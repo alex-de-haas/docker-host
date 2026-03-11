@@ -44,9 +44,7 @@ export async function getContainers(all: boolean = true) {
     image: container.Image,
     status: mapDockerStatus(container.State),
     state: container.State,
-    ports: container.Ports.map(p => 
-      p.PublicPort ? `${p.PublicPort}:${p.PrivatePort}/${p.Type}` : `${p.PrivatePort}/${p.Type}`
-    ),
+    ports: formatContainerPortSummaries(container.Ports),
     created: new Date(container.Created * 1000).toISOString(),
     uptime: container.Status,
   }));
@@ -62,12 +60,15 @@ export async function getContainer(id: string) {
     image: info.Config.Image,
     status: mapDockerStatus(info.State.Status),
     state: info.State.Status,
-    ports: Object.entries(info.NetworkSettings.Ports || {}).map(([port, bindings]) => {
-      if (bindings && bindings.length > 0) {
-        return `${bindings[0].HostPort}:${port}`;
-      }
-      return port;
-    }),
+    ports: dedupePortSummaries(
+      Object.entries(info.NetworkSettings.Ports || {}).flatMap(([port, bindings]) => {
+        if (!bindings || bindings.length === 0) {
+          return [port];
+        }
+
+        return bindings.map(binding => `${binding.HostPort}:${port}`);
+      })
+    ),
     created: info.Created,
     config: {
       name: info.Name.replace(/^\//, ''),
@@ -495,6 +496,18 @@ function mapDockerStatus(state: string): 'running' | 'stopped' | 'restarting' | 
     default:
       return 'stopped';
   }
+}
+
+function formatContainerPortSummaries(ports: Docker.Port[]): string[] {
+  return dedupePortSummaries(
+    ports.map(port =>
+      port.PublicPort ? `${port.PublicPort}:${port.PrivatePort}/${port.Type}` : `${port.PrivatePort}/${port.Type}`
+    )
+  );
+}
+
+function dedupePortSummaries(ports: string[]): string[] {
+  return [...new Set(ports)];
 }
 
 function resolveDockerConnection(): DockerConnectionConfig {

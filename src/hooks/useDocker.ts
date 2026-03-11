@@ -24,8 +24,6 @@ export function useContainers() {
 
   useEffect(() => {
     fetchContainers();
-    const interval = setInterval(fetchContainers, 5000);
-    return () => clearInterval(interval);
   }, [fetchContainers]);
 
   const performAction = async (id: string, action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>) => {
