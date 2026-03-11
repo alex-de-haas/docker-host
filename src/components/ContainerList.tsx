@@ -5,12 +5,13 @@ import {
   Play,
   Square,
   RotateCcw,
+  Download,
   Trash2,
   Terminal,
   ExternalLink,
   MoreVertical,
 } from 'lucide-react';
-import { ContainerStatus } from '@/types/docker';
+import { ContainerAction, ContainerStatus } from '@/types/docker';
 import { Status, StatusIndicator, StatusLabel } from '@/components/ui/status';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,7 +32,7 @@ import {
 
 interface ContainerListProps {
   containers: ContainerStatus[];
-  onAction: (id: string, action: 'start' | 'stop' | 'restart') => void;
+  onAction: (id: string, action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>) => void;
   onRemove: (id: string) => void;
   onViewLogs: (id: string) => void;
 }
@@ -136,6 +137,14 @@ export function ContainerList({ containers, onAction, onRemove, onViewLogs }: Co
                       title="Restart"
                     >
                       <RotateCcw className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onAction(container.id, 'update')}
+                      title="Update container"
+                    >
+                      <Download className="h-4 w-4" />
                     </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>

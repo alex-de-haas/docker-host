@@ -1,5 +1,13 @@
 import { NextResponse } from 'next/server';
-import { getContainers, startContainer, stopContainer, restartContainer, removeContainer, createAndStartContainer } from '@/lib/docker';
+import {
+  getContainers,
+  startContainer,
+  stopContainer,
+  restartContainer,
+  updateContainer,
+  removeContainer,
+  createAndStartContainer,
+} from '@/lib/docker';
 
 export async function GET() {
   try {
@@ -42,6 +50,9 @@ export async function PUT(request: Request) {
         break;
       case 'restart':
         result = await restartContainer(id);
+        break;
+      case 'update':
+        result = await updateContainer(id);
         break;
       default:
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

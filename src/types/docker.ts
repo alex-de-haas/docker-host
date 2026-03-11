@@ -46,7 +46,7 @@ export interface DockerImage {
   created: string;
 }
 
-export type ContainerAction = 'start' | 'stop' | 'restart' | 'remove' | 'logs';
+export type ContainerAction = 'start' | 'stop' | 'restart' | 'update' | 'remove' | 'logs';
 
 export interface ContainerWithConfig extends ContainerStatus {
   config?: ContainerConfig;

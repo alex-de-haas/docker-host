@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ContainerStatus, ContainerConfig } from '@/types/docker';
+import { ContainerStatus, ContainerConfig, ContainerAction } from '@/types/docker';
 
 export function useContainers() {
   const [containers, setContainers] = useState<ContainerStatus[]>([]);
@@ -28,7 +28,7 @@ export function useContainers() {
     return () => clearInterval(interval);
   }, [fetchContainers]);
 
-  const performAction = async (id: string, action: 'start' | 'stop' | 'restart') => {
+  const performAction = async (id: string, action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>) => {
     try {
       const res = await fetch('/api/containers', {
         method: 'PUT',

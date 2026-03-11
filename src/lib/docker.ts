@@ -86,6 +86,62 @@ export async function restartContainer(id: string) {
   return { success: true };
 }
 
+export async function updateContainer(id: string) {
+  const container = docker.getContainer(id);
+  const info = await container.inspect();
+  const imageReference = info.Config.Image;
+
+  await pullImageReference(imageReference);
+
+  const latestImage = await docker.getImage(imageReference).inspect();
+  const currentImageId = info.Image;
+
+  if (latestImage.Id === currentImageId) {
+    return { success: true, updated: false };
+  }
+
+  const originalName = info.Name.replace(/^\//, '');
+  const replacementName = `${originalName}-updating-${Date.now()}`;
+  const replacement = await docker.createContainer(buildReplacementContainerConfig(info, replacementName));
+
+  let stoppedOriginal = false;
+  let removedOriginal = false;
+  let renamedReplacement = false;
+
+  try {
+    await connectSecondaryNetworks(replacement, info);
+
+    if (info.State.Running) {
+      await container.stop();
+      stoppedOriginal = true;
+    }
+
+    await container.remove();
+    removedOriginal = true;
+
+    await replacement.rename({ name: originalName });
+    renamedReplacement = true;
+
+    if (info.State.Running) {
+      await replacement.start();
+    }
+
+    return { success: true, updated: true };
+  } catch (error) {
+    if (!removedOriginal) {
+      if (stoppedOriginal && info.State.Running) {
+        await container.start().catch(() => undefined);
+      }
+
+      await replacement.remove({ force: true }).catch(() => undefined);
+    } else if (!renamedReplacement) {
+      await replacement.remove({ force: true }).catch(() => undefined);
+    }
+
+    throw error;
+  }
+}
+
 export async function removeContainer(id: string, force: boolean = false) {
   const container = docker.getContainer(id);
   await container.remove({ force });
@@ -181,8 +237,13 @@ export async function getImages() {
 
 export async function pullImage(image: string, tag: string = 'latest') {
   const imageTag = buildImageReference(image, tag);
+  await pullImageReference(imageTag);
+  return { success: true };
+}
+
+async function pullImageReference(imageReference: string) {
   await new Promise<void>((resolve, reject) => {
-    docker.pull(imageTag, (err: Error | null, stream: NodeJS.ReadableStream) => {
+    docker.pull(imageReference, (err: Error | null, stream: NodeJS.ReadableStream) => {
       if (err) return reject(err);
       docker.modem.followProgress(stream, (err: Error | null) => {
         if (err) reject(err);
@@ -190,7 +251,203 @@ export async function pullImage(image: string, tag: string = 'latest') {
       });
     });
   });
-  return { success: true };
+}
+
+function buildReplacementContainerConfig(
+  info: Docker.ContainerInspectInfo,
+  name: string
+): Docker.ContainerCreateOptions {
+  const mountConfigs = buildMountConfigs(info);
+  const endpointConfigs = buildEndpointConfigs(info);
+
+  const networkMode = normalizeNetworkMode(info.HostConfig.NetworkMode);
+  const primaryNetwork = getPrimaryNetworkName(networkMode, endpointConfigs);
+
+  if (primaryNetwork) {
+    delete endpointConfigs[primaryNetwork];
+  }
+
+  return {
+    name,
+    platform: info.Platform || undefined,
+    Hostname: info.Config.Hostname,
+    Domainname: info.Config.Domainname,
+    User: info.Config.User,
+    AttachStdin: info.Config.AttachStdin,
+    AttachStdout: info.Config.AttachStdout,
+    AttachStderr: info.Config.AttachStderr,
+    Tty: info.Config.Tty,
+    OpenStdin: info.Config.OpenStdin,
+    StdinOnce: info.Config.StdinOnce,
+    Env: info.Config.Env,
+    Cmd: info.Config.Cmd,
+    Entrypoint: info.Config.Entrypoint,
+    Image: info.Config.Image,
+    Labels: info.Config.Labels,
+    Volumes: info.Config.Volumes,
+    WorkingDir: info.Config.WorkingDir,
+    ExposedPorts: info.Config.ExposedPorts,
+    Healthcheck: info.Config.Healthcheck,
+    HostConfig: {
+      AutoRemove: info.HostConfig.AutoRemove,
+      Binds: mountConfigs.length === 0 ? info.HostConfig.Binds : undefined,
+      LogConfig: info.HostConfig.LogConfig,
+      NetworkMode: networkMode,
+      PortBindings: info.HostConfig.PortBindings,
+      RestartPolicy: info.HostConfig.RestartPolicy,
+      VolumeDriver: info.HostConfig.VolumeDriver,
+      VolumesFrom: info.HostConfig.VolumesFrom,
+      Mounts: mountConfigs.length > 0 ? mountConfigs : undefined,
+      CapAdd: info.HostConfig.CapAdd,
+      CapDrop: info.HostConfig.CapDrop,
+      Dns: info.HostConfig.Dns,
+      DnsOptions: info.HostConfig.DnsOptions,
+      DnsSearch: info.HostConfig.DnsSearch,
+      ExtraHosts: info.HostConfig.ExtraHosts,
+      GroupAdd: info.HostConfig.GroupAdd,
+      IpcMode: info.HostConfig.IpcMode,
+      Cgroup: info.HostConfig.Cgroup,
+      Links: info.HostConfig.Links,
+      OomScoreAdj: info.HostConfig.OomScoreAdj,
+      PidMode: info.HostConfig.PidMode,
+      Privileged: info.HostConfig.Privileged,
+      PublishAllPorts: info.HostConfig.PublishAllPorts,
+      ReadonlyRootfs: info.HostConfig.ReadonlyRootfs,
+      SecurityOpt: info.HostConfig.SecurityOpt,
+      StorageOpt: info.HostConfig.StorageOpt,
+      Tmpfs: info.HostConfig.Tmpfs,
+      UTSMode: info.HostConfig.UTSMode,
+      UsernsMode: info.HostConfig.UsernsMode,
+      ShmSize: info.HostConfig.ShmSize,
+      Sysctls: info.HostConfig.Sysctls,
+      Runtime: info.HostConfig.Runtime,
+      ConsoleSize: info.HostConfig.ConsoleSize,
+      Isolation: info.HostConfig.Isolation,
+      MaskedPaths: info.HostConfig.MaskedPaths,
+      ReadonlyPaths: info.HostConfig.ReadonlyPaths,
+      CpuShares: info.HostConfig.CpuShares,
+      CgroupParent: info.HostConfig.CgroupParent,
+      BlkioWeight: info.HostConfig.BlkioWeight,
+      BlkioWeightDevice: info.HostConfig.BlkioWeightDevice,
+      BlkioDeviceReadBps: info.HostConfig.BlkioDeviceReadBps,
+      BlkioDeviceWriteBps: info.HostConfig.BlkioDeviceWriteBps,
+      BlkioDeviceReadIOps: info.HostConfig.BlkioDeviceReadIOps,
+      BlkioDeviceWriteIOps: info.HostConfig.BlkioDeviceWriteIOps,
+      CpuPeriod: info.HostConfig.CpuPeriod,
+      CpuQuota: info.HostConfig.CpuQuota,
+      CpusetCpus: info.HostConfig.CpusetCpus,
+      CpusetMems: info.HostConfig.CpusetMems,
+      Devices: info.HostConfig.Devices,
+      DeviceCgroupRules: info.HostConfig.DeviceCgroupRules,
+      DeviceRequests: info.HostConfig.DeviceRequests,
+      DiskQuota: info.HostConfig.DiskQuota,
+      KernelMemory: info.HostConfig.KernelMemory,
+      Memory: info.HostConfig.Memory,
+      MemoryReservation: info.HostConfig.MemoryReservation,
+      MemorySwap: info.HostConfig.MemorySwap,
+      MemorySwappiness: info.HostConfig.MemorySwappiness,
+      NanoCpus: info.HostConfig.NanoCpus,
+      OomKillDisable: info.HostConfig.OomKillDisable,
+      Init: info.HostConfig.Init,
+      PidsLimit: info.HostConfig.PidsLimit,
+      Ulimits: info.HostConfig.Ulimits,
+      CpuCount: info.HostConfig.CpuCount,
+      CpuPercent: info.HostConfig.CpuPercent,
+      CpuRealtimePeriod: info.HostConfig.CpuRealtimePeriod,
+      CpuRealtimeRuntime: info.HostConfig.CpuRealtimeRuntime,
+    },
+    NetworkingConfig:
+      Object.keys(endpointConfigs).length > 0
+        ? { EndpointsConfig: endpointConfigs }
+        : undefined,
+  };
+}
+
+function buildMountConfigs(info: Docker.ContainerInspectInfo): Docker.MountConfig {
+  return info.Mounts.filter(isSupportedMount).map(mount => ({
+    Type: mount.Type,
+    Source: mount.Type === 'volume' && mount.Name ? mount.Name : mount.Source,
+    Target: mount.Destination,
+    ReadOnly: !mount.RW,
+    BindOptions:
+      mount.Type === 'bind' && mount.Propagation
+        ? { Propagation: mount.Propagation as Docker.MountPropagation }
+        : undefined,
+  }));
+}
+
+function isSupportedMount(
+  mount: Docker.ContainerInspectInfo['Mounts'][number]
+): mount is Docker.ContainerInspectInfo['Mounts'][number] & { Type: Docker.MountType } {
+  return (
+    mount.Type === 'bind' ||
+    mount.Type === 'volume' ||
+    mount.Type === 'tmpfs' ||
+    mount.Type === 'image'
+  );
+}
+
+function buildEndpointConfigs(info: Docker.ContainerInspectInfo): Docker.EndpointsConfig {
+  return Object.fromEntries(
+    Object.entries(info.NetworkSettings.Networks || {}).map(([networkName, settings]) => [
+      networkName,
+      {
+        Aliases: settings.Aliases,
+        Links: settings.Links,
+        IPAMConfig: settings.IPAMConfig,
+        MacAddress: settings.MacAddress,
+      },
+    ])
+  );
+}
+
+function getPrimaryNetworkName(
+  networkMode: string | undefined,
+  endpointConfigs: Docker.EndpointsConfig
+) {
+  if (!networkMode || networkMode === 'default') {
+    return 'bridge' in endpointConfigs ? 'bridge' : undefined;
+  }
+
+  if (networkMode.startsWith('container:') || networkMode === 'host' || networkMode === 'none') {
+    return undefined;
+  }
+
+  return networkMode in endpointConfigs ? networkMode : undefined;
+}
+
+function normalizeNetworkMode(networkMode?: string) {
+  if (!networkMode) {
+    return undefined;
+  }
+
+  return networkMode === 'default' ? 'bridge' : networkMode;
+}
+
+async function connectSecondaryNetworks(
+  container: Docker.Container,
+  info: Docker.ContainerInspectInfo
+) {
+  const primaryNetwork = getPrimaryNetworkName(
+    normalizeNetworkMode(info.HostConfig.NetworkMode),
+    buildEndpointConfigs(info)
+  );
+
+  for (const [networkName, settings] of Object.entries(info.NetworkSettings.Networks || {})) {
+    if (networkName === primaryNetwork) {
+      continue;
+    }
+
+    await docker.getNetwork(networkName).connect({
+      Container: container.id,
+      EndpointConfig: {
+        Aliases: settings.Aliases,
+        Links: settings.Links,
+        IPAMConfig: settings.IPAMConfig,
+        MacAddress: settings.MacAddress,
+      },
+    });
+  }
 }
 
 function mapDockerStatus(state: string): 'running' | 'stopped' | 'restarting' | 'paused' | 'exited' | 'dead' {
