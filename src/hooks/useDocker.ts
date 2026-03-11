@@ -3,10 +3,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ContainerStatus, ContainerConfig, ContainerAction } from '@/types/docker';
 
+type PendingContainerAction = Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>;
+
 export function useContainers() {
   const [containers, setContainers] = useState<ContainerStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [refreshState, setRefreshState] = useState<'idle' | 'refreshing' | 'self-updating'>('idle');
+  const [pendingAction, setPendingAction] = useState<{ id: string; action: PendingContainerAction } | null>(null);
 
   const fetchContainers = useCallback(async (options?: { suppressError?: boolean }) => {
     const suppressError = options?.suppressError ?? false;
@@ -17,6 +22,7 @@ export function useContainers() {
       const data = await res.json();
       setContainers(data);
       setError(null);
+      setLastUpdatedAt(Date.now());
       return true;
     } catch (err) {
       if (!suppressError) {
@@ -25,6 +31,7 @@ export function useContainers() {
       return false;
     } finally {
       setLoading(false);
+      setRefreshState(current => (current === 'self-updating' ? current : 'idle'));
     }
   }, []);
 
@@ -33,10 +40,19 @@ export function useContainers() {
   }, [fetchContainers]);
 
   const refetch = useCallback(async () => {
+    setLoading(true);
+    setRefreshState('refreshing');
     await fetchContainers();
   }, [fetchContainers]);
 
-  const performAction = async (id: string, action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>) => {
+  const performAction = async (id: string, action: PendingContainerAction) => {
+    setPendingAction({ id, action });
+    if (action === 'update') {
+      setRefreshState('refreshing');
+    }
+
+    let shouldClearPendingAction = true;
+
     try {
       const res = await fetch('/api/containers', {
         method: 'PUT',
@@ -48,13 +64,25 @@ export function useContainers() {
 
       if (action === 'update' && result?.selfUpdateScheduled) {
         setError(null);
+        setRefreshState('self-updating');
+        shouldClearPendingAction = false;
         void waitForSelfUpdate();
         return;
+      }
+
+      if (action === 'update') {
+        setLoading(true);
       }
 
       await fetchContainers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
+      setRefreshState('idle');
+      setLoading(false);
+    } finally {
+      if (shouldClearPendingAction) {
+        setPendingAction(null);
+      }
     }
   };
 
@@ -90,6 +118,9 @@ export function useContainers() {
     containers,
     loading,
     error,
+    lastUpdatedAt,
+    refreshState,
+    pendingAction,
     refetch,
     performAction,
     removeContainer,
@@ -104,11 +135,14 @@ export function useContainers() {
 
       const recovered = await fetchContainers({ suppressError: true });
       if (recovered) {
+        setPendingAction(null);
         return;
       }
     }
 
     setLoading(false);
+    setRefreshState('idle');
+    setPendingAction(null);
     setError('Self-update is still in progress. Refresh the page in a few seconds.');
   }
 }

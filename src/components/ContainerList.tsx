@@ -6,6 +6,7 @@ import {
   Square,
   RotateCcw,
   Download,
+  LoaderCircle,
   Trash2,
   Terminal,
   ExternalLink,
@@ -32,6 +33,7 @@ import {
 
 interface ContainerListProps {
   containers: ContainerStatus[];
+  pendingAction: { id: string; action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'> } | null;
   onAction: (id: string, action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>) => void;
   onRemove: (id: string) => void;
   onViewLogs: (id: string) => void;
@@ -46,7 +48,7 @@ const statusMap: Record<string, 'online' | 'offline' | 'maintenance' | 'degraded
   dead: 'offline',
 };
 
-export function ContainerList({ containers, onAction, onRemove, onViewLogs }: ContainerListProps) {
+export function ContainerList({ containers, pendingAction, onAction, onRemove, onViewLogs }: ContainerListProps) {
   return (
     <div className="rounded-lg border bg-card">
       <Table>
@@ -74,7 +76,9 @@ export function ContainerList({ containers, onAction, onRemove, onViewLogs }: Co
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05 }}
-                className="border-b transition-colors hover:bg-muted/50"
+                className={`border-b transition-colors hover:bg-muted/50 ${
+                  pendingAction?.id === container.id ? 'bg-muted/30' : ''
+                }`}
               >
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2">
@@ -111,14 +115,24 @@ export function ContainerList({ containers, onAction, onRemove, onViewLogs }: Co
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
+                    {pendingAction?.id === container.id && (
+                      <span className="mr-2 text-xs text-muted-foreground">
+                        {pendingAction.action === 'update' ? 'Updating...' : 'Working...'}
+                      </span>
+                    )}
                     {container.status === 'running' ? (
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => onAction(container.id, 'stop')}
                         title="Stop"
+                        disabled={pendingAction?.id === container.id}
                       >
-                        <Square className="h-4 w-4" />
+                        {pendingAction?.id === container.id && pendingAction.action === 'stop' ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Square className="h-4 w-4" />
+                        )}
                       </Button>
                     ) : (
                       <Button
@@ -126,8 +140,13 @@ export function ContainerList({ containers, onAction, onRemove, onViewLogs }: Co
                         size="icon"
                         onClick={() => onAction(container.id, 'start')}
                         title="Start"
+                        disabled={pendingAction?.id === container.id}
                       >
-                        <Play className="h-4 w-4" />
+                        {pendingAction?.id === container.id && pendingAction.action === 'start' ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Play className="h-4 w-4" />
+                        )}
                       </Button>
                     )}
                     <Button
@@ -135,20 +154,30 @@ export function ContainerList({ containers, onAction, onRemove, onViewLogs }: Co
                       size="icon"
                       onClick={() => onAction(container.id, 'restart')}
                       title="Restart"
+                      disabled={pendingAction?.id === container.id}
                     >
-                      <RotateCcw className="h-4 w-4" />
+                      {pendingAction?.id === container.id && pendingAction.action === 'restart' ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-4 w-4" />
+                      )}
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => onAction(container.id, 'update')}
                       title="Update container"
+                      disabled={pendingAction?.id === container.id}
                     >
-                      <Download className="h-4 w-4" />
+                      {pendingAction?.id === container.id && pendingAction.action === 'update' ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
                     </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
+                        <Button variant="ghost" size="icon" disabled={pendingAction?.id === container.id}>
                           <MoreVertical className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>

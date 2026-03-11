@@ -2,16 +2,28 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, RefreshCw, Container } from 'lucide-react';
+import { Plus, RefreshCw, Container, LoaderCircle } from 'lucide-react';
 import { useContainers } from '@/hooks/useDocker';
 import { ContainerList } from '@/components/ContainerList';
 import { CreateContainerDialog } from '@/components/CreateContainerDialog';
 import { LogsDialog } from '@/components/LogsDialog';
 import { StatsCards } from '@/components/StatsCards';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 export default function Dashboard() {
-  const { containers, loading, error, refetch, performAction, removeContainer, createContainer } = useContainers();
+  const {
+    containers,
+    loading,
+    error,
+    lastUpdatedAt,
+    refreshState,
+    pendingAction,
+    refetch,
+    performAction,
+    removeContainer,
+    createContainer,
+  } = useContainers();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [logsDialog, setLogsDialog] = useState<{ open: boolean; containerId: string | null; containerName: string }>({
     open: false,
@@ -27,6 +39,20 @@ export default function Dashboard() {
       containerName: container?.name || 'Unknown',
     });
   };
+
+  const isRefreshing = refreshState !== 'idle';
+  const refreshLabel =
+    refreshState === 'self-updating'
+      ? 'Applying self-update'
+      : refreshState === 'refreshing'
+        ? 'Refreshing data'
+        : lastUpdatedAt
+          ? `Updated ${new Intl.DateTimeFormat(undefined, {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            }).format(lastUpdatedAt)}`
+          : 'Waiting for first sync';
 
   return (
     <div className="min-h-screen bg-background">
@@ -46,8 +72,12 @@ export default function Dashboard() {
             animate={{ opacity: 1, x: 0 }}
             className="flex items-center gap-2"
           >
-            <Button variant="outline" size="icon" onClick={refetch} disabled={loading}>
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <Badge variant="outline" className="hidden sm:inline-flex">
+              {isRefreshing ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <span className="h-2 w-2 rounded-full bg-emerald-500" />}
+              {refreshLabel}
+            </Badge>
+            <Button variant="outline" size="icon" onClick={refetch} disabled={isRefreshing}>
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             </Button>
             <Button onClick={() => setCreateDialogOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
@@ -95,6 +125,7 @@ export default function Dashboard() {
           ) : (
             <ContainerList
               containers={containers}
+              pendingAction={pendingAction}
               onAction={performAction}
               onRemove={removeContainer}
               onViewLogs={handleViewLogs}
