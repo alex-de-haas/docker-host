@@ -68,7 +68,8 @@ export default function Dashboard() {
           >
             <p className="text-sm font-medium">Error: {error}</p>
             <p className="text-xs mt-1">
-              Make sure Docker is running and accessible at /var/run/docker.sock
+              When this app runs inside Docker Desktop, mount the Docker socket into the app container
+              or configure `DOCKER_HOST` or `DOCKER_SOCKET_PATH`.
             </p>
           </motion.div>
         )}

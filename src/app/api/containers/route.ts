@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import {
+  formatDockerError,
   getContainers,
   startContainer,
   stopContainer,
@@ -16,7 +17,7 @@ export async function GET() {
   } catch (error) {
     console.error('Error fetching containers:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch containers', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to fetch containers', details: formatDockerError(error) },
       { status: 500 }
     );
   }
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('Error creating container:', error);
     return NextResponse.json(
-      { error: 'Failed to create container', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to create container', details: formatDockerError(error) },
       { status: 500 }
     );
   }
@@ -62,7 +63,7 @@ export async function PUT(request: Request) {
   } catch (error) {
     console.error('Error performing action:', error);
     return NextResponse.json(
-      { error: 'Failed to perform action', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to perform action', details: formatDockerError(error) },
       { status: 500 }
     );
   }
@@ -83,7 +84,7 @@ export async function DELETE(request: Request) {
   } catch (error) {
     console.error('Error removing container:', error);
     return NextResponse.json(
-      { error: 'Failed to remove container', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to remove container', details: formatDockerError(error) },
       { status: 500 }
     );
   }

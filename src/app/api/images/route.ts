@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getImages, pullImage } from '@/lib/docker';
+import { formatDockerError, getImages, pullImage } from '@/lib/docker';
 
 export async function GET() {
   try {
@@ -8,7 +8,7 @@ export async function GET() {
   } catch (error) {
     console.error('Error fetching images:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch images', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to fetch images', details: formatDockerError(error) },
       { status: 500 }
     );
   }
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('Error pulling image:', error);
     return NextResponse.json(
-      { error: 'Failed to pull image', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to pull image', details: formatDockerError(error) },
       { status: 500 }
     );
   }

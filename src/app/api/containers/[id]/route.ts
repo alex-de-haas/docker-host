@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getContainer, getContainerLogs } from '@/lib/docker';
+import { formatDockerError, getContainer, getContainerLogs } from '@/lib/docker';
 
 export async function GET(
   request: Request,
@@ -21,7 +21,7 @@ export async function GET(
   } catch (error) {
     console.error('Error fetching container:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch container', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to fetch container', details: formatDockerError(error) },
       { status: 500 }
     );
   }

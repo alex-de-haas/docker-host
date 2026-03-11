@@ -1,10 +1,40 @@
 import Docker from 'dockerode';
 import { buildImageReference, parseImageReference, splitImageReference } from '@/lib/docker-image';
 
-// Create Docker client - connects to local Docker daemon
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+const DEFAULT_DOCKER_SOCKET_PATH = '/var/run/docker.sock';
+
+type DockerConnectionConfig = {
+  description: string;
+  options: Docker.DockerOptions;
+};
+
+const dockerConnection = resolveDockerConnection();
+const docker = new Docker(dockerConnection.options);
 
 export default docker;
+export const dockerConnectionDescription = dockerConnection.description;
+
+export function formatDockerError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return 'Unknown Docker error';
+  }
+
+  const dockerError = error as Error & { code?: string };
+
+  if (dockerError.code === 'ENOENT') {
+    return [
+      `Docker endpoint not found at ${dockerConnectionDescription}.`,
+      'If this app is running in Docker Desktop, mount the Docker socket into the app container',
+      `or set DOCKER_HOST/DOCKER_SOCKET_PATH to a reachable Docker daemon.`,
+    ].join(' ');
+  }
+
+  if (dockerError.code === 'EACCES') {
+    return `Permission denied connecting to Docker at ${dockerConnectionDescription}. Check the socket permissions or container user.`;
+  }
+
+  return error.message;
+}
 
 export async function getContainers(all: boolean = true) {
   const containers = await docker.listContainers({ all });
@@ -465,4 +495,47 @@ function mapDockerStatus(state: string): 'running' | 'stopped' | 'restarting' | 
     default:
       return 'stopped';
   }
+}
+
+function resolveDockerConnection(): DockerConnectionConfig {
+  const socketPath = process.env.DOCKER_SOCKET_PATH?.trim();
+  if (socketPath) {
+    return {
+      description: `unix socket ${socketPath}`,
+      options: { socketPath },
+    };
+  }
+
+  const dockerHost = process.env.DOCKER_HOST?.trim();
+  if (dockerHost) {
+    return parseDockerHost(dockerHost);
+  }
+
+  return {
+    description: `unix socket ${DEFAULT_DOCKER_SOCKET_PATH}`,
+    options: { socketPath: DEFAULT_DOCKER_SOCKET_PATH },
+  };
+}
+
+function parseDockerHost(dockerHost: string): DockerConnectionConfig {
+  if (dockerHost.startsWith('unix://')) {
+    const socketPath = dockerHost.slice('unix://'.length);
+    return {
+      description: `unix socket ${socketPath}`,
+      options: { socketPath },
+    };
+  }
+
+  const url = new URL(dockerHost);
+  const protocol = url.protocol === 'https:' ? 'https' : 'http';
+  const port = url.port ? Number(url.port) : protocol === 'https' ? 2376 : 2375;
+
+  return {
+    description: `${protocol}://${url.hostname}:${port}`,
+    options: {
+      host: url.hostname,
+      port,
+      protocol,
+    },
+  };
 }

@@ -11,7 +11,7 @@ export function useContainers() {
   const fetchContainers = useCallback(async () => {
     try {
       const res = await fetch('/api/containers');
-      if (!res.ok) throw new Error('Failed to fetch containers');
+      if (!res.ok) throw new Error(await getApiErrorMessage(res, 'Failed to fetch containers'));
       const data = await res.json();
       setContainers(data);
       setError(null);
@@ -35,7 +35,7 @@ export function useContainers() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, action }),
       });
-      if (!res.ok) throw new Error(`Failed to ${action} container`);
+      if (!res.ok) throw new Error(await getApiErrorMessage(res, `Failed to ${action} container`));
       await fetchContainers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -47,7 +47,7 @@ export function useContainers() {
       const res = await fetch(`/api/containers?id=${id}&force=${force}`, {
         method: 'DELETE',
       });
-      if (!res.ok) throw new Error('Failed to remove container');
+      if (!res.ok) throw new Error(await getApiErrorMessage(res, 'Failed to remove container'));
       await fetchContainers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -61,7 +61,7 @@ export function useContainers() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       });
-      if (!res.ok) throw new Error('Failed to create container');
+      if (!res.ok) throw new Error(await getApiErrorMessage(res, 'Failed to create container'));
       await fetchContainers();
       return true;
     } catch (err) {
@@ -79,6 +79,22 @@ export function useContainers() {
     removeContainer,
     createContainer,
   };
+}
+
+async function getApiErrorMessage(response: Response, fallback: string) {
+  try {
+    const data = await response.json();
+    const details =
+      typeof data?.details === 'string'
+        ? data.details
+        : typeof data?.error === 'string'
+          ? data.error
+          : null;
+
+    return details ? `${fallback}: ${details}` : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export function useContainerLogs(containerId: string | null) {
