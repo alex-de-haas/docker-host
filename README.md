@@ -47,6 +47,7 @@ Notes:
 
 - `host.docker.internal:2375` only works if Docker Desktop is configured to expose the daemon over TCP.
 - Mounting `/var/run/docker.sock` is the usual Docker Desktop setup for containerized tools like this.
+- With the socket or `DOCKER_HOST` configured, the app can also update its own container image. The UI will be briefly unavailable while the new container takes over.
 
 ## Build image
 

@@ -1,7 +1,10 @@
 import Docker from 'dockerode';
+import fs from 'node:fs';
+import os from 'node:os';
 import { buildImageReference, parseImageReference, splitImageReference } from '@/lib/docker-image';
 
 const DEFAULT_DOCKER_SOCKET_PATH = '/var/run/docker.sock';
+const DEFAULT_SELF_UPDATE_GRACE_PERIOD_MS = 5_000;
 
 type DockerConnectionConfig = {
   description: string;
@@ -135,40 +138,36 @@ export async function updateContainer(id: string) {
   const replacementName = `${originalName}-updating-${Date.now()}`;
   const replacement = await docker.createContainer(buildReplacementContainerConfig(info, replacementName));
 
-  let stoppedOriginal = false;
-  let removedOriginal = false;
-  let renamedReplacement = false;
-
   try {
     await connectSecondaryNetworks(replacement, info);
 
-    if (info.State.Running) {
-      await container.stop();
-      stoppedOriginal = true;
+    if (isCurrentProcessContainer(info)) {
+      await scheduleSelfUpdate({
+        info,
+        imageReference,
+        originalName,
+        replacement,
+        replacementName,
+      });
+
+      return {
+        success: true,
+        updated: true,
+        selfUpdateScheduled: true,
+      };
     }
 
-    await container.remove();
-    removedOriginal = true;
-
-    await replacement.rename({ name: originalName });
-    renamedReplacement = true;
-
-    if (info.State.Running) {
-      await replacement.start();
-    }
+    await replaceContainer({
+      original: container,
+      replacement,
+      originalName,
+      replacementName,
+      startReplacement: info.State.Running,
+    });
 
     return { success: true, updated: true };
   } catch (error) {
-    if (!removedOriginal) {
-      if (stoppedOriginal && info.State.Running) {
-        await container.start().catch(() => undefined);
-      }
-
-      await replacement.remove({ force: true }).catch(() => undefined);
-    } else if (!renamedReplacement) {
-      await replacement.remove({ force: true }).catch(() => undefined);
-    }
-
+    await replacement.remove({ force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -282,6 +281,160 @@ async function pullImageReference(imageReference: string) {
       });
     });
   });
+}
+
+async function replaceContainer({
+  original,
+  replacement,
+  originalName,
+  replacementName,
+  startReplacement,
+}: {
+  original: Docker.Container;
+  replacement: Docker.Container;
+  originalName: string;
+  replacementName: string;
+  startReplacement: boolean;
+}) {
+  const backupName = `${originalName}-backup-${Date.now()}`;
+
+  let stoppedOriginal = false;
+  let renamedOriginal = false;
+  let renamedReplacement = false;
+  let replacementStarted = false;
+
+  try {
+    if (startReplacement) {
+      await original.stop();
+      stoppedOriginal = true;
+    }
+
+    await original.rename({ name: backupName });
+    renamedOriginal = true;
+
+    await replacement.rename({ name: originalName });
+    renamedReplacement = true;
+
+    if (startReplacement) {
+      await replacement.start();
+      replacementStarted = true;
+    }
+
+    await original.remove({ force: true }).catch(() => undefined);
+  } catch (error) {
+    if (replacementStarted) {
+      await replacement.stop().catch(() => undefined);
+    }
+
+    if (renamedReplacement) {
+      await replacement.rename({ name: replacementName }).catch(() => undefined);
+    }
+
+    if (renamedOriginal) {
+      await original.rename({ name: originalName }).catch(() => undefined);
+    }
+
+    if (stoppedOriginal) {
+      await original.start().catch(() => undefined);
+    }
+
+    throw error;
+  }
+}
+
+async function scheduleSelfUpdate({
+  info,
+  imageReference,
+  originalName,
+  replacement,
+  replacementName,
+}: {
+  info: Docker.ContainerInspectInfo;
+  imageReference: string;
+  originalName: string;
+  replacement: Docker.Container;
+  replacementName: string;
+}) {
+  const helper = await docker.createContainer(
+    buildSelfUpdateHelperConfig({
+      helperName: `${originalName}-self-update-${Date.now()}`,
+      imageReference,
+      info,
+      originalName,
+      originalId: info.Id,
+      replacementId: replacement.id,
+      replacementName,
+      startReplacement: info.State.Running,
+    })
+  );
+
+  try {
+    await helper.start();
+  } catch (error) {
+    await helper.remove({ force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+function buildSelfUpdateHelperConfig({
+  helperName,
+  imageReference,
+  info,
+  originalName,
+  originalId,
+  replacementId,
+  replacementName,
+  startReplacement,
+}: {
+  helperName: string;
+  imageReference: string;
+  info: Docker.ContainerInspectInfo;
+  originalName: string;
+  originalId: string;
+  replacementId: string;
+  replacementName: string;
+  startReplacement: boolean;
+}): Docker.ContainerCreateOptions {
+  const env = [
+    `ORIGINAL_CONTAINER_ID=${originalId}`,
+    `ORIGINAL_CONTAINER_NAME=${originalName}`,
+    `REPLACEMENT_CONTAINER_ID=${replacementId}`,
+    `REPLACEMENT_CONTAINER_NAME=${replacementName}`,
+    `START_REPLACEMENT=${String(startReplacement)}`,
+    `SELF_UPDATE_GRACE_PERIOD_MS=${getSelfUpdateGracePeriodMs()}`,
+  ];
+
+  const hostConfig: Docker.HostConfig = {
+    AutoRemove: true,
+    NetworkMode: normalizeNetworkMode(info.HostConfig.NetworkMode),
+  };
+
+  if ('socketPath' in dockerConnection.options && dockerConnection.options.socketPath) {
+    const socketPath = dockerConnection.options.socketPath;
+    env.push(`DOCKER_SOCKET_PATH=${socketPath}`);
+    hostConfig.Binds = [resolveSocketBind(info, socketPath)];
+  } else if (process.env.DOCKER_HOST) {
+    env.push(`DOCKER_HOST=${process.env.DOCKER_HOST}`);
+  }
+
+  return {
+    name: helperName,
+    Image: imageReference,
+    Cmd: ['node', '/app/scripts/self-update-helper.mjs'],
+    Env: env,
+    HostConfig: hostConfig,
+  };
+}
+
+function resolveSocketBind(info: Docker.ContainerInspectInfo, socketPath: string) {
+  const mount = info.Mounts.find(candidate => candidate.Destination === socketPath && candidate.Source);
+  const sourcePath = mount?.Source || socketPath;
+  return `${sourcePath}:${socketPath}`;
+}
+
+function getSelfUpdateGracePeriodMs() {
+  const parsed = Number.parseInt(process.env.SELF_UPDATE_GRACE_PERIOD_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_SELF_UPDATE_GRACE_PERIOD_MS;
 }
 
 function buildReplacementContainerConfig(
@@ -453,6 +606,31 @@ function normalizeNetworkMode(networkMode?: string) {
   }
 
   return networkMode === 'default' ? 'bridge' : networkMode;
+}
+
+function isCurrentProcessContainer(info: Docker.ContainerInspectInfo) {
+  return getCurrentContainerIdentifiers().some(identifier => info.Id.startsWith(identifier));
+}
+
+function getCurrentContainerIdentifiers() {
+  const identifiers = new Set<string>();
+  const hostname = os.hostname().trim();
+
+  if (hostname) {
+    identifiers.add(hostname);
+  }
+
+  try {
+    const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf-8');
+
+    for (const match of cgroup.matchAll(/([a-f0-9]{12,64})/gi)) {
+      identifiers.add(match[1]);
+    }
+  } catch {
+    // Not running in a Linux container.
+  }
+
+  return [...identifiers];
 }
 
 async function connectSecondaryNetworks(

@@ -8,15 +8,21 @@ export function useContainers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchContainers = useCallback(async () => {
+  const fetchContainers = useCallback(async (options?: { suppressError?: boolean }) => {
+    const suppressError = options?.suppressError ?? false;
+
     try {
       const res = await fetch('/api/containers');
       if (!res.ok) throw new Error(await getApiErrorMessage(res, 'Failed to fetch containers'));
       const data = await res.json();
       setContainers(data);
       setError(null);
+      return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      if (!suppressError) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      }
+      return false;
     } finally {
       setLoading(false);
     }
@@ -24,6 +30,10 @@ export function useContainers() {
 
   useEffect(() => {
     fetchContainers();
+  }, [fetchContainers]);
+
+  const refetch = useCallback(async () => {
+    await fetchContainers();
   }, [fetchContainers]);
 
   const performAction = async (id: string, action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>) => {
@@ -34,6 +44,14 @@ export function useContainers() {
         body: JSON.stringify({ id, action }),
       });
       if (!res.ok) throw new Error(await getApiErrorMessage(res, `Failed to ${action} container`));
+      const result = await res.json().catch(() => null);
+
+      if (action === 'update' && result?.selfUpdateScheduled) {
+        setError(null);
+        void waitForSelfUpdate();
+        return;
+      }
+
       await fetchContainers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -72,11 +90,27 @@ export function useContainers() {
     containers,
     loading,
     error,
-    refetch: fetchContainers,
+    refetch,
     performAction,
     removeContainer,
     createContainer,
   };
+
+  async function waitForSelfUpdate() {
+    setLoading(true);
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await sleep(attempt === 0 ? 6_000 : 2_000);
+
+      const recovered = await fetchContainers({ suppressError: true });
+      if (recovered) {
+        return;
+      }
+    }
+
+    setLoading(false);
+    setError('Self-update is still in progress. Refresh the page in a few seconds.');
+  }
 }
 
 async function getApiErrorMessage(response: Response, fallback: string) {
@@ -93,6 +127,10 @@ async function getApiErrorMessage(response: Response, fallback: string) {
   } catch {
     return fallback;
   }
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 export function useContainerLogs(containerId: string | null) {
