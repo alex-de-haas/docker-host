@@ -2,6 +2,7 @@ import Docker from 'dockerode';
 import fs from 'node:fs';
 import os from 'node:os';
 import { buildImageReference, parseImageReference, splitImageReference } from '@/lib/docker-image';
+import type { ContainerImageUpdateStatus } from '@/types/docker';
 
 const DEFAULT_DOCKER_SOCKET_PATH = '/var/run/docker.sock';
 const DEFAULT_SELF_UPDATE_GRACE_PERIOD_MS = 5_000;
@@ -265,6 +266,28 @@ export async function getImages() {
   });
 }
 
+export async function checkContainerImageUpdates() {
+  const containers = await docker.listContainers({ all: true });
+  const updates = await Promise.all(
+    containers.map(async (container) => {
+      try {
+        const info = await docker.getContainer(container.Id).inspect();
+        return await checkContainerImageUpdate(info);
+      } catch (error) {
+        return {
+          id: container.Id,
+          image: container.Image,
+          updateAvailable: false,
+          status: 'unknown',
+          error: formatDockerError(error),
+        } satisfies ContainerImageUpdateStatus;
+      }
+    })
+  );
+
+  return updates;
+}
+
 export async function pullImage(image: string, tag: string = 'latest') {
   const imageTag = buildImageReference(image, tag);
   await pullImageReference(imageTag);
@@ -281,6 +304,88 @@ async function pullImageReference(imageReference: string) {
       });
     });
   });
+}
+
+async function checkContainerImageUpdate(
+  info: Docker.ContainerInspectInfo
+): Promise<ContainerImageUpdateStatus> {
+  const imageReference = info.Config.Image;
+  const parsedReference = parseImageReference(imageReference);
+
+  if (!parsedReference.name) {
+    return {
+      id: info.Id,
+      image: imageReference,
+      updateAvailable: false,
+      status: 'unknown',
+      error: 'Container image reference is missing.',
+    };
+  }
+
+  if (parsedReference.digest) {
+    return {
+      id: info.Id,
+      image: imageReference,
+      updateAvailable: false,
+      status: 'pinned',
+      currentDigest: parsedReference.digest,
+      remoteDigest: parsedReference.digest,
+    };
+  }
+
+  let localImage: Docker.ImageInspectInfo;
+
+  try {
+    localImage = await docker.getImage(info.Image).inspect();
+  } catch (error) {
+    return {
+      id: info.Id,
+      image: imageReference,
+      updateAvailable: false,
+      status: 'unknown',
+      error: formatDockerError(error),
+    };
+  }
+
+  const currentDigests = new Set(
+    (localImage.RepoDigests || [])
+      .map(repoDigest => parseImageReference(repoDigest).digest)
+      .filter((digest): digest is string => Boolean(digest))
+  );
+
+  if (currentDigests.size === 0) {
+    return {
+      id: info.Id,
+      image: imageReference,
+      updateAvailable: false,
+      status: 'unknown',
+      error: 'Local image digest is unavailable.',
+    };
+  }
+
+  try {
+    const distribution = await docker.getImage(imageReference).distribution();
+    const remoteDigest = distribution.Descriptor.digest;
+    const currentDigest = [...currentDigests][0];
+
+    return {
+      id: info.Id,
+      image: imageReference,
+      updateAvailable: !currentDigests.has(remoteDigest),
+      status: currentDigests.has(remoteDigest) ? 'up-to-date' : 'update-available',
+      currentDigest,
+      remoteDigest,
+    };
+  } catch (error) {
+    return {
+      id: info.Id,
+      image: imageReference,
+      updateAvailable: false,
+      status: 'unknown',
+      currentDigest: [...currentDigests][0],
+      error: formatDockerError(error),
+    };
+  }
 }
 
 async function replaceContainer({

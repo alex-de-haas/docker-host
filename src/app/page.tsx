@@ -17,9 +17,14 @@ export default function Dashboard() {
     loading,
     error,
     lastUpdatedAt,
+    lastUpdateCheckAt,
     refreshState,
+    checkingUpdates,
     pendingAction,
+    containerUpdateStatuses,
+    availableUpdateCount,
     refetch,
+    checkForUpdates,
     performAction,
     removeContainer,
     createContainer,
@@ -76,8 +81,26 @@ export default function Dashboard() {
               {isRefreshing ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <span className="h-2 w-2 rounded-full bg-emerald-500" />}
               {refreshLabel}
             </Badge>
+            <Badge variant="outline" className="hidden sm:inline-flex">
+              {checkingUpdates ? (
+                <LoaderCircle className="h-3 w-3 animate-spin" />
+              ) : (
+                <span className={`h-2 w-2 rounded-full ${availableUpdateCount > 0 ? 'bg-amber-500' : 'bg-slate-400'}`} />
+              )}
+              {checkingUpdates
+                ? 'Checking updates'
+                : lastUpdateCheckAt
+                  ? availableUpdateCount > 0
+                    ? `${availableUpdateCount} update${availableUpdateCount !== 1 ? 's' : ''} available`
+                    : 'No updates found'
+                  : 'Updates not checked'}
+            </Badge>
             <Button variant="outline" size="icon" onClick={refetch} disabled={isRefreshing}>
               <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
+            <Button variant="outline" onClick={checkForUpdates} disabled={checkingUpdates || isRefreshing}>
+              {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Check Updates
             </Button>
             <Button onClick={() => setCreateDialogOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
@@ -126,6 +149,9 @@ export default function Dashboard() {
             <ContainerList
               containers={containers}
               pendingAction={pendingAction}
+              updateAvailableByContainerId={Object.fromEntries(
+                Object.entries(containerUpdateStatuses).map(([id, status]) => [id, status.updateAvailable])
+              )}
               onAction={performAction}
               onRemove={removeContainer}
               onViewLogs={handleViewLogs}

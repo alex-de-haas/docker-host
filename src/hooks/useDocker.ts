@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ContainerStatus, ContainerConfig, ContainerAction } from '@/types/docker';
+import { ContainerStatus, ContainerConfig, ContainerAction, ContainerImageUpdateStatus } from '@/types/docker';
 
 type PendingContainerAction = Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>;
 
@@ -10,8 +10,11 @@ export function useContainers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [lastUpdateCheckAt, setLastUpdateCheckAt] = useState<number | null>(null);
   const [refreshState, setRefreshState] = useState<'idle' | 'refreshing' | 'self-updating'>('idle');
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [pendingAction, setPendingAction] = useState<{ id: string; action: PendingContainerAction } | null>(null);
+  const [containerUpdateStatuses, setContainerUpdateStatuses] = useState<Record<string, ContainerImageUpdateStatus>>({});
 
   const fetchContainers = useCallback(async (options?: { suppressError?: boolean }) => {
     const suppressError = options?.suppressError ?? false;
@@ -19,8 +22,14 @@ export function useContainers() {
     try {
       const res = await fetch('/api/containers');
       if (!res.ok) throw new Error(await getApiErrorMessage(res, 'Failed to fetch containers'));
-      const data = await res.json();
+      const data: ContainerStatus[] = await res.json();
       setContainers(data);
+      const currentIds = new Set(data.map(container => container.id));
+      setContainerUpdateStatuses(current =>
+        Object.fromEntries(
+          Object.entries(current).filter(([id]) => currentIds.has(id))
+        )
+      );
       setError(null);
       setLastUpdatedAt(Date.now());
       return true;
@@ -65,9 +74,34 @@ export function useContainers() {
       if (action === 'update' && result?.selfUpdateScheduled) {
         setError(null);
         setRefreshState('self-updating');
+        setContainerUpdateStatuses(current => ({
+          ...current,
+          [id]: {
+            ...(current[id] ?? {
+              id,
+              image: containers.find(container => container.id === id)?.image || '',
+            }),
+            updateAvailable: false,
+            status: 'up-to-date',
+          },
+        }));
         shouldClearPendingAction = false;
         void waitForSelfUpdate();
         return;
+      }
+
+      if (action === 'update') {
+        setContainerUpdateStatuses(current => ({
+          ...current,
+          [id]: {
+            ...(current[id] ?? {
+              id,
+              image: containers.find(container => container.id === id)?.image || '',
+            }),
+            updateAvailable: false,
+            status: 'up-to-date',
+          },
+        }));
       }
 
       if (action === 'update') {
@@ -92,6 +126,11 @@ export function useContainers() {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error(await getApiErrorMessage(res, 'Failed to remove container'));
+      setContainerUpdateStatuses(current => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
       await fetchContainers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -114,14 +153,45 @@ export function useContainers() {
     }
   };
 
+  const checkForUpdates = async () => {
+    setCheckingUpdates(true);
+
+    try {
+      const res = await fetch('/api/containers/check-updates', {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(await getApiErrorMessage(res, 'Failed to check for updates'));
+
+      const data: { updates: ContainerImageUpdateStatus[] } = await res.json();
+      setContainerUpdateStatuses(
+        Object.fromEntries(data.updates.map(update => [update.id, update]))
+      );
+      setLastUpdateCheckAt(Date.now());
+      setError(null);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      return false;
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
+
+  const availableUpdateCount = Object.values(containerUpdateStatuses).filter(update => update.updateAvailable).length;
+
   return {
     containers,
     loading,
     error,
     lastUpdatedAt,
+    lastUpdateCheckAt,
     refreshState,
+    checkingUpdates,
     pendingAction,
+    containerUpdateStatuses,
+    availableUpdateCount,
     refetch,
+    checkForUpdates,
     performAction,
     removeContainer,
     createContainer,

@@ -46,6 +46,16 @@ export interface DockerImage {
   created: string;
 }
 
+export interface ContainerImageUpdateStatus {
+  id: string;
+  image: string;
+  updateAvailable: boolean;
+  status: 'update-available' | 'up-to-date' | 'pinned' | 'unknown';
+  currentDigest?: string;
+  remoteDigest?: string;
+  error?: string;
+}
+
 export type ContainerAction = 'start' | 'stop' | 'restart' | 'update' | 'remove' | 'logs';
 
 export interface ContainerWithConfig extends ContainerStatus {

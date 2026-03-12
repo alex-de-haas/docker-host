@@ -36,6 +36,7 @@ import {
 interface ContainerListProps {
   containers: ContainerStatus[];
   pendingAction: { id: string; action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'> } | null;
+  updateAvailableByContainerId: Record<string, boolean>;
   onAction: (id: string, action: Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>) => void;
   onRemove: (id: string) => void;
   onViewLogs: (id: string) => void;
@@ -50,7 +51,14 @@ const statusMap: Record<string, 'online' | 'offline' | 'maintenance' | 'degraded
   dead: 'offline',
 };
 
-export function ContainerList({ containers, pendingAction, onAction, onRemove, onViewLogs }: ContainerListProps) {
+export function ContainerList({
+  containers,
+  pendingAction,
+  updateAvailableByContainerId,
+  onAction,
+  onRemove,
+  onViewLogs,
+}: ContainerListProps) {
   const [expandedContainerId, setExpandedContainerId] = useState<string | null>(null);
   const [containerDetails, setContainerDetails] = useState<Record<string, ContainerWithConfig>>({});
   const [loadingDetailsId, setLoadingDetailsId] = useState<string | null>(null);
@@ -114,7 +122,12 @@ export function ContainerList({ containers, pendingAction, onAction, onRemove, o
               </TableCell>
             </TableRow>
           ) : (
-            containers.map((container, index) => (
+            containers.map((container, index) => {
+              const showUpdateAction =
+                updateAvailableByContainerId[container.id] ||
+                (pendingAction?.id === container.id && pendingAction.action === 'update');
+
+              return (
               <Fragment key={container.id}>
                 <motion.tr
                   initial={{ opacity: 0, y: 20 }}
@@ -208,19 +221,21 @@ export function ContainerList({ containers, pendingAction, onAction, onRemove, o
                           <RotateCcw className="h-4 w-4" />
                         )}
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => onAction(container.id, 'update')}
-                        title="Update container"
-                        disabled={pendingAction?.id === container.id}
-                      >
-                        {pendingAction?.id === container.id && pendingAction.action === 'update' ? (
-                          <LoaderCircle className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Download className="h-4 w-4" />
-                        )}
-                      </Button>
+                      {showUpdateAction && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => onAction(container.id, 'update')}
+                          title="Update container"
+                          disabled={pendingAction?.id === container.id}
+                        >
+                          {pendingAction?.id === container.id && pendingAction.action === 'update' ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                        </Button>
+                      )}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon" disabled={pendingAction?.id === container.id}>
@@ -317,7 +332,8 @@ export function ContainerList({ containers, pendingAction, onAction, onRemove, o
                   </TableRow>
                 )}
               </Fragment>
-            ))
+              );
+            })
           )}
         </TableBody>
       </Table>
