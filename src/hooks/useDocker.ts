@@ -1,9 +1,15 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ContainerStatus, ContainerConfig, ContainerAction, ContainerImageUpdateStatus } from '@/types/docker';
+import {
+  ContainerStatus,
+  ContainerConfig,
+  ContainerAction,
+  ContainerImageUpdateStatus,
+  EnvironmentVariable,
+} from '@/types/docker';
 
-type PendingContainerAction = Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update'>;
+type PendingContainerAction = Extract<ContainerAction, 'start' | 'stop' | 'restart' | 'update' | 'environment'>;
 
 export function useContainers() {
   const [containers, setContainers] = useState<ContainerStatus[]>([]);
@@ -120,6 +126,46 @@ export function useContainers() {
     }
   };
 
+  const updateContainerEnvironment = async (id: string, envVars: EnvironmentVariable[]) => {
+    setPendingAction({ id, action: 'environment' });
+    setRefreshState('refreshing');
+
+    let shouldClearPendingAction = true;
+
+    try {
+      const res = await fetch('/api/containers', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action: 'environment', envVars }),
+      });
+      if (!res.ok) {
+        throw new Error(await getApiErrorMessage(res, 'Failed to update environment variables'));
+      }
+
+      const result = await res.json().catch(() => null);
+
+      if (result?.selfUpdateScheduled) {
+        setError(null);
+        setRefreshState('self-updating');
+        shouldClearPendingAction = false;
+        void waitForSelfUpdate();
+        return true;
+      }
+
+      await fetchContainers();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      setRefreshState('idle');
+      setLoading(false);
+      return false;
+    } finally {
+      if (shouldClearPendingAction) {
+        setPendingAction(null);
+      }
+    }
+  };
+
   const removeContainer = async (id: string, force: boolean = false) => {
     try {
       const res = await fetch(`/api/containers?id=${id}&force=${force}`, {
@@ -195,6 +241,7 @@ export function useContainers() {
     performAction,
     removeContainer,
     createContainer,
+    updateContainerEnvironment,
   };
 
   async function waitForSelfUpdate() {

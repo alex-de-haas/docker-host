@@ -56,7 +56,7 @@ export interface ContainerImageUpdateStatus {
   error?: string;
 }
 
-export type ContainerAction = 'start' | 'stop' | 'restart' | 'update' | 'remove' | 'logs';
+export type ContainerAction = 'start' | 'stop' | 'restart' | 'update' | 'environment' | 'remove' | 'logs';
 
 export interface ContainerWithConfig extends ContainerStatus {
   config?: ContainerConfig;

@@ -28,6 +28,7 @@ export default function Dashboard() {
     performAction,
     removeContainer,
     createContainer,
+    updateContainerEnvironment,
   } = useContainers();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [logsDialog, setLogsDialog] = useState<{ open: boolean; containerId: string | null; containerName: string }>({
@@ -155,6 +156,7 @@ export default function Dashboard() {
               onAction={performAction}
               onRemove={removeContainer}
               onViewLogs={handleViewLogs}
+              onUpdateEnvironment={updateContainerEnvironment}
             />
           )}
         </section>

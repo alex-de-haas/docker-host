@@ -2,7 +2,7 @@ import Docker from 'dockerode';
 import fs from 'node:fs';
 import os from 'node:os';
 import { buildImageReference, parseImageReference, splitImageReference } from '@/lib/docker-image';
-import type { ContainerImageUpdateStatus } from '@/types/docker';
+import type { ContainerImageUpdateStatus, EnvironmentVariable } from '@/types/docker';
 
 const DEFAULT_DOCKER_SOCKET_PATH = '/var/run/docker.sock';
 const DEFAULT_SELF_UPDATE_GRACE_PERIOD_MS = 5_000;
@@ -167,6 +167,56 @@ export async function updateContainer(id: string) {
     });
 
     return { success: true, updated: true };
+  } catch (error) {
+    await replacement.remove({ force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function updateContainerEnvironment(id: string, envVars: EnvironmentVariable[]) {
+  const updates = normalizeEnvironmentUpdates(envVars);
+  const container = docker.getContainer(id);
+  const info = await container.inspect();
+  const nextEnv = mergeEnvironmentVariables(info.Config.Env || [], updates);
+
+  if (arraysEqual(info.Config.Env || [], nextEnv)) {
+    return { success: true, updated: false };
+  }
+
+  const originalName = info.Name.replace(/^\//, '');
+  const replacementName = `${originalName}-env-${Date.now()}`;
+  const replacement = await docker.createContainer(
+    buildReplacementContainerConfig(info, replacementName, { env: nextEnv })
+  );
+
+  try {
+    await connectSecondaryNetworks(replacement, info);
+
+    if (isCurrentProcessContainer(info)) {
+      await scheduleSelfUpdate({
+        info,
+        imageReference: info.Config.Image,
+        originalName,
+        replacement,
+        replacementName,
+      });
+
+      return {
+        success: true,
+        updated: true,
+        selfUpdateScheduled: true,
+      };
+    }
+
+    await replaceContainer({
+      original: container,
+      replacement,
+      originalName,
+      replacementName,
+      startReplacement: info.State.Running,
+    });
+
+    return { success: true, updated: true, id: replacement.id };
   } catch (error) {
     await replacement.remove({ force: true }).catch(() => undefined);
     throw error;
@@ -544,7 +594,8 @@ function getSelfUpdateGracePeriodMs() {
 
 function buildReplacementContainerConfig(
   info: Docker.ContainerInspectInfo,
-  name: string
+  name: string,
+  overrides: { env?: string[] } = {}
 ): Docker.ContainerCreateOptions {
   const mountConfigs = buildMountConfigs(info);
   const endpointConfigs = buildEndpointConfigs(info);
@@ -568,7 +619,7 @@ function buildReplacementContainerConfig(
     Tty: info.Config.Tty,
     OpenStdin: info.Config.OpenStdin,
     StdinOnce: info.Config.StdinOnce,
-    Env: info.Config.Env,
+    Env: overrides.env ?? info.Config.Env,
     Cmd: info.Config.Cmd,
     Entrypoint: info.Config.Entrypoint,
     Image: info.Config.Image,
@@ -650,6 +701,76 @@ function buildReplacementContainerConfig(
         ? { EndpointsConfig: endpointConfigs }
         : undefined,
   };
+}
+
+function normalizeEnvironmentUpdates(envVars: EnvironmentVariable[]) {
+  if (!Array.isArray(envVars)) {
+    throw new Error('Environment variables must be an array.');
+  }
+
+  if (envVars.length === 0) {
+    throw new Error('At least one environment variable is required.');
+  }
+
+  const seenKeys = new Set<string>();
+
+  return envVars.map((envVar) => {
+    const key = String(envVar.key ?? '').trim();
+    const value = String(envVar.value ?? '');
+
+    if (!key) {
+      throw new Error('Environment variable key is required.');
+    }
+
+    if (key.includes('=')) {
+      throw new Error(`Environment variable key "${key}" must not contain "=".`);
+    }
+
+    if (seenKeys.has(key)) {
+      throw new Error(`Environment variable "${key}" is duplicated.`);
+    }
+
+    seenKeys.add(key);
+    return { key, value };
+  });
+}
+
+function mergeEnvironmentVariables(existingEnv: string[], updates: EnvironmentVariable[]) {
+  const updatesByKey = new Map(updates.map(({ key, value }) => [key, `${key}=${value}`]));
+  const handledKeys = new Set<string>();
+  const nextEnv: string[] = [];
+
+  for (const envEntry of existingEnv) {
+    const key = getEnvironmentKey(envEntry);
+
+    if (updatesByKey.has(key)) {
+      if (!handledKeys.has(key)) {
+        nextEnv.push(updatesByKey.get(key)!);
+      }
+
+      handledKeys.add(key);
+      continue;
+    }
+
+    nextEnv.push(envEntry);
+  }
+
+  for (const [key, envEntry] of updatesByKey) {
+    if (!handledKeys.has(key)) {
+      nextEnv.push(envEntry);
+    }
+  }
+
+  return nextEnv;
+}
+
+function getEnvironmentKey(envEntry: string) {
+  const separatorIndex = envEntry.indexOf('=');
+  return separatorIndex === -1 ? envEntry : envEntry.slice(0, separatorIndex);
+}
+
+function arraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function buildMountConfigs(info: Docker.ContainerInspectInfo): Docker.MountConfig {

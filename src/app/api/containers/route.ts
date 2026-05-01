@@ -6,6 +6,7 @@ import {
   stopContainer,
   restartContainer,
   updateContainer,
+  updateContainerEnvironment,
   removeContainer,
   createAndStartContainer,
 } from '@/lib/docker';
@@ -39,7 +40,11 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const { id, action } = await request.json();
+    const { id, action, envVars } = await request.json();
+
+    if (!id) {
+      return NextResponse.json({ error: 'Container ID required' }, { status: 400 });
+    }
     
     let result;
     switch (action) {
@@ -54,6 +59,9 @@ export async function PUT(request: Request) {
         break;
       case 'update':
         result = await updateContainer(id);
+        break;
+      case 'environment':
+        result = await updateContainerEnvironment(id, envVars);
         break;
       default:
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
