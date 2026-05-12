@@ -25,5 +25,6 @@ flowchart LR
 ## Documents
 
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
+- [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
 - [Module metadata files](features/module-metadata.md) - detailed draft for installing Docker-hosted modules from JSON metadata URLs.
 - [Module metadata planning](planning/module-metadata-open-questions.md) - current open questions before implementation.
