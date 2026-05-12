@@ -1,0 +1,29 @@
+# Documentation
+
+## Overview
+
+Docker Host Manager is a local application for managing Docker containers. The planned module model extends this from direct container management to logical modules described by JSON metadata files.
+
+A module is a Docker-hosted functional unit. Administrators add a module by providing a direct URL to a JSON metadata file. The Host downloads that JSON file, reads the Docker image reference and module metadata, then prepares local storage and container configuration.
+
+The Host itself is expected to run as a Docker container in production-like usage. A standalone `docker-host` CLI executable bootstraps and manages the Host container lifecycle, while the Web UI remains the primary interface for daily module management.
+
+When one module depends on another service module, the consumer declares which dependency endpoint it needs and which environment variable should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the consumer container. Network aliases are derived from module ids, for example `com.modulis.storage` becomes `mod-com-modulis-storage`. This does not require Docker Compose, although Compose could be one possible implementation detail.
+
+```mermaid
+flowchart LR
+  A["Metadata JSON URL"] --> B["Docker Host"]
+  B --> C["Module metadata"]
+  C --> D["Docker image"]
+  C --> E["Dependencies"]
+  C --> F["Settings schema"]
+  C --> G["Storage mappings"]
+  E --> I["Dependency base URLs as env vars"]
+  B --> H["Installed module directory"]
+```
+
+## Documents
+
+- [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
+- [Module metadata files](features/module-metadata.md) - detailed draft for installing Docker-hosted modules from JSON metadata URLs.
+- [Module metadata planning](planning/module-metadata-open-questions.md) - current open questions before implementation.

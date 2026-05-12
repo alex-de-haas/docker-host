@@ -2,6 +2,10 @@
 
 Next.js UI for listing, creating, updating, and removing local Docker containers.
 
+## Concepts
+
+- [Project documentation](docs/root.md) contains the current module model, feature notes, and planning status.
+
 ## Local development
 
 Run the app directly on the host:
