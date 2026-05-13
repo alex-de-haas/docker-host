@@ -95,10 +95,12 @@ Docs-only changes:
 Host release artifact:
 
 ```text
-ghcr.io/<owner>/<repo>/docker-host:<version>
-ghcr.io/<owner>/<repo>/docker-host:latest
-ghcr.io/<owner>/<repo>/docker-host:sha-<commit>
+ghcr.io/<owner>/<repo>:<version>
+ghcr.io/<owner>/<repo>:latest
+ghcr.io/<owner>/<repo>:sha-<commit>
 ```
+
+This matches the current repository workflow, which publishes one Host image for the repository. There is no need to add a nested `/docker-host` image path unless the repository later publishes multiple different container images.
 
 CLI release artifacts:
 

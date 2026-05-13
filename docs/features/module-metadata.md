@@ -26,7 +26,7 @@ Metadata file описывает:
 - конфигурационные параметры, которые Host может запросить у администратора;
 - используемые приложением директории внутри container image и правила их маппинга в host storage;
 - динамические коллекции внешних storage mounts, если модуль должен работать с произвольным числом физических папок;
-- минимальные runtime-требования: порты, healthcheck, переменные окружения, ресурсы.
+- минимальные runtime-требования: порты, переменные окружения, ресурсы.
 
 ## Термины
 
@@ -55,6 +55,10 @@ https://cdn.example.com/docker-host/modules/reports.json
 
 Host не должен делать предположение, что URL указывает на Git repository. Даже если URL расположен внутри GitHub, он рассматривается как обычный JSON resource.
 
+В MVP Host не применяет специальные security restrictions к metadata URL. Администратор сам принимает trust decision, когда вводит URL metadata file для установки модуля. Host должен скачать указанный resource, распарсить JSON, проверить metadata schema и показать install plan перед созданием контейнеров или mounts.
+
+MVP не требует trusted domain allow-list, metadata signatures, SSRF protection, special redirect handling или warnings для распространенных image tags вроде `latest`.
+
 Для production-сценариев желательно использовать immutable URL:
 
 - Git tag;
@@ -80,6 +84,40 @@ Branch URL удобен для разработки, но он менее пре
 
 Host должен хранить локальную копию metadata file, который был использован для установки или последнего обновления модуля.
 
+В MVP install flow является optimistic fail-fast и не делает automatic rollback. Если один из шагов установки падает, Host должен сохранить уже созданные files, directories, downloaded images и containers для диагностики, пометить install как `failed` и показать ошибку администратору.
+
+Retry и cleanup должны быть явными действиями администратора. Retry должен по возможности терпимо относиться к уже существующим directories, images и containers. Cleanup/removal failed install может быть отдельной операцией и должен явно показывать, будут ли удалены module data directories.
+
+Минимальные lifecycle states первого implementation:
+
+```text
+installing
+installed
+failed
+disabled
+removing
+```
+
+`disabled` означает, что модуль остается установленным, metadata/settings/data сохранены, но Host не должен запускать его container.
+
+## Module update flow
+
+Module update всегда должен refresh metadata URL установленного модуля. Host не должен трактовать update только как `docker pull` текущего image tag.
+
+Базовый update flow:
+
+1. Администратор выбирает update для установленного модуля.
+2. Host скачивает свежий metadata JSON из сохраненного metadata URL.
+3. Host валидирует metadata schema и проверяет, что `id` совпадает с установленным module id.
+4. Host сравнивает свежий metadata file с локально сохраненным `metadata.json`.
+5. Host показывает update plan: изменения image, settings schema, storage mappings, dependency metadata URLs, runtime ports/resources и потенциальные конфликты.
+6. После подтверждения Host применяет update на основе новых metadata.
+7. Host пересоздает или обновляет container configuration согласно новым metadata.
+8. Host сохраняет свежий metadata file как локальный `metadata.json`.
+9. Host сохраняет updated module source и computed mappings.
+
+В MVP update failure handling следует тому же optimistic fail-fast подходу, что install failure handling. Если update падает на любом шаге после начала применения, Host не делает automatic rollback. Уже созданные files, directories, downloaded images и containers остаются для диагностики, module status становится `failed`, а retry/cleanup выполняются только явным действием администратора.
+
 ## Host storage layout
 
 Docker Host хранит установленные модули внутри `modules` directory своего data root. Для каждого модуля создается отдельная папка по `id` модуля.
@@ -90,7 +128,16 @@ Docker Host хранит установленные модули внутри `m
 ~/.docker-host
 ```
 
-Так как production-like запуск Host container-first, `docker-host` CLI должен по умолчанию монтировать этот путь внутрь Host container как `/data`. Внутри Host container backend работает с `HOST_DATA_ROOT=/data`, а физические данные остаются в `~/.docker-host` на машине администратора.
+Так как production-like запуск Host container-first, `docker-host` CLI должен по умолчанию монтировать этот путь внутрь Host container как `/data`. Внутри Host container backend работает с `HOST_DATA_ROOT_CONTAINER=/data`, а физические данные остаются в `HOST_DATA_ROOT_HOST`, обычно `~/.docker-host`, на машине администратора.
+
+CLI должен передавать Host backend оба data root path:
+
+```env
+HOST_DATA_ROOT_HOST=/Users/example/.docker-host
+HOST_DATA_ROOT_CONTAINER=/data
+```
+
+Host backend использует `HOST_DATA_ROOT_CONTAINER` для собственного file IO внутри Host container. Для Docker bind mount source paths module containers backend должен использовать `HOST_DATA_ROOT_HOST`, потому что Docker daemon интерпретирует bind source paths относительно host machine, а не относительно filesystem Host container.
 
 Пример:
 
@@ -220,11 +267,6 @@ External storage mounts могут находиться за пределами 
         "public": true
       }
     ],
-    "healthcheck": {
-      "type": "http",
-      "path": "/health",
-      "intervalSeconds": 30
-    },
     "resources": {
       "cpus": 1,
       "memory": "512m"
@@ -232,6 +274,117 @@ External storage mounts могут находиться за пределами 
   }
 }
 ```
+
+## Schema source of truth
+
+На текущем этапе источником правды для module metadata schema является этот документ: пример `Metadata draft`, `Schema outline`, field notes и validation rules ниже вместе описывают ожидаемый контракт.
+
+При переходе к executable validation наиболее вероятный формат - JSON Schema. JSON Schema должна быть добавлена в repository как отдельный versioned artifact и использоваться Host backend для runtime validation metadata files. До появления такой JSON Schema отдельная runtime-схема не считается более авторитетной, чем этот документ.
+
+## Schema outline
+
+Top-level metadata object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `schemaVersion` | string | yes | Version of the metadata file schema supported by Host. Current draft value: `0.1`. |
+| `id` | string | yes | Stable unique module id, recommended reverse-DNS format. |
+| `name` | string | yes | Human-readable module name. |
+| `description` | string | no | Short module description for UI display. |
+| `version` | string | yes | Module contract version. Host uses the major part for dependency compatibility in the first implementation. |
+| `image` | object | yes | Docker image reference and pull behavior. |
+| `dependencies` | array | no | Dependency metadata URLs and connection mappings. Default: empty array. |
+| `settings` | array | no | Configuration schema. Values are stored by Host, not in metadata. Default: empty array. |
+| `storage` | object | no | Module-owned storage directories and dynamic external mount collections. |
+| `runtime` | object | yes | Minimal launch requirements: ports and resource hints. |
+
+`image` object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `repository` | string | yes | Docker image repository, for example `ghcr.io/acme/reports-module`. |
+| `tag` | string | yes | Docker image tag. |
+| `pullPolicy` | string | no | One of `ifNotPresent`, `always`, or `manual`. Default: `ifNotPresent`. |
+
+`dependencies[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | string | yes | Expected dependency module id. |
+| `version` | string | yes | Expected dependency major contract version, for example `"1"`. |
+| `required` | boolean | yes | Whether the consumer can start without this dependency resolved. |
+| `metadataUrl` | string | yes | Direct URL to the dependency metadata JSON file. |
+| `connection` | object | no | Required when the consumer needs a runtime base URL from the dependency. |
+
+`dependencies[].connection` object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `endpoint` | string | yes | Dependency `runtime.ports[].key` to use. |
+| `baseUrlEnv` | string | yes | Environment variable name that receives the resolved internal base URL. |
+
+`settings[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | Stable setting key, unique inside the metadata file. |
+| `type` | string | yes | One of `string`, `number`, `boolean`, `enum`, `url`, or `secret`. |
+| `required` | boolean | yes | Whether the administrator must provide or confirm a value. |
+| `default` | any | no | Default value. Secrets must not contain real secret values in `default`. |
+| `target` | object | no | Runtime target for the resolved setting. First implementation target type: `env`. |
+
+`storage` object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `directories` | array | no | Fixed module-owned container paths that Host maps into the module directory. |
+| `mountCollections` | array | no | Dynamic external mount collections configured by the administrator. |
+
+`storage.directories[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | Stable storage key, unique inside the metadata file. |
+| `label` | string | no | Human-readable label for UI display. |
+| `description` | string | no | Short explanation for UI display. |
+| `containerPath` | string | yes | Absolute Unix path inside the module container. |
+| `purpose` | string | no | Suggested purpose, for example `settings`, `data`, `cache`, `logs`, or `temp`. |
+| `required` | boolean | yes | Whether the mapping must exist before container start. |
+| `writable` | boolean | yes | Whether the module expects write access. |
+| `mount` | object | yes | Mount recommendation. Base implementation supports only `type: "bind"`. |
+
+`storage.mountCollections[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | Stable collection key, unique inside the metadata file. |
+| `label` | string | no | Human-readable label for UI display. |
+| `description` | string | no | Short explanation for UI display. |
+| `purpose` | string | no | Suggested purpose, usually `data`. |
+| `required` | boolean | yes | Whether at least the configured minimum must be present. |
+| `minItems` | number | no | Minimum number of external mounts. Default: `0`. |
+| `maxItems` | number or null | no | Maximum number of external mounts. `null` means no fixed limit. |
+| `writable` | boolean | yes | Whether items are writable by default. |
+| `containerPathPrefix` | string | yes | Absolute Unix prefix for collection item paths inside the container. |
+| `itemContainerPathTemplate` | string | yes | Template for item paths. Must contain a safe `{key}` segment. |
+| `hostPathPolicy` | object | yes | Host path selection policy. External paths are administrator-selected. |
+
+`runtime` object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ports` | array | yes | Named container endpoints. |
+| `healthcheck` | object | no | Reserved for future module health checks. Ignored by the first implementation. |
+| `resources` | object | no | CPU and memory hints. |
+
+`runtime.ports[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | Stable endpoint key, unique inside the metadata file. |
+| `containerPort` | number | yes | Container port number. |
+| `protocol` | string | yes | First implementation target: `http`. |
+| `public` | boolean | yes | Whether the endpoint is intended for future outside-network exposure. The first implementation should not publish module host ports automatically. |
 
 ## Field notes
 
@@ -252,7 +405,9 @@ Host должен использовать `id` для:
 
 `image.repository` и `image.tag` задают Docker image. Metadata не фиксирует immutable image reference: обычные обновления модуля должны происходить через обновление Docker image, на который указывает tag.
 
-Если `image.tag` равен `latest`, metadata URL может оставаться неизменным, а Host будет проверять обновления по Docker image. Если нужен более стабильный канал, tag может быть `1`, `1.0`, `stable` или другим соглашением автора модуля.
+Metadata model не задает общего naming convention для Docker image repositories. Module author может указать image из Docker Hub, GHCR, internal registry или любого другого container registry, доступного Docker daemon.
+
+Если `image.tag` равен `latest`, metadata URL может оставаться неизменным, а новый Docker image может публиковаться под тем же tag. При module update Host все равно сначала refreshes metadata URL, затем применяет image/container update на основе актуальных metadata. Если нужен более стабильный канал, tag может быть `1`, `1.0`, `stable` или другим соглашением автора модуля.
 
 `image.pullPolicy` задает, когда Host должен пытаться скачать image:
 
@@ -273,7 +428,7 @@ Host должен использовать `id` для:
 - metadata file остается тем же;
 - `image.repository` и `image.tag` остаются теми же;
 - автор модуля публикует новый Docker image под тем же tag;
-- Host обнаруживает обновление по Docker image и обновляет контейнер.
+- при module update Host refreshes metadata URL, видит тот же image reference, подтягивает актуальный Docker image для tag согласно `pullPolicy` и обновляет container.
 
 `version` стоит менять для крупных несовместимых изменений: например, если изменились API, storage contract или ожидаемая модель взаимодействия с другими модулями. В таком случае metadata может указывать на image tag вроде `2.0`, но Host все равно не запускает параллельно несколько версий одного module `id`.
 
@@ -286,6 +441,8 @@ Host должен использовать `id` для:
 ### `dependencies`
 
 Зависимость указывает не image repository, не Git repository и не version range, а URL другого module metadata file и ожидаемую major-версию его контракта.
+
+На первом этапе implementation scope включает только required dependencies. Optional dependencies остаются частью общей модели, но должны быть спроектированы и реализованы позже как отдельная feature.
 
 Пример:
 
@@ -399,9 +556,11 @@ Docker Compose не является обязательным требовани
 
 Metadata не должна фиксировать container name, host port или absolute URL зависимого модуля. Она только описывает, какой endpoint нужен потребителю и в какую env-переменную Host должен положить resolved base URL.
 
+Resolved dependency base URLs должны быть только internal Docker-network URLs. Host не использует metadata dependency model для передачи внешних public URLs между модулями. Если модулю нужны внешние сервисы, такие URLs остаются ответственностью самого модуля или его обычных settings.
+
 Если dependency обязательная (`required: true`), Host должен установить и запустить ее до запуска потребителя. Если Host не может получить resolved base URL обязательной dependency, запуск потребителя должен быть остановлен с понятной ошибкой.
 
-Если dependency опциональная (`required: false`) и она не установлена, отключена или unhealthy, Host должен не задавать `baseUrlEnv` или передать пустое значение. Потребляющий модуль должен трактовать пустую или отсутствующую env-переменную как "integration unavailable" и работать без этой dependency.
+Если dependency опциональная (`required: false`) и она не установлена или отключена, Host должен не задавать `baseUrlEnv` или передать пустое значение. Потребляющий модуль должен трактовать пустую или отсутствующую env-переменную как "integration unavailable" и работать без этой dependency.
 
 Пример optional dependency:
 
@@ -424,7 +583,7 @@ Metadata не должна фиксировать container name, host port ил
 RECOMMENDATIONS_BASE_URL=
 ```
 
-Диагностика состояния модулей остается ответственностью Host. Host UI должен показывать healthcheck status всех установленных модулей, чтобы администратор видел, какой модуль остановлен, unhealthy или недоступен.
+Диагностика состояния модулей остается ответственностью Host. В MVP Host UI должен показывать Docker daemon container state, чтобы администратор видел, какой модуль запущен, остановлен или завершился с ошибкой. Module health checks и unified health response model должны быть отдельной future feature.
 
 ```mermaid
 flowchart LR
@@ -467,6 +626,17 @@ Host не требует `metadataDigest` для dependency metadata. Источ
 Каждый setting может быть mapped в runtime target. На первом этапе достаточно target type `env`, чтобы Host передавал значение в container environment.
 
 Секреты не должны храниться в metadata file. Metadata только объявляет, что такой секрет нужен.
+
+В MVP secret settings хранятся там же, где обычные module settings, например в `module-settings.json`. `type: "secret"` не означает отдельное secret storage; это правило обработки значения на уровне Host API, Web UI, logs и diagnostics.
+
+Host должен обращаться с secret settings как с write-only values на UI/API boundary:
+
+- API responses, которые использует Web UI, не должны возвращать raw secret value;
+- UI может показывать, что значение задано, и должен позволять set, change и clear без раскрытия текущего значения;
+- install plan, status views, logs, error messages и diagnostics должны показывать redacted value, а не реальный secret;
+- secret value может быть передан в runtime configuration модуля, например как environment variable, если так задано в setting target.
+
+Такой подход считается достаточным для local-first MVP. Основная защита на первом этапе - не допустить случайного раскрытия token/API key через Web UI, API responses, logs или diagnostics. Шифрование secret files, OS keychain integration, protected local files и external secret managers можно рассмотреть позже как advanced storage backends.
 
 ### `storage`
 
@@ -519,6 +689,24 @@ Host не должен давать администратору менять `m
 ```
 
 Если сам Host запущен в контейнере, bind mount path должен быть путем на машине Docker daemon, а не внутренним путем контейнера Host. Иначе Docker создаст volume mount не там, где администратор ожидает.
+
+Пример path mapping:
+
+```text
+metadata modulePath:
+  data
+
+Host backend state path:
+  /data/modules/com.acme.reports/data
+
+Docker bind source path:
+  /Users/example/.docker-host/modules/com.acme.reports/data
+
+Module container mount path:
+  /app/data
+```
+
+Все computed bind source paths для `storage.directories` должны строиться только из `HOST_DATA_ROOT_HOST + modules/<module-id>/<modulePath>`. Metadata file не должен задавать absolute host paths для module-owned storage.
 
 Если `required` равно `true`, Host должен создать mapping до запуска контейнера. Если mapping создать нельзя, установку или запуск модуля нужно остановить с понятной ошибкой. Required storage не должен молча падать обратно на запись внутрь container filesystem.
 
@@ -634,8 +822,13 @@ Host не должен пытаться валидировать external host p
 
 - named container ports;
 - public/private marker для порта;
-- HTTP healthcheck;
 - CPU и memory hints.
+
+В первой implementation Host не вводит runtime health checks или readiness probes для модулей. Статус модуля определяется только через Docker daemon container state: container created, running, stopped, exited или failed по данным Docker.
+
+Для required dependencies Host считает dependency запущенной, если Docker успешно стартовал dependency container и Host может вычислить internal Docker-network base URL. Host не ждет HTTP health endpoint или custom readiness signal на первом этапе.
+
+Module health checks должны быть отдельной future feature. В будущем каждый модуль может предоставлять health URL или эквивалентный сигнал, а Host должен использовать унифицированный response model для всех modules.
 
 Эти поля не обязаны полностью заменять Docker Compose. Их задача - дать Host достаточно информации для управляемого запуска и отображения в UI.
 
@@ -659,6 +852,8 @@ Host не должен пытаться валидировать external host p
 ```
 
 `public: false` означает, что endpoint нужен только внутри Host-managed Docker network. Для module-to-module коммуникации Host должен использовать internal URL, а не опубликованный host port.
+
+В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `runtime.ports[].public`. Наружная публикация выбранных модулей должна быть отдельной feature с explicit authorization и exposure settings.
 
 Host-managed Docker network должна быть одной общей user-defined network для всех managed modules. Default bridge network не подходит, потому что не дает достаточно надежной DNS-модели для module-to-module names.
 
@@ -722,7 +917,7 @@ Host не должен знать, как эти files организованы 
 - Host не должен применять глобальный allow-list для external storage roots;
 - Host не должен проверять external host path через filesystem Host UI процесса;
 - external host path считается валидным только после успешной Docker bind mount operation;
-- public ports не должны конфликтовать с уже опубликованными портами;
+- если future exposure feature публикует module ports наружу, public ports не должны конфликтовать с уже опубликованными портами;
 - `runtime.ports[].key` должен быть уникален внутри одного metadata file;
 - `runtime.ports[].containerPort` должен быть валидным container port;
 - Host-generated network alias должен быть уникален среди установленных модулей;
@@ -730,6 +925,15 @@ Host не должен знать, как эти files организованы 
 ## Trust and security
 
 Module metadata URL является trust boundary. Даже если это всего лишь JSON-файл, он указывает на image, который будет запущен на хосте.
+
+В local-first MVP security baseline намеренно минимальный:
+
+- metadata URL считается осознанным вводом администратора;
+- Host не ограничивает URL trusted domains, allow-list или private network checks;
+- Host не требует metadata signatures;
+- Host не добавляет warning для image tag `latest`;
+- dependencies, port declarations и external mounts показываются как обычные элементы install plan, а не как security warnings;
+- Host валидирует JSON/schema и не выполняет install без явного подтверждения install plan.
 
 Перед установкой Host должен явно показать:
 
@@ -742,7 +946,7 @@ Module metadata URL является trust boundary. Даже если это в
 - запрашиваемые settings;
 - директории внутри container image и выбранные volume mappings;
 - dynamic external storage mounts: collection key, host path, container path и access mode;
-- public ports;
+- port declarations;
 - requested resources.
 
 Желательные будущие улучшения:

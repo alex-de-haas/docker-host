@@ -4,7 +4,7 @@
 
 ## Решение
 
-Host должен иметь Web UI без альтернативы: через него администратор видит список модулей, health/status, настройки, storage mounts, обновления и установку новых модулей.
+Host должен иметь Web UI без альтернативы: через него администратор видит список модулей, Docker container status, настройки, storage mounts, обновления и установку новых модулей.
 
 Production-like запуск Host должен быть container-first:
 
@@ -37,7 +37,7 @@ Host container отвечает за:
 
 - установку модулей из metadata URLs;
 - lifecycle module containers;
-- health/status модулей;
+- Docker daemon status модулей;
 - settings и storage mappings;
 - updates module images;
 - отображение ошибок Docker operations.
@@ -49,7 +49,7 @@ Web UI - основной рабочий интерфейс администра
 Через UI должны быть доступны:
 
 - список модулей;
-- статусы и healthchecks;
+- Docker container statuses;
 - добавление module metadata URL;
 - установка, запуск, остановка, рестарт и удаление модулей;
 - настройка settings;
@@ -57,11 +57,15 @@ Web UI - основной рабочий интерфейс администра
 - просмотр логов;
 - update modules.
 
+В MVP Host не вводит module health checks или readiness probes. UI показывает только состояние контейнера, которое возвращает Docker daemon. Унифицированные module health checks должны быть отдельной future feature.
+
 ### `docker-host` CLI executable
 
 CLI нужен в первую очередь для bootstrap и lifecycle самого Host container.
 
 `docker-host` CLI должен распространяться как standalone executable без внешнего runtime. Базовая реализация: .NET self-contained single-file application с использованием Spectre.Console для terminal UI, prompts, status output, tables, progress indicators и командной структуры.
+
+Это решение является обязательным для первой CLI implementation. CLI artifact должен запускаться без установленного .NET runtime на машине администратора.
 
 Базовые команды:
 
@@ -78,6 +82,10 @@ docker-host config
 ```
 
 Lifecycle-команды работают напрямую через Docker daemon, потому что Host API может быть еще не запущен или может быть сломан.
+
+В первой CLI implementation lifecycle-команды будут обращаться к Docker daemon через установленный Docker CLI executable. Это transport detail: CLI вызывает `docker pull`, `docker run`, `docker stop`, `docker rm`, `docker inspect`, `docker logs` и другие lifecycle-команды, а Docker CLI уже общается с daemon через `/var/run/docker.sock`.
+
+CLI должен вызывать Docker CLI через argument-array APIs, например `ProcessStartInfo.ArgumentList`, а не через shell command strings. Docker execution должен быть изолирован в небольшом adapter layer, чтобы позже его можно было заменить на direct Docker Engine API over Unix socket.
 
 CLI также может иметь команды управления модулями:
 
@@ -115,7 +123,7 @@ docker-host open
 `install.sh` должен:
 
 - проверить, что Docker CLI установлен;
-- проверить, что Docker daemon доступен через `/var/run/docker.sock`;
+- проверить, что Docker daemon доступен через local Docker socket `/var/run/docker.sock`;
 - определить OS/architecture;
 - скачать подходящий `docker-host` standalone executable artifact;
 - положить executable в user-writable bin directory, например `~/.docker-host/bin/docker-host`;
@@ -130,10 +138,28 @@ docker-host open
 
 На базовом этапе CLI implementation target:
 
-- .NET self-contained single-file executable;
+- `net10.0` .NET self-contained single-file executable;
 - Spectre.Console для rich terminal output;
 - cross-platform artifacts под поддерживаемые OS/architecture;
 - без зависимости от установленного runtime на машине администратора.
+
+### Docker daemon access
+
+CLI lifecycle commands должны управлять Host container через Docker daemon. В первой implementation поддерживается local Docker Unix socket:
+
+```text
+/var/run/docker.sock
+```
+
+CLI использует этот socket для lifecycle commands самого Host container. Host container получает доступ к Docker daemon через bind mount:
+
+```text
+/var/run/docker.sock:/var/run/docker.sock
+```
+
+`DOCKER_HOST` и non-standard Docker endpoints не входят в scope первой implementation. Их можно рассмотреть позже, если появится требование поддерживать нестандартные Docker daemon endpoints.
+
+Для первого CLI implementation доступ к socket выполняется через установленный Docker CLI. Архитектурно это остается CLI -> Docker daemon, но transport реализован через Docker CLI process. Позже adapter можно заменить на прямой Docker Engine API client.
 
 Пример итоговой структуры после `install.sh`:
 
@@ -146,12 +172,12 @@ docker-host open
   modules/
 ```
 
-`~/.docker-host/config/launch.env` должен хранить параметры запуска самого Host container как shell-compatible env file: image reference, container name, UI port, Docker socket mount, data mount, `HOST_DATA_ROOT`, restart policy и другие значения, которые нужны `docker-host start/restart/update`.
+`~/.docker-host/config/launch.env` должен хранить параметры запуска самого Host container как shell-compatible env file: image reference, container name, UI port, Docker socket mount, data mount, `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, restart policy и другие значения, которые нужны `docker-host start/restart/update`.
 
 Пример `launch.env`:
 
 ```env
-HOST_IMAGE=ghcr.io/example/docker-host:latest
+HOST_IMAGE=ghcr.io/example/docker-host-manager:latest
 HOST_CONTAINER_NAME=docker-host
 HOST_DATA_ROOT_HOST=$HOME/.docker-host
 HOST_DATA_ROOT_CONTAINER=/data
@@ -160,6 +186,13 @@ HOST_RESTART_POLICY=unless-stopped
 HOST_DOCKER_SOCKET=/var/run/docker.sock
 HOST_MODULE_NETWORK=docker-host-modules
 ```
+
+CLI должен передавать в Host container оба значения data root:
+
+- `HOST_DATA_ROOT_HOST` - path на host machine, который Docker daemon должен использовать как bind mount source для module containers;
+- `HOST_DATA_ROOT_CONTAINER` - path внутри Host container, который Host backend использует для чтения и записи собственного state.
+
+`HOST_IMAGE` должен по умолчанию указывать на Host image, публикуемый текущим repository workflow: `ghcr.io/<owner>/<repo>:latest`. Это значение должно быть переопределяемым через `docker-host config`.
 
 Если `~/.docker-host/bin` не находится в `PATH`, install script должен напечатать инструкцию:
 
@@ -201,16 +234,16 @@ docker-host open
 
 `docker-host install` должен подготовить launch configuration:
 
-- Docker access: `/var/run/docker.sock:/var/run/docker.sock`;
+- Docker access: local socket mount `/var/run/docker.sock:/var/run/docker.sock` for the Host container;
 - Host image reference: default value bundled with CLI, override через `docker-host config`;
 - Host data root: default `~/.docker-host` на машине администратора;
 - Host container data mount: `~/.docker-host:/data`;
-- Host container env: `HOST_DATA_ROOT=/data`;
+- Host container env: `HOST_DATA_ROOT_HOST=<host-data-root>` and `HOST_DATA_ROOT_CONTAINER=/data`;
 - UI port mapping: CLI выбирает свободный host port по умолчанию, override через `docker-host config`;
 - restart policy: default `unless-stopped`, override через `docker-host config`;
 - container name: default `docker-host`, override через `docker-host config`;
 - Host container должен быть подключен к shared module network;
-- required environment variables: `HOST_DATA_ROOT=/data`.
+- required environment variables: `HOST_DATA_ROOT_HOST=<host-data-root>` and `HOST_DATA_ROOT_CONTAINER=/data`.
 
 Launch configuration должна храниться в:
 
@@ -228,7 +261,8 @@ CLI должен читать этот файл для `start`, `restart`, `upda
 -p <auto-selected-host-port>:3000
 -v /var/run/docker.sock:/var/run/docker.sock
 -v ~/.docker-host:/data
--e HOST_DATA_ROOT=/data
+-e HOST_DATA_ROOT_HOST=~/.docker-host
+-e HOST_DATA_ROOT_CONTAINER=/data
 --network <shared-module-network>
 <host-image-reference>
 ```
