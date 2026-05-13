@@ -1,6 +1,6 @@
 # Docker Host Manager
 
-Next.js UI for listing, creating, updating, and removing local Docker containers.
+Monorepo for Docker Host Manager, including the Host Web UI/backend API and the standalone `docker-host` CLI.
 
 ## Concepts
 
@@ -14,7 +14,7 @@ Run the app directly on the host:
 
 ```bash
 npm install
-npm run dev
+npm run host:dev
 ```
 
 The server connects to Docker using:
@@ -26,9 +26,9 @@ The server connects to Docker using:
 Examples:
 
 ```bash
-DOCKER_SOCKET_PATH=/var/run/docker.sock npm run dev
-DOCKER_HOST=unix:///var/run/docker.sock npm run dev
-DOCKER_HOST=tcp://127.0.0.1:2375 npm run dev
+DOCKER_SOCKET_PATH=/var/run/docker.sock npm run host:dev
+DOCKER_HOST=unix:///var/run/docker.sock npm run host:dev
+DOCKER_HOST=tcp://127.0.0.1:2375 npm run host:dev
 ```
 
 ## Running in Docker Desktop
@@ -36,7 +36,7 @@ DOCKER_HOST=tcp://127.0.0.1:2375 npm run dev
 For production-like local testing without pushing an image, build a local development tag first:
 
 ```bash
-docker build -t docker-host:dev .
+docker build -f apps/host/Dockerfile -t docker-host:dev .
 ```
 
 If the app itself runs in a container, the container does not automatically get access to the host Docker socket. Mount it explicitly:
@@ -70,5 +70,13 @@ Notes:
 ## Build image
 
 ```bash
-docker build -t docker-host .
+docker build -f apps/host/Dockerfile -t docker-host .
+```
+
+## CLI scaffold
+
+Build the standalone CLI project:
+
+```bash
+npm run cli:build
 ```

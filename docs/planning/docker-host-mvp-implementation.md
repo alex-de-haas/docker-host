@@ -98,6 +98,8 @@ Exit criteria:
 
 Purpose: подготовить repository к независимой сборке Host image и CLI executable.
 
+Status: completed for the initial artifact skeleton. The repository now has `apps/host`, `apps/cli`, `packages/contracts`, npm workspace scripts, Host image workflow path filters, CLI release asset workflow path filters, and common CI checks. The CLI is a buildable .NET 10 scaffold; lifecycle implementation remains Phase 2 scope.
+
 Tasks:
 
 - Создать `apps/host` для Host Web UI и backend API.

@@ -43,9 +43,9 @@ docs/
   workflows/
 ```
 
-На текущем этапе repository еще может физически не соответствовать этой структуре. Документ описывает целевую организацию, к которой нужно двигаться при появлении полноценного CLI и общего API-контракта.
+На Phase 1 repository физически соответствует этому skeleton: текущий Host app находится в `apps/host`, CLI scaffold находится в `apps/cli`, а будущая область контрактов находится в `packages/contracts`.
 
-При первом split текущий Next.js application переносится в `apps/host`, а standalone `docker-host` CLI создается в `apps/cli`. Shared API contract между Web UI, Host backend API и CLI должен быть определен в repository рядом с кодом при введении CLI-facing Host API surface. Executable OpenAPI artifact можно добавить позже, когда endpoint model стабилизируется.
+Shared API contract между Web UI, Host backend API и CLI должен быть определен в repository рядом с кодом при введении CLI-facing Host API surface. Executable OpenAPI artifact можно добавить позже, когда endpoint model стабилизируется.
 
 ## Component boundaries
 
@@ -57,7 +57,7 @@ flowchart LR
   C --> D
   A --> D
   D --> E["Docker daemon"]
-  F["Dockerfile"] --> G["Host Docker image"]
+  F["apps/host/Dockerfile"] --> G["Host Docker image"]
   A --> H["CLI release artifacts"]
 ```
 
@@ -78,7 +78,7 @@ Recommended path filters:
 Host image build:
   apps/host/**
   packages/contracts/**
-  Dockerfile
+  apps/host/Dockerfile
   package.json
   package-lock.json
   .github/workflows/host-image.yml
@@ -87,6 +87,7 @@ CLI build:
   apps/cli/**
   packages/contracts/**
   scripts/install.sh
+  global.json
   .github/workflows/cli-release.yml
 
 Docs-only changes:

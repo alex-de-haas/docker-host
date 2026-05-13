@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/host/**"
+      - "apps/cli/**"
+      - "packages/contracts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "global.json"
+      - ".github/workflows/ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/host/**"
+      - "apps/cli/**"
+      - "packages/contracts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "global.json"
+      - ".github/workflows/ci.yml"
+
+jobs:
+  host:
+    name: Host
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Lint Host
+        run: npm run host:lint
+
+      - name: Build Host
+        run: npm run host:build
+
+  cli:
+    name: CLI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build CLI
+        run: npm run cli:build
+
+      - name: Build CLI tests
+        run: npm run cli:test

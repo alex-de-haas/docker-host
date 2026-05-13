@@ -1,0 +1,73 @@
+name: CLI Release Assets
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/cli/**"
+      - "packages/contracts/**"
+      - "scripts/install.sh"
+      - "global.json"
+      - ".github/workflows/cli-release.yml"
+
+jobs:
+  publish-artifacts:
+    name: Build ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+            artifact: docker-host-darwin-arm64
+          - os: macos-latest
+            rid: osx-x64
+            artifact: docker-host-darwin-x64
+          - os: ubuntu-latest
+            rid: linux-arm64
+            artifact: docker-host-linux-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+            artifact: docker-host-linux-x64
+          - os: windows-latest
+            rid: win-x64
+            artifact: docker-host-windows-x64.exe
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish CLI executable
+        shell: bash
+        run: |
+          dotnet publish apps/cli/src/Haas.DockerHost.Cli/Haas.DockerHost.Cli.csproj \
+            --configuration Release \
+            --runtime "${{ matrix.rid }}" \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=false \
+            --output artifacts
+
+      - name: Normalize artifact name
+        shell: bash
+        run: |
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            mv artifacts/docker-host.exe "artifacts/${{ matrix.artifact }}"
+          else
+            mv artifacts/docker-host "artifacts/${{ matrix.artifact }}"
+            chmod +x "artifacts/${{ matrix.artifact }}"
+          fi
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts/${{ matrix.artifact }}

@@ -1,7 +1,9 @@
 .git
 .github
-.next
-node_modules
+**/.next
+**/node_modules
+**/bin
+**/obj
+docs
 npm-debug.log*
-Dockerfile*
 README.md
