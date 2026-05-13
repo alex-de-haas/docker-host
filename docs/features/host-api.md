@@ -23,9 +23,145 @@ The first API slice is intentionally small:
 - stop a module;
 - restart a module.
 
-Module install, update, remove, settings editing, storage configuration, install plans, update plans, and external exposure are later API slices.
+Module install, update, remove, settings editing, storage configuration, install plans, update plans, logs, and external exposure are later API slices.
+
+The shared domain vocabulary for this API is defined in [Docker Host domain model](domain-model.md).
+
+## Response Types
+
+### `ModuleSummary`
+
+Returned by list and lifecycle endpoints.
+
+```json
+{
+  "id": "com.acme.reports",
+  "name": "Reports",
+  "description": "Generates operational reports.",
+  "version": "1.0.0",
+  "metadataUrl": "https://modules.example/reports/metadata.json",
+  "image": {
+    "repository": "ghcr.io/acme/reports-module",
+    "tag": "1.0.0",
+    "reference": "ghcr.io/acme/reports-module:1.0.0"
+  },
+  "operationStatus": "installed",
+  "runtimeStatus": {
+    "state": "running",
+    "health": "healthy",
+    "containerId": "4b8d...",
+    "containerName": "mod-com-acme-reports",
+    "startedAt": "2026-05-13T09:30:00Z",
+    "finishedAt": null
+  },
+  "installedAt": "2026-05-13T09:00:00Z",
+  "updatedAt": "2026-05-13T09:30:00Z",
+  "lastError": null
+}
+```
+
+`operationStatus` is persistent Host bookkeeping from `modules.json`. `runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state.
+
+Allowed `operationStatus` values:
+
+- `installed`;
+- `installing`;
+- `updating`;
+- `failed`.
+
+Allowed `runtimeStatus.state` values:
+
+- `not_created`;
+- `created`;
+- `running`;
+- `paused`;
+- `restarting`;
+- `exited`;
+- `dead`;
+- `unknown`.
+
+### `ModuleDetail`
+
+Returned by `GET /api/modules/{moduleId}`.
+
+It includes all `ModuleSummary` fields plus:
+
+```json
+{
+  "settings": [
+    {
+      "key": "EXTERNAL_API_TOKEN",
+      "type": "secret",
+      "required": false,
+      "target": { "type": "env", "name": "EXTERNAL_API_TOKEN" },
+      "valueSet": true
+    }
+  ],
+  "storage": {
+    "directories": [
+      {
+        "key": "data",
+        "containerPath": "/app/data",
+        "hostPath": "~/.docker-host/modules/com.acme.reports/data",
+        "required": true,
+        "writable": true
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "id": "com.acme.identity",
+      "required": true,
+      "metadataUrl": "https://modules.example/identity/metadata.json",
+      "resolvedBaseUrl": "http://mod-com-acme-identity:8080",
+      "baseUrlEnv": "IDENTITY_BASE_URL"
+    }
+  ]
+}
+```
+
+Secret setting values are never returned. For non-secret settings, later settings endpoints may return values when needed by the UI.
+
+### `ModuleActionResult`
+
+Returned by lifecycle actions.
+
+```json
+{
+  "success": true,
+  "module": {
+    "id": "com.acme.reports",
+    "runtimeStatus": {
+      "state": "running",
+      "containerName": "mod-com-acme-reports"
+    }
+  },
+  "error": null
+}
+```
+
+On failure:
+
+```json
+{
+  "success": false,
+  "module": null,
+  "error": {
+    "operation": "module.start",
+    "httpStatus": 500,
+    "dockerStatusCode": 404,
+    "dockerMessage": "No such container: mod-com-acme-reports",
+    "message": "Docker could not start the module container.",
+    "nextStep": "Recreate the module container or reinstall the module when install flows are available."
+  }
+}
+```
+
+Docker operation failures should preserve operation name, Docker status code when available, Docker message, and an administrator-oriented next step.
 
 ## Endpoints
+
+The endpoints in this section are required for the first API implementation slice.
 
 ### `GET /api/modules`
 
@@ -94,11 +230,13 @@ Response should include:
 - updated runtime status from Docker daemon;
 - clear Docker error details when restart fails.
 
+## Near-Term Diagnostics Endpoints
+
+These endpoints are not part of the first Phase 0 API slice, but they are expected soon after the initial module list/lifecycle implementation.
+
 ### `GET /api/modules/{moduleId}/logs`
 
 Returns recent logs for one module container.
-
-This endpoint is useful for the first Web UI slice even before install/update/remove flows are implemented.
 
 Recommended query parameters:
 
@@ -149,3 +287,7 @@ Future endpoints should support:
 ## Documentation status
 
 This document is the Phase 0/1 API planning artifact. It should be updated when implementation decisions change. Once the API stabilizes, generated OpenAPI can be introduced under `packages/contracts`.
+
+## Open Questions
+
+No Phase 0 API questions remain open. Later implementation slices should reopen API details for install plans, update plans, settings writes, storage configuration, logs streaming, and executable OpenAPI generation.

@@ -74,6 +74,8 @@ flowchart TD
 
 Purpose: превратить документацию в точные engineering contracts перед массовой разработкой.
 
+Status: completed for the MVP rewrite baseline. The authoritative Phase 0 artifacts are [Repository and release model](../features/repository-release-model.md), [Docker Host API](../features/host-api.md), [Docker Host domain model](../features/domain-model.md), [Host launch model](../features/host-launch.md), and [Module metadata files](../features/module-metadata.md).
+
 Tasks:
 
 - Зафиксировать `apps/host`, `apps/cli`, `packages/contracts`, `scripts`, `docs`, `.github/workflows` как целевую структуру repository.
