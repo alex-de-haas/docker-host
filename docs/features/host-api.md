@@ -17,6 +17,7 @@ Host API реализуется внутри full-stack Next.js Host application
 
 The first API slice is intentionally small:
 
+- return Host runtime, Docker daemon, module network, and installed module store status;
 - list installed modules;
 - return module runtime statuses;
 - start a module;
@@ -48,7 +49,6 @@ Returned by list and lifecycle endpoints.
   "operationStatus": "installed",
   "runtimeStatus": {
     "state": "running",
-    "health": "healthy",
     "containerId": "4b8d...",
     "containerName": "mod-com-acme-reports",
     "startedAt": "2026-05-13T09:30:00Z",
@@ -61,6 +61,8 @@ Returned by list and lifecycle endpoints.
 ```
 
 `operationStatus` is persistent Host bookkeeping from `modules.json`. `runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state.
+
+The first API slice does not expose module health or readiness. `runtimeStatus` reports only Docker container state. Health checks, including any future Docker healthcheck-based status, are deferred to a later feature.
 
 Allowed `operationStatus` values:
 
@@ -159,6 +161,51 @@ On failure:
 
 Docker operation failures should preserve operation name, Docker status code when available, Docker message, and an administrator-oriented next step.
 
+### `HostStatus`
+
+Returned by `GET /api/host/status`.
+
+```json
+{
+  "host": {
+    "ready": true,
+    "dataRoot": {
+      "hostPath": "/Users/example/.docker-host",
+      "containerPath": "/data",
+      "modulesPath": "/data/modules",
+      "modulesStorePath": "/data/modules.json",
+      "ready": true,
+      "writable": true,
+      "error": null
+    },
+    "store": {
+      "path": "/data/modules.json",
+      "exists": true,
+      "readable": true,
+      "writable": true,
+      "moduleCount": 0,
+      "error": null
+    },
+    "moduleNetwork": {
+      "name": "docker-host-modules",
+      "ready": true,
+      "id": "c4c1...",
+      "created": false,
+      "error": null
+    }
+  },
+  "docker": {
+    "connected": true,
+    "endpoint": "unix socket /var/run/docker.sock",
+    "serverVersion": "29.0.2",
+    "osType": "linux",
+    "error": null
+  }
+}
+```
+
+This endpoint creates the Host data root, `modules/` directory, `modules.json`, and shared module network if they are missing. It returns HTTP `200` when the Host runtime and Docker daemon are ready, and HTTP `503` when a dependency is unavailable.
+
 ## Endpoints
 
 The endpoints in this section are required for the first API implementation slice.
@@ -168,6 +215,14 @@ The endpoints in this section are required for the first API implementation slic
 Returns installed modules known to Docker Host.
 
 The backend reads `modules.json` for installed module registry entries and persistent module state, reads each module's local `metadata.json` for display metadata, and asks Docker daemon for current runtime/container state. Persistent module state includes the source metadata URL, install/update status, failure state, last error details, computed storage mappings, and resolved dependency URLs. Docker runtime state is not stored in `modules.json`.
+
+Response body:
+
+```json
+{
+  "modules": []
+}
+```
 
 Response should include, per module:
 
@@ -179,7 +234,6 @@ Response should include, per module:
 - Docker image reference;
 - lifecycle/install bookkeeping status from `modules.json`, if any;
 - Docker runtime status;
-- Docker health status, if Docker reports one;
 - timestamps such as installed and last updated, if available;
 - last install/update error summary, if available.
 

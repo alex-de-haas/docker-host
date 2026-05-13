@@ -88,16 +88,16 @@ Host должен хранить локальную копию metadata file, к
 
 Retry и cleanup должны быть явными действиями администратора. Retry должен по возможности терпимо относиться к уже существующим directories, images и containers. Cleanup/removal failed install может быть отдельной операцией и должен явно показывать, будут ли удалены module data directories.
 
-Минимальные lifecycle states первого implementation:
+Минимальные persistent operation statuses первого implementation:
 
 ```text
 installing
 installed
+updating
 failed
-removing
 ```
 
-Disable state/action не входит в lifecycle model. Если модуль не должен быть запущен, администратор использует stop/remove.
+`removing` не входит в начальный статусный контракт и должен появиться вместе с будущим module remove flow. Disable state/action не входит в lifecycle model. Если модуль не должен быть запущен, администратор использует stop.
 
 ## Module update flow
 
@@ -142,7 +142,6 @@ Host backend использует `HOST_DATA_ROOT_CONTAINER` для собств
 
 ```text
 <host-data-root>/
-  host-settings.json
   modules.json
   modules/
     com.acme.reports/
@@ -154,12 +153,13 @@ Host backend использует `HOST_DATA_ROOT_CONTAINER` для собств
 
 Назначение файлов и папок:
 
-- `host-settings.json` - настройки самого Docker Host;
-- `modules.json` - root-level registry установленных модулей и persistent module state: module id, source metadata URL для install/update, settings values, install/update status, failure state, last error details, computed storage mappings и resolved dependency URLs;
+- `modules.json` - root-level registry установленных модулей, persistent module state и MVP Host-owned settings: module id, source metadata URL для install/update, settings values, install/update status, failure state, last error details, computed storage mappings, resolved dependency URLs и настройки Host backend, которые не являются CLI launch settings;
 - `metadata.json` - локальная копия module metadata file, полученного по metadata URL;
 - `settings/`, `data/`, `cache/` - физические папки, которые маппятся в container paths из `storage.directories`.
 
-Host использует `modules.json` как registry установленных модулей, источник metadata URL для update flow и место хранения install/update bookkeeping. Runtime container status модуля не хранится в `modules.json`: Host получает текущее состояние container, а позже и Docker health status, из Docker daemon.
+Host использует `modules.json` как registry установленных модулей, источник metadata URL для update flow и место хранения install/update bookkeeping. Runtime container status модуля не хранится в `modules.json`: Host получает текущее состояние container из Docker daemon.
+
+Отдельный `host-settings.json` в MVP не создается. Launch settings самого Host container остаются в CLI-owned `config/launch.env`; настройки, которыми владеет Host backend, при необходимости сохраняются в root-level `modules.json`.
 
 Отдельные per-module `module-state.json`, `module-installation.json` или `module-settings.json` не создаются в MVP. `metadata.json` и storage-директории находятся рядом, потому что они описывают установленную конфигурацию конкретного модуля. При переносе или backup модуля Host должен учитывать и module directory, и соответствующую запись в root-level `modules.json`.
 
@@ -827,7 +827,7 @@ Host не должен пытаться валидировать external host p
 
 Для required dependencies Host считает dependency запущенной, если Docker успешно стартовал dependency container и Host может вычислить internal Docker-network base URL. Host не ждет HTTP health endpoint или custom readiness signal на первом этапе.
 
-Module health checks должны быть отдельной future feature. В будущем каждый модуль может предоставлять health URL или эквивалентный сигнал, а Host должен использовать унифицированный response model для всех modules.
+Module health checks должны быть отдельной future feature. В будущем health status может опираться на Docker healthcheck или другой унифицированный сигнал, но на первом этапе Host не рассчитывает и не возвращает health/readiness.
 
 Эти поля не обязаны полностью заменять Docker Compose. Их задача - дать Host достаточно информации для управляемого запуска и отображения в UI.
 

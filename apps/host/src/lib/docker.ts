@@ -915,7 +915,9 @@ function dedupePortSummaries(ports: string[]): string[] {
 }
 
 function resolveDockerConnection(): DockerConnectionConfig {
-  const socketPath = process.env.DOCKER_SOCKET_PATH?.trim();
+  const socketPath =
+    process.env.DOCKER_SOCKET_PATH?.trim() ||
+    process.env.HOST_DOCKER_SOCKET?.trim();
   if (socketPath) {
     return {
       description: `unix socket ${socketPath}`,

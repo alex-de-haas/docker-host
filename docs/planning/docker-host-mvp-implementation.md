@@ -26,8 +26,9 @@
 - For the first CLI milestone, the Host container may continue running the existing Host application code. The current Next.js Docker container management UI remains a valid launch target and smoke-test example while CLI bootstrap is built.
 - The CLI default Host image is the image produced by the current repository workflow: `ghcr.io/alex-de-haas/docker-host:latest`.
 - `HOST_IMAGE` is a persisted launch setting. It defaults to the workflow image above and can later be changed through `docker-host config`.
-- MVP uses a root-level `modules.json` as the installed module registry and persistent module state file. It stores the list of installed modules, source metadata URLs used for install/update, module settings values, install/update status, failure state, last error details, computed storage mappings, and resolved dependency URLs. Runtime container status is still read from Docker daemon, not from `modules.json`.
+- MVP uses a root-level `modules.json` as the installed module registry, persistent module state file, and place for any MVP Host-owned settings. It stores the list of installed modules, source metadata URLs used for install/update, module settings values, install/update status, failure state, last error details, computed storage mappings, resolved dependency URLs, and Host settings that are not CLI launch settings. Runtime container status is still read from Docker daemon, not from `modules.json`.
 - There is no per-module `module-state.json`, `module-installation.json`, or `module-settings.json` in the MVP. Each module directory contains its local `metadata.json` and storage directories.
+- There is no separate `host-settings.json` in the MVP. Host container launch settings stay in CLI-owned `launch.env`; Host backend-owned settings, if introduced, are stored in `modules.json`.
 - MVP module settings are stored in `modules.json` as key/value pairs for each installed module. All module settings are treated as environment variable values in the first implementation; the storage schema can expand later if non-env setting targets are introduced.
 - Initial Host API scope is intentionally small: list installed modules, return module statuses, and perform module start, stop, and restart actions. Install plans, update plans, module install/update/remove flows, settings APIs, and storage APIs come later.
 - Module install, update, and remove are required product capabilities, but they belong to a later module management slice after the initial list/status/start/stop/restart API is in place.
@@ -236,6 +237,8 @@ Exit criteria:
 
 ## Phase 3 - Host container and backend foundation
 
+Status: first implementation slice completed. The Host backend now reads Host runtime environment values, creates/verifies the data root, `modules/`, `modules.json`, and shared module network, exposes `GET /api/host/status`, reads installed modules from `modules.json`, reads local module `metadata.json`, resolves Docker runtime state through Docker daemon, and exposes module list/detail/start/stop/restart API routes. End-to-end validation inside a published Host container remains part of release hardening.
+
 Purpose: поднять Host API как единственный владелец module management logic.
 
 Tasks:
@@ -358,10 +361,11 @@ Tasks:
 - Реализовать lifecycle states:
   - `installing`;
   - `installed`;
-  - `failed`;
-  - `removing`.
+  - `updating`;
+  - `failed`.
 - Не добавлять disable state/action в MVP lifecycle model.
 - Реализовать start/stop/restart/remove.
+- Ввести `removing` вместе с remove flow, а не в Phase 3/backend foundation contract.
 - Реализовать explicit retry для failed install/update.
 - Реализовать explicit cleanup/remove failed install с предупреждением о data directories.
 - Реализовать update flow:

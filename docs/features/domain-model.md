@@ -73,6 +73,8 @@ The installed module record is stored in root-level `modules.json` and includes:
 
 Docker runtime status is not persisted in the installed module record. The Host reads it from Docker daemon when serving API responses.
 
+`modules.json` is also the MVP location for any Host backend-owned settings that are not CLI launch settings. There is no separate `host-settings.json` file in the MVP.
+
 ### Module directory
 
 Each installed module has a directory under:
@@ -115,11 +117,52 @@ The standalone `docker-host` CLI reads this file for Host lifecycle commands. `H
 | Path | Owner | Responsibility |
 | --- | --- | --- |
 | `~/.docker-host/config/launch.env` | CLI | Host container launch settings. |
-| `~/.docker-host/modules.json` | Host backend | Installed module registry and persistent module state. |
+| `~/.docker-host/modules.json` | Host backend | Installed module registry, persistent module state, and MVP Host-owned settings. |
 | `~/.docker-host/modules/<module-id>/metadata.json` | Host backend | Local copy of downloaded module metadata. |
 | `~/.docker-host/modules/<module-id>/<storage-key>/` | Host backend | Default bind-mount target for module-owned persistent storage. |
 
 The Host backend creates and validates the Host data root structure at startup. The CLI creates the initial Host data root and `launch.env` during bootstrap.
+
+Initial `modules.json` shape:
+
+```json
+{
+  "schemaVersion": "0.1",
+  "hostSettings": {},
+  "modules": [
+    {
+      "id": "com.acme.reports",
+      "metadataUrl": "https://modules.example/reports/metadata.json",
+      "metadataPath": "modules/com.acme.reports/metadata.json",
+      "containerName": "mod-com-acme-reports",
+      "image": {
+        "repository": "ghcr.io/acme/reports-module",
+        "tag": "1.0.0",
+        "reference": "ghcr.io/acme/reports-module:1.0.0"
+      },
+      "operationStatus": "installed",
+      "settings": {},
+      "storageMappings": {},
+      "resolvedDependencies": {},
+      "installedAt": "2026-05-13T09:00:00Z",
+      "updatedAt": "2026-05-13T09:00:00Z",
+      "lastError": null
+    }
+  ],
+  "updatedAt": "2026-05-13T09:00:00Z"
+}
+```
+
+The Phase 3 backend creates an empty store automatically:
+
+```json
+{
+  "schemaVersion": "0.1",
+  "hostSettings": {},
+  "modules": [],
+  "updatedAt": "2026-05-13T09:00:00Z"
+}
+```
 
 ## Lifecycle States
 
@@ -153,7 +196,7 @@ Docker runtime status is read from Docker daemon for each installed module conta
 | `dead` | Docker reports the container as dead. |
 | `unknown` | Host could not determine container state. |
 
-If Docker reports a container health status, Host may expose it as an optional secondary field. The MVP does not define module-level health checks.
+The first implementation does not expose module health or readiness status. Future health support may use Docker healthcheck data or another unified model, but Phase 3 and the initial module API report only Docker container state.
 
 ## Settings
 
