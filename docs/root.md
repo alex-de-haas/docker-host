@@ -30,4 +30,3 @@ flowchart LR
 - [Module metadata files](features/module-metadata.md) - detailed draft for installing Docker-hosted modules from JSON metadata URLs.
 - [Docker Host MVP implementation plan](planning/docker-host-mvp-implementation.md) - rewrite-oriented implementation sequence based on the current documentation.
 - [Prototype feature inventory](planning/prototype-feature-inventory.md) - useful behaviors from the current raw-container prototype to remember during rewrite.
-- [Module metadata planning](planning/module-metadata-open-questions.md) - current open questions before implementation.

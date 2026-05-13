@@ -94,11 +94,10 @@ Retry и cleanup должны быть явными действиями адм�
 installing
 installed
 failed
-disabled
 removing
 ```
 
-`disabled` означает, что модуль остается установленным, metadata/settings/data сохранены, но Host не должен запускать его container.
+Disable state/action не входит в lifecycle model. Если модуль не должен быть запущен, администратор использует stop/remove.
 
 ## Module update flow
 
@@ -156,11 +155,11 @@ Host backend использует `HOST_DATA_ROOT_CONTAINER` для собств
 Назначение файлов и папок:
 
 - `host-settings.json` - настройки самого Docker Host;
-- `modules.json` - registry установленных модулей: module id, source metadata URL для install/update, settings values и install/update bookkeeping, например timestamps и last error;
+- `modules.json` - root-level registry установленных модулей и persistent module state: module id, source metadata URL для install/update, settings values, install/update status, failure state, last error details, computed storage mappings и resolved dependency URLs;
 - `metadata.json` - локальная копия module metadata file, полученного по metadata URL;
 - `settings/`, `data/`, `cache/` - физические папки, которые маппятся в container paths из `storage.directories`.
 
-Host использует `modules.json` как registry установленных модулей и источник metadata URL, который нужен для update flow. Runtime status модуля не хранится в `modules.json`: Host получает текущее состояние container, а позже и Docker health status, из Docker daemon.
+Host использует `modules.json` как registry установленных модулей, источник metadata URL для update flow и место хранения install/update bookkeeping. Runtime container status модуля не хранится в `modules.json`: Host получает текущее состояние container, а позже и Docker health status, из Docker daemon.
 
 Отдельные per-module `module-state.json`, `module-installation.json` или `module-settings.json` не создаются в MVP. `metadata.json` и storage-директории находятся рядом, потому что они описывают установленную конфигурацию конкретного модуля. При переносе или backup модуля Host должен учитывать и module directory, и соответствующую запись в root-level `modules.json`.
 
@@ -397,7 +396,7 @@ Host должен использовать `id` для:
 - проверки конфликтов между установленными модулями;
 - связывания зависимостей;
 - сохранения settings;
-- отображения module lifecycle: installed, update available, disabled, failed.
+- отображения module lifecycle: installed, update available, failed.
 
 `id` берется из metadata file, а не из URL. Один и тот же модуль может быть доступен по разным URLs, но Host должен считать его тем же модулем, если `id` совпадает.
 
@@ -442,7 +441,7 @@ Metadata model не задает общего naming convention для Docker im
 
 Зависимость указывает не image repository, не Git repository и не version range, а URL другого module metadata file и ожидаемую major-версию его контракта.
 
-На первом этапе implementation scope включает только required dependencies. Optional dependencies остаются частью общей модели, но должны быть спроектированы и реализованы позже как отдельная feature.
+На первом этапе implementation scope включает только required dependencies. Optional dependencies остаются частью общей модели, но должны быть спроектированы и реализованы позже как отдельная feature. MVP Host не должен реализовывать optional dependency resolution; metadata с `dependencies[].required: false` должна быть отклонена как unsupported или отложена до отдельного optional dependencies slice.
 
 Пример:
 
@@ -560,9 +559,9 @@ Resolved dependency base URLs должны быть только internal Docker
 
 Если dependency обязательная (`required: true`), Host должен установить и запустить ее до запуска потребителя. Если Host не может получить resolved base URL обязательной dependency, запуск потребителя должен быть остановлен с понятной ошибкой.
 
-Если dependency опциональная (`required: false`) и она не установлена или отключена, Host должен не задавать `baseUrlEnv` или передать пустое значение. Потребляющий модуль должен трактовать пустую или отсутствующую env-переменную как "integration unavailable" и работать без этой dependency.
+Future optional dependencies behavior: если dependency опциональная (`required: false`) и она не установлена или отключена, Host должен не задавать `baseUrlEnv` или передать пустое значение. Потребляющий модуль должен трактовать пустую или отсутствующую env-переменную как "integration unavailable" и работать без этой dependency. Это не входит в first implementation scope.
 
-Пример optional dependency:
+Future optional dependency example:
 
 ```json
 {
@@ -603,7 +602,7 @@ Host должен уметь:
 - проверить, что запрошенный `connection.endpoint` есть в `runtime.ports[]` dependency metadata;
 - передать resolved dependency base URLs в environment variables потребляющего модуля;
 - не запускать потребителя, если обязательная dependency не может быть resolved;
-- для недоступной optional dependency оставить target environment variable пустой или unset;
+- в future optional dependency feature оставлять target environment variable пустой или unset, если optional dependency недоступна;
 - обнаружить циклические зависимости;
 - проверить, что в install plan нет конфликтующих metadata URLs или major-версий для одного dependency `id`;
 - не устанавливать dependency автоматически без явного подтверждения администратора.
@@ -894,10 +893,11 @@ Host не должен знать, как эти files организованы 
 - `dependencies[].id` не должен совпадать с `id` текущего модуля;
 - каждый dependency должен иметь `version`, `required` и `metadataUrl`;
 - `dependencies[].version` должен быть major-версией контракта, например `"1"`;
+- первая implementation поддерживает только `dependencies[].required: true`; `required: false` зарезервирован для отдельной optional dependencies feature;
 - если dependency содержит `connection`, `dependencies[].connection.endpoint` и `dependencies[].connection.baseUrlEnv` обязательны;
 - `dependencies[].connection.baseUrlEnv` должен быть валидным environment variable name;
 - `dependencies[].required: true` означает, что dependency должна быть resolved до запуска потребителя;
-- `dependencies[].required: false` означает, что пустая или отсутствующая `baseUrlEnv` является допустимым runtime state;
+- future support для `dependencies[].required: false` означает, что пустая или отсутствующая `baseUrlEnv` является допустимым runtime state;
 - после загрузки dependency metadata Host должен проверить, что major часть `dependencyMetadata.version` совпадает с `dependencies[].version`;
 - если dependency объявляет `connection.endpoint`, dependency metadata должен содержать `runtime.ports[]` с таким `key`;
 - dependency graph не должен содержать циклов;

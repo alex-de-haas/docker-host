@@ -5,7 +5,6 @@
 - [Host launch model](../features/host-launch.md)
 - [Repository and release model](../features/repository-release-model.md)
 - [Module metadata files](../features/module-metadata.md)
-- [Module metadata planning](module-metadata-open-questions.md)
 
 ## Phase 0/1 decisions
 
@@ -21,23 +20,17 @@
 - Add the CLI test project immediately, alongside the CLI project.
 - CLI Host lifecycle operations use Docker Engine API directly over the local Docker socket. The `docker` CLI executable is not a runtime dependency for `docker-host`.
 - The rewrite happens directly in the current working tree. The current prototype can be overwritten. Prototype capabilities that should not be forgotten are tracked in [Prototype feature inventory](prototype-feature-inventory.md).
+- Implement the standalone `docker-host` CLI first and make it reliably manage the Host container lifecycle before module metadata runtime work starts.
+- For the first CLI milestone, the Host container may continue running the existing Host application code. The current Next.js Docker container management UI remains a valid launch target and smoke-test example while CLI bootstrap is built.
 - The CLI default Host image is the image produced by the current repository workflow: `ghcr.io/alex-de-haas/docker-host:latest`.
 - `HOST_IMAGE` is a persisted launch setting. It defaults to the workflow image above and can later be changed through `docker-host config`.
-- MVP uses a root-level `modules.json` as the installed module registry. It stores module ids, source metadata URLs used for install/update, module settings values, and install/update bookkeeping such as last errors. Runtime status is still read from Docker daemon, not from `modules.json`.
+- MVP uses a root-level `modules.json` as the installed module registry and persistent module state file. It stores the list of installed modules, source metadata URLs used for install/update, module settings values, install/update status, failure state, last error details, computed storage mappings, and resolved dependency URLs. Runtime container status is still read from Docker daemon, not from `modules.json`.
 - There is no per-module `module-state.json`, `module-installation.json`, or `module-settings.json` in the MVP. Each module directory contains its local `metadata.json` and storage directories.
 - MVP module settings are stored in `modules.json` as key/value pairs for each installed module. All module settings are treated as environment variable values in the first implementation; the storage schema can expand later if non-env setting targets are introduced.
 - Initial Host API scope is intentionally small: list installed modules, return module statuses, and perform module start, stop, and restart actions. Install plans, update plans, module install/update/remove flows, settings APIs, and storage APIs come later.
 - Module install, update, and remove are required product capabilities, but they belong to a later module management slice after the initial list/status/start/stop/restart API is in place.
 - Host API authorization is out of scope for the MVP. The Host is expected to be reachable only from the local machine or a trusted local/private network. Public exposure requires a separate future feature and must revisit authentication/authorization.
-
-## Phase 0/1 open questions
-
-- Exact persistent state JSON structures:
-  - root-level `modules.json`;
-  - computed storage mappings;
-  - resolved dependency URLs;
-  - failed install/update diagnostics.
-- Module disable behavior. Disable is not part of the initial API slice and may not be needed; revisit when module install/update/remove flows are designed.
+- No Phase 0/1 planning questions remain open. `modules.json` is the MVP persistent module state file; exact field-level schema should be introduced in the implementation slice that first writes or reads it.
 
 ## Цель MVP
 
@@ -86,8 +79,8 @@ Tasks:
 - Использовать Next.js как single full-stack Host application, не опираясь на текущий прототип.
 - Описать первый Host API endpoint catalog в документации.
 - Зафиксировать первый API slice: module list, module status, module start, module stop, module restart.
-- Описать domain model для installed modules, lifecycle states, settings, storage mappings, dependency resolution и install/update plans после уточнения persistent state open question.
-- Зафиксировать список persistent files, оставив точные JSON structures отдельным open question:
+- Описать domain model для installed modules, lifecycle states, settings, storage mappings, dependency resolution и install/update plans.
+- Зафиксировать список MVP persistent files и их responsibilities:
   - `~/.docker-host/config/launch.env`;
   - `~/.docker-host/modules.json`;
   - `~/.docker-host/modules/<module-id>/metadata.json`.
@@ -106,7 +99,9 @@ Tasks:
 
 - Создать `apps/host` для Host Web UI и backend API.
 - Создать `apps/cli` для standalone `docker-host` CLI.
+- Перенести существующее Next.js приложение в `apps/host` как Host application area.
 - Оставить `packages/contracts` как будущую область для generated OpenAPI/clients после стабилизации API.
+- Определить shared API contract между Web UI, Host backend API и будущими CLI module commands при введении CLI-facing Host API surface.
 - Перенести Dockerfile Host image в границы Host artifact или обновить root Dockerfile согласно выбранной структуре.
 - Выполнять rewrite прямо поверх текущей реализации. Текущий prototype можно удалять или заменять по мере scaffold/implementation work.
 - Использовать [Prototype feature inventory](prototype-feature-inventory.md), чтобы не потерять важные prototype capabilities при rewrite.
@@ -337,7 +332,7 @@ Tasks:
   - `installed`;
   - `failed`;
   - `removing`.
-- Не реализовывать `disabled` state/action до отдельного решения по module disable behavior.
+- Не добавлять disable state/action в MVP lifecycle model.
 - Реализовать start/stop/restart/remove.
 - Реализовать explicit retry для failed install/update.
 - Реализовать explicit cleanup/remove failed install с предупреждением о data directories.

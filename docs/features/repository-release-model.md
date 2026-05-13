@@ -25,7 +25,11 @@ apps/
     package.json
   cli/
     src/
-    DockerHost.Cli.csproj
+      Haas.DockerHost.Cli/
+        Haas.DockerHost.Cli.csproj
+    tests/
+      Haas.DockerHost.Cli.Tests/
+        Haas.DockerHost.Cli.Tests.csproj
 packages/
   contracts/
     openapi.yaml
@@ -40,6 +44,8 @@ docs/
 ```
 
 На текущем этапе repository еще может физически не соответствовать этой структуре. Документ описывает целевую организацию, к которой нужно двигаться при появлении полноценного CLI и общего API-контракта.
+
+При первом split текущий Next.js application переносится в `apps/host`, а standalone `docker-host` CLI создается в `apps/cli`. Shared API contract между Web UI, Host backend API и CLI должен быть определен в repository рядом с кодом при введении CLI-facing Host API surface. Executable OpenAPI artifact можно добавить позже, когда endpoint model стабилизируется.
 
 ## Component boundaries
 

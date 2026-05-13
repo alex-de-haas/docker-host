@@ -31,7 +31,7 @@ Module install, update, remove, settings editing, storage configuration, install
 
 Returns installed modules known to Docker Host.
 
-The backend reads `modules.json` for installed module registry entries, reads each module's local `metadata.json` for display metadata, and asks Docker daemon for current runtime/container state.
+The backend reads `modules.json` for installed module registry entries and persistent module state, reads each module's local `metadata.json` for display metadata, and asks Docker daemon for current runtime/container state. Persistent module state includes the source metadata URL, install/update status, failure state, last error details, computed storage mappings, and resolved dependency URLs. Docker runtime state is not stored in `modules.json`.
 
 Response should include, per module:
 

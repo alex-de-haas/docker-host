@@ -14,6 +14,10 @@ Production-like запуск Host должен быть container-first:
 - CLI может выполнять module operations, но через тот же Host backend API, что и Web UI;
 - бизнес-логика установки и обновления модулей живет в Host backend, а не дублируется в CLI.
 
+Standalone `docker-host` CLI реализуется первым, потому что он должен быть надежным recovery path для Host container lifecycle: install, start, stop, restart, update, status, logs, open и configuration. Module metadata runtime начинается после того, как CLI умеет стабильно bootstrap/manage Host container.
+
+Для первого CLI milestone Host container может продолжать запускать существующий Host application code. Текущий Next.js Docker container management UI остается рабочим launch target и smoke-test example, пока CLI bootstrap flow строится вокруг production-like Host container запуска.
+
 ## Компоненты
 
 ```mermaid
