@@ -9,7 +9,8 @@
 ## Phase 0/1 decisions
 
 - Host Web UI and backend API are implemented as one full-stack Next.js application.
-- Use the latest stable Next.js release at implementation time, not a canary release.
+- Use Next.js 16 as the current implementation baseline. At implementation time, use the latest stable Next.js 16.x release or the latest stable Next.js release if the stable baseline has moved forward; do not use canary releases.
+- Scaffold and maintain the Host app with the Next.js recommended stack: App Router, React and React DOM versions paired with the selected Next.js release, TypeScript, Tailwind CSS, ESLint, Turbopack, `src/` directory, and `@/*` import alias.
 - Use the Node.js version recommended by the selected Next.js release. Current Next.js documentation lists Node.js `20.9` as the minimum supported version; the Docker image should use a current Node.js LTS line that satisfies that requirement.
 - Use Tailwind CSS and shadcn/ui for the Host Web UI.
 - Use `npm` as the package manager. `pnpm` can be reconsidered later if dependency install speed or disk usage becomes a real issue.
@@ -98,6 +99,7 @@ Purpose: подготовить repository к независимой сборк�
 Tasks:
 
 - Создать `apps/host` для Host Web UI и backend API.
+- Создать `apps/host` на Next.js 16 baseline через recommended `create-next-app@latest` options: TypeScript, Tailwind CSS, ESLint, App Router, Turbopack, `src/` directory и `@/*` import alias.
 - Создать `apps/cli` для standalone `docker-host` CLI.
 - Перенести существующее Next.js приложение в `apps/host` как Host application area.
 - Оставить `packages/contracts` как будущую область для generated OpenAPI/clients после стабилизации API.
