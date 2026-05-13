@@ -148,7 +148,6 @@ Host backend использует `HOST_DATA_ROOT_CONTAINER` для собств
   modules/
     com.acme.reports/
       metadata.json
-      module-settings.json
       settings/
       data/
       cache/
@@ -157,12 +156,13 @@ Host backend использует `HOST_DATA_ROOT_CONTAINER` для собств
 Назначение файлов и папок:
 
 - `host-settings.json` - настройки самого Docker Host;
-- `modules.json` - общий список установленных модулей и их metadata URLs;
+- `modules.json` - registry установленных модулей: module id, source metadata URL для install/update, settings values и install/update bookkeeping, например timestamps и last error;
 - `metadata.json` - локальная копия module metadata file, полученного по metadata URL;
-- `module-settings.json` - значения settings конкретного модуля, которые ввел или подтвердил администратор;
 - `settings/`, `data/`, `cache/` - физические папки, которые маппятся в container paths из `storage.directories`.
 
-`metadata.json` и storage-директории находятся рядом, потому что они вместе описывают установленное состояние конкретного модуля. При переносе или backup модуля Host может работать с одной папкой `modules/<module-id>/`.
+Host использует `modules.json` как registry установленных модулей и источник metadata URL, который нужен для update flow. Runtime status модуля не хранится в `modules.json`: Host получает текущее состояние container, а позже и Docker health status, из Docker daemon.
+
+Отдельные per-module `module-state.json`, `module-installation.json` или `module-settings.json` не создаются в MVP. `metadata.json` и storage-директории находятся рядом, потому что они описывают установленную конфигурацию конкретного модуля. При переносе или backup модуля Host должен учитывать и module directory, и соответствующую запись в root-level `modules.json`.
 
 External storage mounts могут находиться за пределами `modules/<module-id>/`. В этом случае внутри module directory хранится только mapping configuration, а сами данные остаются в выбранной администратором физической папке.
 
@@ -623,11 +623,11 @@ Host не требует `metadataDigest` для dependency metadata. Источ
 - `url`;
 - `secret`.
 
-Каждый setting может быть mapped в runtime target. На первом этапе достаточно target type `env`, чтобы Host передавал значение в container environment.
+В первой реализации все module settings считаются environment variables. Значения хранятся в `modules.json` как key/value pairs внутри записи установленного модуля. Ключ setting соответствует `settings[].key` из metadata и используется как environment variable name. Если позже появятся не-env targets, schema хранения settings может быть расширена.
 
 Секреты не должны храниться в metadata file. Metadata только объявляет, что такой секрет нужен.
 
-В MVP secret settings хранятся там же, где обычные module settings, например в `module-settings.json`. `type: "secret"` не означает отдельное secret storage; это правило обработки значения на уровне Host API, Web UI, logs и diagnostics.
+В MVP secret settings хранятся там же, где обычные module settings: в root-level `modules.json` внутри записи установленного модуля. `type: "secret"` не означает отдельное secret storage; это правило обработки значения на уровне Host API, Web UI, logs и diagnostics.
 
 Host должен обращаться с secret settings как с write-only values на UI/API boundary:
 
@@ -741,7 +741,7 @@ Module container mount path:
 }
 ```
 
-Администратор добавляет конкретные mounts уже в Host UI. Эти значения не приходят из metadata URL, а сохраняются в локальном `module-settings.json` или другом state-файле Host.
+Администратор добавляет конкретные mounts уже в Host UI. Эти значения не приходят из metadata URL, а сохраняются в root-level `modules.json` внутри записи установленного модуля.
 
 Пример resolved configuration:
 

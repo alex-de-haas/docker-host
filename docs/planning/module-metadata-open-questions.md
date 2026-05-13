@@ -53,7 +53,7 @@ The CLI project should target `net10.0`.
 
 The first implementation should use the local Docker Unix socket at `/var/run/docker.sock` as the Docker daemon connection mechanism.
 
-The CLI should use the Docker socket for Host container lifecycle commands. The Host container should receive the same socket through a bind mount:
+The CLI should use the Docker socket directly through Docker Engine API for Host container lifecycle commands. The Host container should receive the same socket through a bind mount:
 
 ```text
 /var/run/docker.sock:/var/run/docker.sock
@@ -61,18 +61,18 @@ The CLI should use the Docker socket for Host container lifecycle commands. The 
 
 `DOCKER_HOST` support is out of scope for the first implementation and can be considered later if the project needs non-standard Docker daemon endpoints.
 
-### CLI Docker execution MVP
+### CLI Docker Engine API MVP
 
-The first CLI implementation should call the installed Docker CLI executable for Host container lifecycle operations. The CLI should shell out to commands such as `docker pull`, `docker run`, `docker stop`, `docker rm`, `docker inspect`, and `docker logs`.
+The first CLI implementation should call Docker Engine API directly over the local Docker socket for Host container lifecycle operations. The CLI should not shell out to the installed Docker CLI executable for normal lifecycle operations.
 
 Implementation rules:
 
-- invoke Docker through `ProcessStartInfo.ArgumentList` or equivalent argument-array APIs, not by constructing shell command strings;
-- keep Docker command execution behind a small adapter layer so it can be replaced later;
-- prefer structured JSON output such as `docker inspect` over parsing human-readable command output;
-- surface Docker command failures with the command name, exit code, stderr, and a clear next step for the administrator.
+- keep Docker Engine communication behind a small adapter layer;
+- expose typed methods for image pull, container create/start/stop/remove/inspect/logs and network create/inspect/connect;
+- use typed models for Docker Engine JSON responses instead of parsing human-readable output;
+- surface Docker Engine failures with operation name, HTTP status/code, Docker error message, and a clear next step for the administrator.
 
-The architecture can still be described as CLI -> Docker daemon, with Docker CLI acting as the first implementation transport. A later implementation may replace this adapter with direct Docker Engine API communication over the Unix socket.
+The architecture is CLI -> Docker daemon. The first transport is Docker Engine API over the local Unix socket.
 
 ### Metadata URL security MVP
 

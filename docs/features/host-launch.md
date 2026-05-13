@@ -83,9 +83,9 @@ docker-host config
 
 Lifecycle-команды работают напрямую через Docker daemon, потому что Host API может быть еще не запущен или может быть сломан.
 
-В первой CLI implementation lifecycle-команды будут обращаться к Docker daemon через установленный Docker CLI executable. Это transport detail: CLI вызывает `docker pull`, `docker run`, `docker stop`, `docker rm`, `docker inspect`, `docker logs` и другие lifecycle-команды, а Docker CLI уже общается с daemon через `/var/run/docker.sock`.
+В первой CLI implementation lifecycle-команды будут обращаться к Docker daemon напрямую через Docker Engine API. CLI не должен запускать установленный Docker CLI executable для Host lifecycle operations.
 
-CLI должен вызывать Docker CLI через argument-array APIs, например `ProcessStartInfo.ArgumentList`, а не через shell command strings. Docker execution должен быть изолирован в небольшом adapter layer, чтобы позже его можно было заменить на direct Docker Engine API over Unix socket.
+Docker Engine communication должен быть изолирован в adapter layer, чтобы CLI commands не знали конкретные HTTP endpoint paths, request bodies и transport details.
 
 CLI также может иметь команды управления модулями:
 
@@ -101,12 +101,18 @@ docker-host modules logs <module-id>
 
 ## Quick install script
 
-Для быстрой установки из терминала можно использовать `install.sh`. Это чистый shell bootstrap script, который ставит `docker-host` CLI executable и подготавливает первый запуск Host container.
+Для быстрой установки из терминала используется Unix `scripts/install.sh`. Это чистый shell bootstrap script, который скачивает latest development `docker-host` CLI executable из GitHub Release `cli-dev`, ставит его локально и подготавливает первый запуск Host container.
+
+Пример установки:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
+```
 
 Пример быстрого запуска:
 
 ```sh
-curl -fsSL https://docker-host.example.com/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
 docker-host start
 docker-host open
 ```
@@ -114,7 +120,7 @@ docker-host open
 Более осторожный вариант:
 
 ```sh
-curl -fsSL https://docker-host.example.com/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh -o install.sh
 sh install.sh
 docker-host start
 docker-host open
@@ -122,10 +128,9 @@ docker-host open
 
 `install.sh` должен:
 
-- проверить, что Docker CLI установлен;
-- проверить, что Docker daemon доступен через local Docker socket `/var/run/docker.sock`;
+- проверить, что Docker установлен и daemon доступен через local Docker socket `/var/run/docker.sock`, или делегировать эту проверку установленному `docker-host` CLI;
 - определить OS/architecture;
-- скачать подходящий `docker-host` standalone executable artifact;
+- скачать подходящий `docker-host` standalone executable artifact из GitHub Release `cli-dev`;
 - положить executable в user-writable bin directory, например `~/.docker-host/bin/docker-host`;
 - сделать файл executable;
 - добавить `~/.docker-host/bin` в `PATH` или вывести точную команду, которую администратор должен добавить в shell profile;
@@ -134,14 +139,42 @@ docker-host open
 - не дублировать module management logic;
 - после установки вывести следующие команды и URL Web UI.
 
-`install.sh` должен оставаться shell-only bootstrap layer. Сам `docker-host` CLI при этом не является shell script: это standalone executable, который не требует установленного .NET runtime, Node.js/npm или другого package manager.
+`install.sh` должен оставаться shell-only bootstrap layer for Unix-like systems. Сам `docker-host` CLI при этом не является shell script: это standalone executable, который не требует установленного .NET runtime, Node.js/npm или другого package manager.
 
 На базовом этапе CLI implementation target:
 
 - `net10.0` .NET self-contained single-file executable;
+- project file `Haas.DockerHost.Cli.csproj`;
+- root namespace `Haas.DockerHost.Cli`;
+- published command name `docker-host` via project `AssemblyName` or release artifact rename;
 - Spectre.Console для rich terminal output;
 - cross-platform artifacts под поддерживаемые OS/architecture;
+- test project created with the initial CLI scaffold;
 - без зависимости от установленного runtime на машине администратора.
+
+Recommended CLI layout:
+
+```text
+apps/
+  cli/
+    src/
+      Haas.DockerHost.Cli/
+        Haas.DockerHost.Cli.csproj
+        Program.cs
+        Commands/
+        Configuration/
+        Docker/
+    tests/
+      Haas.DockerHost.Cli.Tests/
+        Haas.DockerHost.Cli.Tests.csproj
+```
+
+Docker Engine communication should be isolated inside the `Haas.DockerHost.Cli.Docker` namespace. The layer should have two levels:
+
+- low-level Engine API transport: sends HTTP requests to Docker Engine over the configured local socket and returns structured status, headers, body and Docker error details;
+- high-level Docker Engine adapter: exposes typed methods such as pull image, inspect container, create network, run Host container, start container, stop container, remove container and get logs.
+
+CLI commands should not construct Docker Engine URLs or request bodies directly. Commands call the high-level adapter, while the adapter owns exact Docker Engine endpoints and structured JSON parsing for operations such as container inspect.
 
 ### Docker daemon access
 
@@ -159,7 +192,7 @@ CLI использует этот socket для lifecycle commands самого 
 
 `DOCKER_HOST` и non-standard Docker endpoints не входят в scope первой implementation. Их можно рассмотреть позже, если появится требование поддерживать нестандартные Docker daemon endpoints.
 
-Для первого CLI implementation доступ к socket выполняется через установленный Docker CLI. Архитектурно это остается CLI -> Docker daemon, но transport реализован через Docker CLI process. Позже adapter можно заменить на прямой Docker Engine API client.
+Для первой CLI implementation доступ к Docker daemon выполняется напрямую через Docker Engine API over local socket. Docker CLI executable не является runtime dependency для `docker-host` CLI.
 
 Пример итоговой структуры после `install.sh`:
 
@@ -203,13 +236,13 @@ export PATH="$HOME/.docker-host/bin:$PATH"
 Default install script не должен автоматически запускать Host container без явного согласия администратора. Для one-command сценария можно поддержать флаг или environment variable:
 
 ```sh
-curl -fsSL https://docker-host.example.com/install.sh | sh -s -- --start
+curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh -s -- --start
 ```
 
 или:
 
 ```sh
-DOCKER_HOST_INSTALL_START=1 curl -fsSL https://docker-host.example.com/install.sh | sh
+DOCKER_HOST_INSTALL_START=1 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
 ```
 
 При `--start` script может выполнить:
@@ -279,11 +312,23 @@ CLI должен читать этот файл для `start`, `restart`, `upda
 
 `docker-host update` должен:
 
+- обновить standalone CLI executable из rolling GitHub Release `cli-dev`;
+- скачать matching CLI artifact для текущих OS/architecture;
+- проверить `SHA256SUMS`, если checksum file доступен;
+- заменить установленный `docker-host` binary безопасно: скачать во временный файл рядом с target executable, выставить permissions и затем заменить target;
 - pull новой версии Host image;
 - остановить текущий Host container;
-- пересоздать container с теми же volumes, env vars, port mappings и restart policy;
+- пересоздать Host container с теми же volumes, env vars, port mappings и restart policy;
 - сохранить Host data root;
-- показать понятную ошибку, если Docker operation failed.
+- показать понятную ошибку, если CLI artifact update или Docker operation failed.
+
+`scripts/install.sh` используется для первой установки и также может быть повторно запущен как repair/reinstall path, но штатная update-команда обновляет и CLI, и Host container.
+
+Обновление модулей должно выполняться отдельными module commands через Host backend API, например:
+
+```text
+docker-host modules update <module-id>
+```
 
 Host UI может позже получить кнопку self-update, но CLI должен оставаться recovery path, потому что UI недоступен во время recreate самого Host container.
 

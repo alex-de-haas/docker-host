@@ -110,9 +110,22 @@ docker-host-darwin-x64
 docker-host-linux-arm64
 docker-host-linux-x64
 docker-host-windows-x64.exe
+SHA256SUMS
 ```
 
-`install.sh` должен скачивать CLI artifact под текущие OS и architecture. CLI уже после установки управляет Host container и использует configured Host image reference.
+For development and early usage, CLI artifacts are published to one rolling GitHub prerelease with tag `cli-dev`. The `cli-dev` workflow overwrites existing release assets for every new CLI build, so installation URLs stay stable while the binary tracks the latest development build.
+
+Unix users install the current development CLI through `scripts/install.sh`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
+```
+
+Later stable CLI versions can be published as immutable GitHub releases, for example `cli-v0.2.1`. Those stable release assets should not be overwritten. GitHub Actions artifacts may still be used for CI/debugging, but they are not the installation channel because they have retention limits and less convenient download URLs.
+
+`install.sh` detects OS/architecture, downloads the right `cli-dev` artifact, verifies checksums when available, installs the executable to `~/.docker-host/bin/docker-host`, marks it executable, and prints PATH instructions. CLI already manages the Host container after installation and uses configured Host image reference.
+
+`docker-host update` updates both the CLI executable and the Host container image. It downloads the matching CLI artifact from `cli-dev`, verifies checksums when available, safely replaces the installed executable, then pulls and recreates the Host container with the configured Host image. `scripts/install.sh` remains the first-install and repair/reinstall path. Module updates are separate module commands, for example `docker-host modules update <module-id>`.
 
 ## Versioning
 
@@ -122,6 +135,8 @@ CLI и Host image могут иметь независимые версии:
 host-v0.3.0
 cli-v0.2.1
 ```
+
+During early development, `cli-dev` is the main CLI distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions.
 
 При изменении API-контракта нужно явно проверить совместимость:
 
