@@ -7,4 +7,7 @@
     <AssemblyName>docker-host</AssemblyName>
     <RootNamespace>Haas.DockerHost.Cli</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.55.2" />
+  </ItemGroup>
 </Project>

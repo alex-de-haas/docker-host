@@ -127,6 +127,8 @@ Exit criteria:
 
 ## Phase 2 - CLI bootstrap MVP
 
+Status: first implementation slice completed. The CLI now has typed `install`, `start`, `stop`, `restart`, `update`, `status`, `logs`, `open`, and `config` commands; `launch.env` defaults and validation; direct Docker Engine transport over Unix socket or Windows named pipe; Host lifecycle create/start/stop/remove/log/network/image operations; auto host-port selection; best-effort browser open; and rolling `cli-dev` release workflow support. Follow-up hardening remains for native Windows executable replacement and full end-to-end release validation on published artifacts.
+
 Purpose: сделать `docker-host` CLI надежным recovery path для Host container lifecycle.
 
 Required stack:

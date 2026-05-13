@@ -1,0 +1,97 @@
+namespace Haas.DockerHost.Cli.Docker;
+
+using System.IO.Pipes;
+using System.Net.Http;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+
+internal sealed class DockerEngineTransport : IDockerEngineTransport
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNamingPolicy = null,
+    };
+
+    private readonly HttpClient httpClient;
+
+    private DockerEngineTransport(HttpClient httpClient)
+    {
+        this.httpClient = httpClient;
+    }
+
+    public static DockerEngineTransport Create(DockerEndpoint endpoint)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            UseProxy = false,
+            ConnectCallback = async (_, cancellationToken) =>
+            {
+                if (endpoint.Kind == DockerEndpointKind.UnixSocket)
+                {
+                    var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                    try
+                    {
+                        await socket.ConnectAsync(new UnixDomainSocketEndPoint(endpoint.Address), cancellationToken);
+                        return new NetworkStream(socket, ownsSocket: true);
+                    }
+                    catch
+                    {
+                        socket.Dispose();
+                        throw;
+                    }
+                }
+
+                var stream = new NamedPipeClientStream(".", endpoint.Address, PipeDirection.InOut, PipeOptions.Asynchronous);
+                await stream.ConnectAsync(cancellationToken);
+                return stream;
+            },
+        };
+
+        return new DockerEngineTransport(new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://docker.local"),
+            Timeout = TimeSpan.FromMinutes(10),
+        });
+    }
+
+    public async Task<DockerEngineResponse> SendAsync(
+        string operation,
+        HttpMethod method,
+        string pathAndQuery,
+        object? body = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(method, pathAndQuery);
+        if (body is not null)
+        {
+            request.Content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json");
+        }
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or TimeoutException)
+        {
+            throw new DockerEngineException(
+                operation,
+                "Unable to reach the local Docker Engine.",
+                dockerMessage: ex.Message,
+                nextStep: "Make sure Docker Desktop or Docker Engine is running and that launch.env uses a supported local endpoint.",
+                innerException: ex);
+        }
+
+        using var _ = response;
+        var bodyBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var bodyText = Encoding.UTF8.GetString(bodyBytes);
+        var headers = response.Headers
+            .Concat(response.Content.Headers)
+            .ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
+
+        return new DockerEngineResponse(operation, response.StatusCode, bodyText, bodyBytes, headers);
+    }
+
+    public void Dispose() => httpClient.Dispose();
+}

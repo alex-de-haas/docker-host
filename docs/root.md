@@ -26,6 +26,7 @@ flowchart LR
 
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
+- [CLI bootstrap](features/cli-bootstrap.md) - Phase 2 `docker-host` command surface, launch configuration, and direct Docker Engine lifecycle integration.
 - [Docker Host API](features/host-api.md) - initial Host backend API endpoint catalog for Web UI and future CLI module commands.
 - [Docker Host domain model](features/domain-model.md) - shared Phase 0 vocabulary for installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
