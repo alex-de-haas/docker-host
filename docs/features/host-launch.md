@@ -310,6 +310,8 @@ CLI должен читать этот файл для `start`, `restart`, `upda
 
 `docker-host open` открывает Web UI в браузере или печатает URL.
 
+Для локальной проверки без push CLI должен поддерживать override `HOST_IMAGE` на локально собранный image tag, например `docker-host:dev`. Детальный dev/test flow описан в [Local development and testing](local-development.md).
+
 ## Restart and update
 
 `docker-host restart` должен перезапускать Host container без изменения module data.

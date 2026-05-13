@@ -8,6 +8,8 @@ Next.js UI for listing, creating, updating, and removing local Docker containers
 
 ## Local development
 
+Detailed local testing guidance is documented in [Local development and testing](docs/features/local-development.md).
+
 Run the app directly on the host:
 
 ```bash
@@ -31,20 +33,32 @@ DOCKER_HOST=tcp://127.0.0.1:2375 npm run dev
 
 ## Running in Docker Desktop
 
+For production-like local testing without pushing an image, build a local development tag first:
+
+```bash
+docker build -t docker-host:dev .
+```
+
 If the app itself runs in a container, the container does not automatically get access to the host Docker socket. Mount it explicitly:
 
 ```bash
-docker run --rm -p 3000:3000 \
+docker run --rm --name docker-host-dev -p 3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  docker-host
+  -v "$HOME/.docker-host-dev:/data" \
+  -e HOST_DATA_ROOT_HOST="$HOME/.docker-host-dev" \
+  -e HOST_DATA_ROOT_CONTAINER=/data \
+  docker-host:dev
 ```
 
 If you expose Docker over TCP instead, pass `DOCKER_HOST`:
 
 ```bash
-docker run --rm -p 3000:3000 \
+docker run --rm --name docker-host-dev -p 3000:3000 \
   -e DOCKER_HOST=tcp://host.docker.internal:2375 \
-  docker-host
+  -v "$HOME/.docker-host-dev:/data" \
+  -e HOST_DATA_ROOT_HOST="$HOME/.docker-host-dev" \
+  -e HOST_DATA_ROOT_CONTAINER=/data \
+  docker-host:dev
 ```
 
 Notes:

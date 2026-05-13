@@ -24,6 +24,7 @@ flowchart LR
 
 ## Documents
 
+- [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
 - [Docker Host API](features/host-api.md) - initial Host backend API endpoint catalog for Web UI and future CLI module commands.
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
