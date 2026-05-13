@@ -71,3 +71,86 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: artifacts/${{ matrix.artifact }}
+
+  publish-cli-dev-release:
+    name: Publish cli-dev release
+    needs: publish-artifacts
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cli-dev-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download CLI artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          expected=(
+            docker-host-darwin-arm64
+            docker-host-darwin-x64
+            docker-host-linux-arm64
+            docker-host-linux-x64
+            docker-host-windows-x64.exe
+          )
+
+          for artifact in "${expected[@]}"; do
+            source="release-assets/${artifact}/${artifact}"
+            if [[ ! -f "${source}" ]]; then
+              echo "Missing expected artifact: ${source}" >&2
+              find release-assets -maxdepth 3 -type f -print >&2
+              exit 1
+            fi
+
+            cp "${source}" "dist/${artifact}"
+          done
+
+          (
+            cd dist
+            sha256sum "${expected[@]}" > SHA256SUMS
+            ls -la
+          )
+
+      - name: Publish rolling prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force cli-dev "${GITHUB_SHA}"
+          git push --force origin refs/tags/cli-dev
+
+          cat > release-notes.md <<EOF
+          Rolling development release for the docker-host CLI.
+
+          Commit: ${GITHUB_SHA}
+
+          Assets are overwritten by the CLI release workflow on each main build.
+          EOF
+
+          if gh release view cli-dev >/dev/null 2>&1; then
+            gh release edit cli-dev \
+              --title "CLI development build" \
+              --notes-file release-notes.md \
+              --prerelease
+            gh release upload cli-dev dist/* --clobber
+          else
+            gh release create cli-dev dist/* \
+              --title "CLI development build" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi

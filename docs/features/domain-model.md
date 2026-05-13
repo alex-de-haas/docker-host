@@ -104,10 +104,11 @@ It owns Host container lifecycle settings, not module state:
 - `HOST_DATA_ROOT_CONTAINER`;
 - `HOST_UI_PORT`;
 - `HOST_RESTART_POLICY`;
+- `HOST_DOCKER_ENDPOINT`;
 - `HOST_DOCKER_SOCKET`;
 - `HOST_MODULE_NETWORK`.
 
-The standalone `docker-host` CLI reads this file for Host lifecycle commands.
+The standalone `docker-host` CLI reads this file for Host lifecycle commands. `HOST_DOCKER_ENDPOINT` is the CLI-side Docker Engine endpoint, such as `unix:///var/run/docker.sock` on macOS/Linux/WSL or `npipe:////./pipe/docker_engine` on native Windows. `HOST_DOCKER_SOCKET` is the socket path mounted into the Linux Host container and remains `/var/run/docker.sock` in the MVP.
 
 ## Persistent Files
 

@@ -52,6 +52,24 @@ In this mode, local metadata test servers can usually be referenced as `http://l
 
 The repository uses npm workspace scripts from the root. `npm run host:dev`, `npm run host:build`, and `npm run host:lint` execute the Host app in `apps/host`.
 
+## Native Windows CLI development
+
+Native Windows CLI support targets Docker Desktop with the WSL 2 Linux engine. Windows containers mode is unsupported for the MVP because the Host image and module runtime are Linux-container based.
+
+The Windows CLI artifact should connect to Docker Engine through:
+
+```text
+npipe:////./pipe/docker_engine
+```
+
+The Host container still receives Docker access through the Linux Engine socket mount:
+
+```text
+/var/run/docker.sock:/var/run/docker.sock
+```
+
+During `docker-host install/start/status`, the CLI should fail clearly if Docker Desktop is in Windows containers mode and should instruct the administrator to switch to Linux containers.
+
 ## Production-like local container testing
 
 Use this mode when the change needs to be validated in the same shape as the released Host container, but without pushing an image:
@@ -85,13 +103,26 @@ Target local flow:
 
 ```bash
 docker build -f apps/host/Dockerfile -t docker-host:dev .
-docker-host config set HOST_IMAGE=docker-host:dev
-docker-host config set HOST_DATA_ROOT_HOST="$HOME/.docker-host-dev"
+docker-host config set HOST_IMAGE docker-host:dev
+docker-host config set HOST_DATA_ROOT_HOST "$HOME/.docker-host-dev"
 docker-host start
 docker-host open
 ```
 
-The exact CLI config command shape can change during implementation, but the launch model must preserve these capabilities:
+The Phase 2 CLI config command shape is fixed as:
+
+```bash
+docker-host config list
+docker-host config get HOST_IMAGE
+docker-host config set HOST_IMAGE docker-host:dev
+docker-host config set HOST_DATA_ROOT_HOST "$HOME/.docker-host-dev"
+docker-host config set HOST_IMAGE=docker-host:dev
+docker-host config reset HOST_IMAGE
+```
+
+`config list` shows all launch settings, `config get` shows one setting, `config set` updates one known launch setting, and `config reset` restores one setting to its default. The `KEY VALUE` form is the primary syntax, while `KEY=VALUE` is supported as a convenience for shell users.
+
+The launch model must preserve these capabilities:
 
 - local Host image tags can be used instead of `ghcr.io/...:latest`;
 - local development uses an isolated data root;
@@ -135,4 +166,4 @@ For a launch/runtime change:
 
 ## Open Questions
 
-- What exact `docker-host config` command syntax should be implemented for local image and data root overrides?
+No local development questions are currently open for Phase 2.

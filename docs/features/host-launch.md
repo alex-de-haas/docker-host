@@ -132,7 +132,7 @@ docker-host open
 
 `install.sh` должен:
 
-- проверить, что Docker установлен и daemon доступен через local Docker socket `/var/run/docker.sock`, или делегировать эту проверку установленному `docker-host` CLI;
+- проверить, что Docker установлен и daemon доступен через local Docker endpoint, или делегировать эту проверку установленному `docker-host` CLI;
 - определить OS/architecture;
 - скачать подходящий `docker-host` standalone executable artifact из GitHub Release `cli-dev`;
 - положить executable в user-writable bin directory, например `~/.docker-host/bin/docker-host`;
@@ -175,28 +175,37 @@ apps/
 
 Docker Engine communication should be isolated inside the `Haas.DockerHost.Cli.Docker` namespace. The layer should have two levels:
 
-- low-level Engine API transport: sends HTTP requests to Docker Engine over the configured local socket and returns structured status, headers, body and Docker error details;
+- Docker Engine API transport: connects to Docker Engine over the configured local endpoint and returns structured status, headers, body and Docker error details;
 - high-level Docker Engine adapter: exposes typed methods such as pull image, inspect container, create network, run Host container, start container, stop container, remove container and get logs.
 
 CLI commands should not construct Docker Engine URLs or request bodies directly. Commands call the high-level adapter, while the adapter owns exact Docker Engine endpoints and structured JSON parsing for operations such as container inspect.
 
+Because the CLI is a .NET executable and must support both Unix sockets and Windows named pipes, the Phase 2 implementation should prefer `Docker.DotNet` or an equivalent Docker Engine API client that supports both transports. The CLI still must not shell out to the `docker` executable. If a library is used, keep it behind the Host-specific adapter so command code remains independent from library models.
+
 ### Docker daemon access
 
-CLI lifecycle commands должны управлять Host container через Docker daemon. В первой implementation поддерживается local Docker Unix socket:
+CLI lifecycle commands должны управлять Host container через Docker daemon. Phase 2 поддерживает local Docker endpoint abstraction:
 
 ```text
-/var/run/docker.sock
+macOS/Linux/WSL: unix:///var/run/docker.sock
+native Windows: npipe:////./pipe/docker_engine
 ```
 
-CLI использует этот socket для lifecycle commands самого Host container. Host container получает доступ к Docker daemon через bind mount:
+Native Windows support targets Docker Desktop with the WSL 2 Linux engine. Windows containers mode is explicitly unsupported for the MVP. If Docker reports `OSType != linux`, `docker-host install/start/status` should fail with a clear diagnostic that Docker Host requires Docker Desktop Linux containers.
+
+CLI использует `HOST_DOCKER_ENDPOINT` для lifecycle commands самого Host container. Это endpoint на машине администратора, через который CLI общается с Docker Engine.
+
+Host container остается Linux-based и получает доступ к Docker daemon через Unix socket path внутри Docker Desktop/Engine VM:
 
 ```text
 /var/run/docker.sock:/var/run/docker.sock
 ```
 
-`DOCKER_HOST` и non-standard Docker endpoints не входят в scope первой implementation. Их можно рассмотреть позже, если появится требование поддерживать нестандартные Docker daemon endpoints.
+`HOST_DOCKER_SOCKET` обозначает container-side socket path, который Host container видит как `/var/run/docker.sock`. Это отдельное значение от `HOST_DOCKER_ENDPOINT`: на native Windows CLI endpoint будет named pipe, но Host container socket mount still uses `/var/run/docker.sock`.
 
-Для первой CLI implementation доступ к Docker daemon выполняется напрямую через Docker Engine API over local socket. Docker CLI executable не является runtime dependency для `docker-host` CLI.
+`DOCKER_HOST`, TCP, SSH, TLS и non-standard Docker daemon endpoints не входят в scope первой implementation. Их можно рассмотреть позже, если появится требование поддерживать remote Docker daemons.
+
+Для первой CLI implementation доступ к Docker daemon выполняется напрямую через Docker Engine API over local Unix socket or Windows named pipe. Docker CLI executable не является runtime dependency для `docker-host` CLI.
 
 Пример итоговой структуры после `install.sh`:
 
@@ -209,7 +218,9 @@ CLI использует этот socket для lifecycle commands самого 
   modules/
 ```
 
-`~/.docker-host/config/launch.env` должен хранить параметры запуска самого Host container как shell-compatible env file: image reference, container name, UI port, Docker socket mount, data mount, `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, restart policy и другие значения, которые нужны `docker-host start/restart/update`.
+`~/.docker-host/config/launch.env` должен хранить параметры запуска самого Host container как env-style key/value file: image reference, container name, UI port, Docker endpoint, Docker socket mount, data mount, `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, restart policy и другие значения, которые нужны `docker-host start/restart/update`.
+
+The file should stay shell-compatible for Unix values generated by `scripts/install.sh`, but the `docker-host` CLI owns parsing and writing. On Windows it must preserve platform-native paths such as `C:\Users\<user>\.docker-host` as raw values instead of applying Unix shell expansion rules.
 
 Пример `launch.env`:
 
@@ -220,9 +231,19 @@ HOST_DATA_ROOT_HOST=$HOME/.docker-host
 HOST_DATA_ROOT_CONTAINER=/data
 HOST_UI_PORT=auto
 HOST_RESTART_POLICY=unless-stopped
+HOST_DOCKER_ENDPOINT=unix:///var/run/docker.sock
 HOST_DOCKER_SOCKET=/var/run/docker.sock
 HOST_MODULE_NETWORK=docker-host-modules
 ```
+
+On native Windows, `docker-host install` should persist a Windows-appropriate default:
+
+```env
+HOST_DOCKER_ENDPOINT=npipe:////./pipe/docker_engine
+HOST_DOCKER_SOCKET=/var/run/docker.sock
+```
+
+`HOST_DATA_ROOT_HOST` should also be resolved to a platform-native absolute path during install, for example `C:\Users\<user>\.docker-host` on Windows.
 
 CLI должен передавать в Host container оба значения data root:
 
@@ -230,6 +251,23 @@ CLI должен передавать в Host container оба значения 
 - `HOST_DATA_ROOT_CONTAINER` - path внутри Host container, который Host backend использует для чтения и записи собственного state.
 
 `HOST_IMAGE` должен по умолчанию указывать на Host image, публикуемый текущим repository workflow: `ghcr.io/<owner>/<repo>:latest`. Это значение должно быть переопределяемым через `docker-host config`.
+
+`docker-host config` должен быть typed interface к известным Host launch settings, а не произвольным editor для `launch.env`.
+
+MVP syntax:
+
+```text
+docker-host config list
+docker-host config get HOST_IMAGE
+docker-host config set HOST_IMAGE docker-host:dev
+docker-host config set HOST_DATA_ROOT_HOST ~/.docker-host-dev
+docker-host config set HOST_IMAGE=docker-host:dev
+docker-host config reset HOST_IMAGE
+```
+
+`config list` печатает все launch settings с текущими значениями. `config get <KEY>` печатает одно значение. `config set <KEY> <VALUE>` и удобная форма `config set <KEY>=<VALUE>` записывают значение в `launch.env`. `config reset <KEY>` возвращает настройку к default value.
+
+CLI должен валидировать known keys перед записью. Unknown keys должны возвращать понятную ошибку. `HOST_UI_PORT` должен принимать `auto` или valid TCP port number. `HOST_DOCKER_ENDPOINT` должен принимать только supported local endpoints для текущей платформы: Unix socket on macOS/Linux/WSL или Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` и `HOST_DOCKER_SOCKET` должны оставаться `/data` и `/var/run/docker.sock` для MVP launch model и не должны изменяться через обычный config flow.
 
 Если `~/.docker-host/bin` не находится в `PATH`, install script должен напечатать инструкцию:
 
@@ -271,7 +309,7 @@ docker-host open
 
 `docker-host install` должен подготовить launch configuration:
 
-- Docker access: local socket mount `/var/run/docker.sock:/var/run/docker.sock` for the Host container;
+- Docker access: local CLI endpoint through `HOST_DOCKER_ENDPOINT`, with the Host container receiving `/var/run/docker.sock:/var/run/docker.sock`;
 - Host image reference: default value bundled with CLI, override через `docker-host config`;
 - Host data root: default `~/.docker-host` на машине администратора;
 - Host container data mount: `~/.docker-host:/data`;
@@ -280,7 +318,8 @@ docker-host open
 - restart policy: default `unless-stopped`, override через `docker-host config`;
 - container name: default `docker-host`, override через `docker-host config`;
 - Host container должен быть подключен к shared module network;
-- required environment variables: `HOST_DATA_ROOT_HOST=<host-data-root>` and `HOST_DATA_ROOT_CONTAINER=/data`.
+- required environment variables: `HOST_DATA_ROOT_HOST=<host-data-root>` and `HOST_DATA_ROOT_CONTAINER=/data`;
+- Windows preflight: Docker Engine must be reachable through `npipe:////./pipe/docker_engine` and must report Linux container mode.
 
 Launch configuration должна храниться в:
 

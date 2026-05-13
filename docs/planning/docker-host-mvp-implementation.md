@@ -19,7 +19,8 @@
 - `.NET net10.0` is used only for the standalone `docker-host` CLI. Host backend code stays inside the Next.js application.
 - CLI project file: `Haas.DockerHost.Cli.csproj`; root namespace: `Haas.DockerHost.Cli`; published command name: `docker-host` via project `AssemblyName` or release artifact rename.
 - Add the CLI test project immediately, alongside the CLI project.
-- CLI Host lifecycle operations use Docker Engine API directly over the local Docker socket. The `docker` CLI executable is not a runtime dependency for `docker-host`.
+- CLI Host lifecycle operations use Docker Engine API directly over the local Docker endpoint. The `docker` CLI executable is not a runtime dependency for `docker-host`.
+- Phase 2 supports local Unix sockets on macOS/Linux/WSL and Docker Desktop named pipe on native Windows. Windows containers mode is unsupported; Windows users must use Docker Desktop Linux containers through WSL 2.
 - The rewrite happens directly in the current working tree. The current prototype can be overwritten. Prototype capabilities that should not be forgotten are tracked in [Prototype feature inventory](prototype-feature-inventory.md).
 - Implement the standalone `docker-host` CLI first and make it reliably manage the Host container lifecycle before module metadata runtime work starts.
 - For the first CLI milestone, the Host container may continue running the existing Host application code. The current Next.js Docker container management UI remains a valid launch target and smoke-test example while CLI bootstrap is built.
@@ -137,7 +138,7 @@ Required stack:
 - test project from the first scaffold;
 - self-contained single-file executable;
 - Spectre.Console для commands, prompts, status output, tables и progress indicators;
-- Direct Docker Engine API client over the local Docker socket.
+- Direct Docker Engine API client over the local Docker endpoint.
 
 Commands:
 
@@ -170,11 +171,15 @@ Tasks:
   - `HOST_DATA_ROOT_CONTAINER=/data`;
   - `HOST_UI_PORT=auto`;
   - `HOST_RESTART_POLICY=unless-stopped`;
+  - `HOST_DOCKER_ENDPOINT=unix:///var/run/docker.sock` on macOS/Linux/WSL;
+  - `HOST_DOCKER_ENDPOINT=npipe:////./pipe/docker_engine` on native Windows;
   - `HOST_DOCKER_SOCKET=/var/run/docker.sock`;
   - `HOST_MODULE_NETWORK=docker-host-modules`.
 - Реализовать Docker Engine API adapter в `Haas.DockerHost.Cli.Docker`:
-  - low-level transport abstraction for Docker Engine HTTP over local socket;
-  - Unix socket transport for `/var/run/docker.sock` in the first implementation;
+  - transport abstraction for Docker Engine API over local endpoint;
+  - Unix socket transport for `/var/run/docker.sock`;
+  - Windows named pipe transport for `npipe:////./pipe/docker_engine`;
+  - prefer `Docker.DotNet` or equivalent library support for Unix socket and Windows named pipe transport while keeping commands behind a Host-specific adapter;
   - high-level `DockerEngineClient` или equivalent adapter с typed methods для Host lifecycle operations;
   - request/response models для container, image, network, logs и error payloads;
   - typed inspect models для Docker Engine JSON responses.
@@ -195,13 +200,28 @@ Tasks:
   - `HOST_DATA_ROOT_HOST`;
   - `HOST_DATA_ROOT_CONTAINER`;
   - shared module network.
+- Добавить Windows preflight для native Windows CLI:
+  - Docker Engine доступен через `npipe:////./pipe/docker_engine`;
+  - Docker Engine reports Linux container mode;
+  - Windows containers mode fails with a clear unsupported-mode diagnostic;
+  - `HOST_DATA_ROOT_HOST` resolved to a platform-native absolute path that Docker Desktop can bind mount into the Linux Host container.
 - Сделать `docker-host update` как combined CLI + Host update:
   - download matching CLI artifact from rolling GitHub Release `cli-dev`;
   - verify `SHA256SUMS` when available;
   - replace installed `docker-host` executable safely;
   - pull Host image;
   - stop/recreate Host container while preserving volumes/env/ports/restart policy.
-- Сделать `HOST_IMAGE` изменяемым через `docker-host config` и сохраняемым в `launch.env`.
+- Перенести в Phase 2 минимальный rolling CLI release channel, который нужен для `docker-host update`:
+  - final `cli-release.yml` job downloads matrix build artifacts;
+  - generates `SHA256SUMS`;
+  - creates or updates GitHub prerelease tag `cli-dev`;
+  - uploads `docker-host-darwin-arm64`, `docker-host-darwin-x64`, `docker-host-linux-arm64`, `docker-host-linux-x64`, `docker-host-windows-x64.exe`, and `SHA256SUMS` with overwrite semantics.
+- Сделать known launch settings изменяемыми через typed `docker-host config` interface и сохраняемыми в `launch.env`:
+  - `docker-host config list`;
+  - `docker-host config get <KEY>`;
+  - `docker-host config set <KEY> <VALUE>`;
+  - `docker-host config set <KEY>=<VALUE>`;
+  - `docker-host config reset <KEY>`.
 - Сделать `docker-host open` как best-effort browser open с fallback на печать URL.
 - Показывать Docker Engine failures с operation name, HTTP status/code, Docker error message и понятным next step.
 
@@ -368,18 +388,13 @@ Tasks:
   - `ghcr.io/alex-de-haas/docker-host:<version>`;
   - `ghcr.io/alex-de-haas/docker-host:latest`;
   - `ghcr.io/alex-de-haas/docker-host:sha-<commit>`.
-- Реализовать CLI release workflow:
-  - publish to rolling GitHub prerelease tag `cli-dev`;
-  - overwrite existing `cli-dev` assets on each development build;
-  - `docker-host-darwin-arm64`;
-  - `docker-host-darwin-x64`;
-  - `docker-host-linux-arm64`;
-  - `docker-host-linux-x64`;
-  - `docker-host-windows-x64.exe`;
-  - `SHA256SUMS`.
+- Финализировать CLI distribution поверх rolling `cli-dev` channel, перенесенного в Phase 2:
+  - keep `cli-dev` compatible with `docker-host update` and `scripts/install.sh`;
+  - introduce immutable stable CLI releases when the project needs stable public versions;
+  - keep release documentation and artifact naming aligned with the implemented workflow.
 - Add Unix `scripts/install.sh` as shell-only bootstrap:
   - installable through `curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh`;
-  - check that Docker is installed/running by verifying the local Docker socket or by delegating the check to the installed `docker-host` CLI;
+  - check that Docker is installed/running by verifying the local Docker endpoint or by delegating the check to the installed `docker-host` CLI;
   - detect OS/architecture;
   - download matching CLI artifact from GitHub Release `cli-dev`;
   - verify `SHA256SUMS` when available;
@@ -408,7 +423,8 @@ Exit criteria:
 - External module exposure outside Host-managed Docker network.
 - Module health checks/readiness probes.
 - Encrypted secret storage, OS keychain integration или external secret managers.
-- `DOCKER_HOST` и non-standard Docker daemon endpoints.
+- Windows containers mode and Windows module containers.
+- `DOCKER_HOST`, TCP, SSH, TLS и other non-standard or remote Docker daemon endpoints.
 - Multiple installed versions of the same module id.
 - SemVer ranges or dependency version solver.
 - Host API authentication/authorization.
