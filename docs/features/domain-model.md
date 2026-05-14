@@ -242,21 +242,26 @@ Install and update plan execution is outside the first API slice, but the model 
 An install plan describes:
 
 - metadata URL and resolved metadata;
+- metadata digest and plan digest used to detect changes between review and apply;
 - Docker image to pull;
 - module directory and metadata copy target;
 - required storage directories and mappings;
 - settings requiring defaults or administrator input;
+- external mount collection requirements and any administrator-selected external mount mappings;
 - dependency modules that must be installed or started;
 - container name, network aliases, ports, mounts, environment variables, and restart policy.
 
 An update plan describes:
 
 - refreshed metadata source;
+- refreshed metadata digest and update plan digest;
 - image changes;
 - settings schema changes;
 - storage mapping changes;
 - dependency changes;
 - container replacement steps.
+
+The MVP does not rely on durable pending plan state. Install and update apply operations should recompute the reviewed plan from source metadata and submitted administrator decisions, then compare the reviewed digest before mutating files, module state, images, or containers.
 
 The first implementation uses optimistic fail-fast behavior. If an install or update fails after changes have started, Host records failure state and preserves created files, directories, images, and containers for diagnosis.
 

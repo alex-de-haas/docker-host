@@ -304,30 +304,29 @@ Recommended query parameters:
 
 Future endpoints should support:
 
-- loading metadata from URL;
-- validating metadata;
-- producing an install plan;
-- confirming and applying install;
-- exposing install failure diagnostics.
+- `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with metadata/plan digest, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker names, network aliases, and runtime ports;
+- `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed digest, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install;
+- expose install failure diagnostics with operation name, Docker status/message when available, administrator next step, and failed operation status.
+
+The MVP should not persist pending install plans as durable state. Apply endpoints should recompute the plan and compare the reviewed digest before changing files, module state, images, or containers.
 
 ### Module update
 
 Future endpoints should support:
 
-- refreshing the stored metadata URL;
-- comparing local and remote metadata;
-- producing an update plan;
-- confirming and applying update;
-- exposing update failure diagnostics.
+- `POST /api/modules/{moduleId}/update/plan` - refresh the stored metadata URL, validate refreshed metadata, require the same module id, compare against local `metadata.json`, and return a reviewed update plan;
+- `POST /api/modules/{moduleId}/update` - recompute the update plan, compare the reviewed digest, then apply image/container/settings/storage/dependency changes after confirmation;
+- expose update failure diagnostics and explicit retry.
 
 ### Module removal
 
 Future endpoints should support:
 
-- remove plan;
+- remove or cleanup plan for installed modules and failed installs;
 - container removal;
-- optional data cleanup decisions;
-- clear reporting of what data is preserved or deleted.
+- optional module-owned data cleanup decisions;
+- clear reporting of what data is preserved or deleted;
+- never delete external host paths, only remove their mappings from Host state.
 
 ### Settings and storage
 

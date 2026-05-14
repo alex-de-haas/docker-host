@@ -64,12 +64,12 @@ flowchart TD
   C --> D["Standalone docker-host CLI"]
   D --> E["Host backend API foundation"]
   E --> F["Host Web UI foundation"]
-  E --> G["Module metadata runtime"]
-  G --> H["Dependency and network runtime"]
-  G --> I["Settings and storage runtime"]
-  H --> J["Module update and failure flows"]
-  I --> J
-  J --> K["Release pipelines and install script"]
+  F --> G["Metadata schema and install planner"]
+  G --> H["Install review UI and input collection"]
+  H --> I["Install apply runtime"]
+  I --> J["Failure recovery and remove"]
+  J --> K["Update plan and update runtime"]
+  K --> L["Release pipelines and install script"]
 ```
 
 ## Phase 0 - Implementation baseline
@@ -283,7 +283,7 @@ Manual validation data:
 - Empty-state проверяется на автоматически созданном пустом `modules.json`.
 - Non-empty UI проверяется ручным добавлением одного lightweight fixture module в `modules.json`, например `com.example.nginx`, с `image.reference` на публичный небольшой образ `nginx:alpine`.
 - Для fixture module нужно вручную создать `modules/<module-id>/metadata.json` с тем же `id`, `name`, `version`, `image` и минимальным `runtime.ports`.
-- Для успешной проверки `start/stop/restart` до Phase 6 нужно вручную создать Docker container с ожидаемым module container name, например `mod-com-example-nginx`, потому что Phase 4 не реализует container creation/install runtime из metadata.
+- Для успешной проверки `start/stop/restart` до Phase 7 нужно вручную создать Docker container с ожидаемым module container name, например `mod-com-example-nginx`, потому что Phase 4 не реализует container creation/install runtime из metadata.
 - Seed data является только validation aid для Phase 4 и не становится production API, install flow или долгосрочным fixture contract.
 
 Exit criteria:
@@ -294,111 +294,201 @@ Exit criteria:
 - Secret setting values не отображаются, потому что settings UI отложен.
 - Empty and manually seeded non-empty module states can both be exercised through the Web UI.
 
-## Phase 5 - Module metadata validation and install plan
+## Phase 5 - Metadata schema and install planner
 
-Purpose: реализовать установку модуля из прямого JSON metadata URL без запуска контейнеров до подтверждения плана.
+Purpose: сделать read-only backend слой, который превращает прямой metadata JSON URL в детерминированный install plan без filesystem и Docker side effects.
 
 Tasks:
 
-- Добавить versioned JSON Schema для metadata draft `schemaVersion: "0.1"`.
+- Добавить versioned JSON Schema для metadata draft `schemaVersion: "0.1"` в `packages/contracts`, чтобы schema была shared contract artifact, а не только Host-private helper.
+- Сделать schema строгой для поддерживаемого MVP-контракта:
+  - поддерживаемые object fields описаны явно;
+  - documented reserved fields, such as `runtime.healthcheck`, may validate but must be marked ignored by MVP runtime;
+  - неизвестные non-extension поля отклоняются, чтобы Host не игнорировал важные runtime требования;
+  - future extensions должны идти через отдельную schema version или явно разрешенный extension namespace.
 - Реализовать metadata downloader:
   - обычный HTTP(S) JSON resource;
+  - bounded response size и timeout как reliability guard;
   - без repository-specific assumptions;
-  - без MVP allow-list/signature/latest-tag warnings.
-- Валидировать обязательные поля:
-  - `schemaVersion`;
-  - `id`;
-  - `name`;
-  - `version`;
-  - `image`;
-  - `runtime.ports`.
-- Применить defaults:
+  - без MVP allow-list, signatures, SSRF policy и latest-tag warnings.
+- Валидировать и нормализовать metadata:
+  - `schemaVersion`, `id`, `name`, `version`, `image.repository`, `image.tag`, `runtime.ports`;
   - `dependencies=[]`;
   - `settings=[]`;
+  - `storage.directories=[]`;
+  - `storage.mountCollections=[]`;
   - `image.pullPolicy=ifNotPresent`;
-  - optional storage fields as documented.
-- Рекурсивно читать required dependencies через `dependencies[].metadataUrl`.
-- Проверять dependency id и major version compatibility.
-- Рассчитывать install plan:
-  - module directory;
-  - local metadata copy path;
+  - setting `target` default: `{ "type": "env", "name": "<setting.key>" }`;
+  - either add an explicit enum options contract before accepting `settings.type="enum"` or reject enum settings as unsupported in MVP;
+  - reject unsupported setting targets, optional dependencies, unsupported port protocols, unsupported storage mount types, and unsafe module-owned paths.
+- Рекурсивно читать only required dependencies через `dependencies[].metadataUrl`.
+- Проверять dependency graph:
+  - downloaded dependency `id` matches declaration;
+  - dependency major version matches declaration;
+  - requested `connection.endpoint` exists in dependency `runtime.ports`;
+  - no cycles;
+  - no conflicting metadata URLs or major versions for the same dependency id.
+- Рассчитывать deterministic install plan:
+  - `metadataUrl`;
+  - normalized metadata and dependency tree;
+  - metadata digest and plan digest;
+  - module directory and local metadata copy path;
   - Docker image references;
-  - required dependencies;
-  - settings prompts/defaults;
+  - required dependencies and topological install order;
+  - setting prompts, defaults, and secret redaction markers;
+  - module-owned storage mappings;
+  - external mount collection requirements, not concrete external paths yet;
+  - container ports without host publication;
+  - Docker container names and network aliases;
+  - conflicts against existing `modules.json`, Docker container names, network aliases, environment variable targets, storage mappings, and dependency graph.
+- Add `POST /api/modules/install/plan`.
+- Do not persist pending install plans in MVP. The later apply endpoint must recompute the plan from submitted metadata URL and compare `metadataDigest` or `planDigest` before changing state.
+
+Exit criteria:
+
+- Metadata URL can be loaded, validated, normalized, and converted into an install plan.
+- The plan API performs no module directory creation, metadata writes, image pulls, container creation, or Docker bind mount validation.
+- Plan output never includes raw secret values.
+- Validation and conflict errors are structured enough for the Web UI to point the administrator at the failing field or graph node.
+
+## Phase 6 - Install review UI and input collection
+
+Purpose: дать администратору понятный review screen для install plan и собрать значения, которые не должны приходить из metadata.
+
+Tasks:
+
+- Add module entry point in the Web UI from the installed modules dashboard.
+- Implement metadata URL input and call `POST /api/modules/install/plan`.
+- Show plan sections:
+  - module identity and metadata URL;
+  - image reference and pull policy;
+  - dependency tree and install order;
+  - dependency connection mappings and resolved internal URLs;
+  - setting prompts and defaults;
   - module-owned storage mappings;
   - external mount collection requirements;
-  - container ports;
-  - Docker network aliases;
-  - potential conflicts.
-- Сделать API и UI review screen для install plan.
+  - runtime ports and resource hints;
+  - generated container names and network aliases;
+  - conflicts and validation errors.
+- Collect setting values for install:
+  - default non-secret values can be shown and edited;
+  - secret values are accepted as write-only fields and are never echoed back in API responses or plan summaries;
+  - required settings without defaults must block confirmation until filled.
+- Collect concrete external mounts only for declared `storage.mountCollections`:
+  - require at least `minItems` when collection is required;
+  - validate item keys as safe path segments;
+  - compute container paths from `itemContainerPathTemplate`;
+  - do not check external host paths through the Host process filesystem.
+- Build the install request payload expected by Phase 7, including `metadataUrl`, reviewed digest, settings values, and external mount selections.
 
 Exit criteria:
 
-- Metadata URL можно загрузить, провалидировать и превратить в install plan.
-- До подтверждения администратора Host не создает containers или mounts.
-- Plan redacts secret values.
+- An administrator can paste a metadata URL, review the complete plan, see conflicts, and provide required settings and external mount selections.
+- The UI keeps install business logic in the backend plan API and only renders/collects user decisions.
+- Secret inputs are not stored in React state longer than needed for submit and are not rendered in summaries, error messages, or debug output.
 
-## Phase 6 - Module install runtime
+## Phase 7 - Module install apply runtime
 
-Purpose: применить подтвержденный install plan и запустить module containers.
+Purpose: применить подтвержденный install request и запустить required dependency modules plus consumer module.
 
 Tasks:
 
-- Создавать `<HOST_DATA_ROOT_CONTAINER>/modules/<module-id>/`.
-- Сохранять локальную копию metadata как `metadata.json`.
-- Сохранять module settings values в root-level `modules.json`.
-- Создавать module-owned directories.
-- Pull images согласно `pullPolicy`.
-- Создавать и запускать required dependency containers.
-- Вычислять internal Docker-network base URLs:
-  - network alias из module id;
-  - selected dependency endpoint;
-  - `http://<network-alias>:<containerPort>`.
-- Inject dependency URLs в consumer env vars через `dependencies[].connection.baseUrlEnv`.
-- Inject settings в runtime env vars. В MVP все module settings считаются environment variables.
-- Создавать consumer container с storage mappings, resources hints и shared network.
-- Сохранять computed mappings и resolved dependency URLs.
-- При ошибке ставить status `failed` и не делать automatic rollback.
+- Add `POST /api/modules/install`.
+- Recompute the install plan from submitted `metadataUrl` and compare the reviewed `metadataDigest` or `planDigest`; if metadata changed, reject the request and require review again.
+- Persist operation state before mutating Docker:
+  - create or update the module record with `operationStatus=installing`;
+  - preserve previous installed modules;
+  - keep operation errors with operation name, Docker status, Docker message, and next step.
+- Create `<HOST_DATA_ROOT_CONTAINER>/modules/<module-id>/`.
+- Save local metadata copy as `metadata.json` after the reviewed metadata digest is accepted.
+- Save module setting values, including write-only secret values, in root-level `modules.json`.
+- Create module-owned directories for `storage.directories`.
+- Store computed module-owned storage mappings and selected external mounts in `modules.json`.
+- Pull images according to `pullPolicy`.
+- Resolve required dependencies:
+  - already installed compatible dependencies are reused and started when needed;
+  - missing required dependencies from the reviewed dependency tree are installed before the consumer;
+  - conflicting installed dependencies fail the install before container mutation.
+- Create and start containers in topological order.
+- Attach every module container to the shared module network with the planned alias.
+- Compute internal dependency base URLs as `http://<network-alias>:<containerPort>` for `http` endpoints.
+- Inject dependency URLs through `dependencies[].connection.baseUrlEnv`.
+- Inject settings through environment variables. In MVP all module settings are environment variables.
+- Create consumer container with storage mappings, external mounts, resource hints, restart policy, and shared network.
+- Mark modules `installed` after successful creation/start. On partial failure, mark the affected module `failed` and do not automatically roll back files, directories, images, or containers.
 
 Exit criteria:
 
-- Required dependency module и consumer module запускаются в shared network.
-- Consumer получает dependency base URL через env var.
-- Partial failures сохраняют диагностику и не удаляют данные автоматически.
+- A reviewed install request can install and start a module with required dependencies.
+- Required dependency and consumer modules can communicate on the shared Docker network through injected base URL env vars.
+- Module-owned storage and selected external mounts are reflected in Docker container configuration and persisted state.
+- Partial failures preserve diagnostics and created artifacts for explicit recovery.
 
-## Phase 7 - Module lifecycle and update
+## Phase 8 - Failure recovery and module removal
 
-Purpose: закрыть полный lifecycle установленного module.
+Purpose: закрыть operational gaps после install runtime: failed install recovery, cleanup, and explicit remove.
 
 Tasks:
 
-- Реализовать lifecycle states:
-  - `installing`;
-  - `installed`;
-  - `updating`;
-  - `failed`.
-- Не добавлять disable state/action в MVP lifecycle model.
-- Реализовать start/stop/restart/remove.
-- Ввести `removing` вместе с remove flow, а не в Phase 3/backend foundation contract.
-- Реализовать explicit retry для failed install/update.
-- Реализовать explicit cleanup/remove failed install с предупреждением о data directories.
-- Реализовать update flow:
+- Add `removing` operation status with the remove flow only.
+- Add retry for failed installs:
+  - recompute plan from stored metadata URL or original install request data available in `modules.json`;
+  - tolerate existing module directory, metadata copy, pulled images, and partially created containers when safe;
+  - keep new failure diagnostics if retry fails.
+- Add cleanup/remove plan for failed installs:
+  - show containers, images, metadata files, module-owned directories, and external mount references that may be affected;
+  - default to preserving data directories;
+  - require explicit administrator confirmation before deleting module-owned data.
+- Add remove for installed modules:
+  - stop and remove module container;
+  - remove module registry entry;
+  - preserve or delete module-owned data according to explicit user choice;
+  - never delete external host paths, only remove their mappings from Host state.
+- Harden start/stop/restart after real install:
+  - ensure network alias before start/restart;
+  - surface missing storage mappings and missing containers as actionable errors;
+  - keep Docker runtime state read from Docker daemon.
+- Add Web UI actions for retry, cleanup failed install, and remove.
+
+Exit criteria:
+
+- Failed installs are visible and can be retried or cleaned up explicitly.
+- Removing a module does not delete data directories or external data without a clear confirmation.
+- Lifecycle actions work against containers created by the install runtime, not only manually seeded containers.
+
+## Phase 9 - Module update plan and update runtime
+
+Purpose: реализовать update как metadata refresh plus reviewed change plan, not just `docker pull`.
+
+Tasks:
+
+- Add update plan API:
   - refresh stored metadata URL;
-  - validate new metadata;
-  - require same module `id`;
-  - compare with local `metadata.json`;
-  - show update plan;
-  - apply container/settings/storage/dependency changes after confirmation;
-  - save new `metadata.json`;
-  - mark failed on partial failure without rollback.
+  - validate new metadata with the same schema/resolver as install;
+  - require the same module `id`;
+  - compare refreshed metadata with local `metadata.json`;
+  - show image, settings schema, storage, dependency, runtime port/resource, and generated container configuration changes;
+  - preserve existing setting values when compatible;
+  - prompt for new required settings;
+  - keep secret values redacted.
+- Add update review UI.
+- Add update apply API:
+  - recompute update plan and compare reviewed digest;
+  - set `operationStatus=updating`;
+  - pull images according to refreshed `pullPolicy`;
+  - apply dependency changes before recreating the consumer;
+  - recreate or replace container configuration when image, env, mounts, ports, resources, or network aliases change;
+  - save refreshed `metadata.json` and updated computed mappings after successful apply;
+  - mark `failed` on partial failure without automatic rollback.
+- Add explicit retry for failed updates.
 
 Exit criteria:
 
-- Module update не является только `docker pull`; он всегда refreshes metadata URL.
-- Failed states можно увидеть, retry или cleanup явно запустить из UI/API.
-- Removing не удаляет data directories без понятного подтверждения.
+- Module update always refreshes metadata URL and displays a reviewed update plan.
+- Existing compatible settings and storage mappings survive update.
+- Failed updates are visible and can be retried explicitly.
 
-## Phase 8 - Release and install script
+## Phase 10 - Release and install script
 
 Purpose: сделать установку воспроизводимой для пользователя без локальной сборки.
 
@@ -432,6 +522,7 @@ Exit criteria:
 - Пользователь может установить CLI через Unix `install.sh` over curl и поднять Host без локального repository checkout.
 - Host image и CLI artifacts публикуются независимо.
 - CLI default Host image reference соответствует repository image path.
+- Published Host image is validated end-to-end against the module install, remove, and update MVP flows before being treated as release-ready.
 
 ## Out of scope for MVP
 
@@ -455,10 +546,12 @@ Exit criteria:
 2. `docker-host` CLI can install/start/open Host container.
 3. Host backend starts in container and persists Host state under `/data`.
 4. Web UI can read Host/module status through backend API.
-5. Metadata URL produces validated install plan.
-6. Required dependency and consumer modules launch in shared network.
-7. Module lifecycle/update/failure handling is complete.
-8. Release workflows and install script are complete.
+5. Metadata URL produces a read-only validated install plan.
+6. Web UI can review the plan and collect settings/external mount decisions.
+7. Confirmed install request creates storage, pulls images, and starts dependency plus consumer modules.
+8. Failed installs can be retried or cleaned up, and installed modules can be removed explicitly.
+9. Updates refresh metadata URL, show a diff plan, and apply after confirmation.
+10. Release workflows and install script are complete.
 
 ## Documentation updates during implementation
 
