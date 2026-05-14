@@ -267,18 +267,32 @@ Purpose: дать администратору основной рабочий �
 
 Tasks:
 
+- Переписать основной dashboard вокруг installed modules, не сохраняя текущую raw-container UI модель.
+- Текущие prototype UI components, hooks, raw-container API routes и Host logic можно удалять или заменять по мере реализации нового module dashboard; отдельный backup/archive не нужен, Git history считается достаточным recovery path.
 - Реализовать список installed modules.
 - Показать Docker container status для каждого module.
-- Добавить первый UI slice для start/stop/restart и logs.
-- Оставить add module by metadata URL, install/update plan review, settings, storage mappings и remove UI для более поздних module management phases.
+- Добавить первый UI slice для start/stop/restart.
+- Не реализовывать logs UI в Phase 4; module logs остаются future diagnostics/API slice.
+- Оставить add module by metadata URL, install/update plan review, settings display/editing, storage mappings и remove UI для более поздних module management phases.
 - Не добавлять альтернативную desktop/local UI модель. Web UI остается основным интерфейсом.
-- Не раскрывать secret setting values в UI.
+- Не показывать module settings в Phase 4.
+- Для ручной проверки non-empty UI использовать manually seeded module data, а не production install flow. Конкретный nginx-based recipe описан в [Local development and testing](../features/local-development.md#phase-4-manual-module-seed).
+
+Manual validation data:
+
+- Empty-state проверяется на автоматически созданном пустом `modules.json`.
+- Non-empty UI проверяется ручным добавлением одного lightweight fixture module в `modules.json`, например `com.example.nginx`, с `image.reference` на публичный небольшой образ `nginx:alpine`.
+- Для fixture module нужно вручную создать `modules/<module-id>/metadata.json` с тем же `id`, `name`, `version`, `image` и минимальным `runtime.ports`.
+- Для успешной проверки `start/stop/restart` до Phase 6 нужно вручную создать Docker container с ожидаемым module container name, например `mod-com-example-nginx`, потому что Phase 4 не реализует container creation/install runtime из metadata.
+- Seed data является только validation aid для Phase 4 и не становится production API, install flow или долгосрочным fixture contract.
 
 Exit criteria:
 
 - Все UI actions идут через Host backend API.
 - UI не содержит module install business logic.
-- Secret settings отображаются как write-only values.
+- UI не зависит от prototype `/api/containers` routes для основного dashboard.
+- Secret setting values не отображаются, потому что settings UI отложен.
+- Empty and manually seeded non-empty module states can both be exercised through the Web UI.
 
 ## Phase 5 - Module metadata validation and install plan
 

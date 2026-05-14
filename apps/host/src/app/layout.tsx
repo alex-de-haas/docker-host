@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Docker Host Manager",
-  description: "Manage Docker containers with URL and port configurations",
+  description: "Manage installed Docker Host modules",
 };
 
 export default function RootLayout({

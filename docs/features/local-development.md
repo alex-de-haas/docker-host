@@ -147,6 +147,113 @@ Example metadata image reference for local module testing:
 
 When the Host itself runs directly through `npm run host:dev`, local metadata URLs can point to `localhost`. When the Host runs as `docker-host:dev`, metadata URLs for services on the developer machine should use `host.docker.internal`.
 
+## Phase 4 manual module seed
+
+Phase 4 does not include module install runtime. To validate the module dashboard before Phase 5/6, use a dedicated development data root and manually seed one installed module record plus its local metadata file. This seed is only a validation aid; it is not a production API, fixture contract, or install flow.
+
+Use an isolated root instead of the production default `~/.docker-host`:
+
+```bash
+export DOCKER_HOST_PHASE4_ROOT="$(mktemp -d /tmp/docker-host-phase4.XXXXXX)"
+mkdir -p "$DOCKER_HOST_PHASE4_ROOT/modules/com.example.nginx"
+```
+
+Create `modules.json`:
+
+```bash
+cat > "$DOCKER_HOST_PHASE4_ROOT/modules.json" <<'JSON'
+{
+  "schemaVersion": "0.1",
+  "hostSettings": {},
+  "modules": [
+    {
+      "id": "com.example.nginx",
+      "metadataUrl": "manual-seed://com.example.nginx",
+      "metadataPath": "modules/com.example.nginx/metadata.json",
+      "containerName": "mod-com-example-nginx",
+      "image": {
+        "repository": "nginx",
+        "tag": "alpine",
+        "reference": "nginx:alpine",
+        "pullPolicy": "ifNotPresent"
+      },
+      "operationStatus": "installed",
+      "settings": {},
+      "storageMappings": {},
+      "resolvedDependencies": {},
+      "installedAt": "2026-05-14T00:00:00Z",
+      "updatedAt": "2026-05-14T00:00:00Z",
+      "lastError": null
+    }
+  ],
+  "updatedAt": "2026-05-14T00:00:00Z"
+}
+JSON
+```
+
+Create `modules/com.example.nginx/metadata.json`:
+
+```bash
+cat > "$DOCKER_HOST_PHASE4_ROOT/modules/com.example.nginx/metadata.json" <<'JSON'
+{
+  "schemaVersion": "0.1",
+  "id": "com.example.nginx",
+  "name": "Example Nginx",
+  "description": "Manual Phase 4 seed module for validating module list and lifecycle UI.",
+  "version": "1.0.0",
+  "image": {
+    "repository": "nginx",
+    "tag": "alpine",
+    "pullPolicy": "ifNotPresent"
+  },
+  "dependencies": [],
+  "settings": [],
+  "storage": {
+    "directories": []
+  },
+  "runtime": {
+    "ports": [
+      {
+        "key": "http",
+        "containerPort": 80,
+        "protocol": "tcp",
+        "public": false
+      }
+    ]
+  }
+}
+JSON
+```
+
+Create the matching Docker container manually. Phase 4 can start, stop, and restart an existing module container, but it must not create containers from metadata:
+
+```bash
+docker rm -f mod-com-example-nginx 2>/dev/null || true
+docker pull nginx:alpine
+docker create --name mod-com-example-nginx nginx:alpine
+```
+
+For direct host-run development, point both Host data root variables at the isolated directory because the backend runs on the developer machine:
+
+```bash
+HOST_DATA_ROOT_HOST="$DOCKER_HOST_PHASE4_ROOT" \
+HOST_DATA_ROOT_CONTAINER="$DOCKER_HOST_PHASE4_ROOT" \
+npm run host:dev
+```
+
+For production-like container testing, bind the same root to `/data` and keep `/data` as the container-side root:
+
+```bash
+docker build -f apps/host/Dockerfile -t docker-host:dev .
+
+docker run --rm --name docker-host-dev -p 3000:3000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$DOCKER_HOST_PHASE4_ROOT:/data" \
+  -e HOST_DATA_ROOT_HOST="$DOCKER_HOST_PHASE4_ROOT" \
+  -e HOST_DATA_ROOT_CONTAINER=/data \
+  docker-host:dev
+```
+
 ## Verification checklist
 
 For a normal feature change:
