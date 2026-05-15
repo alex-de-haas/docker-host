@@ -375,3 +375,36 @@ export interface InstallPlanErrorEnvelope {
   validationErrors: InstallPlanValidationError[];
   conflicts: InstallPlanConflict[];
 }
+
+export interface InstallPlanResponse {
+  plan?: InstallPlan;
+  error?: InstallPlanErrorEnvelope;
+}
+
+export type ModuleInstallSettingValue = string | number | boolean;
+
+export interface ModuleInstallSettingSelection {
+  moduleId: string;
+  key: string;
+  value: ModuleInstallSettingValue;
+  secret: boolean;
+}
+
+export type ModuleInstallExternalMountAccess = 'readWrite' | 'readOnly';
+
+export interface ModuleInstallExternalMountSelection {
+  moduleId: string;
+  collectionKey: string;
+  key: string;
+  label?: string;
+  hostPath: string;
+  containerPath: string;
+  access: ModuleInstallExternalMountAccess;
+}
+
+export interface ModuleInstallRequest {
+  metadataUrl: string;
+  planDigest: string;
+  settings: ModuleInstallSettingSelection[];
+  externalMounts: ModuleInstallExternalMountSelection[];
+}

@@ -1,6 +1,7 @@
 'use client';
 
-import { Boxes, LoaderCircle, RefreshCw } from 'lucide-react';
+import Link from 'next/link';
+import { Boxes, LoaderCircle, Plus, RefreshCw } from 'lucide-react';
 import { ModuleList } from '@/components/ModuleList';
 import { ModuleStatsCards } from '@/components/ModuleStatsCards';
 import { Button } from '@/components/ui/button';
@@ -73,9 +74,17 @@ export default function Dashboard() {
                 Module state is resolved through the Host backend API and Docker runtime state.
               </p>
             </div>
-            <span className="text-sm text-muted-foreground">
-              {modules.length} module{modules.length !== 1 ? 's' : ''}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {modules.length} module{modules.length !== 1 ? 's' : ''}
+              </span>
+              <Button asChild>
+                <Link href="/modules/install">
+                  <Plus className="h-4 w-4" />
+                  Install module
+                </Link>
+              </Button>
+            </div>
           </div>
 
           {loading && modules.length === 0 ? (

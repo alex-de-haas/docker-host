@@ -12,6 +12,8 @@ The dashboard reads installed modules from `GET /api/modules` and uses module li
 
 The UI displays module metadata, image reference, operation status, Docker runtime state, container identity, timestamps, and any recorded module/runtime error. It intentionally does not implement module installation, update plan review, settings editing, storage mapping edits, removal, or log viewing in Phase 4.
 
+Phase 6 adds a dashboard entry point to a dedicated module install route. The install route owns metadata URL input, plan review, administrator setting collection, external mount selection, and construction of the future install apply payload. Dashboard rows stay focused on installed modules and lifecycle actions.
+
 ```mermaid
 flowchart LR
   A["Web UI dashboard"] --> B["GET /api/modules"]
@@ -30,4 +32,4 @@ The empty state is shown when the Host modules store has no installed module rec
 ## Open Questions
 
 - What detail view should own module logs once diagnostics endpoints are added?
-- Should future install/update flows live on the dashboard page or a dedicated module management route?
+- Should module update reuse the dedicated install route layout or use a separate update review route once update plans are implemented?

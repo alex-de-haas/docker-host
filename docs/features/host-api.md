@@ -311,6 +311,44 @@ Future endpoints should support:
 - `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install;
 - expose install failure diagnostics with operation name, Docker status/message when available, administrator next step, and failed operation status.
 
+The reviewed install request payload shape is:
+
+```json
+{
+  "metadataUrl": "https://modules.example.com/reports.json",
+  "planDigest": "sha256:...",
+  "settings": [
+    {
+      "moduleId": "com.acme.reports",
+      "key": "REPORT_RETENTION_DAYS",
+      "value": 30,
+      "secret": false
+    },
+    {
+      "moduleId": "com.acme.reports",
+      "key": "EXTERNAL_API_TOKEN",
+      "value": "submitted write-only secret",
+      "secret": true
+    }
+  ],
+  "externalMounts": [
+    {
+      "moduleId": "com.acme.storage",
+      "collectionKey": "libraries",
+      "key": "main-media",
+      "label": "Main media disk",
+      "hostPath": "/mnt/media",
+      "containerPath": "/storage/libraries/main-media",
+      "access": "readWrite"
+    }
+  ]
+}
+```
+
+Secret setting values are accepted only as write-only submit values. API responses, plan summaries, logs, errors, diagnostics, and UI previews must never echo raw secret values; redacted previews may show that a secret value is present.
+
+The install planner owns administrator-input filtering. Settings and external mount collections should be returned only for the root module and dependency modules that the plan will install. Already installed compatible dependencies with `installAction: "reuse"` should not ask for setting values or external mount selections during a consumer install.
+
 The install plan request body is intentionally minimal:
 
 ```json

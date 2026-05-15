@@ -369,6 +369,17 @@ Exit criteria:
 
 Purpose: дать администратору понятный review screen для install plan и собрать значения, которые не должны приходить из metadata.
 
+Implementation decisions:
+
+- The install flow lives on a dedicated Web UI route instead of a dashboard dialog.
+- The Phase 7 request payload shape is documented in the Host API docs and represented by a shared Host app TypeScript type.
+- The backend install planner decides which settings and external mount collections require administrator input. Reused dependencies should not produce input prompts.
+- External mount selections include item key, optional label, host path, computed container path, and access mode.
+- Secret settings use uncontrolled inputs and are read only during submit through `FormData`; plan summaries and previews must redact them.
+- Install plan conflicts block confirmation. The UI may still show the partial plan returned with HTTP `409`.
+- Local development should include a metadata fixture served by the Host app so Phase 6 can be tested without an external metadata URL.
+- Phase 6 should add unit tests for pure install request helpers such as setting coercion, external mount item validation, and redacted payload previews.
+
 Tasks:
 
 - Add module entry point in the Web UI from the installed modules dashboard.

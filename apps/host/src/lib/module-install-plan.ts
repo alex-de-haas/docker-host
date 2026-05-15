@@ -123,9 +123,22 @@ function buildPlan(
     .filter(node => node.id !== graph.rootId)
     .map(node => buildDependencyNode(graph, node.id, store, config));
   const images = orderedNodes.map(node => buildImage(node.id, node.metadata));
-  const settings = orderedNodes.flatMap(node => buildSettingPrompts(node.id, node.metadata));
+  const administratorInputModuleIds = new Set([
+    graph.rootId,
+    ...dependencies
+      .filter(dependency => dependency.installAction === 'install')
+      .map(dependency => dependency.id),
+  ]);
+  const nodesRequiringAdministratorInput = orderedNodes.filter(node =>
+    administratorInputModuleIds.has(node.id)
+  );
+  const settings = nodesRequiringAdministratorInput.flatMap(node =>
+    buildSettingPrompts(node.id, node.metadata)
+  );
   const directories = orderedNodes.flatMap(node => buildStorageDirectories(node.id, node.metadata, config));
-  const mountCollections = orderedNodes.flatMap(node => buildMountCollections(node.id, node.metadata));
+  const mountCollections = nodesRequiringAdministratorInput.flatMap(node =>
+    buildMountCollections(node.id, node.metadata)
+  );
   const rootPaths = buildModulePaths(root.id, config);
   const rootContainerName = getModuleDockerName(root.id);
   const rootNetworkAlias = getModuleNetworkAlias(root.id);
