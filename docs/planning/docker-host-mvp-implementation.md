@@ -592,26 +592,43 @@ Exit criteria:
 
 Purpose: сделать установку воспроизводимой для пользователя без локальной сборки.
 
+Status: first implementation slice completed locally. The repository now has the Unix installer, Host image workflow hardening, CLI install-time Docker preflight on all supported platforms, and release/install documentation. Treating a published image as release-ready still requires the manual published-artifact validation checklist in [Repository and release model](../features/repository-release-model.md).
+
+Decisions before implementation:
+
+- Host immutable image versions are published from `host-v*` git tags only. The Host image workflow must not treat CLI tags such as `cli-dev` or future `cli-v*` tags as Host release versions.
+- Host image publication should produce a multi-platform image for `linux/amd64` and `linux/arm64`, plus `latest` on `main` and `sha-<commit>` for traceability.
+- `scripts/install.sh` is a thin Unix bootstrap. It downloads and installs the CLI, then delegates launch configuration creation and Docker preflight to `docker-host install`.
+- `docker-host install` should verify Docker Engine reachability and Linux-container mode on Unix-like systems as well as native Windows, so install and start diagnostics stay owned by the CLI.
+- Re-running `scripts/install.sh` is supported as repair/reinstall: it may replace the CLI executable, but it must preserve existing `launch.env` values through the CLI-owned config flow.
+- If `SHA256SUMS` is available, installer checksum verification is mandatory. If the platform lacks a usable checksum tool, installation should fail with a clear next step instead of continuing silently.
+- The installer should support scoped overrides for testing and forks: `DOCKER_HOST_INSTALL_REPO`, `DOCKER_HOST_INSTALL_TAG`, `DOCKER_HOST_INSTALL_DIR`, and `DOCKER_HOST_INSTALL_START`.
+- Immutable stable CLI releases are deferred until the project needs public stable versions. Phase 10 keeps `cli-dev` as the MVP install and self-update channel.
+- Release-ready validation starts as a documented manual checklist: pull the published Host image, install through the curl flow, start Host, then validate module install, remove, and update flows against the published image. A later smoke workflow can automate that checklist.
+- Phase 10 documentation updates must cover `README.md`, `scripts/README.md`, [Repository and release model](../features/repository-release-model.md), and [Host launch model](../features/host-launch.md).
+
 Tasks:
 
 - Реализовать Host image workflow:
-  - `ghcr.io/alex-de-haas/docker-host:<version>`;
+  - `ghcr.io/alex-de-haas/docker-host:<version>` from `host-v*` tags;
   - `ghcr.io/alex-de-haas/docker-host:latest`;
   - `ghcr.io/alex-de-haas/docker-host:sha-<commit>`.
+  - publish Linux `amd64` and `arm64` variants.
 - Финализировать CLI distribution поверх rolling `cli-dev` channel, перенесенного в Phase 2:
   - keep `cli-dev` compatible with `docker-host update` and `scripts/install.sh`;
-  - introduce immutable stable CLI releases when the project needs stable public versions;
+  - defer immutable stable CLI releases until the project needs stable public versions;
   - keep release documentation and artifact naming aligned with the implemented workflow.
 - Add Unix `scripts/install.sh` as shell-only bootstrap:
   - installable through `curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh`;
-  - check that Docker is installed/running by verifying the local Docker endpoint or by delegating the check to the installed `docker-host` CLI;
+  - delegate Docker endpoint and Linux-container-mode validation to the installed `docker-host` CLI;
   - detect OS/architecture;
   - download matching CLI artifact from GitHub Release `cli-dev`;
-  - verify `SHA256SUMS` when available;
+  - verify `SHA256SUMS` when available and fail clearly if verification cannot be performed;
   - install to `~/.docker-host/bin/docker-host`;
   - chmod executable on Unix-like systems;
-  - create default data root;
-  - prepare `launch.env`;
+  - call `docker-host install` to create the default data root and prepare `launch.env`;
+  - preserve existing launch configuration on reinstall;
+  - support `DOCKER_HOST_INSTALL_REPO`, `DOCKER_HOST_INSTALL_TAG`, and `DOCKER_HOST_INSTALL_DIR` overrides for forks and installer tests;
   - print PATH instructions and next commands.
 - Support explicit start mode:
   - `sh -s -- --start`;
@@ -623,6 +640,7 @@ Exit criteria:
 - Host image и CLI artifacts публикуются независимо.
 - CLI default Host image reference соответствует repository image path.
 - Published Host image is validated end-to-end against the module install, remove, and update MVP flows before being treated as release-ready.
+- No Phase 10 release/install design questions remain open before implementation starts.
 
 ## Out of scope for MVP
 

@@ -132,14 +132,16 @@ docker-host open
 
 `install.sh` должен:
 
-- проверить, что Docker установлен и daemon доступен через local Docker endpoint, или делегировать эту проверку установленному `docker-host` CLI;
+- делегировать проверку local Docker endpoint и Linux-container-mode установленному `docker-host` CLI;
 - определить OS/architecture;
 - скачать подходящий `docker-host` standalone executable artifact из GitHub Release `cli-dev`;
+- проверить `SHA256SUMS`, если checksum file доступен, и завершиться с понятной ошибкой, если проверку нельзя выполнить;
 - положить executable в user-writable bin directory, например `~/.docker-host/bin/docker-host`;
 - сделать файл executable;
 - добавить `~/.docker-host/bin` в `PATH` или вывести точную команду, которую администратор должен добавить в shell profile;
-- создать default Host data root `~/.docker-host`;
-- подготовить launch configuration для Host container в `~/.docker-host/config/launch.env`;
+- вызвать `docker-host install`, чтобы создать default Host data root `~/.docker-host` и подготовить launch configuration для Host container в `~/.docker-host/config/launch.env`;
+- сохранять существующие значения `launch.env` при повторном запуске installer;
+- поддерживать scoped overrides для forks и installer tests: `DOCKER_HOST_INSTALL_REPO`, `DOCKER_HOST_INSTALL_TAG`, `DOCKER_HOST_INSTALL_DIR`, `DOCKER_HOST_INSTALL_START`;
 - не дублировать module management logic;
 - после установки вывести следующие команды и URL Web UI.
 
@@ -287,7 +289,7 @@ curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scrip
 DOCKER_HOST_INSTALL_START=1 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
 ```
 
-При `--start` script может выполнить:
+При `--start` или `DOCKER_HOST_INSTALL_START=1` script выполняет:
 
 ```text
 docker-host install
@@ -307,7 +309,7 @@ docker-host start
 docker-host open
 ```
 
-`docker-host install` должен подготовить launch configuration:
+`docker-host install` должен проверить доступность local Docker Engine, убедиться, что daemon работает в Linux-container mode, и подготовить launch configuration:
 
 - Docker access: local CLI endpoint through `HOST_DOCKER_ENDPOINT`, with the Host container receiving `/var/run/docker.sock:/var/run/docker.sock`;
 - Host image reference: default value bundled with CLI, override через `docker-host config`;

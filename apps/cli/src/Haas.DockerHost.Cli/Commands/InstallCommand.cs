@@ -14,11 +14,8 @@ internal sealed class InstallCommand(CommandContext context)
 
         var settings = context.SettingsStore.EnsureInstalled();
 
-        if (context.Environment.IsWindows)
-        {
-            using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-            await docker.EnsureLinuxEngineAsync();
-        }
+        using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
+        await docker.EnsureLinuxEngineAsync();
 
         context.Console.MarkupLine("[green]Launch configuration is ready.[/]");
         context.Console.MarkupLine($"Config: [grey]{Markup.Escape(context.Environment.LaunchConfigPath)}[/]");
@@ -27,4 +24,3 @@ internal sealed class InstallCommand(CommandContext context)
         return 0;
     }
 }
-

@@ -6,6 +6,28 @@ Monorepo for Docker Host Manager, including the Host Web UI/backend API and the 
 
 - [Project documentation](docs/root.md) contains the current module model, feature notes, and planning status.
 
+## Install Current CLI Build
+
+The Unix installer downloads the rolling `cli-dev` CLI release, verifies `SHA256SUMS` when available, installs `docker-host` under `~/.docker-host/bin`, and delegates Docker preflight plus launch configuration setup to the CLI:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
+```
+
+Then start and open the Host:
+
+```bash
+export PATH="$HOME/.docker-host/bin:$PATH"
+docker-host start
+docker-host open
+```
+
+For one-command install and start:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh -s -- --start
+```
+
 ## Local development
 
 Detailed local testing guidance is documented in [Local development and testing](docs/features/local-development.md).
