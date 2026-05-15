@@ -85,6 +85,13 @@ export interface InstalledModuleRecord {
   dependencies?: ResolvedDependency[];
   installedAt?: string;
   updatedAt?: string;
+  lastOperation?: 'install' | 'update' | 'remove' | 'lifecycle';
+  updateAttempt?: {
+    updatePlanDigest: string;
+    settings: ModuleInstallSettingSelection[];
+    externalMounts: ModuleInstallExternalMountSelection[];
+    attemptedAt: string;
+  };
   lastError?: ModuleOperationError | null;
 }
 
@@ -191,6 +198,7 @@ export interface ModuleSummary {
   runtimeStatus: ModuleRuntimeStatus;
   installedAt?: string;
   updatedAt?: string;
+  lastOperation?: InstalledModuleRecord['lastOperation'];
   lastError: ModuleOperationError | null;
 }
 
@@ -501,3 +509,116 @@ export interface ModuleInstallFailureResponse {
 }
 
 export type ModuleInstallResponse = ModuleInstallSuccessResponse | ModuleInstallFailureResponse;
+
+export type ModuleUpdateChangeCategory =
+  | 'metadata'
+  | 'image'
+  | 'settings'
+  | 'storage'
+  | 'externalMounts'
+  | 'dependencies'
+  | 'runtime'
+  | 'docker';
+
+export type ModuleUpdateChangeAction =
+  | 'added'
+  | 'changed'
+  | 'removed'
+  | 'preserved'
+  | 'unchanged'
+  | 'install'
+  | 'reuse'
+  | 'replace';
+
+export interface ModuleUpdateChange {
+  category: ModuleUpdateChangeCategory;
+  action: ModuleUpdateChangeAction;
+  title: string;
+  moduleId: string;
+  path: string;
+  currentValue?: unknown;
+  proposedValue?: unknown;
+}
+
+export interface ModuleUpdatePlan {
+  moduleId: string;
+  metadataUrl: string;
+  currentMetadataDigest: string | null;
+  refreshedMetadataDigest: string;
+  updatePlanDigest: string;
+  module: {
+    id: string;
+    currentName: string;
+    proposedName: string;
+    currentVersion: string;
+    proposedVersion: string;
+    currentDescription?: string;
+    proposedDescription?: string;
+  };
+  normalizedMetadata: NormalizedModuleMetadata;
+  dependencies: InstallPlanDependencyNode[];
+  installOrder: string[];
+  images: InstallPlanImage[];
+  settings: InstallPlanSettingPrompt[];
+  preservedSettings: Array<{
+    moduleId: string;
+    key: string;
+    secret: boolean;
+    target: {
+      type: 'env';
+      name: string;
+    };
+  }>;
+  storage: {
+    directories: InstallPlanStorageDirectory[];
+    mountCollections: InstallPlanMountCollection[];
+    preservedExternalMounts: InstalledExternalMountMapping[];
+    removedExternalMounts: InstalledExternalMountMapping[];
+  };
+  runtime: {
+    ports: Array<ModuleRuntimePortMetadata & { hostPublished: false }>;
+    resources?: NormalizedModuleMetadata['runtime']['resources'];
+  };
+  paths: {
+    moduleDirectoryHost: string;
+    moduleDirectoryContainer: string;
+    metadataPathHost: string;
+    metadataPathContainer: string;
+  };
+  docker: {
+    networkName: string;
+    containerName: string;
+    networkAliases: string[];
+    replacementRequired: boolean;
+    replacementReasons: string[];
+  };
+  changes: ModuleUpdateChange[];
+  warnings: string[];
+  conflicts: InstallPlanConflict[];
+}
+
+export interface ModuleUpdatePlanResponse {
+  plan?: ModuleUpdatePlan;
+  error?: InstallPlanErrorEnvelope;
+}
+
+export interface ModuleUpdateRequest {
+  updatePlanDigest: string;
+  confirmed?: boolean;
+  settings: ModuleInstallSettingSelection[];
+  externalMounts: ModuleInstallExternalMountSelection[];
+}
+
+export interface ModuleUpdateSuccessResponse {
+  module: ModuleSummary;
+  updatedModuleId: string;
+  installedDependencyIds: string[];
+  reusedDependencyIds: string[];
+  error: null;
+}
+
+export interface ModuleUpdateFailureResponse {
+  error: InstallPlanErrorEnvelope;
+}
+
+export type ModuleUpdateResponse = ModuleUpdateSuccessResponse | ModuleUpdateFailureResponse;

@@ -59,7 +59,7 @@ export function redactModuleInstallRequest(request: ModuleInstallRequest): Modul
 }
 
 export function validateExternalMountDrafts(
-  plan: InstallPlan,
+  plan: Pick<InstallPlan, 'storage'>,
   drafts: ExternalMountDraft[]
 ): ExternalMountValidationResult {
   const collections = new Map(
@@ -174,7 +174,7 @@ export function validateExternalMountDrafts(
   return { selections, errors };
 }
 
-export function createExternalMountDrafts(plan: InstallPlan): ExternalMountDraft[] {
+export function createExternalMountDrafts(plan: Pick<InstallPlan, 'storage'>): ExternalMountDraft[] {
   return plan.storage.mountCollections.flatMap(collection => {
     const requiredCount = collection.required ? collection.minItems : 0;
     return Array.from({ length: requiredCount }, (_, index) =>

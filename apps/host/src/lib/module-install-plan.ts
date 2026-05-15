@@ -239,7 +239,7 @@ function buildDependencyNode(
   };
 }
 
-function buildDependencyConnections(
+export function buildDependencyConnections(
   graph: MetadataGraph,
   dependencyId: string
 ): InstallPlanDependencyConnection[] {
@@ -277,7 +277,7 @@ function buildDependencyConnections(
   return connections.sort((first, second) => first.consumerId.localeCompare(second.consumerId));
 }
 
-function buildInstallOrder(
+export function buildInstallOrder(
   graph: MetadataGraph
 ) {
   const visited = new Set<string>();
@@ -305,7 +305,7 @@ function buildInstallOrder(
   return order;
 }
 
-function buildImage(moduleId: string, metadata: NormalizedModuleMetadata): InstallPlanImage {
+export function buildImage(moduleId: string, metadata: NormalizedModuleMetadata): InstallPlanImage {
   return {
     moduleId,
     repository: metadata.image.repository,
@@ -315,7 +315,7 @@ function buildImage(moduleId: string, metadata: NormalizedModuleMetadata): Insta
   };
 }
 
-function buildSettingPrompts(
+export function buildSettingPrompts(
   moduleId: string,
   metadata: NormalizedModuleMetadata
 ): InstallPlanSettingPrompt[] {
@@ -333,7 +333,7 @@ function buildSettingPrompts(
   }));
 }
 
-function buildStorageDirectories(
+export function buildStorageDirectories(
   moduleId: string,
   metadata: NormalizedModuleMetadata,
   config: HostRuntimeConfig
@@ -359,7 +359,7 @@ function buildStorageDirectories(
   });
 }
 
-function buildMountCollections(
+export function buildMountCollections(
   moduleId: string,
   metadata: NormalizedModuleMetadata
 ): InstallPlanMountCollection[] {
@@ -369,7 +369,7 @@ function buildMountCollections(
   }));
 }
 
-function buildModulePaths(moduleId: string, config: HostRuntimeConfig) {
+export function buildModulePaths(moduleId: string, config: HostRuntimeConfig) {
   const moduleDirectoryHost = path.join(config.dataRootHost, 'modules', moduleId);
   const moduleDirectoryContainer = path.join(config.modulesRootContainer, moduleId);
 
@@ -551,7 +551,7 @@ function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
   return conflicts;
 }
 
-function collectEnvironmentTargetConflicts(plan: InstallPlan): InstallPlanConflict[] {
+export function collectEnvironmentTargetConflicts(plan: InstallPlan): InstallPlanConflict[] {
   const conflicts: InstallPlanConflict[] = [];
   const metadataById = new Map<string, NormalizedModuleMetadata>([
     [plan.module.id, plan.normalizedMetadata],
@@ -802,7 +802,7 @@ function buildDigestInput(plan: Omit<InstallPlan, 'planDigest'>) {
   };
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
   }

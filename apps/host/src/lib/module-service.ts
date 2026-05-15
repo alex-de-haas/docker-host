@@ -284,6 +284,7 @@ function toModuleSummary(
     runtimeStatus,
     installedAt: module.installedAt,
     updatedAt: module.updatedAt,
+    lastOperation: module.lastOperation,
     lastError: module.lastError ?? null,
   };
 }

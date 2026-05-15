@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Fragment, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -8,6 +9,7 @@ import {
   CircleAlert,
   Clock3,
   Eraser,
+  ArrowUpCircle,
   LoaderCircle,
   Play,
   RefreshCw,
@@ -302,7 +304,25 @@ export function ModuleList({
                         disabled={lifecycleDisabled || module.runtimeStatus.state === 'not_created'}
                         onClick={() => onAction(module.id, 'restart')}
                       />
-                      {module.operationStatus === 'failed' && (
+                      {module.operationStatus === 'failed' && module.lastOperation === 'update' && (
+                        <>
+                          <IconActionButton
+                            action="update-retry"
+                            title="Retry failed update"
+                            icon={<RefreshCw className="h-4 w-4" />}
+                            pendingAction={modulePendingAction}
+                            disabled={disabled}
+                            onClick={() => onAction(module.id, 'update-retry')}
+                          />
+                          <IconLinkButton
+                            title="Review update again"
+                            href={`/modules/${encodeURIComponent(module.id)}/update`}
+                            icon={<ArrowUpCircle className="h-4 w-4" />}
+                            disabled={disabled}
+                          />
+                        </>
+                      )}
+                      {module.operationStatus === 'failed' && module.lastOperation !== 'update' && (
                         <>
                           <IconActionButton
                             action="retry"
@@ -323,14 +343,22 @@ export function ModuleList({
                         </>
                       )}
                       {module.operationStatus === 'installed' && (
-                        <IconActionButton
-                          action="remove"
-                          title="Remove module"
-                          icon={<Trash2 className="h-4 w-4" />}
-                          pendingAction={modulePendingAction}
-                          disabled={disabled}
-                          onClick={() => void openRecoveryDialog(module, 'remove')}
-                        />
+                        <>
+                          <IconLinkButton
+                            title="Update module"
+                            href={`/modules/${encodeURIComponent(module.id)}/update`}
+                            icon={<ArrowUpCircle className="h-4 w-4" />}
+                            disabled={disabled}
+                          />
+                          <IconActionButton
+                            action="remove"
+                            title="Remove module"
+                            icon={<Trash2 className="h-4 w-4" />}
+                            pendingAction={modulePendingAction}
+                            disabled={disabled}
+                            onClick={() => void openRecoveryDialog(module, 'remove')}
+                          />
+                        </>
                       )}
                     </div>
                   </TableCell>
@@ -604,6 +632,32 @@ function IconActionButton({
   );
 }
 
+function IconLinkButton({
+  title,
+  href,
+  icon,
+  disabled,
+}: {
+  title: string;
+  href: string;
+  icon: ReactNode;
+  disabled: boolean;
+}) {
+  if (disabled) {
+    return (
+      <Button variant="ghost" size="icon" title={title} disabled>
+        {icon}
+      </Button>
+    );
+  }
+
+  return (
+    <Button asChild variant="ghost" size="icon" title={title}>
+      <Link href={href}>{icon}</Link>
+    </Button>
+  );
+}
+
 function formatDate(value?: string | null) {
   if (!value) {
     return '-';
@@ -625,6 +679,7 @@ const actionProgressLabels: Record<ModuleLifecycleAction, string> = {
   stop: 'Stopping...',
   restart: 'Restarting...',
   retry: 'Retrying...',
+  'update-retry': 'Retrying update...',
   cleanup: 'Cleaning up...',
   remove: 'Removing...',
 };

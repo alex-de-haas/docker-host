@@ -10,7 +10,13 @@ import type {
   ModuleSummary,
 } from '@/types/modules';
 
-export type ModuleLifecycleAction = 'start' | 'stop' | 'restart' | 'retry' | ModuleRecoveryAction;
+export type ModuleLifecycleAction =
+  | 'start'
+  | 'stop'
+  | 'restart'
+  | 'retry'
+  | 'update-retry'
+  | ModuleRecoveryAction;
 
 export function useModules() {
   const [modules, setModules] = useState<ModuleSummary[]>([]);
@@ -66,7 +72,8 @@ export function useModules() {
           throw new Error(`${action} requires a reviewed recovery plan.`);
         }
 
-        const response = await fetch(`/api/modules/${encodeURIComponent(id)}/${action}`, {
+        const actionPath = action === 'update-retry' ? 'update/retry' : action;
+        const response = await fetch(`/api/modules/${encodeURIComponent(id)}/${actionPath}`, {
           method: 'POST',
         });
         const result: ModuleActionResult = await response.json();

@@ -491,11 +491,13 @@ Example `409` response shape:
 
 ### Module update
 
-Future endpoints should support:
+The Phase 9 update contract is defined in [Module update flow](module-update.md). The API uses separate update endpoints:
 
-- `POST /api/modules/{moduleId}/update/plan` - refresh the stored metadata URL, validate refreshed metadata, require the same module id, compare against local `metadata.json`, and return a reviewed update plan with refreshed metadata digest and update plan digest;
-- `POST /api/modules/{moduleId}/update` - recompute the update plan, compare the reviewed update plan digest, then apply image/container/settings/storage/dependency changes after confirmation;
-- expose update failure diagnostics and explicit retry.
+- `POST /api/modules/{moduleId}/update/plan` - refresh the stored metadata URL, validate refreshed metadata, require the same module id, compare against local `metadata.json`, and return a reviewed update plan with refreshed metadata digest, update plan digest, prompts, warnings, and conflicts;
+- `POST /api/modules/{moduleId}/update` - recompute the update plan from refreshed metadata and submitted administrator decisions, compare the reviewed update plan digest, then apply image, container, settings, storage, and dependency changes after confirmation;
+- update-specific retry behavior for failed updates, distinct from failed install retry.
+
+The MVP update API does not accept a replacement metadata URL. It updates from the metadata URL stored in the installed module record.
 
 ### Module recovery and removal
 

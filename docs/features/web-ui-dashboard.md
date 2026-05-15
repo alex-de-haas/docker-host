@@ -32,4 +32,5 @@ The empty state is shown when the Host modules store has no installed module rec
 ## Open Questions
 
 - What detail view should own module logs once diagnostics endpoints are added?
-- Should module update reuse the dedicated install route layout or use a separate update review route once update plans are implemented?
+
+Resolved decision: module update uses a dedicated review route at `/modules/{moduleId}/update`, while reusing install review interaction patterns where practical.

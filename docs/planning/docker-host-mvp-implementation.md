@@ -539,6 +539,8 @@ Exit criteria:
 
 Purpose: реализовать update как metadata refresh plus reviewed change plan, not just `docker pull`.
 
+Status: first implementation slice completed. Host backend exposes update plan/apply/retry endpoints, update plans refresh the stored metadata URL and preserve compatible settings/storage decisions, the Web UI has a dedicated update review route, and dashboard rows expose update/update-retry actions. Manual Docker end-to-end validation with a real installed module remains useful before treating the flow as release-ready.
+
 Tasks:
 
 - Add update plan API:
@@ -560,6 +562,25 @@ Tasks:
   - save refreshed `metadata.json` and updated computed mappings after successful apply;
   - mark `failed` on partial failure without automatic rollback.
 - Add explicit retry for failed updates.
+
+Implementation decisions:
+
+- API shape: use separate update endpoints, `POST /api/modules/{moduleId}/update/plan` and `POST /api/modules/{moduleId}/update`. The update plan reads the stored `metadataUrl`; changing a module's metadata URL is out of scope for Phase 9.
+- Plan shape: introduce a dedicated `ModuleUpdatePlan` type with current and proposed state, change groups, prompts, replacement steps, warnings, conflicts, refreshed metadata digest, and `updatePlanDigest`. Reuse install planner internals where practical, but do not expose update as an install plan variant.
+- Digest semantics: cover proposed normalized metadata, dependency tree, computed paths, Docker names, runtime configuration, preserved compatible decisions, and submitted administrator decisions that affect runtime configuration. Exclude timestamps, transient Docker observations, and raw secret values.
+- Settings preservation: keep existing values only when `key`, `type`, and environment target remain compatible. Prompt for new required values. Remove deleted settings from runtime and the installed record after successful update.
+- Secret handling: preserve stored secret values only when `key`, `type: "secret"`, and target are unchanged. Never return raw secret values in update plans, responses, errors, or diagnostics.
+- Storage preservation: preserve module-owned storage mappings by stable key when compatible. Create new required directories during apply. Do not automatically delete removed module-owned directories or external host paths.
+- External mounts: preserve compatible mount selections by collection key and mount key. Prompt only for new or insufficient required external mounts.
+- Dependency changes: install missing new required dependencies, reuse/start compatible installed dependencies, and block incompatible, failed, or missing-container dependencies. Do not recursively update already installed dependencies in Phase 9.
+- Container replacement: use a simple stop/remove/create flow under the shared module mutation lock when runtime configuration changes. Metadata-only updates may skip replacement. `pullPolicy=always` should pull and recreate even when the image reference is unchanged.
+- Failed update retry: distinguish failed install retry from failed update retry with stored failure context. Retry update from the stored update attempt when the recomputed digest still matches; otherwise require review again.
+- Web UI: add a dedicated update review route, reusing install review components where practical. Dashboard rows expose update for installed modules and update-specific recovery for failed updates.
+- Test bar: cover update plan digest behavior, same-id validation, settings and secret preservation, storage/external mount preservation, dependency conflicts, partial failure state, and update retry routing with mocked Docker boundaries plus manual Docker verification.
+
+#### Open Questions
+
+No Phase 9 update design questions remain open before implementation starts. Detailed behavior is captured in [Module update flow](../features/module-update.md).
 
 Exit criteria:
 
