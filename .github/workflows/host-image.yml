@@ -8,7 +8,6 @@ on:
       - "*"
     paths:
       - "apps/host/**"
-      - "packages/contracts/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/host-image.yml"
@@ -17,7 +16,6 @@ on:
       - main
     paths:
       - "apps/host/**"
-      - "packages/contracts/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/host-image.yml"

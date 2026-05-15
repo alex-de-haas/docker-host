@@ -9,7 +9,7 @@ Docker Host должен использовать monorepo:
 - Host Web UI и backend API остаются частью одного Host application;
 - Host Docker image публикуется как отдельный container artifact;
 - `docker-host` CLI публикуется как отдельный standalone executable artifact;
-- общий API-контракт между Host backend API, Web UI и CLI хранится в repository рядом с кодом;
+- общий API-контракт между Host backend API, Web UI и CLI описывается в документации repository;
 - GitHub Actions разделяются по artifact type и запускаются только для затронутых частей.
 
 Такой подход сохраняет синхронизацию между CLI и Host API, но не заставляет пересобирать Host image при каждом изменении CLI.
@@ -30,30 +30,27 @@ apps/
     tests/
       Haas.DockerHost.Cli.Tests/
         Haas.DockerHost.Cli.Tests.csproj
-packages/
-  contracts/
-    openapi.yaml
-    generated/
 scripts/
   install.sh
 docs/
   features/
+    host-api.md
   planning/
 .github/
   workflows/
 ```
 
-На Phase 1 repository физически соответствует этому skeleton: текущий Host app находится в `apps/host`, CLI scaffold находится в `apps/cli`, а будущая область контрактов находится в `packages/contracts`.
+На Phase 1 repository физически соответствует этому skeleton: текущий Host app находится в `apps/host`, CLI scaffold находится в `apps/cli`, а Host API contract описан в `docs/features/host-api.md`.
 
-Shared API contract между Web UI, Host backend API и CLI должен быть определен в repository рядом с кодом при введении CLI-facing Host API surface. Executable OpenAPI artifact можно добавить позже, когда endpoint model стабилизируется.
+Host API contract между Web UI, Host backend API и CLI должен быть определен в `docs/features/host-api.md` при введении CLI-facing Host API surface. Отдельный package contract, generated OpenAPI artifact и generated clients не входят в MVP.
 
 ## Component boundaries
 
 ```mermaid
 flowchart LR
-  A["apps/cli"] --> B["packages/contracts"]
-  C["apps/host Web UI"] --> B
-  D["apps/host backend API"] --> B
+  A["apps/cli"] -. reads .-> B["docs/features/host-api.md"]
+  C["apps/host Web UI"] -. reads .-> B
+  D["apps/host backend API"] -. owns .-> B
   C --> D
   A --> D
   D --> E["Docker daemon"]
@@ -77,7 +74,6 @@ Recommended path filters:
 ```text
 Host image build:
   apps/host/**
-  packages/contracts/**
   apps/host/Dockerfile
   package.json
   package-lock.json
@@ -85,7 +81,7 @@ Host image build:
 
 CLI build:
   apps/cli/**
-  packages/contracts/**
+  docs/features/host-api.md
   scripts/install.sh
   global.json
   .github/workflows/cli-release.yml
@@ -95,7 +91,7 @@ Docs-only changes:
   README.md
 ```
 
-Если изменился только CLI, Host image не должен публиковаться. Если изменился только Host UI без изменения API-контракта, CLI artifacts не должны публиковаться. Если изменился общий API-контракт, CI должен проверить и Host, и CLI.
+Если изменился только CLI, Host image не должен публиковаться. Если изменился только Host UI без изменения API-контракта, CLI artifacts не должны публиковаться. Если изменился `docs/features/host-api.md`, CI должен проверить и Host, и CLI.
 
 ## Release artifacts
 

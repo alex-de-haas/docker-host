@@ -59,6 +59,13 @@ Host не должен делать предположение, что URL ук�
 
 MVP не требует trusted domain allow-list, metadata signatures, SSRF protection, special redirect handling или warnings для распространенных image tags вроде `latest`.
 
+MVP metadata downloader reliability limits:
+
+- maximum response size: 1 MiB per metadata JSON file;
+- request timeout: 10 seconds per metadata JSON fetch;
+- maximum dependency graph size: root metadata plus 32 unique dependency nodes;
+- dependency cycles must be rejected.
+
 Для production-сценариев желательно использовать immutable URL:
 
 - Git tag;
@@ -278,7 +285,7 @@ External storage mounts могут находиться за пределами 
 
 На текущем этапе источником правды для module metadata schema является этот документ: пример `Metadata draft`, `Schema outline`, field notes и validation rules ниже вместе описывают ожидаемый контракт.
 
-При переходе к executable validation наиболее вероятный формат - JSON Schema. JSON Schema должна быть добавлена в repository как отдельный versioned artifact и использоваться Host backend для runtime validation metadata files. До появления такой JSON Schema отдельная runtime-схема не считается более авторитетной, чем этот документ.
+При переходе к executable validation реализация должна жить внутри Host backend и следовать этому документу. Отдельный shared contracts package или generated schema artifact для metadata MVP не требуется. До появления runtime validation отдельная runtime-схема не считается более авторитетной, чем этот документ.
 
 ## Schema outline
 
@@ -327,7 +334,7 @@ Top-level metadata object:
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `key` | string | yes | Stable setting key, unique inside the metadata file. |
-| `type` | string | yes | One of `string`, `number`, `boolean`, `enum`, `url`, or `secret`. |
+| `type` | string | yes | One of `string`, `number`, `boolean`, `url`, or `secret`. |
 | `required` | boolean | yes | Whether the administrator must provide or confirm a value. |
 | `default` | any | no | Default value. Secrets must not contain real secret values in `default`. |
 | `target` | object | no | Runtime target for the resolved setting. First implementation target type: `env`. |
@@ -375,6 +382,8 @@ Top-level metadata object:
 | `ports` | array | yes | Named container endpoints. |
 | `healthcheck` | object | no | Reserved for future module health checks. Ignored by the first implementation. |
 | `resources` | object | no | CPU and memory hints. |
+
+For `schemaVersion: "0.1"`, metadata validation is strict: unknown fields are rejected at every object level. The MVP does not reserve or accept extension namespaces such as `x-*`. Future extensions must use a new schema version or a separately documented namespace. The only reserved field accepted by the MVP schema is `runtime.healthcheck`, and the MVP runtime must ignore it.
 
 `runtime.ports[]` item:
 
@@ -607,7 +616,7 @@ Host должен уметь:
 - проверить, что в install plan нет конфликтующих metadata URLs или major-версий для одного dependency `id`;
 - не устанавливать dependency автоматически без явного подтверждения администратора.
 
-Host не требует `metadataDigest` для dependency metadata. Источником зависимости является набор `id` + `version` + `metadataUrl`, где `version` означает ожидаемую major-версию контракта.
+Host не требует отдельный публичный `metadataDigest` для каждой dependency metadata. Источником зависимости является набор `id` + `version` + `metadataUrl`, где `version` означает ожидаемую major-версию контракта. Содержимое dependency metadata и итоговое dependency tree покрываются общим `planDigest` install plan.
 
 ### `settings`
 
@@ -618,7 +627,6 @@ Host не требует `metadataDigest` для dependency metadata. Источ
 - `string`;
 - `number`;
 - `boolean`;
-- `enum`;
 - `url`;
 - `secret`.
 
@@ -886,6 +894,8 @@ Host не должен знать, как эти files организованы 
 Минимальные правила валидации metadata file:
 
 - JSON должен соответствовать поддерживаемой `schemaVersion`;
+- unknown fields must be rejected at every object level for `schemaVersion: "0.1"`;
+- extension namespaces such as `x-*` are not accepted in the MVP metadata schema;
 - `id`, `name`, `version`, `image.repository` и `image.tag` обязательны;
 - `image.pullPolicy`, если указан, должен быть `ifNotPresent`, `always` или `manual`;
 - `version` должен иметь читаемую major-часть; рекомендуемый формат - `MAJOR.MINOR.PATCH`;
@@ -898,6 +908,7 @@ Host не должен знать, как эти files организованы 
 - `dependencies[].connection.baseUrlEnv` должен быть валидным environment variable name;
 - `dependencies[].required: true` означает, что dependency должна быть resolved до запуска потребителя;
 - future support для `dependencies[].required: false` означает, что пустая или отсутствующая `baseUrlEnv` является допустимым runtime state;
+- dependency graph may include root metadata plus at most 32 unique dependency nodes;
 - после загрузки dependency metadata Host должен проверить, что major часть `dependencyMetadata.version` совпадает с `dependencies[].version`;
 - если dependency объявляет `connection.endpoint`, dependency metadata должен содержать `runtime.ports[]` с таким `key`;
 - dependency graph не должен содержать циклов;

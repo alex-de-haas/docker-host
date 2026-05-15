@@ -11,7 +11,7 @@ Host API реализуется внутри full-stack Next.js Host application
 - Persistent installed module registry is stored in root-level `modules.json`.
 - MVP API is local/private-network only and does not include authentication.
 - API responses must not expose raw secret setting values.
-- Executable OpenAPI generation can be added later after the initial endpoint model stabilizes.
+- The API contract remains this Markdown endpoint catalog for the MVP. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
 
 ## Initial API slice
 
@@ -304,18 +304,133 @@ Recommended query parameters:
 
 Future endpoints should support:
 
-- `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with metadata/plan digest, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker names, network aliases, and runtime ports;
-- `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed digest, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install;
+- `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker names, network aliases, and runtime ports;
+- `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install;
 - expose install failure diagnostics with operation name, Docker status/message when available, administrator next step, and failed operation status.
 
-The MVP should not persist pending install plans as durable state. Apply endpoints should recompute the plan and compare the reviewed digest before changing files, module state, images, or containers.
+The install plan request body is intentionally minimal:
+
+```json
+{
+  "metadataUrl": "https://modules.example.com/reports.json"
+}
+```
+
+Phase 5 should not introduce request flags such as refresh behavior, diagnostics toggles, or conflict-check bypasses.
+
+Successful `200` responses should use one top-level `plan` object:
+
+```json
+{
+  "plan": {
+    "metadataUrl": "https://modules.example.com/reports.json",
+    "metadataDigest": "sha256:...",
+    "planDigest": "sha256:...",
+    "module": {
+      "id": "com.acme.reports",
+      "name": "Reports",
+      "description": "Generates operational reports.",
+      "version": "1.0.0"
+    },
+    "normalizedMetadata": {},
+    "dependencies": [],
+    "installOrder": ["com.acme.identity", "com.acme.reports"],
+    "images": [],
+    "settings": [],
+    "storage": {
+      "directories": [],
+      "mountCollections": []
+    },
+    "runtime": {
+      "ports": []
+    },
+    "docker": {
+      "containerName": "mod-com-acme-reports",
+      "networkAliases": ["mod-com-acme-reports"]
+    },
+    "conflicts": []
+  }
+}
+```
+
+The `dependencies` array represents the resolved dependency tree. `installOrder` is the topological module id order used for later apply. `normalizedMetadata` contains the normalized root metadata after defaults are applied. `settings` contains prompts, defaults, targets, and secret redaction markers, but never raw secret values.
+
+Install plan Docker checks:
+
+- `POST /api/modules/install/plan` requires Docker daemon read access.
+- The endpoint must perform read-only Docker conflict checks for generated container names, Host-managed network presence, and network aliases before returning a successful plan.
+- The endpoint must not create or mutate files, module directories, images, containers, or Docker networks.
+- If Docker daemon is unavailable, the endpoint should return HTTP `503` and should not return a successful install plan.
+- Docker conflict observations are not part of `planDigest`; the apply endpoint must repeat Docker conflict checks before any mutation.
+
+Digest semantics:
+
+- `metadataDigest` is the SHA-256 digest of the root metadata JSON bytes downloaded from the submitted `metadataUrl`. It is used for source transparency, diagnostics, and explaining when the same URL now returns different metadata.
+- `planDigest` is the SHA-256 digest of a canonical JSON representation of the normalized install plan. It covers normalized root metadata, dependency metadata tree, dependency install order, image references, computed paths, setting prompts, storage requirements, Docker container names, network aliases, and runtime ports. It must exclude timestamps, transient download details, Docker runtime status, read-only Docker conflict observations, and other fields that can change without changing the reviewed plan.
+- `planDigest` is the primary review guard for install apply. The apply endpoint must recompute the plan from the submitted `metadataUrl` and administrator decisions, then reject the request if the recomputed `planDigest` differs from the reviewed `planDigest`.
+
+The MVP should not persist pending install plans as durable state. Apply endpoints should recompute the plan and compare the reviewed `planDigest` before changing files, module state, images, or containers.
+
+Install plan validation and conflict status boundaries:
+
+- HTTP `422` is used when metadata is invalid by itself, dependency graph validation fails, or the metadata requests unsupported fields, setting types, protocols, storage mount types, or unsafe paths.
+- HTTP `409` is used when metadata is valid but conflicts with current Host or Docker state, such as an already installed module id, generated container name collision, network alias collision, environment variable target collision, or storage mapping collision.
+- `validationErrors[].path` should use a JSONPath-like string pointing to the failing metadata field, for example `$.image.repository` or `$.dependencies[0].connection.endpoint`.
+- `validationErrors[].node` should identify the dependency graph node when the error belongs to dependency metadata rather than the root metadata. For the root metadata, `node` can be omitted or set to the root module id.
+- `409` responses should include the partial install plan together with `conflicts[]` so the Web UI can show the reviewed plan and highlight conflict locations.
+- The planner should aggregate as many validation errors and conflicts as possible in one response.
+- The planner may fail fast only when it cannot continue meaningfully, such as when the root metadata URL cannot be fetched, root JSON cannot be parsed, or required dependency metadata cannot be fetched or parsed.
+- HTTP `422` and `409` should use a shared error envelope with top-level `error.code`, `error.message`, `error.validationErrors[]`, and `error.conflicts[]`. For `409`, the partial install plan should be returned as a top-level `plan` sibling, not nested inside `error`.
+- `conflicts[]` items should use `code`, `message`, `resourceType`, `resourceId`, and `path` as required fields. `node`, `existingValue`, and `proposedValue` are optional fields for UI highlighting and comparison.
+
+Example `conflicts[]` item:
+
+```json
+{
+  "code": "container_name_conflict",
+  "message": "Container name mod-com-acme-reports already exists.",
+  "resourceType": "docker_container",
+  "resourceId": "mod-com-acme-reports",
+  "path": "$.id",
+  "node": "com.acme.reports",
+  "existingValue": "mod-com-acme-reports",
+  "proposedValue": "mod-com-acme-reports"
+}
+```
+
+Example `422` response shape:
+
+```json
+{
+  "error": {
+    "code": "install_plan_validation_failed",
+    "message": "Module metadata is invalid.",
+    "validationErrors": [],
+    "conflicts": []
+  }
+}
+```
+
+Example `409` response shape:
+
+```json
+{
+  "plan": {},
+  "error": {
+    "code": "install_plan_conflict",
+    "message": "The install plan conflicts with current Host or Docker state.",
+    "validationErrors": [],
+    "conflicts": []
+  }
+}
+```
 
 ### Module update
 
 Future endpoints should support:
 
-- `POST /api/modules/{moduleId}/update/plan` - refresh the stored metadata URL, validate refreshed metadata, require the same module id, compare against local `metadata.json`, and return a reviewed update plan;
-- `POST /api/modules/{moduleId}/update` - recompute the update plan, compare the reviewed digest, then apply image/container/settings/storage/dependency changes after confirmation;
+- `POST /api/modules/{moduleId}/update/plan` - refresh the stored metadata URL, validate refreshed metadata, require the same module id, compare against local `metadata.json`, and return a reviewed update plan with refreshed metadata digest and update plan digest;
+- `POST /api/modules/{moduleId}/update` - recompute the update plan, compare the reviewed update plan digest, then apply image/container/settings/storage/dependency changes after confirmation;
 - expose update failure diagnostics and explicit retry.
 
 ### Module removal
@@ -339,8 +454,12 @@ Future endpoints should support:
 
 ## Documentation status
 
-This document is the Phase 0/1 API planning artifact. It should be updated when implementation decisions change. Once the API stabilizes, generated OpenAPI can be introduced under `packages/contracts`.
+This document is the Host API contract for the MVP. It should be updated when implementation decisions change.
 
 ## Open Questions
 
-No Phase 0 API questions remain open. Later implementation slices should reopen API details for install plans, update plans, settings writes, storage configuration, logs streaming, and executable OpenAPI generation.
+No Phase 0 API questions remain open.
+
+No Phase 5 install plan endpoint questions remain open.
+
+Later implementation slices may reopen API details for update plans, settings writes, storage configuration, and logs streaming.

@@ -7,7 +7,7 @@ on:
       - main
     paths:
       - "apps/cli/**"
-      - "packages/contracts/**"
+      - "docs/features/host-api.md"
       - "scripts/install.sh"
       - "global.json"
       - ".github/workflows/cli-release.yml"

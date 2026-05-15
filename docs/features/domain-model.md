@@ -242,7 +242,7 @@ Install and update plan execution is outside the first API slice, but the model 
 An install plan describes:
 
 - metadata URL and resolved metadata;
-- metadata digest and plan digest used to detect changes between review and apply;
+- metadata digest for the root metadata source and plan digest for the canonical normalized plan used to detect changes between review and apply;
 - Docker image to pull;
 - module directory and metadata copy target;
 - required storage directories and mappings;
@@ -250,6 +250,10 @@ An install plan describes:
 - external mount collection requirements and any administrator-selected external mount mappings;
 - dependency modules that must be installed or started;
 - container name, network aliases, ports, mounts, environment variables, and restart policy.
+
+`metadataDigest` is the SHA-256 digest of the root metadata JSON bytes downloaded from the submitted metadata URL. `planDigest` is the SHA-256 digest of canonical JSON for the normalized plan, including the dependency tree and computed install decisions, but excluding timestamps and transient runtime/download details. Install apply should compare the reviewed `planDigest`, not rely on durable pending plan state.
+
+The install plan endpoint requires Docker daemon read access for conflict checks, but it must not create or mutate Docker resources. Docker conflict observations, such as an already existing container name or unavailable Host-managed network, are reported alongside the plan/error response and are not included in `planDigest`. Install apply must repeat these Docker checks before any mutation.
 
 An update plan describes:
 
@@ -261,7 +265,7 @@ An update plan describes:
 - dependency changes;
 - container replacement steps.
 
-The MVP does not rely on durable pending plan state. Install and update apply operations should recompute the reviewed plan from source metadata and submitted administrator decisions, then compare the reviewed digest before mutating files, module state, images, or containers.
+The MVP does not rely on durable pending plan state. Install and update apply operations should recompute the reviewed plan from source metadata and submitted administrator decisions, then compare the reviewed plan digest before mutating files, module state, images, or containers.
 
 The first implementation uses optimistic fail-fast behavior. If an install or update fails after changes have started, Host records failure state and preserves created files, directories, images, and containers for diagnosis.
 
@@ -287,4 +291,4 @@ com.modulis.storage -> mod-com-modulis-storage
 
 ## Open Questions
 
-No Phase 0 domain model questions remain open. Later slices may reopen details for executable JSON Schema, generated OpenAPI, optional dependencies, external storage UX, and stable API version negotiation.
+No Phase 0 domain model questions remain open. Later slices may reopen details for metadata validation implementation, optional dependencies, external storage UX, and stable API version negotiation.

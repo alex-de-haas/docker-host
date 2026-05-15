@@ -7,7 +7,7 @@ on:
     paths:
       - "apps/host/**"
       - "apps/cli/**"
-      - "packages/contracts/**"
+      - "docs/features/host-api.md"
       - "package.json"
       - "package-lock.json"
       - "global.json"
@@ -18,7 +18,7 @@ on:
     paths:
       - "apps/host/**"
       - "apps/cli/**"
-      - "packages/contracts/**"
+      - "docs/features/host-api.md"
       - "package.json"
       - "package-lock.json"
       - "global.json"

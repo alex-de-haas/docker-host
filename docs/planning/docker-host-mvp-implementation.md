@@ -15,7 +15,7 @@
 - Use Tailwind CSS and shadcn/ui for the Host Web UI.
 - Use `npm` as the package manager. `pnpm` can be reconsidered later if dependency install speed or disk usage becomes a real issue.
 - Choose the Host Docker base image from a current Node.js LTS line that satisfies the selected Next.js version requirements.
-- The initial Host API contract is documented as a human-readable endpoint catalog in [Docker Host API](../features/host-api.md). Executable OpenAPI generation is deferred until the endpoint model stabilizes.
+- The Host API contract is documented as a human-readable endpoint catalog in [Docker Host API](../features/host-api.md). The MVP does not maintain a separate contracts package, generated OpenAPI artifact, or generated API clients.
 - `.NET net10.0` is used only for the standalone `docker-host` CLI. Host backend code stays inside the Next.js application.
 - CLI project file: `Haas.DockerHost.Cli.csproj`; root namespace: `Haas.DockerHost.Cli`; published command name: `docker-host` via project `AssemblyName` or release artifact rename.
 - Add the CLI test project immediately, alongside the CLI project.
@@ -51,7 +51,7 @@
 - Проект реализуется как rewrite по документации, без обязательной совместимости с текущим прототипом.
 - Сначала делается надежный bootstrap Host container через CLI, затем module metadata runtime.
 - Business logic установки, обновления, зависимостей, storage mappings и settings живет в Host backend, а не в CLI.
-- Shared API contract должен быть явно описан в документации, чтобы Web UI и будущие CLI module commands не расходились. Executable OpenAPI artifact можно добавить позже, когда endpoint model стабилизируется.
+- Host API contract должен быть явно описан в документации, чтобы Web UI и будущие CLI module commands не расходились. Отдельный package contract, generated OpenAPI artifact и generated clients не входят в MVP.
 - Docker operations должны иметь диагностируемые ошибки и не скрывать Docker Engine error payloads, status codes и operation context от администратора.
 - Первый module install/update flow использует optimistic fail-fast без automatic rollback.
 
@@ -80,7 +80,7 @@ Status: completed for the MVP rewrite baseline. The authoritative Phase 0 artifa
 
 Tasks:
 
-- Зафиксировать `apps/host`, `apps/cli`, `packages/contracts`, `scripts`, `docs`, `.github/workflows` как целевую структуру repository.
+- Зафиксировать `apps/host`, `apps/cli`, `scripts`, `docs`, `.github/workflows` как целевую структуру repository.
 - Использовать Next.js как single full-stack Host application, не опираясь на текущий прототип.
 - Описать первый Host API endpoint catalog в документации.
 - Зафиксировать первый API slice: module list, module status, module start, module stop, module restart.
@@ -100,7 +100,7 @@ Exit criteria:
 
 Purpose: подготовить repository к независимой сборке Host image и CLI executable.
 
-Status: completed for the initial artifact skeleton. The repository now has `apps/host`, `apps/cli`, `packages/contracts`, npm workspace scripts, Host image workflow path filters, CLI release asset workflow path filters, and common CI checks. The CLI is a buildable .NET 10 scaffold; lifecycle implementation remains Phase 2 scope.
+Status: completed for the initial artifact skeleton. The repository now has `apps/host`, `apps/cli`, npm workspace scripts, Host image workflow path filters, CLI release asset workflow path filters, and common CI checks. The CLI is a buildable .NET 10 scaffold; lifecycle implementation remains Phase 2 scope.
 
 Tasks:
 
@@ -108,8 +108,7 @@ Tasks:
 - Создать `apps/host` на Next.js 16 baseline через recommended `create-next-app@latest` options: TypeScript, Tailwind CSS, ESLint, App Router, Turbopack, `src/` directory и `@/*` import alias.
 - Создать `apps/cli` для standalone `docker-host` CLI.
 - Перенести существующее Next.js приложение в `apps/host` как Host application area.
-- Оставить `packages/contracts` как будущую область для generated OpenAPI/clients после стабилизации API.
-- Определить shared API contract между Web UI, Host backend API и будущими CLI module commands при введении CLI-facing Host API surface.
+- Определить Host API contract в [Docker Host API](../features/host-api.md) между Web UI, Host backend API и будущими CLI module commands при введении CLI-facing Host API surface.
 - Перенести Dockerfile Host image в границы Host artifact или обновить root Dockerfile согласно выбранной структуре.
 - Выполнять rewrite прямо поверх текущей реализации. Текущий prototype можно удалять или заменять по мере scaffold/implementation work.
 - Использовать [Prototype feature inventory](prototype-feature-inventory.md), чтобы не потерять важные prototype capabilities при rewrite.
@@ -263,6 +262,8 @@ Exit criteria:
 
 ## Phase 4 - Web UI foundation
 
+Status: completed. The Host Web UI now uses the installed modules API for the main dashboard, renders empty and installed-module states, displays Docker runtime status, and performs start/stop/restart actions through Host backend module routes. Module install/update/settings/storage/remove/log UI remains intentionally deferred to later phases.
+
 Purpose: дать администратору основной рабочий интерфейс поверх Host backend API.
 
 Tasks:
@@ -300,15 +301,16 @@ Purpose: сделать read-only backend слой, который превра�
 
 Tasks:
 
-- Добавить versioned JSON Schema для metadata draft `schemaVersion: "0.1"` в `packages/contracts`, чтобы schema была shared contract artifact, а не только Host-private helper.
+- Реализовать executable validation для metadata draft `schemaVersion: "0.1"` внутри Host backend. Source of truth для metadata contract остается [Module metadata files](../features/module-metadata.md); отдельный shared contract package не создается.
 - Сделать schema строгой для поддерживаемого MVP-контракта:
   - поддерживаемые object fields описаны явно;
   - documented reserved fields, such as `runtime.healthcheck`, may validate but must be marked ignored by MVP runtime;
-  - неизвестные non-extension поля отклоняются, чтобы Host не игнорировал важные runtime требования;
-  - future extensions должны идти через отдельную schema version или явно разрешенный extension namespace.
+  - unknown fields are rejected in `schemaVersion: "0.1"`;
+  - MVP does not support extension namespaces such as `x-*`; future extensions must use a new schema version or a separately documented namespace.
 - Реализовать metadata downloader:
   - обычный HTTP(S) JSON resource;
-  - bounded response size и timeout как reliability guard;
+  - maximum response size: 1 MiB per metadata JSON file;
+  - request timeout: 10 seconds per metadata JSON fetch;
   - без repository-specific assumptions;
   - без MVP allow-list, signatures, SSRF policy и latest-tag warnings.
 - Валидировать и нормализовать metadata:
@@ -319,10 +321,11 @@ Tasks:
   - `storage.mountCollections=[]`;
   - `image.pullPolicy=ifNotPresent`;
   - setting `target` default: `{ "type": "env", "name": "<setting.key>" }`;
-  - either add an explicit enum options contract before accepting `settings.type="enum"` or reject enum settings as unsupported in MVP;
-  - reject unsupported setting targets, optional dependencies, unsupported port protocols, unsupported storage mount types, and unsafe module-owned paths.
+  - supported setting types are `string`, `number`, `boolean`, `url`, and `secret`;
+  - reject unsupported setting types, unsupported setting targets, optional dependencies, unsupported port protocols, unsupported storage mount types, and unsafe module-owned paths.
 - Рекурсивно читать only required dependencies через `dependencies[].metadataUrl`.
 - Проверять dependency graph:
+  - maximum graph size: root metadata plus at most 32 unique dependency nodes;
   - downloaded dependency `id` matches declaration;
   - dependency major version matches declaration;
   - requested `connection.endpoint` exists in dependency `runtime.ports`;
@@ -331,7 +334,8 @@ Tasks:
 - Рассчитывать deterministic install plan:
   - `metadataUrl`;
   - normalized metadata and dependency tree;
-  - metadata digest and plan digest;
+  - `metadataDigest` for the downloaded root metadata JSON bytes;
+  - `planDigest` for canonical JSON of the normalized plan, including dependency tree and computed install decisions, excluding timestamps and transient fields;
   - module directory and local metadata copy path;
   - Docker image references;
   - required dependencies and topological install order;
@@ -341,8 +345,16 @@ Tasks:
   - container ports without host publication;
   - Docker container names and network aliases;
   - conflicts against existing `modules.json`, Docker container names, network aliases, environment variable targets, storage mappings, and dependency graph.
+- Perform mandatory read-only Docker conflict checks:
+  - Docker daemon must be reachable before returning a successful plan;
+  - if Docker daemon is unavailable, return a failure such as HTTP `503` rather than a degraded successful plan;
+  - check generated container names, Host-managed network presence, and network aliases;
+  - do not create or mutate files, module directories, images, containers, or Docker networks;
+  - keep Docker conflict observations outside `planDigest`, and repeat Docker checks in the later apply endpoint before mutation.
 - Add `POST /api/modules/install/plan`.
-- Do not persist pending install plans in MVP. The later apply endpoint must recompute the plan from submitted metadata URL and compare `metadataDigest` or `planDigest` before changing state.
+- Use the minimal install plan request body `{ "metadataUrl": "..." }`; do not add Phase 5 request flags for refresh behavior, diagnostics toggles, or conflict-check bypasses.
+- Use a shared error envelope for `422` and `409`: top-level `error.code`, `error.message`, `error.validationErrors[]`, and `error.conflicts[]`; `409` may also return a top-level partial `plan`.
+- Do not persist pending install plans in MVP. The later apply endpoint must recompute the plan from submitted metadata URL and compare the reviewed `planDigest` before changing state. `metadataDigest` is returned for source transparency and diagnostics.
 
 Exit criteria:
 
@@ -379,7 +391,7 @@ Tasks:
   - validate item keys as safe path segments;
   - compute container paths from `itemContainerPathTemplate`;
   - do not check external host paths through the Host process filesystem.
-- Build the install request payload expected by Phase 7, including `metadataUrl`, reviewed digest, settings values, and external mount selections.
+- Build the install request payload expected by Phase 7, including `metadataUrl`, reviewed `planDigest`, settings values, and external mount selections.
 
 Exit criteria:
 
@@ -394,13 +406,13 @@ Purpose: применить подтвержденный install request и за
 Tasks:
 
 - Add `POST /api/modules/install`.
-- Recompute the install plan from submitted `metadataUrl` and compare the reviewed `metadataDigest` or `planDigest`; if metadata changed, reject the request and require review again.
+- Recompute the install plan from submitted `metadataUrl` and administrator decisions, then compare the reviewed `planDigest`; if the recomputed plan digest changed, reject the request and require review again.
 - Persist operation state before mutating Docker:
   - create or update the module record with `operationStatus=installing`;
   - preserve previous installed modules;
   - keep operation errors with operation name, Docker status, Docker message, and next step.
 - Create `<HOST_DATA_ROOT_CONTAINER>/modules/<module-id>/`.
-- Save local metadata copy as `metadata.json` after the reviewed metadata digest is accepted.
+- Save local metadata copy as `metadata.json` after the reviewed `planDigest` is accepted.
 - Save module setting values, including write-only secret values, in root-level `modules.json`.
 - Create module-owned directories for `storage.directories`.
 - Store computed module-owned storage mappings and selected external mounts in `modules.json`.
@@ -473,7 +485,7 @@ Tasks:
   - keep secret values redacted.
 - Add update review UI.
 - Add update apply API:
-  - recompute update plan and compare reviewed digest;
+  - recompute update plan and compare reviewed update plan digest;
   - set `operationStatus=updating`;
   - pull images according to refreshed `pullPolicy`;
   - apply dependency changes before recreating the consumer;
