@@ -24,7 +24,7 @@ The first lifecycle API slice is intentionally small:
 - stop a module;
 - restart a module.
 
-The current API surface also includes the module install endpoints: a read-only install plan endpoint and a confirmed install apply endpoint. Update, remove, settings editing, storage configuration, update plans, logs, and external exposure are later API slices.
+The current API surface also includes module install endpoints, failed install retry/cleanup endpoints, and installed module removal endpoints. Update, settings editing, storage configuration, update plans, logs, and external exposure are later API slices.
 
 The shared domain vocabulary for this API is defined in [Docker Host domain model](domain-model.md).
 
@@ -69,7 +69,8 @@ Allowed `operationStatus` values:
 - `installed`;
 - `installing`;
 - `updating`;
-- `failed`.
+- `failed`;
+- `removing`.
 
 Allowed `runtimeStatus.state` values:
 
@@ -496,15 +497,21 @@ Future endpoints should support:
 - `POST /api/modules/{moduleId}/update` - recompute the update plan, compare the reviewed update plan digest, then apply image/container/settings/storage/dependency changes after confirmation;
 - expose update failure diagnostics and explicit retry.
 
-### Module removal
+### Module recovery and removal
 
-Future endpoints should support:
+The Phase 8 API adds explicit recovery actions for failed installs and installed module removal.
 
-- remove or cleanup plan for installed modules and failed installs;
-- container removal;
-- optional module-owned data cleanup decisions;
-- clear reporting of what data is preserved or deleted;
-- never delete external host paths, only remove their mappings from Host state.
+- `POST /api/modules/{moduleId}/retry` retries a failed install from the local `metadata.json` and stored install record. Retry removes and recreates the failed module container, preserves module-owned data directories, starts stored dependencies when needed, and records fresh diagnostics if it fails again.
+- `POST /api/modules/{moduleId}/cleanup/plan` returns a backend-generated cleanup preview for a failed module.
+- `POST /api/modules/{moduleId}/cleanup` applies a confirmed cleanup request. Request body: `{ "confirmed": true, "deleteModuleData": false }`.
+- `POST /api/modules/{moduleId}/remove/plan` returns a backend-generated removal preview for an installed module.
+- `POST /api/modules/{moduleId}/remove` applies a confirmed removal request. Request body: `{ "confirmed": true, "deleteModuleData": false }`.
+
+Cleanup and remove plans list the module container, image reference, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts. The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. External host paths are never deleted; only their Host state mappings are removed.
+
+Installed module removal is blocked when other installed modules depend on the target module. Remove sets `operationStatus=removing` only while the operation is in progress. If removal fails before the registry entry is deleted, the module returns to `installed` with `lastError`.
+
+Lifecycle hardening marks modules `failed` when a lifecycle action discovers a missing Docker container or a missing required storage mapping. Transient Docker daemon, network, stop, or restart errors remain action errors and do not change persistent operation status.
 
 ### Settings and storage
 

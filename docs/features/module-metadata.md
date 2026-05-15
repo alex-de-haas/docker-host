@@ -102,9 +102,19 @@ installing
 installed
 updating
 failed
+removing
 ```
 
-`removing` не входит в начальный статусный контракт и должен появиться вместе с будущим module remove flow. Disable state/action не входит в lifecycle model. Если модуль не должен быть запущен, администратор использует stop.
+`removing` используется только во время explicit remove flow. Если remove падает до удаления registry entry, Host возвращает module status в `installed` и сохраняет `lastError`. Disable state/action не входит в lifecycle model. Если модуль не должен быть запущен, администратор использует stop.
+
+Phase 8 recovery rules:
+
+- failed install retry запускается явно и по умолчанию использует локальный `metadata.json` плюс сохраненный install record;
+- retry пересоздает failed module container и сохраняет module-owned data directories;
+- cleanup failed install и remove installed module используют backend-generated plan перед apply;
+- module-owned data удаляется только при явном `deleteModuleData=true`;
+- external host paths никогда не удаляются, Host удаляет только mappings из своего состояния;
+- Docker images сохраняются и только показываются как preserved artifacts.
 
 ## Module update flow
 

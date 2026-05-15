@@ -471,6 +471,8 @@ Exit criteria:
 
 ## Phase 8 - Failure recovery and module removal
 
+Status: completed. The Host now has failed install retry, cleanup/remove preview plans, explicit cleanup/remove apply routes, `removing` operation status, lifecycle hardening for persistent broken state, dashboard actions, and focused recovery helper tests.
+
 Purpose: закрыть operational gaps после install runtime: failed install recovery, cleanup, and explicit remove.
 
 Tasks:
@@ -494,6 +496,38 @@ Tasks:
   - surface missing storage mappings and missing containers as actionable errors;
   - keep Docker runtime state read from Docker daemon.
 - Add Web UI actions for retry, cleanup failed install, and remove.
+
+Implemented scope:
+
+- Host API exposes direct failed install retry and plan/apply endpoints for cleanup and remove.
+- `ModuleOperationStatus` includes `removing`, used only while remove is in progress.
+- Retry uses local `metadata.json` and the stored install record, recreates the failed module container, preserves module-owned data, and records fresh diagnostics if retry fails.
+- Cleanup applies only to the selected failed module. Successfully installed dependencies stay installed and can be removed separately.
+- Installed module removal is blocked when other installed modules depend on the target.
+- Remove/cleanup plans list containers, images, metadata files, module-owned directories, external mount references, dependents, warnings, and conflicts.
+- `deleteModuleData` defaults to `false`. External host paths and Docker images are never deleted by Phase 8.
+- Start/restart lifecycle preflight marks missing containers and missing required storage mappings as persistent `failed` state; transient Docker errors remain action errors.
+- The Web UI exposes retry as a row action and remove/cleanup as backend-generated confirmation dialogs.
+- Recovery helper tests cover dependent detection, stored mapping normalization, and Host data-root path mapping.
+
+Implementation decisions:
+
+- API shape: use plan/apply endpoints for destructive actions and a direct retry endpoint. Cleanup and remove use backend-generated preview plans: `POST /api/modules/{moduleId}/cleanup/plan`, `POST /api/modules/{moduleId}/cleanup`, `POST /api/modules/{moduleId}/remove/plan`, and `POST /api/modules/{moduleId}/remove`. Failed install retry uses `POST /api/modules/{moduleId}/retry` because it is not a data-deleting action.
+- Failed install retry source of truth: default retry uses the local `metadata.json` bytes and the stored install record for deterministic behavior. A separate explicit refresh-and-review path can recompute from the stored `metadataUrl` and route the administrator back through the install review UI.
+- Partial Docker containers during retry: remove and recreate the failed module container, while preserving module-owned data directories by default.
+- Failed install cleanup scope: cleanup only the selected failed module. Successfully installed dependencies stay installed and can be removed separately.
+- Installed module remove dependency handling: block removal when other installed modules depend on the target, and return the dependent module list in the remove plan/conflict response.
+- Module-owned data deletion: use one `deleteModuleData` boolean, default `false`. The plan must list all module-owned directories and show whether they will be preserved or deleted.
+- Docker image cleanup: Phase 8 does not remove Docker images. Plans may list image references as preserved artifacts for administrator visibility.
+- Failed remove representation: use `operationStatus=removing` only while removal is in progress. If removal fails before the registry entry is deleted, restore `operationStatus=installed` and set `lastError`.
+- Lifecycle hardening state changes: missing container and missing required storage mappings mark the module `failed` with `lastError`. Transient Docker daemon, network, stop, or restart errors remain action errors and do not change persistent `operationStatus`.
+- Mutation locking: replace the install-only mutex with a shared in-process module mutation mutex for install retry, cleanup, remove, and install apply.
+- Web UI placement: use a hybrid flow. Retry is a row action. Remove and cleanup open compact backend-generated plan dialogs with explicit confirmation.
+- Test bar: add file-store integration tests with temporary directories and mocked Docker helper boundaries, plus manual Docker verification for the full recovery/remove flow.
+
+#### Open Questions
+
+No Phase 8 recovery/remove questions remain open before implementation starts.
 
 Exit criteria:
 

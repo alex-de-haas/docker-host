@@ -17,6 +17,7 @@ import {
   readModulesStore,
   writeModulesStore,
 } from '@/lib/module-store';
+import { withModuleMutationLock } from '@/lib/module-mutation-lock';
 import { listInstalledModules } from '@/lib/module-service';
 import type { HostRuntimeConfig } from '@/lib/host-runtime';
 import type { MetadataGraph, MetadataGraphNode } from '@/lib/module-metadata';
@@ -76,8 +77,6 @@ interface InstallNodeContext {
   resolvedDependencies: ResolvedDependency[];
 }
 
-let installMutex: Promise<void> = Promise.resolve();
-
 export async function applyModuleInstallRequest(body: unknown): Promise<InstallApplyResult> {
   const requestValidation = parseInstallRequest(body);
   if (requestValidation.validationErrors.length > 0 || !requestValidation.request) {
@@ -95,7 +94,7 @@ export async function applyModuleInstallRequest(body: unknown): Promise<InstallA
   }
 
   const request = requestValidation.request;
-  return withInstallLock(() => applyValidatedInstallRequest(request));
+  return withModuleMutationLock(() => applyValidatedInstallRequest(request));
 }
 
 async function applyValidatedInstallRequest(
@@ -264,22 +263,6 @@ async function applyValidatedInstallRequest(
       error: null,
     },
   };
-}
-
-async function withInstallLock<T>(operation: () => Promise<T>): Promise<T> {
-  const previous = installMutex;
-  let release: () => void = () => undefined;
-  installMutex = new Promise<void>(resolve => {
-    release = resolve;
-  });
-
-  await previous;
-
-  try {
-    return await operation();
-  } finally {
-    release();
-  }
 }
 
 function parseInstallRequest(body: unknown): {

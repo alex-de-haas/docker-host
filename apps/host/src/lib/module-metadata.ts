@@ -386,7 +386,7 @@ async function readResponseBytes(
   return Buffer.concat(chunks);
 }
 
-function validateAndNormalizeMetadata(
+export function validateAndNormalizeMetadata(
   value: unknown,
   nodePath: string
 ): {

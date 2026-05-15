@@ -1,4 +1,4 @@
-export type ModuleOperationStatus = 'installed' | 'installing' | 'updating' | 'failed';
+export type ModuleOperationStatus = 'installed' | 'installing' | 'updating' | 'failed' | 'removing';
 
 export type ModuleRuntimeState =
   | 'not_created'
@@ -206,6 +206,70 @@ export interface ModuleDetail extends ModuleSummary {
 export interface ModuleActionResult {
   success: boolean;
   module: ModuleSummary | null;
+  error: ModuleOperationError | null;
+}
+
+export type ModuleRecoveryAction = 'cleanup' | 'remove';
+
+export interface ModuleRecoveryPlan {
+  action: ModuleRecoveryAction;
+  moduleId: string;
+  moduleName: string;
+  operationStatus: ModuleOperationStatus;
+  canApply: boolean;
+  deleteModuleDataDefault: false;
+  deleteModuleData: boolean;
+  container: {
+    name: string;
+    exists: boolean;
+    id: string | null;
+    image: string | null;
+    willRemove: boolean;
+  };
+  image: {
+    reference: string;
+    willRemove: false;
+  };
+  metadataFile: {
+    path: string;
+    exists: boolean;
+    willDelete: boolean;
+  };
+  moduleDirectory: {
+    path: string;
+    exists: boolean;
+    willDelete: boolean;
+  };
+  storageDirectories: Array<InstalledStorageMapping & {
+    exists: boolean;
+    willDelete: boolean;
+  }>;
+  externalMounts: Array<InstalledExternalMountMapping & {
+    willDelete: false;
+  }>;
+  dependents: Array<{
+    id: string;
+    name?: string;
+  }>;
+  conflicts: InstallPlanConflict[];
+  warnings: string[];
+}
+
+export interface ModuleRecoveryPlanResponse {
+  plan?: ModuleRecoveryPlan;
+  error?: InstallPlanErrorEnvelope;
+}
+
+export interface ModuleRecoveryApplyRequest {
+  confirmed?: boolean;
+  deleteModuleData?: boolean;
+}
+
+export interface ModuleRecoveryActionResult {
+  success: boolean;
+  module: ModuleSummary | null;
+  removedModuleId?: string;
+  plan?: ModuleRecoveryPlan;
   error: ModuleOperationError | null;
 }
 

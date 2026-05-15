@@ -7,15 +7,33 @@ import {
   ChevronRight,
   CircleAlert,
   Clock3,
+  Eraser,
   LoaderCircle,
   Play,
+  RefreshCw,
   RotateCcw,
   Square,
+  Trash2,
 } from 'lucide-react';
 import type { ModuleLifecycleAction } from '@/hooks/useModules';
-import type { ModuleRuntimeState, ModuleSummary } from '@/types/modules';
+import type {
+  ModuleRecoveryAction,
+  ModuleRecoveryPlan,
+  ModuleRecoveryPlanResponse,
+  ModuleRuntimeState,
+  ModuleSummary,
+} from '@/types/modules';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { Status, StatusIndicator, StatusLabel } from '@/components/ui/status';
 import {
   Table,
@@ -30,6 +48,16 @@ interface ModuleListProps {
   modules: ModuleSummary[];
   pendingAction: { id: string; action: ModuleLifecycleAction } | null;
   onAction: (id: string, action: ModuleLifecycleAction) => void;
+  onRecoveryPlan: (
+    id: string,
+    action: ModuleRecoveryAction,
+    deleteModuleData: boolean
+  ) => Promise<ModuleRecoveryPlanResponse>;
+  onRecoveryApply: (
+    id: string,
+    action: ModuleRecoveryAction,
+    deleteModuleData: boolean
+  ) => Promise<boolean>;
 }
 
 const runtimeStatusMap: Record<ModuleRuntimeState, 'online' | 'offline' | 'maintenance' | 'degraded'> = {
@@ -54,32 +82,152 @@ const runtimeLabels: Record<ModuleRuntimeState, string> = {
   unknown: 'Unknown',
 };
 
-export function ModuleList({ modules, pendingAction, onAction }: ModuleListProps) {
+interface RecoveryDialogState {
+  module: ModuleSummary;
+  action: ModuleRecoveryAction;
+  deleteModuleData: boolean;
+  plan: ModuleRecoveryPlan | null;
+  loading: boolean;
+  applying: boolean;
+  error: string | null;
+}
+
+export function ModuleList({
+  modules,
+  pendingAction,
+  onAction,
+  onRecoveryPlan,
+  onRecoveryApply,
+}: ModuleListProps) {
   const [expandedModuleId, setExpandedModuleId] = useState<string | null>(null);
+  const [recoveryDialog, setRecoveryDialog] = useState<RecoveryDialogState | null>(null);
 
   if (modules.length === 0) {
     return <EmptyModuleState />;
   }
 
+  async function openRecoveryDialog(module: ModuleSummary, action: ModuleRecoveryAction) {
+    setRecoveryDialog({
+      module,
+      action,
+      deleteModuleData: false,
+      plan: null,
+      loading: true,
+      applying: false,
+      error: null,
+    });
+
+    try {
+      const response = await onRecoveryPlan(module.id, action, false);
+      setRecoveryDialog(current =>
+        current && current.module.id === module.id && current.action === action
+          ? {
+              ...current,
+              plan: response.plan ?? null,
+              loading: false,
+              error: response.error ? formatPlanError(response) : null,
+            }
+          : current
+      );
+    } catch (error) {
+      setRecoveryDialog(current =>
+        current && current.module.id === module.id && current.action === action
+          ? {
+              ...current,
+              loading: false,
+              error: error instanceof Error ? error.message : 'Recovery plan could not be loaded.',
+            }
+          : current
+      );
+    }
+  }
+
+  async function setDeleteModuleData(deleteModuleData: boolean) {
+    const current = recoveryDialog;
+    if (!current) {
+      return;
+    }
+
+    setRecoveryDialog({
+      ...current,
+      deleteModuleData,
+      loading: true,
+      error: null,
+    });
+
+    try {
+      const response = await onRecoveryPlan(current.module.id, current.action, deleteModuleData);
+      setRecoveryDialog(previous =>
+        previous && previous.module.id === current.module.id && previous.action === current.action
+          ? {
+              ...previous,
+              plan: response.plan ?? null,
+              loading: false,
+              error: response.error ? formatPlanError(response) : null,
+            }
+          : previous
+      );
+    } catch (error) {
+      setRecoveryDialog(previous =>
+        previous && previous.module.id === current.module.id && previous.action === current.action
+          ? {
+              ...previous,
+              loading: false,
+              error: error instanceof Error ? error.message : 'Recovery plan could not be refreshed.',
+            }
+          : previous
+      );
+    }
+  }
+
+  async function applyRecoveryDialog() {
+    const current = recoveryDialog;
+    if (!current || !current.plan?.canApply) {
+      return;
+    }
+
+    setRecoveryDialog({ ...current, applying: true, error: null });
+    const applied = await onRecoveryApply(
+      current.module.id,
+      current.action,
+      current.deleteModuleData
+    );
+
+    if (applied) {
+      setRecoveryDialog(null);
+    } else {
+      setRecoveryDialog(previous =>
+        previous
+          ? {
+              ...previous,
+              applying: false,
+            }
+          : previous
+      );
+    }
+  }
+
   return (
-    <div className="rounded-lg border bg-card">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-12" />
-            <TableHead className="min-w-[220px]">Module</TableHead>
-            <TableHead className="min-w-[180px]">Image</TableHead>
-            <TableHead>Runtime</TableHead>
-            <TableHead>Operation</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {modules.map(module => {
-            const isExpanded = expandedModuleId === module.id;
-            const modulePendingAction = pendingAction?.id === module.id ? pendingAction.action : null;
-            const isRunning = module.runtimeStatus.state === 'running';
-            const disabled = Boolean(modulePendingAction);
+    <>
+      <div className="rounded-lg border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-12" />
+              <TableHead className="min-w-[220px]">Module</TableHead>
+              <TableHead className="min-w-[180px]">Image</TableHead>
+              <TableHead>Runtime</TableHead>
+              <TableHead>Operation</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {modules.map(module => {
+              const isExpanded = expandedModuleId === module.id;
+              const modulePendingAction = pendingAction?.id === module.id ? pendingAction.action : null;
+              const isRunning = module.runtimeStatus.state === 'running';
+              const disabled = Boolean(modulePendingAction) || module.operationStatus === 'removing';
+              const lifecycleDisabled = disabled || module.operationStatus !== 'installed';
 
             return (
               <Fragment key={module.id}>
@@ -133,7 +281,7 @@ export function ModuleList({ modules, pendingAction, onAction }: ModuleListProps
                           title="Stop module"
                           icon={<Square className="h-4 w-4" />}
                           pendingAction={modulePendingAction}
-                          disabled={disabled}
+                          disabled={lifecycleDisabled}
                           onClick={() => onAction(module.id, 'stop')}
                         />
                       ) : (
@@ -142,7 +290,7 @@ export function ModuleList({ modules, pendingAction, onAction }: ModuleListProps
                           title="Start module"
                           icon={<Play className="h-4 w-4" />}
                           pendingAction={modulePendingAction}
-                          disabled={disabled || module.runtimeStatus.state === 'not_created'}
+                          disabled={lifecycleDisabled || module.runtimeStatus.state === 'not_created'}
                           onClick={() => onAction(module.id, 'start')}
                         />
                       )}
@@ -151,9 +299,39 @@ export function ModuleList({ modules, pendingAction, onAction }: ModuleListProps
                         title="Restart module"
                         icon={<RotateCcw className="h-4 w-4" />}
                         pendingAction={modulePendingAction}
-                        disabled={disabled || module.runtimeStatus.state === 'not_created'}
+                        disabled={lifecycleDisabled || module.runtimeStatus.state === 'not_created'}
                         onClick={() => onAction(module.id, 'restart')}
                       />
+                      {module.operationStatus === 'failed' && (
+                        <>
+                          <IconActionButton
+                            action="retry"
+                            title="Retry failed install"
+                            icon={<RefreshCw className="h-4 w-4" />}
+                            pendingAction={modulePendingAction}
+                            disabled={disabled}
+                            onClick={() => onAction(module.id, 'retry')}
+                          />
+                          <IconActionButton
+                            action="cleanup"
+                            title="Clean up failed install"
+                            icon={<Eraser className="h-4 w-4" />}
+                            pendingAction={modulePendingAction}
+                            disabled={disabled}
+                            onClick={() => void openRecoveryDialog(module, 'cleanup')}
+                          />
+                        </>
+                      )}
+                      {module.operationStatus === 'installed' && (
+                        <IconActionButton
+                          action="remove"
+                          title="Remove module"
+                          icon={<Trash2 className="h-4 w-4" />}
+                          pendingAction={modulePendingAction}
+                          disabled={disabled}
+                          onClick={() => void openRecoveryDialog(module, 'remove')}
+                        />
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -165,10 +343,161 @@ export function ModuleList({ modules, pendingAction, onAction }: ModuleListProps
                   </TableRow>
                 )}
               </Fragment>
-            );
-          })}
-        </TableBody>
-      </Table>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+      <RecoveryPlanDialog
+        state={recoveryDialog}
+        onOpenChange={open => {
+          if (!open) {
+            setRecoveryDialog(null);
+          }
+        }}
+        onDeleteModuleDataChange={value => void setDeleteModuleData(value)}
+        onApply={() => void applyRecoveryDialog()}
+      />
+    </>
+  );
+}
+
+function RecoveryPlanDialog({
+  state,
+  onOpenChange,
+  onDeleteModuleDataChange,
+  onApply,
+}: {
+  state: RecoveryDialogState | null;
+  onOpenChange: (open: boolean) => void;
+  onDeleteModuleDataChange: (value: boolean) => void;
+  onApply: () => void;
+}) {
+  const plan = state?.plan ?? null;
+  const actionLabel = state?.action === 'cleanup' ? 'Clean up failed install' : 'Remove module';
+  const applying = Boolean(state?.applying);
+  const loading = Boolean(state?.loading);
+  const canApply = Boolean(plan?.canApply) && !loading && !applying;
+
+  return (
+    <Dialog open={Boolean(state)} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{actionLabel}</DialogTitle>
+          <DialogDescription>
+            {state?.module.name || 'Module'} artifacts are listed before anything is changed.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading && (
+          <div className="flex items-center gap-2 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+            Loading recovery plan
+          </div>
+        )}
+
+        {state?.error && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            {state.error}
+          </div>
+        )}
+
+        {plan && (
+          <div className="grid gap-4">
+            <div className="grid gap-3 rounded-md border p-3 text-sm sm:grid-cols-2">
+              <PlanItem label="Container" value={`${plan.container.name} (${plan.container.exists ? 'will be removed' : 'missing'})`} />
+              <PlanItem label="Image" value={`${plan.image.reference} (preserved)`} />
+              <PlanItem label="Metadata" value={plan.metadataFile.exists ? 'will be deleted' : 'missing'} />
+              <PlanItem label="Dependents" value={plan.dependents.length ? plan.dependents.map(item => item.id).join(', ') : 'none'} />
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="text-sm font-medium">Module-owned data</h4>
+              <div className="max-h-40 overflow-auto rounded-md border">
+                {plan.storageDirectories.length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground">No module-owned storage mappings.</p>
+                ) : (
+                  <ul className="divide-y text-sm">
+                    {plan.storageDirectories.map(directory => (
+                      <li key={directory.key} className="grid gap-1 p-3">
+                        <span className="font-medium">{directory.key}</span>
+                        <span className="break-all text-xs text-muted-foreground">{directory.hostPath}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {directory.willDelete ? 'will be deleted' : 'will be preserved'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            {plan.externalMounts.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium">External mounts</h4>
+                <div className="max-h-32 overflow-auto rounded-md border">
+                  <ul className="divide-y text-sm">
+                    {plan.externalMounts.map(mount => (
+                      <li key={`${mount.collectionKey}:${mount.key}`} className="grid gap-1 p-3">
+                        <span className="font-medium">{mount.label || mount.key}</span>
+                        <span className="break-all text-xs text-muted-foreground">{mount.hostPath}</span>
+                        <span className="text-xs text-muted-foreground">mapping removed; host path preserved</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            <Label className="items-start gap-3 rounded-md border p-3">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4"
+                checked={state?.deleteModuleData ?? false}
+                disabled={loading || applying}
+                onChange={event => onDeleteModuleDataChange(event.target.checked)}
+              />
+              <span className="grid gap-1">
+                <span>Delete module-owned data directories</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  External host paths are never deleted.
+                </span>
+              </span>
+            </Label>
+
+            {plan.warnings.length > 0 && (
+              <ul className="grid gap-1 text-xs text-muted-foreground">
+                {plan.warnings.map(warning => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
+            Cancel
+          </Button>
+          <Button
+            variant={state?.action === 'remove' || state?.deleteModuleData ? 'destructive' : 'default'}
+            onClick={onApply}
+            disabled={!canApply}
+          >
+            {applying && <LoaderCircle className="h-4 w-4 animate-spin" />}
+            {state?.action === 'cleanup' ? 'Apply cleanup' : 'Remove module'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PlanItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="break-all">{value}</span>
     </div>
   );
 }
@@ -295,4 +624,18 @@ const actionProgressLabels: Record<ModuleLifecycleAction, string> = {
   start: 'Starting...',
   stop: 'Stopping...',
   restart: 'Restarting...',
+  retry: 'Retrying...',
+  cleanup: 'Cleaning up...',
+  remove: 'Removing...',
 };
+
+function formatPlanError(response: ModuleRecoveryPlanResponse) {
+  if (!response.error) {
+    return null;
+  }
+
+  return [
+    response.error.message,
+    ...response.error.conflicts.map(conflict => conflict.message),
+  ].filter(Boolean).join(' ');
+}

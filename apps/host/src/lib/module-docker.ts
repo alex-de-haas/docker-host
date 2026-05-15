@@ -285,6 +285,31 @@ export async function ensureModuleContainerStarted(module: InstalledModuleRecord
   return getModuleRuntimeStatus(module);
 }
 
+export async function removeModuleContainerIfExists(module: InstalledModuleRecord) {
+  const containerName = getModuleContainerName(module);
+
+  try {
+    const container = docker.getContainer(containerName);
+    await container.inspect();
+    await container.remove({ force: true });
+    return {
+      removed: true,
+      existed: true,
+      containerName,
+    };
+  } catch (error) {
+    if (getDockerStatusCode(error) === 404) {
+      return {
+        removed: false,
+        existed: false,
+        containerName,
+      };
+    }
+
+    throw error;
+  }
+}
+
 export async function startModuleContainer(module: InstalledModuleRecord) {
   await ensureModuleContainerNetwork(module);
   const container = docker.getContainer(getModuleContainerName(module));

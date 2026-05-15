@@ -6,18 +6,19 @@ This document defines the Phase 0 domain model for the MVP rewrite. It is the sh
 
 The MVP product model is module-first. Docker containers are an implementation detail managed by Docker Host, not the primary user-facing entity.
 
-In scope for the first API slice:
+In scope for the implemented MVP slices:
 
 - installed module registry;
 - Docker runtime status for installed modules;
 - module start, stop, and restart actions;
+- failed install retry and cleanup;
+- installed module removal;
 - persistent launch and module state files;
-- domain contracts for later install, update, settings, storage, and dependency work.
+- domain contracts for later update, settings, storage, and dependency work.
 
-Out of scope for the first API slice:
+Out of scope for the current MVP slices:
 
-- module install and update execution;
-- module remove flows;
+- module update execution;
 - settings edit UI and APIs;
 - storage configuration UI and APIs;
 - module health checks beyond Docker daemon state;
@@ -210,6 +211,7 @@ Persistent operation status is stored in `modules.json` and describes Host-manag
 | `installing` | Install operation is in progress. |
 | `updating` | Update operation is in progress. |
 | `failed` | Last install/update/start preparation operation failed and needs explicit administrator action. |
+| `removing` | Remove operation is in progress. This state is temporary and should return to `installed` with `lastError` if removal fails before the registry entry is deleted. |
 
 The MVP does not include a disabled module state.
 

@@ -14,6 +14,7 @@ import {
   getModulesStoreStatus,
   readModuleMetadata,
   readModulesStore,
+  writeModulesStore,
 } from '@/lib/module-store';
 import type {
   InstalledExternalMountMapping,
@@ -156,6 +157,20 @@ async function runModuleAction(
     };
   }
 
+  const preflightError = await getPersistentLifecyclePreflightError(
+    installedModule,
+    operation,
+    config
+  );
+  if (preflightError) {
+    await markModuleFailed(moduleId, preflightError, config);
+    return {
+      success: false,
+      module: null,
+      error: preflightError,
+    };
+  }
+
   try {
     const runtimeStatus = await action(installedModule);
     const metadata = await safeReadModuleMetadata(installedModule, config);
@@ -172,6 +187,74 @@ async function runModuleAction(
       error: toModuleOperationError(operation, error, fallbackMessage, nextStep),
     };
   }
+}
+
+async function getPersistentLifecyclePreflightError(
+  module: InstalledModuleRecord,
+  operation: string,
+  config = getHostRuntimeConfig()
+): Promise<ModuleActionResult['error']> {
+  const runtimeStatus = await getModuleRuntimeStatus(module);
+  if (runtimeStatus.state === 'not_created') {
+    return {
+      operation,
+      httpStatus: 409,
+      message: `Module "${module.id}" is missing Docker container "${runtimeStatus.containerName}".`,
+      nextStep: 'Retry the failed install or remove the module and install it again.',
+      occurredAt: new Date().toISOString(),
+    };
+  }
+
+  if (operation !== 'module.start' && operation !== 'module.restart') {
+    return null;
+  }
+
+  const metadata = await safeReadModuleMetadata(module, config);
+  if (!metadata) {
+    return null;
+  }
+
+  for (const directory of metadata.storage?.directories || []) {
+    if (!directory.required) {
+      continue;
+    }
+
+    if (!getStoredStorageMapping(module, directory.key)) {
+      return {
+        operation,
+        httpStatus: 409,
+        message: `Module "${module.id}" is missing required storage mapping "${directory.key}".`,
+        nextStep: 'Clean up the module record or review the install again.',
+        occurredAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  return null;
+}
+
+async function markModuleFailed(
+  moduleId: string,
+  error: NonNullable<ModuleActionResult['error']>,
+  config = getHostRuntimeConfig()
+) {
+  const store = await readModulesStore(config);
+  await writeModulesStore(
+    {
+      ...store,
+      modules: store.modules.map(module =>
+        module.id === moduleId
+          ? {
+              ...module,
+              operationStatus: 'failed',
+              updatedAt: new Date().toISOString(),
+              lastError: error,
+            }
+          : module
+      ),
+    },
+    config
+  );
 }
 
 async function safeReadModuleMetadata(

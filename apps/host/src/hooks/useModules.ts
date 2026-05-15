@@ -1,9 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { ModuleActionResult, ModuleOperationError, ModuleSummary } from '@/types/modules';
+import type {
+  ModuleActionResult,
+  ModuleOperationError,
+  ModuleRecoveryAction,
+  ModuleRecoveryActionResult,
+  ModuleRecoveryPlanResponse,
+  ModuleSummary,
+} from '@/types/modules';
 
-export type ModuleLifecycleAction = 'start' | 'stop' | 'restart';
+export type ModuleLifecycleAction = 'start' | 'stop' | 'restart' | 'retry' | ModuleRecoveryAction;
 
 export function useModules() {
   const [modules, setModules] = useState<ModuleSummary[]>([]);
@@ -55,6 +62,10 @@ export function useModules() {
       setPendingAction({ id, action });
 
       try {
+        if (action === 'cleanup' || action === 'remove') {
+          throw new Error(`${action} requires a reviewed recovery plan.`);
+        }
+
         const response = await fetch(`/api/modules/${encodeURIComponent(id)}/${action}`, {
           method: 'POST',
         });
@@ -81,6 +92,61 @@ export function useModules() {
     [fetchModules]
   );
 
+  const getRecoveryPlan = useCallback(
+    async (
+      id: string,
+      action: ModuleRecoveryAction,
+      deleteModuleData: boolean
+    ): Promise<ModuleRecoveryPlanResponse> => {
+      const response = await fetch(`/api/modules/${encodeURIComponent(id)}/${action}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deleteModuleData }),
+      });
+      const data: ModuleRecoveryPlanResponse = await response.json();
+
+      if (!response.ok && !data.plan) {
+        throw new Error(formatRecoveryPlanError(data, `Failed to load ${action} plan`));
+      }
+
+      return data;
+    },
+    []
+  );
+
+  const applyRecoveryAction = useCallback(
+    async (id: string, action: ModuleRecoveryAction, deleteModuleData: boolean) => {
+      setPendingAction({ id, action });
+
+      try {
+        const response = await fetch(`/api/modules/${encodeURIComponent(id)}/${action}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirmed: true, deleteModuleData }),
+        });
+        const result: ModuleRecoveryActionResult = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error(formatModuleActionError(result.error, `Failed to ${action} module`));
+        }
+
+        if (result.removedModuleId) {
+          setModules(current => current.filter(module => module.id !== result.removedModuleId));
+        }
+
+        setError(null);
+        await fetchModules({ suppressLoading: true });
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown module recovery action error');
+        return false;
+      } finally {
+        setPendingAction(null);
+      }
+    },
+    [fetchModules]
+  );
+
   return {
     modules,
     loading,
@@ -90,6 +156,8 @@ export function useModules() {
     pendingAction,
     refetch,
     performAction,
+    getRecoveryPlan,
+    applyRecoveryAction,
   };
 }
 
@@ -115,4 +183,15 @@ function formatModuleActionError(error: ModuleOperationError | null, fallback: s
   }
 
   return [error.message, error.dockerMessage, error.nextStep].filter(Boolean).join(' ');
+}
+
+function formatRecoveryPlanError(data: ModuleRecoveryPlanResponse, fallback: string) {
+  if (!data.error) {
+    return fallback;
+  }
+
+  return [
+    data.error.message,
+    ...data.error.conflicts.map(conflict => conflict.message),
+  ].filter(Boolean).join(' ');
 }

@@ -18,6 +18,8 @@ export default function Dashboard() {
     pendingAction,
     refetch,
     performAction,
+    getRecoveryPlan,
+    applyRecoveryAction,
   } = useModules();
 
   const isRefreshing = refreshState !== 'idle';
@@ -96,6 +98,8 @@ export default function Dashboard() {
               modules={modules}
               pendingAction={pendingAction}
               onAction={performAction}
+              onRecoveryPlan={getRecoveryPlan}
+              onRecoveryApply={applyRecoveryAction}
             />
           )}
         </section>
