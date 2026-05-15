@@ -25,6 +25,24 @@ export interface ModuleNetworkStatus {
   error: string | null;
 }
 
+export interface DockerContainerNameStatus {
+  name: string;
+  exists: boolean;
+  id: string | null;
+  image: string | null;
+}
+
+export interface ModuleNetworkInspection {
+  name: string;
+  exists: boolean;
+  id: string | null;
+  aliases: Array<{
+    alias: string;
+    containerId: string;
+    containerName: string;
+  }>;
+}
+
 type DockerError = Error & {
   statusCode?: number;
   json?: {
@@ -141,6 +159,70 @@ export async function getModuleRuntimeStatus(
       finishedAt: null,
       error: formatDockerError(error),
     };
+  }
+}
+
+export async function inspectContainerNameReadOnly(
+  name: string
+): Promise<DockerContainerNameStatus> {
+  try {
+    const info = await docker.getContainer(name).inspect();
+
+    return {
+      name,
+      exists: true,
+      id: info.Id ?? null,
+      image: info.Config?.Image ?? null,
+    };
+  } catch (error) {
+    if (getDockerStatusCode(error) === 404) {
+      return {
+        name,
+        exists: false,
+        id: null,
+        image: null,
+      };
+    }
+
+    throw error;
+  }
+}
+
+export async function inspectModuleNetworkReadOnly(
+  config: HostRuntimeConfig = getHostRuntimeConfig()
+): Promise<ModuleNetworkInspection> {
+  try {
+    const info = await docker.getNetwork(config.moduleNetwork).inspect();
+    const containers = info.Containers ?? {};
+
+    return {
+      name: config.moduleNetwork,
+      exists: true,
+      id: info.Id ?? null,
+      aliases: Object.entries(containers).flatMap(([containerId, endpoint]) => {
+        const endpointInfo = endpoint as {
+          Name?: string;
+          Aliases?: string[];
+        };
+
+        return (endpointInfo.Aliases ?? []).map(alias => ({
+          alias,
+          containerId,
+          containerName: endpointInfo.Name ?? containerId,
+        }));
+      }),
+    };
+  } catch (error) {
+    if (getDockerStatusCode(error) === 404) {
+      return {
+        name: config.moduleNetwork,
+        exists: false,
+        id: null,
+        aliases: [],
+      };
+    }
+
+    throw error;
   }
 }
 

@@ -297,6 +297,8 @@ Exit criteria:
 
 ## Phase 5 - Metadata schema and install planner
 
+Status: completed. The Host backend now exposes `POST /api/modules/install/plan`, downloads HTTP(S) metadata JSON with size and timeout limits, validates and normalizes strict `schemaVersion: "0.1"` metadata, recursively resolves required dependencies, computes metadata and plan digests, derives storage paths, Docker names, network aliases, settings prompts, dependency connection URLs, and performs read-only Host/Docker conflict checks without creating files, directories, images, containers, or networks.
+
 Purpose: сделать read-only backend слой, который превращает прямой metadata JSON URL в детерминированный install plan без filesystem и Docker side effects.
 
 Tasks:

@@ -285,7 +285,7 @@ External storage mounts могут находиться за пределами 
 
 На текущем этапе источником правды для module metadata schema является этот документ: пример `Metadata draft`, `Schema outline`, field notes и validation rules ниже вместе описывают ожидаемый контракт.
 
-При переходе к executable validation реализация должна жить внутри Host backend и следовать этому документу. Отдельный shared contracts package или generated schema artifact для metadata MVP не требуется. До появления runtime validation отдельная runtime-схема не считается более авторитетной, чем этот документ.
+Executable validation now lives inside the Host backend and follows this document. The Phase 5 implementation validates and normalizes `schemaVersion: "0.1"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from the read-only install planner. Отдельный shared contracts package или generated schema artifact для metadata MVP не требуется; этот документ остается источником правды для supported metadata contract.
 
 ## Schema outline
 

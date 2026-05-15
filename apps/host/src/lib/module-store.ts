@@ -34,6 +34,22 @@ export async function readModulesStore(config = getHostRuntimeConfig()): Promise
   return normalizeStore(parsed);
 }
 
+export async function readModulesStoreSnapshot(
+  config = getHostRuntimeConfig()
+): Promise<ModulesStoreData> {
+  if (!(await pathExists(config.modulesStorePath))) {
+    return {
+      schemaVersion: STORE_SCHEMA_VERSION,
+      hostSettings: {},
+      modules: [],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  const raw = await fs.readFile(config.modulesStorePath, 'utf-8');
+  return normalizeStore(JSON.parse(raw) as unknown);
+}
+
 export async function writeModulesStore(
   store: ModulesStoreData,
   config = getHostRuntimeConfig()

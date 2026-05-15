@@ -15,7 +15,7 @@ Host API реализуется внутри full-stack Next.js Host application
 
 ## Initial API slice
 
-The first API slice is intentionally small:
+The first lifecycle API slice is intentionally small:
 
 - return Host runtime, Docker daemon, module network, and installed module store status;
 - list installed modules;
@@ -24,7 +24,7 @@ The first API slice is intentionally small:
 - stop a module;
 - restart a module.
 
-Module install, update, remove, settings editing, storage configuration, install plans, update plans, logs, and external exposure are later API slices.
+The current API surface also includes the Phase 5 read-only install plan endpoint. Module install apply, update, remove, settings editing, storage configuration, update plans, logs, and external exposure are later API slices.
 
 The shared domain vocabulary for this API is defined in [Docker Host domain model](domain-model.md).
 
@@ -302,9 +302,12 @@ Recommended query parameters:
 
 ### Module installation
 
-Future endpoints should support:
+The read-only install plan endpoint is implemented:
 
 - `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker names, network aliases, and runtime ports;
+
+Future endpoints should support:
+
 - `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install;
 - expose install failure diagnostics with operation name, Docker status/message when available, administrator next step, and failed operation status.
 
@@ -354,6 +357,8 @@ Successful `200` responses should use one top-level `plan` object:
 ```
 
 The `dependencies` array represents the resolved dependency tree. `installOrder` is the topological module id order used for later apply. `normalizedMetadata` contains the normalized root metadata after defaults are applied. `settings` contains prompts, defaults, targets, and secret redaction markers, but never raw secret values.
+
+The implementation returns dependency nodes with their own normalized metadata, Docker name, network alias, module paths, install action (`install` or `reuse`), and dependency connection mappings. The top-level `paths` object identifies the root module directory and local `metadata.json` copy paths in both host and Host-container path spaces.
 
 Install plan Docker checks:
 
