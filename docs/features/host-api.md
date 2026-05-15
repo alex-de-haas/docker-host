@@ -24,7 +24,7 @@ The first lifecycle API slice is intentionally small:
 - stop a module;
 - restart a module.
 
-The current API surface also includes the Phase 5 read-only install plan endpoint. Module install apply, update, remove, settings editing, storage configuration, update plans, logs, and external exposure are later API slices.
+The current API surface also includes the module install endpoints: a read-only install plan endpoint and a confirmed install apply endpoint. Update, remove, settings editing, storage configuration, update plans, logs, and external exposure are later API slices.
 
 The shared domain vocabulary for this API is defined in [Docker Host domain model](domain-model.md).
 
@@ -298,20 +298,14 @@ Recommended query parameters:
 - `since` - optional timestamp or duration boundary;
 - `timestamps` - whether Docker log timestamps should be included.
 
-## Later API slices
+## Module installation
 
-### Module installation
-
-The read-only install plan endpoint is implemented:
+The module installation API is implemented for the MVP install flow:
 
 - `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker names, network aliases, and runtime ports;
+- `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install.
 
-Future endpoints should support:
-
-- `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install;
-- expose install failure diagnostics with operation name, Docker status/message when available, administrator next step, and failed operation status.
-
-The install apply endpoint should return HTTP `201` on success:
+The install apply endpoint returns HTTP `201` on success:
 
 ```json
 {
@@ -324,7 +318,7 @@ The install apply endpoint should return HTTP `201` on success:
 
 `module` is the installed root module summary after Docker runtime status refresh. `installedModuleIds` contains modules that the apply endpoint created or completed during this request. `reusedModuleIds` contains compatible dependencies that were already installed and were started if needed.
 
-Apply request validation failures use HTTP `422` and the shared error envelope. Current-state conflicts, including reviewed plan digest mismatch, incompatible reusable dependencies, and external mount conflicts, use HTTP `409`. Docker/runtime unavailability before mutation uses HTTP `503`. Failures after mutation has started use HTTP `500`, mark the affected module `failed`, and preserve created files, images, and containers for explicit recovery.
+Apply request validation failures use HTTP `422` and the shared error envelope. Current-state conflicts, including reviewed plan digest mismatch, incompatible or missing-container reusable dependencies, and external mount conflicts, use HTTP `409`. Docker/runtime unavailability before mutation uses HTTP `503`. Failures after mutation has started use HTTP `500`, mark the affected module `failed`, and preserve created files, images, and containers for explicit recovery.
 
 Install apply persists each newly installed module in root-level `modules.json` with:
 
@@ -382,7 +376,7 @@ The install plan request body is intentionally minimal:
 }
 ```
 
-Phase 5 should not introduce request flags such as refresh behavior, diagnostics toggles, or conflict-check bypasses.
+The MVP install flow does not include request flags such as refresh behavior, diagnostics toggles, or conflict-check bypasses.
 
 Successful `200` responses should use one top-level `plan` object:
 
@@ -426,8 +420,9 @@ The implementation returns dependency nodes with their own normalized metadata, 
 Install plan Docker checks:
 
 - `POST /api/modules/install/plan` requires Docker daemon read access.
-- The endpoint must perform read-only Docker conflict checks for generated container names, Host-managed network presence, and network aliases before returning a successful plan.
+- The endpoint must perform read-only Docker conflict checks for generated container names, missing containers for reusable dependencies, and, when the Host-managed network already exists, network aliases before returning a successful plan.
 - The endpoint must not create or mutate files, module directories, images, containers, or Docker networks.
+- A missing Host-managed network is not a plan conflict. The install apply endpoint creates the network at mutation time.
 - If Docker daemon is unavailable, the endpoint should return HTTP `503` and should not return a successful install plan.
 - Docker conflict observations are not part of `planDigest`; the apply endpoint must repeat Docker conflict checks before any mutation.
 

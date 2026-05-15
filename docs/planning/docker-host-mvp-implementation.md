@@ -414,7 +414,7 @@ Exit criteria:
 
 ## Phase 7 - Module install apply runtime
 
-Status: in progress. The initial implementation decisions are fixed below, and development has started with the install apply API route, server-side request validation, per-module state writes, Docker container creation helpers, and Web UI submit wiring.
+Status: completed. The Host now has the install apply API route, server-side request validation, per-module state writes, Docker container creation helpers, Web UI submit wiring, install-time network creation, and reusable dependency preflight checks.
 
 Purpose: применить подтвержденный install request и запустить required dependency modules plus consumer module.
 

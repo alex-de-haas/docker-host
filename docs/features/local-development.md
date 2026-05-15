@@ -264,7 +264,7 @@ http://localhost:3000/fixtures/modules/phase6-reports
 
 The reports fixture references a second local dependency fixture at `/fixtures/modules/phase6-identity`, declares editable non-secret settings, one write-only secret, module-owned storage, one required external mount collection, runtime ports, and resource hints. Use the install route's local fixture action to fill the current origin automatically when the dev server runs on a non-default port.
 
-The install plan endpoint still requires Docker read access and the Host-managed module network. If the fixture returns a Docker conflict or `503`, validate the UI error state first, then create/start the Host through the normal launch path before testing the successful review state.
+The install plan endpoint still requires Docker read access. If the fixture returns a Docker conflict or `503`, validate the UI error state first, then create/start Docker through the normal local setup before testing the successful review state. The install apply endpoint creates the Host-managed module network if it does not already exist.
 
 ## Phase 7 install apply fixture
 

@@ -6,6 +6,7 @@ import {
   createAndStartModuleContainer,
   ensureModuleContainerStarted,
   ensureModuleNetwork,
+  inspectContainerNameReadOnly,
   pullModuleImage,
   toModuleOperationError,
 } from '@/lib/module-docker';
@@ -778,6 +779,17 @@ async function collectReusableDependencyConflicts(
         dependency,
         `Dependency local metadata major "${installedMajor}" does not match planned major "${plannedMajor}".`,
         metadata.version
+      ));
+      continue;
+    }
+
+    const containerName = installed.containerName || dependency.docker.containerName;
+    const container = await inspectContainerNameReadOnly(containerName);
+    if (!container.exists) {
+      conflicts.push(reusableDependencyConflict(
+        dependency,
+        `Dependency Docker container "${containerName}" is missing.`,
+        null
       ));
     }
   }

@@ -568,6 +568,8 @@ Resolved dependency base URLs должны быть только internal Docker
 
 Если dependency обязательная (`required: true`), Host должен установить и запустить ее до запуска потребителя. Если Host не может получить resolved base URL обязательной dependency, запуск потребителя должен быть остановлен с понятной ошибкой.
 
+Если dependency уже установлена и install plan помечает ее как reusable, planner и install apply проверяют `modules.json`, major-совместимость локального `metadata.json` и наличие Docker container. Apply повторяет эти проверки до начала мутаций нового consumer module. Если reusable dependency container отсутствует, установка consumer module отклоняется как конфликт; автоматическое восстановление dependency остается отдельным recovery flow.
+
 Future optional dependencies behavior: если dependency опциональная (`required: false`) и она не установлена или отключена, Host должен не задавать `baseUrlEnv` или передать пустое значение. Потребляющий модуль должен трактовать пустую или отсутствующую env-переменную как "integration unavailable" и работать без этой dependency. Это не входит в first implementation scope.
 
 Future optional dependency example:

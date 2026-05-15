@@ -669,9 +669,11 @@ async function collectDockerConflicts(
   });
 
   for (const dependency of plan.dependencies) {
+    const installed = existingById.get(dependency.id);
+
     plannedDockerTargets.set(dependency.id, {
       moduleId: dependency.id,
-      containerName: dependency.docker.containerName,
+      containerName: installed?.containerName || dependency.docker.containerName,
       alias: dependency.docker.networkAlias,
     });
   }
@@ -679,6 +681,20 @@ async function collectDockerConflicts(
   for (const target of plannedDockerTargets.values()) {
     const status = await inspectContainerNameReadOnly(target.containerName);
     const reusable = isReusableInstalledDependency(target.moduleId, plan.module.id, existingById);
+
+    if (!status.exists && reusable) {
+      conflicts.push({
+        code: 'reusable_dependency_conflict',
+        message: `Reusable dependency "${target.moduleId}" is missing Docker container "${target.containerName}".`,
+        resourceType: 'docker_container',
+        resourceId: target.containerName,
+        path: '$.dependencies',
+        node: target.moduleId,
+        existingValue: null,
+        proposedValue: target.containerName,
+      });
+      continue;
+    }
 
     if (status.exists && !reusable) {
       conflicts.push({
@@ -695,41 +711,31 @@ async function collectDockerConflicts(
   }
 
   const network = await inspectModuleNetworkReadOnly(config);
-  if (!network.exists) {
-    conflicts.push({
-      code: 'module_network_missing',
-      message: `Host-managed Docker network "${config.moduleNetwork}" does not exist.`,
-      resourceType: 'docker_network',
-      resourceId: config.moduleNetwork,
-      path: '$.docker.networkName',
-      existingValue: null,
-      proposedValue: config.moduleNetwork,
-    });
-  }
+  if (network.exists) {
+    for (const target of plannedDockerTargets.values()) {
+      const aliasReservation = network.aliases.find(alias => alias.alias === target.alias);
+      if (!aliasReservation) {
+        continue;
+      }
 
-  for (const target of plannedDockerTargets.values()) {
-    const aliasReservation = network.aliases.find(alias => alias.alias === target.alias);
-    if (!aliasReservation) {
-      continue;
-    }
+      const reusable = isReusableInstalledDependency(target.moduleId, plan.module.id, existingById);
+      const installed = existingById.get(target.moduleId);
+      const installedContainerName = installed?.containerName || (installed ? getModuleDockerName(installed.id) : null);
+      const aliasBelongsToReusableContainer =
+        reusable && installedContainerName && aliasReservation.containerName === installedContainerName;
 
-    const reusable = isReusableInstalledDependency(target.moduleId, plan.module.id, existingById);
-    const installed = existingById.get(target.moduleId);
-    const installedContainerName = installed?.containerName || (installed ? getModuleDockerName(installed.id) : null);
-    const aliasBelongsToReusableContainer =
-      reusable && installedContainerName && aliasReservation.containerName === installedContainerName;
-
-    if (!aliasBelongsToReusableContainer) {
-      conflicts.push({
-        code: 'network_alias_conflict',
-        message: `Network alias "${target.alias}" is already used on Docker network "${config.moduleNetwork}".`,
-        resourceType: 'docker_network_alias',
-        resourceId: target.alias,
-        path: '$.docker.networkAliases',
-        node: target.moduleId,
-        existingValue: aliasReservation.containerName,
-        proposedValue: target.alias,
-      });
+      if (!aliasBelongsToReusableContainer) {
+        conflicts.push({
+          code: 'network_alias_conflict',
+          message: `Network alias "${target.alias}" is already used on Docker network "${config.moduleNetwork}".`,
+          resourceType: 'docker_network_alias',
+          resourceId: target.alias,
+          path: '$.docker.networkAliases',
+          node: target.moduleId,
+          existingValue: aliasReservation.containerName,
+          proposedValue: target.alias,
+        });
+      }
     }
   }
 
