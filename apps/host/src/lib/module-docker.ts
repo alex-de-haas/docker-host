@@ -3,10 +3,13 @@ import docker, { dockerConnectionDescription, formatDockerError } from '@/lib/do
 import { getHostRuntimeConfig } from '@/lib/host-runtime';
 import type { HostRuntimeConfig } from '@/lib/host-runtime';
 import type {
+  InstallPlanImage,
   InstalledModuleRecord,
   ModuleOperationError,
   ModuleRuntimeState,
   ModuleRuntimeStatus,
+  ModuleRuntimePortMetadata,
+  NormalizedModuleMetadata,
 } from '@/types/modules';
 
 export interface DockerDaemonStatus {
@@ -41,6 +44,24 @@ export interface ModuleNetworkInspection {
     containerId: string;
     containerName: string;
   }>;
+}
+
+export interface ModuleContainerMount {
+  hostPath: string;
+  containerPath: string;
+  readOnly: boolean;
+}
+
+export interface CreateModuleContainerInput {
+  moduleId: string;
+  containerName: string;
+  networkName: string;
+  networkAlias: string;
+  imageReference: string;
+  env: Record<string, string>;
+  mounts: ModuleContainerMount[];
+  ports: ModuleRuntimePortMetadata[];
+  resources?: NormalizedModuleMetadata['runtime']['resources'];
 }
 
 type DockerError = Error & {
@@ -226,6 +247,44 @@ export async function inspectModuleNetworkReadOnly(
   }
 }
 
+export async function pullModuleImage(image: InstallPlanImage) {
+  if (image.pullPolicy === 'manual') {
+    await ensureImageExists(
+      image.reference,
+      `Image "${image.reference}" is required locally because pullPolicy is manual. Pull it manually, then retry the install.`
+    );
+    return;
+  }
+
+  if (image.pullPolicy === 'ifNotPresent' && await imageExists(image.reference)) {
+    return;
+  }
+
+  await pullImageReference(image.reference);
+}
+
+export async function createAndStartModuleContainer(config: CreateModuleContainerInput) {
+  const container = await docker.createContainer(buildModuleContainerCreateOptions(config));
+  await container.start();
+  return getModuleRuntimeStatus({
+    id: config.moduleId,
+    metadataUrl: '',
+    containerName: config.containerName,
+  });
+}
+
+export async function ensureModuleContainerStarted(module: InstalledModuleRecord) {
+  await ensureModuleContainerNetwork(module);
+  const container = docker.getContainer(getModuleContainerName(module));
+  const info = await container.inspect();
+
+  if (!info.State.Running) {
+    await container.start();
+  }
+
+  return getModuleRuntimeStatus(module);
+}
+
 export async function startModuleContainer(module: InstalledModuleRecord) {
   await ensureModuleContainerNetwork(module);
   const container = docker.getContainer(getModuleContainerName(module));
@@ -326,6 +385,114 @@ function mapDockerState(state?: string): ModuleRuntimeState {
     default:
       return 'unknown';
   }
+}
+
+function buildModuleContainerCreateOptions(
+  config: CreateModuleContainerInput
+): Docker.ContainerCreateOptions {
+  const exposedPorts = Object.fromEntries(
+    config.ports.map(port => [`${port.containerPort}/tcp`, {}])
+  );
+  const resources = buildResourceHostConfig(config.resources);
+
+  return {
+    name: config.containerName,
+    Image: config.imageReference,
+    ExposedPorts: Object.keys(exposedPorts).length > 0 ? exposedPorts : undefined,
+    Env: Object.entries(config.env).map(([key, value]) => `${key}=${value}`),
+    HostConfig: {
+      NetworkMode: config.networkName,
+      RestartPolicy: { Name: 'unless-stopped' },
+      Mounts: config.mounts.map(mount => ({
+        Type: 'bind',
+        Source: mount.hostPath,
+        Target: mount.containerPath,
+        ReadOnly: mount.readOnly,
+      })),
+      ...resources,
+    },
+    NetworkingConfig: {
+      EndpointsConfig: {
+        [config.networkName]: {
+          Aliases: [config.networkAlias],
+        },
+      },
+    },
+  };
+}
+
+function buildResourceHostConfig(
+  resources: NormalizedModuleMetadata['runtime']['resources'] | undefined
+): Partial<Docker.HostConfig> {
+  if (!resources) {
+    return {};
+  }
+
+  return {
+    ...(resources.cpus !== undefined ? { NanoCpus: Math.round(resources.cpus * 1_000_000_000) } : {}),
+    ...(resources.memory ? { Memory: parseMemoryBytes(resources.memory) } : {}),
+  };
+}
+
+function parseMemoryBytes(value: string) {
+  const match = /^(\d+(?:\.\d+)?)(?:\s*(b|k|kb|m|mb|g|gb))?$/i.exec(value.trim());
+
+  if (!match) {
+    throw new Error(`runtime.resources.memory "${value}" is not a supported Docker Host memory value.`);
+  }
+
+  const amount = Number(match[1]);
+  const unit = (match[2] || 'b').toLowerCase();
+  const multiplier =
+    unit === 'g' || unit === 'gb'
+      ? 1024 * 1024 * 1024
+      : unit === 'm' || unit === 'mb'
+        ? 1024 * 1024
+        : unit === 'k' || unit === 'kb'
+          ? 1024
+          : 1;
+
+  return Math.round(amount * multiplier);
+}
+
+async function ensureImageExists(imageReference: string, missingMessage: string) {
+  if (await imageExists(imageReference)) {
+    return;
+  }
+
+  throw new Error(missingMessage);
+}
+
+async function imageExists(imageReference: string) {
+  try {
+    await docker.getImage(imageReference).inspect();
+    return true;
+  } catch (error) {
+    if (getDockerStatusCode(error) === 404) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function pullImageReference(imageReference: string) {
+  await new Promise<void>((resolve, reject) => {
+    docker.pull(imageReference, (err: Error | null, stream: NodeJS.ReadableStream) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      docker.modem.followProgress(stream, (followError: Error | null) => {
+        if (followError) {
+          reject(followError);
+        } else {
+          resolve();
+        }
+      });
+    });
+  });
 }
 
 function getDockerVersionOsType(version: Docker.DockerVersion) {

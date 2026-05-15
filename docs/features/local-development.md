@@ -266,6 +266,12 @@ The reports fixture references a second local dependency fixture at `/fixtures/m
 
 The install plan endpoint still requires Docker read access and the Host-managed module network. If the fixture returns a Docker conflict or `503`, validate the UI error state first, then create/start the Host through the normal launch path before testing the successful review state.
 
+## Phase 7 install apply fixture
+
+Phase 7 can use the same local metadata fixture to exercise `POST /api/modules/install`. After preparing the install request on `/modules/install`, submit the explicit install action. The apply endpoint recomputes the plan, validates submitted settings and external mounts server-side, writes per-module install state to `modules.json`, stores raw metadata copies under `modules/<module-id>/metadata.json`, creates module-owned directories, pulls images according to `pullPolicy`, and creates module containers on the Host-managed network.
+
+For the fixture path, provide an external mount host path that Docker can bind mount. The Host process does not preflight external host paths through local filesystem checks; Docker daemon mount success or failure is the validation boundary.
+
 ## Verification checklist
 
 For a normal feature change:

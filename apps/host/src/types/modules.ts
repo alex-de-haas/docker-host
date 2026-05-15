@@ -47,6 +47,18 @@ export interface InstalledStorageMapping {
   readOnly?: boolean;
 }
 
+export type InstalledSettingValue = string | number | boolean;
+
+export interface InstalledExternalMountMapping {
+  collectionKey: string;
+  key: string;
+  label?: string;
+  hostPath: string;
+  containerPath: string;
+  access: ModuleInstallExternalMountAccess;
+  readOnly: boolean;
+}
+
 export interface ResolvedDependency {
   id: string;
   endpoint?: string;
@@ -58,14 +70,17 @@ export interface InstalledModuleRecord {
   id: string;
   metadataUrl: string;
   metadataPath?: string;
+  metadataDigest?: string;
+  planDigest?: string;
   containerName?: string;
   image?: Partial<ModuleImage>;
   operationStatus?: ModuleOperationStatus;
-  settings?: Record<string, string>;
+  settings?: Record<string, InstalledSettingValue>;
   storage?: {
     directories?: InstalledStorageMapping[];
   };
   storageMappings?: Record<string, InstalledStorageMapping> | InstalledStorageMapping[];
+  externalMounts?: InstalledExternalMountMapping[] | Record<string, InstalledExternalMountMapping[]>;
   resolvedDependencies?: Record<string, ResolvedDependency> | ResolvedDependency[];
   dependencies?: ResolvedDependency[];
   installedAt?: string;
@@ -183,6 +198,7 @@ export interface ModuleDetail extends ModuleSummary {
   settings: Array<ModuleSettingMetadata & { valueSet: boolean }>;
   storage: {
     directories: InstalledStorageMapping[];
+    externalMounts: InstalledExternalMountMapping[];
   };
   dependencies: ResolvedDependency[];
 }
@@ -408,3 +424,16 @@ export interface ModuleInstallRequest {
   settings: ModuleInstallSettingSelection[];
   externalMounts: ModuleInstallExternalMountSelection[];
 }
+
+export interface ModuleInstallSuccessResponse {
+  module: ModuleSummary;
+  installedModuleIds: string[];
+  reusedModuleIds: string[];
+  error: null;
+}
+
+export interface ModuleInstallFailureResponse {
+  error: InstallPlanErrorEnvelope;
+}
+
+export type ModuleInstallResponse = ModuleInstallSuccessResponse | ModuleInstallFailureResponse;

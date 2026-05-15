@@ -831,6 +831,8 @@ Host не должен пытаться валидировать external host p
 - public/private marker для порта;
 - CPU и memory hints.
 
+Phase 7 applies resource hints when creating Docker containers. `runtime.resources.cpus` maps to Docker `NanoCpus`. `runtime.resources.memory` supports plain byte counts and `k`, `m`, or `g` suffixes, for example `512m` or `1g`.
+
 В первой implementation Host не вводит runtime health checks или readiness probes для модулей. Статус модуля определяется только через Docker daemon container state: container created, running, stopped, exited или failed по данным Docker.
 
 Для required dependencies Host считает dependency запущенной, если Docker успешно стартовал dependency container и Host может вычислить internal Docker-network base URL. Host не ждет HTTP health endpoint или custom readiness signal на первом этапе.

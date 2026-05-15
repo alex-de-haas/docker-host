@@ -414,7 +414,27 @@ Exit criteria:
 
 ## Phase 7 - Module install apply runtime
 
+Status: in progress. The initial implementation decisions are fixed below, and development has started with the install apply API route, server-side request validation, per-module state writes, Docker container creation helpers, and Web UI submit wiring.
+
 Purpose: применить подтвержденный install request и запустить required dependency modules plus consumer module.
+
+Implementation decisions:
+
+- `POST /api/modules/install` returns HTTP `201` on success with the installed root module summary, installed module ids, and reused dependency ids. Apply failures use the same top-level `error.code`, `error.message`, `error.validationErrors[]`, and `error.conflicts[]` envelope as install planning.
+- The apply endpoint must treat the Web UI payload as untrusted input. It validates submitted settings and external mount selections server-side against the recomputed install plan before any filesystem, store, image, or container mutation.
+- `modules.json` records the reviewed `metadataDigest` and `planDigest`, typed setting values, module-owned `storageMappings`, selected `externalMounts`, resolved dependency base URLs, and operation errors. Docker environment variables are stringified only when creating containers.
+- `pullPolicy` behavior in install apply:
+  - `ifNotPresent` inspects the local image first and pulls only when missing;
+  - `always` pulls before container creation;
+  - `manual` requires the image to already exist locally and fails with an administrator next step if it is missing.
+- A reusable dependency must be present in `modules.json` with `operationStatus=installed`, must have compatible local metadata major version, and must have a startable Docker container. Failed or missing-container dependencies are not healed by Phase 7; explicit recovery remains Phase 8 scope.
+- Operation state is written per module before mutating that module's files or Docker resources. Successfully installed dependency modules remain installed if a later consumer install fails.
+- The local `metadata.json` copy stores the raw downloaded metadata bytes that produced the reviewed plan digest, not a reserialized normalized object.
+- Phase 7 creates module containers through a dedicated module Docker helper. It does not use the prototype raw-container helper because module containers must avoid host port publication and must attach to the Host-managed network with the planned alias.
+- The apply endpoint ensures the shared module network exists at mutation time. Network existence is not part of `planDigest`.
+- Resource hints are applied during container creation: `runtime.resources.cpus` maps to Docker `NanoCpus`, and `runtime.resources.memory` supports byte, `k`, `m`, and `g` suffixes.
+- Install apply uses an in-process mutex around mutating work. A durable cross-process file lock can be added later if the Host runs multiple backend processes.
+- The Web UI keeps the redacted payload preview and adds an explicit install submit step once the payload validates locally.
 
 Tasks:
 

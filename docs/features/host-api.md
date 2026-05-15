@@ -311,6 +311,31 @@ Future endpoints should support:
 - `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install;
 - expose install failure diagnostics with operation name, Docker status/message when available, administrator next step, and failed operation status.
 
+The install apply endpoint should return HTTP `201` on success:
+
+```json
+{
+  "module": {},
+  "installedModuleIds": ["com.acme.identity", "com.acme.reports"],
+  "reusedModuleIds": [],
+  "error": null
+}
+```
+
+`module` is the installed root module summary after Docker runtime status refresh. `installedModuleIds` contains modules that the apply endpoint created or completed during this request. `reusedModuleIds` contains compatible dependencies that were already installed and were started if needed.
+
+Apply request validation failures use HTTP `422` and the shared error envelope. Current-state conflicts, including reviewed plan digest mismatch, incompatible reusable dependencies, and external mount conflicts, use HTTP `409`. Docker/runtime unavailability before mutation uses HTTP `503`. Failures after mutation has started use HTTP `500`, mark the affected module `failed`, and preserve created files, images, and containers for explicit recovery.
+
+Install apply persists each newly installed module in root-level `modules.json` with:
+
+- source `metadataUrl`, local `metadataPath`, root or dependency `metadataDigest`, and reviewed `planDigest`;
+- Docker image reference, pull policy, container name, and operation status;
+- typed setting values, including write-only secret values;
+- computed module-owned `storageMappings`;
+- selected `externalMounts`;
+- resolved dependency base URLs;
+- timestamps and the last operation error.
+
 The reviewed install request payload shape is:
 
 ```json

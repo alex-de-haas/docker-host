@@ -16,6 +16,7 @@ import {
   readModulesStore,
 } from '@/lib/module-store';
 import type {
+  InstalledExternalMountMapping,
   InstalledModuleRecord,
   InstalledStorageMapping,
   ModuleActionResult,
@@ -94,6 +95,7 @@ export async function getInstalledModuleDetail(moduleId: string): Promise<Module
     settings: buildSettings(installedModule, metadata),
     storage: {
       directories: buildStorageDirectories(installedModule, metadata),
+      externalMounts: getStoredExternalMounts(installedModule),
     },
     dependencies: buildDependencies(installedModule, metadata),
   };
@@ -275,6 +277,11 @@ function getStoredStorageMapping(module: InstalledModuleRecord, key: string) {
   }
 
   return mappings?.[key];
+}
+
+function getStoredExternalMounts(module: InstalledModuleRecord): InstalledExternalMountMapping[] {
+  const mounts = module.externalMounts || [];
+  return Array.isArray(mounts) ? mounts : Object.values(mounts).flat();
 }
 
 function getResolvedDependencies(module: InstalledModuleRecord) {

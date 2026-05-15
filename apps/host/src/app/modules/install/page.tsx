@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   ArrowLeft,
+  CheckCircle2,
   CircleAlert,
   Database,
   ExternalLink,
@@ -42,7 +43,9 @@ import type {
   InstallPlanMountCollection,
   InstallPlanResponse,
   InstallPlanSettingPrompt,
+  ModuleInstallResponse,
   ModuleInstallRequest,
+  ModuleInstallSuccessResponse,
 } from '@/types/modules';
 
 export default function InstallModulePage() {
@@ -53,6 +56,9 @@ export default function InstallModulePage() {
   const [externalMountDrafts, setExternalMountDrafts] = useState<ExternalMountDraft[]>([]);
   const [externalMountErrors, setExternalMountErrors] = useState<ExternalMountValidationError[]>([]);
   const [preparedRequest, setPreparedRequest] = useState<ModuleInstallRequest | null>(null);
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [installResult, setInstallResult] = useState<ModuleInstallSuccessResponse | null>(null);
+  const [installError, setInstallError] = useState<InstallPlanErrorEnvelope | null>(null);
 
   async function handlePlanSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,6 +66,8 @@ export default function InstallModulePage() {
     setPlan(null);
     setPlanError(null);
     setPreparedRequest(null);
+    setInstallResult(null);
+    setInstallError(null);
     setExternalMountErrors([]);
 
     try {
@@ -96,6 +104,8 @@ export default function InstallModulePage() {
       return;
     }
 
+    setInstallResult(null);
+    setInstallError(null);
     const externalMountValidation = validateExternalMountDrafts(plan, externalMountDrafts);
     setExternalMountErrors(externalMountValidation.errors);
 
@@ -108,7 +118,42 @@ export default function InstallModulePage() {
       new FormData(event.currentTarget),
       externalMountValidation.selections
     );
-    setPreparedRequest(redactModuleInstallRequest(payload));
+    setPreparedRequest(payload);
+  }
+
+  async function handleInstallPrepared() {
+    if (!preparedRequest) {
+      return;
+    }
+
+    setIsInstalling(true);
+    setInstallResult(null);
+    setInstallError(null);
+
+    try {
+      const response = await fetch('/api/modules/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(preparedRequest),
+      });
+      const data = await response.json() as ModuleInstallResponse;
+
+      if ('error' in data && data.error) {
+        setInstallError(data.error);
+        return;
+      }
+
+      setInstallResult(data);
+    } catch (error) {
+      setInstallError({
+        code: 'install_apply_request_failed',
+        message: error instanceof Error ? error.message : 'Unable to install module.',
+        validationErrors: [],
+        conflicts: [],
+      });
+    } finally {
+      setIsInstalling(false);
+    }
   }
 
   return (
@@ -160,6 +205,8 @@ export default function InstallModulePage() {
         </section>
 
         {planError && <PlanErrorPanel error={planError} />}
+        {installError && <PlanErrorPanel error={installError} />}
+        {installResult && <InstallSuccessPanel result={installResult} />}
 
         {plan && (
           <form key={plan.planDigest} onSubmit={handlePrepareRequest} className="space-y-6">
@@ -186,15 +233,40 @@ export default function InstallModulePage() {
               </div>
 
               {preparedRequest && (
-                <pre className="mt-4 max-h-80 overflow-auto rounded-md bg-muted p-4 text-xs">
-                  {JSON.stringify(preparedRequest, null, 2)}
-                </pre>
+                <div className="mt-4 space-y-4">
+                  <pre className="max-h-80 overflow-auto rounded-md bg-muted p-4 text-xs">
+                    {JSON.stringify(redactModuleInstallRequest(preparedRequest), null, 2)}
+                  </pre>
+                  <div className="flex justify-end">
+                    <Button type="button" onClick={handleInstallPrepared} disabled={isInstalling}>
+                      {isInstalling ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      Install module
+                    </Button>
+                  </div>
+                </div>
               )}
             </section>
           </form>
         )}
       </main>
     </div>
+  );
+}
+
+function InstallSuccessPanel({ result }: { result: ModuleInstallSuccessResponse }) {
+  return (
+    <section className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-5 text-emerald-950 dark:text-emerald-200">
+      <div className="mb-3 flex items-center gap-2">
+        <CheckCircle2 className="h-4 w-4" />
+        <h2 className="text-base font-semibold">Module installed</h2>
+      </div>
+      <DefinitionGrid>
+        <Definition label="Module" value={result.module.name} />
+        <Definition label="Module ID" value={result.module.id} />
+        <Definition label="Installed" value={result.installedModuleIds.join(', ') || '-'} />
+        <Definition label="Reused" value={result.reusedModuleIds.join(', ') || '-'} />
+      </DefinitionGrid>
+    </section>
   );
 }
 

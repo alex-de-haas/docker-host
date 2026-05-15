@@ -44,17 +44,27 @@ export type InstallPlanResult =
     };
 
 export async function createInstallPlan(metadataUrl: string): Promise<InstallPlanResult> {
+  const { result } = await createInstallPlanWithGraph(metadataUrl);
+  return result;
+}
+
+export async function createInstallPlanWithGraph(
+  metadataUrl: string
+): Promise<{ result: InstallPlanResult; graph: MetadataGraph | null }> {
   const graphResult = await loadMetadataGraph(metadataUrl);
 
   if (!graphResult.graph || graphResult.validationErrors.length > 0) {
     return {
-      status: 422,
-      body: {
-        error: {
-          code: 'install_plan_validation_failed',
-          message: 'Module metadata is invalid.',
-          validationErrors: graphResult.validationErrors,
-          conflicts: [],
+      graph: null,
+      result: {
+        status: 422,
+        body: {
+          error: {
+            code: 'install_plan_validation_failed',
+            message: 'Module metadata is invalid.',
+            validationErrors: graphResult.validationErrors,
+            conflicts: [],
+          },
         },
       },
     };
@@ -69,11 +79,17 @@ export async function createInstallPlan(metadataUrl: string): Promise<InstallPla
   try {
     const dockerCheck = await collectDockerConflicts(plan, store, config);
     if (dockerCheck.status === 503) {
-      return dockerCheck;
+      return {
+        graph: graphResult.graph,
+        result: dockerCheck,
+      };
     }
     dockerConflicts = dockerCheck.conflicts;
   } catch (error) {
-    return dockerUnavailableResult(error);
+    return {
+      graph: graphResult.graph,
+      result: dockerUnavailableResult(error),
+    };
   }
 
   const conflicts = [...hostConflicts, ...dockerConflicts];
@@ -81,22 +97,28 @@ export async function createInstallPlan(metadataUrl: string): Promise<InstallPla
 
   if (conflicts.length > 0) {
     return {
-      status: 409,
-      body: {
-        plan,
-        error: {
-          code: 'install_plan_conflict',
-          message: 'The install plan conflicts with current Host or Docker state.',
-          validationErrors: [],
-          conflicts,
+      graph: graphResult.graph,
+      result: {
+        status: 409,
+        body: {
+          plan,
+          error: {
+            code: 'install_plan_conflict',
+            message: 'The install plan conflicts with current Host or Docker state.',
+            validationErrors: [],
+            conflicts,
+          },
         },
       },
     };
   }
 
   return {
-    status: 200,
-    body: { plan },
+    graph: graphResult.graph,
+    result: {
+      status: 200,
+      body: { plan },
+    },
   };
 }
 

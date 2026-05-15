@@ -134,16 +134,48 @@ Initial `modules.json` shape:
       "id": "com.acme.reports",
       "metadataUrl": "https://modules.example/reports/metadata.json",
       "metadataPath": "modules/com.acme.reports/metadata.json",
+      "metadataDigest": "sha256:...",
+      "planDigest": "sha256:...",
       "containerName": "mod-com-acme-reports",
       "image": {
         "repository": "ghcr.io/acme/reports-module",
         "tag": "1.0.0",
-        "reference": "ghcr.io/acme/reports-module:1.0.0"
+        "reference": "ghcr.io/acme/reports-module:1.0.0",
+        "pullPolicy": "ifNotPresent"
       },
       "operationStatus": "installed",
-      "settings": {},
-      "storageMappings": {},
-      "resolvedDependencies": {},
+      "settings": {
+        "REPORT_RETENTION_DAYS": 30
+      },
+      "storageMappings": {
+        "data": {
+          "key": "data",
+          "containerPath": "/app/data",
+          "hostPath": "/Users/example/.docker-host/modules/com.acme.reports/data",
+          "required": true,
+          "writable": true,
+          "readOnly": false
+        }
+      },
+      "externalMounts": [
+        {
+          "collectionKey": "libraries",
+          "key": "main-media",
+          "label": "Main media disk",
+          "hostPath": "/mnt/media",
+          "containerPath": "/storage/libraries/main-media",
+          "access": "readWrite",
+          "readOnly": false
+        }
+      ],
+      "resolvedDependencies": [
+        {
+          "id": "com.acme.identity",
+          "endpoint": "http",
+          "baseUrlEnv": "IDENTITY_BASE_URL",
+          "resolvedBaseUrl": "http://mod-com-acme-identity:8080"
+        }
+      ],
       "installedAt": "2026-05-13T09:00:00Z",
       "updatedAt": "2026-05-13T09:00:00Z",
       "lastError": null
@@ -205,6 +237,8 @@ Module settings are declared by metadata and stored as values in `modules.json`.
 MVP rules:
 
 - every setting target is treated as an environment variable;
+- setting values are stored as typed JSON values in `modules.json`;
+- Docker environment variables are stringified only when Host creates a module container;
 - secret values are write-only in API responses;
 - API responses may expose whether a secret value is set, but never the raw value;
 - settings changes are a later API slice.
