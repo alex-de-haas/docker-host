@@ -28,6 +28,7 @@ flowchart LR
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
 - [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.
 - [CLI bootstrap](features/cli-bootstrap.md) - `docker-host` command surface, launch configuration, and direct Docker Engine lifecycle integration.
+- [CLI module commands](features/cli-module-commands.md) - terminal module management commands using the Host backend API.
 - [Docker Host API](features/host-api.md) - Host backend API endpoint catalog for Web UI and future CLI module commands.
 - [Docker Host domain model](features/domain-model.md) - shared vocabulary for installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.

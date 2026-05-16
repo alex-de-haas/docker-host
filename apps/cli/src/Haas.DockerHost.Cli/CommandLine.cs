@@ -3,6 +3,7 @@ namespace Haas.DockerHost.Cli;
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.Docker;
+using Haas.DockerHost.Cli.HostApi;
 using Spectre.Console;
 
 public static class CommandLine
@@ -27,7 +28,8 @@ public static class CommandLine
         var environment = DockerHostEnvironment.Current();
         var settingsStore = new LaunchSettingsStore(environment);
         var dockerFactory = new DockerEngineClientFactory();
-        var commandContext = new CommandContext(console, environment, settingsStore, dockerFactory);
+        var hostApiFactory = new HostApiClientFactory();
+        var commandContext = new CommandContext(console, environment, settingsStore, dockerFactory, hostApiFactory);
 
         try
         {
@@ -43,6 +45,7 @@ public static class CommandLine
                 "logs" => await new LogsCommand(commandContext).ExecuteAsync(args[1..]),
                 "open" => await new OpenCommand(commandContext).ExecuteAsync(args[1..]),
                 "config" => await new ConfigCommand(commandContext).ExecuteAsync(args[1..]),
+                "modules" => await new ModulesCommand(commandContext).ExecuteAsync(args[1..]),
                 _ => UnknownCommand(console, args[0]),
             };
         }
@@ -64,6 +67,11 @@ public static class CommandLine
         catch (DockerEngineException ex)
         {
             WriteDockerError(console, ex);
+            return 1;
+        }
+        catch (HostApiException ex)
+        {
+            WriteHostApiError(console, ex);
             return 1;
         }
         catch (OperationCanceledException)
@@ -103,6 +111,27 @@ public static class CommandLine
         }
     }
 
+    private static void WriteHostApiError(IAnsiConsole console, HostApiException ex)
+    {
+        console.MarkupLine($"[red]Host API operation failed:[/] {Markup.Escape(ex.Operation)}");
+        console.MarkupLine($"[grey]Error:[/] {Markup.Escape(ex.Message)}");
+
+        if (ex.StatusCode is not null)
+        {
+            console.MarkupLine($"[grey]HTTP status:[/] {(int)ex.StatusCode} {ex.StatusCode}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(ex.ResponseBody))
+        {
+            console.MarkupLine($"[grey]Response:[/] {Markup.Escape(ex.ResponseBody)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(ex.NextStep))
+        {
+            console.MarkupLine($"[grey]Next step:[/] {Markup.Escape(ex.NextStep)}");
+        }
+    }
+
     private static void WriteHelp(IAnsiConsole console)
     {
         console.WriteLine(HelpText);
@@ -125,7 +154,9 @@ public static class CommandLine
           logs
           open
           config
+          modules
 
         Run docker-host config --help for configuration commands.
+        Run docker-host modules --help for module commands.
         """;
 }
