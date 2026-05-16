@@ -22,6 +22,14 @@ docker-host start
 docker-host open
 ```
 
+To remove the Host container, Host-managed Docker resources, launch configuration, and local Host state while keeping the `docker-host` CLI executable:
+
+```bash
+docker-host uninstall
+```
+
+Run `docker-host install` again to recreate launch configuration and Host directories.
+
 For one-command install and start:
 
 ```bash

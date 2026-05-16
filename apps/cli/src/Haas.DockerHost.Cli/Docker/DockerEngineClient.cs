@@ -190,13 +190,35 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
 
     public async Task RemoveContainerAsync(string containerName, CancellationToken cancellationToken = default)
     {
-        var response = await transport.SendAsync("remove Host container", HttpMethod.Delete, $"/containers/{EncodePathSegment(containerName)}?force=true&v=false", cancellationToken: cancellationToken);
+        var response = await transport.SendAsync("remove Docker container", HttpMethod.Delete, $"/containers/{EncodePathSegment(containerName)}?force=true&v=false", cancellationToken: cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return;
         }
 
-        EnsureSuccess(response, "Stop the Host container and retry.");
+        EnsureSuccess(response, $"Stop the Docker container '{containerName}' and retry.");
+    }
+
+    public async Task RemoveNetworkAsync(string networkName, CancellationToken cancellationToken = default)
+    {
+        var response = await transport.SendAsync("remove module network", HttpMethod.Delete, $"/networks/{EncodePathSegment(networkName)}", cancellationToken: cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return;
+        }
+
+        EnsureSuccess(response, $"Remove containers attached to the Docker network '{networkName}', then retry.");
+    }
+
+    public async Task RemoveImageAsync(string image, CancellationToken cancellationToken = default)
+    {
+        var response = await transport.SendAsync("remove Docker image", HttpMethod.Delete, $"/images/{EncodePathSegment(image)}?force=false&noprune=false", cancellationToken: cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return;
+        }
+
+        EnsureSuccess(response, $"Remove containers using the Docker image '{image}', then retry.");
     }
 
     public async Task<string> GetLogsAsync(string containerName, int tail, CancellationToken cancellationToken = default)

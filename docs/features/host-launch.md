@@ -75,6 +75,7 @@ CLI нужен в первую очередь для bootstrap и lifecycle са
 
 ```text
 docker-host install
+docker-host uninstall
 docker-host start
 docker-host stop
 docker-host restart
@@ -86,6 +87,8 @@ docker-host config
 ```
 
 Lifecycle-команды работают напрямую через Docker daemon, потому что Host API может быть еще не запущен или может быть сломан.
+
+`docker-host uninstall` сохраняет сам CLI executable, но удаляет Host-managed runtime и local state: Host container, known module containers, Host/module images when Docker allows it, shared module network when it is no longer in use, launch configuration, and Host state under the data root. После этого `docker-host install` должен восстановить launch configuration и базовую структуру директорий.
 
 В первой CLI implementation lifecycle-команды будут обращаться к Docker daemon напрямую через Docker Engine API. CLI не должен запускать установленный Docker CLI executable для Host lifecycle operations.
 

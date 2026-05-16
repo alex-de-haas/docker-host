@@ -34,6 +34,7 @@ public static class CommandLine
             return args[0] switch
             {
                 "install" => await new InstallCommand(commandContext).ExecuteAsync(args[1..]),
+                "uninstall" => await new UninstallCommand(commandContext).ExecuteAsync(args[1..]),
                 "start" => await new StartCommand(commandContext).ExecuteAsync(args[1..]),
                 "stop" => await new StopCommand(commandContext).ExecuteAsync(args[1..]),
                 "restart" => await new RestartCommand(commandContext).ExecuteAsync(args[1..]),
@@ -115,6 +116,7 @@ public static class CommandLine
 
         Commands:
           install
+          uninstall
           start
           stop
           restart
