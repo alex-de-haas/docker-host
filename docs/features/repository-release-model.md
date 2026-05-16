@@ -93,6 +93,8 @@ Docs-only changes:
 
 Если изменился только CLI, Host image не должен публиковаться. Если изменился только Host UI без изменения API-контракта, CLI artifacts не должны публиковаться. Если изменился `docs/features/host-api.md`, CI должен проверить и Host, и CLI.
 
+Common CI runs Host lint, Host unit tests, Host production build, CLI build, and the CLI xUnit test suite. The root `npm run ci` script mirrors that sequence for local validation.
+
 ## Release artifacts
 
 Host release artifact:

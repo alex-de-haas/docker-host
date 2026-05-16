@@ -114,7 +114,7 @@ internal sealed class SelfUpdateService(CommandContext context)
         return await response.Content.ReadAsByteArrayAsync(cancellationToken);
     }
 
-    private static bool TryFindChecksum(string? checksums, string artifact, out string sha256)
+    internal static bool TryFindChecksum(string? checksums, string artifact, out string sha256)
     {
         sha256 = string.Empty;
         if (string.IsNullOrWhiteSpace(checksums))
@@ -135,4 +135,3 @@ internal sealed class SelfUpdateService(CommandContext context)
         return false;
     }
 }
-

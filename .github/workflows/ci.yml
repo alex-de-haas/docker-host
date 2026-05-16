@@ -46,6 +46,9 @@ jobs:
       - name: Lint Host
         run: npm run host:lint
 
+      - name: Test Host
+        run: npm run host:test
+
       - name: Build Host
         run: npm run host:build
 
@@ -67,5 +70,5 @@ jobs:
       - name: Build CLI
         run: npm run cli:build
 
-      - name: Build CLI tests
+      - name: Test CLI
         run: npm run cli:test

@@ -15,7 +15,7 @@
     "host:lint": "npm run lint --workspace @haas/docker-host-app",
     "host:test": "npm run test --workspace @haas/docker-host-app",
     "cli:build": "dotnet build apps/cli/src/Haas.DockerHost.Cli/Haas.DockerHost.Cli.csproj",
-    "cli:test": "dotnet build apps/cli/tests/Haas.DockerHost.Cli.Tests/Haas.DockerHost.Cli.Tests.csproj",
+    "cli:test": "dotnet test apps/cli/tests/Haas.DockerHost.Cli.Tests/Haas.DockerHost.Cli.Tests.csproj",
     "ci": "npm run host:lint && npm run host:test && npm run host:build && npm run cli:build && npm run cli:test"
   }
 }

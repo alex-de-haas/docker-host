@@ -95,10 +95,22 @@ Notes:
 docker build -f apps/host/Dockerfile -t docker-host .
 ```
 
-## CLI scaffold
+## CLI development
 
 Build the standalone CLI project:
 
 ```bash
 npm run cli:build
+```
+
+Run the xUnit CLI test suite:
+
+```bash
+npm run cli:test
+```
+
+Run the same aggregate checks used by CI:
+
+```bash
+npm run ci
 ```
