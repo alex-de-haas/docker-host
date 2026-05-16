@@ -1,24 +1,24 @@
 # Docker Host domain model
 
-This document defines the Phase 0 domain model for the MVP rewrite. It is the shared vocabulary for Host backend API, Web UI, future CLI module commands, and persistent files.
+This document defines the Docker Host domain model. It is the shared vocabulary for Host backend API, Web UI, future CLI module commands, and persistent files.
 
 ## Scope
 
 The MVP product model is module-first. Docker containers are an implementation detail managed by Docker Host, not the primary user-facing entity.
 
-In scope for the implemented MVP slices:
+In scope for the implemented MVP:
 
 - installed module registry;
 - Docker runtime status for installed modules;
 - module start, stop, and restart actions;
 - failed install retry and cleanup;
 - installed module removal;
+- module update planning, apply, and retry;
 - persistent launch and module state files;
-- domain contracts for later update, settings, storage, and dependency work.
+- domain contracts for later settings, storage, and dependency work.
 
-Out of scope for the current MVP slices:
+Out of scope for the current MVP:
 
-- module update execution;
 - settings edit UI and APIs;
 - storage configuration UI and APIs;
 - module health checks beyond Docker daemon state;
@@ -186,7 +186,7 @@ Initial `modules.json` shape:
 }
 ```
 
-The Phase 3 backend creates an empty store automatically:
+The Host backend creates an empty store automatically:
 
 ```json
 {
@@ -230,7 +230,7 @@ Docker runtime status is read from Docker daemon for each installed module conta
 | `dead` | Docker reports the container as dead. |
 | `unknown` | Host could not determine container state. |
 
-The first implementation does not expose module health or readiness status. Future health support may use Docker healthcheck data or another unified model, but Phase 3 and the initial module API report only Docker container state.
+The MVP does not expose module health or readiness status. Future health support may use Docker healthcheck data or another unified model, but the current module API reports only Docker container state.
 
 ## Settings
 
@@ -273,7 +273,7 @@ Optional dependencies are not implemented in the MVP. Metadata with `dependencie
 
 ## Install And Update Plans
 
-Install and update plan execution is outside the first API slice, but the model is fixed for later implementation.
+Install and update plans are reviewed descriptions of Host mutations before apply.
 
 An install plan describes:
 
@@ -301,9 +301,9 @@ An update plan describes:
 - dependency changes;
 - container replacement steps.
 
-The MVP does not rely on durable pending plan state. Install and update apply operations should recompute the reviewed plan from source metadata and submitted administrator decisions, then compare the reviewed plan digest before mutating files, module state, images, or containers.
+The MVP does not rely on durable pending plan state. Install and update apply operations recompute the reviewed plan from source metadata and submitted administrator decisions, then compare the reviewed plan digest before mutating files, module state, images, or containers.
 
-The first implementation uses optimistic fail-fast behavior. If an install or update fails after changes have started, Host records failure state and preserves created files, directories, images, and containers for diagnosis.
+The MVP uses optimistic fail-fast behavior. If an install or update fails after changes have started, Host records failure state and preserves created files, directories, images, and containers for diagnosis.
 
 ## Naming Contracts
 
@@ -327,4 +327,4 @@ com.modulis.storage -> mod-com-modulis-storage
 
 ## Open Questions
 
-No Phase 0 domain model questions remain open. Later slices may reopen details for metadata validation implementation, optional dependencies, external storage UX, and stable API version negotiation.
+No MVP domain model questions remain open. Later slices may reopen details for optional dependencies, external storage UX, and stable API version negotiation.

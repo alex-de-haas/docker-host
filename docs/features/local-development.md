@@ -9,7 +9,7 @@ Docker Host should support two local feedback loops:
 - direct host-run development through `npm run host:dev`;
 - production-like local container testing through a locally built Docker image tag, for example `docker-host:dev`.
 
-The direct host-run mode is the default development loop. The production-like mode is used when validating Dockerfile behavior, container environment variables, Docker socket mounts, Host data root mounts, and future `docker-host` CLI lifecycle behavior.
+The direct host-run mode is the default development loop. The production-like mode is used when validating Dockerfile behavior, container environment variables, Docker socket mounts, Host data root mounts, and `docker-host` CLI lifecycle behavior.
 
 ```mermaid
 flowchart LR
@@ -97,7 +97,7 @@ http://host.docker.internal:<port>/...
 
 ## CLI development contract
 
-The future standalone `docker-host` CLI should allow local Host image override so the lifecycle flow can be tested without registry push.
+The standalone `docker-host` CLI allows local Host image override so the lifecycle flow can be tested without registry push.
 
 Target local flow:
 
@@ -109,7 +109,7 @@ docker-host start
 docker-host open
 ```
 
-The Phase 2 CLI config command shape is fixed as:
+The CLI config command shape is:
 
 ```bash
 docker-host config list
@@ -147,128 +147,21 @@ Example metadata image reference for local module testing:
 
 When the Host itself runs directly through `npm run host:dev`, local metadata URLs can point to `localhost`. When the Host runs as `docker-host:dev`, metadata URLs for services on the developer machine should use `host.docker.internal`.
 
-## Phase 4 manual module seed
-
-Phase 4 does not include module install runtime. To validate the module dashboard before Phase 5/6, use a dedicated development data root and manually seed one installed module record plus its local metadata file. This seed is only a validation aid; it is not a production API, fixture contract, or install flow.
-
-Use an isolated root instead of the production default `~/.docker-host`:
-
-```bash
-export DOCKER_HOST_PHASE4_ROOT="$(mktemp -d /tmp/docker-host-phase4.XXXXXX)"
-mkdir -p "$DOCKER_HOST_PHASE4_ROOT/modules/com.example.nginx"
-```
-
-Create `modules.json`:
-
-```bash
-cat > "$DOCKER_HOST_PHASE4_ROOT/modules.json" <<'JSON'
-{
-  "schemaVersion": "0.1",
-  "hostSettings": {},
-  "modules": [
-    {
-      "id": "com.example.nginx",
-      "metadataUrl": "manual-seed://com.example.nginx",
-      "metadataPath": "modules/com.example.nginx/metadata.json",
-      "containerName": "mod-com-example-nginx",
-      "image": {
-        "repository": "nginx",
-        "tag": "alpine",
-        "reference": "nginx:alpine",
-        "pullPolicy": "ifNotPresent"
-      },
-      "operationStatus": "installed",
-      "settings": {},
-      "storageMappings": {},
-      "resolvedDependencies": {},
-      "installedAt": "2026-05-14T00:00:00Z",
-      "updatedAt": "2026-05-14T00:00:00Z",
-      "lastError": null
-    }
-  ],
-  "updatedAt": "2026-05-14T00:00:00Z"
-}
-JSON
-```
-
-Create `modules/com.example.nginx/metadata.json`:
-
-```bash
-cat > "$DOCKER_HOST_PHASE4_ROOT/modules/com.example.nginx/metadata.json" <<'JSON'
-{
-  "schemaVersion": "0.1",
-  "id": "com.example.nginx",
-  "name": "Example Nginx",
-  "description": "Manual Phase 4 seed module for validating module list and lifecycle UI.",
-  "version": "1.0.0",
-  "image": {
-    "repository": "nginx",
-    "tag": "alpine",
-    "pullPolicy": "ifNotPresent"
-  },
-  "dependencies": [],
-  "settings": [],
-  "storage": {
-    "directories": []
-  },
-  "runtime": {
-    "ports": [
-      {
-        "key": "http",
-        "containerPort": 80,
-        "protocol": "tcp",
-        "public": false
-      }
-    ]
-  }
-}
-JSON
-```
-
-Create the matching Docker container manually. Phase 4 can start, stop, and restart an existing module container, but it must not create containers from metadata:
-
-```bash
-docker rm -f mod-com-example-nginx 2>/dev/null || true
-docker pull nginx:alpine
-docker create --name mod-com-example-nginx nginx:alpine
-```
-
-For direct host-run development, point both Host data root variables at the isolated directory because the backend runs on the developer machine:
-
-```bash
-HOST_DATA_ROOT_HOST="$DOCKER_HOST_PHASE4_ROOT" \
-HOST_DATA_ROOT_CONTAINER="$DOCKER_HOST_PHASE4_ROOT" \
-npm run host:dev
-```
-
-For production-like container testing, bind the same root to `/data` and keep `/data` as the container-side root:
-
-```bash
-docker build -f apps/host/Dockerfile -t docker-host:dev .
-
-docker run --rm --name docker-host-dev -p 3000:3000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$DOCKER_HOST_PHASE4_ROOT:/data" \
-  -e HOST_DATA_ROOT_HOST="$DOCKER_HOST_PHASE4_ROOT" \
-  -e HOST_DATA_ROOT_CONTAINER=/data \
-  docker-host:dev
-```
-
-## Phase 6 install plan fixture
+## Local install fixture
 
 The Host app serves a local metadata fixture for install review UI development:
 
 ```text
-http://localhost:3000/fixtures/modules/phase6-reports
+http://localhost:3000/fixtures/modules/sample-reports
 ```
 
-The reports fixture references a second local dependency fixture at `/fixtures/modules/phase6-identity`, declares editable non-secret settings, one write-only secret, module-owned storage, one required external mount collection, runtime ports, and resource hints. Use the install route's local fixture action to fill the current origin automatically when the dev server runs on a non-default port.
+The reports fixture references a second local dependency fixture at `/fixtures/modules/sample-identity`, declares editable non-secret settings, one write-only secret, module-owned storage, one required external mount collection, runtime ports, and resource hints. Use the install route's local fixture action to fill the current origin automatically when the dev server runs on a non-default port.
 
 The install plan endpoint still requires Docker read access. If the fixture returns a Docker conflict or `503`, validate the UI error state first, then create/start Docker through the normal local setup before testing the successful review state. The install apply endpoint creates the Host-managed module network if it does not already exist.
 
-## Phase 7 install apply fixture
+## Local install apply fixture
 
-Phase 7 can use the same local metadata fixture to exercise `POST /api/modules/install`. After preparing the install request on `/modules/install`, submit the explicit install action. The apply endpoint recomputes the plan, validates submitted settings and external mounts server-side, writes per-module install state to `modules.json`, stores raw metadata copies under `modules/<module-id>/metadata.json`, creates module-owned directories, pulls images according to `pullPolicy`, and creates module containers on the Host-managed network.
+Use the same local metadata fixture to exercise `POST /api/modules/install`. After preparing the install request on `/modules/install`, submit the explicit install action. The apply endpoint recomputes the plan, validates submitted settings and external mounts server-side, writes per-module install state to `modules.json`, stores raw metadata copies under `modules/<module-id>/metadata.json`, creates module-owned directories, pulls images according to `pullPolicy`, and creates module containers on the Host-managed network.
 
 For the fixture path, provide an external mount host path that Docker can bind mount. The Host process does not preflight external host paths through local filesystem checks; Docker daemon mount success or failure is the validation boundary.
 
@@ -277,7 +170,7 @@ For the fixture path, provide an external mount host path that Docker can bind m
 For a normal feature change:
 
 - run `npm run host:dev`;
-- for Phase 6 UI helper changes, run `npm run host:test`;
+- for install/update request helper changes, run `npm run host:test`;
 - open the Web UI;
 - exercise the changed API/UI behavior;
 - check the Docker operation result in the UI or Docker Desktop.
@@ -292,4 +185,4 @@ For a launch/runtime change:
 
 ## Open Questions
 
-No local development questions are currently open for Phase 2.
+No local development questions are currently open.

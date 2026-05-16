@@ -2,7 +2,7 @@
 
 ## Overview
 
-Docker Host Manager is a local application for managing Docker containers. The planned module model extends this from direct container management to logical modules described by JSON metadata files.
+Docker Host Manager is a local application for managing Docker containers. The module model extends this from direct container management to logical modules described by JSON metadata files.
 
 A module is a Docker-hosted functional unit. Administrators add a module by providing a direct URL to a JSON metadata file. The Host downloads that JSON file, reads the Docker image reference and module metadata, then prepares local storage and container configuration.
 
@@ -26,12 +26,10 @@ flowchart LR
 
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
-- [Web UI dashboard](features/web-ui-dashboard.md) - Phase 4 installed module dashboard and lifecycle action scope.
-- [CLI bootstrap](features/cli-bootstrap.md) - Phase 2 `docker-host` command surface, launch configuration, and direct Docker Engine lifecycle integration.
-- [Docker Host API](features/host-api.md) - initial Host backend API endpoint catalog for Web UI and future CLI module commands.
-- [Docker Host domain model](features/domain-model.md) - shared Phase 0 vocabulary for installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
+- [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.
+- [CLI bootstrap](features/cli-bootstrap.md) - `docker-host` command surface, launch configuration, and direct Docker Engine lifecycle integration.
+- [Docker Host API](features/host-api.md) - Host backend API endpoint catalog for Web UI and future CLI module commands.
+- [Docker Host domain model](features/domain-model.md) - shared vocabulary for installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
 - [Module metadata files](features/module-metadata.md) - detailed draft for installing Docker-hosted modules from JSON metadata URLs.
-- [Module update flow](features/module-update.md) - Phase 9 update plan, apply, preservation, and retry decisions.
-- [Docker Host MVP implementation plan](planning/docker-host-mvp-implementation.md) - rewrite-oriented implementation sequence based on the current documentation.
-- [Prototype feature inventory](planning/prototype-feature-inventory.md) - useful behaviors from the current raw-container prototype to remember during rewrite.
+- [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.

@@ -1,33 +1,51 @@
 # Web UI dashboard
 
-The Web UI is the primary daily interface for Docker Host module operations. In Phase 4, the dashboard is centered on installed modules from the Host backend API instead of direct raw Docker container management.
+The Web UI is the primary daily interface for Docker Host module operations. The dashboard is centered on installed modules from the Host backend API instead of direct raw Docker container management.
 
 ## Scope
 
-The dashboard reads installed modules from `GET /api/modules` and uses module lifecycle routes for actions:
+The dashboard reads installed modules from `GET /api/modules`, shows Host/Docker status cards, and uses module lifecycle routes for row actions:
 
 - `POST /api/modules/{moduleId}/start`
 - `POST /api/modules/{moduleId}/stop`
 - `POST /api/modules/{moduleId}/restart`
 
-The UI displays module metadata, image reference, operation status, Docker runtime state, container identity, timestamps, and any recorded module/runtime error. It intentionally does not implement module installation, update plan review, settings editing, storage mapping edits, removal, or log viewing in Phase 4.
+The dashboard displays module metadata, image reference, operation status, Docker runtime state, container identity, timestamps, and any recorded module/runtime error. Rows can expand for details. Lifecycle actions are enabled only for modules in `operationStatus=installed`; failed or removing modules expose recovery actions instead.
 
-Phase 6 adds a dashboard entry point to a dedicated module install route. The install route owns metadata URL input, plan review, administrator setting collection, external mount selection, and construction of the future install apply payload. Dashboard rows stay focused on installed modules and lifecycle actions.
+Implemented module-management flows:
+
+- Install uses the dedicated `/modules/install` route. It accepts a metadata URL, calls `POST /api/modules/install/plan`, renders the reviewed plan, collects setting values and external mount selections, shows a redacted payload preview, then submits `POST /api/modules/install`.
+- Update uses the dedicated `/modules/{moduleId}/update` route. Dashboard rows link to it for installed modules. The route calls `POST /api/modules/{moduleId}/update/plan`, shows refreshed metadata changes and prompts, builds a redacted update request, then submits `POST /api/modules/{moduleId}/update`.
+- Failed update rows expose `POST /api/modules/{moduleId}/update/retry` plus a link to review the update again.
+- Failed install rows expose `POST /api/modules/{moduleId}/retry` and cleanup through a backend-generated confirmation dialog.
+- Installed rows expose remove through a backend-generated confirmation dialog.
+- Cleanup and remove dialogs call `POST /api/modules/{moduleId}/cleanup/plan` or `POST /api/modules/{moduleId}/remove/plan` before apply, default to preserving module-owned data, and only submit apply after explicit confirmation.
 
 ```mermaid
-flowchart LR
+flowchart TD
   A["Web UI dashboard"] --> B["GET /api/modules"]
-  A --> C["POST lifecycle action"]
-  B --> D["Host backend"]
-  C --> D
-  D --> E["modules.json"]
-  D --> F["local metadata.json"]
-  D --> G["Docker daemon"]
+  A --> C["Lifecycle row actions"]
+  A --> D["/modules/install"]
+  A --> E["/modules/{moduleId}/update"]
+  A --> F["Recovery dialogs"]
+  C --> G["start/stop/restart API"]
+  D --> H["install plan/apply API"]
+  E --> I["update plan/apply API"]
+  F --> J["retry/cleanup/remove API"]
+  G --> K["Host backend"]
+  H --> K
+  I --> K
+  J --> K
+  K --> L["modules.json"]
+  K --> M["local metadata.json"]
+  K --> N["Docker daemon"]
 ```
 
-## Empty and seeded states
+## Empty and recovery states
 
-The empty state is shown when the Host modules store has no installed module records. A non-empty dashboard can be validated with the manual Phase 4 seed flow in [Local development and testing](local-development.md#phase-4-manual-module-seed).
+The empty state is shown when the Host modules store has no installed module records. The primary way to leave the empty state is the install route.
+
+Failed modules remain visible with their last operation error so administrators can choose the correct recovery path. Failed installs use install retry or cleanup. Failed updates use update retry or update review. Cleanup and remove previews list affected containers, metadata files, module directories, module-owned storage, external mount mappings, dependents, warnings, and conflicts before any destructive action runs.
 
 ## Open Questions
 

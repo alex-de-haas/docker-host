@@ -4,7 +4,7 @@ The `docker-host` CLI is the recovery path for the Host container lifecycle. It 
 
 ## Command surface
 
-Implemented Phase 2 commands:
+Implemented commands:
 
 ```text
 docker-host install
@@ -105,4 +105,4 @@ The high-level adapter owns Docker Engine paths, request payloads, response pars
 ## Open Questions
 
 - Windows self-replacement may need an additional delayed-replace strategy if replacing the running `.exe` fails on native Windows.
-- Remote Docker endpoints, TLS, SSH, and `DOCKER_HOST` environment discovery remain out of scope for Phase 2.
+- Remote Docker endpoints, TLS, SSH, and `DOCKER_HOST` environment discovery remain out of scope for the local Host launch model.

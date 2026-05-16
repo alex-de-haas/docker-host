@@ -1,18 +1,18 @@
 # Module update flow
 
-This document fixes the Phase 9 design decisions for updating installed modules.
+This document describes the implemented MVP behavior for updating installed modules.
 Module update is a metadata refresh plus reviewed change plan, not only a Docker image pull.
 
 ## Scope
 
-Phase 9 implements:
+The update flow implements:
 
 - an update plan API for installed modules;
 - a reviewed update UI;
 - an update apply API;
 - explicit retry behavior for failed updates.
 
-Out of scope for Phase 9:
+Out of scope for the MVP update flow:
 
 - automatic rollback after partial update failure;
 - recursive automatic updates of already installed dependencies;
@@ -25,16 +25,19 @@ The Host uses separate update endpoints:
 
 - `POST /api/modules/{moduleId}/update/plan`
 - `POST /api/modules/{moduleId}/update`
+- `POST /api/modules/{moduleId}/update/retry`
 
 The plan endpoint reads the installed module record from `modules.json` and refreshes the stored `metadataUrl`. The MVP update API does not accept a replacement metadata URL during update. Changing the metadata URL is a separate future source-management action.
 
 The apply endpoint recomputes the update plan from the installed record, refreshed metadata, and submitted administrator decisions. It rejects the request when the reviewed `updatePlanDigest` no longer matches the recomputed plan.
 
+The retry endpoint is only for failed update attempts. Failed installs continue to use `POST /api/modules/{moduleId}/retry`.
+
 ## Plan Shape
 
-`ModuleUpdatePlan` should be a separate type, not a reused `InstallPlan`. It can reuse install planner internals, but update review needs both the current installed state and the proposed refreshed state.
+`ModuleUpdatePlan` is a separate type, not a reused `InstallPlan`. It reuses install planner internals where practical, but update review needs both the current installed state and the proposed refreshed state.
 
-The plan should include:
+The plan includes:
 
 - `moduleId`;
 - stored `metadataUrl`;
@@ -102,14 +105,14 @@ External mount collection selections are preserved by collection key and mount k
 
 Dependency changes are applied before recreating the consumer module.
 
-Phase 9 should:
+During dependency changes, the update flow:
 
-- install missing new required dependencies;
-- reuse and start compatible installed dependencies;
-- block the update when an installed dependency is incompatible, failed, or missing its container;
-- update the consumer's resolved dependency URLs after dependency changes are applied.
+- installs missing new required dependencies;
+- reuses and starts compatible installed dependencies;
+- blocks the update when an installed dependency is incompatible, failed, or missing its container;
+- updates the consumer's resolved dependency URLs after dependency changes are applied.
 
-Phase 9 should not automatically update already installed dependencies just because their own metadata URL has changed. Recursive dependency update remains a separate explicit update action.
+It does not automatically update already installed dependencies just because their own metadata URL has changed. Recursive dependency update remains a separate explicit update action.
 
 ## Container Replacement
 
@@ -121,33 +124,25 @@ The MVP replacement strategy is simple and explicit:
 - create/start a container with the same deterministic container name;
 - save refreshed `metadata.json` and updated `modules.json` only after successful apply.
 
-If metadata-only changes do not affect image, environment, mounts, ports, resources, or network aliases, the update may skip container replacement. If `pullPolicy` is `always`, update should pull and recreate the container even when the image reference is unchanged.
+If metadata-only changes do not affect image, environment, mounts, ports, resources, or network aliases, the update may skip container replacement. If `pullPolicy` is `always`, update pulls and recreates the container even when the image reference is unchanged.
 
 Partial failures are optimistic fail-fast. Host records `operationStatus=failed`, keeps `lastError`, and preserves files, directories, images, and containers for explicit administrator recovery.
 
 ## Failed Update Retry
 
-Failed install retry and failed update retry must not share ambiguous behavior.
+Failed install retry and failed update retry do not share ambiguous behavior.
 
-The installed module record should store enough failure context to distinguish the last failed operation. Failed update retry should use update semantics, not failed install retry semantics.
-
-Recommended approach:
-
-- record the last operation, reviewed update plan digest, and administrator decisions for a failed update attempt;
-- expose update retry as update-specific behavior;
-- on retry, refresh the metadata URL and recompute the update plan;
-- if the digest still matches, retry apply;
-- if the digest changed, send the administrator back to update review.
+The installed module record stores the last operation, reviewed update plan digest, and administrator decisions for a failed update attempt. Update retry is exposed as update-specific behavior. On retry, the Host refreshes the metadata URL and recomputes the update plan. If the digest still matches, it retries apply; if the digest changed, the administrator must review the update again.
 
 ## Web UI
 
-The update review UI should use a dedicated route, for example `/modules/{moduleId}/update`, while reusing install review components where practical.
+The update review UI uses the dedicated route `/modules/{moduleId}/update`, while reusing install review components where practical.
 
-Dashboard rows should expose update as an action for installed modules. Failed updates should show retry/update-review recovery actions without treating them as failed installs.
+Dashboard rows expose update as an action for installed modules. Failed updates show retry/update-review recovery actions without treating them as failed installs.
 
 ## Test Bar
 
-Phase 9 should include focused tests for:
+Focused tests cover:
 
 - update plan digest stability and mismatch handling;
 - same-module-id validation;
@@ -163,4 +158,4 @@ Use mocked Docker boundaries for apply/retry tests and keep manual Docker verifi
 
 ## Open Questions
 
-No Phase 9 update design questions remain open before implementation starts.
+No MVP update flow questions remain open.

@@ -19,7 +19,7 @@ export function GET(request: Request) {
         id: 'com.example.identity',
         version: '1',
         required: true,
-        metadataUrl: new URL('/fixtures/modules/phase6-identity', request.url).toString(),
+        metadataUrl: new URL('/fixtures/modules/sample-identity', request.url).toString(),
         connection: {
           endpoint: 'http',
           baseUrlEnv: 'IDENTITY_BASE_URL',

@@ -95,7 +95,7 @@ export default function InstallModulePage() {
 
   function handleUseFixture() {
     const origin = window.location.origin;
-    setMetadataUrl(`${origin}/fixtures/modules/phase6-reports`);
+    setMetadataUrl(`${origin}/fixtures/modules/sample-reports`);
   }
 
   function handlePrepareRequest(event: FormEvent<HTMLFormElement>) {

@@ -36,6 +36,6 @@ internal sealed record DockerEndpoint(DockerEndpointKind Kind, string Address)
             return new DockerEndpoint(DockerEndpointKind.NamedPipe, pipeName);
         }
 
-        throw new DockerEngineException("parse Docker endpoint", $"Unsupported Docker endpoint '{endpoint}'.", nextStep: "Phase 2 supports local unix:/// and npipe:/// endpoints only.");
+        throw new DockerEngineException("parse Docker endpoint", $"Unsupported Docker endpoint '{endpoint}'.", nextStep: "Use a local unix:/// or npipe:/// Docker endpoint.");
     }
 }

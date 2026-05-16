@@ -35,12 +35,11 @@ scripts/
 docs/
   features/
     host-api.md
-  planning/
 .github/
   workflows/
 ```
 
-На Phase 1 repository физически соответствует этому skeleton: текущий Host app находится в `apps/host`, CLI scaffold находится в `apps/cli`, а Host API contract описан в `docs/features/host-api.md`.
+Repository physically follows this skeleton: the Host app lives in `apps/host`, the CLI lives in `apps/cli`, and the Host API contract is documented in `docs/features/host-api.md`.
 
 Host API contract между Web UI, Host backend API и CLI должен быть определен в `docs/features/host-api.md` при введении CLI-facing Host API surface. Отдельный package contract, generated OpenAPI artifact и generated clients не входят в MVP.
 
@@ -147,7 +146,7 @@ docker pull ghcr.io/alex-de-haas/docker-host:latest
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh -s -- --start
 ```
 
-The manual Phase 10 checklist is:
+The manual release checklist is:
 
 - install the CLI through the curl flow;
 - confirm `docker-host install` validates Docker Engine reachability and Linux-container mode;

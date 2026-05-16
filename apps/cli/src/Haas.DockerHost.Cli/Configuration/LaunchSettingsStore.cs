@@ -80,7 +80,7 @@ internal sealed class LaunchSettingsStore(DockerHostEnvironment environment)
         var definition = LaunchSettingDefinitions.Get(key);
         if (!definition.IsEditable)
         {
-            throw new ConfigurationException($"{key} is fixed for the Phase 2 launch model and cannot be changed with config set.");
+            throw new ConfigurationException($"{key} is fixed for the local Host launch model and cannot be changed with config set.");
         }
 
         var error = definition.Validate(value, environment);

@@ -107,7 +107,7 @@ removing
 
 `removing` используется только во время explicit remove flow. Если remove падает до удаления registry entry, Host возвращает module status в `installed` и сохраняет `lastError`. Disable state/action не входит в lifecycle model. Если модуль не должен быть запущен, администратор использует stop.
 
-Phase 8 recovery rules:
+Implemented recovery rules:
 
 - failed install retry запускается явно и по умолчанию использует локальный `metadata.json` плюс сохраненный install record;
 - retry пересоздает failed module container и сохраняет module-owned data directories;
@@ -295,7 +295,7 @@ External storage mounts могут находиться за пределами 
 
 На текущем этапе источником правды для module metadata schema является этот документ: пример `Metadata draft`, `Schema outline`, field notes и validation rules ниже вместе описывают ожидаемый контракт.
 
-Executable validation now lives inside the Host backend and follows this document. The Phase 5 implementation validates and normalizes `schemaVersion: "0.1"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from the read-only install planner. Отдельный shared contracts package или generated schema artifact для metadata MVP не требуется; этот документ остается источником правды для supported metadata contract.
+Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes `schemaVersion: "0.1"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from the read-only install planner. Отдельный shared contracts package или generated schema artifact для metadata MVP не требуется; этот документ остается источником правды для supported metadata contract.
 
 ## Schema outline
 
@@ -843,7 +843,7 @@ Host не должен пытаться валидировать external host p
 - public/private marker для порта;
 - CPU и memory hints.
 
-Phase 7 applies resource hints when creating Docker containers. `runtime.resources.cpus` maps to Docker `NanoCpus`. `runtime.resources.memory` supports plain byte counts and `k`, `m`, or `g` suffixes, for example `512m` or `1g`.
+The install/update runtime applies resource hints when creating Docker containers. `runtime.resources.cpus` maps to Docker `NanoCpus`. `runtime.resources.memory` supports plain byte counts and `k`, `m`, or `g` suffixes, for example `512m` or `1g`.
 
 В первой implementation Host не вводит runtime health checks или readiness probes для модулей. Статус модуля определяется только через Docker daemon container state: container created, running, stopped, exited или failed по данным Docker.
 

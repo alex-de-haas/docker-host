@@ -185,11 +185,11 @@ Docker Engine communication should be isolated inside the `Haas.DockerHost.Cli.D
 
 CLI commands should not construct Docker Engine URLs or request bodies directly. Commands call the high-level adapter, while the adapter owns exact Docker Engine endpoints and structured JSON parsing for operations such as container inspect.
 
-Because the CLI is a .NET executable and must support both Unix sockets and Windows named pipes, the Phase 2 implementation should prefer `Docker.DotNet` or an equivalent Docker Engine API client that supports both transports. The CLI still must not shell out to the `docker` executable. If a library is used, keep it behind the Host-specific adapter so command code remains independent from library models.
+Because the CLI is a .NET executable and must support both Unix sockets and Windows named pipes, Docker Engine integration should use `Docker.DotNet` or an equivalent Docker Engine API client that supports both transports. The CLI still must not shell out to the `docker` executable. If a library is used, keep it behind the Host-specific adapter so command code remains independent from library models.
 
 ### Docker daemon access
 
-CLI lifecycle commands должны управлять Host container через Docker daemon. Phase 2 поддерживает local Docker endpoint abstraction:
+CLI lifecycle commands должны управлять Host container через Docker daemon. The local Host launch model supports these Docker endpoint forms:
 
 ```text
 macOS/Linux/WSL: unix:///var/run/docker.sock

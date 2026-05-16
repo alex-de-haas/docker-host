@@ -2,7 +2,7 @@
 
 This directory contains repository-level bootstrap scripts.
 
-The Unix installer is `scripts/install.sh`. It belongs to Phase 10 and stays a thin shell bootstrap:
+The Unix installer is `scripts/install.sh`. It stays a thin shell bootstrap:
 
 - download the matching `docker-host` CLI artifact from the rolling `cli-dev` GitHub Release;
 - verify `SHA256SUMS` when available and fail clearly if verification cannot be performed;

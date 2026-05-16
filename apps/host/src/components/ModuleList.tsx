@@ -538,7 +538,7 @@ function EmptyModuleState() {
       </div>
       <h3 className="text-base font-semibold">No installed modules</h3>
       <p className="mt-2 max-w-md text-sm text-muted-foreground">
-        The Host modules store is empty. Phase 4 validates this state directly; module install flows arrive in a later phase.
+        The Host modules store is empty. Install a module from a metadata URL to populate this dashboard.
       </p>
     </div>
   );

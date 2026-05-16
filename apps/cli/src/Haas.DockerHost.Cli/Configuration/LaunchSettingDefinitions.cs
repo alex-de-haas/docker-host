@@ -114,11 +114,11 @@ internal static class LaunchSettingDefinitions
         {
             return value.StartsWith("npipe:////./pipe/", StringComparison.OrdinalIgnoreCase)
                 ? null
-                : "Native Windows supports only npipe:////./pipe/docker_engine for Phase 2.";
+                : "Native Windows supports only npipe:////./pipe/docker_engine for the local Host launch model.";
         }
 
         return value.StartsWith("unix:///", StringComparison.OrdinalIgnoreCase)
             ? null
-            : "macOS, Linux, and WSL support only unix:/// local Docker endpoints for Phase 2.";
+            : "macOS, Linux, and WSL support only unix:/// local Docker endpoints for the local Host launch model.";
     }
 }

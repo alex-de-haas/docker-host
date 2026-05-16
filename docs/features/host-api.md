@@ -1,6 +1,6 @@
 # Docker Host API
 
-Этот документ описывает начальный API surface для Docker Host. На первом этапе это не executable OpenAPI specification, а human-readable endpoint catalog для согласования backend, Web UI и будущих CLI module commands.
+Этот документ описывает API surface для Docker Host. В MVP это не executable OpenAPI specification, а human-readable endpoint catalog для согласования backend, Web UI и будущих CLI module commands.
 
 Host API реализуется внутри full-stack Next.js Host application. Web UI вызывает этот API напрямую. `docker-host` CLI использует этот же API только для module commands; lifecycle самого Host container CLI выполняет через Docker daemon.
 
@@ -13,18 +13,20 @@ Host API реализуется внутри full-stack Next.js Host application
 - API responses must not expose raw secret setting values.
 - The API contract remains this Markdown endpoint catalog for the MVP. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
 
-## Initial API slice
+## Implemented API Surface
 
-The first lifecycle API slice is intentionally small:
+The current MVP API surface includes:
 
 - return Host runtime, Docker daemon, module network, and installed module store status;
 - list installed modules;
-- return module runtime statuses;
-- start a module;
-- stop a module;
-- restart a module.
+- return installed module details and Docker runtime statuses;
+- start, stop, and restart installed modules;
+- create and apply reviewed module install plans;
+- retry failed installs, clean up failed install artifacts, and remove installed modules through reviewed recovery plans;
+- create and apply reviewed module update plans;
+- retry failed updates separately from failed installs.
 
-The current API surface also includes module install endpoints, failed install retry/cleanup endpoints, and installed module removal endpoints. Update, settings editing, storage configuration, update plans, logs, and external exposure are later API slices.
+Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, module health checks, and external module exposure are later API slices.
 
 The shared domain vocabulary for this API is defined in [Docker Host domain model](domain-model.md).
 
@@ -62,7 +64,7 @@ Returned by list and lifecycle endpoints.
 
 `operationStatus` is persistent Host bookkeeping from `modules.json`. `runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state.
 
-The first API slice does not expose module health or readiness. `runtimeStatus` reports only Docker container state. Health checks, including any future Docker healthcheck-based status, are deferred to a later feature.
+The MVP API does not expose module health or readiness. `runtimeStatus` reports only Docker container state. Health checks, including any future Docker healthcheck-based status, are deferred to a later feature.
 
 Allowed `operationStatus` values:
 
@@ -155,7 +157,7 @@ On failure:
     "dockerStatusCode": 404,
     "dockerMessage": "No such container: mod-com-acme-reports",
     "message": "Docker could not start the module container.",
-    "nextStep": "Recreate the module container or reinstall the module when install flows are available."
+    "nextStep": "Retry the failed operation, review update again, or remove and reinstall the module."
   }
 }
 ```
@@ -209,7 +211,7 @@ This endpoint creates the Host data root, `modules/` directory, `modules.json`, 
 
 ## Endpoints
 
-The endpoints in this section are required for the first API implementation slice.
+The endpoints in this section are implemented for the MVP Host API.
 
 ### `GET /api/modules`
 
@@ -285,9 +287,9 @@ Response should include:
 - updated runtime status from Docker daemon;
 - clear Docker error details when restart fails.
 
-## Near-Term Diagnostics Endpoints
+## Deferred Diagnostics Endpoints
 
-These endpoints are not part of the first Phase 0 API slice, but they are expected soon after the initial module list/lifecycle implementation.
+These endpoints are not implemented in the module API yet, but remain the expected diagnostics surface.
 
 ### `GET /api/modules/{moduleId}/logs`
 
@@ -491,25 +493,100 @@ Example `409` response shape:
 
 ### Module update
 
-The Phase 9 update contract is defined in [Module update flow](module-update.md). The API uses separate update endpoints:
+The update contract is defined in [Module update flow](module-update.md). The API uses separate update endpoints:
 
 - `POST /api/modules/{moduleId}/update/plan` - refresh the stored metadata URL, validate refreshed metadata, require the same module id, compare against local `metadata.json`, and return a reviewed update plan with refreshed metadata digest, update plan digest, prompts, warnings, and conflicts;
 - `POST /api/modules/{moduleId}/update` - recompute the update plan from refreshed metadata and submitted administrator decisions, compare the reviewed update plan digest, then apply image, container, settings, storage, and dependency changes after confirmation;
-- update-specific retry behavior for failed updates, distinct from failed install retry.
+- `POST /api/modules/{moduleId}/update/retry` - retry a failed update attempt using update semantics and the stored failed update context.
 
 The MVP update API does not accept a replacement metadata URL. It updates from the metadata URL stored in the installed module record.
 
+`POST /api/modules/{moduleId}/update/plan` has no request body. It returns HTTP `200` with a top-level `plan` object when the refreshed metadata can be reviewed:
+
+```json
+{
+  "plan": {
+    "moduleId": "com.acme.reports",
+    "metadataUrl": "https://modules.example.com/reports.json",
+    "currentMetadataDigest": "sha256:...",
+    "refreshedMetadataDigest": "sha256:...",
+    "updatePlanDigest": "sha256:...",
+    "module": {
+      "id": "com.acme.reports",
+      "currentName": "Reports",
+      "proposedName": "Reports",
+      "currentVersion": "1.0.0",
+      "proposedVersion": "1.1.0"
+    },
+    "changes": [],
+    "warnings": [],
+    "conflicts": []
+  }
+}
+```
+
+The full `ModuleUpdatePlan` includes current and proposed module identity, normalized refreshed metadata, dependency install/reuse decisions, install order, image references, setting prompts, preserved settings, storage mappings, preserved and removed external mount mappings, runtime port/resource details, deterministic Docker container configuration, replacement requirements, warnings, and conflicts.
+
+The reviewed update request payload shape is:
+
+```json
+{
+  "updatePlanDigest": "sha256:...",
+  "confirmed": true,
+  "settings": [
+    {
+      "moduleId": "com.acme.reports",
+      "key": "REPORT_RETENTION_DAYS",
+      "value": 60,
+      "secret": false
+    }
+  ],
+  "externalMounts": [
+    {
+      "moduleId": "com.acme.reports",
+      "collectionKey": "exports",
+      "key": "main",
+      "label": "Main exports",
+      "hostPath": "/srv/reports",
+      "containerPath": "/exports/main",
+      "access": "readWrite"
+    }
+  ]
+}
+```
+
+Successful apply responses use HTTP `200`:
+
+```json
+{
+  "module": {},
+  "updatedModuleId": "com.acme.reports",
+  "installedDependencyIds": [],
+  "reusedDependencyIds": ["com.acme.identity"],
+  "error": null
+}
+```
+
+Update apply preserves compatible setting values, preserves compatible module-owned storage paths and external mount selections, removes deleted settings from runtime state after success, installs missing new required dependencies, and reuses/starts compatible installed dependencies. It does not recursively update already installed dependencies.
+
+When runtime configuration changes, update apply stops/removes/recreates the module container with the deterministic container name. Metadata-only updates may skip container replacement. If refreshed `pullPolicy` is `always`, the Host pulls and recreates even when the image reference is unchanged.
+
+Failed update apply uses the shared install-plan error envelope for validation/conflict failures before mutation. Partial failures after mutation has started mark the module `failed`, set `lastOperation` to `update`, preserve files, storage, images, and containers for diagnosis, and store enough update attempt context for `POST /api/modules/{moduleId}/update/retry`.
+
 ### Module recovery and removal
 
-The Phase 8 API adds explicit recovery actions for failed installs and installed module removal.
+The recovery API adds explicit actions for failed installs, failed updates, failed install cleanup, and installed module removal.
 
 - `POST /api/modules/{moduleId}/retry` retries a failed install from the local `metadata.json` and stored install record. Retry removes and recreates the failed module container, preserves module-owned data directories, starts stored dependencies when needed, and records fresh diagnostics if it fails again.
+- `POST /api/modules/{moduleId}/update/retry` retries a failed update and is documented in [Module update](#module-update).
 - `POST /api/modules/{moduleId}/cleanup/plan` returns a backend-generated cleanup preview for a failed module.
 - `POST /api/modules/{moduleId}/cleanup` applies a confirmed cleanup request. Request body: `{ "confirmed": true, "deleteModuleData": false }`.
 - `POST /api/modules/{moduleId}/remove/plan` returns a backend-generated removal preview for an installed module.
 - `POST /api/modules/{moduleId}/remove` applies a confirmed removal request. Request body: `{ "confirmed": true, "deleteModuleData": false }`.
 
-Cleanup and remove plans list the module container, image reference, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts. The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. External host paths are never deleted; only their Host state mappings are removed.
+Cleanup and remove plan requests accept `{ "deleteModuleData": true | false }` so the Web UI can refresh the preview before confirmation. Plans return `canApply`, container state, image reference, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts.
+
+The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. Docker images and external host paths are never deleted by the MVP recovery flows; external mount mappings are only removed from Host state.
 
 Installed module removal is blocked when other installed modules depend on the target module. Remove sets `operationStatus=removing` only while the operation is in progress. If removal fails before the registry entry is deleted, the module returns to `installed` with `lastError`.
 
@@ -530,8 +607,6 @@ This document is the Host API contract for the MVP. It should be updated when im
 
 ## Open Questions
 
-No Phase 0 API questions remain open.
+No MVP Host API questions remain open for the implemented install, recovery, remove, and update flows.
 
-No Phase 5 install plan endpoint questions remain open.
-
-Later implementation slices may reopen API details for update plans, settings writes, storage configuration, and logs streaming.
+Later implementation slices may reopen API details for settings writes, storage reconfiguration, module diagnostics, logs streaming, health checks, and external exposure.
