@@ -496,7 +496,7 @@ Complete the operational auth UX that is easier to design after local and OIDC s
 
 ### Phase 8 - Trusted proxy mode
 
-**Status**: Not Started
+**Status**: In Progress
 
 Support deployments where a trusted upstream proxy authenticates the user before traffic reaches Docker Host.
 
@@ -512,10 +512,32 @@ Host should accept upstream identity only when the request comes through a trust
 
 #### Open Questions
 
-- Which trusted proxy providers should be first-class presets?
-- Should Cloudflare Access be modeled as trusted proxy mode, OIDC mode, or both?
-- How should Host prevent direct-origin bypass when trusted proxy mode is enabled?
-- Should trusted proxy mode support non-browser API clients through service tokens or managed OAuth?
+These questions are resolved for the first trusted proxy implementation slice.
+
+| Topic | Options considered | Recommended decision |
+| --- | --- | --- |
+| First-class providers | Cloudflare Access, Pomerium, Authentik proxy, oauth2-proxy, Traefik ForwardAuth, or a generic provider only. | Start with a generic signed-JWT provider and a Cloudflare Access preset. Other providers can map into the same contract after the signed assertion shape is stable. |
+| Cloudflare Access model | Treat as OIDC, trusted proxy mode, or both. | Support Cloudflare Access as trusted proxy mode in Phase 8 because it authenticates before requests reach Host and provides a signed access assertion. Cloudflare can still be represented as OIDC later when Docker Host owns the browser login flow. |
+| Identity proof | Plain headers, signed JWT, remote introspection, or mTLS. | Require a signed JWT assertion for the MVP. Verify issuer, audience, signature, key id, expiration, and not-before before mapping a Host principal. Do not trust plain identity headers in the first slice. |
+| Direct-origin bypass | Trust all proxy headers, bind loopback only, require trusted CIDRs, require shared ingress secret, or enforce signed assertions. | When trusted proxy mode is active, protected browser/API and gateway requests must authenticate through a valid trusted proxy assertion. CLI Bearer tokens remain available for local administration. Browser session fallback is disabled while the mode is active. |
+| Host user mapping | Use transient principals only, pre-provision users only, or just-in-time provisioning. | Reuse the external identity model. Store provider id, issuer, and subject; create or update Host users only after explicit role mapping grants `host.admin` or `host.user`; deny disabled mapped users. |
+| Module identity | Forward upstream provider headers, mint normal module-scoped Host JWTs, or disable module identity. | Convert the trusted proxy user into a normal Host principal and keep the existing module identity contract. Modules receive `X-Docker-Host-Identity` signed by Host, never provider-specific trusted proxy headers. |
+| Non-browser API clients | Service tokens through proxy, managed OAuth, or existing CLI tokens. | Keep existing CLI admin tokens for non-browser Host API clients in Phase 8. Proxy-managed service tokens or OAuth belong to a later phase with concrete provider requirements. |
+| Configuration location | Environment only, auth JSON state only, or both. | Support provider records in auth state and an environment-driven provider for container deployments. Boundary secrets and provider material should be supplied through environment/configuration, not module metadata. |
+| Audit events | Failure-only, lifecycle events, or full request trace. | Audit trusted proxy rejection, role mapping denial, user provisioning, user update, and configuration problems. Avoid logging full assertion payloads or raw tokens. |
+| Completion tests | Unit tests only, manual provider only, or route and gateway regression tests. | Require signed assertion tests with mock JWKS, role mapping tests, disabled-user denial, direct-session fallback denial when trusted mode is active, Host API authorization, and gateway module identity propagation. |
+
+#### Phase 8 MVP Scope
+
+- Add trusted proxy provider records with issuer, audience, assertion header, JWKS source, claim mapping, and explicit claim-to-Host-role mappings.
+- Add a generic signed-JWT validator and Cloudflare Access-compatible default assertion header.
+- Add environment configuration for a single active trusted proxy provider.
+- Map verified assertions into Host-owned users and external identities using `issuer + subject`.
+- Use trusted proxy principals for Host API authorization and module gateway authorization.
+- Disable browser session fallback for protected requests when trusted proxy mode is active, while preserving CLI Bearer token access.
+- Strip trusted proxy assertion headers before proxying traffic to modules.
+- Keep module-facing identity on the existing Host-signed `X-Docker-Host-Identity` contract.
+- Do not implement plain-header identity mode, multiple active trusted proxy providers, provider-specific admin UI, managed OAuth/service-token proxy flows, mTLS, or external ingress automation in this phase.
 
 ### Phase 9 - Developer mode for modules
 

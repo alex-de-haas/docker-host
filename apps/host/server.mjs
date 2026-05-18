@@ -11,6 +11,10 @@ import {
   createModuleIdentityToken,
   getDefaultModuleIdentityMode,
 } from './src/lib/module-identity.mjs';
+import {
+  TRUSTED_PROXY_DEFAULT_ASSERTION_HEADERS,
+  authenticateTrustedProxyRequest,
+} from './src/lib/trusted-proxy.mjs';
 
 const SESSION_COOKIE_NAME = 'docker_host_session';
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
@@ -100,7 +104,7 @@ if (isMainModule()) {
   });
 }
 
-async function resolveGatewayRequest(req) {
+export async function resolveGatewayRequest(req) {
   const hostnameValue = parseHostname(req.headers.host);
   if (!hostnameValue) {
     return null;
@@ -139,7 +143,9 @@ async function resolveGatewayRequest(req) {
     throw new Error(`Module "${exposure.moduleId}" does not define runtime port "${exposure.portKey}".`);
   }
 
-  const principal = authenticateSession(req, authState);
+  const trustedProxy = await authenticateTrustedProxyRequest(req, config);
+  const principal = trustedProxy.principal ||
+    (trustedProxy.modeActive ? null : authenticateSession(req, authState));
   const policy = exposure.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY;
   const access = canAccessModule({
     principal,
@@ -163,6 +169,7 @@ async function resolveGatewayRequest(req) {
     targetOrigin: `http://${networkAlias}:${runtimePort.containerPort}`,
     requestHost: req.headers.host,
     requestProtocol: getRequestProtocol(req),
+    trustedProxyAssertionHeaders: trustedProxy.assertionHeaders,
   };
 }
 
@@ -263,6 +270,10 @@ async function sendDenied(req, res, target) {
 
 export function buildProxyRequestHeaders(req, target, upgrade, identityToken = null) {
   const headers = {};
+  const trustedProxyAssertionHeaders = new Set(
+    (target.trustedProxyAssertionHeaders || TRUSTED_PROXY_DEFAULT_ASSERTION_HEADERS)
+      .map(header => String(header).toLowerCase())
+  );
 
   for (const [name, value] of Object.entries(req.headers)) {
     const lowerName = name.toLowerCase();
@@ -270,7 +281,7 @@ export function buildProxyRequestHeaders(req, target, upgrade, identityToken = n
       continue;
     }
 
-    if (lowerName.startsWith('x-docker-host-')) {
+    if (lowerName.startsWith('x-docker-host-') || trustedProxyAssertionHeaders.has(lowerName)) {
       continue;
     }
 

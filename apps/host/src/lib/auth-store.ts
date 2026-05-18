@@ -13,7 +13,7 @@ export interface AuthUserRecord {
   email?: string;
   displayName?: string;
   role: HostRole;
-  authProvider?: 'local' | 'oidc';
+  authProvider?: 'local' | 'oidc' | 'trusted-proxy';
   passwordHash?: string;
   createdAt: string;
   updatedAt: string;
@@ -114,6 +114,32 @@ export interface AuthOidcTransactionRecord {
   expiresAt: string;
 }
 
+export interface AuthTrustedProxyRoleMappingRecord {
+  claim: string;
+  values: string[];
+  role: HostRole;
+}
+
+export interface AuthTrustedProxyProviderRecord {
+  id: string;
+  type: 'trusted-proxy';
+  enabled: boolean;
+  label: string;
+  issuer: string;
+  audience: string | string[];
+  assertionHeader: string;
+  jwks?: {
+    keys: JsonWebKey[];
+  };
+  jwksUri?: string;
+  subjectClaim?: string;
+  emailClaim?: string;
+  displayNameClaim?: string;
+  roleMappings: AuthTrustedProxyRoleMappingRecord[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AuthState {
   schemaVersion: string;
   users: AuthUserRecord[];
@@ -125,6 +151,7 @@ export interface AuthState {
   externalIdentities: AuthExternalIdentityRecord[];
   oidcProviders: AuthOidcProviderRecord[];
   oidcTransactions: AuthOidcTransactionRecord[];
+  trustedProxyProviders: AuthTrustedProxyProviderRecord[];
   moduleAssignments: ModuleAccessAssignment[];
   updatedAt: string;
 }
@@ -213,6 +240,7 @@ export function createEmptyAuthState(): AuthState {
     externalIdentities: [],
     oidcProviders: [],
     oidcTransactions: [],
+    trustedProxyProviders: [],
     moduleAssignments: [],
     updatedAt: new Date().toISOString(),
   };
@@ -270,6 +298,9 @@ function normalizeAuthState(parsed: unknown): AuthState {
     oidcTransactions: Array.isArray(parsed.oidcTransactions)
       ? parsed.oidcTransactions.filter(isAuthOidcTransactionRecord)
       : [],
+    trustedProxyProviders: Array.isArray(parsed.trustedProxyProviders)
+      ? parsed.trustedProxyProviders.filter(isAuthTrustedProxyProviderRecord)
+      : [],
     moduleAssignments: Array.isArray(parsed.moduleAssignments)
       ? parsed.moduleAssignments.filter(isModuleAccessAssignment)
       : [],
@@ -282,7 +313,12 @@ function isAuthUserRecord(value: unknown): value is AuthUserRecord {
     typeof value.id === 'string' &&
     (typeof value.email === 'string' || value.email === undefined) &&
     (typeof value.passwordHash === 'string' || value.passwordHash === undefined) &&
-    (value.authProvider === 'local' || value.authProvider === 'oidc' || value.authProvider === undefined) &&
+    (
+      value.authProvider === 'local' ||
+      value.authProvider === 'oidc' ||
+      value.authProvider === 'trusted-proxy' ||
+      value.authProvider === undefined
+    ) &&
     (value.role === 'host.admin' || value.role === 'host.user') &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string';
@@ -385,6 +421,39 @@ function isAuthOidcTransactionRecord(value: unknown): value is AuthOidcTransacti
     (typeof value.redirectTo === 'string' || value.redirectTo === undefined) &&
     typeof value.createdAt === 'string' &&
     typeof value.expiresAt === 'string';
+}
+
+function isAuthTrustedProxyProviderRecord(value: unknown): value is AuthTrustedProxyProviderRecord {
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    value.type === 'trusted-proxy' &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.label === 'string' &&
+    typeof value.issuer === 'string' &&
+    (typeof value.audience === 'string' ||
+      (Array.isArray(value.audience) && value.audience.every(item => typeof item === 'string'))) &&
+    typeof value.assertionHeader === 'string' &&
+    (value.jwks === undefined || isJsonWebKeySet(value.jwks)) &&
+    (typeof value.jwksUri === 'string' || value.jwksUri === undefined) &&
+    (typeof value.subjectClaim === 'string' || value.subjectClaim === undefined) &&
+    (typeof value.emailClaim === 'string' || value.emailClaim === undefined) &&
+    (typeof value.displayNameClaim === 'string' || value.displayNameClaim === undefined) &&
+    Array.isArray(value.roleMappings) &&
+    value.roleMappings.every(isAuthTrustedProxyRoleMappingRecord) &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string';
+}
+
+function isAuthTrustedProxyRoleMappingRecord(value: unknown): value is AuthTrustedProxyRoleMappingRecord {
+  return isObject(value) &&
+    typeof value.claim === 'string' &&
+    Array.isArray(value.values) &&
+    value.values.every(item => typeof item === 'string') &&
+    (value.role === 'host.admin' || value.role === 'host.user');
+}
+
+function isJsonWebKeySet(value: unknown): value is { keys: JsonWebKey[] } {
+  return isObject(value) && Array.isArray(value.keys) && value.keys.every(isObject);
 }
 
 function isModuleAccessAssignment(value: unknown): value is ModuleAccessAssignment {

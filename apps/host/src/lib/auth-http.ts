@@ -10,12 +10,13 @@ import {
   SESSION_ABSOLUTE_TIMEOUT_MS,
   SESSION_COOKIE_NAME,
 } from './auth-service.ts';
+import { authenticateTrustedProxyRequest } from './trusted-proxy.mjs';
 import type { AuthRequestMeta } from './auth-service.ts';
 import type { HostApiAction, HostPrincipal } from '../types/auth.ts';
 
 export interface AuthenticatedRequest {
   principal: HostPrincipal;
-  source: 'session' | 'cli-token';
+  source: 'session' | 'cli-token' | 'trusted-proxy';
 }
 
 export async function requireHostAdmin(
@@ -36,7 +37,7 @@ export async function requireHostAdmin(
     return authError('forbidden', 'A Host administrator account is required.', 403);
   }
 
-  if (auth.source === 'session' && isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
+  if (auth.source !== 'cli-token' && isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
     return authError('csrf_rejected', 'State-changing requests must come from the same origin.', 403);
   }
 
@@ -48,7 +49,7 @@ export async function requireHostAdmin(
 
 export async function authenticateRequest(request: Request): Promise<{
   principal: HostPrincipal | null;
-  source: 'session' | 'cli-token';
+  source: 'session' | 'cli-token' | 'trusted-proxy';
 }> {
   const meta = getRequestMeta(request);
   const bearerToken = getBearerToken(request);
@@ -57,6 +58,21 @@ export async function authenticateRequest(request: Request): Promise<{
     return {
       principal: cliPrincipal,
       source: 'cli-token',
+    };
+  }
+
+  const trustedProxy = await authenticateTrustedProxyRequest(request, getHostRuntimeConfig());
+  if (trustedProxy.principal) {
+    return {
+      principal: trustedProxy.principal,
+      source: 'trusted-proxy',
+    };
+  }
+
+  if (trustedProxy.modeActive) {
+    return {
+      principal: null,
+      source: 'trusted-proxy',
     };
   }
 
@@ -249,12 +265,13 @@ function getSessionCookieDomain(request: Request) {
 }
 
 class AuthHttpError extends Error {
-  public constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status: number
-  ) {
+  public readonly code: string;
+  public readonly status: number;
+
+  public constructor(code: string, message: string, status: number) {
     super(message);
     this.name = 'AuthHttpError';
+    this.code = code;
+    this.status = status;
   }
 }

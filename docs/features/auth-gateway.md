@@ -146,6 +146,7 @@ The gateway sanitizes proxied requests:
 - strips CLI `Authorization`;
 - strips the Host session cookie before traffic reaches the module;
 - strips inbound `X-Docker-Host-*` headers so clients cannot spoof future identity headers;
+- strips trusted proxy assertion headers before traffic reaches the module;
 - adds `X-Docker-Host-Identity` with a short-lived signed JWT when the exposure identity mode and authenticated Host principal require identity propagation;
 - adds `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For`;
 - preserves the external module `Host` header for applications that generate root-relative or same-origin URLs.
@@ -390,6 +391,41 @@ Provider configuration can be supplied through Host auth state or environment va
 The OIDC MVP uses explicit claim mappings and denies login when no mapping grants `host.admin` or `host.user`. Just-in-time provisioning creates a Host user only after the ID token is verified and a role mapping succeeds. Host stores the external identity as `providerId + issuer + sub`, while modules continue to see the Host-owned user id in module identity tokens.
 
 Host does not persist OIDC access tokens, refresh tokens, or ID tokens. Provider logout, multiple active OIDC providers, automatic email-based account linking, OIDC admin UI, and background group revalidation are deferred.
+
+### Trusted Proxy Provider
+
+Trusted proxy mode supports deployments where an upstream proxy authenticates the browser before requests reach Docker Host. The first implementation slice accepts only signed JWT assertions from the trusted proxy. The Host verifies issuer, audience, signature, key id, expiration, and not-before before mapping the request to a Host user.
+
+Provider records include issuer, audience, assertion header name, JWKS or JWKS URI, subject/email/display-name claim names, and explicit claim-to-Host-role mappings. Cloudflare Access uses the `Cf-Access-Jwt-Assertion` header and the Access JWKS endpoint. A generic signed-JWT provider can use `X-Docker-Host-Trusted-Proxy-Jwt` or another configured assertion header.
+
+Trusted proxy configuration can be supplied through Host auth state or environment variables for early deployments:
+
+| Environment variable | Meaning |
+| --- | --- |
+| `HOST_TRUSTED_PROXY_ENABLED` | Set to `false` to disable the environment provider. |
+| `HOST_TRUSTED_PROXY_CLOUDFLARE_TEAM_DOMAIN` | Cloudflare Access team domain, for example `team.cloudflareaccess.com`. Enables the Cloudflare Access preset when paired with an audience. |
+| `HOST_TRUSTED_PROXY_ISSUER` | Generic trusted proxy JWT issuer. |
+| `HOST_TRUSTED_PROXY_AUDIENCE` | Comma- or whitespace-separated accepted JWT audiences. |
+| `HOST_TRUSTED_PROXY_JWKS` | Inline JWKS JSON for generic signed assertions. |
+| `HOST_TRUSTED_PROXY_JWKS_URI` | Remote JWKS URI for generic signed assertions. |
+| `HOST_TRUSTED_PROXY_ASSERTION_HEADER` | Generic assertion header. Defaults to `X-Docker-Host-Trusted-Proxy-Jwt`. |
+| `HOST_TRUSTED_PROXY_GROUPS_CLAIM` | Claim name used for role mapping. Defaults to `groups`. |
+| `HOST_TRUSTED_PROXY_ADMIN_GROUPS` | Groups that map to `host.admin`. |
+| `HOST_TRUSTED_PROXY_USER_GROUPS` | Groups that map to `host.user`. |
+| `HOST_TRUSTED_PROXY_SUBJECT_CLAIM` | Subject claim. Defaults to `sub`. |
+| `HOST_TRUSTED_PROXY_EMAIL_CLAIM` | Email claim. Defaults to `email`. |
+| `HOST_TRUSTED_PROXY_DISPLAY_NAME_CLAIM` | Display-name claim. Defaults to `name`. |
+
+When trusted proxy mode is active:
+
+- protected Host API and gateway requests use the verified trusted proxy principal;
+- browser session fallback is disabled for protected requests so direct-origin access cannot bypass the upstream proxy;
+- CLI Bearer tokens remain available for local administrative automation;
+- role mapping is default-deny when no configured claim mapping grants `host.admin` or `host.user`;
+- disabled mapped Host users are denied;
+- trusted proxy assertion headers are stripped before module traffic is proxied.
+
+Trusted proxy users are stored as Host users with `authProvider: "trusted-proxy"` and an external identity keyed by provider id, issuer, and subject. Modules still receive the normal Host-signed `X-Docker-Host-Identity` token; provider-specific trusted proxy headers are never the module-facing identity contract.
 
 ## Developer Mode
 

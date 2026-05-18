@@ -6,7 +6,17 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createLocalJWKSet, jwtVerify } from 'jose';
+import {
+  SignJWT,
+  createLocalJWKSet,
+  exportJWK,
+  generateKeyPair,
+  jwtVerify,
+  type KeyLike,
+} from 'jose';
+import { hashToken } from './auth-crypto.ts';
+import { createEmptyAuthState, writeAuthState } from './auth-store.ts';
+import type { AuthTrustedProxyProviderRecord } from './auth-store.ts';
 import {
   MODULE_IDENTITY_ISSUER,
   getModuleIdentityJwks,
@@ -58,6 +68,7 @@ test('gateway HTTP proxy injects signed identity and strips Host-owned request h
           Host: 'reports.example.test',
           Authorization: 'Bearer cli-token',
           Cookie: 'docker_host_session=host-session; module_cookie=kept',
+          'Cf-Access-Jwt-Assertion': 'trusted-proxy-assertion',
           'X-Docker-Host-Identity': 'spoofed-token',
           'X-Docker-Host-Other': 'spoofed',
           'X-Custom': 'kept',
@@ -72,6 +83,7 @@ test('gateway HTTP proxy injects signed identity and strips Host-owned request h
       assert.equal(captured.body, 'request body');
       assert.equal(captured.headers.host, 'reports.example.test');
       assert.equal(captured.headers.authorization, undefined);
+      assert.equal(captured.headers['cf-access-jwt-assertion'], undefined);
       assert.equal(captured.headers.cookie, 'module_cookie=kept');
       assert.equal(captured.headers['x-docker-host-other'], undefined);
       assert.equal(captured.headers['x-custom'], 'kept');
@@ -216,6 +228,89 @@ test('gateway websocket proxy injects signed identity into upgrade handshake', a
   }
 });
 
+test('gateway trusted proxy mode requires assertion instead of browser session fallback', async () => {
+  const config = await createGatewayServerTestConfig();
+  const restoreEnv = applyRuntimeEnv(config);
+  const signing = await createTrustedProxySigningFixture();
+  const sessionToken = 'dhs_gateway_session';
+  const now = new Date();
+  const localUser = {
+    id: 'user_local',
+    email: 'local@example.test',
+    role: 'host.user' as const,
+    authProvider: 'local' as const,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+  };
+  await seedGatewayTargetFiles(config);
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    users: [localUser],
+    sessions: [{
+      id: 'session_local',
+      userId: localUser.id,
+      tokenHash: hashToken(sessionToken),
+      createdAt: now.toISOString(),
+      lastSeenAt: now.toISOString(),
+      idleExpiresAt: new Date(now.getTime() + 60_000).toISOString(),
+      absoluteExpiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    }],
+    trustedProxyProviders: [trustedProxyProvider(signing.publicJwk)],
+  }, config);
+
+  const { resolveGatewayRequest } = await import('../../server.mjs');
+  const resolver = createHttpServer((req, res) => {
+    void resolveGatewayRequest(req).then(target => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        allowed: target?.access.allowed,
+        reason: target?.access.reason,
+        principalId: target?.principal?.id ?? null,
+      }));
+    }).catch(error => {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end(error instanceof Error ? error.message : 'resolve failed');
+    });
+  });
+
+  try {
+    await listen(resolver);
+
+    const withoutAssertion = await sendHttpRequest(getPort(resolver), {
+      headers: {
+        Host: 'reports.example.test',
+        Cookie: `docker_host_session=${encodeURIComponent(sessionToken)}`,
+      },
+    });
+    assert.deepEqual(JSON.parse(withoutAssertion.body), {
+      allowed: false,
+      reason: 'loginRequired',
+      principalId: null,
+    });
+
+    const assertion = await signTrustedProxyAssertion(signing.privateKey, {
+      subject: 'proxy-user',
+      groups: ['docker-host-users'],
+      email: 'proxy@example.test',
+      name: 'Proxy User',
+    });
+    const withAssertion = await sendHttpRequest(getPort(resolver), {
+      headers: {
+        Host: 'reports.example.test',
+        'Cf-Access-Jwt-Assertion': assertion,
+      },
+    });
+    const resolved = JSON.parse(withAssertion.body);
+    assert.equal(resolved.allowed, true);
+    assert.equal(resolved.reason, 'authenticated');
+    assert.notEqual(resolved.principalId, null);
+    assert.notEqual(resolved.principalId, localUser.id);
+  } finally {
+    restoreEnv();
+    await closeServer(resolver);
+  }
+});
+
 function gatewayTarget(input: {
   moduleId?: string;
   hostname?: string;
@@ -315,6 +410,111 @@ function getPort(server: { address: () => unknown }) {
   const address = server.address();
   assert.ok(address && typeof address === 'object' && 'port' in address);
   return Number(address.port);
+}
+
+async function seedGatewayTargetFiles(config: HostRuntimeConfig) {
+  const moduleId = 'com.example.reports';
+  const moduleRoot = path.join(config.modulesRootContainer, moduleId);
+  const metadataPath = path.join(moduleRoot, 'metadata.json');
+  await fs.mkdir(moduleRoot, { recursive: true });
+  await fs.mkdir(config.gatewayRootContainer, { recursive: true });
+  await fs.writeFile(config.modulesStorePath, `${JSON.stringify({
+    schemaVersion: '0.1',
+    hostSettings: {},
+    modules: [{
+      id: moduleId,
+      metadataUrl: 'https://modules.example.test/reports.json',
+      metadataPath,
+      operationStatus: 'installed',
+    }],
+  }, null, 2)}\n`, 'utf-8');
+  await fs.writeFile(metadataPath, `${JSON.stringify({
+    id: moduleId,
+    runtime: {
+      ports: [{
+        key: 'web',
+        containerPort: 8080,
+        public: true,
+      }],
+    },
+  }, null, 2)}\n`, 'utf-8');
+  await fs.writeFile(config.gatewayExposuresPath, `${JSON.stringify({
+    schemaVersion: '0.1',
+    exposures: [{
+      id: 'gw_reports',
+      moduleId,
+      hostname: 'reports.example.test',
+      portKey: 'web',
+      exposurePolicy: 'loginRequired',
+      enabled: true,
+    }],
+  }, null, 2)}\n`, 'utf-8');
+}
+
+function trustedProxyProvider(jwk: JsonWebKey): AuthTrustedProxyProviderRecord {
+  const now = new Date().toISOString();
+  return {
+    id: 'trusted_proxy_1',
+    type: 'trusted-proxy',
+    enabled: true,
+    label: 'Cloudflare Access',
+    issuer: 'https://access.example.test',
+    audience: 'docker-host-audience',
+    assertionHeader: 'cf-access-jwt-assertion',
+    jwks: {
+      keys: [jwk],
+    },
+    roleMappings: [{
+      claim: 'groups',
+      values: ['docker-host-users'],
+      role: 'host.user',
+    }],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function createTrustedProxySigningFixture() {
+  const { publicKey, privateKey } = await generateKeyPair('ES256', {
+    extractable: true,
+  });
+  const publicJwk = await exportJWK(publicKey);
+  return {
+    privateKey,
+    publicJwk: {
+      ...publicJwk,
+      kid: 'trusted-proxy-test-key',
+      alg: 'ES256',
+      use: 'sig',
+    },
+  };
+}
+
+async function signTrustedProxyAssertion(
+  privateKey: KeyLike,
+  input: {
+    subject: string;
+    groups: string[];
+    email?: string;
+    name?: string;
+  }
+) {
+  return await new SignJWT({
+    groups: input.groups,
+    ...(input.email ? { email: input.email } : {}),
+    ...(input.name ? { name: input.name } : {}),
+  })
+    .setProtectedHeader({
+      alg: 'ES256',
+      kid: 'trusted-proxy-test-key',
+      typ: 'JWT',
+    })
+    .setIssuer('https://access.example.test')
+    .setSubject(input.subject)
+    .setAudience('docker-host-audience')
+    .setIssuedAt()
+    .setExpirationTime('5m')
+    .sign(privateKey);
 }
 
 async function createGatewayServerTestConfig(): Promise<HostRuntimeConfig> {
