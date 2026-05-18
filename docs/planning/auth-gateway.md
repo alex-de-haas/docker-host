@@ -196,6 +196,37 @@ Realtime behavior:
 - What connection revalidation policy should be used for WebSockets and other long-lived transports?
 - Should each module hostname be limited to one module, or should future virtual-host routing support aliases per module?
 
+#### Decisions Before Phase 3
+
+These decisions define the first Host gateway implementation slice:
+
+| Topic | Options considered | Recommended decision |
+| --- | --- | --- |
+| Gateway runtime | Next route handlers, custom Node server in the Host process, or separate gateway container. | Use a custom Node server in the Host container. It can inspect `Host`, proxy streaming requests, and handle WebSocket upgrades before falling through to Next. A separate container is deferred until there is an operational need to scale or harden the gateway independently. |
+| Next deployment mode | Keep `next start`, use standalone output, or run a custom server. | Run `server.mjs` directly. Official Next.js guidance states custom servers and standalone output are not meant to be combined, so the production image should copy `.next` and production dependencies instead of `.next/standalone`. |
+| External bind | Keep loopback only, bind public interfaces by default, or make public bind explicit. | Keep `127.0.0.1` as the default. Add explicit launch settings for `HOST_BIND_ADDRESS`, `HOST_PUBLIC_ORIGIN`, and `HOST_GATEWAY_BASE_DOMAIN`. Binding `0.0.0.0` must be an administrator choice. |
+| Exposure registry | Store in `modules.json`, auth state, or a dedicated gateway file. | Store hostname mappings in `/data/gateway/exposures.json`. Keep Host user assignments in auth state because assignments are Host-owned authorization data. |
+| Exposure target | One hostname per module, one hostname per runtime port, or path routing. | Use one hostname per `moduleId + runtime.ports[].key`. Path routing remains out of scope. Multiple aliases can be added later as additional exposure records. |
+| Port eligibility | Allow any container port, only `runtime.ports[].public`, or admin override. | Allow only metadata ports marked `public: true` in Phase 3. The field remains a capability hint, while exposure policy remains Host-owned. |
+| Default policy | Public, authenticated, or assigned users only. | Use `loginRequired` as the default policy for new exposures. |
+| Host session on subdomains | Host-only cookie, parent-domain cookie, per-module handoff token. | Use parent-domain Host cookies only when `HOST_GATEWAY_BASE_DOMAIN` is configured. The gateway strips the Host session cookie before forwarding to module containers. |
+| Redirect handling | Pass through, rewrite all, or constrain internal redirects. | Preserve relative redirects. Rewrite absolute redirects from the internal module target back to the external module hostname. Leave unrelated external redirects untouched. |
+| Request headers | Pass through everything, strip only hop-by-hop headers, or sanitize Host-owned headers. | Strip hop-by-hop headers, CLI `Authorization`, the Host session cookie, and inbound `X-Docker-Host-*` headers. Add standard `X-Forwarded-*` headers. Do not send trusted identity headers in Phase 3. |
+| Module identity | Start with headers, start with JWT, or defer. | Defer trusted identity propagation to Phase 4. Phase 3 only decides whether traffic can reach the module. |
+| Unknown hostnames | Let Next handle them, return gateway 404, or proxy to a default module. | When a base domain is configured, reject unknown subdomains under that base domain with 404. Keep ordinary Host UI requests working on the canonical Host origin. |
+| Long-lived connections | Handshake-only auth, maximum lifetime, or active revocation registry. | Implement handshake authorization for WebSocket upgrades in Phase 3. Add maximum lifetime and active revocation closure after the basic proxy path is stable. |
+| Stopped modules | Auto-start on first request, return unavailable, or admin prompt. | Do not auto-start modules from gateway traffic. Return an upstream error when the installed module is not ready. Lifecycle remains an explicit admin action. |
+| Audit | Log every proxied request, only denied/config events, or no audit. | Audit exposure changes, assignment changes, and denied access events. Do not audit every static asset or proxied request. |
+
+#### Phase 3 MVP Scope
+
+- Add a gateway exposure registry and admin API.
+- Add subdomain matching before the Next request handler.
+- Proxy HTTP requests, static assets, uploads, streaming responses, and internal redirects.
+- Authorize WebSocket upgrades at handshake time and proxy them where practical.
+- Keep module containers private by relying on the existing Host-managed Docker network and no public module port bindings.
+- Do not implement module-scoped JWTs, identity headers, external ingress automation, DNS ownership checks, or active long-lived connection revocation in this phase.
+
 ### Phase 4 - Module identity contract
 
 **Status**: Not Started

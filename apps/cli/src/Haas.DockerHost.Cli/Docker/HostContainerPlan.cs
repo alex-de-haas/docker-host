@@ -8,8 +8,10 @@ internal sealed record HostContainerPlan(
     string DockerSocket,
     string ModuleNetwork,
     string RestartPolicy,
+    string HostBindAddress,
+    string HostPublicOrigin,
+    string HostGatewayBaseDomain,
     int HostUiPort)
 {
     public const int ContainerUiPort = 3000;
 }
-

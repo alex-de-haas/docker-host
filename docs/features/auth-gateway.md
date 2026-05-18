@@ -53,6 +53,50 @@ The Host gateway maps each module hostname to an installed module target inside 
 
 Path-based module routing is not part of the accepted target model. Many module UIs assume they run at `/`, and realtime transports are simpler on a dedicated origin.
 
+The first gateway implementation runs as a custom Node server in the Host container. It checks the incoming `Host` header before handing the request to Next.js:
+
+```mermaid
+flowchart LR
+  R["Incoming request"] --> H{"Hostname matches exposure?"}
+  H -- "No" --> N["Next Host UI/API"]
+  H -- "Yes" --> A["Gateway access policy"]
+  A -- "Denied" --> D["401/403 or login redirect"]
+  A -- "Allowed" --> P["Proxy to module network alias"]
+```
+
+Because this uses a custom server, the Host image runs `server.mjs` directly instead of `next start` or Next standalone output. The image still builds the Next application normally, then copies `.next`, production dependencies, static assets, and the custom server into the runtime image.
+
+Gateway launch settings:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `HOST_BIND_ADDRESS` | `127.0.0.1` | Host-side address used by Docker port publishing. Set to `0.0.0.0` only when an administrator intentionally exposes the Host beyond loopback or places it behind a trusted ingress. |
+| `HOST_PUBLIC_ORIGIN` | empty | Canonical external Host UI origin, for example `https://host.example.com`. Used for gateway login redirects. |
+| `HOST_GATEWAY_BASE_DOMAIN` | empty | Base domain for module subdomains, for example `example.com`. When set, Host session cookies can be scoped to this parent domain and unknown subdomains under it are rejected. |
+
+Gateway exposure records live in `/data/gateway/exposures.json`:
+
+```json
+{
+  "schemaVersion": "0.1",
+  "exposures": [
+    {
+      "id": "gw_...",
+      "moduleId": "com.acme.reports",
+      "hostname": "reports.example.com",
+      "portKey": "web",
+      "exposurePolicy": "loginRequired",
+      "enabled": true,
+      "createdAt": "2026-05-18T10:00:00.000Z",
+      "updatedAt": "2026-05-18T10:00:00.000Z"
+    }
+  ],
+  "updatedAt": "2026-05-18T10:00:00.000Z"
+}
+```
+
+Each exposure points to a specific `moduleId + runtime.ports[].key`. The referenced metadata port must be marked `public: true`; the administrator still chooses the Host-owned exposure policy separately.
+
 ```mermaid
 flowchart LR
   U["Browser"] --> D["Module subdomain"]
@@ -75,6 +119,35 @@ The module exposure model uses explicit policy states instead of the older `priv
 These policies control only whether traffic reaches the module. They do not define what the user can do inside the module.
 
 The existing metadata field `runtime.ports[].public` is only a port capability hint that says an endpoint is suitable for future external UI exposure. It is not an authorization policy. Host-owned exposure policy decides whether the gateway treats an externally reachable module hostname as `public`, `loginRequired`, or `assignedUsersOnly`.
+
+Module access assignments are stored in the auth state as Host-owned authorization data. They are separate from the gateway hostname registry and from module-owned permissions.
+
+## Gateway Admin API
+
+Gateway exposure management is a Host admin operation:
+
+| Route | Method | Behavior |
+| --- | --- | --- |
+| `/api/gateway/exposures` | `GET` | List configured gateway exposures and assigned Host user ids. |
+| `/api/gateway/exposures` | `POST` | Create a gateway exposure for `moduleId`, `hostname`, `portKey`, and optional `exposurePolicy`. |
+| `/api/gateway/exposures/{exposureId}` | `PUT` | Update hostname, target port, policy, or enabled state. |
+| `/api/gateway/exposures/{exposureId}` | `DELETE` | Remove an exposure. |
+| `/api/gateway/exposures/{exposureId}/assignments` | `PUT` | Replace assigned Host user ids for the exposure's module. |
+
+The initial API is intentionally low-level so the routing and policy layer can stabilize before adding a richer Web UI.
+
+## Gateway Proxy Rules
+
+The gateway sanitizes proxied requests:
+
+- strips hop-by-hop headers;
+- strips CLI `Authorization`;
+- strips the Host session cookie before traffic reaches the module;
+- strips inbound `X-Docker-Host-*` headers so clients cannot spoof future identity headers;
+- adds `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For`;
+- preserves the external module `Host` header for applications that generate root-relative or same-origin URLs.
+
+For responses, the gateway preserves relative redirects and rewrites absolute redirects from the internal module target back to the external module hostname. Module `Set-Cookie` headers are passed through with `Domain` stripped so module cookies stay host-only for the module subdomain.
 
 ## Host Roles
 

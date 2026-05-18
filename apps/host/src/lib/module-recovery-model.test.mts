@@ -113,6 +113,13 @@ test('resolveContainerDataPath maps only paths inside the Host data root', () =>
     dataRootContainer: '/data',
     modulesRootContainer: '/data/modules',
     modulesStorePath: '/data/modules.json',
+    authRootContainer: '/data/auth',
+    authStatePath: '/data/auth/state.json',
+    authAuditPath: '/data/auth/audit.ndjson',
+    gatewayRootContainer: '/data/gateway',
+    gatewayExposuresPath: '/data/gateway/exposures.json',
+    gatewayBaseDomain: null,
+    hostPublicOrigin: null,
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
   };

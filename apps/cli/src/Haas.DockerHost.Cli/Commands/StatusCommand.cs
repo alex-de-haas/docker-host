@@ -31,6 +31,9 @@ internal sealed class StatusCommand(CommandContext context)
         table.AddRow("URL", Markup.Escape(url ?? "not available until the container is created"));
         table.AddRow("Data root", Markup.Escape(settings.ResolveHostDataRoot(context.Environment)));
         table.AddRow("Module network", Markup.Escape(settings.HostModuleNetwork));
+        table.AddRow("Bind address", Markup.Escape(settings.HostBindAddress));
+        table.AddRow("Public origin", Markup.Escape(string.IsNullOrWhiteSpace(settings.HostPublicOrigin) ? "(not set)" : settings.HostPublicOrigin));
+        table.AddRow("Gateway base domain", Markup.Escape(string.IsNullOrWhiteSpace(settings.HostGatewayBaseDomain) ? "(not set)" : settings.HostGatewayBaseDomain));
         table.AddRow("Docker endpoint", Markup.Escape(settings.HostDockerEndpoint));
 
         context.Console.Write(table);
@@ -49,4 +52,3 @@ internal sealed class StatusCommand(CommandContext context)
             : container.State?.Status ?? "stopped";
     }
 }
-

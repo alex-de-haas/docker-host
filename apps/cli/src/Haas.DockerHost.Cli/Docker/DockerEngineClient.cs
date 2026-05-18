@@ -108,18 +108,30 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
     {
         var portKey = $"{HostContainerPlan.ContainerUiPort}/tcp";
         var hostPort = plan.HostUiPort.ToString(CultureInfo.InvariantCulture);
+        var env = new List<string>
+        {
+            $"HOST_DATA_ROOT_HOST={plan.DataRootHost}",
+            $"HOST_DATA_ROOT_CONTAINER={plan.DataRootContainer}",
+            $"HOST_DOCKER_SOCKET={plan.DockerSocket}",
+            $"HOST_MODULE_NETWORK={plan.ModuleNetwork}",
+            "PORT=3000",
+            "HOSTNAME=0.0.0.0",
+        };
+
+        if (!string.IsNullOrWhiteSpace(plan.HostPublicOrigin))
+        {
+            env.Add($"HOST_PUBLIC_ORIGIN={plan.HostPublicOrigin}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(plan.HostGatewayBaseDomain))
+        {
+            env.Add($"HOST_GATEWAY_BASE_DOMAIN={plan.HostGatewayBaseDomain}");
+        }
+
         var body = new
         {
             Image = plan.Image,
-            Env = new[]
-            {
-                $"HOST_DATA_ROOT_HOST={plan.DataRootHost}",
-                $"HOST_DATA_ROOT_CONTAINER={plan.DataRootContainer}",
-                $"HOST_DOCKER_SOCKET={plan.DockerSocket}",
-                $"HOST_MODULE_NETWORK={plan.ModuleNetwork}",
-                "PORT=3000",
-                "HOSTNAME=0.0.0.0",
-            },
+            Env = env,
             ExposedPorts = new Dictionary<string, object>
             {
                 [portKey] = new { },
@@ -137,7 +149,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
                     [
                         new
                         {
-                            HostIp = "127.0.0.1",
+                            HostIp = plan.HostBindAddress,
                             HostPort = hostPort,
                         },
                     ],

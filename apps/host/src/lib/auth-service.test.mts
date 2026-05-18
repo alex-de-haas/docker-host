@@ -90,6 +90,10 @@ async function createTestConfig(): Promise<HostRuntimeConfig> {
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
+    gatewayRootContainer: path.join(dataRootContainer, 'gateway'),
+    gatewayExposuresPath: path.join(dataRootContainer, 'gateway', 'exposures.json'),
+    gatewayBaseDomain: null,
+    hostPublicOrigin: null,
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
   };

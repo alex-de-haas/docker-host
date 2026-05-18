@@ -5,5 +5,5 @@ export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
   await revokeRequestSession(request);
-  return createClearSessionCookieResponse({ authenticated: false });
+  return createClearSessionCookieResponse({ authenticated: false }, 200, request);
 }

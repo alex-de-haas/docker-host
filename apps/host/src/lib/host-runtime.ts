@@ -14,6 +14,10 @@ export interface HostRuntimeConfig {
   authRootContainer: string;
   authStatePath: string;
   authAuditPath: string;
+  gatewayRootContainer: string;
+  gatewayExposuresPath: string;
+  gatewayBaseDomain: string | null;
+  hostPublicOrigin: string | null;
   dockerSocketPath: string;
   moduleNetwork: string;
 }
@@ -43,6 +47,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
   const moduleNetwork = process.env.HOST_MODULE_NETWORK?.trim() || DEFAULT_MODULE_NETWORK;
   const modulesRootContainer = path.join(dataRootContainer, 'modules');
   const authRootContainer = path.join(dataRootContainer, 'auth');
+  const gatewayRootContainer = path.join(dataRootContainer, 'gateway');
 
   return {
     dataRootHost,
@@ -52,6 +57,10 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
+    gatewayRootContainer,
+    gatewayExposuresPath: path.join(gatewayRootContainer, 'exposures.json'),
+    gatewayBaseDomain: normalizeOptionalRuntimeValue(process.env.HOST_GATEWAY_BASE_DOMAIN),
+    hostPublicOrigin: normalizeOptionalRuntimeValue(process.env.HOST_PUBLIC_ORIGIN),
     dockerSocketPath,
     moduleNetwork,
   };
@@ -62,9 +71,11 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     await fs.mkdir(config.dataRootContainer, { recursive: true });
     await fs.mkdir(config.modulesRootContainer, { recursive: true });
     await fs.mkdir(config.authRootContainer, { recursive: true });
+    await fs.mkdir(config.gatewayRootContainer, { recursive: true });
     await fs.access(config.dataRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.modulesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.authRootContainer, fs.constants.R_OK | fs.constants.W_OK);
+    await fs.access(config.gatewayRootContainer, fs.constants.R_OK | fs.constants.W_OK);
 
     return {
       hostPath: config.dataRootHost,
@@ -95,4 +106,9 @@ export async function pathExists(targetPath: string) {
   } catch {
     return false;
   }
+}
+
+function normalizeOptionalRuntimeValue(value: string | undefined) {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }

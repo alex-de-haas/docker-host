@@ -4,6 +4,7 @@ import path from 'node:path';
 import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostRole } from '../types/auth.ts';
+import type { ModuleAccessAssignment } from '../types/auth.ts';
 
 export const AUTH_STORE_SCHEMA_VERSION = '0.1';
 
@@ -55,6 +56,7 @@ export interface AuthState {
   sessions: AuthSessionRecord[];
   setupTokens: AuthSetupTokenRecord[];
   cliTokens: AuthCliTokenRecord[];
+  moduleAssignments: ModuleAccessAssignment[];
   updatedAt: string;
 }
 
@@ -137,6 +139,7 @@ export function createEmptyAuthState(): AuthState {
     sessions: [],
     setupTokens: [],
     cliTokens: [],
+    moduleAssignments: [],
     updatedAt: new Date().toISOString(),
   };
 }
@@ -178,6 +181,9 @@ function normalizeAuthState(parsed: unknown): AuthState {
       ? parsed.setupTokens.filter(isAuthSetupTokenRecord)
       : [],
     cliTokens: Array.isArray(parsed.cliTokens) ? parsed.cliTokens.filter(isAuthCliTokenRecord) : [],
+    moduleAssignments: Array.isArray(parsed.moduleAssignments)
+      ? parsed.moduleAssignments.filter(isModuleAccessAssignment)
+      : [],
     updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
   };
 }
@@ -220,6 +226,12 @@ function isAuthCliTokenRecord(value: unknown): value is AuthCliTokenRecord {
     typeof value.label === 'string' &&
     typeof value.createdAt === 'string' &&
     value.scope === 'host.admin.cli';
+}
+
+function isModuleAccessAssignment(value: unknown): value is ModuleAccessAssignment {
+  return isObject(value) &&
+    typeof value.moduleId === 'string' &&
+    typeof value.userId === 'string';
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

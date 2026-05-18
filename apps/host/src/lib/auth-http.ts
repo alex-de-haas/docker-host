@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { canUseHostApi } from './auth-policy.ts';
+import { getHostRuntimeConfig } from './host-runtime.ts';
 import {
   authenticateCliToken,
   authenticateSessionToken,
@@ -79,23 +80,27 @@ export function createSessionCookieResponse<TBody>(
   status = 200
 ) {
   const response = NextResponse.json(body, { status });
+  const domain = getSessionCookieDomain(request);
   response.cookies.set(SESSION_COOKIE_NAME, sessionToken, {
     httpOnly: true,
     maxAge: Math.floor(SESSION_ABSOLUTE_TIMEOUT_MS / 1000),
     path: '/',
     sameSite: 'lax',
     secure: isSecureRequest(request),
+    ...(domain ? { domain } : {}),
   });
   return response;
 }
 
-export function createClearSessionCookieResponse<TBody>(body: TBody, status = 200) {
+export function createClearSessionCookieResponse<TBody>(body: TBody, status = 200, request?: Request) {
   const response = NextResponse.json(body, { status });
+  const domain = request ? getSessionCookieDomain(request) : null;
   response.cookies.set(SESSION_COOKIE_NAME, '', {
     httpOnly: true,
     maxAge: 0,
     path: '/',
     sameSite: 'lax',
+    ...(domain ? { domain } : {}),
   });
   return response;
 }
@@ -207,6 +212,21 @@ function isLoopbackRequest(request: Request) {
 function getRequestOrigin(request: Request) {
   const url = new URL(request.url);
   return `${url.protocol}//${url.host}`;
+}
+
+function getSessionCookieDomain(request: Request) {
+  const baseDomain = getHostRuntimeConfig().gatewayBaseDomain;
+  if (!baseDomain) {
+    return null;
+  }
+
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  const normalizedBaseDomain = baseDomain.toLowerCase().replace(/^\.+|\.+$/g, '');
+  if (hostname === normalizedBaseDomain || hostname.endsWith(`.${normalizedBaseDomain}`)) {
+    return normalizedBaseDomain;
+  }
+
+  return null;
 }
 
 class AuthHttpError extends Error {

@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server.mjs --dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.mjs --production",
     "lint": "eslint",
     "test": "node --experimental-strip-types --test \"src/**/*.test.mts\""
   },
