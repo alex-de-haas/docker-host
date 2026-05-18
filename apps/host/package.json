@@ -20,6 +20,7 @@
     "clsx": "^2.1.1",
     "dockerode": "^4.0.9",
     "framer-motion": "^12.23.25",
+    "jose": "^6.2.3",
     "lucide-react": "^0.556.0",
     "next": "16.0.7",
     "react": "19.2.0",

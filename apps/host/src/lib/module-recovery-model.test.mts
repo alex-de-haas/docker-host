@@ -120,6 +120,7 @@ test('resolveContainerDataPath maps only paths inside the Host data root', () =>
     gatewayExposuresPath: '/data/gateway/exposures.json',
     gatewayBaseDomain: null,
     hostPublicOrigin: null,
+    hostInternalOrigin: 'http://docker-host:3000',
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
   };

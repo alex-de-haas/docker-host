@@ -268,6 +268,7 @@ Gateway-related launch settings:
 - `HOST_BIND_ADDRESS` defaults to `127.0.0.1`; administrators can set `0.0.0.0` when placing the Host behind external ingress.
 - `HOST_PUBLIC_ORIGIN` is the canonical external Host UI origin, for example `https://host.example.com`.
 - `HOST_GATEWAY_BASE_DOMAIN` is the parent domain for module subdomains, for example `example.com`.
+- `HOST_INTERNAL_ORIGIN` defaults inside the Host container to `http://docker-host:3000`. The CLI injects that value and attaches the Host container to the shared module network with the stable `docker-host` alias so module containers can fetch Host-published metadata such as JWKS.
 
 `docker-host config` должен быть typed interface к известным Host launch settings, а не произвольным editor для `launch.env`.
 

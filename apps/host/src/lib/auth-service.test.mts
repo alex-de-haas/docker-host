@@ -94,6 +94,7 @@ async function createTestConfig(): Promise<HostRuntimeConfig> {
     gatewayExposuresPath: path.join(dataRootContainer, 'gateway', 'exposures.json'),
     gatewayBaseDomain: null,
     hostPublicOrigin: null,
+    hostInternalOrigin: 'http://docker-host:3000',
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
   };

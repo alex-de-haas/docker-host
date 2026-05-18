@@ -122,6 +122,9 @@ function normalizeGatewayExposureRecord(value: unknown): GatewayExposureRecord |
     hostname: value.hostname.toLowerCase(),
     portKey: value.portKey,
     exposurePolicy: value.exposurePolicy,
+    identityMode: isIdentityMode(value.identityMode)
+      ? value.identityMode
+      : getDefaultIdentityMode(value.exposurePolicy),
     enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
@@ -130,6 +133,14 @@ function normalizeGatewayExposureRecord(value: unknown): GatewayExposureRecord |
 
 function isExposurePolicy(value: unknown) {
   return value === 'public' || value === 'loginRequired' || value === 'assignedUsersOnly';
+}
+
+function isIdentityMode(value: unknown) {
+  return value === 'none' || value === 'optional' || value === 'required';
+}
+
+function getDefaultIdentityMode(exposurePolicy: GatewayExposureRecord['exposurePolicy']) {
+  return exposurePolicy === 'public' ? 'none' : 'required';
 }
 
 function isGatewayExposureRecord(value: GatewayExposureRecord | null): value is GatewayExposureRecord {

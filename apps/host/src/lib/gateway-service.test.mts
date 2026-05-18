@@ -26,6 +26,7 @@ test('creates gateway exposure for a public module port and resolves target', as
 
   assert.equal(exposure.hostname, 'reports.example.test');
   assert.equal(exposure.exposurePolicy, 'loginRequired');
+  assert.equal(exposure.identityMode, 'required');
 
   const anonymousTarget = await resolveGatewayTarget('reports.example.test', null, config);
   assert.equal(anonymousTarget?.targetBaseUrl, 'http://mod-com-example-reports:8080');
@@ -55,6 +56,34 @@ test('rejects exposure for runtime ports not marked public', async () => {
       portKey: 'web',
     }, 'user_admin', config),
     (error: unknown) => error instanceof GatewayServiceError && error.code === 'port_not_public'
+  );
+});
+
+test('public gateway exposures default to no identity and reject required identity', async () => {
+  const config = await createGatewayTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.public',
+    portPublic: true,
+  });
+
+  const exposure = await upsertGatewayExposure({
+    moduleId: 'com.example.public',
+    hostname: 'public.example.test',
+    portKey: 'web',
+    exposurePolicy: 'public',
+  }, 'user_admin', config);
+
+  assert.equal(exposure.identityMode, 'none');
+
+  await assert.rejects(
+    upsertGatewayExposure({
+      moduleId: 'com.example.public',
+      hostname: 'public-required.example.test',
+      portKey: 'web',
+      exposurePolicy: 'public',
+      identityMode: 'required',
+    }, 'user_admin', config),
+    (error: unknown) => error instanceof GatewayServiceError && error.code === 'invalid_identity_mode'
   );
 });
 
@@ -123,6 +152,7 @@ async function createGatewayTestConfig(): Promise<HostRuntimeConfig> {
     gatewayExposuresPath: path.join(gatewayRootContainer, 'exposures.json'),
     gatewayBaseDomain: 'example.test',
     hostPublicOrigin: 'https://host.example.test',
+    hostInternalOrigin: 'http://docker-host:3000',
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
   };

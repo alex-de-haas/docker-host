@@ -73,6 +73,7 @@ Gateway launch settings:
 | `HOST_BIND_ADDRESS` | `127.0.0.1` | Host-side address used by Docker port publishing. Set to `0.0.0.0` only when an administrator intentionally exposes the Host beyond loopback or places it behind a trusted ingress. |
 | `HOST_PUBLIC_ORIGIN` | empty | Canonical external Host UI origin, for example `https://host.example.com`. Used for gateway login redirects. |
 | `HOST_GATEWAY_BASE_DOMAIN` | empty | Base domain for module subdomains, for example `example.com`. When set, Host session cookies can be scoped to this parent domain and unknown subdomains under it are rejected. |
+| `HOST_INTERNAL_ORIGIN` | `http://docker-host:3000` | Internal Host origin that module containers can use to fetch Host-published metadata such as JWKS. The CLI attaches the Host container to the module network with the stable `docker-host` alias. |
 
 Gateway exposure records live in `/data/gateway/exposures.json`:
 
@@ -86,6 +87,7 @@ Gateway exposure records live in `/data/gateway/exposures.json`:
       "hostname": "reports.example.com",
       "portKey": "web",
       "exposurePolicy": "loginRequired",
+      "identityMode": "required",
       "enabled": true,
       "createdAt": "2026-05-18T10:00:00.000Z",
       "updatedAt": "2026-05-18T10:00:00.000Z"
@@ -129,7 +131,7 @@ Gateway exposure management is a Host admin operation:
 | Route | Method | Behavior |
 | --- | --- | --- |
 | `/api/gateway/exposures` | `GET` | List configured gateway exposures and assigned Host user ids. |
-| `/api/gateway/exposures` | `POST` | Create a gateway exposure for `moduleId`, `hostname`, `portKey`, and optional `exposurePolicy`. |
+| `/api/gateway/exposures` | `POST` | Create a gateway exposure for `moduleId`, `hostname`, `portKey`, optional `exposurePolicy`, and optional `identityMode`. |
 | `/api/gateway/exposures/{exposureId}` | `PUT` | Update hostname, target port, policy, or enabled state. |
 | `/api/gateway/exposures/{exposureId}` | `DELETE` | Remove an exposure. |
 | `/api/gateway/exposures/{exposureId}/assignments` | `PUT` | Replace assigned Host user ids for the exposure's module. |
@@ -144,6 +146,7 @@ The gateway sanitizes proxied requests:
 - strips CLI `Authorization`;
 - strips the Host session cookie before traffic reaches the module;
 - strips inbound `X-Docker-Host-*` headers so clients cannot spoof future identity headers;
+- adds `X-Docker-Host-Identity` with a short-lived signed JWT when the exposure identity mode and authenticated Host principal require identity propagation;
 - adds `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For`;
 - preserves the external module `Host` header for applications that generate root-relative or same-origin URLs.
 
@@ -219,7 +222,17 @@ This lets different modules implement different domain-specific permission model
 
 ## Module Identity Token
 
-Host must not forward its own session cookie to modules. When a request is authenticated, Host should pass a short-lived signed token scoped to the target module.
+Host must not forward its own session cookie to modules. When a gateway request is authenticated and the exposure identity mode allows identity propagation, Host passes a short-lived signed JWT scoped to the target module in `X-Docker-Host-Identity`.
+
+Token decisions:
+
+- JWTs are signed with an asymmetric Host-owned key. The MVP algorithm is `ES256`.
+- Private signing keys live under `/data/auth/module-identity-keys.json`, separate from users, sessions, CLI tokens, and module assignments.
+- Public keys are published as JWKS at `/.well-known/docker-host/jwks.json`.
+- Discovery metadata is published at `/.well-known/docker-host/module-identity.json`.
+- The discovery `jwks_uri` uses `HOST_INTERNAL_ORIGIN`, defaulting to `http://docker-host:3000`, so module containers can validate tokens from inside the Docker network.
+- Tokens use a 5-minute lifetime and are minted for each authenticated proxied HTTP request or WebSocket/SSE/long-poll setup request.
+- Host strips inbound `X-Docker-Host-*` request headers before adding its own identity header.
 
 Example claims:
 
@@ -229,10 +242,16 @@ Example claims:
   "sub": "user_123",
   "aud": "com.acme.reports",
   "exp": 1790000000,
+  "iat": 1789999700,
+  "jti": "mit_...",
+  "hostRole": "host.user",
+  "moduleAccess": "assigned",
+  "moduleExposurePolicy": "assignedUsersOnly",
   "email": "work@example.com",
   "name": "Work User",
-  "hostRole": "host.user",
-  "moduleAccess": "assigned"
+  "gatewayExposureId": "gw_...",
+  "hostname": "reports.example.com",
+  "portKey": "web"
 }
 ```
 
@@ -241,10 +260,14 @@ Rules:
 - `aud` must identify the target module.
 - `sub` must identify the Host user.
 - `hostRole` should be `host.admin` or `host.user`.
-- public unauthenticated requests should not include a user token.
-- modules should validate tokens against a Host JWKS endpoint or configured public key.
+- `moduleAccess` is one of `authenticated`, `assigned`, `hostAdmin`, or `publicAuthenticated`.
+- `moduleExposurePolicy` is the Host gateway exposure policy that allowed the request.
+- public unauthenticated requests do not include a user token.
+- public exposures default to `identityMode: "none"` and may opt into `identityMode: "optional"` for personalization.
+- `loginRequired` and `assignedUsersOnly` exposures default to `identityMode: "required"`.
+- modules must validate tokens against Host JWKS and must reject tokens with the wrong audience, issuer, signature, or expiration.
 
-Host may pass convenience headers, but the signed token should be the authoritative identity artifact.
+Host does not pass unsigned identity convenience headers in the Phase 4 MVP. If convenience headers are added later, the signed token remains the only authoritative identity artifact.
 
 ## Realtime Traffic
 
@@ -350,7 +373,6 @@ Integrated development should be used to verify:
 ## Open Questions
 
 - Should Host remember a preferred account per module hostname?
-- How should signing keys be rotated?
 - What exact revalidation policy should long-lived realtime connections use?
 - Should `loginRequired` modules be able to query all Host users, users who have opened the module, or only users explicitly assigned later?
 - What module service credential should be used for module-to-Host internal APIs?

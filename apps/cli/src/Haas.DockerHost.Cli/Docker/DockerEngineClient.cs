@@ -114,6 +114,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             $"HOST_DATA_ROOT_CONTAINER={plan.DataRootContainer}",
             $"HOST_DOCKER_SOCKET={plan.DockerSocket}",
             $"HOST_MODULE_NETWORK={plan.ModuleNetwork}",
+            "HOST_INTERNAL_ORIGIN=http://docker-host:3000",
             "PORT=3000",
             "HOSTNAME=0.0.0.0",
         };
@@ -163,7 +164,10 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             {
                 EndpointsConfig = new Dictionary<string, object>
                 {
-                    [plan.ModuleNetwork] = new { },
+                    [plan.ModuleNetwork] = new
+                    {
+                        Aliases = new[] { "docker-host" },
+                    },
                 },
             },
         };

@@ -5,6 +5,7 @@ import { DEFAULT_MODULE_EXPOSURE_POLICY, canAccessModule } from './auth-policy.t
 import { appendAuthAuditEvent, readAuthStateSnapshot, updateAuthState } from './auth-store.ts';
 import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
+import { getDefaultModuleIdentityMode, isModuleIdentityMode } from './module-identity.mjs';
 import {
   readGatewayExposureStateSnapshot,
   updateGatewayExposureState,
@@ -71,6 +72,7 @@ export async function upsertGatewayExposure(
           hostname: normalized.hostname,
           portKey: normalized.portKey,
           exposurePolicy: normalized.exposurePolicy,
+          identityMode: normalized.identityMode,
           enabled: normalized.enabled,
           updatedAt: now,
         }
@@ -80,6 +82,7 @@ export async function upsertGatewayExposure(
           hostname: normalized.hostname,
           portKey: normalized.portKey,
           exposurePolicy: normalized.exposurePolicy,
+          identityMode: normalized.identityMode,
           enabled: normalized.enabled,
           createdAt: now,
           updatedAt: now,
@@ -108,6 +111,7 @@ export async function upsertGatewayExposure(
       hostname: exposure.hostname,
       portKey: exposure.portKey,
       exposurePolicy: exposure.exposurePolicy,
+      identityMode: exposure.identityMode,
       enabled: exposure.enabled,
     },
   }, config);
@@ -259,12 +263,14 @@ export async function validateGatewayExposureInput(
   id: string;
   hostname: string;
   exposurePolicy: GatewayExposureRecord['exposurePolicy'];
+  identityMode: GatewayExposureRecord['identityMode'];
   enabled: boolean;
 }> {
   const moduleId = input.moduleId.trim();
   const portKey = input.portKey.trim();
   const hostname = normalizeGatewayHostname(input.hostname);
   const exposurePolicy = input.exposurePolicy ?? DEFAULT_MODULE_EXPOSURE_POLICY;
+  const identityMode = input.identityMode ?? getDefaultModuleIdentityMode(exposurePolicy);
   const enabled = input.enabled ?? true;
 
   if (!moduleId) {
@@ -286,6 +292,17 @@ export async function validateGatewayExposureInput(
 
   if (!isExposurePolicy(exposurePolicy)) {
     throw new GatewayServiceError('invalid_exposure_policy', 'Exposure policy is not supported.');
+  }
+
+  if (!isModuleIdentityMode(identityMode)) {
+    throw new GatewayServiceError('invalid_identity_mode', 'Module identity mode is not supported.');
+  }
+
+  if (exposurePolicy === 'public' && identityMode === 'required') {
+    throw new GatewayServiceError(
+      'invalid_identity_mode',
+      'Public exposures can use identity mode "none" or "optional", but not "required".'
+    );
   }
 
   const installedModule = await findInstalledModuleSnapshot(moduleId, config);
@@ -315,6 +332,7 @@ export async function validateGatewayExposureInput(
     hostname,
     portKey,
     exposurePolicy,
+    identityMode,
     enabled,
   };
 }

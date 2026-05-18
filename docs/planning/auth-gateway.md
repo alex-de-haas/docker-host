@@ -229,7 +229,7 @@ These decisions define the first Host gateway implementation slice:
 
 ### Phase 4 - Module identity contract
 
-**Status**: Not Started
+**Status**: In Progress
 
 Define how modules receive authenticated user context from Host:
 
@@ -248,22 +248,87 @@ Example token claims:
   "sub": "user_123",
   "aud": "com.acme.reports",
   "exp": 1790000000,
+  "iat": 1789999700,
+  "jti": "mit_...",
   "email": "work@example.com",
   "name": "Work User",
   "hostRole": "host.user",
-  "moduleAccess": "assigned"
+  "moduleAccess": "assigned",
+  "moduleExposurePolicy": "assignedUsersOnly"
 }
 ```
 
-Host may also pass identity headers for convenience, but signed tokens should be the authoritative contract for modules that need trustable identity.
+Host should not pass unsigned identity convenience headers in the Phase 4 MVP. If convenience headers are added later, the signed token remains the only authoritative identity artifact for modules that need trustable identity.
 
-#### Open Questions
+#### Decisions Before Phase 4
 
-- Which claims are stable contract fields and which are optional convenience fields?
-- Should modules receive external IdP groups directly, or only normalized Host identity and Host role?
-- Where should Host signing keys live, and how should key rotation work?
-- Should there be an official module SDK or helper library for validating Host-issued tokens?
-- How should optional identity work for `public` modules when a visitor is already logged in to Host?
+These decisions define the first module identity implementation slice:
+
+| Topic | Options considered | Recommended decision |
+| --- | --- | --- |
+| Token format | Signed JWT, opaque reference token, or trusted headers only. | Use a signed JWT as the authoritative module identity contract. Opaque reference tokens would force every module request back through Host introspection, and trusted headers alone are too easy for module authors to misuse. |
+| Signing algorithm | Shared-secret `HS256`, RSA `RS256`, elliptic-curve `ES256`, or EdDSA. | Use an asymmetric signing key. Prefer `ES256` for the MVP because it works well with JWKS and avoids sharing a signing secret with modules. If the runtime dependency chosen for JWT support makes `RS256` materially simpler, it is acceptable as long as modules validate through JWKS and never receive private key material. |
+| JWT library | Hand-written signing, Node WebCrypto directly, or a maintained JOSE library. | Use a maintained JOSE implementation, for example the `jose` package, instead of hand-writing JWT/JWKS handling. |
+| Signing key storage | Store keys in `auth/state.json`, environment variables, or a dedicated key file. | Store module identity signing keys in a dedicated versioned file under the auth root, for example `/data/auth/module-identity-keys.json`. Keep private key material separate from users, sessions, CLI tokens, and module assignments. |
+| Key rotation | No rotation, manual replacement, or active plus retired keys. | MVP may start with one active key, but the key file format should support `kid`, `createdAt`, `active`, and retired public keys. JWKS should publish active and still-valid retired public keys so old short-lived tokens can expire naturally. |
+| JWKS endpoint | Configured public key only, internal-only endpoint, or unauthenticated JWKS route. | Add an unauthenticated JWKS route, for example `/.well-known/docker-host/jwks.json`. Public keys are not secret, and a standard JWKS endpoint makes module validation simpler. |
+| Discovery endpoint | No discovery, document static paths, or publish metadata. | Add a small unauthenticated discovery document, for example `/.well-known/docker-host/module-identity.json`, with `issuer`, `jwks_uri`, supported algorithms, and token header name. |
+| Internal Host origin for modules | Use `HOST_PUBLIC_ORIGIN`, Docker container name, or a dedicated internal origin. | Add a stable internal Host origin for module-to-Host calls, defaulting to `http://docker-host:3000`. The CLI should attach the Host container to the module network with a matching stable alias, even when `HOST_CONTAINER_NAME` is customized. |
+| Token transport to modules | Forward `Authorization: Bearer`, module cookie, or Host-owned header. | Pass the JWT in `X-Docker-Host-Identity`. Do not use `Authorization`, because modules may already use it for their own APIs. Do not use cookies, because Host identity must not become ambient module browser state. |
+| Convenience headers | Add signed token only, add unsigned identity headers, or add both. | MVP should send only the signed JWT. The gateway already strips inbound `X-Docker-Host-*` headers; unsigned convenience headers can be added later if needed, but modules must not depend on them for trust. |
+| Stable claims | Minimal registered claims, full user profile, or provider-specific claims. | Stable required claims: `iss`, `sub`, `aud`, `exp`, `iat`, `jti`, `hostRole`, `moduleAccess`, and `moduleExposurePolicy`. Optional convenience claims: `email`, `name`, `gatewayExposureId`, `hostname`, and `portKey`. |
+| Audience | Use module id, exposure id, hostname, or runtime port key. | Use `aud` equal to the module id. Exposure id, hostname, and port key may be included as optional informational claims, but they should not replace the module audience. |
+| Module access claim | Boolean access, permission list, or reason enum. | Use a reason enum aligned with Host gateway access decisions: `authenticated`, `assigned`, `hostAdmin`, or `publicAuthenticated`. Keep module-specific permissions out of the Host token. |
+| External IdP groups | Pass through directly, normalize into Host roles, or defer. | Do not pass external IdP groups in Phase 4. Modules receive normalized Host identity and Host role. Provider-specific groups belong to later OIDC or trusted proxy phases. |
+| Token lifetime | Match Host session, one request only, or short fixed TTL. | Use a short fixed TTL, initially 5 minutes. The gateway issues a fresh token for each authenticated proxied HTTP request and for WebSocket/SSE/long-poll setup requests. |
+| Realtime identity | No identity for realtime, token only on initial request, or periodic revalidation. | Use the token on the initial HTTP request or WebSocket handshake in Phase 4. Active revalidation and forced closure of long-lived connections remain a later gateway hardening task. |
+| Public module identity | Always omit identity, always send identity when logged in, or per-exposure opt-in. | Add an identity mode to exposure configuration: `none`, `optional`, or `required`. Default `public` exposures to `none`; allow `optional` so a public module can personalize for logged-in Host users. `loginRequired` and `assignedUsersOnly` exposures default to `required`. |
+| Official module SDK | Required before Phase 4, validation snippets only, or SDK after integration. | Do not block Phase 4 on an SDK. First publish the contract, JWKS, and validation examples. Add an SDK only after at least one real module integration proves the shape. |
+
+The Phase 4 token contract should start with this claim shape:
+
+```json
+{
+  "iss": "docker-host",
+  "sub": "user_123",
+  "aud": "com.acme.reports",
+  "exp": 1790000000,
+  "iat": 1789999700,
+  "jti": "mit_...",
+  "hostRole": "host.user",
+  "moduleAccess": "assigned",
+  "moduleExposurePolicy": "assignedUsersOnly",
+  "email": "work@example.com",
+  "name": "Work User",
+  "gatewayExposureId": "gw_...",
+  "hostname": "reports.example.com",
+  "portKey": "web"
+}
+```
+
+Required claims are the compatibility contract. Optional claims may be omitted by Host configuration, future provider mode, privacy policy, or module exposure policy.
+
+#### Phase 4 MVP Scope
+
+- Add module identity signing key persistence under `/data/auth/`.
+- Add JWKS and discovery endpoints.
+- Add token minting for authenticated gateway requests.
+- Inject the token into proxied module HTTP requests and WebSocket handshake requests through `X-Docker-Host-Identity`.
+- Add exposure identity mode handling for `public`, `loginRequired`, and `assignedUsersOnly` exposures.
+- Keep Host session cookies stripped before forwarding to modules.
+- Keep inbound `X-Docker-Host-*` request headers stripped before adding Host-owned identity headers.
+- Document the module validation contract, including claims, token header, JWKS discovery, expected audience, and expiration handling.
+- Add tests for signing, JWKS publication, wrong audience rejection, expired token rejection, header spoofing protection, public exposure identity defaults, and authenticated gateway token injection.
+
+Do not implement provider group passthrough, module-specific permission claims, a module SDK, module-to-Host directory APIs, active long-lived connection revalidation, or external ingress automation in Phase 4.
+
+#### Implementation Notes
+
+- Extract module identity signing, JWKS, discovery, token-issuance, and identity-mode decisions into testable helpers that can be reused by the custom gateway server.
+- Use `HOST_INTERNAL_ORIGIN`, defaulting to `http://docker-host:3000`, so module containers can reliably fetch Host JWKS inside the Host-managed Docker network.
+- Attach the Host container to the shared module network with the stable `docker-host` network alias, even if the administrator customizes the Host container name.
+- Store `identityMode` on gateway exposure records so `public` modules can opt into authenticated identity without changing the exposure access policy.
+- Add a fixture module or test upstream before closing Phase 4 so the Host verifies the full custom-server proxy path: valid token injection, no token for default public exposures, optional public identity, and spoofed inbound `X-Docker-Host-*` rejection.
 
 ### Phase 5 - Module user directory and module-owned permissions
 

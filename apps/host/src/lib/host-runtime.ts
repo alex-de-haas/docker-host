@@ -5,6 +5,7 @@ import path from 'node:path';
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
 const DEFAULT_DOCKER_SOCKET = '/var/run/docker.sock';
 const DEFAULT_MODULE_NETWORK = 'docker-host-modules';
+const DEFAULT_HOST_INTERNAL_ORIGIN = 'http://docker-host:3000';
 
 export interface HostRuntimeConfig {
   dataRootHost: string;
@@ -18,6 +19,7 @@ export interface HostRuntimeConfig {
   gatewayExposuresPath: string;
   gatewayBaseDomain: string | null;
   hostPublicOrigin: string | null;
+  hostInternalOrigin: string;
   dockerSocketPath: string;
   moduleNetwork: string;
 }
@@ -61,6 +63,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     gatewayExposuresPath: path.join(gatewayRootContainer, 'exposures.json'),
     gatewayBaseDomain: normalizeOptionalRuntimeValue(process.env.HOST_GATEWAY_BASE_DOMAIN),
     hostPublicOrigin: normalizeOptionalRuntimeValue(process.env.HOST_PUBLIC_ORIGIN),
+    hostInternalOrigin: normalizeOptionalRuntimeValue(process.env.HOST_INTERNAL_ORIGIN) ?? DEFAULT_HOST_INTERNAL_ORIGIN,
     dockerSocketPath,
     moduleNetwork,
   };

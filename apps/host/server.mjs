@@ -6,6 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import next from 'next';
+import {
+  MODULE_IDENTITY_TOKEN_HEADER,
+  createModuleIdentityToken,
+  getDefaultModuleIdentityMode,
+} from './src/lib/module-identity.mjs';
 
 const SESSION_COOKIE_NAME = 'docker_host_session';
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
@@ -78,7 +83,7 @@ server.prependListener('upgrade', async (req, socket, head) => {
       return;
     }
 
-    proxyWebSocketUpgrade(req, socket, head, gatewayTarget);
+    await proxyWebSocketUpgrade(req, socket, head, gatewayTarget);
   } catch (error) {
     console.error('Gateway upgrade failed:', error);
     sendUpgradeDenied(socket, 502);
@@ -146,6 +151,7 @@ async function resolveGatewayRequest(req) {
     exposure: {
       ...exposure,
       exposurePolicy: policy,
+      identityMode: getExposureIdentityMode(exposure, policy),
       hostname: hostnameValue,
     },
     access,
@@ -164,7 +170,8 @@ async function proxyHttpRequest(req, res, target) {
     return;
   }
 
-  const headers = buildProxyRequestHeaders(req, target, false);
+  const identityToken = await createModuleIdentityToken(target, getRuntimeConfig());
+  const headers = buildProxyRequestHeaders(req, target, false, identityToken);
   const proxyReq = httpRequest({
     protocol: 'http:',
     hostname: target.networkAlias,
@@ -190,11 +197,12 @@ async function proxyHttpRequest(req, res, target) {
   req.pipe(proxyReq);
 }
 
-function proxyWebSocketUpgrade(req, socket, head, target) {
+async function proxyWebSocketUpgrade(req, socket, head, target) {
+  const identityToken = await createModuleIdentityToken(target, getRuntimeConfig());
   const upstream = net.connect(target.containerPort, target.networkAlias);
 
   upstream.on('connect', () => {
-    const headers = buildProxyRequestHeaders(req, target, true);
+    const headers = buildProxyRequestHeaders(req, target, true, identityToken);
     const lines = [`${req.method} ${req.url || '/'} HTTP/${req.httpVersion}`];
     for (const [name, value] of Object.entries(headers)) {
       if (Array.isArray(value)) {
@@ -251,7 +259,7 @@ async function sendDenied(req, res, target) {
   });
 }
 
-function buildProxyRequestHeaders(req, target, upgrade) {
+function buildProxyRequestHeaders(req, target, upgrade, identityToken = null) {
   const headers = {};
 
   for (const [name, value] of Object.entries(req.headers)) {
@@ -279,6 +287,10 @@ function buildProxyRequestHeaders(req, target, upgrade) {
   headers['x-forwarded-host'] = target.requestHost;
   headers['x-forwarded-proto'] = getRequestProtocol(req);
   headers['x-forwarded-for'] = appendForwardedFor(req);
+
+  if (identityToken) {
+    headers[MODULE_IDENTITY_TOKEN_HEADER] = identityToken;
+  }
 
   if (upgrade) {
     headers.connection = 'Upgrade';
@@ -481,6 +493,7 @@ function getRuntimeConfig() {
     gatewayExposuresPath: path.join(gatewayRootContainer, 'exposures.json'),
     gatewayBaseDomain: normalizeDomain(process.env.HOST_GATEWAY_BASE_DOMAIN),
     hostPublicOrigin: process.env.HOST_PUBLIC_ORIGIN?.trim() || null,
+    hostInternalOrigin: process.env.HOST_INTERNAL_ORIGIN?.trim() || 'http://docker-host:3000',
   };
 }
 
@@ -598,6 +611,13 @@ function parseHostnameFromOrigin(origin) {
 function normalizeDomain(value) {
   const normalized = value?.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
   return normalized || null;
+}
+
+function getExposureIdentityMode(exposure, exposurePolicy) {
+  const identityMode = exposure.identityMode;
+  return identityMode === 'none' || identityMode === 'optional' || identityMode === 'required'
+    ? identityMode
+    : getDefaultModuleIdentityMode(exposurePolicy);
 }
 
 function acceptsHtml(req) {

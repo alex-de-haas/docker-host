@@ -27,6 +27,7 @@ COPY --from=builder /repo/apps/host/public ./apps/host/public
 COPY --from=builder /repo/apps/host/scripts ./apps/host/scripts
 COPY --from=builder /repo/apps/host/scripts /app/scripts
 COPY --from=builder /repo/apps/host/server.mjs ./apps/host/server.mjs
+COPY --from=builder /repo/apps/host/src/lib/module-identity.mjs ./apps/host/src/lib/module-identity.mjs
 COPY --from=builder /repo/apps/host/next.config.ts ./apps/host/next.config.ts
 
 EXPOSE 3000
