@@ -171,6 +171,15 @@ CLI module commands should act as a local administrator tool. The CLI should aut
 
 The accepted local authentication direction is to use a revocable local admin token for CLI access. The Host stores only a server-side hash of the token. The CLI stores the token material under the local Docker Host config area with restrictive file permissions or platform ACLs. Authenticated CLI module commands are treated as `host.admin` operations.
 
+Phase 7 adds the first operational CLI token lifecycle:
+
+- Host administrators can list, create, rotate, and revoke CLI admin tokens through admin-authenticated Host APIs.
+- Raw CLI token material is returned only once when a token is created or rotated.
+- CLI token records remain user-scoped. A token only works while its owning Host user is enabled and remains `host.admin`.
+- The CLI stores the active token in `~/.docker-host/config/auth.json` with restrictive file permissions on Unix-like platforms.
+- `DOCKER_HOST_CLI_TOKEN` can provide an ephemeral token override for automation.
+- Host API-backed CLI commands send the token as `Authorization: Bearer`.
+
 ## Local Authentication Decisions
 
 Phase 2 uses a local password provider, opaque server-side sessions, JSON persistence, local setup and recovery tokens, and structured audit records.
@@ -193,9 +202,13 @@ Implemented local-auth surface:
 - `/setup` creates the first Host administrator when supplied with a valid setup token;
 - `/login` authenticates existing Host users;
 - `/api/auth/bootstrap`, `/api/auth/login`, `/api/auth/logout`, and `/api/auth/status` own browser auth flow;
+- `/api/auth/cli-tokens` lists and creates CLI admin tokens for authenticated Host administrators;
+- `/api/auth/cli-tokens/{tokenId}` revokes a CLI admin token;
+- `/api/auth/cli-tokens/{tokenId}/rotate` creates a replacement CLI admin token and revokes the selected old token;
 - `/api/health` is the minimal unauthenticated health endpoint;
 - current Host API routes for Host status, modules, containers, images, install, update, lifecycle, remove, and recovery require `host.admin`;
-- `docker-host auth setup-token` writes a hashed one-time setup token into the Host auth JSON store through local filesystem access.
+- `docker-host auth setup-token` writes a hashed one-time setup token into the Host auth JSON store through local filesystem access;
+- `docker-host auth token import/status/logout/list/create/revoke/rotate` manages the local CLI token and the Host-side CLI token lifecycle.
 
 ## Module-Owned Permissions
 

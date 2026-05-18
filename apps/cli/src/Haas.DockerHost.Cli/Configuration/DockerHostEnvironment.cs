@@ -14,6 +14,7 @@ internal sealed class DockerHostEnvironment
         BinDirectory = Path.Combine(rootDirectory, "bin");
         ModulesDirectory = Path.Combine(rootDirectory, "modules");
         LaunchConfigPath = Path.Combine(ConfigDirectory, "launch.env");
+        AuthConfigPath = Path.Combine(ConfigDirectory, "auth.json");
         IsWindows = isWindows;
         HasRootOverride = hasRootOverride;
     }
@@ -29,6 +30,8 @@ internal sealed class DockerHostEnvironment
     public string ModulesDirectory { get; }
 
     public string LaunchConfigPath { get; }
+
+    public string AuthConfigPath { get; }
 
     public bool IsWindows { get; }
 

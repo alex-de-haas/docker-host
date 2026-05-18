@@ -4,12 +4,17 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  authenticateCliToken,
   authenticatePassword,
   authenticateSessionToken,
   bootstrapFirstAdmin,
+  createCliTokenForAdmin,
   createSetupToken,
   getAuthStatus,
+  listCliTokens,
+  revokeCliToken,
   revokeSession,
+  rotateCliToken,
 } from './auth-service.ts';
 import { readAuthStateSnapshot } from './auth-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
@@ -77,6 +82,36 @@ test('authenticates and revokes password sessions', async () => {
 
   assert.equal(await revokeSession(login.sessionToken, undefined, config), true);
   assert.equal(await authenticateSessionToken(login.sessionToken, undefined, config), null);
+});
+
+test('creates, rotates, lists, and revokes CLI admin tokens', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const admin = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+
+  const created = await createCliTokenForAdmin(admin.user.id, 'Laptop CLI', config);
+  assert.equal(created.cliToken.label, 'Laptop CLI');
+  assert.equal((await authenticateCliToken(created.token, undefined, config))?.id, admin.user.id);
+
+  const storedAfterCreate = await readAuthStateSnapshot(config);
+  assert.equal(JSON.stringify(storedAfterCreate).includes(created.token), false);
+  assert.equal((await listCliTokens(config)).length, 1);
+
+  const rotated = await rotateCliToken(created.tokenId, admin.user.id, 'Rotated CLI', config);
+  assert.equal(rotated.cliToken.label, 'Rotated CLI');
+  assert.equal(await authenticateCliToken(created.token, undefined, config), null);
+  assert.equal((await authenticateCliToken(rotated.token, undefined, config))?.id, admin.user.id);
+
+  const listedAfterRotate = await listCliTokens(config);
+  assert.equal(listedAfterRotate.length, 2);
+  assert.equal(listedAfterRotate.find(token => token.id === created.tokenId)?.revokedAt !== undefined, true);
+
+  assert.equal(await revokeCliToken(rotated.tokenId, admin.user.id, config), true);
+  assert.equal(await authenticateCliToken(rotated.token, undefined, config), null);
 });
 
 async function createTestConfig(): Promise<HostRuntimeConfig> {

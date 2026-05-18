@@ -463,12 +463,36 @@ These questions are resolved for the first generic OIDC implementation slice.
 
 Complete the operational auth UX that is easier to design after local and OIDC sign-in both exist. This phase carries the work previously listed as Phase 2 closure items, but it is not required for the local-auth foundation.
 
-- Add administrator flows to create, rotate, and revoke CLI admin tokens.
-- Store CLI token material locally with restrictive file permissions or platform ACLs.
+#### Decisions Before Phase 7
+
+| Topic | Options considered | Recommended decision |
+| --- | --- | --- |
+| Phase boundary | Only CLI tokens/account switching/throttling/tests, or include full session administration. | Keep Phase 7 focused on CLI token operations, local CLI token storage, browser account-switching basics, login throttling, and security regression tests. Full admin session and audit consoles belong in Phase 10 unless they block this phase. |
+| CLI token creation boundary | Web UI, CLI direct state writes, or authenticated Host API. | Create, rotate, revoke, and list CLI admin tokens through admin-authenticated Host APIs. Keep direct CLI writes reserved for local setup and recovery tokens. |
+| Local CLI token storage | CLI config file, OS keychain, or environment variable only. | Store the active CLI token under the local Docker Host config area with restrictive file permissions or platform ACLs. Support an environment override for automation. OS keychain integration can be added later. |
+| CLI command surface | Import/status/logout only, full lifecycle commands, or manual configuration. | Start with `auth token import`, `auth token status`, `auth token logout`, and authenticated lifecycle commands for list/create/revoke/rotate. |
+| CLI token rotation | Create new and revoke old immediately, use a grace period, or require manual create/revoke. | Rotate by creating a replacement token, storing the raw replacement locally when requested by CLI, and revoking the selected old token immediately. |
+| CLI token lifetime | No expiry until revoke, fixed expiry, or idle expiry. | Use revocable long-lived tokens in the MVP, with `createdAt`, `lastUsedAt`, `revokedAt`, label, user id, and audit events. Add expiry later only if operational requirements justify it. |
+| CLI token ownership | Host-wide, user-scoped, or device-scoped. | Keep tokens user-scoped. A token is valid only while the owning Host user exists, is enabled, and remains `host.admin`. |
+| Browser account switching storage | Multiple HttpOnly remembered-session cookies, localStorage, or a server-side device profile. | Do not put session tokens in localStorage. Use HttpOnly cookies for remembered sessions and make one session active per request. |
+| Account switcher MVP | Switch only, add account, logout current, or logout all remembered. | Include current account display, add account, switch, and sign out current. Defer sign out all and per-module preferred account until there is a clear UX need. |
+| Login throttling | In-memory counters, JSON-backed counters, or external ingress only. | Use Host-owned throttling keyed by normalized account and request origin. Do not trust client IP or proxy headers until trusted proxy mode defines that boundary. |
+| CSRF model | Same-origin checks, synchronizer token, or local bypass. | Keep same-origin checks for mutating browser-session requests. CLI Bearer-token requests are not subject to CSRF checks. Add route-level regression coverage. |
+| Security settings UI | Dashboard header dialogs, `/settings/security`, or CLI-only. | Add a minimal security settings surface for CLI token lifecycle. Keep broader session/audit management for Phase 10. |
+| Completion tests | Service-only tests, route integration tests, or browser E2E. | Require route-level tests for CSRF rejection, protected API access, user/admin authorization, expired sessions, CLI token authorization, logout behavior, account switching, and pre-auth setup-required mode. Use service tests for lower-level token lifecycle rules. |
+
+#### Phase 7 MVP Scope
+
+- Add admin-only Host API endpoints to list, create, rotate, and revoke CLI admin tokens.
+- Keep raw CLI token material visible only once when a token is created or rotated.
+- Store only CLI token hashes in Host auth state.
+- Add CLI local token import/status/logout and authenticated list/create/revoke/rotate commands.
+- Send stored CLI tokens to Host API requests as `Authorization: Bearer`.
+- Store CLI token material locally with restrictive file permissions or platform ACLs, and support an environment override for automation.
 - Add browser account-switching basics for multiple remembered Host sessions.
 - Add login throttling by account and request origin.
 - Add route-level security regression tests for CSRF rejection, protected API access, user/admin authorization, expired sessions, CLI token authorization, logout behavior, account switching, and pre-auth migration/setup-required mode.
-- Decide whether broader session management and revocation controls belong here or in the later audit/recovery operations phase.
+- Do not implement full session inventory, global session revocation, provider logout, audit UI, or recovery operations console in this phase unless they become blockers.
 
 ### Phase 8 - Trusted proxy mode
 

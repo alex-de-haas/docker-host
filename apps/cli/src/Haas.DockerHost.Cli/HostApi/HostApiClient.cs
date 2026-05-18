@@ -1,11 +1,12 @@
 namespace Haas.DockerHost.Cli.HostApi;
 
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Haas.DockerHost.Cli;
 
-internal sealed class HostApiClient(HttpClient httpClient) : IDisposable
+internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken = null) : IDisposable
 {
     public const string ContractVersion = "0.1";
 
@@ -17,6 +18,39 @@ internal sealed class HostApiClient(HttpClient httpClient) : IDisposable
 
     public Task<HostApiResponse<HostStatusResponse>> GetHostStatusAsync(CancellationToken cancellationToken = default)
         => SendAsync<HostStatusResponse>("read Host status", HttpMethod.Get, "api/host/status", cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<CliTokenListResponse>> ListCliTokensAsync(CancellationToken cancellationToken = default)
+        => SendAsync<CliTokenListResponse>("list CLI tokens", HttpMethod.Get, "api/auth/cli-tokens", cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<CliTokenCreateResponse>> CreateCliTokenAsync(
+        CliTokenCreateRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<CliTokenCreateResponse>(
+            "create CLI token",
+            HttpMethod.Post,
+            "api/auth/cli-tokens",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<CliTokenCreateResponse>> RotateCliTokenAsync(
+        string tokenId,
+        CliTokenRotateRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<CliTokenCreateResponse>(
+            "rotate CLI token",
+            HttpMethod.Post,
+            $"api/auth/cli-tokens/{Uri.EscapeDataString(tokenId)}/rotate",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<CliTokenRevokeResponse>> RevokeCliTokenAsync(
+        string tokenId,
+        CancellationToken cancellationToken = default)
+        => SendAsync<CliTokenRevokeResponse>(
+            "revoke CLI token",
+            HttpMethod.Delete,
+            $"api/auth/cli-tokens/{Uri.EscapeDataString(tokenId)}",
+            cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<ModuleListResponse>> ListModulesAsync(CancellationToken cancellationToken = default)
         => SendAsync<ModuleListResponse>("list modules", HttpMethod.Get, "api/modules", cancellationToken: cancellationToken);
@@ -83,6 +117,10 @@ internal sealed class HostApiClient(HttpClient httpClient) : IDisposable
         using var request = new HttpRequestMessage(method, path);
         request.Headers.TryAddWithoutValidation("X-Docker-Host-Cli-Version", CommandLine.Version);
         request.Headers.TryAddWithoutValidation("X-Docker-Host-Api-Contract-Version", ContractVersion);
+        if (!string.IsNullOrWhiteSpace(bearerToken))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        }
 
         if (body is not null)
         {

@@ -9,6 +9,56 @@ internal sealed class HostStatusResponse
     public JsonElement? Docker { get; init; }
 }
 
+internal sealed class CliTokenListResponse
+{
+    public IReadOnlyList<CliTokenSummary> CliTokens { get; init; } = [];
+}
+
+internal sealed class CliTokenCreateRequest
+{
+    public string? Label { get; init; }
+
+    public string? UserId { get; init; }
+}
+
+internal sealed class CliTokenRotateRequest
+{
+    public string? Label { get; init; }
+}
+
+internal sealed class CliTokenCreateResponse
+{
+    public CliTokenSummary? CliToken { get; init; }
+
+    public string Token { get; init; } = "";
+
+    public string? RevokedTokenId { get; init; }
+}
+
+internal sealed class CliTokenRevokeResponse
+{
+    public bool Revoked { get; init; }
+
+    public string TokenId { get; init; } = "";
+}
+
+internal sealed class CliTokenSummary
+{
+    public string Id { get; init; } = "";
+
+    public string UserId { get; init; } = "";
+
+    public string Label { get; init; } = "";
+
+    public string CreatedAt { get; init; } = "";
+
+    public string? LastUsedAt { get; init; }
+
+    public string? RevokedAt { get; init; }
+
+    public string Scope { get; init; } = "";
+}
+
 internal sealed class ModuleListResponse
 {
     public IReadOnlyList<ModuleSummary> Modules { get; init; } = [];

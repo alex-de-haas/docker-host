@@ -7,6 +7,7 @@ import {
   updateAuthState,
 } from './auth-store.ts';
 import type {
+  AuthCliTokenRecord,
   AuthSessionRecord,
   AuthState,
   AuthUserRecord,
@@ -34,6 +35,16 @@ export interface AuthRequestMeta {
 
 export interface SessionPrincipal extends HostPrincipal {
   sessionId: string;
+}
+
+export interface CliTokenSummary {
+  id: string;
+  userId: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+  scope: 'host.admin.cli';
 }
 
 export async function getAuthStatus(config?: HostRuntimeConfig) {
@@ -402,31 +413,31 @@ export async function createCliTokenForAdmin(
 ) {
   const token = generateToken(CLI_TOKEN_PREFIX);
   const now = new Date();
-  let tokenId = '';
 
-  await updateAuthState(state => {
+  const createdToken = await updateAuthState<AuthCliTokenRecord>(state => {
     const user = state.users.find(candidate => candidate.id === userId && !candidate.disabled);
     if (!user || user.role !== 'host.admin') {
       throw new AuthServiceError('admin_required', 'CLI tokens can only be issued for Host administrators.');
     }
 
-    tokenId = `cli_${randomUUID()}`;
+    const nextToken: AuthCliTokenRecord = {
+      id: `cli_${randomUUID()}`,
+      userId,
+      tokenHash: hashToken(token),
+      label: normalizeCliTokenLabel(label),
+      createdAt: now.toISOString(),
+      scope: 'host.admin.cli',
+    };
+
     return {
       state: {
         ...state,
         cliTokens: [
           ...state.cliTokens,
-          {
-            id: tokenId,
-            userId,
-            tokenHash: hashToken(token),
-            label,
-            createdAt: now.toISOString(),
-            scope: 'host.admin.cli',
-          },
+          nextToken,
         ],
       },
-      result: null,
+      result: nextToken,
     };
   }, config);
 
@@ -434,12 +445,141 @@ export async function createCliTokenForAdmin(
     type: 'auth.cli_token.created',
     actorUserId: userId,
     success: true,
-    details: { tokenId, label },
+    details: { tokenId: createdToken.id, label: createdToken.label },
   }, config);
 
   return {
     token,
-    tokenId,
+    tokenId: createdToken.id,
+    cliToken: summarizeCliToken(createdToken),
+  };
+}
+
+export async function listCliTokens(config?: HostRuntimeConfig): Promise<CliTokenSummary[]> {
+  const state = await readAuthState(config);
+  return state.cliTokens.map(summarizeCliToken);
+}
+
+export async function revokeCliToken(
+  tokenId: string,
+  actorUserId: string,
+  config?: HostRuntimeConfig
+) {
+  const normalizedTokenId = tokenId.trim();
+  const now = new Date();
+
+  const revokedToken = await updateAuthState<AuthCliTokenRecord | null>(state => {
+    const existingToken = state.cliTokens.find(candidate =>
+      candidate.id === normalizedTokenId && !candidate.revokedAt
+    );
+    const revoked: AuthCliTokenRecord | null = existingToken
+      ? { ...existingToken, revokedAt: now.toISOString() }
+      : null;
+
+    return {
+      state: {
+        ...state,
+        cliTokens: state.cliTokens.map(candidate =>
+          revoked && candidate.id === revoked.id ? revoked : candidate
+        ),
+      },
+      result: revoked,
+    };
+  }, config);
+
+  if (revokedToken) {
+    await appendAuthAuditEvent({
+      type: 'auth.cli_token.revoked',
+      actorUserId,
+      success: true,
+      details: {
+        tokenId: revokedToken.id,
+        userId: revokedToken.userId,
+        label: revokedToken.label,
+      },
+    }, config);
+  }
+
+  return Boolean(revokedToken);
+}
+
+export async function rotateCliToken(
+  tokenId: string,
+  actorUserId: string,
+  label?: string,
+  config?: HostRuntimeConfig
+) {
+  const normalizedTokenId = tokenId.trim();
+  const token = generateToken(CLI_TOKEN_PREFIX);
+  const now = new Date();
+
+  const rotated = await updateAuthState<{
+    revokedToken: AuthCliTokenRecord;
+    createdToken: AuthCliTokenRecord;
+  }>(state => {
+    const existingToken = state.cliTokens.find(candidate =>
+      candidate.id === normalizedTokenId && !candidate.revokedAt
+    );
+    if (!existingToken) {
+      throw new AuthServiceError('cli_token_not_found', 'CLI token was not found or is already revoked.');
+    }
+
+    const user = state.users.find(candidate =>
+      candidate.id === existingToken.userId &&
+      !candidate.disabled &&
+      candidate.role === 'host.admin'
+    );
+    if (!user) {
+      throw new AuthServiceError('admin_required', 'CLI tokens can only be issued for Host administrators.');
+    }
+
+    const revokedToken: AuthCliTokenRecord = {
+      ...existingToken,
+      revokedAt: now.toISOString(),
+    };
+    const createdToken: AuthCliTokenRecord = {
+      id: `cli_${randomUUID()}`,
+      userId: existingToken.userId,
+      tokenHash: hashToken(token),
+      label: normalizeCliTokenLabel(label ?? existingToken.label),
+      createdAt: now.toISOString(),
+      scope: 'host.admin.cli',
+    };
+
+    return {
+      state: {
+        ...state,
+        cliTokens: [
+          ...state.cliTokens.map(candidate =>
+            candidate.id === revokedToken.id ? revokedToken : candidate
+          ),
+          createdToken,
+        ],
+      },
+      result: {
+        revokedToken,
+        createdToken,
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.cli_token.rotated',
+    actorUserId,
+    success: true,
+    details: {
+      revokedTokenId: rotated.revokedToken.id,
+      tokenId: rotated.createdToken.id,
+      userId: rotated.createdToken.userId,
+      label: rotated.createdToken.label,
+    },
+  }, config);
+
+  return {
+    token,
+    tokenId: rotated.createdToken.id,
+    revokedTokenId: rotated.revokedToken.id,
+    cliToken: summarizeCliToken(rotated.createdToken),
   };
 }
 
@@ -537,5 +677,26 @@ function toPrincipal(user: AuthUserRecord): HostPrincipal {
     email: user.email || undefined,
     displayName: user.displayName,
     role: user.role,
+  };
+}
+
+function normalizeCliTokenLabel(label: string) {
+  const normalized = label.trim();
+  return (normalized || 'Docker Host CLI').slice(0, 80);
+}
+
+function summarizeCliToken(token: AuthCliTokenRecord | null): CliTokenSummary {
+  if (!token) {
+    throw new AuthServiceError('cli_token_not_created', 'CLI token was not created.');
+  }
+
+  return {
+    id: token.id,
+    userId: token.userId,
+    label: token.label,
+    createdAt: token.createdAt,
+    lastUsedAt: token.lastUsedAt,
+    revokedAt: token.revokedAt,
+    scope: token.scope,
   };
 }

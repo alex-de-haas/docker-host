@@ -3,6 +3,7 @@ namespace Haas.DockerHost.Cli.Commands;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.HostApi;
 using Spectre.Console;
 
@@ -352,7 +353,9 @@ internal sealed class ModulesCommand(CommandContext context)
             return null;
         }
 
-        return context.HostApiFactory.Create(new Uri(url));
+        var baseUri = new Uri(url);
+        var token = new HostAuthTokenStore(context.Environment).GetTokenForHost(baseUri);
+        return context.HostApiFactory.Create(baseUri, token);
     }
 
     private async Task<bool> EnsureHostReadyAsync(HostApiClient hostApi)

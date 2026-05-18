@@ -2,12 +2,12 @@ namespace Haas.DockerHost.Cli.HostApi;
 
 internal sealed class HostApiClientFactory
 {
-    public HostApiClient Create(Uri baseUri)
+    public HostApiClient Create(Uri baseUri, string? bearerToken = null)
         => new(new HttpClient
         {
             BaseAddress = EnsureTrailingSlash(baseUri),
             Timeout = TimeSpan.FromMinutes(10),
-        });
+        }, bearerToken);
 
     private static Uri EnsureTrailingSlash(Uri baseUri)
     {

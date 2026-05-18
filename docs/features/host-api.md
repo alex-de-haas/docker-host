@@ -609,6 +609,17 @@ Implemented browser auth endpoints:
 
 OIDC login denies access when the transaction state is invalid or expired, ID token verification fails, the token has no subject, no role mapping matches, or the mapped Host user is disabled. OIDC provider access tokens, refresh tokens, and ID tokens are not persisted.
 
+### CLI admin tokens
+
+CLI admin tokens authenticate local CLI commands to Host API routes as `host.admin` operations. The Host stores only token hashes and returns raw token material only when a token is created or rotated.
+
+- `GET /api/auth/cli-tokens` returns CLI token metadata: `id`, `userId`, `label`, `createdAt`, optional `lastUsedAt`, optional `revokedAt`, and `scope`.
+- `POST /api/auth/cli-tokens` creates a CLI token for the current administrator by default. Optional body: `{ "label": "Laptop CLI", "userId": "user_123" }`.
+- `DELETE /api/auth/cli-tokens/{tokenId}` revokes an active CLI token.
+- `POST /api/auth/cli-tokens/{tokenId}/rotate` revokes the selected token and returns a raw replacement token once. Optional body: `{ "label": "Replacement CLI" }`.
+
+All CLI token lifecycle endpoints require `host.auth.configure`. Browser-session requests must pass the Host same-origin CSRF check. CLI Bearer-token requests are not subject to CSRF checks.
+
 ### Internal module directory
 
 The internal module directory API lets a module list Host users explicitly assigned to that module so the module can manage its own roles and permissions. It is not a browser session API and does not grant modules access to the full Host user directory.

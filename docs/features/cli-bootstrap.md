@@ -39,9 +39,20 @@ Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port n
 
 ```text
 docker-host auth setup-token
+docker-host auth token import <token> [--host <url>] [--token-id <id>] [--label <label>]
+docker-host auth token status
+docker-host auth token logout
+docker-host auth token list
+docker-host auth token create [--label <label>] [--user-id <id>]
+docker-host auth token revoke <token-id>
+docker-host auth token rotate [token-id] [--label <label>]
 ```
 
 `auth setup-token` creates a one-time first-admin setup token in the Host auth JSON store under `HOST_DATA_ROOT_HOST/auth/state.json`. It stores only the token hash and prints the raw token for local use in `/setup`.
+
+`auth token import` stores an existing raw CLI admin token locally under `~/.docker-host/config/auth.json`, or under `DOCKER_HOST_HOME/config/auth.json` when that test/development override is set. The token file is restricted to the current user on Unix-like platforms. `DOCKER_HOST_CLI_TOKEN` can override the stored token for automation without writing local credential material.
+
+`auth token list`, `create`, `revoke`, and `rotate` call the Host API with the locally stored token as `Authorization: Bearer`. `create` and `rotate` store the returned raw token locally and do not print it back to the terminal.
 
 ## Launch configuration
 
@@ -49,6 +60,12 @@ The CLI persists launch settings in:
 
 ```text
 ~/.docker-host/config/launch.env
+```
+
+The CLI persists its active Host API token in:
+
+```text
+~/.docker-host/config/auth.json
 ```
 
 Default values:
