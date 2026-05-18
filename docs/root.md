@@ -24,6 +24,8 @@ flowchart LR
 
 ## Documents
 
+- [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
+- [Auth Gateway planning](planning/auth-gateway.md) - implementation plan and open questions for the Host auth gateway.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
 - [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.
