@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Boxes, LogOut, LoaderCircle, Plus, RefreshCw } from 'lucide-react';
+import { Boxes, LogOut, LoaderCircle, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { ModuleList } from '@/components/ModuleList';
 import { ModuleStatsCards } from '@/components/ModuleStatsCards';
 import { Button } from '@/components/ui/button';
@@ -58,6 +58,11 @@ export function DashboardClient({ user }: { user: HostPrincipal }) {
             </Badge>
             <Button variant="outline" size="icon" onClick={refetch} disabled={isRefreshing}>
               <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
+            <Button asChild variant="outline" size="icon" aria-label="Security settings">
+              <Link href="/settings/security">
+                <ShieldCheck className="h-4 w-4" />
+              </Link>
             </Button>
             <Button variant="outline" size="icon" onClick={() => void handleLogout()} aria-label="Log out">
               <LogOut className="h-4 w-4" />

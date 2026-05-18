@@ -17,6 +17,7 @@ internal sealed class AuthCommand(CommandContext context)
     private const string Usage = """
         Usage:
           docker-host auth setup-token
+          docker-host auth recovery-token
           docker-host auth token import <token> [--host <url>] [--token-id <id>] [--label <label>]
           docker-host auth token status
           docker-host auth token logout
@@ -27,6 +28,7 @@ internal sealed class AuthCommand(CommandContext context)
 
         Commands:
           setup-token    Create a one-time setup token for the first Host administrator.
+          recovery-token Create a one-time recovery token through local machine access.
           token import   Store an existing CLI admin token locally.
           token status   Show the locally stored CLI token metadata.
           token logout   Remove the locally stored CLI token.
@@ -47,16 +49,41 @@ internal sealed class AuthCommand(CommandContext context)
         return args[0] switch
         {
             "setup-token" => await CreateSetupTokenAsync(args[1..]),
+            "recovery-token" => await CreateRecoveryTokenAsync(args[1..]),
             "token" => await ExecuteTokenAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown auth command '{args[0]}'.", Usage),
         };
     }
 
     private async Task<int> CreateSetupTokenAsync(string[] args)
+        => await CreateLocalSetupTokenAsync(
+            args,
+            "first-admin",
+            requireNoAdmin: true,
+            "Setup token created.",
+            "auth setup-token does not accept arguments.",
+            "Usage: docker-host auth setup-token");
+
+    private async Task<int> CreateRecoveryTokenAsync(string[] args)
+        => await CreateLocalSetupTokenAsync(
+            args,
+            "recovery",
+            requireNoAdmin: false,
+            "Recovery token created.",
+            "auth recovery-token does not accept arguments.",
+            "Usage: docker-host auth recovery-token");
+
+    private async Task<int> CreateLocalSetupTokenAsync(
+        string[] args,
+        string purpose,
+        bool requireNoAdmin,
+        string successMessage,
+        string usageError,
+        string usage)
     {
         if (args.Length > 0)
         {
-            throw new CommandUsageException("auth setup-token does not accept arguments.", "Usage: docker-host auth setup-token");
+            throw new CommandUsageException(usageError, usage);
         }
 
         var settings = context.SettingsStore.EnsureInstalled();
@@ -66,7 +93,7 @@ internal sealed class AuthCommand(CommandContext context)
         Directory.CreateDirectory(authRoot);
 
         var state = await ReadAuthStateAsync(statePath);
-        if (AdminExists(state))
+        if (requireNoAdmin && AdminExists(state))
         {
             context.Console.MarkupLine("[yellow]A Host administrator already exists.[/]");
             return 1;
@@ -81,7 +108,7 @@ internal sealed class AuthCommand(CommandContext context)
             ["tokenHash"] = Sha256Base64Url(token),
             ["createdAt"] = now.ToString("O"),
             ["expiresAt"] = expiresAt.ToString("O"),
-            ["purpose"] = "first-admin",
+            ["purpose"] = purpose,
         };
 
         var setupTokens = state["setupTokens"] as JsonArray ?? new JsonArray();
@@ -90,18 +117,30 @@ internal sealed class AuthCommand(CommandContext context)
         state["updatedAt"] = now.ToString("O");
 
         await WriteAuthStateAsync(statePath, state);
+        await AppendLocalAuthAuditEventAsync(
+            authRoot,
+            purpose == "first-admin" ? "auth.setup_token.created" : "auth.recovery_token.created",
+            new JsonObject
+            {
+                ["tokenId"] = tokenRecord["id"]?.GetValue<string>(),
+                ["expiresAt"] = expiresAt.ToString("O"),
+            });
 
         var setupUrl = await TryResolveSetupUrlAsync(settings, token);
-        context.Console.MarkupLine("[green]Setup token created.[/]");
+        context.Console.MarkupLine($"[green]{Markup.Escape(successMessage)}[/]");
         context.Console.MarkupLine($"[grey]Expires:[/] {Markup.Escape(expiresAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss"))}");
         context.Console.MarkupLine($"[grey]Token:[/] {Markup.Escape(token)}");
-        if (setupUrl is not null)
+        if (purpose == "first-admin" && setupUrl is not null)
         {
             context.Console.MarkupLine($"[grey]Setup URL:[/] {Markup.Escape(setupUrl)}");
         }
-        else
+        else if (purpose == "first-admin")
         {
             context.Console.MarkupLine("[grey]Next step:[/] Start Docker Host, then open /setup and enter the token.");
+        }
+        else
+        {
+            context.Console.MarkupLine("[grey]Next step:[/] Open the Host recovery flow and enter the token.");
         }
 
         return 0;
@@ -507,6 +546,25 @@ internal sealed class AuthCommand(CommandContext context)
             state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         File.Move(tempPath, statePath, overwrite: true);
+    }
+
+    private static async Task AppendLocalAuthAuditEventAsync(string authRoot, string type, JsonObject details)
+    {
+        Directory.CreateDirectory(authRoot);
+        var auditPath = Path.Combine(authRoot, "audit.ndjson");
+        var auditEvent = new JsonObject
+        {
+            ["id"] = "evt_" + Guid.NewGuid().ToString("D"),
+            ["type"] = type,
+            ["createdAt"] = DateTimeOffset.UtcNow.ToString("O"),
+            ["success"] = true,
+            ["details"] = details,
+        };
+
+        await File.AppendAllTextAsync(
+            auditPath,
+            auditEvent.ToJsonString(new JsonSerializerOptions { WriteIndented = false }) + Environment.NewLine,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private static JsonObject CreateEmptyAuthState()

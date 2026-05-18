@@ -24,6 +24,7 @@ export const SESSION_COOKIE_NAME = 'docker_host_session';
 export const SESSION_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 export const SESSION_ABSOLUTE_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 export const SETUP_TOKEN_TTL_MS = 15 * 60 * 1000;
+export const RECENT_REAUTH_WINDOW_MS = 10 * 60 * 1000;
 
 const SETUP_TOKEN_PREFIX = 'dhstp_';
 const CLI_TOKEN_PREFIX = 'dhcli_';
@@ -45,6 +46,30 @@ export interface CliTokenSummary {
   lastUsedAt?: string;
   revokedAt?: string;
   scope: 'host.admin.cli';
+}
+
+export interface AuthSessionSummary {
+  id: string;
+  userId: string;
+  userEmail?: string;
+  userDisplayName?: string;
+  userRole?: string;
+  authProvider?: string;
+  createdAt: string;
+  lastSeenAt: string;
+  idleExpiresAt: string;
+  absoluteExpiresAt: string;
+  revokedAt?: string;
+  reauthenticatedAt?: string;
+  active: boolean;
+  current: boolean;
+  request?: AuthRequestMeta;
+}
+
+export interface AuthSessionListOptions {
+  userId?: string;
+  includeRevoked?: boolean;
+  currentSessionId?: string;
 }
 
 export async function getAuthStatus(config?: HostRuntimeConfig) {
@@ -161,7 +186,7 @@ export async function bootstrapFirstAdmin(
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
     };
-    const session = createSessionRecord(user.id, sessionToken, now);
+    const session = createSessionRecord(user.id, sessionToken, now, request);
 
     return {
       state: {
@@ -192,6 +217,111 @@ export async function bootstrapFirstAdmin(
     sessionToken,
     session: createdSession,
     user: toPrincipal(createdUser),
+  };
+}
+
+export async function recoverHostAdmin(
+  input: {
+    recoveryToken: string;
+    email: string;
+    password: string;
+    displayName?: string;
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const email = normalizeEmail(input.email);
+  if (!email) {
+    throw new AuthServiceError('invalid_email', 'Enter a valid email address.');
+  }
+
+  const passwordPolicy = validatePasswordPolicy(input.password);
+  if (!passwordPolicy.valid) {
+    throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
+  }
+
+  const passwordHash = await hashPassword(input.password);
+  const sessionToken = generateToken('dhs_');
+  const now = new Date();
+  const recoveryTokenHash = hashToken(input.recoveryToken);
+
+  const { user, session, recoveryTokenId, restoredExistingUser } = await updateAuthState(state => {
+    const recoveryToken = findValidRecoveryToken(state, recoveryTokenHash, now);
+    if (!recoveryToken) {
+      throw new AuthServiceError('invalid_recovery_token', 'The recovery token is invalid or expired.');
+    }
+
+    const existingUser = state.users.find(candidate => candidate.email === email);
+    const user: AuthUserRecord = existingUser
+      ? {
+          ...existingUser,
+          email,
+          displayName: input.displayName?.trim() || existingUser.displayName,
+          role: 'host.admin',
+          authProvider: 'local',
+          passwordHash,
+          disabled: false,
+          updatedAt: now.toISOString(),
+        }
+      : {
+          id: `user_${randomUUID()}`,
+          email,
+          displayName: input.displayName?.trim() || undefined,
+          role: 'host.admin',
+          authProvider: 'local',
+          passwordHash,
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        };
+    const session = createSessionRecord(user.id, sessionToken, now, request);
+
+    return {
+      state: {
+        ...state,
+        users: existingUser
+          ? state.users.map(candidate => candidate.id === user.id ? user : candidate)
+          : [...state.users, user],
+        sessions: [
+          ...pruneExpiredSessions(state.sessions, now).map(candidate =>
+            candidate.userId === user.id ? { ...candidate, revokedAt: now.toISOString() } : candidate
+          ),
+          session,
+        ],
+        setupTokens: state.setupTokens.map(candidate =>
+          candidate.id === recoveryToken.id
+            ? { ...candidate, usedAt: now.toISOString() }
+            : candidate
+        ),
+      },
+      result: {
+        user,
+        session,
+        recoveryTokenId: recoveryToken.id,
+        restoredExistingUser: Boolean(existingUser),
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.recovery.completed',
+    actorUserId: user.id,
+    target: {
+      type: 'auth.user',
+      id: user.id,
+    },
+    success: true,
+    request,
+    details: {
+      recoveryTokenId,
+      restoredExistingUser,
+      sessionId: session.id,
+    },
+  }, config);
+
+  return {
+    sessionToken,
+    session,
+    user: toPrincipal(user),
   };
 }
 
@@ -228,7 +358,7 @@ export async function authenticatePassword(
   const sessionToken = generateToken('dhs_');
 
   const createdSession = await updateAuthState(current => {
-    const session = createSessionRecord(user.id, sessionToken, now);
+    const session = createSessionRecord(user.id, sessionToken, now, request);
     return {
       state: {
         ...current,
@@ -404,6 +534,171 @@ export async function revokeSession(
   }
 
   return Boolean(revokedSession);
+}
+
+export async function listAuthSessions(
+  options: AuthSessionListOptions = {},
+  config?: HostRuntimeConfig
+): Promise<AuthSessionSummary[]> {
+  const state = await readAuthState(config);
+  const now = new Date();
+  const usersById = new Map(state.users.map(user => [user.id, user]));
+
+  return state.sessions
+    .filter(session => !options.userId || session.userId === options.userId)
+    .filter(session => options.includeRevoked || !session.revokedAt)
+    .filter(session => options.includeRevoked || !isExpired(session.idleExpiresAt, now))
+    .filter(session => options.includeRevoked || !isExpired(session.absoluteExpiresAt, now))
+    .map(session => summarizeSession(session, usersById.get(session.userId), now, options.currentSessionId))
+    .sort((left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt));
+}
+
+export async function revokeSessionById(
+  sessionId: string,
+  actorUserId: string,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const normalizedSessionId = sessionId.trim();
+  const now = new Date();
+
+  const revokedSession = await updateAuthState<AuthSessionRecord | null>(state => {
+    const existingSession = state.sessions.find(session =>
+      session.id === normalizedSessionId &&
+      !session.revokedAt &&
+      !isExpired(session.idleExpiresAt, now) &&
+      !isExpired(session.absoluteExpiresAt, now)
+    );
+    const revoked: AuthSessionRecord | null = existingSession
+      ? { ...existingSession, revokedAt: now.toISOString() }
+      : null;
+
+    return {
+      state: {
+        ...state,
+        sessions: state.sessions.map(session =>
+          revoked && session.id === revoked.id ? revoked : session
+        ),
+      },
+      result: revoked,
+    };
+  }, config);
+
+  if (revokedSession) {
+    await appendAuthAuditEvent({
+      type: 'auth.session.revoked',
+      actorUserId,
+      target: {
+        type: 'auth.session',
+        id: revokedSession.id,
+      },
+      success: true,
+      request,
+      details: {
+        userId: revokedSession.userId,
+      },
+    }, config);
+  }
+
+  return Boolean(revokedSession);
+}
+
+export async function reauthenticateSession(
+  input: {
+    sessionId: string;
+    userId: string;
+    password?: string;
+    recoveryToken?: string;
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const now = new Date();
+  const state = await readAuthState(config);
+  const user = state.users.find(candidate => candidate.id === input.userId && !candidate.disabled);
+  if (!user) {
+    throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+  }
+
+  if (input.password) {
+    if (
+      (user.authProvider !== 'local' && user.authProvider !== undefined) ||
+      !user.passwordHash ||
+      !(await verifyPassword(input.password, user.passwordHash))
+    ) {
+      await appendAuthAuditEvent({
+        type: 'auth.reauthentication.failed',
+        actorUserId: input.userId,
+        success: false,
+        request,
+        details: {
+          method: 'password',
+        },
+      }, config);
+
+      throw new AuthServiceError('reauth_failed', 'Password reauthentication failed.');
+    }
+
+    return await markSessionReauthenticated(input.sessionId, input.userId, 'password', request, config);
+  }
+
+  if (input.recoveryToken) {
+    const recoveryTokenHash = hashToken(input.recoveryToken);
+    const recoveryTokenId = await updateAuthState<string | null>(current => {
+      const recoveryToken = findValidRecoveryToken(current, recoveryTokenHash, now);
+      if (!recoveryToken) {
+        return {
+          state: current,
+          result: null,
+        };
+      }
+
+      return {
+        state: {
+          ...current,
+          setupTokens: current.setupTokens.map(candidate =>
+            candidate.id === recoveryToken.id
+              ? { ...candidate, usedAt: now.toISOString() }
+              : candidate
+          ),
+        },
+        result: recoveryToken.id,
+      };
+    }, config);
+
+    if (!recoveryTokenId) {
+      await appendAuthAuditEvent({
+        type: 'auth.reauthentication.failed',
+        actorUserId: input.userId,
+        success: false,
+        request,
+        details: {
+          method: 'recoveryToken',
+        },
+      }, config);
+
+      throw new AuthServiceError('invalid_recovery_token', 'The recovery token is invalid or expired.');
+    }
+
+    return await markSessionReauthenticated(input.sessionId, input.userId, 'recoveryToken', request, config, {
+      recoveryTokenId,
+    });
+  }
+
+  throw new AuthServiceError('reauth_method_required', 'Enter a password or recovery token.');
+}
+
+export async function hasRecentSessionReauthentication(
+  sessionId: string,
+  config?: HostRuntimeConfig
+) {
+  const state = await readAuthState(config);
+  const session = state.sessions.find(candidate => candidate.id === sessionId);
+  if (!session?.reauthenticatedAt) {
+    return false;
+  }
+
+  return Date.parse(session.reauthenticatedAt) >= Date.now() - RECENT_REAUTH_WINDOW_MS;
 }
 
 export async function createCliTokenForAdmin(
@@ -598,7 +893,7 @@ export async function createSessionForUser(
       throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
     }
 
-    const createdSession = createSessionRecord(existingUser.id, sessionToken, now);
+    const createdSession = createSessionRecord(existingUser.id, sessionToken, now, request);
     return {
       state: {
         ...state,
@@ -642,7 +937,12 @@ export class AuthServiceError extends Error {
   }
 }
 
-function createSessionRecord(userId: string, token: string, now: Date): AuthSessionRecord {
+function createSessionRecord(
+  userId: string,
+  token: string,
+  now: Date,
+  request?: AuthRequestMeta
+): AuthSessionRecord {
   return {
     id: `session_${randomUUID()}`,
     userId,
@@ -651,15 +951,18 @@ function createSessionRecord(userId: string, token: string, now: Date): AuthSess
     lastSeenAt: now.toISOString(),
     idleExpiresAt: new Date(now.getTime() + SESSION_IDLE_TIMEOUT_MS).toISOString(),
     absoluteExpiresAt: new Date(now.getTime() + SESSION_ABSOLUTE_TIMEOUT_MS).toISOString(),
+    request,
   };
 }
 
 function pruneExpiredSessions(sessions: AuthSessionRecord[], now: Date) {
-  return sessions.filter(session =>
-    !session.revokedAt &&
+  return sessions.filter(session => isSessionActive(session, now));
+}
+
+function isSessionActive(session: AuthSessionRecord, now: Date) {
+  return !session.revokedAt &&
     !isExpired(session.idleExpiresAt, now) &&
-    !isExpired(session.absoluteExpiresAt, now)
-  );
+    !isExpired(session.absoluteExpiresAt, now);
 }
 
 function isExpired(expiresAt: string, now: Date) {
@@ -685,6 +988,72 @@ function normalizeCliTokenLabel(label: string) {
   return (normalized || 'Docker Host CLI').slice(0, 80);
 }
 
+function findValidRecoveryToken(state: AuthState, tokenHash: string, now: Date) {
+  return state.setupTokens.find(candidate =>
+    candidate.purpose === 'recovery' &&
+    !candidate.usedAt &&
+    !isExpired(candidate.expiresAt, now) &&
+    candidate.tokenHash === tokenHash
+  );
+}
+
+async function markSessionReauthenticated(
+  sessionId: string,
+  userId: string,
+  method: 'password' | 'recoveryToken',
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig,
+  details?: Record<string, unknown>
+) {
+  const now = new Date();
+
+  const session = await updateAuthState<AuthSessionRecord | null>(state => {
+    const existingSession = state.sessions.find(candidate =>
+      candidate.id === sessionId &&
+      candidate.userId === userId &&
+      !candidate.revokedAt &&
+      !isExpired(candidate.idleExpiresAt, now) &&
+      !isExpired(candidate.absoluteExpiresAt, now)
+    );
+    const reauthenticatedSession: AuthSessionRecord | null = existingSession
+      ? { ...existingSession, reauthenticatedAt: now.toISOString() }
+      : null;
+
+    return {
+      state: {
+        ...state,
+        sessions: state.sessions.map(candidate =>
+          reauthenticatedSession && candidate.id === reauthenticatedSession.id
+            ? reauthenticatedSession
+            : candidate
+        ),
+      },
+      result: reauthenticatedSession,
+    };
+  }, config);
+
+  if (!session) {
+    throw new AuthServiceError('session_not_found', 'Session was not found or expired.');
+  }
+
+  await appendAuthAuditEvent({
+    type: 'auth.reauthentication.succeeded',
+    actorUserId: userId,
+    target: {
+      type: 'auth.session',
+      id: session.id,
+    },
+    success: true,
+    request,
+    details: {
+      method,
+      ...details,
+    },
+  }, config);
+
+  return summarizeSession(session, undefined, now, session.id);
+}
+
 function summarizeCliToken(token: AuthCliTokenRecord | null): CliTokenSummary {
   if (!token) {
     throw new AuthServiceError('cli_token_not_created', 'CLI token was not created.');
@@ -698,5 +1067,30 @@ function summarizeCliToken(token: AuthCliTokenRecord | null): CliTokenSummary {
     lastUsedAt: token.lastUsedAt,
     revokedAt: token.revokedAt,
     scope: token.scope,
+  };
+}
+
+function summarizeSession(
+  session: AuthSessionRecord,
+  user: AuthUserRecord | undefined,
+  now: Date,
+  currentSessionId?: string
+): AuthSessionSummary {
+  return {
+    id: session.id,
+    userId: session.userId,
+    userEmail: user?.email,
+    userDisplayName: user?.displayName,
+    userRole: user?.role,
+    authProvider: user?.authProvider,
+    createdAt: session.createdAt,
+    lastSeenAt: session.lastSeenAt,
+    idleExpiresAt: session.idleExpiresAt,
+    absoluteExpiresAt: session.absoluteExpiresAt,
+    revokedAt: session.revokedAt,
+    reauthenticatedAt: session.reauthenticatedAt,
+    active: isSessionActive(session, now),
+    current: session.id === currentSessionId,
+    request: session.request,
   };
 }

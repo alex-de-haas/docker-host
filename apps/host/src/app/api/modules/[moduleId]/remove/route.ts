@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { requireHostAdmin } from '@/lib/auth-http';
+import { getRequestMeta, requireHostAdmin } from '@/lib/auth-http';
+import { appendModuleOperationAudit } from '@/lib/module-audit';
 import { applyModuleRemoveRequest } from '@/lib/module-recovery';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,14 @@ export async function POST(
   const { moduleId } = await params;
   const body = await readJson(request);
   const result = await applyModuleRemoveRequest(moduleId, body);
+  await appendModuleOperationAudit({
+    operation: 'remove',
+    moduleId,
+    actorUserId: auth.principal.id,
+    success: result.body.success,
+    httpStatus: result.status,
+    request: getRequestMeta(request),
+  });
   return NextResponse.json(result.body, { status: result.status });
 }
 

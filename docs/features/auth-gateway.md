@@ -201,15 +201,35 @@ Key local-auth decisions:
 Implemented local-auth surface:
 
 - `/setup` creates the first Host administrator when supplied with a valid setup token;
+- `/recovery` restores or recreates a local `host.admin` account when supplied with a valid setup or recovery token;
+- `/settings/security` gives Host administrators a security operations surface for sessions, recent reauthentication, provider diagnostics, audit review, and audit retention;
 - `/login` authenticates existing Host users;
 - `/api/auth/bootstrap`, `/api/auth/login`, `/api/auth/logout`, and `/api/auth/status` own browser auth flow;
+- `/api/auth/recovery` consumes setup or recovery tokens, resets local administrator credentials, revokes old sessions for that account, and creates a new browser session;
+- `/api/auth/reauth` refreshes a browser session's recent reauthentication timestamp with a password or recovery token;
+- `/api/auth/diagnostics` reports safe OIDC and trusted proxy configuration diagnostics for Host administrators;
+- `/api/auth/audit` lists sanitized audit events for Host administrators with pagination and filters;
+- `DELETE /api/auth/audit` applies retention-based audit purge and writes a final `auth.audit.purged` event;
+- `/api/auth/sessions` lists active and optionally revoked Host sessions for Host administrators;
+- `/api/auth/sessions/{sessionId}` revokes a Host session by id for Host administrators;
 - `/api/auth/cli-tokens` lists and creates CLI admin tokens for authenticated Host administrators;
 - `/api/auth/cli-tokens/{tokenId}` revokes a CLI admin token;
 - `/api/auth/cli-tokens/{tokenId}/rotate` creates a replacement CLI admin token and revokes the selected old token;
 - `/api/health` is the minimal unauthenticated health endpoint;
 - current Host API routes for Host status, modules, containers, images, install, update, lifecycle, remove, and recovery require `host.admin`;
 - `docker-host auth setup-token` writes a hashed one-time setup token into the Host auth JSON store through local filesystem access;
+- `docker-host auth recovery-token` writes a hashed one-time recovery token into the Host auth JSON store through local filesystem access;
 - `docker-host auth token import/status/logout/list/create/revoke/rotate` manages the local CLI token and the Host-side CLI token lifecycle.
+
+Audit events are stored as append-only NDJSON under `/data/auth/audit.ndjson`, separate from the main auth state. New events use a stable envelope with event identity, timestamp, type, optional actor, optional target, request metadata, success state, and sanitized details. Raw passwords, bearer tokens, setup tokens, recovery tokens, OIDC tokens, trusted proxy assertions, cookies, and authorization headers must not be written to the audit log.
+
+The audit reader supports cursor pagination plus filters for event type, actor, target, result, and timestamp range. The retention purge keeps events on or after the selected cutoff, reports malformed discarded lines, and appends a purge summary event. The default operational retention used by the Web UI is 90 days.
+
+High-risk auth operations require a recent browser reauthentication window. Browser sessions can refresh this window through `/api/auth/reauth` using the user's local password or a local recovery token. CLI-token and trusted-proxy authenticated requests bypass browser reauthentication because the caller has already presented a privileged non-browser credential or a verified upstream identity.
+
+Session operational controls build on the existing server-side session records in `/data/auth/state.json`. The session APIs expose session ids, owner metadata, timestamps, active/revoked state, and coarse request metadata, but never token hashes or raw session cookies.
+
+Module lifecycle, install, update, remove, gateway module-open, and gateway denied-access events are written to the same audit log with module targets. Routine module lifecycle actions do not require recent reauthentication, but the resulting audit records include the Host actor, module id, success state, and HTTP status when available.
 
 ## Module-Owned Permissions
 

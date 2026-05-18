@@ -219,6 +219,10 @@ export async function proxyHttpRequest(req, res, target) {
     return;
   }
 
+  if (req.method === 'GET' && acceptsHtml(req)) {
+    await appendGatewayAuditEvent(req, target, true);
+  }
+
   const identityToken = await createModuleIdentityToken(target, getRuntimeConfig());
   const headers = buildProxyRequestHeaders(req, target, false, identityToken);
   const proxyTarget = getProxyTarget(target);
@@ -773,14 +777,18 @@ function sendUpgradeDenied(socket, status) {
   socket.destroy();
 }
 
-async function appendGatewayAuditEvent(req, target) {
+async function appendGatewayAuditEvent(req, target, allowed = false) {
   const config = getRuntimeConfig();
   const event = {
     id: `evt_${randomUUID()}`,
-    type: 'gateway.access.denied',
+    type: allowed ? 'gateway.module.opened' : 'gateway.access.denied',
     createdAt: new Date().toISOString(),
     actorUserId: target.principal?.id,
-    success: false,
+    success: allowed,
+    target: {
+      type: 'module',
+      id: target.exposure.moduleId,
+    },
     request: {
       origin: typeof req.headers.origin === 'string' ? req.headers.origin : undefined,
       userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { requireHostAdmin } from '@/lib/auth-http';
+import { getRequestMeta, requireHostAdmin } from '@/lib/auth-http';
+import { appendModuleOperationAudit } from '@/lib/module-audit';
 import { normalizeModuleActionStatus, restartInstalledModule } from '@/lib/module-service';
 
 export const dynamic = 'force-dynamic';
@@ -16,5 +17,14 @@ export async function POST(
 
   const { moduleId } = await params;
   const result = await restartInstalledModule(moduleId);
-  return NextResponse.json(result, { status: normalizeModuleActionStatus(result) });
+  const status = normalizeModuleActionStatus(result);
+  await appendModuleOperationAudit({
+    operation: 'restart',
+    moduleId,
+    actorUserId: auth.principal.id,
+    success: result.success,
+    httpStatus: status,
+    request: getRequestMeta(request),
+  });
+  return NextResponse.json(result, { status });
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireHostAdmin } from '@/lib/auth-http';
+import { requireHostAdmin, requireRecentReauthentication } from '@/lib/auth-http';
 import {
   isAuthServiceError,
   rotateCliToken,
@@ -15,6 +15,11 @@ export async function POST(
   const auth = await requireHostAdmin(request, 'host.auth.configure');
   if (auth instanceof NextResponse) {
     return auth;
+  }
+
+  const reauth = await requireRecentReauthentication(auth, 'host.auth.configure');
+  if (reauth instanceof NextResponse) {
+    return reauth;
   }
 
   try {

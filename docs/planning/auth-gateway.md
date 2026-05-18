@@ -600,7 +600,7 @@ These decisions define the first module developer mode implementation slice.
 
 ### Phase 10 - Audit, recovery, and operational controls
 
-**Status**: Not Started
+**Status**: Completed
 
 Add operational features needed for a secure admin surface:
 
@@ -610,12 +610,46 @@ Add operational features needed for a secure admin surface:
 - diagnostics for OIDC/proxy misconfiguration;
 - clear user-facing errors when authorization blocks an action.
 
-#### Open Questions
+#### Completion Summary
 
-- What retention and compaction strategy should JSON audit logs use?
-- How long should audit events be retained by default?
-- Which recovery actions should require local machine access through CLI?
-- Should auth configuration changes require reauthentication?
+- Added an admin audit reader and API for `/data/auth/audit.ndjson` with cursor pagination, filters, malformed-line reporting, and retention-based purge.
+- Standardized the Phase 10 audit envelope with sanitized `details`, optional `target`, request metadata, and explicit success state for new events.
+- Added session inventory and revocation APIs backed by existing Host session records.
+- Added local CLI recovery-token creation plus a Web recovery flow that consumes setup or recovery tokens to restore a `host.admin` account.
+- Added recent reauthentication gates for high-risk auth operations, including CLI token mutations, session revocation, and audit purge.
+- Added `/settings/security` with sessions, reauthentication, OIDC/trusted proxy diagnostics, audit review, and audit retention controls.
+- Added module lifecycle/install/update/remove audit events and gateway module-open/denied audit events.
+- Added action-specific authorization error envelopes with remediation hints for protected Host APIs.
+
+#### Open Questions Before Phase 10
+
+These recommendations are accepted for the first Phase 10 implementation slice so the work can extend the existing JSON and NDJSON auth model without changing storage direction.
+
+| Topic | Options considered | Recommendation |
+| --- | --- | --- |
+| Audit storage and compaction | Keep one append-only `/data/auth/audit.ndjson` file; rotate NDJSON files by time or size; move audit records into `state.json`; introduce SQLite or another embedded store. | Keep append-only NDJSON separate from auth state. Add a small audit reader that can stream, filter, and paginate records, then add rotation/compaction around the existing file path only when the active file crosses a size or age threshold. Do not introduce SQLite in Phase 10. |
+| Audit retention default | Keep all events forever; purge after 30 days; purge after 90 days; make retention configurable without a default. | Default to 90 days for local installs, configurable through a launch setting such as `HOST_AUTH_AUDIT_RETENTION_DAYS`. Keep failed-login and denied-access events under the same policy to avoid special-case privacy behavior. |
+| Audit event contract | Continue free-form event types and details; define typed event names only; define a stable event envelope plus typed detail schemas for high-value events. | Define a stable envelope with `id`, `createdAt`, `type`, `actorUserId`, `target`, `success`, `request`, and sanitized `details`. Start with typed detail schemas for auth, session, CLI token, gateway exposure, module lifecycle, install/update/remove, and recovery events. Never log raw tokens, passwords, OIDC tokens, trusted proxy assertions, or full request headers. |
+| Audit integrity | Treat the audit file as best-effort local diagnostics; add a hash chain; sign events with a Host key; export to an external log sink. | Use best-effort local audit in the MVP, with restrictive file permissions and clear documentation that local machine administrators can modify local files. Add a hash chain only after the read/query UI is stable and before any external-compliance claim. |
+| Audit access surface | CLI-only export; admin API only; Web UI only; admin API plus Web UI and optional CLI export. | Implement an admin-only paginated API first, then a minimal `/settings/security/audit` Web UI with filters for date, actor, type, result, and target. CLI export can follow if debugging from terminal becomes important. |
+| Session management scope | Let users revoke only their current session; allow users to revoke their own other sessions; allow admins to revoke any user's sessions; add global session purge. | Implement both self-service and admin operations: current session, other sessions for the same user, all sessions for the same user, and admin revocation for any user. Show session id, created time, last seen time, expiry, source, and coarse user agent information, but never token hashes. |
+| Session state pruning | Keep only active sessions; retain revoked and expired sessions in `state.json`; move historical session data to audit only. | Keep `state.json` focused on active sessions plus recently revoked sessions needed for UI feedback. Use audit events as the durable history for expired and revoked sessions. |
+| Emergency recovery boundary | Allow recovery from any authenticated admin session; generate recovery tokens through Web UI; generate recovery tokens only from local CLI or direct local data access; rely on manual JSON edits. | Require local machine access for break-glass recovery token creation, password reset of the last admin, disabling a broken external provider, and promotion of a replacement admin. The Web UI may consume a recovery/setup token, but it should not be the primary issuer of emergency credentials. |
+| Recovery command shape | Extend `docker-host auth setup-token`; add separate `docker-host auth recovery-token`; add many specialized recovery commands. | Add explicit recovery commands instead of overloading first-admin setup: `docker-host auth recovery-token`, then focused commands for `reset-password`, `restore-admin`, and `disable-provider` only if the Web recovery flow cannot safely handle them. |
+| Reauthentication for sensitive changes | Never require reauthentication after login; require reauthentication for all mutating admin actions; require recent reauthentication only for high-risk auth and recovery changes. | Require a recent reauthentication window for high-risk actions: auth provider changes, trusted proxy/OIDC role mappings, CLI token creation/rotation for another user, disabling users, revoking other users' sessions, recovery token creation, and deleting audit logs. Do not require it for routine module lifecycle actions. |
+| Trusted proxy and OIDC diagnostics | Surface raw provider errors only; add a generic failed-login message; add admin diagnostics with safe redaction. | Keep user-facing login failures concise, but add an admin-only diagnostics panel that checks issuer discovery, JWKS reachability, callback URL, audience, clock skew, claim mapping, and trusted proxy assertion presence. Redact tokens and assertions. |
+| Authorization error UX | Return generic `401` or `403`; return action-specific errors; add remediation hints to Web UI responses. | Standardize auth error envelopes with `code`, `message`, `requiredRole`, `action`, and `nextStep` where useful. The Web UI should show why an action is blocked and whether login, account switching, assignment, or admin access is required. |
+| Account switching controls | Keep switching as implicit multiple sessions; add a global account switcher; remember preferred account per module hostname. | For Phase 10, expose active and remembered sessions in the security surface and support explicit logout/revoke flows. Defer preferred account per module hostname until module-open UX has enough usage feedback. |
+| Deleting audit data | Never allow deletion; allow full purge; allow retention-based purge only; allow export then purge. | Allow retention-based purge as an operational maintenance action. Full manual purge should require recent reauthentication and emit a final purge audit event before deletion. |
+
+#### Completed Implementation Slice
+
+- Added an audit reader service for the existing `/data/auth/audit.ndjson` file with streaming parse, pagination, date/type/result filters, and malformed-line handling.
+- Defined the Phase 10 audit event envelope and normalized the highest-value new event details without changing stored historical records.
+- Added admin-only audit API routes and regression tests.
+- Added session listing and revocation service methods on top of the existing `sessions` records.
+- Added explicit local CLI recovery token creation and Web recovery consumption.
+- Added regression tests for audit redaction, audit purge, session revocation, recovery token issuance, recovery completion, and reauthentication gates.
 
 ### Phase 11 - External ingress automation
 

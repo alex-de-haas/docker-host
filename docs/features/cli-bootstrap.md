@@ -39,6 +39,7 @@ Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port n
 
 ```text
 docker-host auth setup-token
+docker-host auth recovery-token
 docker-host auth token import <token> [--host <url>] [--token-id <id>] [--label <label>]
 docker-host auth token status
 docker-host auth token logout
@@ -49,6 +50,8 @@ docker-host auth token rotate [token-id] [--label <label>]
 ```
 
 `auth setup-token` creates a one-time first-admin setup token in the Host auth JSON store under `HOST_DATA_ROOT_HOST/auth/state.json`. It stores only the token hash and prints the raw token for local use in `/setup`.
+
+`auth recovery-token` creates a one-time recovery token through local machine access and writes only the token hash to `HOST_DATA_ROOT_HOST/auth/state.json`. The command also records a sanitized audit event in `HOST_DATA_ROOT_HOST/auth/audit.ndjson`.
 
 `auth token import` stores an existing raw CLI admin token locally under `~/.docker-host/config/auth.json`, or under `DOCKER_HOST_HOME/config/auth.json` when that test/development override is set. The token file is restricted to the current user on Unix-like platforms. `DOCKER_HOST_CLI_TOKEN` can override the stored token for automation without writing local credential material.
 

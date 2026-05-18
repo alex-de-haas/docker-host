@@ -5,12 +5,14 @@ import {
   authenticateCliToken,
   authenticateSessionToken,
   getAuthStatus,
+  hasRecentSessionReauthentication,
   isAuthServiceError,
   revokeSession,
   SESSION_ABSOLUTE_TIMEOUT_MS,
   SESSION_COOKIE_NAME,
 } from './auth-service.ts';
 import { authenticateTrustedProxyRequest } from './trusted-proxy.mjs';
+import { appendAuthAuditEvent } from './auth-store.ts';
 import type { AuthRequestMeta } from './auth-service.ts';
 import type { HostApiAction, HostPrincipal } from '../types/auth.ts';
 
@@ -25,26 +27,64 @@ export async function requireHostAdmin(
 ): Promise<AuthenticatedRequest | NextResponse> {
   const status = await getAuthStatus();
   if (status.setupRequired) {
-    return authError('setup_required', 'Docker Host setup must be completed first.', 403);
+    return authError('setup_required', 'Docker Host setup must be completed first.', 403, {
+      action,
+      nextStep: 'Open /setup and complete the first administrator setup.',
+    });
   }
 
   const auth = await authenticateRequest(request);
   if (!auth.principal) {
-    return authError('unauthorized', 'Authentication is required.', 401);
+    await appendDeniedHostApiAudit(action, 'unauthorized', null, request);
+    return authError('unauthorized', 'Authentication is required.', 401, {
+      action,
+      nextStep: 'Sign in to Docker Host.',
+    });
   }
 
   if (!canUseHostApi(auth.principal, action)) {
-    return authError('forbidden', 'A Host administrator account is required.', 403);
+    await appendDeniedHostApiAudit(action, 'forbidden', auth.principal, request);
+    return authError('forbidden', 'A Host administrator account is required.', 403, {
+      action,
+      requiredRole: 'host.admin',
+      nextStep: 'Switch to a Host administrator account.',
+    });
   }
 
   if (auth.source !== 'cli-token' && isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
-    return authError('csrf_rejected', 'State-changing requests must come from the same origin.', 403);
+    await appendDeniedHostApiAudit(action, 'csrf_rejected', auth.principal, request);
+    return authError('csrf_rejected', 'State-changing requests must come from the same origin.', 403, {
+      action,
+      nextStep: 'Retry the action from the Docker Host Web UI.',
+    });
   }
 
   return {
     principal: auth.principal,
     source: auth.source,
   };
+}
+
+export async function requireRecentReauthentication(
+  auth: AuthenticatedRequest,
+  action: HostApiAction
+): Promise<true | NextResponse> {
+  if (auth.source !== 'session') {
+    return true;
+  }
+
+  const sessionId = 'sessionId' in auth.principal
+    ? String(auth.principal.sessionId)
+    : '';
+  if (sessionId && await hasRecentSessionReauthentication(sessionId)) {
+    return true;
+  }
+
+  return authError('reauth_required', 'Recent administrator reauthentication is required.', 403, {
+    action,
+    requiredRole: 'host.admin',
+    nextStep: 'Reauthenticate from Security settings, then retry this action.',
+  });
 }
 
 export async function authenticateRequest(request: Request): Promise<{
@@ -164,12 +204,22 @@ export function authExceptionResponse(error: unknown) {
   return authError('auth_failed', error instanceof Error ? error.message : 'Unknown authentication error', 500);
 }
 
-export function authError(code: string, message: string, status: number) {
+export function authError(
+  code: string,
+  message: string,
+  status: number,
+  metadata: {
+    requiredRole?: string;
+    action?: HostApiAction;
+    nextStep?: string;
+  } = {}
+) {
   return NextResponse.json(
     {
       error: {
         code,
         message,
+        ...metadata,
       },
     },
     { status }
@@ -190,6 +240,28 @@ function getBearerToken(request: Request) {
   }
 
   return authorization.slice('Bearer '.length).trim() || null;
+}
+
+async function appendDeniedHostApiAudit(
+  action: HostApiAction,
+  reason: string,
+  principal: HostPrincipal | null,
+  request: Request
+) {
+  await appendAuthAuditEvent({
+    type: 'auth.host_api.denied',
+    actorUserId: principal?.id,
+    target: {
+      type: 'host.api',
+      id: action,
+    },
+    success: false,
+    request: getRequestMeta(request),
+    details: {
+      action,
+      reason,
+    },
+  });
 }
 
 function getCookieValue(request: Request, name: string) {

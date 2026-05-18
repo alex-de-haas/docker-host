@@ -29,6 +29,11 @@ export interface AuthSessionRecord {
   idleExpiresAt: string;
   absoluteExpiresAt: string;
   revokedAt?: string;
+  reauthenticatedAt?: string;
+  request?: {
+    origin?: string;
+    userAgent?: string;
+  };
 }
 
 export interface AuthSetupTokenRecord {
@@ -161,6 +166,10 @@ export interface AuthAuditEvent {
   type: string;
   createdAt: string;
   actorUserId?: string;
+  target?: {
+    type: string;
+    id: string;
+  };
   success?: boolean;
   request?: {
     origin?: string;
@@ -225,7 +234,7 @@ export async function appendAuthAuditEvent(
     createdAt: new Date().toISOString(),
     ...event,
   };
-  await fs.appendFile(config.authAuditPath, `${JSON.stringify(entry)}\n`, 'utf-8');
+  await fs.appendFile(config.authAuditPath, `${JSON.stringify(sanitizeAuthAuditEvent(entry))}\n`, 'utf-8');
 }
 
 export function createEmptyAuthState(): AuthState {
@@ -332,7 +341,9 @@ function isAuthSessionRecord(value: unknown): value is AuthSessionRecord {
     typeof value.createdAt === 'string' &&
     typeof value.lastSeenAt === 'string' &&
     typeof value.idleExpiresAt === 'string' &&
-    typeof value.absoluteExpiresAt === 'string';
+    typeof value.absoluteExpiresAt === 'string' &&
+    (value.reauthenticatedAt === undefined || typeof value.reauthenticatedAt === 'string') &&
+    (value.request === undefined || isAuthRequestMeta(value.request));
 }
 
 function isAuthSetupTokenRecord(value: unknown): value is AuthSetupTokenRecord {
@@ -460,6 +471,87 @@ function isModuleAccessAssignment(value: unknown): value is ModuleAccessAssignme
   return isObject(value) &&
     typeof value.moduleId === 'string' &&
     typeof value.userId === 'string';
+}
+
+function isAuthRequestMeta(value: unknown): value is { origin?: string; userAgent?: string } {
+  return isObject(value) &&
+    (value.origin === undefined || typeof value.origin === 'string') &&
+    (value.userAgent === undefined || typeof value.userAgent === 'string');
+}
+
+function sanitizeAuthAuditEvent(event: AuthAuditEvent): AuthAuditEvent {
+  return {
+    ...event,
+    request: event.request
+      ? {
+          origin: truncateAuditString(event.request.origin),
+          userAgent: truncateAuditString(event.request.userAgent),
+        }
+      : undefined,
+    details: event.details
+      ? sanitizeAuditDetails(event.details) as Record<string, unknown>
+      : undefined,
+  };
+}
+
+function sanitizeAuditDetails(value: unknown, depth = 0): unknown {
+  if (depth > 6) {
+    return '[truncated]';
+  }
+
+  if (typeof value === 'string') {
+    return truncateAuditString(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeAuditDetails(item, depth + 1));
+  }
+
+  if (!isObject(value)) {
+    return value;
+  }
+
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    isSensitiveAuditDetailKey(key) ? '[redacted]' : sanitizeAuditDetails(item, depth + 1),
+  ]));
+}
+
+function isSensitiveAuditDetailKey(key: string) {
+  return new Set([
+    'access_token',
+    'accesstoken',
+    'assertion',
+    'authorization',
+    'client_secret',
+    'clientsecret',
+    'code_verifier',
+    'codeverifier',
+    'cookie',
+    'id_token',
+    'idtoken',
+    'password',
+    'raw_token',
+    'rawtoken',
+    'recovery_token',
+    'recoverytoken',
+    'refresh_token',
+    'refreshtoken',
+    'secret',
+    'session_token',
+    'sessiontoken',
+    'setup_token',
+    'setuptoken',
+    'token',
+  ]).has(key.toLowerCase());
+}
+
+function truncateAuditString(value: string | undefined) {
+  if (value === undefined || value.length <= 2048) {
+    return value;
+  }
+
+  return `${value.slice(0, 2048)}...[truncated]`;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
