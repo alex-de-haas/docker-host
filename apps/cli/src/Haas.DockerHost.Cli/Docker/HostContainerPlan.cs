@@ -11,6 +11,7 @@ internal sealed record HostContainerPlan(
     string HostBindAddress,
     string HostPublicOrigin,
     string HostGatewayBaseDomain,
+    string HostModuleDevMode,
     int HostUiPort)
 {
     public const int ContainerUiPort = 3000;

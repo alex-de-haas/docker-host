@@ -496,7 +496,7 @@ Complete the operational auth UX that is easier to design after local and OIDC s
 
 ### Phase 8 - Trusted proxy mode
 
-**Status**: In Progress
+**Status**: Completed
 
 Support deployments where a trusted upstream proxy authenticates the user before traffic reaches Docker Host.
 
@@ -541,7 +541,7 @@ These questions are resolved for the first trusted proxy implementation slice.
 
 ### Phase 9 - Developer mode for modules
 
-**Status**: Not Started
+**Status**: Completed
 
 Allow module authors to develop without always running the full Host install flow:
 
@@ -562,12 +562,41 @@ Integrated:
   auth -> real Host session and module-scoped JWT
 ```
 
-#### Open Questions
+#### Decisions Before Phase 9
 
-- Should development target overrides live in module metadata, Host settings, or a separate local-only file?
-- Should Host provide a command to mint local test JWTs for module development?
-- How should integrated development work for modules that depend on other modules?
-- Should module dev mode be blocked automatically outside localhost/private networks?
+These decisions define the first module developer mode implementation slice.
+
+| Topic | Options considered | Recommended decision |
+| --- | --- | --- |
+| Override storage | Put overrides in module metadata, production gateway exposure state, Host settings, or a separate local-only file. | Store developer targets in `/data/dev/module-targets.json`. They are local-only operational state and do not modify metadata, installed module records, or production gateway exposures. |
+| Activation boundary | Always enabled, API toggle, or launch setting. | Require `HOST_MODULE_DEV_MODE=enabled`. The default is `disabled`, and stored targets are inert while disabled. |
+| Module requirement | Require an installed module, allow an ephemeral metadata registration, or accept a raw module id. | Use ephemeral metadata registration. Host validates the metadata graph and derives the root module id without creating module containers or storage. |
+| Target shape | Port only, host plus port, or full URL. | Use an absolute HTTP target URL. The URL may include a path prefix, but not credentials, query, or fragment. |
+| Target network safety | Unrestricted target URL, loopback only, or local/private networks. | Allow localhost, `*.localhost`, `host.docker.internal`, loopback, and private IP ranges. Reject public target URLs. |
+| Gateway behavior | Separate dev gateway, path-based fallback, or existing subdomain gateway override. | Reuse the existing Host gateway. While developer mode is enabled, dev targets are checked before production gateway exposures. |
+| Identity model | Mock identity from Host, Host-signed module identity, or no identity. | Integrated mode uses the normal Host access policy and Host-signed `X-Docker-Host-Identity`. Standalone mock identity remains module-owned. |
+| Dependencies | Require installed dependencies, allow all dependencies as local targets, or mock dependency URLs. | MVP covers the root module target. Per-dependency target overrides remain a follow-up in the same local-only state model. |
+| Dev target management | Web UI first, CLI/API first, or manual JSON editing. | Implement admin API and CLI commands first: `docker-host modules dev list`, `link`, and `unlink`. |
+| Completion tests | Service tests only, gateway tests only, or both. | Require service validation tests and gateway proxy tests for local override routing plus Host identity injection. |
+
+#### Phase 9 MVP Scope
+
+- Add `HOST_MODULE_DEV_MODE` launch setting and pass it into the Host container.
+- Add local-only developer target state under `/data/dev/module-targets.json`.
+- Add admin-only APIs to list, create/update, and delete developer targets.
+- Validate metadata URL, root module metadata, public runtime port, developer hostname, exposure policy, identity mode, and local/private HTTP target URL.
+- Add gateway resolution that checks enabled developer targets before production gateway exposures while developer mode is enabled.
+- Proxy HTTP and WebSocket traffic to local developer targets, including optional target path prefixes.
+- Keep normal Host authorization and module identity token issuance for integrated developer traffic.
+- Add CLI commands for listing, linking, and unlinking developer targets.
+- Document the workflow in `docs/features/module-developer-mode.md`.
+- Do not implement generated standalone `.env` output, module SDK helpers, per-dependency developer target overlays, or a full Web UI in this phase.
+
+#### Remaining Follow-Ups
+
+- Should Host remember a preferred account per module hostname?
+- Should standalone module development receive generated `.env` output from Host metadata validation?
+- Should per-dependency developer overrides be independent target records or a root target overlay?
 
 ### Phase 10 - Audit, recovery, and operational controls
 

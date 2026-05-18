@@ -64,6 +64,64 @@ internal sealed class ModuleListResponse
     public IReadOnlyList<ModuleSummary> Modules { get; init; } = [];
 }
 
+internal sealed class ModuleDevTargetListResponse
+{
+    public bool DeveloperModeEnabled { get; init; }
+
+    public IReadOnlyList<ModuleDevTargetSummary> Targets { get; init; } = [];
+}
+
+internal sealed class ModuleDevTargetResponse
+{
+    public ModuleDevTargetSummary? Target { get; init; }
+}
+
+internal sealed class ModuleDevTargetRequest
+{
+    public string MetadataUrl { get; init; } = "";
+
+    public string Hostname { get; init; } = "";
+
+    public string PortKey { get; init; } = "";
+
+    public string TargetBaseUrl { get; init; } = "";
+
+    public string? ExposurePolicy { get; init; }
+
+    public string? IdentityMode { get; init; }
+
+    public bool? Enabled { get; init; }
+}
+
+internal sealed class ModuleDevTargetSummary
+{
+    public string Id { get; init; } = "";
+
+    public string ModuleId { get; init; } = "";
+
+    public string ModuleName { get; init; } = "";
+
+    public string ModuleVersion { get; init; } = "";
+
+    public string MetadataUrl { get; init; } = "";
+
+    public string Hostname { get; init; } = "";
+
+    public string PortKey { get; init; } = "";
+
+    public string TargetBaseUrl { get; init; } = "";
+
+    public string ExposurePolicy { get; init; } = "";
+
+    public string IdentityMode { get; init; } = "";
+
+    public bool Enabled { get; init; }
+
+    public string CreatedAt { get; init; } = "";
+
+    public string UpdatedAt { get; init; } = "";
+}
+
 internal sealed class ModuleSummary
 {
     public string Id { get; init; } = "";

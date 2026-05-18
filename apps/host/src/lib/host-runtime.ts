@@ -12,6 +12,9 @@ export interface HostRuntimeConfig {
   dataRootContainer: string;
   modulesRootContainer: string;
   modulesStorePath: string;
+  moduleDevModeEnabled?: boolean;
+  moduleDevRootContainer?: string;
+  moduleDevTargetsPath?: string;
   authRootContainer: string;
   authStatePath: string;
   authAuditPath: string;
@@ -48,6 +51,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
 
   const moduleNetwork = process.env.HOST_MODULE_NETWORK?.trim() || DEFAULT_MODULE_NETWORK;
   const modulesRootContainer = path.join(dataRootContainer, 'modules');
+  const moduleDevRootContainer = path.join(dataRootContainer, 'dev');
   const authRootContainer = path.join(dataRootContainer, 'auth');
   const gatewayRootContainer = path.join(dataRootContainer, 'gateway');
 
@@ -56,6 +60,9 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     dataRootContainer,
     modulesRootContainer,
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
+    moduleDevModeEnabled: isEnabledRuntimeFlag(process.env.HOST_MODULE_DEV_MODE),
+    moduleDevRootContainer,
+    moduleDevTargetsPath: path.join(moduleDevRootContainer, 'module-targets.json'),
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
@@ -70,13 +77,20 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
 }
 
 export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promise<HostDataRootStatus> {
+  const moduleDevRootContainer = config.moduleDevRootContainer ?? path.join(config.dataRootContainer, 'dev');
   try {
     await fs.mkdir(config.dataRootContainer, { recursive: true });
     await fs.mkdir(config.modulesRootContainer, { recursive: true });
+    if (config.moduleDevModeEnabled) {
+      await fs.mkdir(moduleDevRootContainer, { recursive: true });
+    }
     await fs.mkdir(config.authRootContainer, { recursive: true });
     await fs.mkdir(config.gatewayRootContainer, { recursive: true });
     await fs.access(config.dataRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.modulesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
+    if (config.moduleDevModeEnabled) {
+      await fs.access(moduleDevRootContainer, fs.constants.R_OK | fs.constants.W_OK);
+    }
     await fs.access(config.authRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.gatewayRootContainer, fs.constants.R_OK | fs.constants.W_OK);
 
@@ -114,4 +128,13 @@ export async function pathExists(targetPath: string) {
 function normalizeOptionalRuntimeValue(value: string | undefined) {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function isEnabledRuntimeFlag(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === '1' ||
+    normalized === 'true' ||
+    normalized === 'enabled' ||
+    normalized === 'on' ||
+    normalized === 'yes';
 }

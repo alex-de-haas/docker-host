@@ -39,6 +39,8 @@ internal sealed class LaunchSettings
 
     public string HostModuleNetwork => this[LaunchSettingDefinitions.HostModuleNetwork];
 
+    public string HostModuleDevMode => this[LaunchSettingDefinitions.HostModuleDevMode];
+
     public string ResolveHostDataRoot(DockerHostEnvironment environment)
         => environment.ResolvePath(HostDataRootHostRaw);
 

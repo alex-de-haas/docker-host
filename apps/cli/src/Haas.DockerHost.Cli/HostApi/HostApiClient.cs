@@ -55,6 +55,28 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
     public Task<HostApiResponse<ModuleListResponse>> ListModulesAsync(CancellationToken cancellationToken = default)
         => SendAsync<ModuleListResponse>("list modules", HttpMethod.Get, "api/modules", cancellationToken: cancellationToken);
 
+    public Task<HostApiResponse<ModuleDevTargetListResponse>> ListModuleDevTargetsAsync(CancellationToken cancellationToken = default)
+        => SendAsync<ModuleDevTargetListResponse>("list module developer targets", HttpMethod.Get, "api/modules/dev/targets", cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<ModuleDevTargetResponse>> CreateModuleDevTargetAsync(
+        ModuleDevTargetRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<ModuleDevTargetResponse>(
+            "create module developer target",
+            HttpMethod.Post,
+            "api/modules/dev/targets",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<ModuleDevTargetResponse>> DeleteModuleDevTargetAsync(
+        string targetId,
+        CancellationToken cancellationToken = default)
+        => SendAsync<ModuleDevTargetResponse>(
+            "delete module developer target",
+            HttpMethod.Delete,
+            $"api/modules/dev/targets/{Uri.EscapeDataString(targetId)}",
+            cancellationToken: cancellationToken);
+
     public Task<HostApiResponse<ModuleActionResult>> RunModuleActionAsync(
         string moduleId,
         string action,

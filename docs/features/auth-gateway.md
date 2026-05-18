@@ -453,7 +453,22 @@ Integrated development should be used to verify:
 - realtime transports;
 - module access policies.
 
+Implemented MVP:
+
+- developer mode is disabled by default and enabled with `HOST_MODULE_DEV_MODE=enabled`;
+- developer target records live in `/data/dev/module-targets.json`;
+- Host validates a metadata URL before linking a developer target;
+- each target maps a hostname and metadata runtime `portKey` to an HTTP local target URL;
+- target URLs are limited to localhost, `*.localhost`, `host.docker.internal`, loopback, and private IP ranges;
+- gateway developer targets are checked before production gateway exposures while developer mode is enabled;
+- integrated requests use the normal Host access policy and the normal Host-signed `X-Docker-Host-Identity` token;
+- CLI/API management is available through `docker-host modules dev list`, `link`, and `unlink`.
+
+More details live in [Module developer mode](module-developer-mode.md).
+
 ## Open Questions
 
 - Should Host remember a preferred account per module hostname?
 - What exact revalidation policy should long-lived realtime connections use?
+- Should Phase 9 add generated `.env` output for standalone modules, or should that wait for a module SDK?
+- Should per-dependency developer target overrides be represented as independent records or as a root target overlay?

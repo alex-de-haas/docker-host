@@ -111,6 +111,46 @@ export async function resolveGatewayRequest(req) {
   }
 
   const config = getRuntimeConfig();
+  const devTarget = config.moduleDevModeEnabled
+    ? await resolveModuleDevTarget(hostnameValue, config)
+    : null;
+  if (devTarget) {
+    const authState = await readAuthState(config);
+    const trustedProxy = await authenticateTrustedProxyRequest(req, config);
+    const principal = trustedProxy.principal ||
+      (trustedProxy.modeActive ? null : authenticateSession(req, authState));
+    const access = canAccessModule({
+      principal,
+      moduleId: devTarget.moduleId,
+      exposurePolicy: devTarget.exposurePolicy,
+      assignments: authState.moduleAssignments || [],
+    });
+    const targetUrl = parseDevTargetUrl(devTarget.targetBaseUrl);
+
+    return {
+      exposure: {
+        id: devTarget.id,
+        moduleId: devTarget.moduleId,
+        hostname: hostnameValue,
+        portKey: devTarget.portKey,
+        exposurePolicy: devTarget.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY,
+        identityMode: getExposureIdentityMode(devTarget, devTarget.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY),
+      },
+      access,
+      principal,
+      networkAlias: targetUrl.hostname,
+      containerPort: targetUrl.port,
+      proxyHostname: targetUrl.hostname,
+      proxyPort: targetUrl.port,
+      targetPathPrefix: targetUrl.pathPrefix,
+      targetOrigin: targetUrl.origin,
+      requestHost: req.headers.host,
+      requestProtocol: getRequestProtocol(req),
+      trustedProxyAssertionHeaders: trustedProxy.assertionHeaders,
+      developerMode: true,
+    };
+  }
+
   const gateway = await readJsonIfExists(config.gatewayExposuresPath, {
     schemaVersion: '0.1',
     exposures: [],
@@ -181,12 +221,13 @@ export async function proxyHttpRequest(req, res, target) {
 
   const identityToken = await createModuleIdentityToken(target, getRuntimeConfig());
   const headers = buildProxyRequestHeaders(req, target, false, identityToken);
+  const proxyTarget = getProxyTarget(target);
   const proxyReq = httpRequest({
     protocol: 'http:',
-    hostname: target.networkAlias,
-    port: target.containerPort,
+    hostname: proxyTarget.hostname,
+    port: proxyTarget.port,
     method: req.method,
-    path: req.url || '/',
+    path: buildProxyPath(req.url || '/', proxyTarget.pathPrefix),
     headers,
   }, proxyRes => {
     const responseHeaders = buildProxyResponseHeaders(proxyRes.headers, target);
@@ -208,11 +249,12 @@ export async function proxyHttpRequest(req, res, target) {
 
 export async function proxyWebSocketUpgrade(req, socket, head, target) {
   const identityToken = await createModuleIdentityToken(target, getRuntimeConfig());
-  const upstream = net.connect(target.containerPort, target.networkAlias);
+  const proxyTarget = getProxyTarget(target);
+  const upstream = net.connect(proxyTarget.port, proxyTarget.hostname);
 
   upstream.on('connect', () => {
     const headers = buildProxyRequestHeaders(req, target, true, identityToken);
-    const lines = [`${req.method} ${req.url || '/'} HTTP/${req.httpVersion}`];
+    const lines = [`${req.method} ${buildProxyPath(req.url || '/', proxyTarget.pathPrefix)} HTTP/${req.httpVersion}`];
     for (const [name, value] of Object.entries(headers)) {
       if (Array.isArray(value)) {
         for (const item of value) {
@@ -502,6 +544,8 @@ function getRuntimeConfig() {
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
+    moduleDevModeEnabled: isEnabledRuntimeFlag(process.env.HOST_MODULE_DEV_MODE),
+    moduleDevTargetsPath: path.join(dataRootContainer, 'dev', 'module-targets.json'),
     gatewayRootContainer,
     gatewayExposuresPath: path.join(gatewayRootContainer, 'exposures.json'),
     gatewayBaseDomain: normalizeDomain(process.env.HOST_GATEWAY_BASE_DOMAIN),
@@ -518,6 +562,62 @@ function getModuleNetworkAlias(moduleId) {
     .replace(/-{2,}/g, '-');
 
   return `mod-${normalized || 'module'}`;
+}
+
+async function resolveModuleDevTarget(hostnameValue, config) {
+  const state = await readJsonIfExists(config.moduleDevTargetsPath, {
+    schemaVersion: '0.1',
+    targets: [],
+  });
+
+  return Array.isArray(state.targets)
+    ? state.targets.find(candidate =>
+        candidate &&
+        candidate.enabled !== false &&
+        typeof candidate.hostname === 'string' &&
+        candidate.hostname.toLowerCase() === hostnameValue &&
+        typeof candidate.targetBaseUrl === 'string' &&
+        typeof candidate.moduleId === 'string' &&
+        typeof candidate.portKey === 'string'
+      ) || null
+    : null;
+}
+
+function parseDevTargetUrl(value) {
+  const parsed = new URL(value);
+  if (parsed.protocol !== 'http:') {
+    throw new Error('Module developer gateway targets must use http.');
+  }
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+  const port = Number(parsed.port || 80);
+  const pathPrefix = parsed.pathname.replace(/\/+$/, '');
+
+  return {
+    hostname,
+    port,
+    origin: parsed.origin,
+    pathPrefix: pathPrefix === '/' ? '' : pathPrefix,
+  };
+}
+
+function getProxyTarget(target) {
+  return {
+    hostname: target.proxyHostname || target.networkAlias,
+    port: target.proxyPort || target.containerPort,
+    pathPrefix: target.targetPathPrefix || '',
+  };
+}
+
+function buildProxyPath(requestPath, pathPrefix) {
+  if (!pathPrefix) {
+    return requestPath || '/';
+  }
+
+  const normalizedRequestPath = requestPath && requestPath.startsWith('/')
+    ? requestPath
+    : `/${requestPath || ''}`;
+  return `${pathPrefix}${normalizedRequestPath}`;
 }
 
 function stripCookieValue(value, cookieName) {
@@ -624,6 +724,15 @@ function parseHostnameFromOrigin(origin) {
 function normalizeDomain(value) {
   const normalized = value?.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
   return normalized || null;
+}
+
+function isEnabledRuntimeFlag(value) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === '1' ||
+    normalized === 'true' ||
+    normalized === 'enabled' ||
+    normalized === 'on' ||
+    normalized === 'yes';
 }
 
 function getExposureIdentityMode(exposure, exposurePolicy) {

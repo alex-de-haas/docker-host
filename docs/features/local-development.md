@@ -147,6 +147,31 @@ Example metadata image reference for local module testing:
 
 When the Host itself runs directly through `npm run host:dev`, local metadata URLs can point to `localhost`. When the Host runs as `docker-host:dev`, metadata URLs for services on the developer machine should use `host.docker.internal`.
 
+## Module developer mode
+
+For faster module UI/runtime iteration, Docker Host also supports local-only module developer targets. This mode validates module metadata and lets the Host gateway route a module hostname to a local dev server without creating a managed module container.
+
+Enable it through launch configuration:
+
+```bash
+docker-host config set HOST_MODULE_DEV_MODE enabled
+docker-host restart
+```
+
+Then link a target:
+
+```bash
+docker-host modules dev link \
+  http://localhost:3000/fixtures/modules/sample-reports \
+  reports.localhost \
+  web \
+  http://127.0.0.1:3001
+```
+
+Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They are active only while `HOST_MODULE_DEV_MODE=enabled`; they do not modify installed module records, module metadata, or production gateway exposure records.
+
+See [Module developer mode](module-developer-mode.md) for API, CLI, and gateway details.
+
 ## Local install fixture
 
 The Host app serves a local metadata fixture for install review UI development:

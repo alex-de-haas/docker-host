@@ -59,6 +59,7 @@ internal sealed class UpdateCommand(CommandContext context)
             settings.HostBindAddress,
             settings.HostPublicOrigin,
             settings.HostGatewayBaseDomain,
+            settings.HostModuleDevMode,
             hostPort);
 
         await docker.CreateHostContainerAsync(plan);

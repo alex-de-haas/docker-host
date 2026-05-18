@@ -16,6 +16,7 @@ internal static class LaunchSettingDefinitions
     public const string HostDockerEndpoint = "HOST_DOCKER_ENDPOINT";
     public const string HostDockerSocket = "HOST_DOCKER_SOCKET";
     public const string HostModuleNetwork = "HOST_MODULE_NETWORK";
+    public const string HostModuleDevMode = "HOST_MODULE_DEV_MODE";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
@@ -31,6 +32,7 @@ internal static class LaunchSettingDefinitions
         new(HostDockerEndpoint, env => env.IsWindows ? "npipe:////./pipe/docker_engine" : "unix:///var/run/docker.sock", true, ValidateDockerEndpoint),
         new(HostDockerSocket, _ => "/var/run/docker.sock", true, ValidateContainerPath),
         new(HostModuleNetwork, _ => "docker-host-modules", true, Required),
+        new(HostModuleDevMode, _ => "disabled", true, ValidateEnabledDisabled),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);
@@ -174,4 +176,9 @@ internal static class LaunchSettingDefinitions
             ? null
             : "macOS, Linux, and WSL support only unix:/// local Docker endpoints for the local Host launch model.";
     }
+
+    private static string? ValidateEnabledDisabled(string value, DockerHostEnvironment _)
+        => value is "enabled" or "disabled"
+            ? null
+            : "Value must be enabled or disabled.";
 }

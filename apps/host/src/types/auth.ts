@@ -13,6 +13,7 @@ export type HostApiAction =
   | 'modules.lifecycle'
   | 'modules.exposure.manage'
   | 'modules.directory.manage'
+  | 'modules.development.manage'
   | 'modules.recovery';
 
 export interface HostPrincipal {
