@@ -19,9 +19,11 @@ Docker Host should not depend on a regular managed module for its own authentica
 
 - Module UIs use dedicated subdomains, not path-based routing.
 - All external module UI traffic goes through the Host gateway by default.
-- Direct public module ports are not the primary exposure model.
+- Direct public module ports are not the primary exposure model and are allowed only as an explicit development override.
 - Host has two initial global roles: `host.admin` and `host.user`.
 - Host decides whether a user can reach a module.
+- Local Host instances, including `localhost`, require authentication by default. Development bypass must be explicit configuration.
+- The default exposure policy for externally opened module UIs is `loginRequired`.
 - Each module owns its internal permission model.
 - Modules may receive Host identity through module-scoped signed tokens.
 - Modules may query only a scoped list of users relevant to that module.
@@ -66,9 +68,11 @@ The module exposure model uses explicit policy states instead of the older `priv
 | --- | --- | --- | --- |
 | `public` | no | no | Anyone who can reach the hostname can open the module UI. |
 | `loginRequired` | yes | no | Any authenticated Host user can open the module. |
-| `assignedUsersOnly` | yes | yes | Only selected Host users can open the module. |
+| `assignedUsersOnly` | yes | yes for `host.user` | Selected Host users can open the module; `host.admin` can also reach it for bootstrap and configuration. |
 
 These policies control only whether traffic reaches the module. They do not define what the user can do inside the module.
+
+The existing metadata field `runtime.ports[].public` is only a port capability hint that says an endpoint is suitable for future external UI exposure. It is not an authorization policy. Host-owned exposure policy decides whether the gateway treats an externally reachable module hostname as `public`, `loginRequired`, or `assignedUsersOnly`.
 
 ## Host Roles
 
@@ -77,9 +81,17 @@ Initial Host roles are intentionally small:
 | Role | Meaning |
 | --- | --- |
 | `host.admin` | Can manage Host configuration, auth settings, users, module install/update/remove, exposure, and recovery. |
-| `host.user` | Can access modules allowed by exposure policy and assignment state. |
+| `host.user` | Can access module subdomains allowed by exposure policy and assignment state. It cannot call Host API functionality, including module listing or Host status views. |
 
 Host role is included in module identity so modules can make bootstrap or admin UX decisions when appropriate. A module may decide to treat `host.admin` as an internal module administrator, but module-specific permissions still belong to the module.
+
+`host.admin` is allowed through the Host gateway for module bootstrap and configuration. This does not force the module to grant internal administrator rights automatically; the module may grant, map, or ignore the Host role according to its own permission model.
+
+## CLI Access
+
+CLI module commands should act as a local administrator tool. The CLI should authenticate to the Host API using local administrator credentials or a local administrator token created during Host setup. The token or credential material must remain local to the physical machine and must not be exposed to remote callers.
+
+The exact credential storage and recovery flow belongs to the local authentication phase, but the policy model treats authenticated CLI module commands as `host.admin` operations.
 
 ## Module-Owned Permissions
 
@@ -236,11 +248,10 @@ Integrated development should be used to verify:
 
 ## Open Questions
 
-- Should local `localhost` Host instances require login by default?
-- Should `host.admin` always be accepted as module admin/bootstrap identity, or should each module opt in?
 - Should Host remember a preferred account per module hostname?
 - Which persistence backend should own users, sessions, assignments, signing keys, and audit events?
 - How should signing keys be rotated?
 - What exact revalidation policy should long-lived realtime connections use?
 - Should `loginRequired` modules be able to query all Host users, users who have opened the module, or only users explicitly assigned later?
 - What module service credential should be used for module-to-Host internal APIs?
+- What exact local credential form should CLI store or request for administrator access?

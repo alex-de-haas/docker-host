@@ -43,7 +43,7 @@ The recommended implementation direction is to start with local Host authenticat
 
 ### Phase 1 - Architecture and policy model
 
-**Status**: Not Started
+**Status**: In Progress
 
 Define the core boundaries before implementation:
 
@@ -58,7 +58,7 @@ Define the core boundaries before implementation:
 Initial Host role model:
 
 - `host.admin` can manage Host configuration, auth settings, module install/update/remove, module exposure, and recovery flows.
-- `host.user` can access modules allowed by module exposure policy and assignment state.
+- `host.user` can access modules allowed by module exposure policy and assignment state, but cannot call Host API functionality, including module listing or Host status views.
 
 Module exposure policy should use three explicit states:
 
@@ -66,20 +66,28 @@ Module exposure policy should use three explicit states:
 | --- | --- | --- | --- |
 | `public` | no | no | Public module UI that does not need Host identity. |
 | `loginRequired` | yes | no | Any authenticated Host user can open the module; module handles internal permissions. |
-| `assignedUsersOnly` | yes | yes | Host grants access to selected users; module still handles internal permissions. |
+| `assignedUsersOnly` | yes | yes for `host.user` | Host grants access to selected users; module still handles internal permissions. |
+
+`loginRequired` is the default exposure policy for externally opened module UI ports. The existing metadata field `runtime.ports[].public` remains a port capability hint that an endpoint is suitable for external UI exposure. It is not the Host authorization policy. Normal external module access must still go through the Host gateway and use the Host-owned exposure policy.
 
 Host-level permissions and module-level permissions should remain separate:
 
 - Host decides whether a request can reach a module.
 - The module decides which actions are available inside the module.
 - Host may pass `hostRole` in the identity token so a module can implement bootstrap or admin UX, but Host does not automatically own every module's internal authorization model.
+- `host.admin` can reach modules through the Host gateway for bootstrap and configuration even when the module uses `assignedUsersOnly`; the module decides whether that Host role becomes an internal module administrator.
+- `host.user` has no Host management surface. A `host.user` only receives access to module subdomains allowed by module exposure policy and assignment state.
+
+#### Decisions
+
+- Authentication is mandatory by default for local Host instances, including `localhost`. Development bypass must be explicit configuration, not the default.
+- Direct public module port publishing is not part of the normal exposure model. It may exist only as an explicit development override; production-like access goes through the Host gateway.
+- CLI module commands should use local administrator credentials or a local administrator token. The CLI is expected to run on the local physical machine and should not expose those credentials outside the machine.
+- `host.admin` is allowed through the Host gateway for module bootstrap and configuration. Internal module administrator rights remain module-owned and may be granted, mapped, or ignored by the module.
 
 #### Open Questions
 
-- Should authentication be mandatory for every local Host instance, including `localhost`, or can development mode start without login?
-- Should direct module port publishing be forbidden, allowed for development only, or allowed as an explicit advanced exposure mode?
-- Should CLI module commands authenticate against Host API, or is the local CLI always considered an administrative tool?
-- Should `host.admin` always be able to enter a module's internal admin/bootstrap screen, or should each module explicitly opt in?
+- What exact local credential form should the CLI store or request for admin access in Phase 2?
 
 ### Phase 2 - Local Host authentication
 

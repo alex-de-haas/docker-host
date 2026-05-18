@@ -9,7 +9,7 @@ Host API реализуется внутри full-stack Next.js Host application
 - Host backend API is the owner of module management logic.
 - Runtime status is read from Docker daemon, not from persistent JSON files.
 - Persistent installed module registry is stored in root-level `modules.json`.
-- MVP API is local/private-network only and does not include authentication.
+- The current pre-auth MVP API is local/private-network only. The Auth Gateway feature supersedes this by requiring Host-owned authentication and `host.admin` authorization for Host API functionality.
 - API responses must not expose raw secret setting values.
 - The API contract remains this Markdown endpoint catalog for the MVP. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
 

@@ -402,7 +402,7 @@ For `schemaVersion: "0.1"`, metadata validation is strict: unknown fields are re
 | `key` | string | yes | Stable endpoint key, unique inside the metadata file. |
 | `containerPort` | number | yes | Container port number. |
 | `protocol` | string | yes | First implementation target: `http`. |
-| `public` | boolean | yes | Whether the endpoint is intended for future outside-network exposure. The first implementation should not publish module host ports automatically. |
+| `public` | boolean | yes | Whether the endpoint is suitable for external UI exposure through a future Host gateway. This is a capability hint, not an authorization policy. The first implementation should not publish module host ports automatically. |
 
 ## Field notes
 
@@ -874,7 +874,7 @@ Module health checks должны быть отдельной future feature. В
 
 `public: false` означает, что endpoint нужен только внутри Host-managed Docker network. Для module-to-module коммуникации Host должен использовать internal URL, а не опубликованный host port.
 
-В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `runtime.ports[].public`. Наружная публикация выбранных модулей должна быть отдельной feature с explicit authorization и exposure settings.
+В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `runtime.ports[].public`. Наружная публикация выбранных модулей должна быть отдельной feature с explicit authorization и exposure settings. Auth Gateway owns the actual module exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
 
 Host-managed Docker network должна быть одной общей user-defined network для всех managed modules. Default bridge network не подходит, потому что не дает достаточно надежной DNS-модели для module-to-module names.
 
