@@ -397,7 +397,7 @@ These decisions define the first module directory and module-owned permissions i
 
 ### Phase 6 - Generic OIDC provider mode
 
-**Status**: Not Started
+**Status**: In Progress
 
 Add a provider implementation for standard OIDC:
 
@@ -423,10 +423,39 @@ OIDC group "docker-host-users"  -> host.user
 
 #### Open Questions
 
-- Which OIDC provider should be tested first as the reference implementation?
-- Should Docker Host support multiple active auth providers at once, or one active provider per Host?
-- Should role mappings be configured through Web UI, config files, or both?
-- How should Host handle users whose external groups change while they have an active session?
+These questions are resolved for the first generic OIDC implementation slice.
+
+| Topic | Options considered | Recommended decision |
+| --- | --- | --- |
+| Reference provider | Keycloak, Authentik, Auth0, Microsoft Entra ID, Google Workspace, or a mock provider. | Use a mock OIDC provider for automated tests and Keycloak as the first manual reference provider. Keycloak is open source, easy to run locally, and exercises issuer discovery, JWKS, scopes, and group claims without relying on a hosted service. |
+| Active providers | One active provider, multiple parallel providers, or local and OIDC side by side. | Support one active browser login provider in the Phase 6 MVP. Keep local recovery/admin access available through the existing local auth primitives. Multiple simultaneous external providers and account linking should wait until identity profiles have a concrete requirement. |
+| OIDC flow | Authorization Code, Authorization Code with PKCE, implicit, or hybrid. | Use Authorization Code with PKCE. Do not implement implicit or hybrid flows. |
+| Callback URL | Derive from each request, require `HOST_PUBLIC_ORIGIN`, or configure manually per provider. | Use `${HOST_PUBLIC_ORIGIN}/api/auth/oidc/callback` for non-loopback deployments and allow request-origin derivation only for local development. |
+| Default scopes | `openid`, `openid profile email`, or provider-specific expanded scopes. | Start with `openid profile email`; allow extra scopes in provider configuration for group claims. |
+| Stable user identity | Email, provider `sub`, `issuer + sub`, or a Host-owned user id. | Keep Host-owned user ids as the stable subject that modules see. Store the external identity as `providerId + issuer + sub`. Never use email as the identity key. |
+| User provisioning | Pre-provision only, just-in-time provisioning, or open default role. | Use just-in-time provisioning only after explicit role mapping grants `host.admin` or `host.user`. If no mapping matches, deny login. |
+| Role mapping | Hard-coded groups, email domains, default role, or explicit claim mappings. | Use explicit claim mappings to `host.admin` and `host.user`. Default deny when no mapping matches. |
+| Group changes | Recheck only at login, recheck every request, or periodic revalidation. | Recompute the Host role on every OIDC login. Active sessions read the Host user record, so a later successful OIDC login updates role for existing sessions of that Host user. Background revalidation can wait until Host intentionally stores provider refresh tokens or adds a provider sync job. |
+| Provider tokens | Store no provider tokens, store ID tokens only, or store refresh tokens. | Do not persist OIDC access, refresh, or ID tokens in the MVP. Store only Host-owned user/session state, external identity metadata, and audit events. |
+| Account linking | Link by email automatically, manual link flow, or separate Host users. | Do not automatically link by email. A matching email from an external provider must not take over an existing local account. Manual account linking is deferred. |
+| Logout | Host-only logout, provider logout, or both. | Revoke the Host session in the MVP. Provider logout can be added later as an optional provider capability. |
+| Transaction state | Cookie-only, signed state, or server-side transaction records. | Use short-lived server-side transaction records with hashed `state`, hashed `nonce`, and a PKCE verifier. |
+| Claim mapping shape | Hard-coded `groups`, provider presets, or configurable claim/value rules. | Start with configurable top-level claim/value rules. Provider presets can be added after Keycloak and one hosted provider prove the shape. |
+| Disabled users | Allow login, deny login, or reactivate automatically. | Deny login for disabled Host users. Reactivation must remain an explicit Host admin action. |
+| Audit events | Failures only, lifecycle events, or full token trace. | Audit login start, callback success/failure, denied role mapping, user provisioning, session creation, and provider configuration changes. Do not log provider tokens or full claim payloads. |
+| Completion tests | Unit tests only, real provider only, or mock plus reference provider. | Require unit tests with a mock OIDC provider for discovery, token exchange, ID token verification, PKCE/state rejection, role mapping, JIT provisioning, disabled-user denial, and session creation. Keep Keycloak as a manual reference test. |
+
+#### Phase 6 MVP Scope
+
+- Add a generic OIDC provider model with issuer, client id, client secret, callback URL, scopes, and explicit claim-to-Host-role mappings.
+- Add short-lived OIDC login transaction records with hashed `state`, hashed `nonce`, and PKCE verifier storage.
+- Add `GET /api/auth/oidc/login` to start Authorization Code with PKCE.
+- Add `GET /api/auth/oidc/callback` to validate the callback, exchange the code, verify the ID token through provider JWKS, map Host role, and create a normal Host session.
+- Preserve Host ownership of roles, module assignments, session lifetime, gateway access, and module identity tokens.
+- Create or update a Host user after successful external identity validation and explicit role mapping.
+- Deny login when no role mapping matches, the OIDC subject is missing, token validation fails, the transaction is expired, or the mapped Host user is disabled.
+- Do not store provider access tokens, refresh tokens, or ID tokens.
+- Do not implement account linking, multiple active OIDC providers, provider logout, OIDC admin UI, or background group revalidation in the first implementation slice.
 
 ### Phase 7 - Trusted proxy mode
 

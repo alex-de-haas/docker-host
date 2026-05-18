@@ -2,12 +2,19 @@
 
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Boxes, LoaderCircle, LogIn } from 'lucide-react';
+import { Boxes, KeyRound, LoaderCircle, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-export function LoginClient() {
+interface LoginClientProps {
+  oidcProvider?: {
+    id: string;
+    label: string;
+  };
+}
+
+export function LoginClient({ oidcProvider }: LoginClientProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +58,22 @@ export function LoginClient() {
             <p className="text-sm text-muted-foreground">Administrator sign in</p>
           </div>
         </div>
+
+        {oidcProvider && (
+          <div className="mb-5">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                window.location.href = '/api/auth/oidc/login';
+              }}
+            >
+              <KeyRound className="h-4 w-4" />
+              Continue with {oidcProvider.label}
+            </Button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">

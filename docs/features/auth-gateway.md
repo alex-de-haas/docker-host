@@ -351,6 +351,33 @@ External providers authenticate users. Docker Host still owns:
 - module-scoped identity tokens;
 - audit events.
 
+### Generic OIDC Provider
+
+The first generic OIDC implementation supports one active browser login provider using Authorization Code with PKCE.
+
+Implemented OIDC login surface:
+
+- `GET /api/auth/oidc/login` starts the OIDC authorization request;
+- `GET /api/auth/oidc/callback` validates the callback, exchanges the authorization code, verifies the ID token with provider JWKS, maps the external identity to a Host role, and creates a normal Host session cookie.
+
+Provider configuration can be supplied through Host auth state or environment variables for early deployments:
+
+| Environment variable | Meaning |
+| --- | --- |
+| `HOST_OIDC_ISSUER` | OIDC issuer URL. |
+| `HOST_OIDC_CLIENT_ID` | OIDC client id. |
+| `HOST_OIDC_CLIENT_SECRET` | Optional OIDC client secret. |
+| `HOST_OIDC_LABEL` | Optional label shown on the login page. |
+| `HOST_OIDC_SCOPES` | Optional comma- or whitespace-separated scopes. Defaults to `openid profile email`. |
+| `HOST_OIDC_GROUPS_CLAIM` | Optional claim name for group matching. Defaults to `groups`. |
+| `HOST_OIDC_ADMIN_GROUPS` | Groups that map to `host.admin`. |
+| `HOST_OIDC_USER_GROUPS` | Groups that map to `host.user`. |
+| `HOST_OIDC_CALLBACK_URL` | Optional explicit callback URL. |
+
+The OIDC MVP uses explicit claim mappings and denies login when no mapping grants `host.admin` or `host.user`. Just-in-time provisioning creates a Host user only after the ID token is verified and a role mapping succeeds. Host stores the external identity as `providerId + issuer + sub`, while modules continue to see the Host-owned user id in module identity tokens.
+
+Host does not persist OIDC access tokens, refresh tokens, or ID tokens. Provider logout, multiple active OIDC providers, automatic email-based account linking, OIDC admin UI, and background group revalidation are deferred.
+
 ## Developer Mode
 
 Module development should not require every change to run through a full Host install flow.

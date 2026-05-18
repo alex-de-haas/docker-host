@@ -92,6 +92,25 @@ export function createSessionCookieResponse<TBody>(
   return response;
 }
 
+export function createSessionRedirectResponse(
+  request: Request,
+  location: string,
+  sessionToken: string,
+  status = 302
+) {
+  const response = NextResponse.redirect(new URL(location, request.url), status);
+  const domain = getSessionCookieDomain(request);
+  response.cookies.set(SESSION_COOKIE_NAME, sessionToken, {
+    httpOnly: true,
+    maxAge: Math.floor(SESSION_ABSOLUTE_TIMEOUT_MS / 1000),
+    path: '/',
+    sameSite: 'lax',
+    secure: isSecureRequest(request),
+    ...(domain ? { domain } : {}),
+  });
+  return response;
+}
+
 export function createClearSessionCookieResponse<TBody>(body: TBody, status = 200, request?: Request) {
   const response = NextResponse.json(body, { status });
   const domain = request ? getSessionCookieDomain(request) : null;

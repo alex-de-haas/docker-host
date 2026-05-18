@@ -25,6 +25,7 @@ The current MVP API surface includes:
 - retry failed installs, clean up failed install artifacts, and remove installed modules through reviewed recovery plans;
 - create and apply reviewed module update plans;
 - retry failed updates separately from failed installs;
+- support local and generic OIDC browser authentication flows;
 - serve scoped module directory responses to modules through an internal service-token API.
 
 Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, module health checks, and richer external module exposure controls are later API slices.
@@ -592,6 +593,21 @@ The default is always to preserve module-owned data. Setting `deleteModuleData=t
 Installed module removal is blocked when other installed modules depend on the target module. Remove sets `operationStatus=removing` only while the operation is in progress. If removal fails before the registry entry is deleted, the module returns to `installed` with `lastError`.
 
 Lifecycle hardening marks modules `failed` when a lifecycle action discovers a missing Docker container or a missing required storage mapping. Transient Docker daemon, network, stop, or restart errors remain action errors and do not change persistent operation status.
+
+### Authentication
+
+Browser authentication uses Host-owned sessions stored server-side in the auth state. Host session cookies are HttpOnly and are never forwarded to modules by the gateway.
+
+Implemented browser auth endpoints:
+
+- `POST /api/auth/bootstrap` creates the first local `host.admin` after a valid local setup token.
+- `POST /api/auth/login` authenticates a local password user and creates a Host session.
+- `POST /api/auth/logout` revokes the current Host session.
+- `GET /api/auth/status` returns setup and current-session status.
+- `GET /api/auth/oidc/login` starts generic OIDC Authorization Code with PKCE when an OIDC provider is configured.
+- `GET /api/auth/oidc/callback` validates the OIDC callback, exchanges the authorization code, verifies the ID token with provider JWKS, applies explicit role mapping, creates or updates the Host user for the external identity, and creates a normal Host session.
+
+OIDC login denies access when the transaction state is invalid or expired, ID token verification fails, the token has no subject, no role mapping matches, or the mapped Host user is disabled. OIDC provider access tokens, refresh tokens, and ID tokens are not persisted.
 
 ### Internal module directory
 

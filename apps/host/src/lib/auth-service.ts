@@ -145,6 +145,7 @@ export async function bootstrapFirstAdmin(
       email,
       displayName: input.displayName?.trim() || undefined,
       role: 'host.admin',
+      authProvider: 'local',
       passwordHash,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
@@ -193,8 +194,13 @@ export async function authenticatePassword(
 ) {
   const email = normalizeEmail(input.email);
   const state = await readAuthState(config);
-  const user = state.users.find(candidate => candidate.email === email && !candidate.disabled);
-  const valid = user ? await verifyPassword(input.password, user.passwordHash) : false;
+  const user = state.users.find(candidate =>
+    candidate.email === email &&
+    !candidate.disabled &&
+    (candidate.authProvider === 'local' || candidate.authProvider === undefined) &&
+    typeof candidate.passwordHash === 'string'
+  );
+  const valid = user?.passwordHash ? await verifyPassword(input.password, user.passwordHash) : false;
 
   if (!user || !valid) {
     await appendAuthAuditEvent({
@@ -437,6 +443,51 @@ export async function createCliTokenForAdmin(
   };
 }
 
+export async function createSessionForUser(
+  userId: string,
+  auditType: string,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const now = new Date();
+  const sessionToken = generateToken('dhs_');
+
+  const { user, session } = await updateAuthState(state => {
+    const existingUser = state.users.find(candidate => candidate.id === userId && !candidate.disabled);
+    if (!existingUser) {
+      throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+    }
+
+    const createdSession = createSessionRecord(existingUser.id, sessionToken, now);
+    return {
+      state: {
+        ...state,
+        sessions: [...pruneExpiredSessions(state.sessions, now), createdSession],
+      },
+      result: {
+        user: existingUser,
+        session: createdSession,
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: auditType,
+    actorUserId: user.id,
+    success: true,
+    request,
+    details: {
+      sessionId: session.id,
+    },
+  }, config);
+
+  return {
+    sessionToken,
+    session,
+    user: toPrincipal(user),
+  };
+}
+
 export function isAuthServiceError(error: unknown): error is AuthServiceError {
   return error instanceof AuthServiceError;
 }
@@ -483,7 +534,7 @@ function normalizeEmail(email: string) {
 function toPrincipal(user: AuthUserRecord): HostPrincipal {
   return {
     id: user.id,
-    email: user.email,
+    email: user.email || undefined,
     displayName: user.displayName,
     role: user.role,
   };

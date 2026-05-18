@@ -10,10 +10,11 @@ export const AUTH_STORE_SCHEMA_VERSION = '0.1';
 
 export interface AuthUserRecord {
   id: string;
-  email: string;
+  email?: string;
   displayName?: string;
   role: HostRole;
-  passwordHash: string;
+  authProvider?: 'local' | 'oidc';
+  passwordHash?: string;
   createdAt: string;
   updatedAt: string;
   disabled?: boolean;
@@ -67,6 +68,52 @@ export interface AuthModuleDirectoryPolicyRecord {
   updatedAt: string;
 }
 
+export interface AuthExternalIdentityRecord {
+  id: string;
+  userId: string;
+  providerId: string;
+  issuer: string;
+  subject: string;
+  email?: string;
+  displayName?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string;
+}
+
+export interface AuthOidcRoleMappingRecord {
+  claim: string;
+  values: string[];
+  role: HostRole;
+}
+
+export interface AuthOidcProviderRecord {
+  id: string;
+  type: 'oidc';
+  enabled: boolean;
+  label: string;
+  issuer: string;
+  clientId: string;
+  clientSecret?: string;
+  callbackUrl?: string;
+  scopes: string[];
+  roleMappings: AuthOidcRoleMappingRecord[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthOidcTransactionRecord {
+  id: string;
+  providerId: string;
+  stateHash: string;
+  nonceHash: string;
+  codeVerifier: string;
+  redirectUri: string;
+  redirectTo?: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface AuthState {
   schemaVersion: string;
   users: AuthUserRecord[];
@@ -75,6 +122,9 @@ export interface AuthState {
   cliTokens: AuthCliTokenRecord[];
   moduleServiceTokens: AuthModuleServiceTokenRecord[];
   moduleDirectoryPolicies: AuthModuleDirectoryPolicyRecord[];
+  externalIdentities: AuthExternalIdentityRecord[];
+  oidcProviders: AuthOidcProviderRecord[];
+  oidcTransactions: AuthOidcTransactionRecord[];
   moduleAssignments: ModuleAccessAssignment[];
   updatedAt: string;
 }
@@ -160,6 +210,9 @@ export function createEmptyAuthState(): AuthState {
     cliTokens: [],
     moduleServiceTokens: [],
     moduleDirectoryPolicies: [],
+    externalIdentities: [],
+    oidcProviders: [],
+    oidcTransactions: [],
     moduleAssignments: [],
     updatedAt: new Date().toISOString(),
   };
@@ -208,6 +261,15 @@ function normalizeAuthState(parsed: unknown): AuthState {
     moduleDirectoryPolicies: Array.isArray(parsed.moduleDirectoryPolicies)
       ? parsed.moduleDirectoryPolicies.filter(isAuthModuleDirectoryPolicyRecord)
       : [],
+    externalIdentities: Array.isArray(parsed.externalIdentities)
+      ? parsed.externalIdentities.filter(isAuthExternalIdentityRecord)
+      : [],
+    oidcProviders: Array.isArray(parsed.oidcProviders)
+      ? parsed.oidcProviders.filter(isAuthOidcProviderRecord)
+      : [],
+    oidcTransactions: Array.isArray(parsed.oidcTransactions)
+      ? parsed.oidcTransactions.filter(isAuthOidcTransactionRecord)
+      : [],
     moduleAssignments: Array.isArray(parsed.moduleAssignments)
       ? parsed.moduleAssignments.filter(isModuleAccessAssignment)
       : [],
@@ -218,8 +280,9 @@ function normalizeAuthState(parsed: unknown): AuthState {
 function isAuthUserRecord(value: unknown): value is AuthUserRecord {
   return isObject(value) &&
     typeof value.id === 'string' &&
-    typeof value.email === 'string' &&
-    typeof value.passwordHash === 'string' &&
+    (typeof value.email === 'string' || value.email === undefined) &&
+    (typeof value.passwordHash === 'string' || value.passwordHash === undefined) &&
+    (value.authProvider === 'local' || value.authProvider === 'oidc' || value.authProvider === undefined) &&
     (value.role === 'host.admin' || value.role === 'host.user') &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string';
@@ -270,6 +333,58 @@ function isAuthModuleDirectoryPolicyRecord(value: unknown): value is AuthModuleD
     typeof value.moduleId === 'string' &&
     typeof value.includeEmail === 'boolean' &&
     typeof value.updatedAt === 'string';
+}
+
+function isAuthExternalIdentityRecord(value: unknown): value is AuthExternalIdentityRecord {
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.userId === 'string' &&
+    typeof value.providerId === 'string' &&
+    typeof value.issuer === 'string' &&
+    typeof value.subject === 'string' &&
+    (typeof value.email === 'string' || value.email === undefined) &&
+    (typeof value.displayName === 'string' || value.displayName === undefined) &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string';
+}
+
+function isAuthOidcProviderRecord(value: unknown): value is AuthOidcProviderRecord {
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    value.type === 'oidc' &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.label === 'string' &&
+    typeof value.issuer === 'string' &&
+    typeof value.clientId === 'string' &&
+    (typeof value.clientSecret === 'string' || value.clientSecret === undefined) &&
+    (typeof value.callbackUrl === 'string' || value.callbackUrl === undefined) &&
+    Array.isArray(value.scopes) &&
+    value.scopes.every(scope => typeof scope === 'string') &&
+    Array.isArray(value.roleMappings) &&
+    value.roleMappings.every(isAuthOidcRoleMappingRecord) &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string';
+}
+
+function isAuthOidcRoleMappingRecord(value: unknown): value is AuthOidcRoleMappingRecord {
+  return isObject(value) &&
+    typeof value.claim === 'string' &&
+    Array.isArray(value.values) &&
+    value.values.every(item => typeof item === 'string') &&
+    (value.role === 'host.admin' || value.role === 'host.user');
+}
+
+function isAuthOidcTransactionRecord(value: unknown): value is AuthOidcTransactionRecord {
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.providerId === 'string' &&
+    typeof value.stateHash === 'string' &&
+    typeof value.nonceHash === 'string' &&
+    typeof value.codeVerifier === 'string' &&
+    typeof value.redirectUri === 'string' &&
+    (typeof value.redirectTo === 'string' || value.redirectTo === undefined) &&
+    typeof value.createdAt === 'string' &&
+    typeof value.expiresAt === 'string';
 }
 
 function isModuleAccessAssignment(value: unknown): value is ModuleAccessAssignment {
