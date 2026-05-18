@@ -43,7 +43,7 @@ The recommended implementation direction is to start with local Host authenticat
 
 ### Phase 1 - Architecture and policy model
 
-**Status**: In Progress
+**Status**: Completed
 
 Define the core boundaries before implementation:
 
@@ -87,7 +87,7 @@ Host-level permissions and module-level permissions should remain separate:
 
 ### Phase 2 - Local Host authentication
 
-**Status**: In Progress
+**Status**: Completed
 
 Implement a local provider that works without external services:
 
@@ -160,7 +160,7 @@ These answers are accepted for the first local Host authentication implementatio
 
 ### Phase 3 - Host gateway for subdomain module exposure
 
-**Status**: Not Started
+**Status**: Completed
 
 Add a gateway layer that routes external module traffic through Docker Host:
 
@@ -229,7 +229,7 @@ These decisions define the first Host gateway implementation slice:
 
 ### Phase 4 - Module identity contract
 
-**Status**: In Progress
+**Status**: Completed
 
 Define how modules receive authenticated user context from Host:
 
@@ -332,7 +332,7 @@ Do not implement provider group passthrough, module-specific permission claims, 
 
 ### Phase 5 - Module user directory and module-owned permissions
 
-**Status**: In Progress
+**Status**: Completed
 
 Define a scoped Host API that modules can use to list users who have access to that module. The module should not receive the entire Host user directory unless the Host admin explicitly grants that capability later.
 
@@ -397,7 +397,7 @@ These decisions define the first module directory and module-owned permissions i
 
 ### Phase 6 - Generic OIDC provider mode
 
-**Status**: In Progress
+**Status**: Completed
 
 Add a provider implementation for standard OIDC:
 
@@ -457,7 +457,20 @@ These questions are resolved for the first generic OIDC implementation slice.
 - Do not store provider access tokens, refresh tokens, or ID tokens.
 - Do not implement account linking, multiple active OIDC providers, provider logout, OIDC admin UI, or background group revalidation in the first implementation slice.
 
-### Phase 7 - Trusted proxy mode
+### Phase 7 - Session and CLI credential operations
+
+**Status**: Not Started
+
+Complete the operational auth UX that is easier to design after local and OIDC sign-in both exist. This phase carries the work previously listed as Phase 2 closure items, but it is not required for the local-auth foundation.
+
+- Add administrator flows to create, rotate, and revoke CLI admin tokens.
+- Store CLI token material locally with restrictive file permissions or platform ACLs.
+- Add browser account-switching basics for multiple remembered Host sessions.
+- Add login throttling by account and request origin.
+- Add route-level security regression tests for CSRF rejection, protected API access, user/admin authorization, expired sessions, CLI token authorization, logout behavior, account switching, and pre-auth migration/setup-required mode.
+- Decide whether broader session management and revocation controls belong here or in the later audit/recovery operations phase.
+
+### Phase 8 - Trusted proxy mode
 
 **Status**: Not Started
 
@@ -480,7 +493,7 @@ Host should accept upstream identity only when the request comes through a trust
 - How should Host prevent direct-origin bypass when trusted proxy mode is enabled?
 - Should trusted proxy mode support non-browser API clients through service tokens or managed OAuth?
 
-### Phase 8 - Developer mode for modules
+### Phase 9 - Developer mode for modules
 
 **Status**: Not Started
 
@@ -510,7 +523,7 @@ Integrated:
 - How should integrated development work for modules that depend on other modules?
 - Should module dev mode be blocked automatically outside localhost/private networks?
 
-### Phase 9 - Audit, recovery, and operational controls
+### Phase 10 - Audit, recovery, and operational controls
 
 **Status**: Not Started
 
@@ -529,7 +542,7 @@ Add operational features needed for a secure admin surface:
 - Which recovery actions should require local machine access through CLI?
 - Should auth configuration changes require reauthentication?
 
-### Phase 10 - External ingress automation
+### Phase 11 - External ingress automation
 
 **Status**: Not Started
 

@@ -419,19 +419,33 @@ async function upsertOidcUser(
 }
 
 async function getActiveOidcProvider(config: HostRuntimeConfig) {
-  const state = await readAuthState(config);
-  return state.oidcProviders.find(provider => provider.enabled) ?? getEnvOidcProvider();
+  return selectSingleActiveOidcProvider(await getConfiguredOidcProviders(config));
 }
 
 async function getOidcProviderById(providerId: string, config: HostRuntimeConfig) {
+  const providers = await getConfiguredOidcProviders(config);
+  selectSingleActiveOidcProvider(providers);
+  return providers.find(provider => provider.id === providerId) ?? null;
+}
+
+async function getConfiguredOidcProviders(config: HostRuntimeConfig) {
   const state = await readAuthState(config);
-  const stateProvider = state.oidcProviders.find(provider => provider.id === providerId && provider.enabled);
-  if (stateProvider) {
-    return stateProvider;
+  const envProvider = getEnvOidcProvider();
+  return [
+    ...state.oidcProviders.filter(provider => provider.enabled),
+    ...(envProvider ? [envProvider] : []),
+  ];
+}
+
+function selectSingleActiveOidcProvider(providers: AuthOidcProviderRecord[]) {
+  if (providers.length > 1) {
+    throw new AuthServiceError(
+      'oidc_multiple_active_providers',
+      'Exactly one active OIDC browser login provider is supported.'
+    );
   }
 
-  const envProvider = getEnvOidcProvider();
-  return envProvider?.id === providerId ? envProvider : null;
+  return providers[0] ?? null;
 }
 
 function getEnvOidcProvider(): AuthOidcProviderRecord | null {
@@ -553,11 +567,15 @@ async function verifyOidcIdToken(
 ) {
   const jwksResponse = await client.fetch(discovery.jwks_uri);
   const jwks = await readJson<JSONWebKeySet>(jwksResponse, 'oidc_jwks_failed');
-  const { payload } = await jwtVerify(idToken, createLocalJWKSet(jwks), {
-    issuer: provider.issuer,
-    audience: provider.clientId,
-  });
-  return payload;
+  try {
+    const { payload } = await jwtVerify(idToken, createLocalJWKSet(jwks), {
+      issuer: provider.issuer,
+      audience: provider.clientId,
+    });
+    return payload;
+  } catch {
+    throw new AuthServiceError('oidc_token_invalid', 'OIDC ID token could not be verified.');
+  }
 }
 
 async function readJson<T>(response: Response, errorCode: string): Promise<T> {
@@ -636,8 +654,34 @@ function getOidcRedirectUri(
     return provider.callbackUrl;
   }
 
-  const origin = config.hostPublicOrigin || requestOrigin;
+  const origin = config.hostPublicOrigin || getLocalDevelopmentOrigin(requestOrigin);
   return `${origin.replace(/\/+$/, '')}${OIDC_CALLBACK_PATH}`;
+}
+
+function getLocalDevelopmentOrigin(requestOrigin: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(requestOrigin);
+  } catch {
+    throw new AuthServiceError(
+      'oidc_public_origin_required',
+      'HOST_PUBLIC_ORIGIN or an explicit OIDC callback URL is required for non-loopback OIDC login.'
+    );
+  }
+
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const loopback = hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname.endsWith('.localhost');
+  if (!loopback) {
+    throw new AuthServiceError(
+      'oidc_public_origin_required',
+      'HOST_PUBLIC_ORIGIN or an explicit OIDC callback URL is required for non-loopback OIDC login.'
+    );
+  }
+
+  return parsed.origin;
 }
 
 function createPkceCodeChallenge(codeVerifier: string) {

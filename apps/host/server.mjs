@@ -90,13 +90,15 @@ server.prependListener('upgrade', async (req, socket, head) => {
   }
 });
 
-await app.prepare();
+if (isMainModule()) {
+  await app.prepare();
 
-server.listen(port, hostname, () => {
-  console.log(
-    `> Docker Host listening at http://${hostname}:${port} as ${dev ? 'development' : 'production'}`
-  );
-});
+  server.listen(port, hostname, () => {
+    console.log(
+      `> Docker Host listening at http://${hostname}:${port} as ${dev ? 'development' : 'production'}`
+    );
+  });
+}
 
 async function resolveGatewayRequest(req) {
   const hostnameValue = parseHostname(req.headers.host);
@@ -164,7 +166,7 @@ async function resolveGatewayRequest(req) {
   };
 }
 
-async function proxyHttpRequest(req, res, target) {
+export async function proxyHttpRequest(req, res, target) {
   if (!target.access.allowed) {
     await sendDenied(req, res, target);
     return;
@@ -197,7 +199,7 @@ async function proxyHttpRequest(req, res, target) {
   req.pipe(proxyReq);
 }
 
-async function proxyWebSocketUpgrade(req, socket, head, target) {
+export async function proxyWebSocketUpgrade(req, socket, head, target) {
   const identityToken = await createModuleIdentityToken(target, getRuntimeConfig());
   const upstream = net.connect(target.containerPort, target.networkAlias);
 
@@ -259,7 +261,7 @@ async function sendDenied(req, res, target) {
   });
 }
 
-function buildProxyRequestHeaders(req, target, upgrade, identityToken = null) {
+export function buildProxyRequestHeaders(req, target, upgrade, identityToken = null) {
   const headers = {};
 
   for (const [name, value] of Object.entries(req.headers)) {
@@ -300,7 +302,7 @@ function buildProxyRequestHeaders(req, target, upgrade, identityToken = null) {
   return headers;
 }
 
-function buildProxyResponseHeaders(responseHeaders, target) {
+export function buildProxyResponseHeaders(responseHeaders, target) {
   const headers = {};
   for (const [name, value] of Object.entries(responseHeaders)) {
     const lowerName = name.toLowerCase();
@@ -688,4 +690,8 @@ function isInstalledModuleRecord(value) {
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isMainModule() {
+  return process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 }

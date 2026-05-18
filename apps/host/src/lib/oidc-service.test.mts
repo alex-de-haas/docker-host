@@ -9,7 +9,7 @@ import {
   generateKeyPair,
   type KeyLike,
 } from 'jose';
-import { authenticateSessionToken } from './auth-service.ts';
+import { AuthServiceError, authenticateSessionToken } from './auth-service.ts';
 import {
   createEmptyAuthState,
   readAuthStateSnapshot,
@@ -158,6 +158,187 @@ test('OIDC callback rejects disabled mapped Host users', async () => {
   );
 });
 
+test('OIDC login requires an explicit public origin outside local development', async () => {
+  const config = await createTestConfig();
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    oidcProviders: [testProvider()],
+  }, config);
+  const signing = await createSigningFixture();
+
+  await assert.rejects(
+    startOidcLogin({
+      requestOrigin: 'https://host.example.test',
+    }, undefined, config, createMockOidcClient(signing)),
+    (error: unknown) =>
+      error instanceof AuthServiceError &&
+      error.code === 'oidc_public_origin_required'
+  );
+});
+
+test('OIDC login rejects multiple active browser providers', async () => {
+  const config = await createTestConfig();
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    oidcProviders: [
+      testProvider(),
+      {
+        ...testProvider(),
+        id: 'second-provider',
+        issuer: 'https://second-idp.example.test',
+      },
+    ],
+  }, config);
+  const signing = await createSigningFixture();
+
+  await assert.rejects(
+    startOidcLogin({
+      requestOrigin: 'http://localhost:3000',
+    }, undefined, config, createMockOidcClient(signing)),
+    (error: unknown) =>
+      error instanceof AuthServiceError &&
+      error.code === 'oidc_multiple_active_providers'
+  );
+});
+
+test('OIDC callback rejects invalid and expired state', async () => {
+  const config = await createTestConfig();
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    oidcProviders: [testProvider()],
+  }, config);
+  const signing = await createSigningFixture();
+  const client = createMockOidcClient(signing);
+
+  await assert.rejects(
+    completeOidcLogin({
+      state: 'unknown-state',
+      code: 'authorization-code',
+      requestOrigin: 'http://localhost:3000',
+    }, undefined, config, client),
+    (error: unknown) =>
+      error instanceof AuthServiceError &&
+      error.code === 'oidc_invalid_state'
+  );
+
+  const login = await startOidcLogin({
+    requestOrigin: 'http://localhost:3000',
+  }, undefined, config, client);
+  const authorizationUrl = new URL(login.authorizationUrl);
+  const state = await readAuthStateSnapshot(config);
+  await writeAuthState({
+    ...state,
+    oidcTransactions: state.oidcTransactions.map(transaction => ({
+      ...transaction,
+      expiresAt: '2020-01-01T00:00:00.000Z',
+    })),
+  }, config);
+
+  await assert.rejects(
+    completeOidcLogin({
+      state: authorizationUrl.searchParams.get('state') || '',
+      code: 'authorization-code',
+      requestOrigin: 'http://localhost:3000',
+    }, undefined, config, client),
+    (error: unknown) =>
+      error instanceof AuthServiceError &&
+      error.code === 'oidc_invalid_state'
+  );
+});
+
+test('OIDC callback rejects invalid nonce and missing subject', async () => {
+  const config = await createTestConfig();
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    oidcProviders: [testProvider()],
+  }, config);
+  const signing = await createSigningFixture();
+  const client = createMockOidcClient(signing);
+
+  const firstLogin = await startOidcLogin({
+    requestOrigin: 'http://localhost:3000',
+  }, undefined, config, client);
+  const firstAuthorizationUrl = new URL(firstLogin.authorizationUrl);
+  signing.idToken = await signIdToken(signing.privateKey, {
+    nonce: 'wrong-nonce',
+    groups: ['docker-host-users'],
+    subject: 'subject-user',
+  });
+
+  await assert.rejects(
+    completeOidcLogin({
+      state: firstAuthorizationUrl.searchParams.get('state') || '',
+      code: 'authorization-code',
+      requestOrigin: 'http://localhost:3000',
+    }, undefined, config, client),
+    (error: unknown) =>
+      error instanceof AuthServiceError &&
+      error.code === 'oidc_invalid_nonce'
+  );
+
+  const secondLogin = await startOidcLogin({
+    requestOrigin: 'http://localhost:3000',
+  }, undefined, config, client);
+  const secondAuthorizationUrl = new URL(secondLogin.authorizationUrl);
+  signing.idToken = await signIdToken(signing.privateKey, {
+    nonce: secondAuthorizationUrl.searchParams.get('nonce') || '',
+    groups: ['docker-host-users'],
+  });
+
+  await assert.rejects(
+    completeOidcLogin({
+      state: secondAuthorizationUrl.searchParams.get('state') || '',
+      code: 'authorization-code',
+      requestOrigin: 'http://localhost:3000',
+    }, undefined, config, client),
+    (error: unknown) =>
+      error instanceof AuthServiceError &&
+      error.code === 'oidc_missing_subject'
+  );
+});
+
+test('OIDC provider hardening rejects discovery, token, JWKS, and ID-token failures', async () => {
+  const config = await createTestConfig();
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    oidcProviders: [testProvider()],
+  }, config);
+  const signing = await createSigningFixture();
+
+  await assert.rejects(
+    startOidcLogin({
+      requestOrigin: 'http://localhost:3000',
+    }, undefined, config, createMockOidcClient(signing, {
+      discoveryBody: {
+        issuer: 'https://unexpected.example.test',
+        authorization_endpoint: authorizationEndpoint,
+        token_endpoint: tokenEndpoint,
+        jwks_uri: jwksUri,
+      },
+    })),
+    (error: unknown) =>
+      error instanceof AuthServiceError &&
+      error.code === 'oidc_discovery_invalid'
+  );
+
+  await assertOidcCallbackFailure(config, signing, {
+    tokenStatus: 500,
+    tokenBody: { error: 'server_error' },
+  }, 'oidc_token_exchange_failed');
+  await assertOidcCallbackFailure(config, signing, {
+    jwksStatus: 500,
+    jwksBody: { error: 'server_error' },
+  }, 'oidc_jwks_failed');
+  await assertOidcCallbackFailure(config, signing, {
+    tokenFactory: async nonce => await signIdToken(signing.privateKey, {
+      nonce,
+      groups: ['docker-host-users'],
+      subject: 'subject-user',
+      audience: 'wrong-audience',
+    }),
+  }, 'oidc_token_invalid');
+});
+
 function testProvider(): AuthOidcProviderRecord {
   const now = new Date().toISOString();
   return {
@@ -191,12 +372,14 @@ async function signIdToken(
   input: {
     nonce: string;
     groups: string[];
-    subject: string;
+    subject?: string;
     email?: string;
     name?: string;
+    audience?: string;
+    expiresIn?: string;
   }
 ) {
-  return await new SignJWT({
+  let jwt = new SignJWT({
     nonce: input.nonce,
     groups: input.groups,
     ...(input.email ? { email: input.email } : {}),
@@ -208,11 +391,15 @@ async function signIdToken(
       typ: 'JWT',
     })
     .setIssuer(issuer)
-    .setSubject(input.subject)
-    .setAudience(clientId)
+    .setAudience(input.audience || clientId)
     .setIssuedAt()
-    .setExpirationTime('5m')
-    .sign(privateKey);
+    .setExpirationTime(input.expiresIn || '5m');
+
+  if (input.subject) {
+    jwt = jwt.setSubject(input.subject);
+  }
+
+  return await jwt.sign(privateKey);
 }
 
 async function createSigningFixture() {
@@ -230,17 +417,27 @@ async function createSigningFixture() {
   };
 }
 
-function createMockOidcClient(signing: Awaited<ReturnType<typeof createSigningFixture>>) {
+function createMockOidcClient(
+  signing: Awaited<ReturnType<typeof createSigningFixture>>,
+  options: {
+    discoveryStatus?: number;
+    discoveryBody?: unknown;
+    tokenStatus?: number;
+    tokenBody?: unknown;
+    jwksStatus?: number;
+    jwksBody?: unknown;
+  } = {}
+) {
   return {
     async fetch(input: string | URL, init?: RequestInit) {
       const url = String(input);
       if (url === `${issuer}/.well-known/openid-configuration`) {
-        return jsonResponse({
+        return jsonResponse(options.discoveryBody ?? {
           issuer,
           authorization_endpoint: authorizationEndpoint,
           token_endpoint: tokenEndpoint,
           jwks_uri: jwksUri,
-        });
+        }, options.discoveryStatus);
       }
 
       if (url === tokenEndpoint) {
@@ -250,15 +447,15 @@ function createMockOidcClient(signing: Awaited<ReturnType<typeof createSigningFi
         assert.equal(body?.get('client_id'), clientId);
         assert.equal(body?.get('client_secret'), 'secret');
         assert.ok(body?.get('code_verifier')?.startsWith('oidc_pkce_'));
-        return jsonResponse({
+        return jsonResponse(options.tokenBody ?? {
           id_token: signing.idToken,
-        });
+        }, options.tokenStatus);
       }
 
       if (url === jwksUri) {
-        return jsonResponse({
+        return jsonResponse(options.jwksBody ?? {
           keys: [signing.publicJwk],
-        });
+        }, options.jwksStatus);
       }
 
       return new Response('not found', { status: 404 });
@@ -266,9 +463,46 @@ function createMockOidcClient(signing: Awaited<ReturnType<typeof createSigningFi
   };
 }
 
-function jsonResponse(body: unknown) {
+async function assertOidcCallbackFailure(
+  config: HostRuntimeConfig,
+  signing: Awaited<ReturnType<typeof createSigningFixture>>,
+  options: {
+    tokenStatus?: number;
+    tokenBody?: unknown;
+    jwksStatus?: number;
+    jwksBody?: unknown;
+    tokenFactory?: (nonce: string) => Promise<string>;
+  },
+  expectedCode: string
+) {
+  const client = createMockOidcClient(signing, options);
+  const login = await startOidcLogin({
+    requestOrigin: 'http://localhost:3000',
+  }, undefined, config, client);
+  const authorizationUrl = new URL(login.authorizationUrl);
+  signing.idToken = options.tokenFactory
+    ? await options.tokenFactory(authorizationUrl.searchParams.get('nonce') || '')
+    : await signIdToken(signing.privateKey, {
+        nonce: authorizationUrl.searchParams.get('nonce') || '',
+        groups: ['docker-host-users'],
+        subject: `subject-${expectedCode}`,
+      });
+
+  await assert.rejects(
+    completeOidcLogin({
+      state: authorizationUrl.searchParams.get('state') || '',
+      code: 'authorization-code',
+      requestOrigin: 'http://localhost:3000',
+    }, undefined, config, client),
+    (error: unknown) =>
+      error instanceof AuthServiceError &&
+      error.code === expectedCode
+  );
+}
+
+function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: {
       'Content-Type': 'application/json',
     },
