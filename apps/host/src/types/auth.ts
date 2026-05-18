@@ -12,6 +12,7 @@ export type HostApiAction =
   | 'modules.remove'
   | 'modules.lifecycle'
   | 'modules.exposure.manage'
+  | 'modules.directory.manage'
   | 'modules.recovery';
 
 export interface HostPrincipal {
@@ -39,4 +40,3 @@ export interface ModuleAccessDecision {
   policy: ModuleExposurePolicy;
   reason: ModuleAccessReason;
 }
-

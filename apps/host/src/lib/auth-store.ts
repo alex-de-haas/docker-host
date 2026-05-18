@@ -50,12 +50,31 @@ export interface AuthCliTokenRecord {
   scope: 'host.admin.cli';
 }
 
+export interface AuthModuleServiceTokenRecord {
+  id: string;
+  moduleId: string;
+  tokenHash: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+  scope: 'module.directory';
+}
+
+export interface AuthModuleDirectoryPolicyRecord {
+  moduleId: string;
+  includeEmail: boolean;
+  updatedAt: string;
+}
+
 export interface AuthState {
   schemaVersion: string;
   users: AuthUserRecord[];
   sessions: AuthSessionRecord[];
   setupTokens: AuthSetupTokenRecord[];
   cliTokens: AuthCliTokenRecord[];
+  moduleServiceTokens: AuthModuleServiceTokenRecord[];
+  moduleDirectoryPolicies: AuthModuleDirectoryPolicyRecord[];
   moduleAssignments: ModuleAccessAssignment[];
   updatedAt: string;
 }
@@ -139,6 +158,8 @@ export function createEmptyAuthState(): AuthState {
     sessions: [],
     setupTokens: [],
     cliTokens: [],
+    moduleServiceTokens: [],
+    moduleDirectoryPolicies: [],
     moduleAssignments: [],
     updatedAt: new Date().toISOString(),
   };
@@ -181,6 +202,12 @@ function normalizeAuthState(parsed: unknown): AuthState {
       ? parsed.setupTokens.filter(isAuthSetupTokenRecord)
       : [],
     cliTokens: Array.isArray(parsed.cliTokens) ? parsed.cliTokens.filter(isAuthCliTokenRecord) : [],
+    moduleServiceTokens: Array.isArray(parsed.moduleServiceTokens)
+      ? parsed.moduleServiceTokens.filter(isAuthModuleServiceTokenRecord)
+      : [],
+    moduleDirectoryPolicies: Array.isArray(parsed.moduleDirectoryPolicies)
+      ? parsed.moduleDirectoryPolicies.filter(isAuthModuleDirectoryPolicyRecord)
+      : [],
     moduleAssignments: Array.isArray(parsed.moduleAssignments)
       ? parsed.moduleAssignments.filter(isModuleAccessAssignment)
       : [],
@@ -226,6 +253,23 @@ function isAuthCliTokenRecord(value: unknown): value is AuthCliTokenRecord {
     typeof value.label === 'string' &&
     typeof value.createdAt === 'string' &&
     value.scope === 'host.admin.cli';
+}
+
+function isAuthModuleServiceTokenRecord(value: unknown): value is AuthModuleServiceTokenRecord {
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.moduleId === 'string' &&
+    typeof value.tokenHash === 'string' &&
+    typeof value.label === 'string' &&
+    typeof value.createdAt === 'string' &&
+    value.scope === 'module.directory';
+}
+
+function isAuthModuleDirectoryPolicyRecord(value: unknown): value is AuthModuleDirectoryPolicyRecord {
+  return isObject(value) &&
+    typeof value.moduleId === 'string' &&
+    typeof value.includeEmail === 'boolean' &&
+    typeof value.updatedAt === 'string';
 }
 
 function isModuleAccessAssignment(value: unknown): value is ModuleAccessAssignment {

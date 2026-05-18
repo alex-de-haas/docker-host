@@ -332,7 +332,7 @@ Do not implement provider group passthrough, module-specific permission claims, 
 
 ### Phase 5 - Module user directory and module-owned permissions
 
-**Status**: Not Started
+**Status**: In Progress
 
 Define a scoped Host API that modules can use to list users who have access to that module. The module should not receive the entire Host user directory unless the Host admin explicitly grants that capability later.
 
@@ -361,12 +361,39 @@ Example scoped directory response:
 
 The directory API should require a module service token or another machine-to-machine credential. It should not be callable by arbitrary browser users.
 
-#### Open Questions
+#### Decisions Before Phase 5
 
-- Should `loginRequired` modules be able to query all Host users, only users who have opened the module, or only users explicitly assigned later?
-- Should modules store permissions against Host user ids, external provider subject ids, or both?
-- Should Host expose user email to modules by default, or should email be an optional claim controlled by policy?
-- What machine-to-machine credential should modules use to call Host internal APIs?
+These decisions define the first module directory and module-owned permissions implementation slice.
+
+| Topic | Options considered | Recommended decision |
+| --- | --- | --- |
+| Directory scope for `loginRequired` modules | Return all enabled Host users, return only users who have opened the module, or return only explicitly assigned users. | Use explicit module assignment as the first directory scope, even for `loginRequired` modules. `loginRequired` controls gateway access, while directory visibility is a separate privacy boundary. A later phase can add a Host admin setting that grants a module broader directory access. |
+| Assignment granularity | Store assignments by `moduleId`, by gateway exposure id, or by `moduleId + portKey`. | Keep assignments module-scoped by `moduleId` for Phase 5. Module permissions are module-owned, and splitting the Host directory by exposure or port would make permissions harder for modules to reason about. |
+| `host.admin` directory inclusion | Always include `host.admin`, include only explicitly assigned admins, or include admins only when they have opened the module. | Include only explicitly assigned admins in the directory response. Admin gateway access is for bootstrap and recovery, but it should not silently disclose admin identities to every module. |
+| Permission subject identifiers | Modules store permissions against Host user ids, external provider subject ids, or both. | Modules should store permissions against stable Host user ids from the Host token `sub`. External provider subject ids can be added later as optional identity metadata after OIDC and trusted proxy modes exist. |
+| Directory response fields | Return `id` only, return `id` plus display fields, or allow policy-controlled fields. | Return `id`, `displayName`, and `hostRole` by default. Make `email` opt-in per module or per exposure because email is personally identifying and may not be needed for module permission assignment. |
+| Disabled or deleted users | Hide them, return tombstones, or keep full records until cleanup. | Hide disabled users from normal directory responses and reserve tombstones for a later sync/audit API. This keeps the MVP simple and prevents modules from granting new permissions to disabled users. |
+| Module service credential type | Per-module static bearer token, per-install service token, signed client assertion, or mTLS. | Use a Host-generated per-installed-module service token for Phase 5. Store only a server-side hash in Host auth state, expose the raw token once during install/credential rotation, and mount or inject it into the module as a secret environment variable. |
+| Credential storage and rotation | Store in auth state, module state, or gateway state; rotate manually or automatically. | Store service credential hashes in auth state because they authorize Host internal APIs. Support explicit admin rotation and revocation in the MVP; automatic rotation can wait until modules have a refresh protocol. |
+| Module API authorization | Trust the requested `moduleId`, derive module from credential, or require both to match. | Derive the authorized module from the service token and require any path `moduleId` to match it. A module must never be able to ask for another module's directory by changing a URL parameter. |
+| Network boundary | Expose directory API on public Host API, internal Docker network only, or both with different auth. | Serve the module directory API on the Host internal origin used by modules, defaulting to `http://docker-host:3000`. It may share the same process, but it should require a module service token and should not be callable with browser session cookies. |
+| Endpoint contract | Single list endpoint, paginated endpoint, or query/filter API. | Start with `GET /api/internal/modules/{moduleId}/directory/users` returning a schema-versioned response. Include pagination fields even if the first implementation returns all assigned users, so the contract can grow without a breaking change. |
+| Directory caching | No caching, fixed TTL, or ETag/conditional requests. | Allow short module-side caching with a small TTL such as 60 seconds and include `updatedAt` in the response. Add ETag or long-poll invalidation only if real modules need it. |
+| Audit events | Audit every successful query, denied queries only, or credential lifecycle and policy changes only. | Audit credential create/rotate/revoke and denied directory access. Do not audit every successful directory read in the MVP because modules may query on startup or permission screens. |
+| Admin UI scope | Build user and assignment management UI, backend API only, or minimal read-only diagnostics. | Phase 5 should prioritize backend service credential and directory APIs. Reuse existing assignment data. A richer Host user/assignment UI should be a separate UX slice unless it blocks manual testing. |
+| Completion tests | Unit tests only, API route tests, or end-to-end module fixture. | Require API/service tests for credential authorization, cross-module denial, disabled user filtering, email opt-in behavior, credential rotation/revocation, and directory behavior for `loginRequired` and `assignedUsersOnly` modules. Add an end-to-end fixture only after Phase 4 gateway identity tests are stable. |
+
+#### Phase 5 MVP Scope
+
+- Add Host-generated per-installed-module service tokens with server-side token hashes in auth state.
+- Inject `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN` into newly created module containers.
+- Add a scoped internal directory endpoint at `GET /api/internal/modules/{moduleId}/directory/users`.
+- Add admin-only endpoints for service token creation/revocation and module directory policy updates.
+- Authorize directory requests with module service tokens only; do not accept browser session cookies.
+- Return only explicitly assigned, enabled Host users in directory responses.
+- Omit email by default and include it only when a module directory policy opts in.
+- Add audit events for service token creation, revocation, rejected service tokens, denied cross-module directory reads, and directory policy changes.
+- Add focused tests for directory scope, credential authorization, cross-module denial, email opt-in behavior, and token revocation.
 
 ### Phase 6 - Generic OIDC provider mode
 

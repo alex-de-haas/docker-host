@@ -308,6 +308,13 @@ Preferred model:
 - Module stores module-specific roles and permissions.
 - Module can call a Host internal API to list users assigned to that module.
 - The API requires a module service credential, not a browser user token.
+- Directory scope is explicit module assignment, even for `loginRequired` modules.
+- `host.admin` users appear in a module directory only when explicitly assigned.
+- Modules should store module-owned permissions against stable Host user ids from Host-issued token `sub`.
+- Email is omitted by default and requires a module directory policy opt-in.
+- Disabled Host users are hidden from normal directory responses.
+- The MVP endpoint is `GET /api/internal/modules/{moduleId}/directory/users`.
+- Newly created module containers receive `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN`.
 
 Example response:
 
@@ -325,7 +332,7 @@ Example response:
 }
 ```
 
-For `loginRequired` modules, the exact directory behavior is still open: a module may need all authenticated users, users who have opened the module before, or only users explicitly assigned later.
+The directory response is schema-versioned and may include pagination fields even when the first implementation returns all assigned users in one response. Modules may cache responses briefly, for example for 60 seconds, but Host remains authoritative for assignment changes.
 
 ## External Providers
 
@@ -374,5 +381,3 @@ Integrated development should be used to verify:
 
 - Should Host remember a preferred account per module hostname?
 - What exact revalidation policy should long-lived realtime connections use?
-- Should `loginRequired` modules be able to query all Host users, users who have opened the module, or only users explicitly assigned later?
-- What module service credential should be used for module-to-Host internal APIs?
