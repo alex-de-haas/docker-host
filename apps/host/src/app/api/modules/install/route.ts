@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
+import { requireHostAdmin } from '@/lib/auth-http';
 import { applyModuleInstallRequest } from '@/lib/module-install-apply';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
+  const auth = await requireHostAdmin(request, 'modules.install');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   let body: unknown;
 
   try {

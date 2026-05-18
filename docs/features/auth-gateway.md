@@ -29,6 +29,8 @@ Docker Host should not depend on a regular managed module for its own authentica
 - Modules may query only a scoped list of users relevant to that module.
 - Multiple real-world accounts are modeled as multiple Host users with account switching.
 - Identity profiles are deferred until there is a concrete need to link multiple external identities into one Host person.
+- Local authentication stores Host-owned users, sessions, CLI tokens, assignments, and audit state in dedicated versioned JSON files under the Host data root.
+- SQLite is not part of the planned local auth persistence model.
 
 ## Gateway Routing
 
@@ -91,7 +93,33 @@ Host role is included in module identity so modules can make bootstrap or admin 
 
 CLI module commands should act as a local administrator tool. The CLI should authenticate to the Host API using local administrator credentials or a local administrator token created during Host setup. The token or credential material must remain local to the physical machine and must not be exposed to remote callers.
 
-The exact credential storage and recovery flow belongs to the local authentication phase, but the policy model treats authenticated CLI module commands as `host.admin` operations.
+The accepted local authentication direction is to use a revocable local admin token for CLI access. The Host stores only a server-side hash of the token. The CLI stores the token material under the local Docker Host config area with restrictive file permissions or platform ACLs. Authenticated CLI module commands are treated as `host.admin` operations.
+
+## Local Authentication Decisions
+
+Phase 2 uses a local password provider, opaque server-side sessions, JSON persistence, local setup and recovery tokens, and structured audit records.
+
+Key local-auth decisions:
+
+- password authentication is the first local credential type;
+- the first `host.admin` is created through a local CLI-generated setup token;
+- setup tokens are single-use, stored hashed, expire after 15 minutes, and are invalidated after first admin creation;
+- browser sessions use opaque random tokens in HttpOnly cookies with server-side hashed token records;
+- default browser sessions use a 12-hour idle timeout and a 14-day absolute lifetime;
+- logout revokes the current account session by default;
+- multiple browser accounts may be remembered, with one active account per request;
+- all current Host API functionality remains `host.admin` only, including Host status and module listing;
+- pre-auth installations enter setup-required mode while preserving existing modules and data;
+- emergency recovery requires local machine or container access.
+
+Implemented local-auth surface:
+
+- `/setup` creates the first Host administrator when supplied with a valid setup token;
+- `/login` authenticates existing Host users;
+- `/api/auth/bootstrap`, `/api/auth/login`, `/api/auth/logout`, and `/api/auth/status` own browser auth flow;
+- `/api/health` is the minimal unauthenticated health endpoint;
+- current Host API routes for Host status, modules, containers, images, install, update, lifecycle, remove, and recovery require `host.admin`;
+- `docker-host auth setup-token` writes a hashed one-time setup token into the Host auth JSON store through local filesystem access.
 
 ## Module-Owned Permissions
 
@@ -249,9 +277,7 @@ Integrated development should be used to verify:
 ## Open Questions
 
 - Should Host remember a preferred account per module hostname?
-- Which persistence backend should own users, sessions, assignments, signing keys, and audit events?
 - How should signing keys be rotated?
 - What exact revalidation policy should long-lived realtime connections use?
 - Should `loginRequired` modules be able to query all Host users, users who have opened the module, or only users explicitly assigned later?
 - What module service credential should be used for module-to-Host internal APIs?
-- What exact local credential form should CLI store or request for administrator access?

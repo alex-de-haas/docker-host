@@ -84,9 +84,12 @@ docker-host status
 docker-host logs
 docker-host open
 docker-host config
+docker-host auth
 ```
 
 Lifecycle-команды работают напрямую через Docker daemon, потому что Host API может быть еще не запущен или может быть сломан.
+
+Auth bootstrap and recovery commands also remain local-first. `docker-host auth setup-token` writes a one-time setup token hash into the Host data root so the first administrator can be created through `/setup` without relying on a pre-existing Host API session.
 
 `docker-host uninstall` сохраняет сам CLI executable, но удаляет Host-managed runtime и local state: Host container, known module containers, Host/module images when Docker allows it, shared module network when it is no longer in use, launch configuration, and Host state under the data root. После этого `docker-host install` должен восстановить launch configuration и базовую структуру директорий.
 

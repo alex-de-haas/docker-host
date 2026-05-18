@@ -82,16 +82,12 @@ Host-level permissions and module-level permissions should remain separate:
 
 - Authentication is mandatory by default for local Host instances, including `localhost`. Development bypass must be explicit configuration, not the default.
 - Direct public module port publishing is not part of the normal exposure model. It may exist only as an explicit development override; production-like access goes through the Host gateway.
-- CLI module commands should use local administrator credentials or a local administrator token. The CLI is expected to run on the local physical machine and should not expose those credentials outside the machine.
+- CLI admin access in Phase 2 uses a revocable local admin token. The Host stores only a server-side hash, and the CLI stores token material locally with restrictive file permissions or platform ACLs. The CLI is expected to run on the local physical machine and should not expose those credentials outside the machine.
 - `host.admin` is allowed through the Host gateway for module bootstrap and configuration. Internal module administrator rights remain module-owned and may be granted, mapped, or ignored by the module.
-
-#### Open Questions
-
-- What exact local credential form should the CLI store or request for admin access in Phase 2?
 
 ### Phase 2 - Local Host authentication
 
-**Status**: Not Started
+**Status**: In Progress
 
 Implement a local provider that works without external services:
 
@@ -104,6 +100,18 @@ Implement a local provider that works without external services:
 - provide logout and session revocation;
 - log authentication and authorization decisions.
 
+Initial implementation slice:
+
+- dedicated JSON auth store under the Host data root;
+- local setup-token bootstrap for the first administrator;
+- password hashing and opaque server-side browser sessions;
+- login, logout, bootstrap, auth status, and public health API routes;
+- Host API route protection with `host.admin` checks;
+- same-origin checks for mutating cookie-authenticated API requests;
+- setup and login UI pages;
+- `docker-host auth setup-token` for local setup token creation;
+- auth core tests for bootstrap, weak-password rejection, login, session validation, and revocation.
+
 This phase should produce the minimum viable security boundary for a local-first Docker Host installation.
 
 The first identity model should be simple:
@@ -115,13 +123,40 @@ work@example.com     -> host.user
 
 Fast switching between these accounts should be a UI/session feature. It should not require a separate profile model in the MVP.
 
-#### Open Questions
+#### Decisions Before Phase 2
 
-- Should local auth start with password login, passkeys, or password login with passkeys planned later?
-- Where should local users, roles, and sessions be persisted: `modules.json`, a separate JSON file, or SQLite?
-- What is the emergency recovery flow if the only admin account is lost?
-- What session lifetime and idle timeout should be used by default?
-- Should Host remember a preferred account per module subdomain for faster switching?
+These answers are accepted for the first local Host authentication implementation:
+
+| Topic | Decision |
+| --- | --- |
+| Deployment boundary | Phase 2 protects the local-first Host. The current CLI-published Host UI remains loopback-bound. Private LAN and reverse-proxy deployments are not the first target, but auth code must not depend on `localhost` except for explicit setup and recovery checks. |
+| Unauthenticated routes | Default deny. Allow only static assets, login, setup-token bootstrap, idempotent logout, local-only recovery token flow, and a minimal public health endpoint. Full Host status, modules, containers, images, and fixtures are protected unless an explicit development bypass is enabled. |
+| HTTPS | HTTP is allowed for loopback. Non-loopback session cookies require HTTPS. Private-network HTTP is supported only behind an explicit development override. |
+| First local credential type | Use password authentication for Phase 2. Passkeys are deferred. |
+| Password policy and throttling | Require a minimum 12-character password, reject obviously weak values, hash with a per-user salt and recorded KDF parameters, rate-limit by account and request origin, and audit login failures. |
+| First admin creation | Create the first `host.admin` through a local CLI-generated setup token that opens or unlocks the setup UI. A first arbitrary browser visitor must not be able to claim admin access. |
+| Setup token lifetime | Setup tokens are single-use, stored hashed, expire after 15 minutes, and are invalidated immediately after the first admin is created. New setup tokens require local CLI or container access. |
+| Auth persistence boundary | Store users, password hashes, sessions, CLI tokens, recovery tokens, role assignments, and audit events under a dedicated versioned auth directory in the Host data root, for example `/data/auth/`. Do not store auth state in `modules.json`. |
+| SQLite | Do not introduce SQLite for Phase 2. JSON files are the intended local persistence model. Future external providers may own external identity, but Docker Host still stores Host-owned roles, local sessions, tokens, assignments, and audit state in JSON unless a concrete operational requirement proves otherwise. |
+| CLI admin credential | Use a revocable local admin token with a narrow CLI scope. Store only the server-side token hash in Host auth state, and store the client token material in the local CLI config area with restrictive file permissions or platform ACLs. Provide rotation and revocation. |
+| Emergency recovery | Recovery requires local machine or container access. CLI should be able to mint a recovery/setup token or reset local admin access. No unauthenticated remote recovery endpoint is allowed. |
+| Session model | Use opaque random session tokens in HttpOnly cookies. Store only hashed session tokens server-side and treat the server-side session record as authoritative for revocation. Do not use Host session JWTs. |
+| Session lifetime | Use a 12-hour idle timeout and a 14-day absolute lifetime for browser sessions. Longer-lived remember-me behavior is deferred. |
+| Logout scope | Default logout revokes the current account/session. Broader actions such as revoking every session for an account or every account in a browser should be explicit separate actions. |
+| Account switching | Support multiple remembered browser sessions, with one active account per request. Per-module preferred account selection is deferred. |
+| Host API authorization | Keep all current Host API functionality admin-only in Phase 2, including `host.read`. If unauthenticated uptime is needed, expose a separate minimal public health endpoint rather than weakening Host status. |
+| Phase 2 audit events | Implement structured audit records for bootstrap, login success/failure, logout, session revocation, recovery, denied Host API calls, CLI token create/revoke, and auth configuration changes. Retention, filtering, and an admin audit UI are deferred. |
+| Pre-auth migration | Existing installations without auth state enter setup-required mode. Existing modules and data remain intact, but privileged API/UI access is blocked until a local admin is created. |
+| Completion tests | Phase 2 is complete only after tests cover route protection, admin/user authorization, bootstrap idempotency, expired and revoked sessions, CSRF rejection, CLI token authorization, logout/account switching basics, and migration from a pre-auth install. |
+
+#### Implementation Notes
+
+- Keep Phase 2 focused on a local password provider, Host sessions, route protection, CLI admin access, logout, revocation, recovery, and audit scaffolding. Defer passkeys, OIDC, trusted proxy mode, module gateway routing, and module-scoped JWTs to later phases.
+- Use a dedicated JSON persistence interface for auth state so route and policy code do not depend on file layout details.
+- Hash passwords with a memory-hard or intentionally slow KDF with per-user salts and recorded parameters. Prefer a dependency-light implementation that can run consistently inside the Host container.
+- Protect mutating cookie-authenticated API routes against CSRF with same-origin checks and/or CSRF tokens. Treat cookie authentication as insufficient by itself for state-changing requests.
+- Treat all Host API routes as protected by default. Add explicit allow-list entries only for bootstrap, login, logout, recovery, static assets, explicit development fixtures, and operational health endpoints that genuinely need to remain public.
+- Keep `host.admin` as the only role that can call Host management APIs in Phase 2. `host.user` should authenticate successfully but should not receive Host management screens or module listing until a user-facing dashboard is explicitly designed.
 
 ### Phase 3 - Host gateway for subdomain module exposure
 
@@ -337,7 +372,7 @@ Add operational features needed for a secure admin surface:
 
 #### Open Questions
 
-- Should audit log storage be file-based initially, or should auth work introduce SQLite?
+- What retention and compaction strategy should JSON audit logs use?
 - How long should audit events be retained by default?
 - Which recovery actions should require local machine access through CLI?
 - Should auth configuration changes require reauthentication?

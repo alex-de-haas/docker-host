@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireHostAdmin } from '@/lib/auth-http';
 import { createModuleCleanupPlan } from '@/lib/module-recovery';
 
 export const dynamic = 'force-dynamic';
@@ -8,6 +9,11 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ moduleId: string }> }
 ) {
+  const auth = await requireHostAdmin(request, 'modules.recovery');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   const { moduleId } = await params;
   const body = await readJson(request);
   const result = await createModuleCleanupPlan(moduleId, readDeleteModuleData(body));

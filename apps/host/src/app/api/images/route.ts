@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
+import { requireHostAdmin } from '@/lib/auth-http';
 import { formatDockerError, getImages, pullImage } from '@/lib/docker';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireHostAdmin(request, 'host.read');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const images = await getImages();
     return NextResponse.json(images);
@@ -15,6 +21,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireHostAdmin(request, 'host.configure');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const { image, tag } = await request.json();
     const result = await pullImage(image, tag);

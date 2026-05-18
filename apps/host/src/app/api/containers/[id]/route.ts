@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
+import { requireHostAdmin } from '@/lib/auth-http';
 import { formatDockerError, getContainer, getContainerLogs } from '@/lib/docker';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireHostAdmin(request, 'host.read');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const { id } = await params;
     const { searchParams } = new URL(request.url);

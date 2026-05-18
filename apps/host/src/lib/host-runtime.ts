@@ -11,6 +11,9 @@ export interface HostRuntimeConfig {
   dataRootContainer: string;
   modulesRootContainer: string;
   modulesStorePath: string;
+  authRootContainer: string;
+  authStatePath: string;
+  authAuditPath: string;
   dockerSocketPath: string;
   moduleNetwork: string;
 }
@@ -39,12 +42,16 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
 
   const moduleNetwork = process.env.HOST_MODULE_NETWORK?.trim() || DEFAULT_MODULE_NETWORK;
   const modulesRootContainer = path.join(dataRootContainer, 'modules');
+  const authRootContainer = path.join(dataRootContainer, 'auth');
 
   return {
     dataRootHost,
     dataRootContainer,
     modulesRootContainer,
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
+    authRootContainer,
+    authStatePath: path.join(authRootContainer, 'state.json'),
+    authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
     dockerSocketPath,
     moduleNetwork,
   };
@@ -54,8 +61,10 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
   try {
     await fs.mkdir(config.dataRootContainer, { recursive: true });
     await fs.mkdir(config.modulesRootContainer, { recursive: true });
+    await fs.mkdir(config.authRootContainer, { recursive: true });
     await fs.access(config.dataRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.modulesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
+    await fs.access(config.authRootContainer, fs.constants.R_OK | fs.constants.W_OK);
 
     return {
       hostPath: config.dataRootHost,
