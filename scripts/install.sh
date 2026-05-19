@@ -18,6 +18,8 @@ Environment overrides:
   DOCKER_HOST_INSTALL_REPO   GitHub repository, default alex-de-haas/docker-host
   DOCKER_HOST_INSTALL_TAG    GitHub Release tag, default cli-dev
   DOCKER_HOST_INSTALL_DIR    Directory for the docker-host executable, default ~/.docker-host/bin
+  DOCKER_HOST_INSTALL_PROFILE Shell profile to update for PATH, default auto-detect
+  DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE Set to 1 to skip shell profile updates
   DOCKER_HOST_INSTALL_START  Set to 1 to run docker-host start and open after install
 USAGE
 }
@@ -52,6 +54,12 @@ INSTALL_DIR="${DOCKER_HOST_INSTALL_DIR:-$HOME_DIR/.docker-host/bin}"
 [ -n "$REPO" ] || fail "DOCKER_HOST_INSTALL_REPO cannot be empty."
 [ -n "$TAG" ] || fail "DOCKER_HOST_INSTALL_TAG cannot be empty."
 [ -n "$INSTALL_DIR" ] || fail "DOCKER_HOST_INSTALL_DIR cannot be empty."
+case "$INSTALL_DIR" in
+  *'
+'*)
+    fail "DOCKER_HOST_INSTALL_DIR cannot contain a newline."
+    ;;
+esac
 
 case "$(uname -s)" in
   Darwin)
@@ -115,6 +123,104 @@ sha256_file() {
   return 127
 }
 
+shell_single_quote() {
+  printf "'"
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+detect_shell_profile() {
+  if [ -n "${DOCKER_HOST_INSTALL_PROFILE:-}" ]; then
+    printf '%s\n' "$DOCKER_HOST_INSTALL_PROFILE"
+    return 0
+  fi
+
+  shell_name="$(basename "${SHELL:-}")"
+  case "$shell_name" in
+    zsh)
+      printf '%s\n' "$HOME_DIR/.zshrc"
+      ;;
+    bash)
+      if [ "$OS_NAME" = "darwin" ]; then
+        if [ -f "$HOME_DIR/.bash_profile" ] || [ ! -f "$HOME_DIR/.bashrc" ]; then
+          printf '%s\n' "$HOME_DIR/.bash_profile"
+        else
+          printf '%s\n' "$HOME_DIR/.bashrc"
+        fi
+      else
+        printf '%s\n' "$HOME_DIR/.bashrc"
+      fi
+      ;;
+    sh)
+      printf '%s\n' "$HOME_DIR/.profile"
+      ;;
+    *)
+      printf '%s\n' ""
+      ;;
+  esac
+}
+
+append_path_block() {
+  profile="$1"
+  quoted_install_dir="$(shell_single_quote "$INSTALL_DIR")"
+  {
+    printf '\n%s\n' "# >>> docker-host PATH >>>"
+    printf '%s\n' "# Added by docker-host install.sh"
+    printf 'DOCKER_HOST_INSTALL_BIN=%s\n' "$quoted_install_dir"
+    printf '%s\n' 'case ":$PATH:" in'
+    printf '%s\n' '  *":$DOCKER_HOST_INSTALL_BIN:"*) ;;'
+    printf '%s\n' '  *) export PATH="$DOCKER_HOST_INSTALL_BIN:$PATH" ;;'
+    printf '%s\n' 'esac'
+    printf '%s\n' 'unset DOCKER_HOST_INSTALL_BIN'
+    printf '%s\n' "# <<< docker-host PATH <<<"
+  } >> "$profile"
+}
+
+ensure_path_profile() {
+  if [ "${DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE:-0}" = "1" ]; then
+    printf '\n%s\n' "Skipping shell profile PATH update because DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE=1."
+    print_manual_path_instruction
+    return 0
+  fi
+
+  profile="$(detect_shell_profile)"
+  if [ -z "$profile" ]; then
+    printf '\n%s\n' "Could not auto-detect a POSIX shell profile for PATH persistence."
+    print_manual_path_instruction
+    return 0
+  fi
+
+  if [ -f "$profile" ] && grep -F "# >>> docker-host PATH >>>" "$profile" >/dev/null 2>&1; then
+    printf '\n%s\n' "docker-host PATH entry is already managed in $profile"
+    return 0
+  fi
+
+  if [ -f "$profile" ] && grep -F "$INSTALL_DIR" "$profile" >/dev/null 2>&1; then
+    printf '\n%s\n' "$profile already references $INSTALL_DIR"
+    return 0
+  fi
+
+  if append_path_block "$profile"; then
+    printf '\n%s\n' "Added docker-host to PATH in $profile"
+    case ":$PATH:" in
+      *":$INSTALL_DIR:"*)
+        ;;
+      *)
+        printf '%s\n' "Open a new terminal, or run this for the current terminal:"
+        printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
+        ;;
+    esac
+  else
+    printf '\n%s\n' "Could not update $profile." >&2
+    print_manual_path_instruction
+  fi
+}
+
+print_manual_path_instruction() {
+  printf '%s\n' "Add docker-host to your PATH:"
+  printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
+}
+
 printf '%s\n' "Downloading $ARTIFACT from $REPO@$TAG..."
 download "$BASE_URL/$ARTIFACT" "$TMP_DIR/$ARTIFACT" || fail "failed to download $BASE_URL/$ARTIFACT."
 
@@ -143,14 +249,7 @@ printf '%s\n' "Installed docker-host to $TARGET"
 
 "$TARGET" install
 
-case ":$PATH:" in
-  *":$INSTALL_DIR:"*)
-    ;;
-  *)
-    printf '\n%s\n' "Add docker-host to your PATH:"
-    printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
-    ;;
-esac
+ensure_path_profile
 
 if [ "$START_AFTER_INSTALL" = "1" ]; then
   "$TARGET" start

@@ -35,10 +35,10 @@ internal sealed class SelfUpdateService(CommandContext context)
         var checksums = await TryDownloadTextAsync(httpClient, checksumsUrl, cancellationToken);
         var artifactBytes = await DownloadBytesAsync(httpClient, artifactUrl, cancellationToken);
 
+        var artifactSha256 = CalculateSha256(artifactBytes);
         if (TryFindChecksum(checksums, artifact, out var expectedSha256))
         {
-            var actualSha256 = Convert.ToHexString(SHA256.HashData(artifactBytes)).ToLowerInvariant();
-            if (!string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(artifactSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException("Downloaded CLI artifact failed SHA256 verification.");
             }
@@ -46,6 +46,12 @@ internal sealed class SelfUpdateService(CommandContext context)
         else
         {
             context.Console.MarkupLine("[yellow]SHA256SUMS was not available; continuing without checksum verification.[/]");
+        }
+
+        if (CurrentExecutableMatches(processPath, artifactSha256))
+        {
+            context.Console.MarkupLine("[green]CLI already up to date.[/] Downloaded artifact matches the current executable.");
+            return;
         }
 
         var tempPath = processPath + ".download";
@@ -61,6 +67,18 @@ internal sealed class SelfUpdateService(CommandContext context)
 
         File.Move(tempPath, processPath, overwrite: true);
         context.Console.MarkupLine($"[green]CLI updated.[/] Current process continues as {Assembly.GetExecutingAssembly().GetName().Version} until the next invocation.");
+    }
+
+    internal static bool CurrentExecutableMatches(string processPath, string artifactSha256)
+        => string.Equals(CalculateFileSha256(processPath), artifactSha256, StringComparison.OrdinalIgnoreCase);
+
+    internal static string CalculateSha256(byte[] bytes)
+        => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    private static string CalculateFileSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
     private static string GetArtifactName()

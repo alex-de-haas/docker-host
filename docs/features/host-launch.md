@@ -141,10 +141,10 @@ docker-host open
 - проверить `SHA256SUMS`, если checksum file доступен, и завершиться с понятной ошибкой, если проверку нельзя выполнить;
 - положить executable в user-writable bin directory, например `~/.docker-host/bin/docker-host`;
 - сделать файл executable;
-- добавить `~/.docker-host/bin` в `PATH` или вывести точную команду, которую администратор должен добавить в shell profile;
+- добавить `~/.docker-host/bin` в shell profile для будущих терминальных сессий или вывести точную команду, если profile нельзя определить;
 - вызвать `docker-host install`, чтобы создать default Host data root `~/.docker-host` и подготовить launch configuration для Host container в `~/.docker-host/config/launch.env`;
 - сохранять существующие значения `launch.env` при повторном запуске installer;
-- поддерживать scoped overrides для forks и installer tests: `DOCKER_HOST_INSTALL_REPO`, `DOCKER_HOST_INSTALL_TAG`, `DOCKER_HOST_INSTALL_DIR`, `DOCKER_HOST_INSTALL_START`;
+- поддерживать scoped overrides для forks, installer tests и кастомных shell profiles: `DOCKER_HOST_INSTALL_REPO`, `DOCKER_HOST_INSTALL_TAG`, `DOCKER_HOST_INSTALL_DIR`, `DOCKER_HOST_INSTALL_PROFILE`, `DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE`, `DOCKER_HOST_INSTALL_START`;
 - не дублировать module management logic;
 - после установки вывести следующие команды и URL Web UI.
 
@@ -274,11 +274,13 @@ docker-host config reset HOST_IMAGE
 
 CLI должен валидировать known keys перед записью. Unknown keys должны возвращать понятную ошибку. `HOST_UI_PORT` должен принимать `auto` или valid TCP port number. `HOST_DOCKER_ENDPOINT` должен принимать только supported local endpoints для текущей платформы: Unix socket on macOS/Linux/WSL или Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` и `HOST_DOCKER_SOCKET` должны оставаться `/data` и `/var/run/docker.sock` для MVP launch model и не должны изменяться через обычный config flow.
 
-Если `~/.docker-host/bin` не находится в `PATH`, install script должен напечатать инструкцию:
+Если `~/.docker-host/bin` не находится в `PATH`, install script должен добавить idempotent PATH-блок в shell profile. Для `zsh` используется `~/.zshrc`; для `bash` используется типичный bash profile текущей платформы; для `sh` используется `~/.profile`. Если profile нельзя определить или запись отключена через `DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE=1`, script должен напечатать инструкцию:
 
 ```sh
 export PATH="$HOME/.docker-host/bin:$PATH"
 ```
+
+`DOCKER_HOST_INSTALL_PROFILE` может явно задать profile path для кастомных shell setup.
 
 Default install script не должен автоматически запускать Host container без явного согласия администратора. Для one-command сценария можно поддержать флаг или environment variable:
 
@@ -365,7 +367,8 @@ CLI должен читать этот файл для `start`, `restart`, `upda
 - обновить standalone CLI executable из rolling GitHub Release `cli-dev`;
 - скачать matching CLI artifact для текущих OS/architecture;
 - проверить `SHA256SUMS`, если checksum file доступен;
-- заменить установленный `docker-host` binary безопасно: скачать во временный файл рядом с target executable, выставить permissions и затем заменить target;
+- сравнить скачанный artifact с текущим executable и явно вывести, был ли CLI обновлен или уже актуален;
+- если artifact отличается, заменить установленный `docker-host` binary безопасно: скачать во временный файл рядом с target executable, выставить permissions и затем заменить target;
 - pull новой версии Host image;
 - остановить текущий Host container;
 - пересоздать Host container с теми же volumes, env vars, port mappings и restart policy;
