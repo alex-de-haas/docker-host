@@ -1,7 +1,7 @@
 namespace Haas.DockerHost.Cli.Commands;
 
+using System.Diagnostics;
 using System.Net;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,8 +11,9 @@ internal sealed class SelfUpdateService(CommandContext context)
 {
     private const string ReleaseBaseUrl = "https://github.com/alex-de-haas/docker-host/releases/download/cli-dev";
     private const int DownloadBufferSize = 81920;
+    internal static readonly IReadOnlyList<string> HostOnlyUpdateArguments = ["update", "--host-only"];
 
-    public async Task UpdateAsync(CancellationToken cancellationToken = default)
+    public async Task<SelfUpdateResult> UpdateAsync(CancellationToken cancellationToken = default)
     {
         var processPath = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(processPath))
@@ -41,7 +42,7 @@ internal sealed class SelfUpdateService(CommandContext context)
         if (hasExpectedSha256 && CurrentExecutableMatches(processPath, expectedSha256))
         {
             context.Console.MarkupLine("[green]CLI ready up to date.[/]");
-            return;
+            return SelfUpdateResult.AlreadyCurrent(processPath);
         }
 
         var artifactBytes = await DownloadArtifactAsync(
@@ -66,7 +67,7 @@ internal sealed class SelfUpdateService(CommandContext context)
         if (CurrentExecutableMatches(processPath, artifactSha256))
         {
             context.Console.MarkupLine("[green]CLI ready up to date.[/]");
-            return;
+            return SelfUpdateResult.AlreadyCurrent(processPath);
         }
 
         var tempPath = processPath + ".download";
@@ -80,8 +81,10 @@ internal sealed class SelfUpdateService(CommandContext context)
                 UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         }
 
+        WarmRelaunchSupport();
         File.Move(tempPath, processPath, overwrite: true);
-        context.Console.MarkupLine($"[green]CLI updated.[/] New version installed. Current process continues as {Assembly.GetExecutingAssembly().GetName().Version} until the next invocation.");
+        context.Console.MarkupLine("[green]CLI updated.[/] New version installed.");
+        return SelfUpdateResult.Updated(processPath);
     }
 
     internal static bool CurrentExecutableMatches(string processPath, string artifactSha256)
@@ -89,6 +92,40 @@ internal sealed class SelfUpdateService(CommandContext context)
 
     internal static string CalculateSha256(byte[] bytes)
         => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    internal static async Task<int> RunUpdatedExecutableAsync(
+        string executablePath,
+        IReadOnlyList<string> arguments,
+        CancellationToken cancellationToken = default)
+    {
+        using var process = Process.Start(CreateRelaunchStartInfo(executablePath, arguments))
+            ?? throw new InvalidOperationException($"Unable to start the updated docker-host executable at '{executablePath}'.");
+
+        await process.WaitForExitAsync(cancellationToken);
+        return process.ExitCode;
+    }
+
+    internal static ProcessStartInfo CreateRelaunchStartInfo(string executablePath, IReadOnlyList<string> arguments)
+    {
+        var startInfo = new ProcessStartInfo(executablePath)
+        {
+            UseShellExecute = false,
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return startInfo;
+    }
+
+    private static void WarmRelaunchSupport()
+    {
+        using var currentProcess = Process.GetCurrentProcess();
+        _ = currentProcess.Id;
+        _ = typeof(ProcessStartInfo).Assembly.FullName;
+    }
 
     private static string CalculateFileSha256(string path)
     {
@@ -275,4 +312,13 @@ internal sealed class SelfUpdateService(CommandContext context)
 
         return false;
     }
+}
+
+internal readonly record struct SelfUpdateResult(bool WasUpdated, string ExecutablePath)
+{
+    public static SelfUpdateResult AlreadyCurrent(string executablePath)
+        => new(false, executablePath);
+
+    public static SelfUpdateResult Updated(string executablePath)
+        => new(true, executablePath);
 }

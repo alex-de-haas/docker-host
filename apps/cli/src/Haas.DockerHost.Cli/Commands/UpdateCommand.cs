@@ -17,15 +17,33 @@ internal sealed class UpdateCommand(CommandContext context)
 
         if (!hostOnly)
         {
+            SelfUpdateResult selfUpdateResult;
             try
             {
-                await new SelfUpdateService(context).UpdateAsync();
+                selfUpdateResult = await new SelfUpdateService(context).UpdateAsync();
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException)
             {
                 context.Console.MarkupLine($"[red]CLI update failed:[/] {Markup.Escape(ex.Message)}");
                 context.Console.MarkupLine("The Host container was not changed. Retry later or run [grey]docker-host update --host-only[/] to update only the Host container.");
                 return 1;
+            }
+
+            if (selfUpdateResult.WasUpdated)
+            {
+                context.Console.MarkupLine("[grey]Continuing Host container update with the updated CLI executable.[/]");
+                try
+                {
+                    return await SelfUpdateService.RunUpdatedExecutableAsync(
+                        selfUpdateResult.ExecutablePath,
+                        SelfUpdateService.HostOnlyUpdateArguments);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                {
+                    context.Console.MarkupLine($"[red]Unable to continue Host container update:[/] {Markup.Escape(ex.Message)}");
+                    context.Console.MarkupLine("The CLI was updated, but the Host container was not changed. Run [grey]docker-host update --host-only[/] to finish the Host container update.");
+                    return 1;
+                }
             }
         }
 

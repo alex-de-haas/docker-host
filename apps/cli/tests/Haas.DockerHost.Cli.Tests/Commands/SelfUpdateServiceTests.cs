@@ -76,4 +76,16 @@ public sealed class SelfUpdateServiceTests
         Assert.False(found);
         Assert.Equal(string.Empty, sha256);
     }
+
+    [Fact]
+    public void CreateRelaunchStartInfo_UsesExecutablePathAndArguments()
+    {
+        var startInfo = SelfUpdateService.CreateRelaunchStartInfo(
+            "/usr/local/bin/docker-host",
+            SelfUpdateService.HostOnlyUpdateArguments);
+
+        Assert.Equal("/usr/local/bin/docker-host", startInfo.FileName);
+        Assert.False(startInfo.UseShellExecute);
+        Assert.Equal(["update", "--host-only"], startInfo.ArgumentList.ToArray());
+    }
 }

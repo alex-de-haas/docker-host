@@ -383,6 +383,7 @@ CLI должен читать этот файл для `start`, `restart`, `upda
 - проверить `SHA256SUMS`, если checksum file доступен;
 - сравнить скачанный artifact с текущим executable и явно вывести, был ли CLI обновлен или уже актуален;
 - если artifact отличается, заменить установленный `docker-host` binary безопасно: скачать во временный файл рядом с target executable, выставить permissions и затем заменить target;
+- если CLI binary был заменен, продолжить Host update через новый executable с `docker-host update --host-only`, а не выполнять Docker operations из процесса, executable которого уже заменен;
 - pull новой версии Host image;
 - остановить текущий Host container;
 - пересоздать Host container с теми же volumes, env vars, port mappings и restart policy;
