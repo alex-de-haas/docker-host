@@ -22,6 +22,12 @@ docker-host start
 docker-host open
 ```
 
+Install the repository demo module:
+
+```bash
+docker-host modules install https://raw.githubusercontent.com/alex-de-haas/docker-host/main/modules/demo-module/metadata.json
+```
+
 To remove the Host container, Host-managed Docker resources, launch configuration, and local Host state while keeping the `docker-host` CLI executable:
 
 ```bash

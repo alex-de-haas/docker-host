@@ -36,3 +36,4 @@ flowchart LR
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
 - [Module metadata files](features/module-metadata.md) - detailed draft for installing Docker-hosted modules from JSON metadata URLs.
 - [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.
+- [Demo Module](features/demo-module.md) - repository-local Next.js module for validating Docker Host module operations.

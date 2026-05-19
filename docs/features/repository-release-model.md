@@ -8,6 +8,7 @@ Docker Host должен использовать monorepo:
 
 - Host Web UI и backend API остаются частью одного Host application;
 - Host Docker image публикуется как отдельный container artifact;
+- repository-local demo modules can publish their own container artifacts;
 - `docker-host` CLI публикуется как отдельный standalone executable artifact;
 - общий API-контракт между Host backend API, Web UI и CLI описывается в документации repository;
 - GitHub Actions разделяются по artifact type и запускаются только для затронутых частей.
@@ -32,6 +33,11 @@ apps/
         Haas.DockerHost.Cli.Tests.csproj
 scripts/
   install.sh
+modules/
+  demo-module/
+    src/
+    Dockerfile
+    metadata.json
 docs/
   features/
     host-api.md
@@ -39,7 +45,7 @@ docs/
   workflows/
 ```
 
-Repository physically follows this skeleton: the Host app lives in `apps/host`, the CLI lives in `apps/cli`, and the Host API contract is documented in `docs/features/host-api.md`.
+Repository physically follows this skeleton: the Host app lives in `apps/host`, the CLI lives in `apps/cli`, repository-local modules live in `modules`, and the Host API contract is documented in `docs/features/host-api.md`.
 
 Host API contract между Web UI, Host backend API и CLI должен быть определен в `docs/features/host-api.md` при введении CLI-facing Host API surface. Отдельный package contract, generated OpenAPI artifact и generated clients не входят в MVP.
 
@@ -54,6 +60,7 @@ flowchart LR
   A --> D
   D --> E["Docker daemon"]
   F["apps/host/Dockerfile"] --> G["Host Docker image"]
+  I["modules/demo-module/Dockerfile"] --> J["Demo Module Docker image"]
   A --> H["CLI release artifacts"]
 ```
 
@@ -65,6 +72,7 @@ Host backend API остается единственным владельцем 
 
 - `ci.yml` - общие проверки на pull request и push;
 - `host-image.yml` - build/push Host Docker image;
+- `demo-module-image.yml` - build/push Demo Module Docker image to Docker Hub;
 - `cli-release.yml` - build/publish standalone CLI artifacts;
 - опционально `docs.yml` - проверки документации.
 
@@ -77,6 +85,12 @@ Host image build:
   package.json
   package-lock.json
   .github/workflows/host-image.yml
+
+Demo Module image build:
+  modules/demo-module/**
+  package.json
+  package-lock.json
+  .github/workflows/demo-module-image.yml
 
 CLI build:
   apps/cli/**
@@ -109,6 +123,16 @@ This matches the current repository workflow, which publishes one Host image for
 Immutable Host versions are created from `host-v*` git tags. The Host image workflow must not publish versioned Host images for CLI tags such as `cli-dev` or future `cli-v*` tags. The `latest` tag tracks the default branch, and `sha-<commit>` tags provide traceability for every published image.
 
 The Host image should be published as a multi-platform Linux image for `linux/amd64` and `linux/arm64`, so Docker Desktop users on Apple Silicon and standard x64 Linux hosts can pull the same image reference without local emulation setup.
+
+Demo Module image artifact:
+
+```text
+alex-de-haas/demo-module:<module-version>
+alex-de-haas/demo-module:latest
+alex-de-haas/demo-module:sha-<commit>
+```
+
+The Demo Module image is published to Docker Hub from `demo-module-image.yml`. The workflow builds pull requests without pushing, then publishes on the default branch and on `demo-module-v*` tags. Docker Hub publishing requires `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets.
 
 CLI release artifacts:
 
