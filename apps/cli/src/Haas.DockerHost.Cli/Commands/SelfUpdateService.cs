@@ -170,13 +170,11 @@ internal sealed class SelfUpdateService(CommandContext context)
         string checksumsUrl,
         CancellationToken cancellationToken)
     {
-        var checksumsBytes = await DownloadWithProgressAsync(
-            progressContext => TryDownloadBytesAsync(
-                httpClient,
-                checksumsUrl,
-                "SHA256SUMS",
-                progressContext,
-                cancellationToken));
+        var checksumsBytes = await TryDownloadBytesAsync(
+            httpClient,
+            checksumsUrl,
+            "SHA256SUMS",
+            cancellationToken);
 
         return checksumsBytes is null ? null : Encoding.UTF8.GetString(checksumsBytes);
     }
@@ -186,33 +184,16 @@ internal sealed class SelfUpdateService(CommandContext context)
         string artifactUrl,
         string artifact,
         CancellationToken cancellationToken)
-        => await DownloadWithProgressAsync(
-            progressContext => DownloadBytesAsync(
-                httpClient,
-                artifactUrl,
-                artifact,
-                progressContext,
-                cancellationToken));
+        => await DownloadBytesAsync(
+            httpClient,
+            artifactUrl,
+            artifact,
+            cancellationToken);
 
-    private async Task<T> DownloadWithProgressAsync<T>(Func<ProgressContext, Task<T>> download)
-        => await context.Console
-            .Progress()
-            .AutoClear(true)
-            .HideCompleted(true)
-            .Columns(
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn(),
-                new DownloadedColumn(),
-                new TransferSpeedColumn(),
-                new RemainingTimeColumn())
-            .StartAsync(download);
-
-    private static async Task<byte[]?> TryDownloadBytesAsync(
+    private async Task<byte[]?> TryDownloadBytesAsync(
         HttpClient httpClient,
         string url,
         string description,
-        ProgressContext progressContext,
         CancellationToken cancellationToken)
     {
         using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -222,20 +203,54 @@ internal sealed class SelfUpdateService(CommandContext context)
         }
 
         response.EnsureSuccessStatusCode();
-        return await ReadResponseBytesAsync(response, description, progressContext, cancellationToken);
+        return await ReadResponseBytesWithProgressAsync(response, description, cancellationToken);
     }
 
-    private static async Task<byte[]> DownloadBytesAsync(
+    private async Task<byte[]> DownloadBytesAsync(
         HttpClient httpClient,
         string url,
         string description,
-        ProgressContext progressContext,
         CancellationToken cancellationToken)
     {
         using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
-        return await ReadResponseBytesAsync(response, description, progressContext, cancellationToken);
+        return await ReadResponseBytesWithProgressAsync(response, description, cancellationToken);
     }
+
+    private async Task<byte[]> ReadResponseBytesWithProgressAsync(
+        HttpResponseMessage response,
+        string description,
+        CancellationToken cancellationToken)
+    {
+        var contentLength = response.Content.Headers.ContentLength;
+        return await context.Console
+            .Progress()
+            .AutoClear(true)
+            .HideCompleted(true)
+            .Columns(CreateDownloadProgressColumns(contentLength))
+            .StartAsync(progressContext => ReadResponseBytesAsync(
+                response,
+                description,
+                progressContext,
+                cancellationToken));
+    }
+
+    internal static ProgressColumn[] CreateDownloadProgressColumns(long? contentLength)
+        => contentLength is > 0
+            ? [
+                new TaskDescriptionColumn(),
+                new ProgressBarColumn(),
+                new PercentageColumn(),
+                new DownloadedColumn(),
+                new TransferSpeedColumn(),
+                new RemainingTimeColumn(),
+            ]
+            : [
+                new TaskDescriptionColumn(),
+                new SpinnerColumn(Spinner.Known.Dots),
+                new DownloadedColumn(),
+                new TransferSpeedColumn(),
+            ];
 
     private static async Task<byte[]> ReadResponseBytesAsync(
         HttpResponseMessage response,

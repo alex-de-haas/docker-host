@@ -1,4 +1,5 @@
 using Haas.DockerHost.Cli.Commands;
+using Spectre.Console;
 
 namespace Haas.DockerHost.Cli.Tests.Commands;
 
@@ -87,5 +88,29 @@ public sealed class SelfUpdateServiceTests
         Assert.Equal("/usr/local/bin/docker-host", startInfo.FileName);
         Assert.False(startInfo.UseShellExecute);
         Assert.Equal(["update", "--host-only"], startInfo.ArgumentList.ToArray());
+    }
+
+    [Fact]
+    public void CreateDownloadProgressColumns_KnownContentLength_UsesDeterminateProgressColumns()
+    {
+        var columns = SelfUpdateService.CreateDownloadProgressColumns(1024);
+
+        Assert.Contains(columns, column => column is ProgressBarColumn);
+        Assert.Contains(columns, column => column is PercentageColumn);
+        Assert.Contains(columns, column => column is RemainingTimeColumn);
+        Assert.DoesNotContain(columns, column => column is SpinnerColumn);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0L)]
+    public void CreateDownloadProgressColumns_UnknownContentLength_UsesSpinnerColumns(long? contentLength)
+    {
+        var columns = SelfUpdateService.CreateDownloadProgressColumns(contentLength);
+
+        Assert.Contains(columns, column => column is SpinnerColumn);
+        Assert.DoesNotContain(columns, column => column is ProgressBarColumn);
+        Assert.DoesNotContain(columns, column => column is PercentageColumn);
+        Assert.DoesNotContain(columns, column => column is RemainingTimeColumn);
     }
 }
