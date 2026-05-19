@@ -29,9 +29,19 @@ Implemented Phase 3 behavior:
 - invalid `ui` metadata is rejected by metadata validation;
 - the demo module declares `ui` metadata and exposes stable `/`, `/people`, and `/settings` routes.
 
+Implemented Phase 4 behavior:
+
+- the Apps sidebar is populated from `/api/apps`;
+- app entries can show nested navigation from `ui.navigation`;
+- `/apps/{moduleId}` opens a Host-owned app page without proxying that path to module containers;
+- the Host app page embeds module UIs in an iframe using `/api/apps/{moduleId}/embed?path=...`;
+- the shell topbar remains Host-owned and shows app context, status, and refresh controls;
+- module UIs cannot directly override the shell topbar;
+- the embed route requires Host authentication, validates the selected shell App, proxies only the reserved embed path, injects module identity, strips Host-owned headers, and rewrites root-relative module links and assets through the reserved embed URL.
+
 ## Navigation
 
-The current sidebar rendering remains static until the later Apps sidebar phase wires it to `/api/apps`.
+The sidebar combines static Host management navigation with dynamic Apps navigation from `/api/apps`.
 
 - Host:
   - Dashboard (`/`)
@@ -40,7 +50,9 @@ The current sidebar rendering remains static until the later Apps sidebar phase 
   - Installed modules (`/#installed-modules`)
   - Install module (`/modules/install`)
 - Apps:
-  - empty disabled state until the Apps sidebar consumes the app registry
+  - loading, error, and empty states when app registry data is unavailable or empty
+  - one entry for each visible shell App
+  - nested app navigation when `ui.navigation` is present
 - Settings:
   - Security (`/settings/security`)
 
@@ -53,6 +65,9 @@ flowchart TD
   C --> F["Update module"]
   C --> G["External ingress"]
   C --> H["Security settings"]
+  C --> M["Apps sidebar"]
+  M --> N["App shell route"]
+  N --> O["Embedded module iframe"]
   I["Standalone auth pages"] --> J["Login"]
   I --> K["Setup"]
   I --> L["Recovery"]
@@ -64,6 +79,8 @@ The shell uses a static sidebar on desktop (`lg` and wider). Below that breakpoi
 
 The topbar contains page title and description, a page-specific action slot, and the account dropdown. Long titles, descriptions, and account text truncate instead of causing horizontal page overflow.
 
+For embedded module apps, the topbar remains Host-owned. The Host app route sets the app name, selected nested navigation label, status badge, and iframe refresh action. Module UIs may render their own internal headers inside the iframe, but they do not receive runtime control over the shell chrome. If module-provided topbar actions are needed later, they should be added through a new declarative metadata contract.
+
 ## Page Integration
 
 The dashboard remains focused on installed module status, lifecycle actions, recovery dialogs, and links into install/update flows. External ingress readiness moved to the dedicated `/ingress` page and reuses the existing readiness panel and APIs.
@@ -72,7 +89,7 @@ Install, update, and security pages keep their existing backend calls and form b
 
 ## App Registry API
 
-`GET /api/apps` returns a minimal, principal-filtered app registry for future sidebar rendering and embedded app opening.
+`GET /api/apps` returns a minimal, principal-filtered app registry for sidebar rendering and embedded app opening.
 
 `host.admin` receives all shell-routable app entries, including unavailable entries with safe diagnostic status. `host.user` receives only available apps that are visible to all authenticated users or explicitly assigned to that user.
 
@@ -85,6 +102,14 @@ Shell App access modes are Host-owned:
 The response intentionally returns same-origin Host paths, such as `/apps/{moduleId}` and reserved embedded URLs under `/api/apps/{moduleId}/embed`. It does not return Docker network aliases, container names, container ids, raw container URLs, public module UI domains, or service/API gateway exposure hostnames.
 
 Modules appear in the app registry only when local metadata includes an explicit `ui` contract. `runtime.ports[].public` is still only a capability hint and does not create an app entry by itself.
+
+## Embedded App Route
+
+`/apps/{moduleId}` is shell state. It renders the Host shell around the selected module UI and uses the optional `path` query parameter to select nested module navigation, for example `/apps/com.acme.reports?path=%2Fpeople`.
+
+The iframe uses the reserved embedded transport URL returned by `/api/apps`: `/api/apps/{moduleId}/embed?path=...`. This endpoint requires Host authentication and validates the current principal against the app registry before proxying to a module. It does not publish module UIs as standalone public hostnames and does not turn `/apps/{moduleId}` into a direct module proxy.
+
+The embed transport rewrites root-relative links and assets in HTML/CSS responses back through the reserved embed URL so module pages can load common assets while remaining inside the Host shell. If a module response explicitly blocks framing with headers such as `X-Frame-Options: DENY` or `Content-Security-Policy: frame-ancestors 'none'`, the embed route returns a concise fallback page explaining that the module UI must support Host shell embedding.
 
 ## Module UI Metadata
 
@@ -102,5 +127,5 @@ Missing `ui` metadata is valid. The module can still install and run, but it is 
 
 ## Open Questions
 
-- No Phase 1 shell foundation, Phase 2 app registry starter, or Phase 3 module UI metadata contract questions remain open.
-- Later phases still need the Apps sidebar, embedded app route, gateway exposure management UX, non-admin user portal behavior, developer mode integration, and full app portal browser smoke coverage.
+- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, or Phase 4 Apps sidebar/app host page questions remain open.
+- Later phases still need gateway exposure management UX, non-admin user portal behavior, developer mode integration, and full app portal browser smoke coverage.

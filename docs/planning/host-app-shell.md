@@ -335,7 +335,7 @@ Resolved Phase 3 decisions:
 
 ### Phase 4 - Apps sidebar and app host page
 
-**Status**: Not Started
+**Status**: Completed
 
 Render the Apps group in the Host sidebar and provide a Host route that opens selected module UIs.
 
@@ -361,6 +361,21 @@ Acceptance criteria:
 - Host shell remains visible around embedded module UI.
 - Nested app navigation updates the embedded URL.
 - Existing Host pages continue to work when no apps are configured.
+
+Implementation notes:
+
+- `useHostApps` loads `/api/apps` on shell pages and exposes loading, error, refresh, and timestamp state.
+- The Host sidebar now renders the Apps section from app registry entries, including empty, loading, error, unavailable, and nested navigation states.
+- `/apps/[moduleId]` is a Host shell route. It keeps the shell visible, resolves selected nested navigation through the `path` query parameter, and renders the selected module UI in an iframe.
+- The Host app page owns topbar context for app name, selected nested navigation label, availability status, and iframe refresh.
+- `/api/apps/[moduleId]/embed` is the reserved embedded transport. It requires Host authentication, resolves only apps visible to the current principal, rejects unavailable apps, proxies to the declared UI runtime port, injects module identity, strips Host-owned request headers, scopes module cookies to the embed route, rewrites root-relative module links/assets through the reserved embed URL, and returns a concise embed-blocked HTML fallback when module frame headers explicitly block embedding.
+- `/apps/{moduleId}` remains shell state only and is not a direct module-container proxy.
+
+Resolved Phase 4 starter decisions:
+
+- **Question**: Can module apps override or directly control the Host shell topbar?
+  **Answer**: No. In Phase 4, the shell topbar remains Host-owned and is controlled only by the Host app page.
+  **Recommendation**: Let the Host app route set topbar context such as app name, availability status, selected nested navigation label, and refresh/reload actions. Module UIs may render their own internal header inside the iframe, but they should not receive runtime control over the shell chrome. If module-provided topbar actions become necessary later, add an explicit declarative metadata contract instead of giving embedded apps direct Shell UI access.
 
 ### Phase 5 - Gateway exposure management UX
 

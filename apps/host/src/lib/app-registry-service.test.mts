@@ -44,6 +44,7 @@ test('returns available shell apps to authenticated Host users', async () => {
   assert.equal(apps[0].id, 'com.example.reports');
   assert.equal(apps[0].accessMode, 'allAuthenticated');
   assert.equal(apps[0].status, 'available');
+  assert.equal(apps[0].icon, 'boxes');
   assert.equal(apps[0].entryPath, '/apps/com.example.reports');
   assert.equal(apps[0].embeddedUrl, '/api/apps/com.example.reports/embed?path=%2F');
   assert.deepEqual(apps[0].navigation, [
@@ -262,6 +263,7 @@ async function writeInstalledModule(
     ...(input.withUi
       ? {
           ui: input.ui ?? {
+            icon: 'boxes',
             entrypoint: {
               portKey: 'http',
               path: '/',

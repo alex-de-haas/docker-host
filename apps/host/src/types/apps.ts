@@ -25,6 +25,7 @@ export interface HostAppEntry {
   moduleId: string;
   displayName: string;
   description?: string;
+  icon?: string;
   version: string;
   status: HostAppStatus;
   statusReason: HostAppStatusReason;

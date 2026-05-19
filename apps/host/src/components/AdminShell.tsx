@@ -1,12 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  BarChart3,
   Boxes,
   ChevronDown,
+  ChevronRight,
+  Circle,
+  CircleAlert,
   Gauge,
   Globe2,
   LayoutGrid,
@@ -14,7 +18,11 @@ import {
   Menu,
   PackagePlus,
   PanelsTopLeft,
+  RefreshCw,
+  ScrollText,
   ShieldCheck,
+  Settings,
+  Users,
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -34,8 +42,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useHostApps } from '@/hooks/useHostApps';
 import { cn } from '@/lib/utils';
 import type { HostPrincipal } from '@/types/auth';
+import type { HostAppEntry } from '@/types/apps';
 
 const AdminPrincipalContext = createContext<HostPrincipal | null>(null);
 
@@ -78,6 +88,7 @@ export function AdminShell({
   const user = useAdminPrincipal();
   const accountLabel = user.email || user.displayName || user.id;
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const appsState = useHostApps();
 
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -87,7 +98,7 @@ export function AdminShell({
   return (
     <div className="min-h-dvh bg-muted/30 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
       <aside className="sticky top-0 hidden h-dvh border-r bg-sidebar text-sidebar-foreground lg:block">
-        <AdminSidebar onNavigate={() => undefined} />
+        <AdminSidebar appsState={appsState} onNavigate={() => undefined} />
       </aside>
 
       <Dialog open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
@@ -100,6 +111,7 @@ export function AdminShell({
             Navigate between Host tools, module management, apps, and settings.
           </DialogDescription>
           <AdminSidebar
+            appsState={appsState}
             onNavigate={() => setMobileSidebarOpen(false)}
             closeButton={(
               <Button
@@ -189,6 +201,8 @@ type NavigationSection = {
   items: NavigationItem[];
 };
 
+type AppsState = ReturnType<typeof useHostApps>;
+
 const navigationSections: NavigationSection[] = [
   {
     title: 'Host',
@@ -226,13 +240,7 @@ const navigationSections: NavigationSection[] = [
   },
   {
     title: 'Apps',
-    items: [
-      {
-        label: 'No apps registered',
-        icon: LayoutGrid,
-        disabled: true,
-      },
-    ],
+    items: [],
   },
   {
     title: 'Settings',
@@ -248,13 +256,17 @@ const navigationSections: NavigationSection[] = [
 ];
 
 function AdminSidebar({
+  appsState,
   onNavigate,
   closeButton,
 }: {
+  appsState: AppsState;
   onNavigate: () => void;
   closeButton?: ReactNode;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const selectedAppPath = normalizeSelectedAppPath(searchParams.get('path'));
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -274,19 +286,187 @@ function AdminSidebar({
             <div key={section.title} className="space-y-2">
               <h2 className="px-2 text-xs font-medium uppercase text-muted-foreground">{section.title}</h2>
               <div className="space-y-1">
-                {section.items.map(item => (
-                  <NavigationLink
-                    key={`${section.title}:${item.label}`}
-                    item={item}
-                    pathname={pathname}
-                    onNavigate={onNavigate}
-                  />
-                ))}
+                {section.title === 'Apps'
+                  ? (
+                      <AppNavigationSection
+                        appsState={appsState}
+                        pathname={pathname}
+                        selectedAppPath={selectedAppPath}
+                        onNavigate={onNavigate}
+                      />
+                    )
+                  : section.items.map(item => (
+                      <NavigationLink
+                        key={`${section.title}:${item.label}`}
+                        item={item}
+                        pathname={pathname}
+                        onNavigate={onNavigate}
+                      />
+                    ))}
               </div>
             </div>
           ))}
         </div>
       </nav>
+    </div>
+  );
+}
+
+function AppNavigationSection({
+  appsState,
+  pathname,
+  selectedAppPath,
+  onNavigate,
+}: {
+  appsState: AppsState;
+  pathname: string;
+  selectedAppPath: string;
+  onNavigate: () => void;
+}) {
+  const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
+
+  if (appsState.loading) {
+    return (
+      <NavigationPlaceholder
+        icon={RefreshCw}
+        label="Loading apps"
+        className="animate-pulse"
+      />
+    );
+  }
+
+  if (appsState.error) {
+    return (
+      <NavigationPlaceholder
+        icon={CircleAlert}
+        label="Apps unavailable"
+        title={appsState.error}
+      />
+    );
+  }
+
+  if (appsState.apps.length === 0) {
+    return (
+      <NavigationPlaceholder
+        icon={LayoutGrid}
+        label="No apps registered"
+      />
+    );
+  }
+
+  return appsState.apps.map(app => {
+    const isActive = pathname === `/apps/${encodeURIComponent(app.moduleId)}` ||
+      pathname === `/apps/${app.moduleId}`;
+    const expanded = isActive || expandedAppIds.has(app.id);
+    const Icon = getAppIcon(app.icon);
+
+    return (
+      <div key={app.id} className="space-y-1">
+        <div className="flex items-center gap-1">
+          <Link
+            href={app.entryPath}
+            className={cn(
+              'flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-sm transition-colors',
+              isActive
+                ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+              app.status !== 'available' && 'text-muted-foreground opacity-70'
+            )}
+            aria-disabled={app.status !== 'available'}
+            title={app.status === 'available' ? app.displayName : formatAppStatusReason(app.statusReason)}
+            onClick={event => {
+              if (app.status !== 'available') {
+                event.preventDefault();
+                return;
+              }
+              onNavigate();
+            }}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{app.displayName}</span>
+            {app.status !== 'available' && (
+              <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+            )}
+          </Link>
+          {app.navigation.length > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-8 shrink-0"
+              aria-label={expanded ? `Collapse ${app.displayName} navigation` : `Expand ${app.displayName} navigation`}
+              aria-expanded={expanded}
+              onClick={() => {
+                setExpandedAppIds(current => {
+                  const next = new Set(current);
+                  if (next.has(app.id)) {
+                    next.delete(app.id);
+                  } else {
+                    next.add(app.id);
+                  }
+                  return next;
+                });
+              }}
+            >
+              <ChevronRight
+                className={cn(
+                  'h-4 w-4 transition-transform',
+                  expanded && 'rotate-90'
+                )}
+              />
+            </Button>
+          )}
+        </div>
+        {expanded && app.navigation.length > 0 && (
+          <div className="ml-6 space-y-1 border-l border-sidebar-border pl-2">
+            {app.navigation.map(item => {
+              const childActive = isActive && selectedAppPath === item.path;
+              return (
+                <Link
+                  key={`${app.id}:${item.path}`}
+                  href={item.entryPath}
+                  className={cn(
+                    'flex min-h-8 items-center gap-2 rounded-md px-2 text-xs transition-colors',
+                    childActive
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                  )}
+                  onClick={onNavigate}
+                >
+                  <Circle className="h-2 w-2 shrink-0 fill-current" />
+                  <span className="min-w-0 truncate">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  });
+}
+
+function NavigationPlaceholder({
+  icon: Icon,
+  label,
+  className,
+  title,
+}: {
+  icon: LucideIcon;
+  label: string;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground opacity-70',
+        className
+      )}
+      aria-disabled="true"
+      title={title}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 truncate">{label}</span>
     </div>
   );
 }
@@ -325,4 +505,55 @@ function NavigationLink({
       <span className="min-w-0 truncate">{item.label}</span>
     </Link>
   );
+}
+
+function getAppIcon(iconKey?: string): LucideIcon {
+  switch (iconKey) {
+    case 'bar-chart':
+    case 'chart':
+    case 'reports':
+      return BarChart3;
+    case 'boxes':
+    case 'modules':
+      return Boxes;
+    case 'settings':
+      return Settings;
+    case 'users':
+    case 'people':
+      return Users;
+    case 'document':
+    case 'docs':
+      return ScrollText;
+    default:
+      return LayoutGrid;
+  }
+}
+
+function normalizeSelectedAppPath(path: string | null) {
+  if (!path || !path.startsWith('/') || path.startsWith('//') || path.includes('\\')) {
+    return '/';
+  }
+
+  return path;
+}
+
+function formatAppStatusReason(reason: HostAppEntry['statusReason']) {
+  switch (reason) {
+    case 'metadataMissing':
+      return 'App metadata is missing.';
+    case 'metadataInvalid':
+      return 'App metadata is invalid.';
+    case 'uiPortMissing':
+      return 'App UI port is missing.';
+    case 'uiPortNotPublic':
+      return 'App UI port is not marked public.';
+    case 'moduleOperationUnavailable':
+      return 'Module operation is not ready.';
+    case 'runtimeUnavailable':
+      return 'Module runtime is not running.';
+    case 'available':
+      return 'Available';
+    default:
+      return 'App is unavailable.';
+  }
 }

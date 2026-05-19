@@ -140,6 +140,7 @@ Returned by `GET /api/apps`.
   "moduleId": "com.acme.reports",
   "displayName": "Reports",
   "description": "Generates operational reports.",
+  "icon": "boxes",
   "version": "1.0.0",
   "status": "available",
   "statusReason": "available",
@@ -303,6 +304,7 @@ Response entries include:
 - module id;
 - display name;
 - description, if available;
+- icon key, if declared by module `ui` metadata;
 - version;
 - app status and safe status reason;
 - shell App access mode;
@@ -311,6 +313,20 @@ Response entries include:
 - same-origin Host entry path;
 - reserved embedded URL;
 - nested navigation items.
+
+### `GET /api/apps/{moduleId}/embed`
+
+Reserved iframe transport for shell App UI content.
+
+This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. The Host validates that the selected module app is visible to the current principal and available before proxying. The selected module UI path is passed in the `path` query parameter and must be a same-origin absolute path beginning with `/`.
+
+Example:
+
+```text
+/api/apps/com.acme.reports/embed?path=%2Fpeople
+```
+
+The endpoint proxies to the module runtime port declared by `ui.entrypoint`, injects module identity where applicable, strips Host-owned request headers, scopes module cookies to the reserved embed route, and rewrites root-relative HTML/CSS links through the reserved embed URL. It is not a public module UI hostname and `/apps/{moduleId}` is not a direct proxy path.
 
 ### `GET /api/modules/{moduleId}`
 

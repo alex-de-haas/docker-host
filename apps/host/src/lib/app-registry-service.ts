@@ -109,6 +109,7 @@ async function buildModuleAppCandidate(
       moduleId: module.id,
       displayName: metadataResult.metadata.name || module.id,
       ...(metadataResult.metadata.description ? { description: metadataResult.metadata.description } : {}),
+      ...(uiResult.ui.icon ? { icon: uiResult.ui.icon } : {}),
       version: metadataResult.metadata.version || 'unknown',
       status: available ? 'available' : 'unavailable',
       statusReason: available

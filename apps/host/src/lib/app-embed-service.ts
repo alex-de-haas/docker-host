@@ -1,0 +1,511 @@
+import { NextResponse } from 'next/server.js';
+import { canAccessModule } from './auth-policy.ts';
+import { SESSION_COOKIE_NAME } from './auth-service.ts';
+import { listHostApps } from './app-registry-service.ts';
+import { getModuleNetworkAlias } from './gateway-service.ts';
+import { getHostRuntimeConfig } from './host-runtime.ts';
+import { validateModuleUiMetadata } from './module-metadata.ts';
+import {
+  readModuleMetadata,
+  readModulesStoreSnapshot,
+} from './module-store.ts';
+import {
+  MODULE_IDENTITY_TOKEN_HEADER,
+  createModuleIdentityToken,
+} from './module-identity.mjs';
+import { TRUSTED_PROXY_DEFAULT_ASSERTION_HEADERS } from './trusted-proxy.mjs';
+import type { ListHostAppsOptions } from './app-registry-service.ts';
+import type { HostRuntimeConfig } from './host-runtime.ts';
+import type { HostPrincipal, ModuleExposurePolicy } from '../types/auth.ts';
+import type { HostAppAccessMode, HostAppEntry } from '../types/apps.ts';
+import type {
+  InstalledModuleRecord,
+  ModuleRuntimePortMetadata,
+} from '../types/modules.ts';
+
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+const REWRITABLE_CONTENT_TYPES = [
+  'text/html',
+  'text/css',
+  'application/xhtml+xml',
+];
+const MAX_EMBED_PATH_LENGTH = 2048;
+
+export interface HostAppEmbedTarget {
+  app: HostAppEntry;
+  installedModule: InstalledModuleRecord;
+  port: ModuleRuntimePortMetadata;
+  config: HostRuntimeConfig;
+  modulePath: string;
+  targetOrigin: string;
+  upstreamUrl: string;
+  requestHost: string;
+  requestProtocol: string;
+  identityInput: {
+    exposure: {
+      id: string;
+      moduleId: string;
+      hostname: string;
+      portKey: string;
+      exposurePolicy: ModuleExposurePolicy;
+      identityMode: 'required';
+    };
+    access: ReturnType<typeof canAccessModule>;
+    principal: HostPrincipal;
+  };
+}
+
+export class HostAppEmbedError extends Error {
+  public readonly code: string;
+  public readonly status: number;
+
+  public constructor(code: string, message: string, status = 400) {
+    super(message);
+    this.name = 'HostAppEmbedError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export async function resolveHostAppEmbedTarget(
+  request: Request,
+  principal: HostPrincipal,
+  moduleId: string,
+  options: ListHostAppsOptions & { config?: HostRuntimeConfig } = {}
+): Promise<HostAppEmbedTarget> {
+  const config = options.config ?? getHostRuntimeConfig();
+  const modulePath = normalizeEmbedModulePath(new URL(request.url).searchParams.get('path'));
+  const apps = await listHostApps(principal, {
+    ...options,
+    config,
+  });
+  const app = apps.find(candidate => candidate.moduleId === moduleId);
+
+  if (!app) {
+    throw new HostAppEmbedError(
+      'app_not_found',
+      `Module app "${moduleId}" is not registered for the current Host principal.`,
+      404
+    );
+  }
+
+  if (app.status !== 'available') {
+    throw new HostAppEmbedError(
+      'app_unavailable',
+      `Module app "${moduleId}" is not available.`,
+      503
+    );
+  }
+
+  const store = await readModulesStoreSnapshot(config);
+  const installedModule = store.modules.find(candidate => candidate.id === moduleId);
+  if (!installedModule) {
+    throw new HostAppEmbedError('module_not_found', `Module "${moduleId}" is not installed.`, 404);
+  }
+
+  const metadata = await readModuleMetadata(installedModule, config);
+  const ui = metadata?.ui
+    ? validateModuleUiMetadata(metadata.ui, '$.ui', metadata.runtime?.ports ?? [], [], moduleId)
+    : null;
+  if (!metadata || !ui) {
+    throw new HostAppEmbedError('metadata_invalid', `Module "${moduleId}" does not have valid UI metadata.`, 503);
+  }
+
+  const port = metadata.runtime?.ports?.find(candidate => candidate.key === ui.entrypoint.portKey);
+  if (!port) {
+    throw new HostAppEmbedError('ui_port_missing', `Module "${moduleId}" UI port is missing.`, 503);
+  }
+
+  const networkAlias = getModuleNetworkAlias(moduleId);
+  const targetOrigin = `http://${networkAlias}:${port.containerPort}`;
+  const upstreamUrl = new URL(modulePath, targetOrigin).toString();
+  const requestHost = getRequestHost(request);
+  const requestProtocol = getRequestProtocol(request);
+  const exposurePolicy = getExposurePolicy(app.accessMode);
+
+  return {
+    app,
+    installedModule,
+    port,
+    config,
+    modulePath,
+    targetOrigin,
+    upstreamUrl,
+    requestHost,
+    requestProtocol,
+    identityInput: {
+      exposure: {
+        id: `shell_${moduleId}`,
+        moduleId,
+        hostname: requestHost,
+        portKey: ui.entrypoint.portKey,
+        exposurePolicy,
+        identityMode: 'required',
+      },
+      access: canAccessModule({
+        principal,
+        moduleId,
+        exposurePolicy,
+        assignments: app.accessMode === 'assignedUsersOnly' && principal.role !== 'host.admin'
+          ? [principal.id]
+          : [],
+      }),
+      principal,
+    },
+  };
+}
+
+export async function proxyHostAppEmbedRequest(
+  request: Request,
+  target: HostAppEmbedTarget
+) {
+  const identityToken = await createModuleIdentityToken(target.identityInput, target.config);
+  const headers = buildEmbedRequestHeaders(request, target, identityToken);
+  const method = request.method.toUpperCase();
+  const response = await fetch(target.upstreamUrl, {
+    method,
+    headers,
+    redirect: 'manual',
+    body: method === 'GET' || method === 'HEAD'
+      ? undefined
+      : await request.arrayBuffer(),
+  });
+
+  return await buildEmbedResponse(request, response, target);
+}
+
+export function normalizeEmbedModulePath(value: string | null) {
+  const path = value || '/';
+  if (
+    !path.startsWith('/') ||
+    path.startsWith('//') ||
+    path.includes('\\') ||
+    /[\u0000-\u001f\u007f]/.test(path) ||
+    path.length > MAX_EMBED_PATH_LENGTH
+  ) {
+    throw new HostAppEmbedError(
+      'invalid_embed_path',
+      'Embedded module UI path must be a same-origin absolute path.',
+      400
+    );
+  }
+
+  return path;
+}
+
+export function rewriteEmbeddedContent(
+  content: string,
+  target: Pick<HostAppEmbedTarget, 'app'>
+) {
+  const toEmbedPath = (modulePath: string) => buildEmbedUrl(target.app.moduleId, modulePath);
+
+  return content
+    .replace(/\b(href|src|action)=("|')\/(?!\/)([^"']*)\2/g, (_match, attribute: string, quote: string, path: string) => (
+      `${attribute}=${quote}${toEmbedPath(`/${path}`)}${quote}`
+    ))
+    .replace(/\b(srcset)=("|')([^"']+)\2/g, (_match, attribute: string, quote: string, value: string) => (
+      `${attribute}=${quote}${rewriteSrcSet(value, toEmbedPath)}${quote}`
+    ))
+    .replace(/url\((["']?)\/(?!\/)([^)"']+)\1\)/g, (_match, quote: string, path: string) => (
+      `url(${quote}${toEmbedPath(`/${path}`)}${quote})`
+    ));
+}
+
+export function buildEmbedUrl(moduleId: string, modulePath: string) {
+  return `/api/apps/${encodeURIComponent(moduleId)}/embed?path=${encodeURIComponent(modulePath)}`;
+}
+
+export function appEmbedErrorResponse(error: unknown) {
+  if (error instanceof HostAppEmbedError) {
+    return embedErrorHtmlResponse(error.status, error.message);
+  }
+
+  console.error('Host app embed failed:', error);
+  return embedErrorHtmlResponse(
+    502,
+    error instanceof Error ? error.message : 'Unknown app embed error'
+  );
+}
+
+function buildEmbedRequestHeaders(
+  request: Request,
+  target: HostAppEmbedTarget,
+  identityToken: string | null
+) {
+  const headers = new Headers();
+  const trustedProxyAssertionHeaders = new Set(
+    TRUSTED_PROXY_DEFAULT_ASSERTION_HEADERS.map(header => header.toLowerCase())
+  );
+
+  request.headers.forEach((value, name) => {
+    const lowerName = name.toLowerCase();
+    if (
+      HOP_BY_HOP_HEADERS.has(lowerName) ||
+      lowerName === 'authorization' ||
+      lowerName === 'host' ||
+      lowerName === 'content-length' ||
+      lowerName === 'accept-encoding'
+    ) {
+      return;
+    }
+
+    if (lowerName.startsWith('x-docker-host-') || trustedProxyAssertionHeaders.has(lowerName)) {
+      return;
+    }
+
+    if (lowerName === 'cookie') {
+      const cookie = stripCookieValue(value, SESSION_COOKIE_NAME);
+      if (cookie) {
+        headers.set(name, cookie);
+      }
+      return;
+    }
+
+    headers.set(name, value);
+  });
+
+  headers.set('x-forwarded-host', target.requestHost);
+  headers.set('x-forwarded-proto', target.requestProtocol);
+  headers.set('x-forwarded-for', appendForwardedFor(request));
+
+  if (identityToken) {
+    headers.set(MODULE_IDENTITY_TOKEN_HEADER, identityToken);
+  }
+
+  return headers;
+}
+
+async function buildEmbedResponse(
+  request: Request,
+  response: Response,
+  target: HostAppEmbedTarget
+) {
+  const frameBlockReason = getFrameBlockReason(response.headers);
+  if (frameBlockReason) {
+    return new NextResponse(renderFrameBlockedHtml(target, frameBlockReason), {
+      status: 409,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    });
+  }
+
+  const headers = buildEmbedResponseHeaders(request, response.headers, target);
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  if (shouldRewriteContent(contentType)) {
+    const body = rewriteEmbeddedContent(await response.text(), target);
+    headers.delete('content-length');
+    headers.delete('content-encoding');
+    return new NextResponse(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+
+  return new NextResponse(request.method.toUpperCase() === 'HEAD' ? null : response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function buildEmbedResponseHeaders(
+  request: Request,
+  responseHeaders: Headers,
+  target: HostAppEmbedTarget
+) {
+  const headers = new Headers();
+  responseHeaders.forEach((value, name) => {
+    const lowerName = name.toLowerCase();
+    if (
+      HOP_BY_HOP_HEADERS.has(lowerName) ||
+      lowerName === 'content-length' ||
+      lowerName === 'content-encoding'
+    ) {
+      return;
+    }
+
+    if (lowerName === 'location') {
+      headers.set(name, rewriteLocationHeader(value, request, target));
+      return;
+    }
+
+    if (lowerName === 'set-cookie') {
+      headers.set(name, rewriteSetCookieHeader(value, target.app.moduleId));
+      return;
+    }
+
+    headers.set(name, value);
+  });
+
+  headers.set('cache-control', 'no-store');
+  return headers;
+}
+
+function shouldRewriteContent(contentType: string) {
+  return REWRITABLE_CONTENT_TYPES.some(candidate => contentType.includes(candidate));
+}
+
+function rewriteLocationHeader(
+  location: string,
+  request: Request,
+  target: HostAppEmbedTarget
+) {
+  try {
+    const parsed = new URL(location, target.targetOrigin);
+    const targetOrigin = new URL(target.targetOrigin);
+    if (
+      parsed.origin === targetOrigin.origin ||
+      !/^[a-z][a-z\d+.-]*:/i.test(location)
+    ) {
+      return new URL(buildEmbedUrl(target.app.moduleId, `${parsed.pathname}${parsed.search}${parsed.hash}`), request.url).toString();
+    }
+  } catch {
+    return location;
+  }
+
+  return location;
+}
+
+function rewriteSetCookieHeader(value: string, moduleId: string) {
+  const embedPath = `/api/apps/${encodeURIComponent(moduleId)}/embed`;
+  return value
+    .replace(/;\s*domain=[^;]*/ig, '')
+    .replace(/;\s*path=[^;]*/ig, '')
+    .concat(`; Path=${embedPath}`);
+}
+
+function getFrameBlockReason(headers: Headers) {
+  const xFrameOptions = headers.get('x-frame-options')?.toLowerCase().trim();
+  if (xFrameOptions === 'deny') {
+    return 'The module response includes X-Frame-Options: DENY.';
+  }
+
+  const csp = headers.get('content-security-policy')?.toLowerCase() ?? '';
+  if (/\bframe-ancestors\s+[^;]*('none'|none)/.test(csp)) {
+    return 'The module response blocks framing through its Content-Security-Policy.';
+  }
+
+  return null;
+}
+
+function renderFrameBlockedHtml(target: HostAppEmbedTarget, reason: string) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(target.app.displayName)} embed blocked</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Arial, Helvetica, sans-serif; color: #18181b; background: #fafafa; }
+    main { max-width: 520px; padding: 32px; text-align: center; }
+    h1 { margin: 0 0 10px; font-size: 20px; }
+    p { margin: 0; color: #52525b; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Module UI cannot be embedded</h1>
+    <p>${escapeHtml(reason)} Update the module UI contract so it can open through the Host shell.</p>
+  </main>
+</body>
+</html>`;
+}
+
+function embedErrorHtmlResponse(status: number, message: string) {
+  return new NextResponse(renderEmbedErrorHtml(message), {
+    status,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+function renderEmbedErrorHtml(message: string) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Module UI unavailable</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Arial, Helvetica, sans-serif; color: #18181b; background: #fafafa; }
+    main { max-width: 560px; padding: 32px; text-align: center; }
+    h1 { margin: 0 0 10px; font-size: 20px; }
+    p { margin: 0; color: #52525b; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Module UI unavailable</h1>
+    <p>${escapeHtml(message)} Open this module through the Host shell after the module UI target is reachable and supports embedding.</p>
+  </main>
+</body>
+</html>`;
+}
+
+function rewriteSrcSet(
+  value: string,
+  toEmbedPath: (modulePath: string) => string
+) {
+  return value.split(',').map(candidate => {
+    const trimmed = candidate.trim();
+    const [url, ...rest] = trimmed.split(/\s+/);
+    if (!url?.startsWith('/') || url.startsWith('//')) {
+      return candidate;
+    }
+
+    return [toEmbedPath(url), ...rest].join(' ');
+  }).join(', ');
+}
+
+function stripCookieValue(value: string, cookieName: string) {
+  const cookies = value
+    .split(';')
+    .map(part => part.trim())
+    .filter(part => part && part.split('=')[0] !== cookieName);
+
+  return cookies.length > 0 ? cookies.join('; ') : null;
+}
+
+function appendForwardedFor(request: Request) {
+  const current = request.headers.get('x-forwarded-for');
+  const remoteAddress = request.headers.get('x-real-ip') ?? '';
+  return current ? `${current}, ${remoteAddress}` : remoteAddress;
+}
+
+function getRequestHost(request: Request) {
+  return request.headers.get('x-forwarded-host')?.split(',')[0]?.trim() ||
+    request.headers.get('host') ||
+    new URL(request.url).host;
+}
+
+function getRequestProtocol(request: Request) {
+  return request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ||
+    new URL(request.url).protocol.replace(/:$/, '');
+}
+
+function getExposurePolicy(accessMode: HostAppAccessMode): ModuleExposurePolicy {
+  return accessMode === 'assignedUsersOnly' ? 'assignedUsersOnly' : 'loginRequired';
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
