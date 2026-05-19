@@ -1423,6 +1423,8 @@ export function validateModuleUiMetadata(
 
   rejectUnknownFields(value, pathToUi, ['category', 'icon', 'entrypoint', 'navigation'], validationErrors, moduleId);
 
+  const hasCategory = Object.prototype.hasOwnProperty.call(value, 'category');
+  const hasIcon = Object.prototype.hasOwnProperty.call(value, 'icon');
   const category = readOptionalString(value, 'category', pathToUi, validationErrors, moduleId);
   const icon = readOptionalString(value, 'icon', pathToUi, validationErrors, moduleId);
   const entrypoint = validateModuleUiEntrypoint(
@@ -1439,7 +1441,7 @@ export function validateModuleUiMetadata(
     moduleId
   );
 
-  if (category && category !== 'Apps') {
+  if (hasCategory && category !== 'Apps') {
     validationErrors.push({
       code: 'module_ui_category_invalid',
       message: 'ui.category must be "Apps" when provided.',
@@ -1448,7 +1450,7 @@ export function validateModuleUiMetadata(
     });
   }
 
-  if (icon && (!/^[a-z][a-z0-9-]*$/.test(icon) || icon.length > MAX_UI_ICON_LENGTH)) {
+  if (hasIcon && (!icon || !/^[a-z][a-z0-9-]*$/.test(icon) || icon.length > MAX_UI_ICON_LENGTH)) {
     validationErrors.push({
       code: 'module_ui_icon_invalid',
       message: `ui.icon must be a lowercase icon key up to ${MAX_UI_ICON_LENGTH} characters.`,
@@ -1542,6 +1544,7 @@ function validateModuleUiNavigation(
   }
 
   const navigation: ModuleUiMetadata['navigation'] = [];
+  const navigationPaths = new Set<string>();
   value.forEach((item, index) => {
     const itemPath = `${pathToNavigation}[${index}]`;
     if (!isPlainObject(item)) {
@@ -1569,6 +1572,15 @@ function validateModuleUiNavigation(
 
     if (itemPathValue) {
       validateModuleUiPath(itemPathValue, `${itemPath}.path`, validationErrors, moduleId);
+      if (navigationPaths.has(itemPathValue)) {
+        validationErrors.push({
+          code: 'module_ui_navigation_duplicate_path',
+          message: `ui.navigation[].path "${itemPathValue}" is duplicated.`,
+          path: `${itemPath}.path`,
+          node: moduleId,
+        });
+      }
+      navigationPaths.add(itemPathValue);
     }
 
     if (label && itemPathValue) {

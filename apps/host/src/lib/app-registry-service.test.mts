@@ -134,6 +134,45 @@ test('does not infer shell apps from modules without explicit UI metadata', asyn
   assert.equal(apps.length, 0);
 });
 
+test('reports invalid shell UI metadata only to admins', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    withUi: true,
+    ui: {
+      entrypoint: {
+        portKey: 'http',
+        path: '/',
+      },
+      navigation: [
+        {
+          label: 'People',
+          path: '/people',
+        },
+        {
+          label: 'Team',
+          path: '/people',
+        },
+      ],
+    },
+  });
+
+  const userApps = await listHostApps(assignedUser, {
+    config,
+    runtimeStatusReader: runtimeStatus('running'),
+  });
+  const adminApps = await listHostApps(admin, {
+    config,
+    runtimeStatusReader: runtimeStatus('running'),
+  });
+
+  assert.equal(userApps.length, 0);
+  assert.equal(adminApps.length, 1);
+  assert.equal(adminApps[0].moduleId, 'com.example.reports');
+  assert.equal(adminApps[0].statusReason, 'metadataInvalid');
+});
+
 test('reports missing metadata only to admins', async () => {
   const config = await createAppRegistryTestConfig();
   await writeModulesStore(config, [
@@ -187,6 +226,7 @@ async function writeInstalledModule(
     moduleId: string;
     name: string;
     withUi: boolean;
+    ui?: unknown;
     operationStatus?: 'installed' | 'installing' | 'updating' | 'failed' | 'removing';
   }
 ) {
@@ -221,7 +261,7 @@ async function writeInstalledModule(
     },
     ...(input.withUi
       ? {
-          ui: {
+          ui: input.ui ?? {
             entrypoint: {
               portKey: 'http',
               path: '/',

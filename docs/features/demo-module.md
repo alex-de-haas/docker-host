@@ -4,13 +4,16 @@
 
 Demo Module is a repository-local Docker Host module under `modules/demo-module`. It is a small Next.js application that gives Docker Host a stable target for validating module operations during development.
 
-The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, sample people data, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, and resource hints. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
+The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, sample people data, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
 
 ```mermaid
 flowchart LR
   A["modules/demo-module/metadata.json"] --> B["Docker Host install plan"]
   B --> C["ghcr.io/alex-de-haas/demo-module:latest"]
   C --> D["Next.js demo app"]
+  D --> M["/"]
+  D --> N["/people"]
+  D --> O["/settings"]
   D --> E["/api/health"]
   D --> F["/api/config"]
   D --> G["/api/people"]
@@ -26,6 +29,8 @@ flowchart LR
 - `modules/demo-module/metadata.json` - Docker Host metadata used for install and update tests.
 - `modules/demo-module/Dockerfile` - production image build for the demo module.
 - `modules/demo-module/src/app/page.tsx` - demo dashboard.
+- `modules/demo-module/src/app/people/page.tsx` - stable people page for shell app navigation.
+- `modules/demo-module/src/app/settings/page.tsx` - stable settings page for shell app navigation.
 - `modules/demo-module/src/app/api/health/route.ts` - health and writable-storage probe.
 - `modules/demo-module/src/app/api/config/route.ts` - sanitized runtime configuration.
 - `modules/demo-module/src/app/api/people/route.ts` - sample people payload.
@@ -74,6 +79,7 @@ The module currently validates these Host flows:
 - optional external mount collection input;
 - container start, stop, restart, remove, and update paths;
 - future health-check integration through `/api/health`;
+- shell app discovery through `ui.entrypoint` and nested navigation for `/`, `/people`, and `/settings`;
 - gateway exposure policies through the presence or absence of a Host identity token;
 - module identity token validation through Host discovery and JWKS endpoints;
 - module-scoped directory reads through `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN`;

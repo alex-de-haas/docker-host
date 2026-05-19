@@ -21,6 +21,14 @@ Implemented Phase 2 behavior:
 - shell Apps do not support anonymous or `public` discovery;
 - service/API gateway exposures are not inferred as shell Apps.
 
+Implemented Phase 3 behavior:
+
+- module metadata supports an optional shell-only `ui` contract;
+- `ui.entrypoint` selects the public runtime port and default module UI path for shell embedding;
+- `ui.navigation` provides optional nested app navigation without runtime route probing;
+- invalid `ui` metadata is rejected by metadata validation;
+- the demo module declares `ui` metadata and exposes stable `/`, `/people`, and `/settings` routes.
+
 ## Navigation
 
 The current sidebar rendering remains static until the later Apps sidebar phase wires it to `/api/apps`.
@@ -78,7 +86,21 @@ The response intentionally returns same-origin Host paths, such as `/apps/{modul
 
 Modules appear in the app registry only when local metadata includes an explicit `ui` contract. `runtime.ports[].public` is still only a capability hint and does not create an app entry by itself.
 
+## Module UI Metadata
+
+The `ui` contract is shell-only. It describes how the Host can list and later embed a module UI; it does not publish a module UI hostname and does not create a service/API gateway exposure.
+
+Supported fields:
+
+- `ui.category` is optional and must be `Apps` when provided;
+- `ui.icon` is optional and must be a non-empty lowercase icon key;
+- `ui.entrypoint.portKey` must reference a `runtime.ports[]` item marked `public: true`;
+- `ui.entrypoint.path` must be a same-origin absolute path beginning with `/`;
+- `ui.navigation[]` is optional, preserves author-defined order, and requires unique same-origin absolute paths.
+
+Missing `ui` metadata is valid. The module can still install and run, but it is not returned as a shell App. Malformed `ui` metadata is rejected during install/update planning, and app registry compatibility checks keep invalid installed metadata hidden from `host.user` while returning safe diagnostics to `host.admin`.
+
 ## Open Questions
 
-- No Phase 1 shell foundation or Phase 2 app registry starter questions remain open.
-- Later phases still need the Apps sidebar, embedded app route, complete module UI metadata documentation, and non-admin user portal behavior.
+- No Phase 1 shell foundation, Phase 2 app registry starter, or Phase 3 module UI metadata contract questions remain open.
+- Later phases still need the Apps sidebar, embedded app route, gateway exposure management UX, non-admin user portal behavior, developer mode integration, and full app portal browser smoke coverage.

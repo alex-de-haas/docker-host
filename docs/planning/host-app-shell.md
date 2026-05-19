@@ -17,7 +17,7 @@ Reference UI direction: [TailwindAdmin React](https://react.tailwind-admin.com/)
 
 ## Target public navigation model
 
-In externally published deployments, the Host shell is the primary public entry point on the root domain, for example `zayats.io`.
+In externally published deployments, the Host shell is the primary public entry point on the root domain, for example `example.com`.
 
 When an unauthenticated person opens the root domain, Docker Host should send them to the standalone login page. After authentication, the shell experience depends on the Host role:
 
@@ -26,11 +26,11 @@ When an unauthenticated person opens the root domain, Docker Host should send th
 
 The Apps sidebar should show only module UIs the current principal can open. Selecting an app opens that module UI inside the Host shell, so the shell remains the user's main navigation surface. Direct public UI URLs for modules are not part of the target external publishing model.
 
-Some modules may also expose non-shell service endpoints for third-party clients. For example, a media module can expose a Jellyfin-compatible API for Apple TV clients such as Infuse on `media.zayats.io`. These service endpoints should continue to use dedicated gateway subdomains. They should not be represented as shell Apps and should not imply that the module's browser UI is available on the same public subdomain.
+Some modules may also expose non-shell service endpoints for third-party clients. For example, a media module can expose a Jellyfin-compatible API for Apple TV clients such as Infuse on `media.example.com`. These service endpoints should continue to use dedicated gateway subdomains. They should not be represented as shell Apps and should not imply that the module's browser UI is available on the same public subdomain.
 
 ```mermaid
 flowchart LR
-  U["User"] --> R["Root domain shell, e.g. zayats.io"]
+  U["User"] --> R["Root domain shell, e.g. example.com"]
   R --> L["Standalone login page"]
   L --> S["Role-filtered Host shell"]
   S --> H["Admin Host tools"]
@@ -38,7 +38,7 @@ flowchart LR
   A --> P["Embedded module UI"]
   P --> G["Host gateway"]
   G --> M["Module UI container"]
-  C["Third-party client"] --> SD["Module service subdomain, e.g. media.zayats.io"]
+  C["Third-party client"] --> SD["Module service subdomain, e.g. media.example.com"]
   SD --> G2["Host gateway service route"]
   G2 --> B["Module service/API container"]
 
@@ -226,7 +226,7 @@ Resolved Phase 2 starter decisions:
 
 ### Phase 3 - Module UI metadata contract
 
-**Status**: Not Started
+**Status**: Completed
 
 Extend module metadata with optional UI navigation data. This keeps app navigation predictable and avoids guessing routes from running modules.
 
@@ -281,6 +281,57 @@ Acceptance criteria:
 - Existing modules without `ui` still install but do not appear as shell Apps unless another explicit shell UI contract is added.
 - Invalid UI metadata is rejected during install/update planning before runtime exposure.
 - Demo module can populate an Apps submenu through metadata.
+
+Implementation notes:
+
+- Phase 3 kept app rendering out of scope and completed the module `ui` metadata contract around the existing Phase 2 `/api/apps` API.
+- `ui.category` remains optional but must be `Apps` when provided.
+- `ui.icon` remains optional and must be a non-empty lowercase icon key when provided.
+- `ui.entrypoint.path` and `ui.navigation[].path` are same-origin absolute paths beginning with `/`; direct URLs, protocol-relative paths, backslashes, control characters, and excessive lengths are rejected.
+- Duplicate `ui.navigation[].path` values are rejected.
+- The real demo module metadata now declares the basic `ui` contract and exposes stable `/`, `/people`, and `/settings` routes.
+
+Resolved Phase 3 decisions:
+
+- **Question**: What is the real Phase 3 scope now that Phase 2 already introduced minimal `ui` support?
+  **Answer**: Treat Phase 3 as contract completion: reconcile docs, close validation gaps, add targeted tests, and keep app rendering for Phase 4.
+  **Recommendation**: Use the contract-completion scope. Phase 2 already ships `/api/apps`, validator support, and sample reports metadata; Phase 4 owns sidebar and embedded app behavior.
+
+- **Question**: Should completing `ui` require a metadata schema version bump?
+  **Answer**: Keep `schemaVersion: "0.1"` because the metadata format is still a local-first MVP draft.
+  **Recommendation**: Keep `schemaVersion: "0.1"` unless externally published modules must support older Host builds. The current code and durable metadata documentation already include `ui` in the `0.1` contract.
+
+- **Question**: What should be the authoritative source for the `ui` contract?
+  **Answer**: Keep `docs/features/module-metadata.md` plus executable validation as the source of truth.
+  **Recommendation**: Keep the current document-plus-validator model for Phase 3. Add generated schemas only when external module authors need machine-readable validation outside the Host.
+
+- **Question**: How strict should `ui.entrypoint.path` and `ui.navigation[].path` validation be?
+  **Answer**: Allow same-origin absolute path strings beginning with `/`, including query strings and fragments.
+  **Recommendation**: Keep same-origin static path validation and do not probe module routes. Reject direct URLs, protocol-relative URLs, backslashes, control characters, and excessive length.
+
+- **Question**: Should duplicate nested navigation items be accepted?
+  **Answer**: Reject duplicate navigation paths while preserving author-defined order.
+  **Recommendation**: Reject duplicate paths and preserve the declared order. Silent deduplication can hide metadata mistakes and make selected navigation state ambiguous.
+
+- **Question**: How should optional `ui.category` and `ui.icon` behave before the Apps sidebar exists?
+  **Answer**: Keep `category` optional but limited to `Apps`, and keep `icon` as an optional lowercase key with a Host fallback.
+  **Recommendation**: Keep the current narrow fields. Do not let modules define Host navigation taxonomy yet; Phase 4 can map unknown icon keys to a default icon.
+
+- **Question**: What should happen when `ui` exists but is invalid?
+  **Answer**: Reject the install or update plan.
+  **Recommendation**: Reject invalid `ui` during install/update planning. A missing `ui` is valid, but a malformed shell UI contract should fail before it can create confusing app registry behavior.
+
+- **Question**: How much demo-module work belongs in Phase 3?
+  **Answer**: Ensure the demo module exposes stable routes matching `ui.navigation`.
+  **Recommendation**: Keep the demo work functional but small: metadata plus stable routes are enough for Phase 3 and give Phase 4 a predictable embedded-app test target.
+
+- **Question**: What test coverage defines Phase 3 as complete?
+  **Answer**: Validator tests plus app-registry compatibility tests for valid, absent, and invalid `ui`.
+  **Recommendation**: Add targeted validation and registry tests in Phase 3. Save sidebar and iframe browser smoke coverage for Phase 4, where that UI exists.
+
+- **Question**: Should Phase 3 add service/API exposure metadata alongside `ui`?
+  **Answer**: Keep service/API exposure metadata separate and defer it to the gateway exposure UX slice.
+  **Recommendation**: Keep Phase 3 shell-only. Service/API endpoint publishing is a separate gateway concern and should not be encoded under `ui`.
 
 ### Phase 4 - Apps sidebar and app host page
 

@@ -117,3 +117,89 @@ test('rejects shell UI paths that are not same-origin absolute paths', () => {
     true
   );
 });
+
+test('rejects duplicate shell UI navigation paths', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: '0.1',
+    id: 'com.example.reports',
+    name: 'Example Reports',
+    version: '1.0.0',
+    image: {
+      repository: 'ghcr.io/example/reports',
+      tag: 'latest',
+    },
+    runtime: {
+      ports: [
+        {
+          key: 'http',
+          containerPort: 3000,
+          protocol: 'http',
+          public: true,
+        },
+      ],
+    },
+    ui: {
+      entrypoint: {
+        portKey: 'http',
+        path: '/',
+      },
+      navigation: [
+        {
+          label: 'People',
+          path: '/people',
+        },
+        {
+          label: 'Team',
+          path: '/people',
+        },
+      ],
+    },
+  }, '$');
+
+  assert.equal(result.metadata, null);
+  assert.equal(
+    result.validationErrors.some(error => error.code === 'module_ui_navigation_duplicate_path'),
+    true
+  );
+});
+
+test('rejects empty optional shell UI category and icon values', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: '0.1',
+    id: 'com.example.reports',
+    name: 'Example Reports',
+    version: '1.0.0',
+    image: {
+      repository: 'ghcr.io/example/reports',
+      tag: 'latest',
+    },
+    runtime: {
+      ports: [
+        {
+          key: 'http',
+          containerPort: 3000,
+          protocol: 'http',
+          public: true,
+        },
+      ],
+    },
+    ui: {
+      category: '',
+      icon: ' ',
+      entrypoint: {
+        portKey: 'http',
+        path: '/',
+      },
+    },
+  }, '$');
+
+  assert.equal(result.metadata, null);
+  assert.equal(
+    result.validationErrors.some(error => error.code === 'module_ui_category_invalid'),
+    true
+  );
+  assert.equal(
+    result.validationErrors.some(error => error.code === 'module_ui_icon_invalid'),
+    true
+  );
+});

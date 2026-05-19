@@ -429,8 +429,8 @@ For `schemaVersion: "0.1"`, metadata validation is strict: unknown fields are re
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `category` | string | no | Must be `Apps` when provided. |
-| `icon` | string | no | Lowercase icon key for future sidebar rendering, for example `boxes`. |
+| `category` | string | no | Must be the non-empty value `Apps` when provided. |
+| `icon` | string | no | Non-empty lowercase icon key for future sidebar rendering, for example `boxes`. |
 | `entrypoint` | object | yes | Shell UI entrypoint. |
 | `navigation` | array | no | Optional nested app navigation. Default: empty array. |
 
@@ -446,9 +446,11 @@ For `schemaVersion: "0.1"`, metadata validation is strict: unknown fields are re
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `label` | string | yes | Sidebar label, at most 80 characters. |
-| `path` | string | yes | Same-origin absolute module UI path beginning with `/`. |
+| `path` | string | yes | Same-origin absolute module UI path beginning with `/`. Navigation paths must be unique within one `ui.navigation` array. |
 
 The `ui` contract never requests a public module UI hostname. The Host app registry remains authenticated and returns same-origin Host shell paths only. Modules without `ui` metadata can still be installed, but they do not appear as shell Apps.
+
+Invalid `ui` metadata is rejected during install or update planning. Missing `ui` metadata is valid and means the module does not appear as a shell App. The Host does not infer shell Apps from gateway exposure records, public runtime ports, service/API endpoint hostnames, or runtime route probing.
 
 ## Field notes
 
