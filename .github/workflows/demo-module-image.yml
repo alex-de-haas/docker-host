@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "demo-module-v*"
     paths:
       - "modules/demo-module/**"
       - "package.json"
@@ -39,13 +37,6 @@ jobs:
         shell: bash
         run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/demo-module" >> "$GITHUB_OUTPUT"
 
-      - name: Read demo module version
-        id: module
-        shell: bash
-        run: |
-          version=$(node -p "require('./modules/demo-module/package.json').version")
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -59,9 +50,7 @@ jobs:
           images: ${{ steps.image.outputs.name }}
           tags: |
             type=ref,event=pr
-            type=match,pattern=demo-module-v(.*),group=1
             type=sha,prefix=sha-
-            type=raw,value=${{ steps.module.outputs.version }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Log in to GitHub Container Registry

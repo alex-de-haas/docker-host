@@ -20,10 +20,10 @@ modules/demo-module/metadata.json
 For Docker Host testing, install the module from the raw metadata URL in this repository. The metadata uses the GitHub Container Registry image reference:
 
 ```text
-ghcr.io/alex-de-haas/demo-module:0.1.0
+ghcr.io/alex-de-haas/demo-module:latest
 ```
 
-The CI image workflow publishes this image to GitHub Container Registry. Docker Host pulls it when it is missing locally.
+The CI image workflow publishes this image to GitHub Container Registry. Docker Host pulls it on install and update because the metadata uses `pullPolicy: always`.
 
 ## Build the module image
 

@@ -127,12 +127,11 @@ The Host image should be published as a multi-platform Linux image for `linux/am
 Demo Module image artifact:
 
 ```text
-ghcr.io/alex-de-haas/demo-module:<module-version>
 ghcr.io/alex-de-haas/demo-module:latest
 ghcr.io/alex-de-haas/demo-module:sha-<commit>
 ```
 
-The Demo Module image is published to GitHub Container Registry from `demo-module-image.yml`. The workflow builds pull requests without pushing, then publishes on the default branch and on `demo-module-v*` tags. It uses the built-in `GITHUB_TOKEN` with `packages: write`, so no extra registry secrets are required.
+The Demo Module image is published to GitHub Container Registry from `demo-module-image.yml`. The workflow builds pull requests without pushing, then publishes rolling `latest` and traceable SHA tags on the default branch. It uses the built-in `GITHUB_TOKEN` with `packages: write`, so no extra registry secrets are required.
 
 CLI release artifacts:
 

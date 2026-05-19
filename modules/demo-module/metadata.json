@@ -6,8 +6,8 @@
   "version": "0.1.0",
   "image": {
     "repository": "ghcr.io/alex-de-haas/demo-module",
-    "tag": "0.1.0",
-    "pullPolicy": "ifNotPresent"
+    "tag": "latest",
+    "pullPolicy": "always"
   },
   "settings": [
     {

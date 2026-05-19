@@ -9,7 +9,7 @@ The module is intentionally simple: it exposes a dashboard, sample people data, 
 ```mermaid
 flowchart LR
   A["modules/demo-module/metadata.json"] --> B["Docker Host install plan"]
-  B --> C["ghcr.io/alex-de-haas/demo-module:0.1.0"]
+  B --> C["ghcr.io/alex-de-haas/demo-module:latest"]
   C --> D["Next.js demo app"]
   D --> E["/api/health"]
   D --> F["/api/config"]
@@ -48,10 +48,10 @@ npm run demo-module:docker:build
 The metadata uses:
 
 ```text
-ghcr.io/alex-de-haas/demo-module:0.1.0
+ghcr.io/alex-de-haas/demo-module:latest
 ```
 
-The CI image workflow publishes `0.1.0`, `latest`, and SHA tags to GitHub Container Registry. It authenticates with the built-in `GITHUB_TOKEN`, so no extra registry secrets are required. The metadata uses `pullPolicy: ifNotPresent`, so Docker Host pulls the image when it is missing locally.
+The CI image workflow publishes `latest` and SHA tags to GitHub Container Registry. It authenticates with the built-in `GITHUB_TOKEN`, so no extra registry secrets are required. The metadata uses `pullPolicy: always`, so Docker Host pulls the rolling image on install and update.
 
 ## Install Testing
 
