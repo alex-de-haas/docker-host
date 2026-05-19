@@ -216,6 +216,10 @@ dd {
   margin: 0;
 }
 
+.compactList {
+  gap: 10px;
+}
+
 .detailList div {
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
@@ -257,10 +261,27 @@ dd {
 
 .personRow div span,
 .emptyText,
-.storageItem p {
+.storageItem p,
+.smallText {
   color: var(--muted);
   font-size: 0.88rem;
   line-height: 1.45;
+}
+
+.authStack {
+  display: grid;
+  gap: 16px;
+}
+
+.authStatusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.smallText {
+  overflow-wrap: anywhere;
 }
 
 .state {
@@ -344,7 +365,8 @@ dd {
   }
 
   .personRow,
-  .panelHeader {
+  .panelHeader,
+  .authStatusRow {
     align-items: flex-start;
     flex-direction: column;
   }

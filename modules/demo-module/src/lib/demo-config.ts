@@ -11,6 +11,11 @@ export interface DemoConfig {
   refreshSeconds: number;
   authPreview: boolean;
   publicUrl: string;
+  host: {
+    internalOrigin: string;
+    moduleId: string;
+    moduleServiceTokenConfigured: boolean;
+  };
   paths: {
     data: string;
     logs: string;
@@ -29,17 +34,24 @@ export interface StorageInspection {
 }
 
 const defaultModuleId = "com.haas.demo-module";
-const defaultModuleVersion = "0.1.0";
+const defaultModuleVersion = "0.2.0";
 
 export function getDemoConfig(): DemoConfig {
+  const moduleId = process.env.DOCKER_HOST_MODULE_ID || process.env.MODULE_ID || defaultModuleId;
+
   return {
-    moduleId: process.env.MODULE_ID || defaultModuleId,
+    moduleId,
     moduleVersion: process.env.MODULE_VERSION || defaultModuleVersion,
     greeting: process.env.DEMO_GREETING || "Hello from Docker Host",
     releaseChannel: process.env.DEMO_RELEASE_CHANNEL || "local",
     refreshSeconds: readNumber(process.env.DEMO_REFRESH_SECONDS, 30),
     authPreview: readBoolean(process.env.DEMO_AUTH_PREVIEW, false),
     publicUrl: process.env.DEMO_PUBLIC_URL || "http://localhost:3100",
+    host: {
+      internalOrigin: process.env.DOCKER_HOST_INTERNAL_ORIGIN || "http://docker-host:3000",
+      moduleId,
+      moduleServiceTokenConfigured: Boolean(process.env.DOCKER_HOST_MODULE_SERVICE_TOKEN),
+    },
     paths: {
       data: process.env.DEMO_DATA_DIR || defaultRuntimePath("data"),
       logs: process.env.DEMO_LOG_DIR || defaultRuntimePath("logs"),

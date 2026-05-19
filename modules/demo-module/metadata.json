@@ -2,8 +2,8 @@
   "schemaVersion": "0.1",
   "id": "com.haas.demo-module",
   "name": "Demo Module",
-  "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, and future auth flows.",
-  "version": "0.1.0",
+  "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, gateway authorization, identity propagation, and module directory flows.",
+  "version": "0.2.0",
   "image": {
     "repository": "ghcr.io/alex-de-haas/demo-module",
     "tag": "latest",
@@ -44,7 +44,7 @@
       "key": "DEMO_AUTH_PREVIEW",
       "type": "boolean",
       "required": false,
-      "default": false,
+      "default": true,
       "target": {
         "type": "env",
         "name": "DEMO_AUTH_PREVIEW"
