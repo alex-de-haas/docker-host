@@ -42,6 +42,8 @@ Metadata file описывает:
 - **External storage mount** - host path, выбранный администратором и находящийся за пределами module directory.
 - **Mount collection** - декларация в metadata, которая разрешает администратору добавить динамическое количество external storage mounts одного типа.
 - **Runtime endpoint** - именованный port зависимого модуля, по которому другие модули могут получить internal base URL.
+- **Shell UI entrypoint** - будущий metadata contract для browser UI, который открывается только внутри Host shell на root domain.
+- **Service/API exposure** - отдельная будущая декларация для endpoint, который можно публиковать на dedicated subdomain для сторонних клиентов. Такая декларация не делает browser UI модуля публичным.
 
 ## Metadata URL
 
@@ -402,7 +404,7 @@ For `schemaVersion: "0.1"`, metadata validation is strict: unknown fields are re
 | `key` | string | yes | Stable endpoint key, unique inside the metadata file. |
 | `containerPort` | number | yes | Container port number. |
 | `protocol` | string | yes | First implementation target: `http`. |
-| `public` | boolean | yes | Whether the endpoint is suitable for external UI exposure through a future Host gateway. This is a capability hint, not an authorization policy. The first implementation should not publish module host ports automatically. |
+| `public` | boolean | yes | Whether the endpoint is suitable for Host-managed routing beyond module-to-module internal dependency URLs. This is a capability hint, not an authorization policy. It does not publish the endpoint, does not create a direct public module UI domain, and does not make the endpoint appear in Apps navigation by itself. |
 
 ## Field notes
 
@@ -840,7 +842,7 @@ Host не должен пытаться валидировать external host p
 `runtime` описывает минимальные параметры запуска. На первом этапе достаточно:
 
 - named container ports;
-- public/private marker для порта;
+- public/private capability marker для порта;
 - CPU и memory hints.
 
 The install/update runtime applies resource hints when creating Docker containers. `runtime.resources.cpus` maps to Docker `NanoCpus`. `runtime.resources.memory` supports plain byte counts and `k`, `m`, or `g` suffixes, for example `512m` or `1g`.
@@ -874,7 +876,7 @@ Module health checks должны быть отдельной future feature. В
 
 `public: false` означает, что endpoint нужен только внутри Host-managed Docker network. Для module-to-module коммуникации Host должен использовать internal URL, а не опубликованный host port.
 
-В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `runtime.ports[].public`. Наружная публикация выбранных модулей должна быть отдельной feature с explicit authorization и exposure settings. Auth Gateway owns the actual module exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
+В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `runtime.ports[].public`. Наружная публикация service/API endpoints должна быть отдельной feature с explicit authorization и exposure settings. Browser UI модулей должен открываться через Host shell, а не через отдельный публичный UI subdomain. Auth Gateway owns the actual service/API exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
 
 Host-managed Docker network должна быть одной общей user-defined network для всех managed modules. Default bridge network не подходит, потому что не дает достаточно надежной DNS-модели для module-to-module names.
 
@@ -942,7 +944,7 @@ Host не должен знать, как эти files организованы 
 - Host не должен применять глобальный allow-list для external storage roots;
 - Host не должен проверять external host path через filesystem Host UI процесса;
 - external host path считается валидным только после успешной Docker bind mount operation;
-- если future exposure feature публикует module ports наружу, public ports не должны конфликтовать с уже опубликованными портами;
+- если future service/API exposure feature публикует module ports наружу, public ports не должны конфликтовать с уже опубликованными портами;
 - `runtime.ports[].key` должен быть уникален внутри одного metadata file;
 - `runtime.ports[].containerPort` должен быть валидным container port;
 - Host-generated network alias должен быть уникален среди установленных модулей;
