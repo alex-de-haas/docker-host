@@ -4,12 +4,12 @@
 
 Demo Module is a repository-local Docker Host module under `modules/demo-module`. It is a small Next.js application that gives Docker Host a stable target for validating module operations during development.
 
-The module is intentionally simple: it exposes a dashboard, sample people data, sanitized runtime configuration, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, ignored MVP health-check metadata, and resource hints. The image is published to Docker Hub as `alex-de-haas/demo-module`.
+The module is intentionally simple: it exposes a dashboard, sample people data, sanitized runtime configuration, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, ignored MVP health-check metadata, and resource hints. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
 
 ```mermaid
 flowchart LR
   A["modules/demo-module/metadata.json"] --> B["Docker Host install plan"]
-  B --> C["alex-de-haas/demo-module:0.1.0"]
+  B --> C["ghcr.io/alex-de-haas/demo-module:0.1.0"]
   C --> D["Next.js demo app"]
   D --> E["/api/health"]
   D --> F["/api/config"]
@@ -48,15 +48,10 @@ npm run demo-module:docker:build
 The metadata uses:
 
 ```text
-alex-de-haas/demo-module:0.1.0
+ghcr.io/alex-de-haas/demo-module:0.1.0
 ```
 
-The CI image workflow publishes `0.1.0`, `latest`, and SHA tags to Docker Hub. The metadata uses `pullPolicy: ifNotPresent`, so Docker Host pulls the image when it is missing locally.
-
-The Docker Hub publishing workflow requires these repository secrets:
-
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
+The CI image workflow publishes `0.1.0`, `latest`, and SHA tags to GitHub Container Registry. It authenticates with the built-in `GITHUB_TOKEN`, so no extra registry secrets are required. The metadata uses `pullPolicy: ifNotPresent`, so Docker Host pulls the image when it is missing locally.
 
 ## Install Testing
 

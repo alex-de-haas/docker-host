@@ -21,17 +21,23 @@ on:
       - ".github/workflows/demo-module-image.yml"
 
 env:
-  DOCKERHUB_IMAGE: alex-de-haas/demo-module
+  REGISTRY: ghcr.io
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Compute image name
+        id: image
+        shell: bash
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/demo-module" >> "$GITHUB_OUTPUT"
 
       - name: Read demo module version
         id: module
@@ -50,7 +56,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.DOCKERHUB_IMAGE }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=ref,event=pr
             type=match,pattern=demo-module-v(.*),group=1
@@ -58,12 +64,13 @@ jobs:
             type=raw,value=${{ steps.module.outputs.version }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish Demo Module image
         uses: docker/build-push-action@v7

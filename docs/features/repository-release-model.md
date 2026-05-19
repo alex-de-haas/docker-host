@@ -72,7 +72,7 @@ Host backend API остается единственным владельцем 
 
 - `ci.yml` - общие проверки на pull request и push;
 - `host-image.yml` - build/push Host Docker image;
-- `demo-module-image.yml` - build/push Demo Module Docker image to Docker Hub;
+- `demo-module-image.yml` - build/push Demo Module Docker image to GitHub Container Registry;
 - `cli-release.yml` - build/publish standalone CLI artifacts;
 - опционально `docs.yml` - проверки документации.
 
@@ -127,12 +127,12 @@ The Host image should be published as a multi-platform Linux image for `linux/am
 Demo Module image artifact:
 
 ```text
-alex-de-haas/demo-module:<module-version>
-alex-de-haas/demo-module:latest
-alex-de-haas/demo-module:sha-<commit>
+ghcr.io/alex-de-haas/demo-module:<module-version>
+ghcr.io/alex-de-haas/demo-module:latest
+ghcr.io/alex-de-haas/demo-module:sha-<commit>
 ```
 
-The Demo Module image is published to Docker Hub from `demo-module-image.yml`. The workflow builds pull requests without pushing, then publishes on the default branch and on `demo-module-v*` tags. Docker Hub publishing requires `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets.
+The Demo Module image is published to GitHub Container Registry from `demo-module-image.yml`. The workflow builds pull requests without pushing, then publishes on the default branch and on `demo-module-v*` tags. It uses the built-in `GITHUB_TOKEN` with `packages: write`, so no extra registry secrets are required.
 
 CLI release artifacts:
 

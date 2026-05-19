@@ -5,7 +5,7 @@
   "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, and future auth flows.",
   "version": "0.1.0",
   "image": {
-    "repository": "alex-de-haas/demo-module",
+    "repository": "ghcr.io/alex-de-haas/demo-module",
     "tag": "0.1.0",
     "pullPolicy": "ifNotPresent"
   },
