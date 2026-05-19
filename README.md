@@ -4,7 +4,7 @@ Monorepo for Docker Host Manager, including the Host Web UI/backend API and the 
 
 ## Concepts
 
-- [Project documentation](docs/root.md) contains the current module model, feature notes, and planning status.
+- [Project documentation](docs/root.md) contains the current module model, feature notes, and follow-up backlog.
 
 ## Install Current CLI Build
 

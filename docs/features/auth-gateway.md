@@ -1,6 +1,6 @@
 # Auth Gateway
 
-This document captures the accepted architecture direction for Docker Host authentication, authorization, module gateway routing, realtime traffic, and module-owned permissions.
+This document captures the implemented Docker Host authentication, authorization, module gateway routing, realtime traffic, external ingress readiness, and module-owned permissions model.
 
 ## Scope
 
@@ -172,7 +172,7 @@ CLI module commands should act as a local administrator tool. The CLI should aut
 
 The accepted local authentication direction is to use a revocable local admin token for CLI access. The Host stores only a server-side hash of the token. The CLI stores the token material under the local Docker Host config area with restrictive file permissions or platform ACLs. Authenticated CLI module commands are treated as `host.admin` operations.
 
-Phase 7 adds the first operational CLI token lifecycle:
+The operational CLI token lifecycle includes:
 
 - Host administrators can list, create, rotate, and revoke CLI admin tokens through admin-authenticated Host APIs.
 - Raw CLI token material is returned only once when a token is created or rotated.
@@ -180,10 +180,11 @@ Phase 7 adds the first operational CLI token lifecycle:
 - The CLI stores the active token in `~/.docker-host/config/auth.json` with restrictive file permissions on Unix-like platforms.
 - `DOCKER_HOST_CLI_TOKEN` can provide an ephemeral token override for automation.
 - Host API-backed CLI commands send the token as `Authorization: Bearer`.
+- CLI token create, revoke, rotate, session revocation, and audit purge operations require recent browser reauthentication when called with a browser session.
 
 ## Local Authentication Decisions
 
-Phase 2 uses a local password provider, opaque server-side sessions, JSON persistence, local setup and recovery tokens, and structured audit records.
+The local authentication implementation uses a local password provider, opaque server-side sessions, JSON persistence, local setup and recovery tokens, and structured audit records.
 
 Key local-auth decisions:
 
@@ -301,7 +302,7 @@ Rules:
 - `loginRequired` and `assignedUsersOnly` exposures default to `identityMode: "required"`.
 - modules must validate tokens against Host JWKS and must reject tokens with the wrong audience, issuer, signature, or expiration.
 
-Host does not pass unsigned identity convenience headers in the Phase 4 MVP. If convenience headers are added later, the signed token remains the only authoritative identity artifact.
+Host does not pass unsigned identity convenience headers in the MVP. If convenience headers are added later, the signed token remains the only authoritative identity artifact.
 
 ## Realtime Traffic
 
@@ -414,7 +415,7 @@ Host does not persist OIDC access tokens, refresh tokens, or ID tokens. Provider
 
 ### Trusted Proxy Provider
 
-Trusted proxy mode supports deployments where an upstream proxy authenticates the browser before requests reach Docker Host. The first implementation slice accepts only signed JWT assertions from the trusted proxy. The Host verifies issuer, audience, signature, key id, expiration, and not-before before mapping the request to a Host user.
+Trusted proxy mode supports deployments where an upstream proxy authenticates the browser before requests reach Docker Host. The implementation accepts only signed JWT assertions from the trusted proxy. The Host verifies issuer, audience, signature, key id, expiration, and not-before before mapping the request to a Host user.
 
 Provider records include issuer, audience, assertion header name, JWKS or JWKS URI, subject/email/display-name claim names, and explicit claim-to-Host-role mappings. Cloudflare Access uses the `Cf-Access-Jwt-Assertion` header and the Access JWKS endpoint. A generic signed-JWT provider can use `X-Docker-Host-Trusted-Proxy-Jwt` or another configured assertion header.
 
@@ -488,9 +489,20 @@ More details live in [Module developer mode](module-developer-mode.md).
 
 ## External Ingress Readiness
 
-External ingress readiness is provider-neutral. Docker Host does not own DNS, TLS termination, reverse proxy configuration, tunnels, or upstream identity provider configuration in this phase. Instead, Host records the administrator's manual publish intent, generates setup instructions, validates Host-side prerequisites, and reports drift when Host gateway or auth settings change after an exposure was marked ready.
+External ingress readiness is provider-neutral. Docker Host does not own DNS, TLS termination, reverse proxy configuration, tunnels, or upstream identity provider configuration. Instead, Host records the administrator's manual publish intent, generates setup instructions, validates Host-side prerequisites, and reports drift when Host gateway or auth settings change after an exposure was marked ready.
 
 External ingress readiness records live in `/data/ingress/external-ingress.json`. The records are keyed by gateway exposure id and hostname, separate from `/data/gateway/exposures.json`, so the Host gateway contract remains unchanged.
+
+```mermaid
+flowchart LR
+  A["Gateway exposure"] --> B["Manual ingress intent"]
+  B --> C["Generated setup instructions"]
+  B --> D["Host-side readiness checks"]
+  D --> E{"Status"}
+  E --> F["validated"]
+  E --> G["failed or drifted"]
+  G --> H["Administrator reconciles DNS, proxy, TLS, or Host settings"]
+```
 
 Supported statuses:
 
@@ -504,6 +516,8 @@ Supported statuses:
 | `failed` | Host-side readiness checks failed. |
 | `unknown` | Host cannot determine a useful readiness state. |
 
+Manual setup instructions are generated per exposure and include DNS target guidance, reverse proxy routing expectations, TLS requirements, WebSocket forwarding, the Host OIDC callback URL when Host owns browser login, trusted-proxy assertion guidance when an upstream proxy owns login, and the active Host gateway policy/identity mode.
+
 Readiness checks are intentionally Host-side only:
 
 - `HOST_GATEWAY_BASE_DOMAIN` is configured;
@@ -513,13 +527,15 @@ Readiness checks are intentionally Host-side only:
 - manual DNS, reverse proxy, TLS, and websocket checklist items are marked complete;
 - direct-origin bypass protection is marked complete when trusted proxy mode is enabled.
 
-The Web UI shows an external ingress readiness panel for gateway exposures. Admin-only APIs are available under `/api/ingress/exposures` for listing status, creating/updating manual intent, marking ready, refreshing validation, and unlinking local readiness records.
+The Web UI shows an external ingress readiness panel for gateway exposures. Admin-only APIs are available under `/api/ingress/exposures` for listing status, reading a single exposure status, creating/updating manual intent, marking ready, refreshing validation, and unlinking local readiness records.
 
-Provider-specific automation, including Cloudflare DNS, Tunnel public hostname, or Access application management, is intentionally outside this phase. It can be added later as an optional adapter on top of the provider-neutral readiness model.
+External ingress lifecycle changes are audited as sanitized events for saved manual intent, mark-ready, validation refresh, drift detection, and unlink. These events reference the gateway exposure target but do not log provider credentials, assertions, secrets, or full request headers.
+
+Provider-specific automation, including Cloudflare DNS, Cloudflare Tunnel public hostname, Cloudflare Access application management, or other provider adapters, is intentionally outside this feature. It can be added later as an optional adapter on top of the provider-neutral readiness model.
 
 ## Open Questions
 
 - Should Host remember a preferred account per module hostname?
 - What exact revalidation policy should long-lived realtime connections use?
-- Should Phase 9 add generated `.env` output for standalone modules, or should that wait for a module SDK?
+- Should generated `.env` output for standalone modules be added to developer mode, or should that wait for a module SDK?
 - Should per-dependency developer target overrides be represented as independent records or as a root target overlay?

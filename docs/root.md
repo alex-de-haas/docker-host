@@ -26,7 +26,6 @@ flowchart LR
 
 - [Future work](todo.md) - lightweight backlog items and follow-up ideas that are not yet dedicated planning documents.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
-- [Auth Gateway planning](planning/auth-gateway.md) - implementation plan and open questions for the Host auth gateway.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Module developer mode](features/module-developer-mode.md) - local-only module development targets that proxy through the Host gateway without a full install.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.

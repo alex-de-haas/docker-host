@@ -8,4 +8,4 @@ This page tracks small product and implementation ideas that are not yet large e
 
 ## External Ingress
 
-- Add optional provider-specific external ingress automation after the provider-neutral readiness flow is implemented. Cloudflare DNS, Tunnel public hostname, and Access application automation are candidates, but should remain a separate adapter feature instead of blocking Host-owned authorization work.
+- Add optional provider-specific external ingress automation on top of the implemented provider-neutral readiness flow. Cloudflare DNS, Cloudflare Tunnel public hostname, Cloudflare Access application management, and adapter/preset support for other ingress providers are candidates, but should remain separate provider adapters instead of blocking Host-owned authorization work.

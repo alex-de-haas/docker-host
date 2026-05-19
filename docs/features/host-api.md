@@ -604,6 +604,9 @@ Implemented browser auth endpoints:
 - `POST /api/auth/login` authenticates a local password user and creates a Host session.
 - `POST /api/auth/logout` revokes the current Host session.
 - `GET /api/auth/status` returns setup and current-session status.
+- `POST /api/auth/recovery` consumes a local setup or recovery token, restores a `host.admin` account, revokes stale sessions for that account, and creates a new browser session.
+- `POST /api/auth/reauth` refreshes the current browser session's recent reauthentication timestamp using a local password or recovery token.
+- `GET /api/auth/diagnostics` returns safe OIDC and trusted-proxy diagnostics for Host administrators.
 - `GET /api/auth/oidc/login` starts generic OIDC Authorization Code with PKCE when an OIDC provider is configured.
 - `GET /api/auth/oidc/callback` validates the OIDC callback, exchanges the authorization code, verifies the ID token with provider JWKS, applies explicit role mapping, creates or updates the Host user for the external identity, and creates a normal Host session.
 
@@ -619,6 +622,45 @@ CLI admin tokens authenticate local CLI commands to Host API routes as `host.adm
 - `POST /api/auth/cli-tokens/{tokenId}/rotate` revokes the selected token and returns a raw replacement token once. Optional body: `{ "label": "Replacement CLI" }`.
 
 All CLI token lifecycle endpoints require `host.auth.configure`. Browser-session requests must pass the Host same-origin CSRF check. CLI Bearer-token requests are not subject to CSRF checks.
+
+### Sessions and audit
+
+Session and audit APIs support the `/settings/security` operations surface:
+
+- `GET /api/auth/sessions` returns active Host sessions and can include recently revoked sessions with `includeRevoked=true`.
+- `DELETE /api/auth/sessions/{sessionId}` revokes a Host session by id.
+- `GET /api/auth/audit` returns sanitized audit events with cursor pagination and filters for event type, actor, target, result, and timestamp range.
+- `DELETE /api/auth/audit` applies retention-based purge and appends a final `auth.audit.purged` summary event.
+
+Session revocation and audit purge require `host.auth.configure`; mutating browser-session requests also require recent reauthentication. Responses never expose raw session cookies, token hashes, bearer tokens, setup tokens, recovery tokens, provider assertions, or provider tokens.
+
+### Gateway exposure and ingress readiness
+
+Gateway exposure APIs manage Host-owned module subdomain routing:
+
+- `GET /api/gateway/exposures` lists gateway exposures and assigned Host user ids.
+- `POST /api/gateway/exposures` creates or updates an exposure for `moduleId`, `hostname`, `portKey`, optional `exposurePolicy`, and optional `identityMode`.
+- `PUT /api/gateway/exposures/{exposureId}` updates hostname, port, policy, identity mode, or enabled state.
+- `DELETE /api/gateway/exposures/{exposureId}` removes an exposure.
+- `PUT /api/gateway/exposures/{exposureId}/assignments` replaces assigned Host user ids for the exposure's module.
+
+External ingress readiness APIs track manual provider-neutral publishing state for existing gateway exposures:
+
+- `GET /api/ingress/exposures` lists readiness status, generated instructions, validation checks, and next steps for gateway exposures.
+- `POST /api/ingress/exposures` creates or updates manual readiness intent. Request body includes `gatewayExposureId`, optional checklist fields, optional notes, and optional `markReady`.
+- `GET /api/ingress/exposures/{exposureId}` returns one exposure's readiness status.
+- `PUT /api/ingress/exposures/{exposureId}` updates that exposure's manual readiness intent.
+- `POST /api/ingress/exposures/{exposureId}/refresh` reruns Host-side validation and marks the record `validated`, `failed`, or `drifted`.
+- `DELETE /api/ingress/exposures/{exposureId}` unlinks the local readiness record without implying that external DNS, proxy, tunnel, or provider resources were deleted.
+
+These endpoints require `modules.exposure.manage`. They validate only Host-owned prerequisites and stored manual checklist state; provider API automation is intentionally deferred.
+
+### Module identity discovery
+
+Module identity discovery is public because it exposes only public key material and validation metadata:
+
+- `GET /.well-known/docker-host/module-identity.json` returns issuer, JWKS URI, supported algorithms, and the identity header name.
+- `GET /.well-known/docker-host/jwks.json` returns the Host public JWKS for validating `X-Docker-Host-Identity`.
 
 ### Internal module directory
 
@@ -674,6 +716,6 @@ This document is the Host API contract for the MVP. It should be updated when im
 
 ## Open Questions
 
-No MVP Host API questions remain open for the implemented install, recovery, remove, update, and internal module directory flows.
+No MVP Host API questions remain open for the implemented install, recovery, remove, update, auth, gateway exposure, external ingress readiness, and internal module directory flows.
 
-Later implementation slices may reopen API details for settings writes, storage reconfiguration, module diagnostics, logs streaming, health checks, and external exposure.
+Later implementation slices may reopen API details for settings writes, storage reconfiguration, module diagnostics, logs streaming, health checks, and provider-specific external ingress automation.
