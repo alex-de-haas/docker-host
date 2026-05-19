@@ -675,8 +675,16 @@ internal sealed class ModulesCommand(CommandContext context)
 
     private string? PromptForSetting(InstallPlanSettingPrompt setting)
     {
+        var prompt = CreateSettingPrompt(setting);
+        var raw = context.Console.Prompt(prompt);
+        return string.IsNullOrEmpty(raw) && !setting.Required ? null : raw;
+    }
+
+    internal static TextPrompt<string> CreateSettingPrompt(InstallPlanSettingPrompt setting)
+    {
         var label = $"{setting.ModuleId}.{setting.Key}";
-        var prompt = new TextPrompt<string>($"{Markup.Escape(label)} ({Markup.Escape(setting.Secret ? "secret" : setting.Type)}):");
+        var prompt = new TextPrompt<string>($"{Markup.Escape(label)} ({Markup.Escape(setting.Secret ? "secret" : setting.Type)}):")
+            .WithConverter(Markup.Escape);
         if (!setting.Required)
         {
             prompt.AllowEmpty();
@@ -692,8 +700,7 @@ internal sealed class ModulesCommand(CommandContext context)
         }
 
         prompt.Validate(value => ValidateSettingInput(setting, value));
-        var raw = context.Console.Prompt(prompt);
-        return string.IsNullOrEmpty(raw) && !setting.Required ? null : raw;
+        return prompt;
     }
 
     private IReadOnlyList<ModuleInstallExternalMountSelection> PromptForExternalMounts(IReadOnlyList<InstallPlanMountCollection> collections)
