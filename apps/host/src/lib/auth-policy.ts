@@ -16,6 +16,14 @@ export function canUseHostApi(
   return principal?.role === 'host.admin';
 }
 
+export function canUseHostShell(principal: HostPrincipal | null | undefined) {
+  return principal?.role === 'host.admin' || principal?.role === 'host.user';
+}
+
+export function getDefaultHostShellPath(principal: HostPrincipal) {
+  return principal.role === 'host.user' ? '/apps' : '/';
+}
+
 export function canAccessModule({
   principal,
   moduleId,

@@ -163,11 +163,13 @@ Initial Host roles are intentionally small:
 | Role | Meaning |
 | --- | --- |
 | `host.admin` | Can manage Host configuration, auth settings, users, module install/update/remove, exposure, and recovery. |
-| `host.user` | Can access module subdomains allowed by exposure policy and assignment state. It cannot call Host API functionality, including module listing or Host status views. |
+| `host.user` | Can load the Host shell as an Apps portal and access module subdomains allowed by exposure policy and assignment state. It cannot call Host management API functionality, including module listing or Host status views. |
 
 Host role is included in module identity so modules can make bootstrap or admin UX decisions when appropriate. A module may decide to treat `host.admin` as an internal module administrator, but module-specific permissions still belong to the module.
 
 `host.admin` is allowed through the Host gateway for module bootstrap and configuration. This does not force the module to grant internal administrator rights automatically; the module may grant, map, or ignore the Host role according to its own permission model.
+
+`host.user` shell access is intentionally narrow. The user can call the app registry and embedded app transport paths needed by `/apps`, but module install/update/remove/lifecycle, gateway exposure management, external ingress management, security settings, user management, and Host status APIs remain `host.admin` only.
 
 ## CLI Access
 

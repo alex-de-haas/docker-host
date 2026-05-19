@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { AdminShell } from '@/components/AdminShell';
@@ -114,16 +115,23 @@ function renderAppHostContent({
   }
 
   if (appsState.error) {
+    const loginRequired = appsState.errorCode === 'unauthorized';
     return (
       <AppStatePanel
-        title="Apps unavailable"
-        description={appsState.error}
-        action={(
-          <Button type="button" variant="outline" onClick={() => void appsState.refetch()}>
-            <RefreshCw className="h-4 w-4" />
-            Retry
-          </Button>
-        )}
+        title={loginRequired ? 'Login required' : 'Apps unavailable'}
+        description={loginRequired ? 'Sign in to Docker Host before opening module apps.' : appsState.error}
+        action={loginRequired
+          ? (
+              <Button asChild>
+                <Link href="/login">Sign in</Link>
+              </Button>
+            )
+          : (
+              <Button type="button" variant="outline" onClick={() => void appsState.refetch()}>
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            )}
       />
     );
   }
@@ -131,8 +139,13 @@ function renderAppHostContent({
   if (!app) {
     return (
       <AppStatePanel
-        title="App not found"
-        description="This module app is not registered for the current Host principal."
+        title="Access denied"
+        description="This module app is not assigned to the current Host principal or is no longer available."
+        action={(
+          <Button asChild variant="outline">
+            <Link href="/apps">Back to Apps</Link>
+          </Button>
+        )}
       />
     );
   }

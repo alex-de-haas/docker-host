@@ -50,6 +50,16 @@ Implemented Phase 5 behavior:
 - deleting an exposure removes linked external ingress readiness state;
 - creating an exposure leaves readiness unmanaged until an administrator explicitly plans ingress.
 
+Implemented Phase 6 behavior:
+
+- authenticated `host.user` principals can load the Host shell;
+- `/apps` is the default non-admin portal view;
+- non-admin users who open `/` are routed to `/apps`;
+- the sidebar is filtered by role, so non-admin users see Apps and account actions only;
+- Host management pages render an access-denied shell state for non-admin users;
+- module lifecycle, install/update/remove, gateway exposure management, external ingress management, security settings, and other Host management APIs remain `host.admin` only;
+- the Apps portal includes empty states for no assigned apps, apps unavailable, login required, and access denied.
+
 ## Navigation
 
 The sidebar combines static Host management navigation with dynamic Apps navigation from `/api/apps`.
@@ -67,9 +77,11 @@ The sidebar combines static Host management navigation with dynamic Apps navigat
 - Settings:
   - Security (`/settings/security`)
 
+For `host.user`, the sidebar is reduced to Apps navigation plus the account menu. Host, Modules, and Settings navigation are hidden because those workflows remain administrative.
+
 ```mermaid
 flowchart TD
-  A["Admin route group"] --> B["Admin auth guard"]
+  A["Shell route group"] --> B["Authenticated shell guard"]
   B --> C["Shared Host shell"]
   C --> D["Dashboard"]
   C --> E["Install module"]
@@ -77,6 +89,8 @@ flowchart TD
   C --> G["Gateway exposures and external ingress"]
   C --> H["Security settings"]
   C --> M["Apps sidebar"]
+  C --> P["Apps portal"]
+  P --> M
   M --> N["App shell route"]
   N --> O["Embedded module iframe"]
   I["Standalone auth pages"] --> J["Login"]
@@ -97,6 +111,10 @@ For embedded module apps, the topbar remains Host-owned. The Host app route sets
 The dashboard remains focused on installed module status, lifecycle actions, recovery dialogs, and links into install/update flows. Gateway exposure management and external ingress readiness live on the dedicated `/ingress` page and reuse the existing gateway and readiness APIs.
 
 Install, update, and security pages keep their existing backend calls and form behavior. Their previous page headers were replaced by shell page metadata and topbar action slots.
+
+Non-admin users do not receive Host management pages. Opening `/`, `/ingress`, `/modules/install`, `/modules/{moduleId}/update`, or `/settings/security` as `host.user` keeps the authenticated shell but routes the user to `/apps` or renders an access-denied state. The underlying management APIs continue to require `host.admin`.
+
+`/apps` is the default portal page for `host.user`. It renders the current principal's app registry entries, lets users open available apps, and shows clear empty states when no apps are assigned, app registry data is unavailable, or the session needs login again.
 
 ## App Registry API
 
@@ -163,5 +181,5 @@ External ingress readiness remains explicit. Creating an exposure does not creat
 
 ## Open Questions
 
-- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, Phase 4 Apps sidebar/app host page, or Phase 5 gateway exposure management UX questions remain open.
-- Later phases still need non-admin user portal behavior, developer mode integration, and full app portal browser smoke coverage.
+- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, Phase 4 Apps sidebar/app host page, Phase 5 gateway exposure management UX, or Phase 6 user portal behavior questions remain open.
+- Later phases still need developer mode integration and full app portal browser smoke coverage.

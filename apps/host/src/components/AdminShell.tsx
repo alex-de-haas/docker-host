@@ -87,6 +87,7 @@ export function AdminShell({
 }) {
   const user = useAdminPrincipal();
   const accountLabel = user.email || user.displayName || user.id;
+  const shellHomePath = user.role === 'host.user' ? '/apps' : '/';
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const appsState = useHostApps();
 
@@ -98,7 +99,12 @@ export function AdminShell({
   return (
     <div className="min-h-dvh bg-muted/30 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
       <aside className="sticky top-0 hidden h-dvh border-r bg-sidebar text-sidebar-foreground lg:block">
-        <AdminSidebar appsState={appsState} onNavigate={() => undefined} />
+        <AdminSidebar
+          appsState={appsState}
+          shellHomePath={shellHomePath}
+          user={user}
+          onNavigate={() => undefined}
+        />
       </aside>
 
       <Dialog open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
@@ -106,12 +112,14 @@ export function AdminShell({
           className="left-0 top-0 h-dvh w-80 max-w-[85vw] translate-x-0 translate-y-0 gap-0 rounded-none border-y-0 border-l-0 border-r bg-sidebar p-0 text-sidebar-foreground shadow-xl sm:max-w-80"
           showCloseButton={false}
         >
-          <DialogTitle className="sr-only">Admin navigation</DialogTitle>
+          <DialogTitle className="sr-only">Host navigation</DialogTitle>
           <DialogDescription className="sr-only">
-            Navigate between Host tools, module management, apps, and settings.
+            Navigate between available Host tools, module management, apps, and settings.
           </DialogDescription>
           <AdminSidebar
             appsState={appsState}
+            shellHomePath={shellHomePath}
+            user={user}
             onNavigate={() => setMobileSidebarOpen(false)}
             closeButton={(
               <Button
@@ -154,7 +162,11 @@ export function AdminShell({
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="max-w-[11rem] px-2 sm:max-w-[16rem]">
+                <Button
+                  variant="outline"
+                  className="max-w-[11rem] px-2 sm:max-w-[16rem]"
+                  suppressHydrationWarning
+                >
                   <span className="min-w-0 truncate text-xs sm:text-sm">{accountLabel}</span>
                   <ChevronDown className="h-4 w-4" />
                 </Button>
@@ -255,23 +267,36 @@ const navigationSections: NavigationSection[] = [
   },
 ];
 
+function getNavigationSections(user: HostPrincipal): NavigationSection[] {
+  if (user.role === 'host.user') {
+    return navigationSections.filter(section => section.title === 'Apps');
+  }
+
+  return navigationSections;
+}
+
 function AdminSidebar({
   appsState,
+  shellHomePath,
+  user,
   onNavigate,
   closeButton,
 }: {
   appsState: AppsState;
+  shellHomePath: string;
+  user: HostPrincipal;
   onNavigate: () => void;
   closeButton?: ReactNode;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const selectedAppPath = normalizeSelectedAppPath(searchParams.get('path'));
+  const sections = getNavigationSections(user);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-16 shrink-0 items-center justify-between border-b px-4">
-        <Link href="/" className="flex min-w-0 items-center gap-2" onClick={onNavigate}>
+        <Link href={shellHomePath} className="flex min-w-0 items-center gap-2" onClick={onNavigate}>
           <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
             <PanelsTopLeft className="h-5 w-5" />
           </span>
@@ -280,9 +305,9 @@ function AdminSidebar({
         {closeButton}
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-4" aria-label="Admin navigation">
+      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-4" aria-label="Host navigation">
         <div className="space-y-6">
-          {navigationSections.map(section => (
+          {sections.map(section => (
             <div key={section.title} className="space-y-2">
               <h2 className="px-2 text-xs font-medium uppercase text-muted-foreground">{section.title}</h2>
               <div className="space-y-1">
@@ -292,6 +317,7 @@ function AdminSidebar({
                         appsState={appsState}
                         pathname={pathname}
                         selectedAppPath={selectedAppPath}
+                        user={user}
                         onNavigate={onNavigate}
                       />
                     )
@@ -316,11 +342,13 @@ function AppNavigationSection({
   appsState,
   pathname,
   selectedAppPath,
+  user,
   onNavigate,
 }: {
   appsState: AppsState;
   pathname: string;
   selectedAppPath: string;
+  user: HostPrincipal;
   onNavigate: () => void;
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
@@ -336,10 +364,11 @@ function AppNavigationSection({
   }
 
   if (appsState.error) {
+    const loginRequired = appsState.errorCode === 'unauthorized';
     return (
       <NavigationPlaceholder
-        icon={CircleAlert}
-        label="Apps unavailable"
+        icon={loginRequired ? ShieldCheck : CircleAlert}
+        label={loginRequired ? 'Login required' : 'Apps unavailable'}
         title={appsState.error}
       />
     );
@@ -349,7 +378,7 @@ function AppNavigationSection({
     return (
       <NavigationPlaceholder
         icon={LayoutGrid}
-        label="No apps registered"
+        label={user.role === 'host.user' ? 'No assigned apps' : 'No apps registered'}
       />
     );
   }

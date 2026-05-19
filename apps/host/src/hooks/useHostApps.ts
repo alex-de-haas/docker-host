@@ -7,6 +7,7 @@ export function useHostApps() {
   const [apps, setApps] = useState<HostAppEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [refreshState, setRefreshState] = useState<'idle' | 'refreshing'>('idle');
 
@@ -20,16 +21,19 @@ export function useHostApps() {
         cache: 'no-store',
       });
       if (!response.ok) {
-        throw new Error(await getApiErrorMessage(response, 'Failed to fetch Host apps'));
+        const apiError = await getApiError(response, 'Failed to fetch Host apps');
+        throw new HostAppsFetchError(apiError.message, apiError.code);
       }
 
       const data = await response.json() as HostAppsResponse;
       setApps(Array.isArray(data.apps) ? data.apps : []);
       setError(null);
+      setErrorCode(null);
       setLastUpdatedAt(Date.now());
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown app registry error');
+      setErrorCode(err instanceof HostAppsFetchError ? err.code : null);
       return false;
     } finally {
       setLoading(false);
@@ -50,15 +54,24 @@ export function useHostApps() {
     apps,
     loading,
     error,
+    errorCode,
     lastUpdatedAt,
     refreshState,
     refetch,
   };
 }
 
-async function getApiErrorMessage(response: Response, fallback: string) {
+class HostAppsFetchError extends Error {
+  constructor(message: string, readonly code: string | null) {
+    super(message);
+    this.name = 'HostAppsFetchError';
+  }
+}
+
+async function getApiError(response: Response, fallback: string) {
   try {
     const data = await response.json();
+    const code = typeof data?.error?.code === 'string' ? data.error.code : null;
     const details =
       typeof data?.details === 'string'
         ? data.details
@@ -68,8 +81,14 @@ async function getApiErrorMessage(response: Response, fallback: string) {
             ? data.error
             : null;
 
-    return details ? `${fallback}: ${details}` : fallback;
+    return {
+      code,
+      message: details ? `${fallback}: ${details}` : fallback,
+    };
   } catch {
-    return fallback;
+    return {
+      code: null,
+      message: fallback,
+    };
   }
 }

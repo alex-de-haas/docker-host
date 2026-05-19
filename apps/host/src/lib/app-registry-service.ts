@@ -35,11 +35,15 @@ export async function listHostApps(
   options: ListHostAppsOptions = {}
 ): Promise<HostAppEntry[]> {
   const config = options.config ?? getHostRuntimeConfig();
-  const runtimeStatusReader = options.runtimeStatusReader ?? await getDefaultRuntimeStatusReader();
   const [modulesStore, authState] = await Promise.all([
     readModulesStoreSnapshot(config),
     readAuthStateSnapshot(config),
   ]);
+  if (modulesStore.modules.length === 0) {
+    return [];
+  }
+
+  const runtimeStatusReader = options.runtimeStatusReader ?? await getDefaultRuntimeStatusReader();
 
   const candidates = await Promise.all(
     modulesStore.modules.map(module =>

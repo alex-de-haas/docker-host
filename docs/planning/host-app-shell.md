@@ -452,7 +452,7 @@ Resolved Phase 5 starter decisions:
 
 ### Phase 6 - User portal behavior
 
-**Status**: Not Started
+**Status**: Completed
 
 Make the shell useful for non-admin users while keeping Host management actions admin-only.
 
@@ -474,6 +474,36 @@ Acceptance criteria:
 - `host.user` cannot access Host admin APIs or admin UI actions.
 - `host.admin` keeps the full Host management experience.
 - The root domain can serve both admin and user shell experiences after standalone login, with navigation filtered by role and app access.
+
+Implementation notes:
+
+- The shared shell layout now accepts any authenticated `host.admin` or `host.user` principal.
+- `host.user` principals are routed from `/` to `/apps`.
+- `/apps` is the default user portal and shows assigned app entries, app registry failures, login-required state, and no-assigned-apps state.
+- Host management pages render an access-denied shell state for non-admin users instead of exposing management actions.
+- Host management APIs remain protected by existing `host.admin` checks.
+
+Resolved Phase 6 decisions:
+
+- **Question**: How should shell access differ from admin access?
+  **Answer**: Shell access accepts authenticated `host.admin` and `host.user` principals. Host management remains admin-only through page-level guards and existing admin API authorization.
+  **Recommendation**: Use a shared authenticated shell guard, then protect Host management pages and APIs separately.
+
+- **Question**: Where should `host.user` land after login or opening the root domain?
+  **Answer**: `host.user` lands on `/apps`.
+  **Recommendation**: Keep `/` as the admin dashboard and redirect non-admin users to `/apps`, so an empty assignment state can be shown intentionally.
+
+- **Question**: What should direct admin URL access show for `host.user`?
+  **Answer**: Show a role-filtered shell with an access-denied state.
+  **Recommendation**: Do not redirect authenticated users back to login. Keep them inside the shell and provide a clear path back to Apps.
+
+- **Question**: How should sidebar navigation be filtered?
+  **Answer**: `host.admin` sees Host, Modules, Apps, and Settings navigation. `host.user` sees only Apps and account actions.
+  **Recommendation**: Build navigation sections from the current principal role.
+
+- **Question**: What empty states should Phase 6 include?
+  **Answer**: Include no assigned apps, apps unavailable, login required, and access denied.
+  **Recommendation**: Treat app registry authentication failures as login required, registry/data failures as apps unavailable, and direct admin page access by a user as access denied.
 
 ### Phase 7 - Developer mode integration
 

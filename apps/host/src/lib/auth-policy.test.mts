@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   canAccessModule,
   canUseHostApi,
+  canUseHostShell,
   DEFAULT_MODULE_EXPOSURE_POLICY,
+  getDefaultHostShellPath,
 } from './auth-policy.ts';
 import type { HostPrincipal } from '../types/auth.ts';
 
@@ -23,6 +25,17 @@ test('only host admins can use Host API actions', () => {
   assert.equal(canUseHostApi(admin, 'modules.install'), true);
   assert.equal(canUseHostApi(user, 'host.read'), false);
   assert.equal(canUseHostApi(null, 'host.read'), false);
+});
+
+test('host admins and host users can load the Host shell', () => {
+  assert.equal(canUseHostShell(admin), true);
+  assert.equal(canUseHostShell(user), true);
+  assert.equal(canUseHostShell(null), false);
+});
+
+test('host users default to the Apps portal', () => {
+  assert.equal(getDefaultHostShellPath(admin), '/');
+  assert.equal(getDefaultHostShellPath(user), '/apps');
 });
 
 test('module exposure defaults to login required', () => {
@@ -116,4 +129,3 @@ test('host admins can reach assigned modules for bootstrap and configuration', (
     }
   );
 });
-

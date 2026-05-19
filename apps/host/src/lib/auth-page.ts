@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { canUseHostApi } from './auth-policy.ts';
+import { canUseHostApi, canUseHostShell, getDefaultHostShellPath } from './auth-policy.ts';
 import {
   authenticateSessionToken,
   getAuthStatus,
@@ -10,6 +10,15 @@ import {
 import type { HostPrincipal } from '../types/auth.ts';
 
 export async function requireHostAdminPage(): Promise<HostPrincipal> {
+  const principal = await requireHostPrincipalPage();
+  if (!canUseHostApi(principal, 'host.read')) {
+    redirect('/login');
+  }
+
+  return principal;
+}
+
+export async function requireHostPrincipalPage(): Promise<HostPrincipal> {
   const status = await getAuthStatus();
   if (status.setupRequired) {
     if (isDevAuthAutoLoginEnabled()) {
@@ -19,7 +28,7 @@ export async function requireHostAdminPage(): Promise<HostPrincipal> {
   }
 
   const principal = await getCurrentPagePrincipal();
-  if (!principal || !canUseHostApi(principal, 'host.read')) {
+  if (!principal || !canUseHostShell(principal)) {
     if (isDevAuthAutoLoginEnabled()) {
       redirectToDevLogin('/');
     }
@@ -39,8 +48,8 @@ export async function redirectAuthenticatedPage() {
   }
 
   const principal = await getCurrentPagePrincipal();
-  if (principal && canUseHostApi(principal, 'host.read')) {
-    redirect('/');
+  if (principal && canUseHostShell(principal)) {
+    redirect(getDefaultHostShellPath(principal));
   }
   if (isDevAuthAutoLoginEnabled()) {
     redirectToDevLogin('/');

@@ -55,7 +55,7 @@ export function LoginClient({ oidcProvider }: LoginClientProps) {
           </div>
           <div>
             <h1 className="text-xl font-semibold">Docker Host Manager</h1>
-            <p className="text-sm text-muted-foreground">Administrator sign in</p>
+            <p className="text-sm text-muted-foreground">Sign in to open Host tools and assigned apps</p>
           </div>
         </div>
 
