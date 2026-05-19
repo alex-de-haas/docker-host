@@ -124,6 +124,28 @@ export function GET(request: Request) {
         memory: '256m',
       },
     },
+    ui: {
+      category: 'Apps',
+      icon: 'boxes',
+      entrypoint: {
+        portKey: 'http',
+        path: '/',
+      },
+      navigation: [
+        {
+          label: 'Overview',
+          path: '/',
+        },
+        {
+          label: 'People',
+          path: '/people',
+        },
+        {
+          label: 'Settings',
+          path: '/settings',
+        },
+      ],
+    },
   });
 }
 

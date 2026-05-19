@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { getHostRuntimeConfig, pathExists } from '@/lib/host-runtime';
-import type { HostRuntimeConfig } from '@/lib/host-runtime';
+import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
+import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { InstalledModuleRecord, ModuleMetadata, ModulesStoreData } from '@/types/modules';
 
 const STORE_SCHEMA_VERSION = '0.1';

@@ -26,7 +26,8 @@ The current MVP API surface includes:
 - create and apply reviewed module update plans;
 - retry failed updates separately from failed installs;
 - support local and generic OIDC browser authentication flows;
-- serve scoped module directory responses to modules through an internal service-token API.
+- serve scoped module directory responses to modules through an internal service-token API;
+- return authenticated, principal-filtered shell App registry data through `/api/apps`.
 
 Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, module health checks, and richer external module exposure controls are later API slices.
 
@@ -128,6 +129,44 @@ It includes all `ModuleSummary` fields plus:
 ```
 
 Secret setting values are never returned. For non-secret settings, later settings endpoints may return values when needed by the UI.
+
+### `HostAppEntry`
+
+Returned by `GET /api/apps`.
+
+```json
+{
+  "id": "com.acme.reports",
+  "moduleId": "com.acme.reports",
+  "displayName": "Reports",
+  "description": "Generates operational reports.",
+  "version": "1.0.0",
+  "status": "available",
+  "statusReason": "available",
+  "accessMode": "allAuthenticated",
+  "operationStatus": "installed",
+  "runtimeState": "running",
+  "entryPath": "/apps/com.acme.reports",
+  "embeddedUrl": "/api/apps/com.acme.reports/embed?path=%2F",
+  "navigation": [
+    {
+      "label": "People",
+      "path": "/people",
+      "entryPath": "/apps/com.acme.reports?path=%2Fpeople",
+      "embeddedUrl": "/api/apps/com.acme.reports/embed?path=%2Fpeople"
+    }
+  ]
+}
+```
+
+`GET /api/apps` intentionally omits raw Docker/container internals. It does not return container ids, container names, Docker network aliases, raw container URLs, public module UI domains, or service/API gateway exposure hostnames.
+
+Allowed `accessMode` values:
+
+- `allAuthenticated`;
+- `assignedUsersOnly`.
+
+No `public` or anonymous shell App mode exists. Separate service/API gateway exposures are not shell Apps.
 
 ### `ModuleActionResult`
 
@@ -241,6 +280,37 @@ Response should include, per module:
 - Docker runtime status;
 - timestamps such as installed and last updated, if available;
 - last install/update error summary, if available.
+
+### `GET /api/apps`
+
+Returns app navigation data for the current authenticated Host principal.
+
+This endpoint requires authentication but does not require `host.admin`. Unauthenticated callers receive HTTP `401` and no app discovery data. `host.admin` can see all shell-routable app entries, including unavailable entries with safe diagnostic status. `host.user` can see only available apps that are visible to all authenticated users or explicitly assigned to that user.
+
+The backend reads installed module records from `modules.json`, reads each module's local `metadata.json`, requires explicit `ui` metadata, applies Host-owned module assignments, and reads runtime state for availability. It does not infer shell Apps from gateway exposure records or from `runtime.ports[].public` alone.
+
+Response body:
+
+```json
+{
+  "apps": []
+}
+```
+
+Response entries include:
+
+- app id;
+- module id;
+- display name;
+- description, if available;
+- version;
+- app status and safe status reason;
+- shell App access mode;
+- module operation status;
+- runtime state without container details;
+- same-origin Host entry path;
+- reserved embedded URL;
+- nested navigation items.
 
 ### `GET /api/modules/{moduleId}`
 

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server.js';
 import { canUseHostApi } from './auth-policy.ts';
 import { getHostRuntimeConfig } from './host-runtime.ts';
 import {
@@ -19,6 +19,41 @@ import type { HostApiAction, HostPrincipal } from '../types/auth.ts';
 export interface AuthenticatedRequest {
   principal: HostPrincipal;
   source: 'session' | 'cli-token' | 'trusted-proxy';
+}
+
+export async function requireHostPrincipal(
+  request: Request,
+  action: HostApiAction
+): Promise<AuthenticatedRequest | NextResponse> {
+  const status = await getAuthStatus();
+  if (status.setupRequired) {
+    return authError('setup_required', 'Docker Host setup must be completed first.', 403, {
+      action,
+      nextStep: 'Open /setup and complete the first administrator setup.',
+    });
+  }
+
+  const auth = await authenticateRequest(request);
+  if (!auth.principal) {
+    await appendDeniedHostApiAudit(action, 'unauthorized', null, request);
+    return authError('unauthorized', 'Authentication is required.', 401, {
+      action,
+      nextStep: 'Sign in to Docker Host.',
+    });
+  }
+
+  if (auth.source !== 'cli-token' && isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
+    await appendDeniedHostApiAudit(action, 'csrf_rejected', auth.principal, request);
+    return authError('csrf_rejected', 'State-changing requests must come from the same origin.', 403, {
+      action,
+      nextStep: 'Retry the action from the Docker Host Web UI.',
+    });
+  }
+
+  return {
+    principal: auth.principal,
+    source: auth.source,
+  };
 }
 
 export async function requireHostAdmin(

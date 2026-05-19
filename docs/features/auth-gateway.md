@@ -8,7 +8,7 @@ Docker Host should be the access-control boundary for:
 
 - Host Web UI;
 - Host backend API;
-- externally exposed module UIs;
+- externally exposed module service/API endpoints;
 - module gateway routing;
 - module access assignment;
 - Host-level roles and sessions.
@@ -17,13 +17,13 @@ Docker Host should not depend on a regular managed module for its own authentica
 
 ## Accepted Decisions
 
-- Module UIs use dedicated subdomains, not path-based routing.
-- All external module UI traffic goes through the Host gateway by default.
+- Module browser UIs are opened through the Host shell. Dedicated subdomains are reserved for separate service/API exposures.
+- All external service/API exposure traffic goes through the Host gateway by default.
 - Direct public module ports are not the primary exposure model and are allowed only as an explicit development override.
 - Host has two initial global roles: `host.admin` and `host.user`.
 - Host decides whether a user can reach a module.
 - Local Host instances, including `localhost`, require authentication by default. Development bypass must be explicit configuration.
-- The default exposure policy for externally opened module UIs is `loginRequired`.
+- The default exposure policy for externally opened service/API endpoints is `loginRequired`.
 - Each module owns its internal permission model.
 - Modules may receive Host identity through module-scoped signed tokens.
 - Modules may query only a scoped list of users relevant to that module.
@@ -34,11 +34,11 @@ Docker Host should not depend on a regular managed module for its own authentica
 
 ## Gateway Routing
 
-The target production routing model is subdomain based:
+The target production routing model for service/API exposures is subdomain based:
 
 ```text
 host.example.com    -> Docker Host Web UI
-reports.example.com -> Docker Host Gateway -> mod-reports:8080
+reports-api.example.com -> Docker Host Gateway -> mod-reports:8080
 media.example.com   -> Docker Host Gateway -> mod-media:3000
 ```
 
@@ -51,7 +51,7 @@ The Host gateway maps each module hostname to an installed module target inside 
 - exposure policy;
 - assigned users, if applicable.
 
-Path-based module routing is not part of the accepted target model. Many module UIs assume they run at `/`, and realtime transports are simpler on a dedicated origin.
+Path-based service/API routing is not part of the accepted target model. Realtime transports are simpler on a dedicated origin. Module browser UIs are handled separately by the Host shell app portal.
 
 The first gateway implementation runs as a custom Node server in the Host container. It checks the incoming `Host` header before handing the request to Next.js:
 
@@ -101,7 +101,7 @@ Each exposure points to a specific `moduleId + runtime.ports[].key`. The referen
 
 ```mermaid
 flowchart LR
-  U["Browser"] --> D["Module subdomain"]
+  U["Client"] --> D["Module service/API subdomain"]
   D --> G["Docker Host Gateway"]
   G --> A["Access policy"]
   A --> M["Module container"]
@@ -110,17 +110,17 @@ flowchart LR
 
 ## Exposure Policy
 
-The module exposure model uses explicit policy states instead of the older `private` and `protected` terminology.
+The module exposure model uses explicit policy states instead of the older `private` and `protected` terminology. These gateway exposure policies apply to separately published service/API endpoints, not to shell Apps. Shell Apps are discovered only after Host authentication through `/api/apps`.
 
 | Policy | Login required | Host assignment required | Behavior |
 | --- | --- | --- | --- |
-| `public` | no | no | Anyone who can reach the hostname can open the module UI. |
-| `loginRequired` | yes | no | Any authenticated Host user can open the module. |
-| `assignedUsersOnly` | yes | yes for `host.user` | Selected Host users can open the module; `host.admin` can also reach it for bootstrap and configuration. |
+| `public` | no | no | Anyone who can reach the hostname can reach the exposed service/API endpoint. |
+| `loginRequired` | yes | no | Any authenticated Host user can reach the exposed service/API endpoint. |
+| `assignedUsersOnly` | yes | yes for `host.user` | Selected Host users can reach the exposed service/API endpoint; `host.admin` can also reach it for bootstrap and configuration. |
 
 These policies control only whether traffic reaches the module. They do not define what the user can do inside the module.
 
-The existing metadata field `runtime.ports[].public` is only a port capability hint that says an endpoint is suitable for future external UI exposure. It is not an authorization policy. Host-owned exposure policy decides whether the gateway treats an externally reachable module hostname as `public`, `loginRequired`, or `assignedUsersOnly`.
+The existing metadata field `runtime.ports[].public` is only a port capability hint that says an endpoint is suitable for Host-managed routing beyond internal module-to-module URLs. It is not an authorization policy and does not create a shell App. Host-owned exposure policy decides whether the gateway treats an externally reachable service/API hostname as `public`, `loginRequired`, or `assignedUsersOnly`.
 
 Module access assignments are stored in the auth state as Host-owned authorization data. They are separate from the gateway hostname registry and from module-owned permissions.
 

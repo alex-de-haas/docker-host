@@ -124,17 +124,25 @@ Resolved Phase 1 decisions:
 
 ### Phase 2 - Principal-aware app registry API
 
-**Status**: Not Started
+**Status**: Completed
 
 Add a Host API that returns only app navigation data that the current authenticated principal is allowed to see.
 
 Tasks:
 
 - Add `GET /api/apps`.
-- Authenticate any Host principal, not only `host.admin`.
-- Build app entries from shell UI metadata, installed module records, access policy, and runtime status.
+- Authenticate any Host principal, not only `host.admin`; unauthenticated callers receive `401` and no app discovery data.
+- Pull the minimal `ui` metadata contract needed by the app registry into this phase before constructing app entries.
+- Define a minimal Host-owned shell App access mode:
+  - `allAuthenticated` for apps visible to any signed-in Host user;
+  - `assignedUsersOnly` for apps visible only to assigned users and `host.admin`;
+  - no `public` or anonymous shell App mode.
+- Build app entries from explicit shell UI metadata, installed module records, Host-owned app access mode, module access assignments, and runtime status.
 - Include only UI entrypoints whose module is installed and whose runtime target is available through the Host shell.
-- Apply Host module access rules before returning an app to the caller.
+- Apply Host module access rules before returning an app to the caller:
+  - `host.admin` can see all shell-routable app entries, including unavailable entries with safe diagnostics;
+  - `host.user` can see only apps available to all authenticated users or explicitly assigned to that user.
+- Do not infer Apps from gateway exposure records, direct public module hostnames, or `runtime.ports[].public` alone.
 - Return enough data for navigation without leaking raw Docker/container internals:
   - app id;
   - module id;
@@ -146,9 +154,10 @@ Tasks:
   - embedded URL;
   - nested navigation items.
 - Add tests for:
-  - `public`;
-  - `loginRequired`;
-  - `assignedUsersOnly`;
+  - unauthenticated callers are rejected;
+  - apps visible to any authenticated Host user;
+  - apps visible only to assigned users;
+  - shell Apps are not exposed through anonymous or `public` discovery;
   - `host.admin` visibility;
   - `host.user` visibility;
   - disabled or unavailable UI entrypoints;
@@ -161,13 +170,67 @@ Acceptance criteria:
 - `host.admin` can discover all routable apps, including enough status to diagnose unavailable app entries.
 - `/api/modules` remains admin-focused and does not become the user-facing app registry.
 - The app registry describes shell-openable module UIs, not every public service endpoint a module may expose for third-party clients.
+- Shell Apps do not support anonymous/public discovery. A module UI is discoverable only after Host authentication.
 - `/api/apps` does not return direct public module UI domains or subdomains.
+
+Implementation notes:
+
+- `GET /api/apps` is implemented as a dynamic App Router API route.
+- `requireHostPrincipal` handles authenticated, non-admin Host API reads.
+- `app-registry-service` builds principal-filtered registry entries and keeps Docker/container internals out of the response.
+- Minimal `ui` metadata validation is implemented for `ui.entrypoint` and `ui.navigation`.
+- The reports development fixture includes `ui` metadata for local app-registry testing.
+- Unit coverage exists for metadata validation and app-registry access filtering. Route coverage verifies that unauthenticated `/api/apps` callers receive `401`.
+
+Resolved Phase 2 starter decisions:
+
+- **Question**: Should Phase 2 implement a minimal `ui` metadata contract before `/api/apps`?
+  **Answer**: Yes. Phase 2 needs the minimal `ui.entrypoint` and optional `ui.navigation` shape required to build app entries.
+  **Recommendation**: Move only the registry-critical subset of Phase 3 into Phase 2, then leave the broader metadata documentation and demo-module polish in Phase 3.
+
+- **Question**: Should `/api/apps` return shell Apps to unauthenticated callers when an app would otherwise be public?
+  **Answer**: No. Shell Apps are part of the authenticated Host shell, so `/api/apps` requires an authenticated Host principal.
+  **Recommendation**: Treat anonymous/public shell App discovery as closed. Redirect root-domain users to login first, then return role-filtered Apps after authentication.
+
+- **Question**: Are `public`, `private`, or `protected` useful terms for shell Apps?
+  **Answer**: No. For shell Apps, the useful distinction is whether an authenticated Host user can see the app by default or only through explicit assignment.
+  **Recommendation**: Use shell App access terms such as "all authenticated users" and "assigned users only". Keep older gateway exposure policy terms scoped to separate service/API endpoint publishing until that model is revisited.
+
+- **Question**: Should Phase 2 still support rare public service/API endpoints?
+  **Answer**: Not through the Apps registry. Public or externally reachable service/API endpoints are separate gateway exposure behavior and should not create shell Apps.
+  **Recommendation**: Keep Phase 2 focused on authenticated shell navigation. Revisit public service/API exposure terminology in the gateway exposure UX phase if the old policy names become confusing.
+
+- **Question**: Which auth sources should `/api/apps` accept?
+  **Answer**: Use the existing Host request authentication path so browser sessions and trusted-proxy principals work consistently. CLI bearer tokens may authenticate as admin, but the endpoint remains read-only navigation data.
+  **Recommendation**: Add a helper for "require authenticated Host principal" instead of reusing `requireHostAdmin`.
+
+- **Question**: Where should shell App visibility rules come from?
+  **Answer**: Visibility should be Host-owned. Phase 2 should not let module metadata grant public visibility or define Host users.
+  **Recommendation**: Add a minimal Host-owned shell App access mode with `allAuthenticated` as the default and `assignedUsersOnly` as the restricted mode. Use existing module assignment records for the assigned-user check.
+
+- **Question**: What should `host.admin` and `host.user` receive for unavailable apps?
+  **Answer**: `host.admin` should receive unavailable app entries with safe diagnostic status. `host.user` should receive only usable apps they can open.
+  **Recommendation**: Hide unavailable apps from regular users until the user portal has a deliberate disabled-app UX.
+
+- **Question**: What app identifier should Phase 2 use?
+  **Answer**: Use `moduleId` as the app id while the metadata supports one shell UI entrypoint per module.
+  **Recommendation**: Defer separate generated app ids until modules can expose more than one shell app.
+
+- **Question**: Which URLs should `/api/apps` return?
+  **Answer**: Return same-origin Host shell paths and reserved embedded URLs only. Do not return raw container URLs, Docker network aliases, or public module UI domains.
+  **Recommendation**: Use `/apps/{moduleId}` as shell state and a Host-owned embedded transport URL for iframe content.
+
+- **Question**: How should missing or invalid metadata be handled?
+  **Answer**: It should not fail the entire registry response.
+  **Recommendation**: Hide invalid entries from `host.user`; include safe unavailable diagnostics for `host.admin`.
 
 ### Phase 3 - Module UI metadata contract
 
 **Status**: Not Started
 
 Extend module metadata with optional UI navigation data. This keeps app navigation predictable and avoids guessing routes from running modules.
+
+Phase 2 may implement the minimal `ui.entrypoint` and `ui.navigation` support required by `/api/apps`. Phase 3 completes the contract, validation, demo metadata, and durable feature documentation.
 
 The `ui` contract describes a shell-only UI entrypoint. It does not request or imply a direct public hostname for the module UI. If a module also needs a public service/API endpoint for third-party clients, that should be modeled separately from `ui` as a service exposure in a later metadata slice.
 
@@ -202,8 +265,8 @@ Proposed metadata shape:
 
 Tasks:
 
-- Add `ui` types to module metadata TypeScript models.
-- Update metadata validation to accept and normalize optional `ui`.
+- Complete `ui` types in module metadata TypeScript models if Phase 2 introduced only the minimal subset.
+- Complete metadata validation to accept and normalize optional `ui`.
 - Validate that `ui.entrypoint.portKey` references a `runtime.ports[]` item with `public: true`.
 - Validate that `ui.entrypoint.path` and `ui.navigation[].path` are absolute same-origin paths beginning with `/`.
 - Validate navigation labels and reject empty or excessively long labels.
@@ -349,8 +412,8 @@ Acceptance criteria:
 ## Recommended Implementation Order
 
 1. Build the shell around existing admin pages.
-2. Add `/api/apps` with access-filtered app entries.
-3. Add optional `ui` metadata support.
+2. Add the minimal `ui` metadata support needed by `/api/apps`.
+3. Add `/api/apps` with authenticated, access-filtered app entries.
 4. Render Apps sidebar and embedded app route.
 5. Add service/API gateway exposure management UI.
 6. Enable non-admin user portal behavior.

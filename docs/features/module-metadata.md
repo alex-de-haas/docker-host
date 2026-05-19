@@ -289,6 +289,24 @@ External storage mounts могут находиться за пределами 
       "cpus": 1,
       "memory": "512m"
     }
+  },
+  "ui": {
+    "category": "Apps",
+    "icon": "boxes",
+    "entrypoint": {
+      "portKey": "http",
+      "path": "/"
+    },
+    "navigation": [
+      {
+        "label": "Overview",
+        "path": "/"
+      },
+      {
+        "label": "People",
+        "path": "/people"
+      }
+    ]
   }
 }
 ```
@@ -315,6 +333,7 @@ Top-level metadata object:
 | `settings` | array | no | Configuration schema. Values are stored by Host, not in metadata. Default: empty array. |
 | `storage` | object | no | Module-owned storage directories and dynamic external mount collections. |
 | `runtime` | object | yes | Minimal launch requirements: ports and resource hints. |
+| `ui` | object | no | Shell-only UI entrypoint and optional navigation for the Host app registry. |
 
 `image` object:
 
@@ -405,6 +424,31 @@ For `schemaVersion: "0.1"`, metadata validation is strict: unknown fields are re
 | `containerPort` | number | yes | Container port number. |
 | `protocol` | string | yes | First implementation target: `http`. |
 | `public` | boolean | yes | Whether the endpoint is suitable for Host-managed routing beyond module-to-module internal dependency URLs. This is a capability hint, not an authorization policy. It does not publish the endpoint, does not create a direct public module UI domain, and does not make the endpoint appear in Apps navigation by itself. |
+
+`ui` object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `category` | string | no | Must be `Apps` when provided. |
+| `icon` | string | no | Lowercase icon key for future sidebar rendering, for example `boxes`. |
+| `entrypoint` | object | yes | Shell UI entrypoint. |
+| `navigation` | array | no | Optional nested app navigation. Default: empty array. |
+
+`ui.entrypoint` object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `portKey` | string | yes | Must reference a `runtime.ports[].key` whose port is marked `public: true`. This does not create anonymous access; it only marks the port as suitable for Host-managed shell routing. |
+| `path` | string | yes | Same-origin absolute path beginning with `/`, such as `/` or `/dashboard`. Direct URLs and protocol-relative paths are rejected. |
+
+`ui.navigation[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `label` | string | yes | Sidebar label, at most 80 characters. |
+| `path` | string | yes | Same-origin absolute module UI path beginning with `/`. |
+
+The `ui` contract never requests a public module UI hostname. The Host app registry remains authenticated and returns same-origin Host shell paths only. Modules without `ui` metadata can still be installed, but they do not appear as shell Apps.
 
 ## Field notes
 
@@ -876,7 +920,7 @@ Module health checks должны быть отдельной future feature. В
 
 `public: false` означает, что endpoint нужен только внутри Host-managed Docker network. Для module-to-module коммуникации Host должен использовать internal URL, а не опубликованный host port.
 
-В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `runtime.ports[].public`. Наружная публикация service/API endpoints должна быть отдельной feature с explicit authorization и exposure settings. Browser UI модулей должен открываться через Host shell, а не через отдельный публичный UI subdomain. Auth Gateway owns the actual service/API exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
+В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `runtime.ports[].public`. Наружная публикация service/API endpoints должна быть отдельной feature с explicit authorization и exposure settings. Browser UI модулей должен открываться через Host shell, а не через отдельный публичный UI subdomain. Shell Apps are always discovered after Host authentication; older Auth Gateway exposure policy names apply only to separate service/API endpoint publishing until that model is revisited.
 
 Host-managed Docker network должна быть одной общей user-defined network для всех managed modules. Default bridge network не подходит, потому что не дает достаточно надежной DNS-модели для module-to-module names.
 
