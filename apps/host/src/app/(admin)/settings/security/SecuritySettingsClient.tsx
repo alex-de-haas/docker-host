@@ -1,10 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
-  ArrowLeft,
   CheckCircle2,
   LoaderCircle,
   RefreshCw,
@@ -12,6 +10,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
+import { AdminShell } from '@/components/AdminShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,7 +24,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { HostPrincipal } from '@/types/auth';
 
 interface AuthAuditEvent {
   id: string;
@@ -66,7 +64,7 @@ interface AuthDiagnosticCheck {
   nextStep?: string;
 }
 
-export function SecuritySettingsClient({ user }: { user: HostPrincipal }) {
+export function SecuritySettingsClient() {
   const [auditEvents, setAuditEvents] = useState<AuthAuditEvent[]>([]);
   const [sessions, setSessions] = useState<AuthSessionSummary[]>([]);
   const [diagnostics, setDiagnostics] = useState<{
@@ -202,29 +200,16 @@ export function SecuritySettingsClient({ user }: { user: HostPrincipal }) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-16 items-center justify-between px-4">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-semibold">Security settings</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="hidden sm:inline-flex">{user.email}</Badge>
-            <Button asChild variant="outline">
-              <Link href="/">
-                <ArrowLeft className="h-4 w-4" />
-                Dashboard
-              </Link>
-            </Button>
-            <Button variant="outline" size="icon" onClick={() => void loadSecurityState()} disabled={loading}>
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="container space-y-6 px-4 py-8">
+    <AdminShell
+      title="Security settings"
+      description="Sessions, reauthentication, diagnostics, and audit events"
+      actions={(
+        <Button variant="outline" size="icon" onClick={() => void loadSecurityState()} disabled={loading} aria-label="Refresh security settings">
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      )}
+      contentClassName="space-y-6"
+    >
         {error && (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {error}
@@ -340,7 +325,7 @@ export function SecuritySettingsClient({ user }: { user: HostPrincipal }) {
           <DiagnosticsCard title="Trusted proxy diagnostics" checks={diagnostics.trustedProxy} />
         </section>
 
-          <Card className="min-w-0 rounded-lg">
+        <Card className="min-w-0 rounded-lg">
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle>Audit log</CardTitle>
@@ -387,8 +372,7 @@ export function SecuritySettingsClient({ user }: { user: HostPrincipal }) {
             </Table>
           </CardContent>
         </Card>
-      </main>
-    </div>
+    </AdminShell>
   );
 }
 

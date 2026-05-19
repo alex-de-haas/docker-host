@@ -20,7 +20,7 @@ Implemented module-management flows:
 - Failed install rows expose `POST /api/modules/{moduleId}/retry` and cleanup through a backend-generated confirmation dialog.
 - Installed rows expose remove through a backend-generated confirmation dialog.
 - Cleanup and remove dialogs call `POST /api/modules/{moduleId}/cleanup/plan` or `POST /api/modules/{moduleId}/remove/plan` before apply, default to preserving module-owned data, and only submit apply after explicit confirmation.
-- The dashboard includes an external ingress readiness panel for gateway exposures. It calls `/api/ingress/exposures`, shows provider-neutral publish status, renders generated manual setup instructions, supports mark-ready/refresh/unlink actions, and keeps provider-specific DNS, tunnel, or identity-provider automation out of the Web UI.
+- External ingress readiness is available on the dedicated `/ingress` shell page. It calls `/api/ingress/exposures`, shows provider-neutral publish status, renders generated manual setup instructions, supports mark-ready/refresh/unlink actions, and keeps provider-specific DNS, tunnel, or identity-provider automation out of the Web UI.
 
 ```mermaid
 flowchart TD
@@ -29,7 +29,7 @@ flowchart TD
   A --> D["/modules/install"]
   A --> E["/modules/{moduleId}/update"]
   A --> F["Recovery dialogs"]
-  A --> Q["External ingress readiness panel"]
+  A --> Q["/ingress readiness page"]
   C --> G["start/stop/restart API"]
   D --> H["install plan/apply API"]
   E --> I["update plan/apply API"]

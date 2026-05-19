@@ -52,7 +52,7 @@ flowchart LR
 
 ### Phase 1 - App shell foundation
 
-**Status**: Not Started
+**Status**: Completed
 
 Create a reusable Host application shell that can wrap current Host pages without changing existing backend behavior.
 
@@ -77,6 +77,12 @@ Acceptance criteria:
 - Existing dashboard, install, update, external ingress readiness, and security workflows still work.
 - Sidebar navigation does not require module app registry data to render.
 - Mobile layout has no horizontal overflow and can open/close the sidebar.
+
+Implementation notes:
+
+- Admin shell pages now live under a Next.js route group while keeping URLs stable.
+- `/ingress` owns external ingress readiness and reuses the existing readiness panel.
+- The durable Phase 1 behavior is documented in `docs/features/host-app-shell.md`.
 
 Resolved Phase 1 decisions:
 

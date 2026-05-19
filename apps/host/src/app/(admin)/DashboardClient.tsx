@@ -1,16 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { Boxes, LogOut, LoaderCircle, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
-import { ExternalIngressReadinessPanel } from '@/components/ExternalIngressReadinessPanel';
+import { LoaderCircle, Plus, RefreshCw } from 'lucide-react';
+import { AdminShell } from '@/components/AdminShell';
 import { ModuleList } from '@/components/ModuleList';
 import { ModuleStatsCards } from '@/components/ModuleStatsCards';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useModules } from '@/hooks/useModules';
-import type { HostPrincipal } from '@/types/auth';
 
-export function DashboardClient({ user }: { user: HostPrincipal }) {
+export function DashboardClient() {
   const {
     modules,
     loading,
@@ -36,43 +35,22 @@ export function DashboardClient({ user }: { user: HostPrincipal }) {
           }).format(lastUpdatedAt)}`
         : 'Waiting for first sync';
 
-  async function handleLogout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    window.location.href = '/login';
-  }
-
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-16 items-center justify-between px-4">
-          <div className="flex items-center gap-2">
-            <Boxes className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-semibold">Docker Host Manager</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="hidden md:inline-flex">
-              {user.email}
-            </Badge>
-            <Badge variant="outline" className="hidden sm:inline-flex">
-              {isRefreshing ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <span className="h-2 w-2 rounded-full bg-emerald-500" />}
-              {refreshLabel}
-            </Badge>
-            <Button variant="outline" size="icon" onClick={refetch} disabled={isRefreshing}>
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            </Button>
-            <Button asChild variant="outline" size="icon" aria-label="Security settings">
-              <Link href="/settings/security">
-                <ShieldCheck className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button variant="outline" size="icon" onClick={() => void handleLogout()} aria-label="Log out">
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="container px-4 py-8 space-y-8">
+    <AdminShell
+      title="Dashboard"
+      description="Installed modules and Docker runtime state"
+      actions={(
+        <>
+          <Badge variant="outline" className="hidden sm:inline-flex">
+            {isRefreshing ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <span className="h-2 w-2 rounded-full bg-emerald-500" />}
+            {refreshLabel}
+          </Badge>
+          <Button variant="outline" size="icon" onClick={refetch} disabled={isRefreshing} aria-label="Refresh modules">
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </Button>
+        </>
+      )}
+    >
         {error && (
           <div className="bg-destructive/10 text-destructive rounded-lg p-4">
             <p className="text-sm font-medium">Error: {error}</p>
@@ -86,7 +64,7 @@ export function DashboardClient({ user }: { user: HostPrincipal }) {
           <ModuleStatsCards modules={modules} />
         </section>
 
-        <section className="space-y-4">
+        <section id="installed-modules" className="scroll-mt-24 space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold">Installed modules</h2>
@@ -121,9 +99,6 @@ export function DashboardClient({ user }: { user: HostPrincipal }) {
             />
           )}
         </section>
-
-        <ExternalIngressReadinessPanel />
-      </main>
-    </div>
+    </AdminShell>
   );
 }

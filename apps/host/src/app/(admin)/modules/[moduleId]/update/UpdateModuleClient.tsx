@@ -1,14 +1,11 @@
 'use client';
 
-import Link from 'next/link';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
-  ArrowLeft,
   CheckCircle2,
   CircleAlert,
   Database,
-  ExternalLink,
   Folder,
   GitBranch,
   HardDrive,
@@ -16,21 +13,20 @@ import {
   LoaderCircle,
   Network,
   Plus,
-  Server,
+  RefreshCw,
   Settings2,
   Trash2,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { AdminShell } from '@/components/AdminShell';
 import {
-  buildModuleInstallRequest,
+  buildModuleUpdateRequest,
+  getUpdateSettingFieldName,
+  redactModuleUpdateRequest,
+} from '@/lib/module-update-request';
+import {
   computeExternalMountContainerPath,
   createExternalMountDraft,
   createExternalMountDrafts,
-  getSettingFieldName,
-  redactModuleInstallRequest,
   validateExternalMountDrafts,
 } from '@/lib/module-install-request';
 import type {
@@ -38,65 +34,64 @@ import type {
   ExternalMountValidationError,
 } from '@/lib/module-install-request';
 import type {
-  InstallPlan,
   InstallPlanErrorEnvelope,
   InstallPlanMountCollection,
-  InstallPlanResponse,
   InstallPlanSettingPrompt,
-  ModuleInstallResponse,
-  ModuleInstallRequest,
-  ModuleInstallSuccessResponse,
+  ModuleUpdatePlan,
+  ModuleUpdatePlanResponse,
+  ModuleUpdateRequest,
+  ModuleUpdateResponse,
+  ModuleUpdateSuccessResponse,
 } from '@/types/modules';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
-export function InstallModuleClient() {
-  const [metadataUrl, setMetadataUrl] = useState('');
-  const [isPlanning, setIsPlanning] = useState(false);
-  const [plan, setPlan] = useState<InstallPlan | null>(null);
+export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
+  const [isPlanning, setIsPlanning] = useState(true);
+  const [plan, setPlan] = useState<ModuleUpdatePlan | null>(null);
   const [planError, setPlanError] = useState<InstallPlanErrorEnvelope | null>(null);
   const [externalMountDrafts, setExternalMountDrafts] = useState<ExternalMountDraft[]>([]);
   const [externalMountErrors, setExternalMountErrors] = useState<ExternalMountValidationError[]>([]);
-  const [preparedRequest, setPreparedRequest] = useState<ModuleInstallRequest | null>(null);
-  const [isInstalling, setIsInstalling] = useState(false);
-  const [installResult, setInstallResult] = useState<ModuleInstallSuccessResponse | null>(null);
-  const [installError, setInstallError] = useState<InstallPlanErrorEnvelope | null>(null);
+  const [preparedRequest, setPreparedRequest] = useState<ModuleUpdateRequest | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateResult, setUpdateResult] = useState<ModuleUpdateSuccessResponse | null>(null);
+  const [updateError, setUpdateError] = useState<InstallPlanErrorEnvelope | null>(null);
 
-  async function handlePlanSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const loadPlan = useCallback(async () => {
     setIsPlanning(true);
     setPlan(null);
     setPlanError(null);
     setPreparedRequest(null);
-    setInstallResult(null);
-    setInstallError(null);
+    setUpdateResult(null);
+    setUpdateError(null);
     setExternalMountErrors([]);
 
     try {
-      const response = await fetch('/api/modules/install/plan', {
+      const response = await fetch(`/api/modules/${encodeURIComponent(moduleId)}/update/plan`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metadataUrl }),
       });
-      const data = await response.json() as InstallPlanResponse;
+      const data = await response.json() as ModuleUpdatePlanResponse;
 
       setPlan(data.plan ?? null);
       setPlanError(data.error ?? null);
       setExternalMountDrafts(data.plan ? createExternalMountDrafts(data.plan) : []);
     } catch (error) {
       setPlanError({
-        code: 'install_plan_request_failed',
-        message: error instanceof Error ? error.message : 'Unable to request install plan.',
+        code: 'update_plan_request_failed',
+        message: error instanceof Error ? error.message : 'Unable to request update plan.',
         validationErrors: [],
         conflicts: [],
       });
     } finally {
       setIsPlanning(false);
     }
-  }
+  }, [moduleId]);
 
-  function handleUseFixture() {
-    const origin = window.location.origin;
-    setMetadataUrl(`${origin}/fixtures/modules/sample-reports`);
-  }
+  useEffect(() => {
+    void loadPlan();
+  }, [loadPlan]);
 
   function handlePrepareRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -104,8 +99,8 @@ export function InstallModuleClient() {
       return;
     }
 
-    setInstallResult(null);
-    setInstallError(null);
+    setUpdateResult(null);
+    setUpdateError(null);
     const externalMountValidation = validateExternalMountDrafts(plan, externalMountDrafts);
     setExternalMountErrors(externalMountValidation.errors);
 
@@ -113,7 +108,7 @@ export function InstallModuleClient() {
       return;
     }
 
-    const payload = buildModuleInstallRequest(
+    const payload = buildModuleUpdateRequest(
       plan,
       new FormData(event.currentTarget),
       externalMountValidation.selections
@@ -121,95 +116,74 @@ export function InstallModuleClient() {
     setPreparedRequest(payload);
   }
 
-  async function handleInstallPrepared() {
-    if (!preparedRequest) {
+  async function handleApplyPrepared() {
+    if (!preparedRequest || !plan) {
       return;
     }
 
-    setIsInstalling(true);
-    setInstallResult(null);
-    setInstallError(null);
+    setIsUpdating(true);
+    setUpdateResult(null);
+    setUpdateError(null);
 
     try {
-      const response = await fetch('/api/modules/install', {
+      const response = await fetch(`/api/modules/${encodeURIComponent(plan.moduleId)}/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(preparedRequest),
       });
-      const data = await response.json() as ModuleInstallResponse;
+      const data = await response.json() as ModuleUpdateResponse;
 
       if ('error' in data && data.error) {
-        setInstallError(data.error);
+        setUpdateError(data.error);
         return;
       }
 
-      setInstallResult(data);
+      setUpdateResult(data);
     } catch (error) {
-      setInstallError({
-        code: 'install_apply_request_failed',
-        message: error instanceof Error ? error.message : 'Unable to install module.',
+      setUpdateError({
+        code: 'update_apply_request_failed',
+        message: error instanceof Error ? error.message : 'Unable to update module.',
         validationErrors: [],
         conflicts: [],
       });
     } finally {
-      setIsInstalling(false);
+      setIsUpdating(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-16 items-center justify-between px-4">
-          <div className="flex items-center gap-3">
-            <Button asChild variant="ghost" size="icon">
-              <Link href="/" aria-label="Back to dashboard">
-                <ArrowLeft className="h-4 w-4" />
-              </Link>
+    <AdminShell
+      title="Update module"
+      description={moduleId}
+      actions={(
+          <div className="flex items-center gap-2">
+            {plan && (
+              <Badge variant={plan.conflicts.length > 0 ? 'destructive' : 'outline'}>
+                {plan.conflicts.length > 0 ? 'Blocked' : 'Ready'}
+              </Badge>
+            )}
+            <Button variant="outline" size="icon" onClick={() => void loadPlan()} disabled={isPlanning}>
+              {isPlanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             </Button>
-            <div>
-              <h1 className="text-xl font-semibold">Install module</h1>
-              <p className="text-sm text-muted-foreground">Review metadata plan</p>
-            </div>
           </div>
-          {plan && (
-            <Badge variant={plan.conflicts.length > 0 ? 'destructive' : 'outline'}>
-              {plan.conflicts.length > 0 ? 'Blocked' : 'Ready'}
-            </Badge>
-          )}
-        </div>
-      </header>
-
-      <main className="container space-y-6 px-4 py-8">
-        <section className="rounded-lg border bg-card p-5">
-          <form onSubmit={handlePlanSubmit} className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
-            <div className="space-y-2">
-              <Label htmlFor="metadata-url">Metadata URL</Label>
-              <Input
-                id="metadata-url"
-                type="url"
-                value={metadataUrl}
-                onChange={event => setMetadataUrl(event.target.value)}
-                placeholder="https://modules.example.com/reports.json"
-                required
-              />
+      )}
+      contentClassName="space-y-6"
+    >
+        {isPlanning && (
+          <section className="rounded-lg border bg-card p-5">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              Refreshing module metadata
             </div>
-            <Button type="button" variant="outline" onClick={handleUseFixture}>
-              <Database className="h-4 w-4" />
-              Local fixture
-            </Button>
-            <Button type="submit" disabled={isPlanning}>
-              {isPlanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-              Create plan
-            </Button>
-          </form>
-        </section>
+          </section>
+        )}
 
         {planError && <PlanErrorPanel error={planError} />}
-        {installError && <PlanErrorPanel error={installError} />}
-        {installResult && <InstallSuccessPanel result={installResult} />}
+        {updateError && <PlanErrorPanel error={updateError} />}
+        {updateResult && <UpdateSuccessPanel result={updateResult} />}
 
         {plan && (
-          <form key={plan.planDigest} onSubmit={handlePrepareRequest} className="space-y-6">
+          <form key={plan.updatePlanDigest} onSubmit={handlePrepareRequest} className="space-y-6">
             <PlanReview
               plan={plan}
               externalMountDrafts={externalMountDrafts}
@@ -220,7 +194,7 @@ export function InstallModuleClient() {
             <section className="rounded-lg border bg-card p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-base font-semibold">Install request</h2>
+                  <h2 className="text-base font-semibold">Update request</h2>
                   <p className="text-sm text-muted-foreground">
                     {plan.conflicts.length > 0
                       ? 'Resolve plan conflicts before confirmation.'
@@ -235,12 +209,12 @@ export function InstallModuleClient() {
               {preparedRequest && (
                 <div className="mt-4 space-y-4">
                   <pre className="max-h-80 overflow-auto rounded-md bg-muted p-4 text-xs">
-                    {JSON.stringify(redactModuleInstallRequest(preparedRequest), null, 2)}
+                    {JSON.stringify(redactModuleUpdateRequest(preparedRequest), null, 2)}
                   </pre>
                   <div className="flex justify-end">
-                    <Button type="button" onClick={handleInstallPrepared} disabled={isInstalling}>
-                      {isInstalling ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                      Install module
+                    <Button type="button" onClick={handleApplyPrepared} disabled={isUpdating}>
+                      {isUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      Apply update
                     </Button>
                   </div>
                 </div>
@@ -248,23 +222,22 @@ export function InstallModuleClient() {
             </section>
           </form>
         )}
-      </main>
-    </div>
+    </AdminShell>
   );
 }
 
-function InstallSuccessPanel({ result }: { result: ModuleInstallSuccessResponse }) {
+function UpdateSuccessPanel({ result }: { result: ModuleUpdateSuccessResponse }) {
   return (
     <section className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-5 text-emerald-950 dark:text-emerald-200">
       <div className="mb-3 flex items-center gap-2">
         <CheckCircle2 className="h-4 w-4" />
-        <h2 className="text-base font-semibold">Module installed</h2>
+        <h2 className="text-base font-semibold">Module updated</h2>
       </div>
       <DefinitionGrid>
         <Definition label="Module" value={result.module.name} />
-        <Definition label="Module ID" value={result.module.id} />
-        <Definition label="Installed" value={result.installedModuleIds.join(', ') || '-'} />
-        <Definition label="Reused" value={result.reusedModuleIds.join(', ') || '-'} />
+        <Definition label="Module ID" value={result.updatedModuleId} />
+        <Definition label="Installed dependencies" value={result.installedDependencyIds.join(', ') || '-'} />
+        <Definition label="Reused dependencies" value={result.reusedDependencyIds.join(', ') || '-'} />
       </DefinitionGrid>
     </section>
   );
@@ -276,7 +249,7 @@ function PlanReview({
   externalMountErrors,
   onExternalMountDraftsChange,
 }: {
-  plan: InstallPlan;
+  plan: ModuleUpdatePlan;
   externalMountDrafts: ExternalMountDraft[];
   externalMountErrors: ExternalMountValidationError[];
   onExternalMountDraftsChange: (drafts: ExternalMountDraft[]) => void;
@@ -284,82 +257,89 @@ function PlanReview({
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-6">
-        <ReviewSection title="Module" icon={<Server className="h-4 w-4" />}>
+        <ReviewSection title="Module" icon={<Database className="h-4 w-4" />}>
           <DefinitionGrid>
-            <Definition label="Name" value={plan.module.name} />
+            <Definition label="Name" value={`${plan.module.currentName} -> ${plan.module.proposedName}`} />
             <Definition label="Module ID" value={plan.module.id} />
-            <Definition label="Version" value={plan.module.version} />
+            <Definition label="Version" value={`${plan.module.currentVersion} -> ${plan.module.proposedVersion}`} />
             <Definition label="Metadata URL" value={plan.metadataUrl} />
-            <Definition label="Metadata digest" value={plan.metadataDigest} />
-            <Definition label="Plan digest" value={plan.planDigest} />
+            <Definition label="Current digest" value={plan.currentMetadataDigest || '-'} />
+            <Definition label="Refreshed digest" value={plan.refreshedMetadataDigest} />
+            <Definition label="Update digest" value={plan.updatePlanDigest} />
           </DefinitionGrid>
         </ReviewSection>
 
-        <ReviewSection title="Images" icon={<Database className="h-4 w-4" />}>
-          <TableLike
-            columns={['Module', 'Image', 'Pull policy']}
-            rows={plan.images.map(image => [
-              image.moduleId,
-              image.reference,
-              image.pullPolicy,
-            ])}
+        <ReviewSection title="Changes" icon={<RefreshCw className="h-4 w-4" />}>
+          <IssueList
+            empty="No runtime changes detected"
+            issues={plan.changes.map((change, index) => ({
+              id: `${change.category}:${change.action}:${index}`,
+              title: `${change.category} / ${change.action}`,
+              message: change.title,
+              detail: change.path,
+            }))}
           />
         </ReviewSection>
 
         <ReviewSection title="Dependencies" icon={<GitBranch className="h-4 w-4" />}>
           <div className="space-y-4">
             <DefinitionGrid>
-              <Definition label="Install order" value={plan.installOrder.join(' -> ')} />
+              <Definition label="Apply order" value={plan.installOrder.join(' -> ')} />
             </DefinitionGrid>
             {plan.dependencies.length === 0 ? (
               <EmptyLine>No dependencies</EmptyLine>
             ) : (
-              <div className="space-y-3">
-                {plan.dependencies.map(dependency => (
-                  <div key={dependency.id} className="rounded-md border p-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{dependency.name}</span>
-                      <Badge variant="outline">{dependency.installAction}</Badge>
-                      <code className="text-xs text-muted-foreground">{dependency.id}</code>
-                    </div>
-                    {dependency.connections.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {dependency.connections.map(connection => (
-                          <DefinitionGrid key={`${connection.consumerId}:${connection.endpoint}`}>
-                            <Definition label="Consumer" value={connection.consumerId} />
-                            <Definition label="Endpoint" value={connection.endpoint} />
-                            <Definition label="Environment" value={connection.baseUrlEnv} />
-                            <Definition label="Resolved URL" value={connection.resolvedBaseUrl} />
-                          </DefinitionGrid>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <TableLike
+                columns={['Module', 'Action', 'Metadata URL']}
+                rows={plan.dependencies.map(dependency => [
+                  dependency.id,
+                  dependency.installAction,
+                  dependency.metadataUrl,
+                ])}
+              />
             )}
           </div>
         </ReviewSection>
 
         <ReviewSection title="Settings" icon={<Settings2 className="h-4 w-4" />}>
-          <SettingsInputs settings={plan.settings} />
+          <div className="space-y-4">
+            {plan.preservedSettings.length > 0 && (
+              <TableLike
+                columns={['Module', 'Key', 'Target']}
+                rows={plan.preservedSettings.map(setting => [
+                  setting.moduleId,
+                  setting.key,
+                  setting.secret ? `${setting.target.name} (secret)` : setting.target.name,
+                ])}
+              />
+            )}
+            <SettingsInputs settings={plan.settings} />
+          </div>
         </ReviewSection>
 
         <ReviewSection title="Storage" icon={<Folder className="h-4 w-4" />}>
           <div className="space-y-5">
-            <div>
-              <h3 className="mb-2 text-sm font-medium">Module-owned mappings</h3>
+            <TableLike
+              columns={['Module', 'Key', 'Host path', 'Container path']}
+              rows={plan.storage.directories.map(directory => [
+                directory.moduleId,
+                directory.key,
+                directory.hostPath,
+                directory.containerPath,
+              ])}
+              empty="No module-owned storage"
+            />
+            {plan.storage.preservedExternalMounts.length > 0 && (
               <TableLike
-                columns={['Module', 'Key', 'Host path', 'Container path']}
-                rows={plan.storage.directories.map(directory => [
-                  directory.moduleId,
-                  directory.key,
-                  directory.hostPath,
-                  directory.containerPath,
+                columns={['Collection', 'Key', 'Host path', 'Access']}
+                rows={plan.storage.preservedExternalMounts.map(mount => [
+                  mount.collectionKey,
+                  mount.key,
+                  mount.hostPath,
+                  mount.access,
                 ])}
-                empty="No module-owned storage"
               />
-            </div>
+            )}
             <ExternalMountCollections
               collections={plan.storage.mountCollections}
               drafts={externalMountDrafts}
@@ -371,29 +351,28 @@ function PlanReview({
       </div>
 
       <aside className="space-y-6">
+        <ReviewSection title="Images" icon={<Database className="h-4 w-4" />}>
+          <TableLike
+            columns={['Module', 'Image', 'Pull policy']}
+            rows={plan.images.map(image => [
+              image.moduleId,
+              image.reference,
+              image.pullPolicy,
+            ])}
+          />
+        </ReviewSection>
+
         <ReviewSection title="Runtime" icon={<HardDrive className="h-4 w-4" />}>
-          <div className="space-y-4">
-            <TableLike
-              columns={['Key', 'Port', 'Protocol', 'Public']}
-              rows={plan.runtime.ports.map(port => [
-                port.key,
-                String(port.containerPort),
-                port.protocol,
-                port.public ? 'yes' : 'no',
-              ])}
-              empty="No runtime ports"
-            />
-            {plan.runtime.resources && (
-              <DefinitionGrid>
-                {plan.runtime.resources.cpus !== undefined && (
-                  <Definition label="CPUs" value={String(plan.runtime.resources.cpus)} />
-                )}
-                {plan.runtime.resources.memory && (
-                  <Definition label="Memory" value={plan.runtime.resources.memory} />
-                )}
-              </DefinitionGrid>
-            )}
-          </div>
+          <TableLike
+            columns={['Key', 'Port', 'Protocol', 'Public']}
+            rows={plan.runtime.ports.map(port => [
+              port.key,
+              String(port.containerPort),
+              port.protocol,
+              port.public ? 'yes' : 'no',
+            ])}
+            empty="No runtime ports"
+          />
         </ReviewSection>
 
         <ReviewSection title="Docker" icon={<Network className="h-4 w-4" />}>
@@ -401,9 +380,21 @@ function PlanReview({
             <Definition label="Network" value={plan.docker.networkName} />
             <Definition label="Container" value={plan.docker.containerName} />
             <Definition label="Aliases" value={plan.docker.networkAliases.join(', ')} />
-            <Definition label="Module path" value={plan.paths.moduleDirectoryHost} />
+            <Definition label="Replacement" value={plan.docker.replacementRequired ? plan.docker.replacementReasons.join(', ') : 'not required'} />
           </DefinitionGrid>
         </ReviewSection>
+
+        {plan.warnings.length > 0 && (
+          <ReviewSection title="Warnings" icon={<CircleAlert className="h-4 w-4" />}>
+            <IssueList
+              issues={plan.warnings.map((warning, index) => ({
+                id: `warning:${index}`,
+                title: 'warning',
+                message: warning,
+              }))}
+            />
+          </ReviewSection>
+        )}
 
         {plan.conflicts.length > 0 && (
           <ReviewSection title="Conflicts" icon={<CircleAlert className="h-4 w-4" />}>
@@ -424,7 +415,7 @@ function PlanReview({
 
 function SettingsInputs({ settings }: { settings: InstallPlanSettingPrompt[] }) {
   if (settings.length === 0) {
-    return <EmptyLine>No settings required</EmptyLine>;
+    return <EmptyLine>No new setting values required</EmptyLine>;
   }
 
   return (
@@ -432,7 +423,7 @@ function SettingsInputs({ settings }: { settings: InstallPlanSettingPrompt[] }) 
       {settings.map(setting => (
         <div key={`${setting.moduleId}:${setting.key}`} className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <Label htmlFor={getSettingFieldName(setting)}>{setting.key}</Label>
+            <Label htmlFor={getUpdateSettingFieldName(setting)}>{setting.key}</Label>
             <div className="flex gap-1">
               <Badge variant="outline">{setting.type}</Badge>
               {setting.secret && (
@@ -456,7 +447,7 @@ function SettingsInputs({ settings }: { settings: InstallPlanSettingPrompt[] }) 
 }
 
 function SettingInput({ setting }: { setting: InstallPlanSettingPrompt }) {
-  const id = getSettingFieldName(setting);
+  const id = getUpdateSettingFieldName(setting);
   const defaultValue = setting.default === undefined ? '' : String(setting.default);
 
   if (setting.type === 'boolean') {
@@ -498,12 +489,7 @@ function ExternalMountCollections({
   onDraftsChange: (drafts: ExternalMountDraft[]) => void;
 }) {
   if (collections.length === 0) {
-    return (
-      <div>
-        <h3 className="mb-2 text-sm font-medium">External mounts</h3>
-        <EmptyLine>No external mounts</EmptyLine>
-      </div>
-    );
+    return <EmptyLine>No new external mounts required</EmptyLine>;
   }
 
   function updateDraft(id: string, patch: Partial<ExternalMountDraft>) {
@@ -523,7 +509,6 @@ function ExternalMountCollections({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium">External mounts</h3>
       {collections.map(collection => {
         const collectionDrafts = drafts.filter(
           draft => draft.moduleId === collection.moduleId && draft.collectionKey === collection.key
@@ -647,11 +632,13 @@ function PlanErrorPanel({ error }: { error: InstallPlanErrorEnvelope }) {
 
 function IssueList({
   issues,
+  empty = 'No issue details',
 }: {
   issues: Array<{ id: string; title: string; message: string; detail?: string }>;
+  empty?: string;
 }) {
   if (issues.length === 0) {
-    return <EmptyLine>No issue details</EmptyLine>;
+    return <EmptyLine>{empty}</EmptyLine>;
   }
 
   return (
