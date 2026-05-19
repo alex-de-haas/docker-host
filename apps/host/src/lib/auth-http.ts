@@ -308,17 +308,49 @@ function isSecureRequest(request: Request) {
     new URL(request.url).protocol === 'https:';
 }
 
-function isLoopbackRequest(request: Request) {
-  const hostname = new URL(request.url).hostname.toLowerCase();
-  return hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname.endsWith('.localhost');
+export function isLoopbackRequest(request: Request) {
+  return [
+    new URL(request.url).hostname,
+    parseHeaderHostname(request.headers.get('host')),
+    parseHeaderHostname(request.headers.get('x-forwarded-host')),
+  ].some(hostname => hostname ? isLoopbackHostname(hostname) : false);
 }
 
 function getRequestOrigin(request: Request) {
   const url = new URL(request.url);
-  return `${url.protocol}//${url.host}`;
+  const host = parseHeaderHost(request.headers.get('x-forwarded-host')) ||
+    parseHeaderHost(request.headers.get('host')) ||
+    url.host;
+  const protocol = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ||
+    url.protocol.replace(/:$/, '');
+
+  return `${protocol}://${host}`;
+}
+
+function parseHeaderHost(value: string | null) {
+  return value?.split(',')[0]?.trim() || null;
+}
+
+function parseHeaderHostname(value: string | null) {
+  const host = parseHeaderHost(value);
+  if (!host) {
+    return null;
+  }
+
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return end === -1 ? host : host.slice(1, end);
+  }
+
+  return host.split(':')[0] || null;
+}
+
+function isLoopbackHostname(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  return normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized.endsWith('.localhost');
 }
 
 function getSessionCookieDomain(request: Request) {

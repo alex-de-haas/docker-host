@@ -52,6 +52,17 @@ npm install
 npm run host:dev
 ```
 
+For UI work where you want to land directly on the dashboard with isolated
+development state:
+
+```bash
+npm run host:dev:auto-auth
+```
+
+This uses `.docker-host-dev/` in the repository as the Host data root and enables
+development-only auto-login. It creates a normal local `host.admin` user and
+browser session; production setup-token behavior is unchanged.
+
 The server connects to Docker using:
 
 1. `DOCKER_SOCKET_PATH`, if set

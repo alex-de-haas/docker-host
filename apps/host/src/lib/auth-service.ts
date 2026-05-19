@@ -30,6 +30,9 @@ export const SESSION_REJECTION_AUDIT_THROTTLE_MS = 5 * 60 * 1000;
 
 const SETUP_TOKEN_PREFIX = 'dhstp_';
 const CLI_TOKEN_PREFIX = 'dhcli_';
+const DEFAULT_DEV_ADMIN_EMAIL = 'admin@docker-host.local';
+const DEFAULT_DEV_ADMIN_DISPLAY_NAME = 'Docker Host Dev Admin';
+const DEFAULT_DEV_ADMIN_PASSWORD = 'docker-host-dev-admin';
 const SESSION_REJECTION_AUDIT_CACHE_MAX = 500;
 const rejectedSessionAuditCache = new Map<string, number>();
 
@@ -382,6 +385,115 @@ export async function authenticatePassword(
   return {
     sessionToken,
     session: createdSession,
+    user: toPrincipal(user),
+  };
+}
+
+export function isDevAuthAutoLoginEnabled() {
+  const mode = process.env.HOST_DEV_AUTH?.trim().toLowerCase();
+  const enabled = mode === '1' ||
+    mode === 'true' ||
+    mode === 'enabled' ||
+    mode === 'on' ||
+    mode === 'yes' ||
+    mode === 'auto' ||
+    mode === 'auto-login';
+
+  if (!enabled) {
+    return false;
+  }
+
+  return isDevelopmentRuntime();
+}
+
+export function getDevAuthCredentials() {
+  const configuredEmail = normalizeEmail(process.env.HOST_DEV_ADMIN_EMAIL || '');
+  const configuredPassword = process.env.HOST_DEV_ADMIN_PASSWORD || '';
+  const displayName = process.env.HOST_DEV_ADMIN_NAME?.trim() || DEFAULT_DEV_ADMIN_DISPLAY_NAME;
+
+  return {
+    email: configuredEmail || DEFAULT_DEV_ADMIN_EMAIL,
+    displayName,
+    password: configuredPassword || DEFAULT_DEV_ADMIN_PASSWORD,
+  };
+}
+
+export async function createDevAdminSession(
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  if (!isDevAuthAutoLoginEnabled()) {
+    throw new AuthServiceError('dev_auth_disabled', 'Development auto-login is not enabled.');
+  }
+
+  const credentials = getDevAuthCredentials();
+  const passwordPolicy = validatePasswordPolicy(credentials.password);
+  if (!passwordPolicy.valid) {
+    throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
+  }
+
+  const passwordHash = await hashPassword(credentials.password);
+  const sessionToken = generateToken('dhs_');
+  const now = new Date();
+
+  const { user, session, createdUser } = await updateAuthState(state => {
+    const existingUser = state.users.find(candidate =>
+      candidate.email === credentials.email &&
+      (candidate.authProvider === 'local' || candidate.authProvider === undefined)
+    );
+    const user: AuthUserRecord = existingUser
+      ? {
+          ...existingUser,
+          email: credentials.email,
+          displayName: credentials.displayName,
+          role: 'host.admin',
+          authProvider: 'local',
+          passwordHash,
+          disabled: false,
+          updatedAt: now.toISOString(),
+        }
+      : {
+          id: `user_${randomUUID()}`,
+          email: credentials.email,
+          displayName: credentials.displayName,
+          role: 'host.admin',
+          authProvider: 'local',
+          passwordHash,
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        };
+    const session = createSessionRecord(user.id, sessionToken, now, request);
+
+    return {
+      state: {
+        ...state,
+        users: existingUser
+          ? state.users.map(candidate => candidate.id === user.id ? user : candidate)
+          : [...state.users, user],
+        sessions: [...pruneExpiredSessions(state.sessions, now), session],
+      },
+      result: {
+        user,
+        session,
+        createdUser: !existingUser,
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.dev_login.succeeded',
+    actorUserId: user.id,
+    success: true,
+    request,
+    details: {
+      sessionId: session.id,
+      createdUser,
+    },
+  }, config);
+
+  return {
+    sessionToken,
+    session,
     user: toPrincipal(user),
   };
 }
@@ -975,6 +1087,15 @@ function isSessionActive(session: AuthSessionRecord, now: Date) {
 
 function isExpired(expiresAt: string, now: Date) {
   return Date.parse(expiresAt) <= now.getTime();
+}
+
+function isDevelopmentRuntime() {
+  const hostRuntimeMode = process.env.HOST_RUNTIME_MODE?.trim().toLowerCase();
+  if (hostRuntimeMode) {
+    return hostRuntimeMode === 'development';
+  }
+
+  return process.env.NODE_ENV === 'development';
 }
 
 function shouldRefreshSessionActivity(session: AuthSessionRecord, now: Date) {

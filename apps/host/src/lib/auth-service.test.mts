@@ -9,9 +9,11 @@ import {
   authenticateSessionToken,
   bootstrapFirstAdmin,
   createCliTokenForAdmin,
+  createDevAdminSession,
   createSetupToken,
   getAuthStatus,
   hasRecentSessionReauthentication,
+  isDevAuthAutoLoginEnabled,
   listAuthSessions,
   listCliTokens,
   reauthenticateSession,
@@ -49,6 +51,44 @@ test('bootstraps the first admin with a setup token and creates a session', asyn
   assert.equal(state.users.length, 1);
   assert.equal(state.sessions.length, 1);
   assert.equal(state.setupTokens[0]?.usedAt !== undefined, true);
+});
+
+test('development auto-login creates a normal admin session only when enabled', async t => {
+  const config = await createTestConfig();
+  const previousDevAuth = process.env.HOST_DEV_AUTH;
+  const previousRuntimeMode = process.env.HOST_RUNTIME_MODE;
+  t.after(() => {
+    restoreEnv('HOST_DEV_AUTH', previousDevAuth);
+    restoreEnv('HOST_RUNTIME_MODE', previousRuntimeMode);
+  });
+
+  delete process.env.HOST_DEV_AUTH;
+  process.env.HOST_RUNTIME_MODE = 'development';
+  assert.equal(isDevAuthAutoLoginEnabled(), false);
+  await assert.rejects(
+    createDevAdminSession(undefined, config),
+    /Development auto-login is not enabled/
+  );
+
+  process.env.HOST_DEV_AUTH = 'auto';
+  process.env.HOST_RUNTIME_MODE = 'production';
+  assert.equal(isDevAuthAutoLoginEnabled(), false);
+
+  process.env.HOST_RUNTIME_MODE = 'development';
+  assert.equal(isDevAuthAutoLoginEnabled(), true);
+
+  const result = await createDevAdminSession({ userAgent: 'Dev Browser' }, config);
+
+  assert.equal(result.user.email, 'admin@docker-host.local');
+  assert.equal(result.user.role, 'host.admin');
+  assert.equal((await authenticateSessionToken(result.sessionToken, undefined, config))?.id, result.user.id);
+  assert.equal((await getAuthStatus(config)).setupRequired, false);
+
+  const state = await readAuthStateSnapshot(config);
+  assert.equal(state.users.length, 1);
+  assert.equal(state.sessions.length, 1);
+  assert.equal(state.setupTokens.length, 0);
+  assert.equal(JSON.stringify(state).includes('docker-host-dev-admin'), false);
 });
 
 test('rejects weak passwords before consuming a setup token', async () => {
@@ -260,4 +300,13 @@ async function createTestConfig(): Promise<HostRuntimeConfig> {
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
   };
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
 }

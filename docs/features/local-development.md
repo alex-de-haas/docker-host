@@ -52,6 +52,31 @@ In this mode, local metadata test servers can usually be referenced as `http://l
 
 The repository uses npm workspace scripts from the root. `npm run host:dev`, `npm run host:build`, and `npm run host:lint` execute the Host app in `apps/host`.
 
+## Direct host-run development with auto-login
+
+Use this mode for fast UI work when the first screen should be the dashboard:
+
+```bash
+npm run host:dev:auto-auth
+```
+
+This script sets:
+
+- `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the repository-local `.docker-host-dev/` directory;
+- `HOST_DEV_AUTH=auto`, which enables development-only auto-login.
+
+When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only from loopback hosts such as `127.0.0.1` or `localhost`.
+
+The route does not disable authentication. It creates or updates a normal local `host.admin` account, issues a normal browser session cookie, and then redirects back to the dashboard. The default development account is:
+
+- email: `admin@docker-host.local`;
+- password: `docker-host-dev-admin`;
+- display name: `Docker Host Dev Admin`.
+
+Override these values with `HOST_DEV_ADMIN_EMAIL`, `HOST_DEV_ADMIN_PASSWORD`, and `HOST_DEV_ADMIN_NAME` if a local test needs different credentials. The password still has to satisfy the normal local password policy.
+
+Production runs and direct `npm run host:dev` runs do not enable this behavior. They continue to require a CLI-generated setup token for first administrator setup.
+
 ## Native Windows CLI development
 
 Native Windows CLI support targets Docker Desktop with the WSL 2 Linux engine. Windows containers mode is unsupported for the MVP because the Host image and module runtime are Linux-container based.

@@ -38,6 +38,7 @@ const dev = process.argv.includes('--dev')
   : process.argv.includes('--production')
     ? false
     : process.env.NODE_ENV !== 'production';
+process.env.HOST_RUNTIME_MODE = dev ? 'development' : 'production';
 
 let handleNextRequest;
 

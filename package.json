@@ -11,6 +11,7 @@
     "build": "npm run host:build",
     "lint": "npm run host:lint",
     "host:dev": "npm run dev --workspace @haas/docker-host-app",
+    "host:dev:auto-auth": "HOST_DATA_ROOT_HOST=\"$PWD/.docker-host-dev\" HOST_DATA_ROOT_CONTAINER=\"$PWD/.docker-host-dev\" HOST_DEV_AUTH=auto npm run host:dev",
     "host:build": "npm run build --workspace @haas/docker-host-app",
     "host:start": "npm run start --workspace @haas/docker-host-app",
     "host:lint": "npm run lint --workspace @haas/docker-host-app",
