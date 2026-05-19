@@ -42,8 +42,7 @@ internal sealed class HostLifecycle(CommandContext context)
 
         if (!await docker.ImageExistsAsync(settings.HostImage, cancellationToken))
         {
-            context.Console.MarkupLine($"Pulling Host image [grey]{Markup.Escape(settings.HostImage)}[/]...");
-            await docker.PullImageAsync(settings.HostImage, cancellationToken);
+            await PullHostImageAsync(context, docker, settings.HostImage, cancellationToken);
         }
 
         var hostPort = settings.GetFixedHostPort() ?? PortAllocator.GetFreeLoopbackPort();
@@ -117,6 +116,19 @@ internal sealed class HostLifecycle(CommandContext context)
 
         return null;
     }
+
+    internal static async Task PullHostImageAsync(
+        CommandContext context,
+        DockerEngineClient docker,
+        string image,
+        CancellationToken cancellationToken = default)
+        => await context.Console
+            .Status()
+            .Spinner(Spinner.Known.BoxBounce)
+            .SpinnerStyle(Style.Parse("green"))
+            .StartAsync(
+                $"Pulling Host image [grey]{Markup.Escape(image)}[/]...",
+                async _ => await docker.PullImageAsync(image, cancellationToken));
 
     private static string BuildUrl(int port) => $"http://localhost:{port}";
 }

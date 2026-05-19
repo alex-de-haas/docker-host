@@ -33,8 +33,7 @@ internal sealed class UpdateCommand(CommandContext context)
         await docker.EnsureLinuxEngineAsync();
         await docker.EnsureNetworkAsync(settings.HostModuleNetwork);
 
-        context.Console.MarkupLine($"Pulling Host image [grey]{Markup.Escape(settings.HostImage)}[/]...");
-        await docker.PullImageAsync(settings.HostImage);
+        await HostLifecycle.PullHostImageAsync(context, docker, settings.HostImage);
 
         var existing = await docker.InspectContainerAsync(settings.HostContainerName);
         var previousPort = HostLifecycle.TryGetMappedPort(existing);

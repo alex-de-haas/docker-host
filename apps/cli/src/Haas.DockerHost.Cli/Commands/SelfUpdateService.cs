@@ -32,17 +32,26 @@ internal sealed class SelfUpdateService(CommandContext context)
         var checksumsUrl = $"{ReleaseBaseUrl}/SHA256SUMS";
 
         using var httpClient = new HttpClient();
-        var assets = await DownloadCliAssetsAsync(
+        var checksums = await DownloadChecksumsAsync(
             httpClient,
             checksumsUrl,
+            cancellationToken);
+
+        var hasExpectedSha256 = TryFindChecksum(checksums, artifact, out var expectedSha256);
+        if (hasExpectedSha256 && CurrentExecutableMatches(processPath, expectedSha256))
+        {
+            context.Console.MarkupLine("[green]CLI ready up to date.[/]");
+            return;
+        }
+
+        var artifactBytes = await DownloadArtifactAsync(
+            httpClient,
             artifactUrl,
             artifact,
             cancellationToken);
-        var checksums = assets.Checksums;
-        var artifactBytes = assets.ArtifactBytes;
 
         var artifactSha256 = CalculateSha256(artifactBytes);
-        if (TryFindChecksum(checksums, artifact, out var expectedSha256))
+        if (hasExpectedSha256)
         {
             if (!string.Equals(artifactSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
             {
@@ -56,7 +65,7 @@ internal sealed class SelfUpdateService(CommandContext context)
 
         if (CurrentExecutableMatches(processPath, artifactSha256))
         {
-            context.Console.MarkupLine("[green]CLI already up to date.[/] Downloaded artifact matches the current executable.");
+            context.Console.MarkupLine("[green]CLI ready up to date.[/]");
             return;
         }
 
@@ -72,7 +81,7 @@ internal sealed class SelfUpdateService(CommandContext context)
         }
 
         File.Move(tempPath, processPath, overwrite: true);
-        context.Console.MarkupLine($"[green]CLI updated.[/] Current process continues as {Assembly.GetExecutingAssembly().GetName().Version} until the next invocation.");
+        context.Console.MarkupLine($"[green]CLI updated.[/] New version installed. Current process continues as {Assembly.GetExecutingAssembly().GetName().Version} until the next invocation.");
     }
 
     internal static bool CurrentExecutableMatches(string processPath, string artifactSha256)
@@ -119,14 +128,40 @@ internal sealed class SelfUpdateService(CommandContext context)
         throw new PlatformNotSupportedException($"Unsupported OS {RuntimeInformation.OSDescription}.");
     }
 
-    private async Task<DownloadedCliAssets> DownloadCliAssetsAsync(
+    private async Task<string?> DownloadChecksumsAsync(
         HttpClient httpClient,
         string checksumsUrl,
+        CancellationToken cancellationToken)
+    {
+        var checksumsBytes = await DownloadWithProgressAsync(
+            progressContext => TryDownloadBytesAsync(
+                httpClient,
+                checksumsUrl,
+                "SHA256SUMS",
+                progressContext,
+                cancellationToken));
+
+        return checksumsBytes is null ? null : Encoding.UTF8.GetString(checksumsBytes);
+    }
+
+    private async Task<byte[]> DownloadArtifactAsync(
+        HttpClient httpClient,
         string artifactUrl,
         string artifact,
         CancellationToken cancellationToken)
+        => await DownloadWithProgressAsync(
+            progressContext => DownloadBytesAsync(
+                httpClient,
+                artifactUrl,
+                artifact,
+                progressContext,
+                cancellationToken));
+
+    private async Task<T> DownloadWithProgressAsync<T>(Func<ProgressContext, Task<T>> download)
         => await context.Console
             .Progress()
+            .AutoClear(true)
+            .HideCompleted(true)
             .Columns(
                 new TaskDescriptionColumn(),
                 new ProgressBarColumn(),
@@ -134,26 +169,7 @@ internal sealed class SelfUpdateService(CommandContext context)
                 new DownloadedColumn(),
                 new TransferSpeedColumn(),
                 new RemainingTimeColumn())
-            .StartAsync(async progressContext =>
-            {
-                var checksumsBytes = await TryDownloadBytesAsync(
-                    httpClient,
-                    checksumsUrl,
-                    "SHA256SUMS",
-                    progressContext,
-                    cancellationToken);
-
-                var artifactBytes = await DownloadBytesAsync(
-                    httpClient,
-                    artifactUrl,
-                    artifact,
-                    progressContext,
-                    cancellationToken);
-
-                return new DownloadedCliAssets(
-                    checksumsBytes is null ? null : Encoding.UTF8.GetString(checksumsBytes),
-                    artifactBytes);
-            });
+            .StartAsync(download);
 
     private static async Task<byte[]?> TryDownloadBytesAsync(
         HttpClient httpClient,
@@ -259,6 +275,4 @@ internal sealed class SelfUpdateService(CommandContext context)
 
         return false;
     }
-
-    private sealed record DownloadedCliAssets(string? Checksums, byte[] ArtifactBytes);
 }
