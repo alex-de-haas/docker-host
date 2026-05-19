@@ -101,7 +101,7 @@ The high-level adapter owns Docker Engine paths, request payloads, response pars
 
 `docker-host restart` recreates the Host container with the current launch settings while preserving `HOST_DATA_ROOT_HOST`.
 
-`docker-host update` downloads the matching CLI artifact from the rolling GitHub prerelease `cli-dev`, verifies `SHA256SUMS` when available, compares the downloaded artifact with the current executable, reports whether the CLI was updated or already current, pulls the Host image, and recreates the Host container while preserving the previous auto-selected port when Docker metadata exposes it. `docker-host update --host-only` skips the CLI artifact step for local repair and development flows.
+`docker-host update` downloads the matching CLI artifact from the rolling GitHub prerelease `cli-dev`, showing Spectre.Console progress for the checksum file and CLI artifact. Downloads with a known `Content-Length` show a determinate progress bar, percentage, downloaded bytes, transfer speed, and remaining time; downloads without a known size fall back to an indeterminate moving progress bar. The command verifies `SHA256SUMS` when available, compares the downloaded artifact with the current executable, reports whether the CLI was updated or already current, pulls the Host image through Docker Engine, and recreates the Host container while preserving the previous auto-selected port when Docker metadata exposes it. `docker-host update --host-only` skips the CLI artifact step for local repair and development flows.
 
 `docker-host open` uses Docker container port metadata to open the current Host UI URL, with a plain URL fallback when browser launch fails.
 

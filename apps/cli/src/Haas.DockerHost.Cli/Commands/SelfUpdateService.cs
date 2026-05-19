@@ -4,11 +4,13 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using Spectre.Console;
 
 internal sealed class SelfUpdateService(CommandContext context)
 {
     private const string ReleaseBaseUrl = "https://github.com/alex-de-haas/docker-host/releases/download/cli-dev";
+    private const int DownloadBufferSize = 81920;
 
     public async Task UpdateAsync(CancellationToken cancellationToken = default)
     {
@@ -30,10 +32,14 @@ internal sealed class SelfUpdateService(CommandContext context)
         var checksumsUrl = $"{ReleaseBaseUrl}/SHA256SUMS";
 
         using var httpClient = new HttpClient();
-        context.Console.MarkupLine($"Downloading CLI artifact [grey]{Markup.Escape(artifact)}[/]...");
-
-        var checksums = await TryDownloadTextAsync(httpClient, checksumsUrl, cancellationToken);
-        var artifactBytes = await DownloadBytesAsync(httpClient, artifactUrl, cancellationToken);
+        var assets = await DownloadCliAssetsAsync(
+            httpClient,
+            checksumsUrl,
+            artifactUrl,
+            artifact,
+            cancellationToken);
+        var checksums = assets.Checksums;
+        var artifactBytes = assets.ArtifactBytes;
 
         var artifactSha256 = CalculateSha256(artifactBytes);
         if (TryFindChecksum(checksums, artifact, out var expectedSha256))
@@ -113,23 +119,124 @@ internal sealed class SelfUpdateService(CommandContext context)
         throw new PlatformNotSupportedException($"Unsupported OS {RuntimeInformation.OSDescription}.");
     }
 
-    private static async Task<string?> TryDownloadTextAsync(HttpClient httpClient, string url, CancellationToken cancellationToken)
+    private async Task<DownloadedCliAssets> DownloadCliAssetsAsync(
+        HttpClient httpClient,
+        string checksumsUrl,
+        string artifactUrl,
+        string artifact,
+        CancellationToken cancellationToken)
+        => await context.Console
+            .Progress()
+            .Columns(
+                new TaskDescriptionColumn(),
+                new ProgressBarColumn(),
+                new PercentageColumn(),
+                new DownloadedColumn(),
+                new TransferSpeedColumn(),
+                new RemainingTimeColumn())
+            .StartAsync(async progressContext =>
+            {
+                var checksumsBytes = await TryDownloadBytesAsync(
+                    httpClient,
+                    checksumsUrl,
+                    "SHA256SUMS",
+                    progressContext,
+                    cancellationToken);
+
+                var artifactBytes = await DownloadBytesAsync(
+                    httpClient,
+                    artifactUrl,
+                    artifact,
+                    progressContext,
+                    cancellationToken);
+
+                return new DownloadedCliAssets(
+                    checksumsBytes is null ? null : Encoding.UTF8.GetString(checksumsBytes),
+                    artifactBytes);
+            });
+
+    private static async Task<byte[]?> TryDownloadBytesAsync(
+        HttpClient httpClient,
+        string url,
+        string description,
+        ProgressContext progressContext,
+        CancellationToken cancellationToken)
     {
-        using var response = await httpClient.GetAsync(url, cancellationToken);
+        using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
         }
 
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync(cancellationToken);
+        return await ReadResponseBytesAsync(response, description, progressContext, cancellationToken);
     }
 
-    private static async Task<byte[]> DownloadBytesAsync(HttpClient httpClient, string url, CancellationToken cancellationToken)
+    private static async Task<byte[]> DownloadBytesAsync(
+        HttpClient httpClient,
+        string url,
+        string description,
+        ProgressContext progressContext,
+        CancellationToken cancellationToken)
     {
-        using var response = await httpClient.GetAsync(url, cancellationToken);
+        using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        return await ReadResponseBytesAsync(response, description, progressContext, cancellationToken);
+    }
+
+    private static async Task<byte[]> ReadResponseBytesAsync(
+        HttpResponseMessage response,
+        string description,
+        ProgressContext progressContext,
+        CancellationToken cancellationToken)
+    {
+        var contentLength = response.Content.Headers.ContentLength;
+        var maxValue = contentLength is > 0 ? contentLength.Value : 1;
+        var progressTask = progressContext.AddTask(Markup.Escape(description), maxValue: maxValue);
+        if (contentLength is null)
+        {
+            progressTask.IsIndeterminate();
+        }
+
+        await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var output = new MemoryStream(
+            contentLength is > 0 and <= int.MaxValue
+                ? (int)contentLength.Value
+                : 0);
+        var buffer = new byte[DownloadBufferSize];
+        long downloaded = 0;
+
+        while (true)
+        {
+            var bytesRead = await contentStream.ReadAsync(buffer, cancellationToken);
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            output.Write(buffer.AsSpan(0, bytesRead));
+            downloaded += bytesRead;
+            if (contentLength is null)
+            {
+                progressTask.MaxValue = Math.Max(progressTask.MaxValue, downloaded + 1);
+            }
+
+            progressTask.Value = downloaded;
+        }
+
+        if (contentLength is null)
+        {
+            progressTask.IsIndeterminate(false);
+            progressTask.MaxValue = Math.Max(downloaded, 1);
+        }
+
+        if (downloaded > 0)
+        {
+            progressTask.Value = downloaded;
+        }
+
+        progressTask.StopTask();
+        return output.ToArray();
     }
 
     internal static bool TryFindChecksum(string? checksums, string artifact, out string sha256)
@@ -152,4 +259,6 @@ internal sealed class SelfUpdateService(CommandContext context)
 
         return false;
     }
+
+    private sealed record DownloadedCliAssets(string? Checksums, byte[] ArtifactBytes);
 }
