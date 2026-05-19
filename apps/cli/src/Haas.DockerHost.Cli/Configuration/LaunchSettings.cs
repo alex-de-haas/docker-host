@@ -25,6 +25,12 @@ internal sealed class LaunchSettings
 
     public string HostUiPort => this[LaunchSettingDefinitions.HostUiPort];
 
+    public string HostBindAddress => this[LaunchSettingDefinitions.HostBindAddress];
+
+    public string HostPublicOrigin => this[LaunchSettingDefinitions.HostPublicOrigin];
+
+    public string HostGatewayBaseDomain => this[LaunchSettingDefinitions.HostGatewayBaseDomain];
+
     public string HostRestartPolicy => this[LaunchSettingDefinitions.HostRestartPolicy];
 
     public string HostDockerEndpoint => this[LaunchSettingDefinitions.HostDockerEndpoint];
@@ -32,6 +38,8 @@ internal sealed class LaunchSettings
     public string HostDockerSocket => this[LaunchSettingDefinitions.HostDockerSocket];
 
     public string HostModuleNetwork => this[LaunchSettingDefinitions.HostModuleNetwork];
+
+    public string HostModuleDevMode => this[LaunchSettingDefinitions.HostModuleDevMode];
 
     public string ResolveHostDataRoot(DockerHostEnvironment environment)
         => environment.ResolvePath(HostDataRootHostRaw);
@@ -73,4 +81,3 @@ internal sealed class LaunchSettings
         return new LaunchSettings(next);
     }
 }
-

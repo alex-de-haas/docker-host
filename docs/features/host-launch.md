@@ -84,9 +84,12 @@ docker-host status
 docker-host logs
 docker-host open
 docker-host config
+docker-host auth
 ```
 
 Lifecycle-команды работают напрямую через Docker daemon, потому что Host API может быть еще не запущен или может быть сломан.
+
+Auth bootstrap and recovery commands also remain local-first. `docker-host auth setup-token` writes a one-time setup token hash into the Host data root so the first administrator can be created through `/setup` without relying on a pre-existing Host API session.
 
 `docker-host uninstall` сохраняет сам CLI executable, но удаляет Host-managed runtime и local state: Host container, known module containers, Host/module images when Docker allows it, shared module network when it is no longer in use, launch configuration, and Host state under the data root. После этого `docker-host install` должен восстановить launch configuration и базовую структуру директорий.
 
@@ -235,10 +238,14 @@ HOST_CONTAINER_NAME=docker-host
 HOST_DATA_ROOT_HOST=$HOME/.docker-host
 HOST_DATA_ROOT_CONTAINER=/data
 HOST_UI_PORT=auto
+HOST_BIND_ADDRESS=127.0.0.1
+HOST_PUBLIC_ORIGIN=
+HOST_GATEWAY_BASE_DOMAIN=
 HOST_RESTART_POLICY=unless-stopped
 HOST_DOCKER_ENDPOINT=unix:///var/run/docker.sock
 HOST_DOCKER_SOCKET=/var/run/docker.sock
 HOST_MODULE_NETWORK=docker-host-modules
+HOST_MODULE_DEV_MODE=disabled
 ```
 
 On native Windows, `docker-host install` should persist a Windows-appropriate default:
@@ -257,6 +264,13 @@ CLI должен передавать в Host container оба значения 
 
 `HOST_IMAGE` должен по умолчанию указывать на Host image, публикуемый текущим repository workflow: `ghcr.io/<owner>/<repo>:latest`. Это значение должно быть переопределяемым через `docker-host config`.
 
+Gateway-related launch settings:
+
+- `HOST_BIND_ADDRESS` defaults to `127.0.0.1`; administrators can set `0.0.0.0` when placing the Host behind external ingress.
+- `HOST_PUBLIC_ORIGIN` is the canonical external Host UI origin, for example `https://host.example.com`.
+- `HOST_GATEWAY_BASE_DOMAIN` is the parent domain for module subdomains, for example `example.com`.
+- `HOST_INTERNAL_ORIGIN` defaults inside the Host container to `http://docker-host:3000`. The CLI injects that value and attaches the Host container to the shared module network with the stable `docker-host` alias so module containers can fetch Host-published metadata such as JWKS.
+
 `docker-host config` должен быть typed interface к известным Host launch settings, а не произвольным editor для `launch.env`.
 
 MVP syntax:
@@ -272,7 +286,7 @@ docker-host config reset HOST_IMAGE
 
 `config list` печатает все launch settings с текущими значениями. `config get <KEY>` печатает одно значение. `config set <KEY> <VALUE>` и удобная форма `config set <KEY>=<VALUE>` записывают значение в `launch.env`. `config reset <KEY>` возвращает настройку к default value.
 
-CLI должен валидировать known keys перед записью. Unknown keys должны возвращать понятную ошибку. `HOST_UI_PORT` должен принимать `auto` или valid TCP port number. `HOST_DOCKER_ENDPOINT` должен принимать только supported local endpoints для текущей платформы: Unix socket on macOS/Linux/WSL или Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` и `HOST_DOCKER_SOCKET` должны оставаться `/data` и `/var/run/docker.sock` для MVP launch model и не должны изменяться через обычный config flow.
+CLI должен валидировать known keys перед записью. Unknown keys должны возвращать понятную ошибку. `HOST_UI_PORT` должен принимать `auto` или valid TCP port number. `HOST_BIND_ADDRESS` должен принимать `127.0.0.1` или `0.0.0.0`. `HOST_PUBLIC_ORIGIN` должен быть absolute `http`/`https` origin без path. `HOST_GATEWAY_BASE_DOMAIN` должен быть valid DNS name или empty value. `HOST_DOCKER_ENDPOINT` должен принимать только supported local endpoints для текущей платформы: Unix socket on macOS/Linux/WSL или Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` и `HOST_DOCKER_SOCKET` должны оставаться `/data` и `/var/run/docker.sock` для MVP launch model и не должны изменяться через обычный config flow.
 
 Если `~/.docker-host/bin` не находится в `PATH`, install script должен добавить idempotent PATH-блок в shell profile. Для `zsh` используется `~/.zshrc`; для `bash` используется типичный bash profile текущей платформы; для `sh` используется `~/.profile`. Если profile нельзя определить или запись отключена через `DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE=1`, script должен напечатать инструкцию:
 

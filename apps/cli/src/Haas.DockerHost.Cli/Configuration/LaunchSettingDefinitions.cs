@@ -9,10 +9,14 @@ internal static class LaunchSettingDefinitions
     public const string HostDataRootHost = "HOST_DATA_ROOT_HOST";
     public const string HostDataRootContainer = "HOST_DATA_ROOT_CONTAINER";
     public const string HostUiPort = "HOST_UI_PORT";
+    public const string HostBindAddress = "HOST_BIND_ADDRESS";
+    public const string HostPublicOrigin = "HOST_PUBLIC_ORIGIN";
+    public const string HostGatewayBaseDomain = "HOST_GATEWAY_BASE_DOMAIN";
     public const string HostRestartPolicy = "HOST_RESTART_POLICY";
     public const string HostDockerEndpoint = "HOST_DOCKER_ENDPOINT";
     public const string HostDockerSocket = "HOST_DOCKER_SOCKET";
     public const string HostModuleNetwork = "HOST_MODULE_NETWORK";
+    public const string HostModuleDevMode = "HOST_MODULE_DEV_MODE";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
@@ -21,10 +25,14 @@ internal static class LaunchSettingDefinitions
         new(HostDataRootHost, DefaultDataRootHost, true, ValidateHostPath),
         new(HostDataRootContainer, _ => "/data", false, ValidateContainerPath),
         new(HostUiPort, _ => "auto", true, ValidateHostPort),
+        new(HostBindAddress, _ => "127.0.0.1", true, ValidateBindAddress),
+        new(HostPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
+        new(HostGatewayBaseDomain, _ => "", true, ValidateOptionalDnsName),
         new(HostRestartPolicy, _ => "unless-stopped", true, ValidateRestartPolicy),
         new(HostDockerEndpoint, env => env.IsWindows ? "npipe:////./pipe/docker_engine" : "unix:///var/run/docker.sock", true, ValidateDockerEndpoint),
         new(HostDockerSocket, _ => "/var/run/docker.sock", true, ValidateContainerPath),
         new(HostModuleNetwork, _ => "docker-host-modules", true, Required),
+        new(HostModuleDevMode, _ => "disabled", true, ValidateEnabledDisabled),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);
@@ -100,6 +108,53 @@ internal static class LaunchSettingDefinitions
         return port is > 0 and <= 65535 ? null : "Host UI port must be between 1 and 65535.";
     }
 
+    private static string? ValidateBindAddress(string value, DockerHostEnvironment _)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "Host bind address cannot be empty.";
+        }
+
+        return value is "127.0.0.1" or "0.0.0.0" ? null : "Host bind address must be 127.0.0.1 or 0.0.0.0.";
+    }
+
+    private static string? ValidateOptionalHttpOrigin(string value, DockerHostEnvironment _)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
+            string.IsNullOrEmpty(uri.PathAndQuery.Trim('/'))
+            ? null
+            : "Host public origin must be an absolute http(s) origin without a path.";
+    }
+
+    private static string? ValidateOptionalDnsName(string value, DockerHostEnvironment _)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim().Trim('.');
+        var labels = trimmed.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (labels.Length == 0 || trimmed.Length > 253)
+        {
+            return "Gateway base domain must be a valid DNS name.";
+        }
+
+        return labels.All(label =>
+            label.Length is > 0 and <= 63 &&
+            char.IsLetterOrDigit(label[0]) &&
+            char.IsLetterOrDigit(label[^1]) &&
+            label.All(character => char.IsLetterOrDigit(character) || character == '-'))
+            ? null
+            : "Gateway base domain must be a valid DNS name.";
+    }
+
     private static string? ValidateRestartPolicy(string value, DockerHostEnvironment _)
     {
         var allowed = new[] { "no", "always", "unless-stopped", "on-failure" };
@@ -121,4 +176,9 @@ internal static class LaunchSettingDefinitions
             ? null
             : "macOS, Linux, and WSL support only unix:/// local Docker endpoints for the local Host launch model.";
     }
+
+    private static string? ValidateEnabledDisabled(string value, DockerHostEnvironment _)
+        => value is "enabled" or "disabled"
+            ? null
+            : "Value must be enabled or disabled.";
 }

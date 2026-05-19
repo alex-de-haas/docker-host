@@ -19,6 +19,10 @@ import {
   writeModulesStore,
 } from '@/lib/module-store';
 import {
+  buildModuleServiceEnvironment,
+  createModuleServiceToken,
+} from '@/lib/module-directory-service';
+import {
   getStoredExternalMounts,
   getStoredStorageMappings,
 } from '@/lib/module-recovery-model';
@@ -285,13 +289,17 @@ async function applyValidatedUpdateRequest(
       await writeModuleFiles(context);
       await createModuleOwnedDirectories(context);
       await pullModuleImage(context.image);
+      const moduleServiceToken = await createModuleServiceToken({
+        moduleId: context.id,
+        label: 'Container directory API token',
+      }, undefined, config);
       await createAndStartModuleContainer({
         moduleId: context.id,
         containerName: context.containerName,
         networkName: config.moduleNetwork,
         networkAlias: context.networkAlias,
         imageReference: context.image.reference,
-        env: buildContainerEnvironment(context),
+        env: buildContainerEnvironment(context, moduleServiceToken.token, config),
         mounts: buildContainerMounts(context),
         ports: context.metadata.runtime.ports,
         ...(context.metadata.runtime.resources ? { resources: context.metadata.runtime.resources } : {}),
@@ -306,13 +314,17 @@ async function applyValidatedUpdateRequest(
 
     if (plan.docker.replacementRequired) {
       await removeModuleContainerIfExists(installedModule);
+      const moduleServiceToken = await createModuleServiceToken({
+        moduleId: rootContext.id,
+        label: 'Container directory API token',
+      }, undefined, config);
       await createAndStartModuleContainer({
         moduleId,
         containerName: rootContext.containerName,
         networkName: config.moduleNetwork,
         networkAlias: rootContext.networkAlias,
         imageReference: rootContext.image.reference,
-        env: buildContainerEnvironment(rootContext),
+        env: buildContainerEnvironment(rootContext, moduleServiceToken.token, config),
         mounts: buildContainerMounts(rootContext),
         ports: rootContext.metadata.runtime.ports,
         ...(rootContext.metadata.runtime.resources ? { resources: rootContext.metadata.runtime.resources } : {}),
@@ -783,8 +795,16 @@ async function createModuleOwnedDirectories(context: UpdateNodeContext) {
   );
 }
 
-function buildContainerEnvironment(context: UpdateNodeContext) {
-  const env: Record<string, string> = {};
+function buildContainerEnvironment(
+  context: UpdateNodeContext,
+  moduleServiceToken: string,
+  config: HostRuntimeConfig
+) {
+  const env: Record<string, string> = buildModuleServiceEnvironment({
+    moduleId: context.id,
+    serviceToken: moduleServiceToken,
+    hostInternalOrigin: config.hostInternalOrigin,
+  });
 
   for (const setting of context.metadata.settings) {
     const value = context.settings[setting.key];

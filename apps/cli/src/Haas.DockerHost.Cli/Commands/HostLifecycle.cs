@@ -54,6 +54,10 @@ internal sealed class HostLifecycle(CommandContext context)
             settings.HostDockerSocket,
             settings.HostModuleNetwork,
             settings.HostRestartPolicy,
+            settings.HostBindAddress,
+            settings.HostPublicOrigin,
+            settings.HostGatewayBaseDomain,
+            settings.HostModuleDevMode,
             hostPort);
 
         await docker.CreateHostContainerAsync(plan, cancellationToken);

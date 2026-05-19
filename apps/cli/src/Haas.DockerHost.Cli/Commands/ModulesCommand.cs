@@ -3,6 +3,7 @@ namespace Haas.DockerHost.Cli.Commands;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.HostApi;
 using Spectre.Console;
 
@@ -17,6 +18,9 @@ internal sealed class ModulesCommand(CommandContext context)
           docker-host modules stop <module-id>
           docker-host modules restart <module-id>
           docker-host modules update <module-id>
+          docker-host modules dev list
+          docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
+          docker-host modules dev unlink <target-id>
         """;
 
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
@@ -41,6 +45,7 @@ internal sealed class ModulesCommand(CommandContext context)
             "stop" => await RunLifecycleActionAsync("stop", args[1..]),
             "restart" => await RunLifecycleActionAsync("restart", args[1..]),
             "update" => await UpdateAsync(args[1..]),
+            "dev" => await ExecuteDevAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown modules command '{args[0]}'.", Usage),
         };
     }
@@ -323,6 +328,114 @@ internal sealed class ModulesCommand(CommandContext context)
         return 0;
     }
 
+    private async Task<int> ExecuteDevAsync(string[] args)
+    {
+        const string devUsage = """
+            Usage:
+              docker-host modules dev list
+              docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
+              docker-host modules dev unlink <target-id>
+            """;
+
+        if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"])
+        {
+            context.Console.WriteLine(devUsage);
+            return 0;
+        }
+
+        return args[0] switch
+        {
+            "list" => await ListDevTargetsAsync(args[1..]),
+            "link" => await LinkDevTargetAsync(args[1..]),
+            "unlink" => await UnlinkDevTargetAsync(args[1..]),
+            _ => throw new CommandUsageException($"Unknown modules dev command '{args[0]}'.", devUsage),
+        };
+    }
+
+    private async Task<int> ListDevTargetsAsync(string[] args)
+    {
+        if (args.Length != 0)
+        {
+            throw new CommandUsageException("modules dev list does not accept arguments.", "Usage: docker-host modules dev list");
+        }
+
+        using var hostApi = await CreateHostApiClientAsync();
+        if (hostApi is null)
+        {
+            return 1;
+        }
+
+        var response = await hostApi.ListModuleDevTargetsAsync();
+        if (!response.IsSuccess || response.Body is null)
+        {
+            return RenderApiFailure("Failed to list module developer targets.", response.StatusCode, response.RawBody);
+        }
+
+        RenderDevTargets(response.Body);
+        return 0;
+    }
+
+    private async Task<int> LinkDevTargetAsync(string[] args)
+    {
+        var parsed = ParseArguments(args);
+        if (parsed.Positionals.Count != 4)
+        {
+            throw new CommandUsageException(
+                "modules dev link requires metadata URL, hostname, port key, and target URL.",
+                "Usage: docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]");
+        }
+
+        using var hostApi = await CreateHostApiClientAsync();
+        if (hostApi is null)
+        {
+            return 1;
+        }
+
+        var response = await hostApi.CreateModuleDevTargetAsync(new ModuleDevTargetRequest
+        {
+            MetadataUrl = parsed.Positionals[0],
+            Hostname = parsed.Positionals[1],
+            PortKey = parsed.Positionals[2],
+            TargetBaseUrl = parsed.Positionals[3],
+            ExposurePolicy = parsed.Options.GetValueOrDefault("policy"),
+            IdentityMode = parsed.Options.GetValueOrDefault("identity"),
+            Enabled = parsed.Flags.Contains("disabled") ? false : null,
+        });
+
+        if (!response.IsSuccess || response.Body?.Target is null)
+        {
+            return RenderApiFailure("Failed to link module developer target.", response.StatusCode, response.RawBody);
+        }
+
+        context.Console.MarkupLine("[green]Module developer target linked.[/]");
+        RenderDevTargetSummary(response.Body.Target);
+        return 0;
+    }
+
+    private async Task<int> UnlinkDevTargetAsync(string[] args)
+    {
+        if (args.Length != 1)
+        {
+            throw new CommandUsageException("modules dev unlink requires exactly one target id.", "Usage: docker-host modules dev unlink <target-id>");
+        }
+
+        using var hostApi = await CreateHostApiClientAsync();
+        if (hostApi is null)
+        {
+            return 1;
+        }
+
+        var response = await hostApi.DeleteModuleDevTargetAsync(args[0]);
+        if (!response.IsSuccess || response.Body?.Target is null)
+        {
+            return RenderApiFailure("Failed to unlink module developer target.", response.StatusCode, response.RawBody);
+        }
+
+        context.Console.MarkupLine("[green]Module developer target removed.[/]");
+        RenderDevTargetSummary(response.Body.Target);
+        return 0;
+    }
+
     private async Task<HostApiClient?> CreateHostApiClientAsync()
     {
         var settings = context.SettingsStore.Load();
@@ -352,7 +465,9 @@ internal sealed class ModulesCommand(CommandContext context)
             return null;
         }
 
-        return context.HostApiFactory.Create(new Uri(url));
+        var baseUri = new Uri(url);
+        var token = new HostAuthTokenStore(context.Environment).GetTokenForHost(baseUri);
+        return context.HostApiFactory.Create(baseUri, token);
     }
 
     private async Task<bool> EnsureHostReadyAsync(HostApiClient hostApi)
@@ -370,6 +485,69 @@ internal sealed class ModulesCommand(CommandContext context)
         }
 
         return false;
+    }
+
+    private void RenderDevTargets(ModuleDevTargetListResponse response)
+    {
+        context.Console.MarkupLine(response.DeveloperModeEnabled
+            ? "[green]Module developer mode is enabled.[/]"
+            : "[yellow]Module developer mode is disabled.[/]");
+
+        if (!response.DeveloperModeEnabled)
+        {
+            context.Console.WriteLine("Enable it with: docker-host config set HOST_MODULE_DEV_MODE enabled && docker-host restart");
+        }
+
+        if (response.Targets.Count == 0)
+        {
+            context.Console.MarkupLine("[yellow]No module developer targets.[/]");
+            return;
+        }
+
+        var table = new Table()
+            .RoundedBorder()
+            .AddColumn("Target id")
+            .AddColumn("Module")
+            .AddColumn("Hostname")
+            .AddColumn("Port")
+            .AddColumn("Target URL")
+            .AddColumn("Policy")
+            .AddColumn("Identity")
+            .AddColumn("Status");
+
+        foreach (var target in response.Targets)
+        {
+            table.AddRow(
+                Markup.Escape(target.Id),
+                Markup.Escape($"{target.ModuleName} ({target.ModuleId})"),
+                Markup.Escape(target.Hostname),
+                Markup.Escape(target.PortKey),
+                Markup.Escape(target.TargetBaseUrl),
+                Markup.Escape(target.ExposurePolicy),
+                Markup.Escape(target.IdentityMode),
+                target.Enabled ? "enabled" : "disabled");
+        }
+
+        context.Console.Write(table);
+    }
+
+    private void RenderDevTargetSummary(ModuleDevTargetSummary target)
+    {
+        var table = new Table()
+            .RoundedBorder()
+            .AddColumn("Property")
+            .AddColumn("Value");
+
+        table.AddRow("Target id", Markup.Escape(target.Id));
+        table.AddRow("Module", Markup.Escape($"{target.ModuleName} ({target.ModuleId})"));
+        table.AddRow("Version", Markup.Escape(target.ModuleVersion));
+        table.AddRow("Hostname", Markup.Escape(target.Hostname));
+        table.AddRow("Port key", Markup.Escape(target.PortKey));
+        table.AddRow("Target URL", Markup.Escape(target.TargetBaseUrl));
+        table.AddRow("Policy", Markup.Escape(target.ExposurePolicy));
+        table.AddRow("Identity", Markup.Escape(target.IdentityMode));
+        table.AddRow("Status", target.Enabled ? "enabled" : "disabled");
+        context.Console.Write(table);
     }
 
     private void RenderInstallPlan(InstallPlan plan)
@@ -1010,4 +1188,49 @@ internal sealed class ModulesCommand(CommandContext context)
         };
         return true;
     }
+
+    private static ParsedArguments ParseArguments(string[] args)
+    {
+        var positionals = new List<string>();
+        var options = new Dictionary<string, string>(StringComparer.Ordinal);
+        var flags = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var index = 0; index < args.Length; index++)
+        {
+            var arg = args[index];
+            if (!arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                positionals.Add(arg);
+                continue;
+            }
+
+            var option = arg[2..];
+            var separator = option.IndexOf('=', StringComparison.Ordinal);
+            if (separator >= 0)
+            {
+                options[option[..separator]] = option[(separator + 1)..];
+                continue;
+            }
+
+            if (option is "disabled")
+            {
+                flags.Add(option);
+                continue;
+            }
+
+            if (index + 1 >= args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                throw new CommandUsageException($"Option '{arg}' requires a value.", Usage);
+            }
+
+            options[option] = args[++index];
+        }
+
+        return new ParsedArguments(positionals, options, flags);
+    }
+
+    private sealed record ParsedArguments(
+        IReadOnlyList<string> Positionals,
+        IReadOnlyDictionary<string, string> Options,
+        IReadOnlySet<string> Flags);
 }

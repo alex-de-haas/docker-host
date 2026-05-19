@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireHostAdmin } from '@/lib/auth-http';
 import {
   formatDockerError,
   getContainers,
@@ -11,7 +12,12 @@ import {
   createAndStartContainer,
 } from '@/lib/docker';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireHostAdmin(request, 'host.read');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const containers = await getContainers(true);
     return NextResponse.json(containers);
@@ -25,6 +31,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireHostAdmin(request, 'host.configure');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const config = await request.json();
     const result = await createAndStartContainer(config);
@@ -39,6 +50,11 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  const auth = await requireHostAdmin(request, 'host.configure');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const { id, action, envVars } = await request.json();
 
@@ -78,6 +94,11 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await requireHostAdmin(request, 'host.configure');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');

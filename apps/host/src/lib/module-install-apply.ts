@@ -19,6 +19,11 @@ import {
 } from '@/lib/module-store';
 import { withModuleMutationLock } from '@/lib/module-mutation-lock';
 import { listInstalledModules } from '@/lib/module-service';
+import {
+  buildModuleServiceEnvironment,
+  createModuleServiceToken,
+  revokeModuleServiceToken,
+} from '@/lib/module-directory-service';
 import type { HostRuntimeConfig } from '@/lib/host-runtime';
 import type { MetadataGraph, MetadataGraphNode } from '@/lib/module-metadata';
 import type {
@@ -210,19 +215,25 @@ async function applyValidatedInstallRequest(
     }
 
     const context = buildInstallNodeContext(plan, graph, moduleId, decisionValidation.decisions);
+    let moduleServiceTokenId: string | null = null;
 
     try {
       await persistInstallingState(context, plan, config);
       await writeModuleFiles(context);
       await createModuleOwnedDirectories(context);
       await pullModuleImage(context.image);
+      const moduleServiceToken = await createModuleServiceToken({
+        moduleId: context.id,
+        label: 'Container directory API token',
+      }, undefined, config);
+      moduleServiceTokenId = moduleServiceToken.tokenId;
       await createAndStartModuleContainer({
         moduleId: context.id,
         containerName: context.containerName,
         networkName: plan.docker.networkName,
         networkAlias: context.networkAlias,
         imageReference: context.image.reference,
-        env: buildContainerEnvironment(context),
+        env: buildContainerEnvironment(context, moduleServiceToken.token, config),
         mounts: buildContainerMounts(context),
         ports: context.metadata.runtime.ports,
         ...(context.metadata.runtime.resources ? { resources: context.metadata.runtime.resources } : {}),
@@ -236,6 +247,9 @@ async function applyValidatedInstallRequest(
         `Docker Host could not install module "${context.id}".`,
         'Inspect the preserved files, Docker images, and containers, then retry or run cleanup when recovery actions are available.'
       );
+      if (moduleServiceTokenId) {
+        await revokeModuleServiceToken(moduleServiceTokenId, undefined, config);
+      }
       await markModuleFailed(context.id, operationError, config);
       return applyFailureResult(operationError);
     }
@@ -933,8 +947,16 @@ async function createModuleOwnedDirectories(context: InstallNodeContext) {
   );
 }
 
-function buildContainerEnvironment(context: InstallNodeContext) {
-  const env: Record<string, string> = {};
+function buildContainerEnvironment(
+  context: InstallNodeContext,
+  moduleServiceToken: string,
+  config: HostRuntimeConfig
+) {
+  const env: Record<string, string> = buildModuleServiceEnvironment({
+    moduleId: context.id,
+    serviceToken: moduleServiceToken,
+    hostInternalOrigin: config.hostInternalOrigin,
+  });
 
   for (const setting of context.metadata.settings) {
     const value = context.settings[setting.key];

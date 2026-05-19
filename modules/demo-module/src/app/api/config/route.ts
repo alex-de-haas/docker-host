@@ -21,6 +21,11 @@ export async function GET() {
       authPreview: config.authPreview,
       publicUrl: config.publicUrl,
     },
+    hostIntegration: {
+      internalOrigin: config.host.internalOrigin,
+      moduleId: config.host.moduleId,
+      moduleServiceTokenConfigured: config.host.moduleServiceTokenConfigured,
+    },
     storage,
   });
 }

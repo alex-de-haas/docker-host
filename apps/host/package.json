@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server.mjs --dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.mjs --production",
     "lint": "eslint",
     "test": "node --experimental-strip-types --test \"src/**/*.test.mts\""
   },
@@ -20,6 +20,7 @@
     "clsx": "^2.1.1",
     "dockerode": "^4.0.9",
     "framer-motion": "^12.23.25",
+    "jose": "^6.2.3",
     "lucide-react": "^0.556.0",
     "next": "16.0.7",
     "react": "19.2.0",

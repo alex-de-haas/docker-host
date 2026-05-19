@@ -46,6 +46,7 @@ public static class CommandLine
                 "open" => await new OpenCommand(commandContext).ExecuteAsync(args[1..]),
                 "config" => await new ConfigCommand(commandContext).ExecuteAsync(args[1..]),
                 "modules" => await new ModulesCommand(commandContext).ExecuteAsync(args[1..]),
+                "auth" => await new AuthCommand(commandContext).ExecuteAsync(args[1..]),
                 _ => UnknownCommand(console, args[0]),
             };
         }
@@ -155,8 +156,10 @@ public static class CommandLine
           open
           config
           modules
+          auth
 
         Run docker-host config --help for configuration commands.
         Run docker-host modules --help for module commands.
+        Run docker-host auth --help for authentication commands.
         """;
 }

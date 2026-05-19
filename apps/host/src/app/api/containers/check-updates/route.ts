@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
+import { requireHostAdmin } from '@/lib/auth-http';
 import { checkContainerImageUpdates, formatDockerError } from '@/lib/docker';
 
-export async function POST() {
+export async function POST(request: Request) {
+  const auth = await requireHostAdmin(request, 'host.read');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const updates = await checkContainerImageUpdates();
     return NextResponse.json({ updates });

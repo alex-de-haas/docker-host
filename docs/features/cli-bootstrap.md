@@ -18,6 +18,7 @@ docker-host logs
 docker-host open
 docker-host config
 docker-host modules
+docker-host auth
 ```
 
 `docker-host config` is a typed interface for known Host launch settings:
@@ -34,12 +35,40 @@ Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port n
 
 `docker-host modules` is the Host API-backed module command group. It covers module list, install/add, start, stop, restart, and update commands. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
 
+`docker-host auth` contains local authentication recovery and bootstrap commands:
+
+```text
+docker-host auth setup-token
+docker-host auth recovery-token
+docker-host auth token import <token> [--host <url>] [--token-id <id>] [--label <label>]
+docker-host auth token status
+docker-host auth token logout
+docker-host auth token list
+docker-host auth token create [--label <label>] [--user-id <id>]
+docker-host auth token revoke <token-id>
+docker-host auth token rotate [token-id] [--label <label>]
+```
+
+`auth setup-token` creates a one-time first-admin setup token in the Host auth JSON store under `HOST_DATA_ROOT_HOST/auth/state.json`. It stores only the token hash and prints the raw token for local use in `/setup`.
+
+`auth recovery-token` creates a one-time recovery token through local machine access and writes only the token hash to `HOST_DATA_ROOT_HOST/auth/state.json`. The command also records a sanitized audit event in `HOST_DATA_ROOT_HOST/auth/audit.ndjson`.
+
+`auth token import` stores an existing raw CLI admin token locally under `~/.docker-host/config/auth.json`, or under `DOCKER_HOST_HOME/config/auth.json` when that test/development override is set. The token file is restricted to the current user on Unix-like platforms. `DOCKER_HOST_CLI_TOKEN` can override the stored token for automation without writing local credential material.
+
+`auth token list`, `create`, `revoke`, and `rotate` call the Host API with the locally stored token as `Authorization: Bearer`. `create` and `rotate` store the returned raw token locally and do not print it back to the terminal.
+
 ## Launch configuration
 
 The CLI persists launch settings in:
 
 ```text
 ~/.docker-host/config/launch.env
+```
+
+The CLI persists its active Host API token in:
+
+```text
+~/.docker-host/config/auth.json
 ```
 
 Default values:

@@ -1,13 +1,19 @@
 import { NextResponse } from 'next/server';
+import { requireHostAdmin } from '@/lib/auth-http';
 import { getInstalledModuleDetail } from '@/lib/module-service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ moduleId: string }> }
 ) {
+  const auth = await requireHostAdmin(request, 'host.read');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     const { moduleId } = await params;
     const installedModule = await getInstalledModuleDetail(moduleId);

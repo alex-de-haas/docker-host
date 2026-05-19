@@ -9,7 +9,7 @@ Host API реализуется внутри full-stack Next.js Host application
 - Host backend API is the owner of module management logic.
 - Runtime status is read from Docker daemon, not from persistent JSON files.
 - Persistent installed module registry is stored in root-level `modules.json`.
-- MVP API is local/private-network only and does not include authentication.
+- The current pre-auth MVP API is local/private-network only. The Auth Gateway feature supersedes this by requiring Host-owned authentication and `host.admin` authorization for Host API functionality.
 - API responses must not expose raw secret setting values.
 - The API contract remains this Markdown endpoint catalog for the MVP. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
 
@@ -24,9 +24,11 @@ The current MVP API surface includes:
 - create and apply reviewed module install plans;
 - retry failed installs, clean up failed install artifacts, and remove installed modules through reviewed recovery plans;
 - create and apply reviewed module update plans;
-- retry failed updates separately from failed installs.
+- retry failed updates separately from failed installs;
+- support local and generic OIDC browser authentication flows;
+- serve scoped module directory responses to modules through an internal service-token API.
 
-Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, module health checks, and external module exposure are later API slices.
+Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, module health checks, and richer external module exposure controls are later API slices.
 
 The shared domain vocabulary for this API is defined in [Docker Host domain model](domain-model.md).
 
@@ -592,6 +594,113 @@ Installed module removal is blocked when other installed modules depend on the t
 
 Lifecycle hardening marks modules `failed` when a lifecycle action discovers a missing Docker container or a missing required storage mapping. Transient Docker daemon, network, stop, or restart errors remain action errors and do not change persistent operation status.
 
+### Authentication
+
+Browser authentication uses Host-owned sessions stored server-side in the auth state. Host session cookies are HttpOnly and are never forwarded to modules by the gateway.
+
+Implemented browser auth endpoints:
+
+- `POST /api/auth/bootstrap` creates the first local `host.admin` after a valid local setup token.
+- `POST /api/auth/login` authenticates a local password user and creates a Host session.
+- `POST /api/auth/logout` revokes the current Host session.
+- `GET /api/auth/status` returns setup and current-session status.
+- `POST /api/auth/recovery` consumes a local setup or recovery token, restores a `host.admin` account, revokes stale sessions for that account, and creates a new browser session.
+- `POST /api/auth/reauth` refreshes the current browser session's recent reauthentication timestamp using a local password or recovery token.
+- `GET /api/auth/diagnostics` returns safe OIDC and trusted-proxy diagnostics for Host administrators.
+- `GET /api/auth/oidc/login` starts generic OIDC Authorization Code with PKCE when an OIDC provider is configured.
+- `GET /api/auth/oidc/callback` validates the OIDC callback, exchanges the authorization code, verifies the ID token with provider JWKS, applies explicit role mapping, creates or updates the Host user for the external identity, and creates a normal Host session.
+
+OIDC login denies access when the transaction state is invalid or expired, ID token verification fails, the token has no subject, no role mapping matches, or the mapped Host user is disabled. OIDC provider access tokens, refresh tokens, and ID tokens are not persisted.
+
+### CLI admin tokens
+
+CLI admin tokens authenticate local CLI commands to Host API routes as `host.admin` operations. The Host stores only token hashes and returns raw token material only when a token is created or rotated.
+
+- `GET /api/auth/cli-tokens` returns CLI token metadata: `id`, `userId`, `label`, `createdAt`, optional `lastUsedAt`, optional `revokedAt`, and `scope`.
+- `POST /api/auth/cli-tokens` creates a CLI token for the current administrator by default. Optional body: `{ "label": "Laptop CLI", "userId": "user_123" }`.
+- `DELETE /api/auth/cli-tokens/{tokenId}` revokes an active CLI token.
+- `POST /api/auth/cli-tokens/{tokenId}/rotate` revokes the selected token and returns a raw replacement token once. Optional body: `{ "label": "Replacement CLI" }`.
+
+All CLI token lifecycle endpoints require `host.auth.configure`. Browser-session requests must pass the Host same-origin CSRF check. CLI Bearer-token requests are not subject to CSRF checks.
+
+### Sessions and audit
+
+Session and audit APIs support the `/settings/security` operations surface:
+
+- `GET /api/auth/sessions` returns active Host sessions and can include recently revoked sessions with `includeRevoked=true`.
+- `DELETE /api/auth/sessions/{sessionId}` revokes a Host session by id.
+- `GET /api/auth/audit` returns sanitized audit events with cursor pagination and filters for event type, actor, target, result, and timestamp range.
+- `DELETE /api/auth/audit` applies retention-based purge and appends a final `auth.audit.purged` summary event.
+
+Session revocation and audit purge require `host.auth.configure`; mutating browser-session requests also require recent reauthentication. Responses never expose raw session cookies, token hashes, bearer tokens, setup tokens, recovery tokens, provider assertions, or provider tokens.
+
+### Gateway exposure and ingress readiness
+
+Gateway exposure APIs manage Host-owned module subdomain routing:
+
+- `GET /api/gateway/exposures` lists gateway exposures and assigned Host user ids.
+- `POST /api/gateway/exposures` creates or updates an exposure for `moduleId`, `hostname`, `portKey`, optional `exposurePolicy`, and optional `identityMode`.
+- `PUT /api/gateway/exposures/{exposureId}` updates hostname, port, policy, identity mode, or enabled state.
+- `DELETE /api/gateway/exposures/{exposureId}` removes an exposure.
+- `PUT /api/gateway/exposures/{exposureId}/assignments` replaces assigned Host user ids for the exposure's module.
+
+External ingress readiness APIs track manual provider-neutral publishing state for existing gateway exposures:
+
+- `GET /api/ingress/exposures` lists readiness status, generated instructions, validation checks, and next steps for gateway exposures.
+- `POST /api/ingress/exposures` creates or updates manual readiness intent. Request body includes `gatewayExposureId`, optional checklist fields, optional notes, and optional `markReady`.
+- `GET /api/ingress/exposures/{exposureId}` returns one exposure's readiness status.
+- `PUT /api/ingress/exposures/{exposureId}` updates that exposure's manual readiness intent.
+- `POST /api/ingress/exposures/{exposureId}/refresh` reruns Host-side validation and marks the record `validated`, `failed`, or `drifted`.
+- `DELETE /api/ingress/exposures/{exposureId}` unlinks the local readiness record without implying that external DNS, proxy, tunnel, or provider resources were deleted.
+
+These endpoints require `modules.exposure.manage`. They validate only Host-owned prerequisites and stored manual checklist state; provider API automation is intentionally deferred.
+
+### Module identity discovery
+
+Module identity discovery is public because it exposes only public key material and validation metadata:
+
+- `GET /.well-known/docker-host/module-identity.json` returns issuer, JWKS URI, supported algorithms, and the identity header name.
+- `GET /.well-known/docker-host/jwks.json` returns the Host public JWKS for validating `X-Docker-Host-Identity`.
+
+### Internal module directory
+
+The internal module directory API lets a module list Host users explicitly assigned to that module so the module can manage its own roles and permissions. It is not a browser session API and does not grant modules access to the full Host user directory.
+
+- `GET /api/internal/modules/{moduleId}/directory/users` returns assigned, enabled Host users for the module.
+- Authorization uses `Authorization: Bearer {module service token}`.
+- The service token is generated by Host, stored only as a server-side hash, and injected into newly created module containers as `DOCKER_HOST_MODULE_SERVICE_TOKEN`.
+- The module id associated with the token must match `{moduleId}` in the route.
+- Browser session cookies and CLI tokens are not accepted for this endpoint.
+- Email is omitted by default and included only when a module directory policy opts in.
+
+Host administrators can manage the module directory policy and service credentials through admin-only endpoints:
+
+- `POST /api/modules/{moduleId}/directory/service-tokens` creates a service token and returns the raw token once.
+- `DELETE /api/modules/{moduleId}/directory/service-tokens/{tokenId}` revokes a service token for that module.
+- `PUT /api/modules/{moduleId}/directory/policy` updates directory policy fields such as `includeEmail`.
+
+Example response:
+
+```json
+{
+  "schemaVersion": "0.1",
+  "moduleId": "com.acme.reports",
+  "users": [
+    {
+      "id": "user_123",
+      "displayName": "Work User",
+      "hostRole": "host.user"
+    }
+  ],
+  "pagination": {
+    "limit": 1,
+    "offset": 0,
+    "total": 1
+  },
+  "updatedAt": "2026-05-18T12:00:00Z"
+}
+```
+
 ### Settings and storage
 
 Future endpoints should support:
@@ -607,6 +716,6 @@ This document is the Host API contract for the MVP. It should be updated when im
 
 ## Open Questions
 
-No MVP Host API questions remain open for the implemented install, recovery, remove, and update flows.
+No MVP Host API questions remain open for the implemented install, recovery, remove, update, auth, gateway exposure, external ingress readiness, and internal module directory flows.
 
-Later implementation slices may reopen API details for settings writes, storage reconfiguration, module diagnostics, logs streaming, health checks, and external exposure.
+Later implementation slices may reopen API details for settings writes, storage reconfiguration, module diagnostics, logs streaming, health checks, and provider-specific external ingress automation.

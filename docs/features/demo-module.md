@@ -4,7 +4,7 @@
 
 Demo Module is a repository-local Docker Host module under `modules/demo-module`. It is a small Next.js application that gives Docker Host a stable target for validating module operations during development.
 
-The module is intentionally simple: it exposes a dashboard, sample people data, sanitized runtime configuration, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, ignored MVP health-check metadata, and resource hints. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
+The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, sample people data, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, and resource hints. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
 
 ```mermaid
 flowchart LR
@@ -14,6 +14,9 @@ flowchart LR
   D --> E["/api/health"]
   D --> F["/api/config"]
   D --> G["/api/people"]
+  D --> J["/api/auth/identity"]
+  J --> K["Host JWKS discovery"]
+  J --> L["Scoped module directory"]
   B --> H["/app/data and /app/logs mounts"]
   B --> I["optional /mnt/sources/{key} mounts"]
 ```
@@ -26,6 +29,8 @@ flowchart LR
 - `modules/demo-module/src/app/api/health/route.ts` - health and writable-storage probe.
 - `modules/demo-module/src/app/api/config/route.ts` - sanitized runtime configuration.
 - `modules/demo-module/src/app/api/people/route.ts` - sample people payload.
+- `modules/demo-module/src/app/api/auth/identity/route.ts` - Host gateway identity, request-header, module directory, and module-owned permission diagnostics.
+- `modules/demo-module/src/lib/host-auth.ts` - module-side validation of the Host-issued `X-Docker-Host-Identity` JWT and scoped directory lookup.
 
 ## Local Development
 
@@ -69,4 +74,9 @@ The module currently validates these Host flows:
 - optional external mount collection input;
 - container start, stop, restart, remove, and update paths;
 - future health-check integration through `/api/health`;
-- future authorization experiments through the `DEMO_AUTH_PREVIEW` setting.
+- gateway exposure policies through the presence or absence of a Host identity token;
+- module identity token validation through Host discovery and JWKS endpoints;
+- module-scoped directory reads through `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN`;
+- module-owned permission mapping from Host identity claims;
+- gateway request sanitization, including stripped Host session cookies and visible `X-Docker-Host-*` headers;
+- authorization diagnostics through `/api/auth/identity`.

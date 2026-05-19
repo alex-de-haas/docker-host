@@ -3,6 +3,10 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  if (!isDevFixtureEnabled()) {
+    return NextResponse.json({ error: 'Fixture metadata is disabled.' }, { status: 404 });
+  }
+
   return NextResponse.json({
     schemaVersion: '0.1',
     id: 'com.example.identity',
@@ -61,4 +65,9 @@ export function GET() {
       },
     },
   });
+}
+
+function isDevFixtureEnabled() {
+  return process.env.NODE_ENV !== 'production' ||
+    process.env.HOST_ENABLE_DEV_FIXTURES === 'true';
 }
