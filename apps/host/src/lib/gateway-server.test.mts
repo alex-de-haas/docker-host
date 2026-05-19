@@ -201,6 +201,9 @@ test('gateway websocket proxy injects signed identity into upgrade handshake', a
           'Upgrade: websocket',
           'Sec-WebSocket-Version: 13',
           'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          'Cookie: docker_host_session=host-session; module_cookie=kept',
+          'X-Repeat: one',
+          'X-Repeat: two',
           'X-Docker-Host-Identity: spoofed-token',
           '',
           '',
@@ -211,6 +214,9 @@ test('gateway websocket proxy injects signed identity into upgrade handshake', a
       client.destroy();
 
       assert.doesNotMatch(raw, /spoofed-token/);
+      assert.doesNotMatch(raw, /docker_host_session/);
+      assert.match(raw, /^Cookie: module_cookie=kept$/mi);
+      assert.equal(raw.match(/^X-Repeat:/gmi)?.length, 2);
       const match = raw.match(/^X-Docker-Host-Identity: (.+)$/mi);
       assert.ok(match, raw);
       const verified = await jwtVerify(match[1]!, createLocalJWKSet(await getModuleIdentityJwks(config)), {
@@ -225,6 +231,37 @@ test('gateway websocket proxy injects signed identity into upgrade handshake', a
   } finally {
     restoreEnv();
     await closeServer(upstream);
+  }
+});
+
+test('gateway resolves unavailable installed module as service unavailable', async () => {
+  const config = await createGatewayServerTestConfig();
+  const restoreEnv = applyRuntimeEnv(config);
+  await seedGatewayTargetFiles(config, { operationStatus: 'updating' });
+  const { GatewayHttpError, resolveGatewayRequest } = await import('../../server.mjs');
+  const resolver = createHttpServer((req, res) => {
+    void resolveGatewayRequest(req).then(() => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('resolved');
+    }).catch(error => {
+      res.writeHead(error instanceof GatewayHttpError ? error.status : 500, { 'Content-Type': 'text/plain' });
+      res.end(error instanceof Error ? error.message : 'resolve failed');
+    });
+  });
+
+  try {
+    await listen(resolver);
+    const response = await sendHttpRequest(getPort(resolver), {
+      headers: {
+        Host: 'reports.example.test',
+      },
+    });
+
+    assert.equal(response.statusCode, 503);
+    assert.match(response.body, /not ready for gateway traffic/);
+  } finally {
+    restoreEnv();
+    await closeServer(resolver);
   }
 });
 
@@ -517,7 +554,10 @@ function getPort(server: { address: () => unknown }) {
   return Number(address.port);
 }
 
-async function seedGatewayTargetFiles(config: HostRuntimeConfig) {
+async function seedGatewayTargetFiles(
+  config: HostRuntimeConfig,
+  options: { operationStatus?: string } = {}
+) {
   const moduleId = 'com.example.reports';
   const moduleRoot = path.join(config.modulesRootContainer, moduleId);
   const metadataPath = path.join(moduleRoot, 'metadata.json');
@@ -530,7 +570,7 @@ async function seedGatewayTargetFiles(config: HostRuntimeConfig) {
       id: moduleId,
       metadataUrl: 'https://modules.example.test/reports.json',
       metadataPath,
-      operationStatus: 'installed',
+      operationStatus: options.operationStatus || 'installed',
     }],
   }, null, 2)}\n`, 'utf-8');
   await fs.writeFile(metadataPath, `${JSON.stringify({

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
+import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
@@ -111,42 +112,48 @@ export async function purgeAuthAuditEvents(
   const retentionDays = clampRetentionDays(input.retentionDays);
   const cutoffTime = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
   const cutoff = new Date(cutoffTime).toISOString();
-  const keptLines: string[] = [];
   let keptCount = 0;
   let deletedCount = 0;
   let malformedLineCount = 0;
+  const temporaryPath = `${config.authAuditPath}.${process.pid}.${randomUUID()}.tmp`;
 
+  await fsPromises.mkdir(config.authRootContainer, { recursive: true });
+  const output = fs.createWriteStream(temporaryPath, { encoding: 'utf-8' });
   if (await pathExists(config.authAuditPath)) {
-    const raw = await fsPromises.readFile(config.authAuditPath, 'utf-8');
-    for (const rawLine of raw.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line) {
-        continue;
-      }
+    const lines = createInterface({
+      input: fs.createReadStream(config.authAuditPath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
 
-      const event = parseAuditLine(line);
-      if (!event) {
-        malformedLineCount += 1;
-        deletedCount += 1;
-        continue;
-      }
+    try {
+      for await (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+          continue;
+        }
 
-      if (Date.parse(event.createdAt) >= cutoffTime) {
-        keptLines.push(JSON.stringify(event));
-        keptCount += 1;
-      } else {
-        deletedCount += 1;
+        const event = parseAuditLine(line);
+        if (!event) {
+          malformedLineCount += 1;
+          deletedCount += 1;
+          continue;
+        }
+
+        if (Date.parse(event.createdAt) >= cutoffTime) {
+          await writeAuditLine(output, JSON.stringify(event));
+          keptCount += 1;
+        } else {
+          deletedCount += 1;
+        }
       }
+    } catch (error) {
+      output.destroy();
+      await fsPromises.unlink(temporaryPath).catch(() => undefined);
+      throw error;
     }
   }
 
-  const temporaryPath = `${config.authAuditPath}.${process.pid}.${randomUUID()}.tmp`;
-  await fsPromises.mkdir(config.authRootContainer, { recursive: true });
-  await fsPromises.writeFile(
-    temporaryPath,
-    keptLines.length > 0 ? `${keptLines.join('\n')}\n` : '',
-    'utf-8'
-  );
+  await closeAuditWriter(output);
   await fsPromises.rename(temporaryPath, config.authAuditPath);
 
   await appendAuthAuditEvent({
@@ -173,6 +180,22 @@ export async function purgeAuthAuditEvents(
     deletedCount,
     malformedLineCount,
   };
+}
+
+async function writeAuditLine(output: fs.WriteStream, line: string) {
+  if (!output.write(`${line}\n`)) {
+    await once(output, 'drain');
+  }
+}
+
+async function closeAuditWriter(output: fs.WriteStream) {
+  if (output.closed || output.destroyed) {
+    return;
+  }
+
+  const closed = once(output, 'close');
+  output.end();
+  await closed;
 }
 
 function parseAuditLine(line: string): AuthAuditEvent | null {

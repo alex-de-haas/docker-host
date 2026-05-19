@@ -58,7 +58,7 @@ const server = createServer(async (req, res) => {
   } catch (error) {
     console.error('Gateway request failed:', error);
     if (!res.headersSent) {
-      sendPlain(res, 500, error instanceof Error ? error.message : 'Gateway request failed.');
+      sendPlain(res, getGatewayErrorStatus(error), getGatewayErrorMessage(error));
     } else {
       res.destroy(error instanceof Error ? error : undefined);
     }
@@ -90,7 +90,7 @@ server.prependListener('upgrade', async (req, socket, head) => {
     await proxyWebSocketUpgrade(req, socket, head, gatewayTarget);
   } catch (error) {
     console.error('Gateway upgrade failed:', error);
-    sendUpgradeDenied(socket, 502);
+    sendUpgradeDenied(socket, getGatewayErrorStatus(error, 502));
   }
 });
 
@@ -102,6 +102,15 @@ if (isMainModule()) {
       `> Docker Host listening at http://${hostname}:${port} as ${dev ? 'development' : 'production'}`
     );
   });
+}
+
+export class GatewayHttpError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.name = 'GatewayHttpError';
+    this.status = status;
+    this.code = code;
+  }
 }
 
 export async function resolveGatewayRequest(req) {
@@ -173,8 +182,19 @@ export async function resolveGatewayRequest(req) {
     readAuthState(config),
   ]);
   const installedModule = modulesStore.modules.find(module => module.id === exposure.moduleId);
-  if (!installedModule || installedModule.operationStatus && installedModule.operationStatus !== 'installed') {
-    throw new Error(`Module "${exposure.moduleId}" is not installed and ready for gateway traffic.`);
+  if (!installedModule) {
+    throw new GatewayHttpError(
+      404,
+      'gateway_module_not_found',
+      `Module "${exposure.moduleId}" is not installed.`
+    );
+  }
+  if (installedModule.operationStatus && installedModule.operationStatus !== 'installed') {
+    throw new GatewayHttpError(
+      503,
+      'gateway_module_unavailable',
+      `Module "${exposure.moduleId}" is not ready for gateway traffic.`
+    );
   }
 
   const metadata = await readModuleMetadata(installedModule, config);
@@ -257,17 +277,8 @@ export async function proxyWebSocketUpgrade(req, socket, head, target) {
   const upstream = net.connect(proxyTarget.port, proxyTarget.hostname);
 
   upstream.on('connect', () => {
-    const headers = buildProxyRequestHeaders(req, target, true, identityToken);
     const lines = [`${req.method} ${buildProxyPath(req.url || '/', proxyTarget.pathPrefix)} HTTP/${req.httpVersion}`];
-    for (const [name, value] of Object.entries(headers)) {
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          lines.push(`${name}: ${item}`);
-        }
-      } else if (value !== undefined) {
-        lines.push(`${name}: ${value}`);
-      }
-    }
+    lines.push(...buildProxyUpgradeHeaderLines(req, target, identityToken));
 
     upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
     if (head.length > 0) {
@@ -357,6 +368,61 @@ export function buildProxyRequestHeaders(req, target, upgrade, identityToken = n
   }
 
   return headers;
+}
+
+export function buildProxyUpgradeHeaderLines(req, target, identityToken = null) {
+  const lines = [];
+  const trustedProxyAssertionHeaders = new Set(
+    (target.trustedProxyAssertionHeaders || TRUSTED_PROXY_DEFAULT_ASSERTION_HEADERS)
+      .map(header => String(header).toLowerCase())
+  );
+
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    const name = req.rawHeaders[index];
+    const value = req.rawHeaders[index + 1];
+    if (!name || value === undefined) {
+      continue;
+    }
+
+    const lowerName = name.toLowerCase();
+    if (
+      HOP_BY_HOP_HEADERS.has(lowerName) ||
+      lowerName === 'authorization' ||
+      lowerName === 'host' ||
+      lowerName === 'x-forwarded-host' ||
+      lowerName === 'x-forwarded-proto' ||
+      lowerName === 'x-forwarded-for'
+    ) {
+      continue;
+    }
+
+    if (lowerName.startsWith('x-docker-host-') || trustedProxyAssertionHeaders.has(lowerName)) {
+      continue;
+    }
+
+    if (lowerName === 'cookie') {
+      const cookie = stripCookieValue(value, SESSION_COOKIE_NAME);
+      if (cookie) {
+        lines.push(formatHeaderLine(name, cookie));
+      }
+      continue;
+    }
+
+    lines.push(formatHeaderLine(name, value));
+  }
+
+  lines.push(formatHeaderLine('Host', target.requestHost));
+  lines.push(formatHeaderLine('X-Forwarded-Host', target.requestHost));
+  lines.push(formatHeaderLine('X-Forwarded-Proto', getRequestProtocol(req)));
+  lines.push(formatHeaderLine('X-Forwarded-For', appendForwardedFor(req)));
+
+  if (identityToken) {
+    lines.push(formatHeaderLine(MODULE_IDENTITY_TOKEN_HEADER, identityToken));
+  }
+
+  lines.push(formatHeaderLine('Connection', 'Upgrade'));
+  lines.push(formatHeaderLine('Upgrade', req.headers.upgrade || 'websocket'));
+  return lines;
 }
 
 export function buildProxyResponseHeaders(responseHeaders, target) {
@@ -643,6 +709,11 @@ function stripCookieDomain(value) {
   return Array.isArray(value) ? value.map(rewrite) : typeof value === 'string' ? rewrite(value) : value;
 }
 
+function formatHeaderLine(name, value) {
+  const normalizedValue = Array.isArray(value) ? value.join(', ') : String(value);
+  return `${name}: ${normalizedValue.replace(/[\r\n]+/g, ' ')}`;
+}
+
 function getCookieValue(cookieHeader, name) {
   if (!cookieHeader) {
     return null;
@@ -759,6 +830,14 @@ function sendJson(res, status, body) {
   res.end(`${JSON.stringify(body)}\n`);
 }
 
+function getGatewayErrorStatus(error, fallback = 500) {
+  return error instanceof GatewayHttpError ? error.status : fallback;
+}
+
+function getGatewayErrorMessage(error) {
+  return error instanceof Error ? error.message : 'Gateway request failed.';
+}
+
 function sendPlain(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'text/plain; charset=utf-8',
@@ -772,7 +851,11 @@ function sendUpgradeDenied(socket, status) {
     ? 'Unauthorized'
     : status === 403
       ? 'Forbidden'
-      : 'Bad Gateway';
+      : status === 404
+        ? 'Not Found'
+        : status === 503
+          ? 'Service Unavailable'
+          : 'Bad Gateway';
   socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
   socket.destroy();
 }

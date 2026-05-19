@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import type { FileHandle } from 'node:fs/promises';
 import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostRole } from '../types/auth.ts';
@@ -179,6 +180,9 @@ export interface AuthAuditEvent {
 }
 
 let authStoreMutex: Promise<void> = Promise.resolve();
+const AUTH_STATE_LOCK_STALE_MS = 2 * 60 * 1000;
+const AUTH_STATE_LOCK_TIMEOUT_MS = 30 * 1000;
+const AUTH_STATE_LOCK_RETRY_MS = 50;
 
 export async function readAuthState(config = getHostRuntimeConfig()): Promise<AuthState> {
   await ensureAuthState(config);
@@ -217,10 +221,16 @@ export async function updateAuthState<T>(
   config = getHostRuntimeConfig()
 ): Promise<T> {
   return withAuthStoreLock(async () => {
-    const current = await readAuthState(config);
-    const { state, result } = await operation(current);
-    await writeAuthState(state, config);
-    return result;
+    return await withAuthStateFileLock(config, async () => {
+      await ensureAuthStateUnlocked(config);
+      const raw = await fs.readFile(config.authStatePath, 'utf-8');
+      const current = normalizeAuthState(JSON.parse(raw) as unknown);
+      const { state, result } = await operation(current);
+      if (state !== current) {
+        await writeAuthState(state, config);
+      }
+      return result;
+    });
   });
 }
 
@@ -259,6 +269,16 @@ async function ensureAuthState(config: HostRuntimeConfig) {
   await fs.mkdir(config.authRootContainer, { recursive: true });
 
   if (!(await pathExists(config.authStatePath))) {
+    await withAuthStateFileLock(config, async () => {
+      await ensureAuthStateUnlocked(config);
+    });
+  }
+}
+
+async function ensureAuthStateUnlocked(config: HostRuntimeConfig) {
+  await fs.mkdir(config.authRootContainer, { recursive: true });
+
+  if (!(await pathExists(config.authStatePath))) {
     await writeAuthState(createEmptyAuthState(), config);
   }
 }
@@ -277,6 +297,65 @@ async function withAuthStoreLock<T>(operation: () => Promise<T>): Promise<T> {
   } finally {
     release();
   }
+}
+
+async function withAuthStateFileLock<T>(
+  config: HostRuntimeConfig,
+  operation: () => Promise<T>
+): Promise<T> {
+  await fs.mkdir(config.authRootContainer, { recursive: true });
+  const lockPath = `${config.authStatePath}.lock`;
+  const start = Date.now();
+  let lock: FileHandle | null = null;
+
+  while (!lock) {
+    try {
+      lock = await fs.open(lockPath, 'wx');
+      await lock.writeFile(`${process.pid}\n`, 'utf-8');
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'EEXIST') {
+        throw error;
+      }
+
+      await removeStaleAuthStateLock(lockPath);
+      if (Date.now() - start >= AUTH_STATE_LOCK_TIMEOUT_MS) {
+        throw new Error(`Timed out waiting for auth state lock at ${lockPath}.`);
+      }
+      await delay(AUTH_STATE_LOCK_RETRY_MS);
+    }
+  }
+
+  try {
+    return await operation();
+  } finally {
+    await lock.close();
+    await fs.unlink(lockPath).catch(error => {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+    });
+  }
+}
+
+async function removeStaleAuthStateLock(lockPath: string) {
+  try {
+    const stat = await fs.stat(lockPath);
+    if (Date.now() - stat.mtimeMs >= AUTH_STATE_LOCK_STALE_MS) {
+      await fs.unlink(lockPath);
+    }
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
 }
 
 function normalizeAuthState(parsed: unknown): AuthState {

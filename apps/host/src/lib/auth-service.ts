@@ -25,9 +25,13 @@ export const SESSION_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 export const SESSION_ABSOLUTE_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 export const SETUP_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const RECENT_REAUTH_WINDOW_MS = 10 * 60 * 1000;
+export const SESSION_ACTIVITY_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+export const SESSION_REJECTION_AUDIT_THROTTLE_MS = 5 * 60 * 1000;
 
 const SETUP_TOKEN_PREFIX = 'dhstp_';
 const CLI_TOKEN_PREFIX = 'dhcli_';
+const SESSION_REJECTION_AUDIT_CACHE_MAX = 500;
+const rejectedSessionAuditCache = new Map<string, number>();
 
 export interface AuthRequestMeta {
   origin?: string;
@@ -414,24 +418,28 @@ export async function authenticateSessionToken(
       };
     }
 
-    return {
-      state: {
-        ...state,
-        sessions: sessions.map(candidate =>
-          principal && candidate.id === principal.sessionId
+    const shouldTouchSession = Boolean(session && user && shouldRefreshSessionActivity(session, now));
+    const sessionId = session?.id;
+    const nextSessions = shouldTouchSession
+      ? sessions.map(candidate =>
+          candidate.id === sessionId
             ? {
                 ...candidate,
                 lastSeenAt: now.toISOString(),
                 idleExpiresAt: new Date(now.getTime() + SESSION_IDLE_TIMEOUT_MS).toISOString(),
               }
             : candidate
-        ),
-      },
+        )
+      : sessions;
+    const stateChanged = shouldTouchSession || sessions.length !== state.sessions.length;
+
+    return {
+      state: stateChanged ? { ...state, sessions: nextSessions } : state,
       result: null,
     };
   }, config);
 
-  if (!principal && request) {
+  if (!principal && request && shouldAuditRejectedSession(sessionTokenHash, now)) {
     await appendAuthAuditEvent({
       type: 'auth.session.rejected',
       success: false,
@@ -967,6 +975,32 @@ function isSessionActive(session: AuthSessionRecord, now: Date) {
 
 function isExpired(expiresAt: string, now: Date) {
   return Date.parse(expiresAt) <= now.getTime();
+}
+
+function shouldRefreshSessionActivity(session: AuthSessionRecord, now: Date) {
+  const lastSeenTime = Date.parse(session.lastSeenAt);
+  return Number.isNaN(lastSeenTime) ||
+    now.getTime() - lastSeenTime >= SESSION_ACTIVITY_WRITE_INTERVAL_MS;
+}
+
+function shouldAuditRejectedSession(sessionTokenHash: string, now: Date) {
+  const nowTime = now.getTime();
+  for (const [key, timestamp] of rejectedSessionAuditCache) {
+    if (
+      nowTime - timestamp >= SESSION_REJECTION_AUDIT_THROTTLE_MS ||
+      rejectedSessionAuditCache.size > SESSION_REJECTION_AUDIT_CACHE_MAX
+    ) {
+      rejectedSessionAuditCache.delete(key);
+    }
+  }
+
+  const lastAuditTime = rejectedSessionAuditCache.get(sessionTokenHash);
+  if (lastAuditTime !== undefined && nowTime - lastAuditTime < SESSION_REJECTION_AUDIT_THROTTLE_MS) {
+    return false;
+  }
+
+  rejectedSessionAuditCache.set(sessionTokenHash, nowTime);
+  return true;
 }
 
 function normalizeEmail(email: string) {

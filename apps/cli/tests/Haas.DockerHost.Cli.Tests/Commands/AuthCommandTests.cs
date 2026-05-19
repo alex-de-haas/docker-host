@@ -36,6 +36,21 @@ public sealed class AuthCommandTests : IDisposable
         Assert.DoesNotContain("dhstp_", audit);
     }
 
+    [Fact]
+    public async Task RunAsync_RecoveryToken_RemovesStaleAuthStateLock()
+    {
+        var authRoot = Path.Combine(rootDirectory, "auth");
+        Directory.CreateDirectory(authRoot);
+        var lockPath = Path.Combine(authRoot, "state.json.lock");
+        await File.WriteAllTextAsync(lockPath, "stale");
+        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.AddMinutes(-5));
+
+        var exitCode = await CommandLine.RunAsync(["auth", "recovery-token"]);
+
+        Assert.Equal(0, exitCode);
+        Assert.False(File.Exists(lockPath));
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);

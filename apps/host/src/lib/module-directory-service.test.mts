@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createEmptyAuthState, writeAuthState } from './auth-store.ts';
+import { createEmptyAuthState, readAuthStateSnapshot, writeAuthState } from './auth-store.ts';
 import {
   ModuleDirectoryServiceError,
   authenticateModuleServiceToken,
@@ -99,6 +99,22 @@ test('revoked module service token no longer authenticates', async () => {
   assert.equal((await authenticateModuleServiceToken(serviceToken.token, undefined, config))?.moduleId, 'com.example.reports');
   assert.equal(await revokeModuleServiceToken(serviceToken.tokenId, 'user_admin', config), true);
   assert.equal(await authenticateModuleServiceToken(serviceToken.token, undefined, config), null);
+});
+
+test('throttles module service token activity writes after first use', async () => {
+  const config = await createDirectoryTestConfig();
+  const serviceToken = await createModuleServiceToken({
+    moduleId: 'com.example.reports',
+  }, 'user_admin', config);
+
+  assert.equal((await authenticateModuleServiceToken(serviceToken.token, undefined, config))?.moduleId, 'com.example.reports');
+  const afterFirstUse = await readAuthStateSnapshot(config);
+  const firstLastUsedAt = afterFirstUse.moduleServiceTokens[0]?.lastUsedAt;
+  assert.equal(typeof firstLastUsedAt, 'string');
+
+  assert.equal((await authenticateModuleServiceToken(serviceToken.token, undefined, config))?.moduleId, 'com.example.reports');
+  const afterSecondUse = await readAuthStateSnapshot(config);
+  assert.equal(afterSecondUse.moduleServiceTokens[0]?.lastUsedAt, firstLastUsedAt);
 });
 
 test('module service token revoke is constrained to the owning module', async () => {

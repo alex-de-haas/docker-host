@@ -21,6 +21,7 @@ import {
   revokeSessionById,
   rotateCliToken,
 } from './auth-service.ts';
+import { listAuthAuditEvents } from './auth-audit.ts';
 import { readAuthStateSnapshot } from './auth-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
@@ -87,6 +88,37 @@ test('authenticates and revokes password sessions', async () => {
 
   assert.equal(await revokeSession(login.sessionToken, undefined, config), true);
   assert.equal(await authenticateSessionToken(login.sessionToken, undefined, config), null);
+});
+
+test('throttles session activity writes for recently seen sessions', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const login = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+  const before = await readAuthStateSnapshot(config);
+
+  assert.equal((await authenticateSessionToken(login.sessionToken, undefined, config))?.id, login.user.id);
+
+  const after = await readAuthStateSnapshot(config);
+  assert.equal(after.sessions[0]?.lastSeenAt, before.sessions[0]?.lastSeenAt);
+  assert.equal(after.sessions[0]?.idleExpiresAt, before.sessions[0]?.idleExpiresAt);
+});
+
+test('rate limits rejected session audit events for repeated invalid cookies', async () => {
+  const config = await createTestConfig();
+  const request = {
+    origin: 'https://host.example.test',
+    userAgent: 'Test Browser',
+  };
+
+  assert.equal(await authenticateSessionToken('dhs_invalid', request, config), null);
+  assert.equal(await authenticateSessionToken('dhs_invalid', request, config), null);
+
+  const audit = await listAuthAuditEvents({ type: 'auth.session.rejected' }, config);
+  assert.equal(audit.events.length, 1);
 });
 
 test('lists and revokes sessions by id', async () => {

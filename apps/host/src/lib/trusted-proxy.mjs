@@ -15,6 +15,9 @@ const GENERIC_ASSERTION_HEADER = 'x-docker-host-trusted-proxy-jwt';
 const DEFAULT_SUBJECT_CLAIM = 'sub';
 const DEFAULT_EMAIL_CLAIM = 'email';
 const DEFAULT_DISPLAY_NAME_CLAIM = 'name';
+const AUTH_STATE_LOCK_STALE_MS = 2 * 60 * 1000;
+const AUTH_STATE_LOCK_TIMEOUT_MS = 30 * 1000;
+const AUTH_STATE_LOCK_RETRY_MS = 50;
 
 const remoteJwkSets = new Map();
 let trustedProxyStoreMutex = Promise.resolve();
@@ -478,10 +481,14 @@ async function readAuthState(config) {
 
 async function updateAuthState(operation, config) {
   return withTrustedProxyStoreLock(async () => {
-    const current = await readAuthState(config);
-    const { state, result } = await operation(current);
-    await writeAuthState(state, config);
-    return result;
+    return await withAuthStateFileLock(config, async () => {
+      const current = await readAuthState(config);
+      const { state, result } = await operation(current);
+      if (state !== current) {
+        await writeAuthState(state, config);
+      }
+      return result;
+    });
   });
 }
 
@@ -519,6 +526,58 @@ async function withTrustedProxyStoreLock(operation) {
   } finally {
     release();
   }
+}
+
+async function withAuthStateFileLock(config, operation) {
+  await fs.mkdir(config.authRootContainer, { recursive: true });
+  const lockPath = `${config.authStatePath}.lock`;
+  const start = Date.now();
+  let lock = null;
+
+  while (!lock) {
+    try {
+      lock = await fs.open(lockPath, 'wx');
+      await lock.writeFile(`${process.pid}\n`, 'utf-8');
+    } catch (error) {
+      if (error?.code !== 'EEXIST') {
+        throw error;
+      }
+
+      await removeStaleAuthStateLock(lockPath);
+      if (Date.now() - start >= AUTH_STATE_LOCK_TIMEOUT_MS) {
+        throw new Error(`Timed out waiting for auth state lock at ${lockPath}.`);
+      }
+      await delay(AUTH_STATE_LOCK_RETRY_MS);
+    }
+  }
+
+  try {
+    return await operation();
+  } finally {
+    await lock.close();
+    await fs.unlink(lockPath).catch(error => {
+      if (error?.code !== 'ENOENT') {
+        throw error;
+      }
+    });
+  }
+}
+
+async function removeStaleAuthStateLock(lockPath) {
+  try {
+    const stat = await fs.stat(lockPath);
+    if (Date.now() - stat.mtimeMs >= AUTH_STATE_LOCK_STALE_MS) {
+      await fs.unlink(lockPath);
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function normalizeAuthState(parsed) {

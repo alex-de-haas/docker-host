@@ -18,6 +18,7 @@ export const MODULE_DIRECTORY_SCHEMA_VERSION = '0.1';
 export const MODULE_SERVICE_TOKEN_ENV = 'DOCKER_HOST_MODULE_SERVICE_TOKEN';
 export const MODULE_ID_ENV = 'DOCKER_HOST_MODULE_ID';
 export const HOST_INTERNAL_ORIGIN_ENV = 'DOCKER_HOST_INTERNAL_ORIGIN';
+export const MODULE_SERVICE_TOKEN_ACTIVITY_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface ModuleServicePrincipal {
   moduleId: string;
@@ -183,7 +184,7 @@ export async function authenticateModuleServiceToken(
   }
 
   const tokenHash = hashToken(token);
-  const now = new Date().toISOString();
+  const now = new Date();
   let principal: ModuleServicePrincipal | null = null;
 
   await updateAuthState(state => {
@@ -201,15 +202,20 @@ export async function authenticateModuleServiceToken(
       };
     }
 
+    const shouldTouchToken = Boolean(serviceToken && shouldRefreshModuleServiceTokenActivity(serviceToken, now));
+    const serviceTokenId = serviceToken?.id;
+
     return {
-      state: {
-        ...state,
-        moduleServiceTokens: state.moduleServiceTokens.map(candidate =>
-          principal && candidate.id === serviceToken?.id
-            ? { ...candidate, lastUsedAt: now }
-            : candidate
-        ),
-      },
+      state: shouldTouchToken
+        ? {
+            ...state,
+            moduleServiceTokens: state.moduleServiceTokens.map(candidate =>
+              candidate.id === serviceTokenId
+                ? { ...candidate, lastUsedAt: now.toISOString() }
+                : candidate
+            ),
+          }
+        : state,
       result: null,
     };
   }, config);
@@ -390,4 +396,17 @@ function compareDirectoryUsers(left: ModuleDirectoryUser, right: ModuleDirectory
 
 function normalizeModuleId(moduleId: string) {
   return moduleId.trim();
+}
+
+function shouldRefreshModuleServiceTokenActivity(
+  token: AuthModuleServiceTokenRecord,
+  now: Date
+) {
+  if (!token.lastUsedAt) {
+    return true;
+  }
+
+  const lastUsedTime = Date.parse(token.lastUsedAt);
+  return Number.isNaN(lastUsedTime) ||
+    now.getTime() - lastUsedTime >= MODULE_SERVICE_TOKEN_ACTIVITY_WRITE_INTERVAL_MS;
 }

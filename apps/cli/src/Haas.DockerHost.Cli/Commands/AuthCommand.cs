@@ -14,6 +14,9 @@ internal sealed class AuthCommand(CommandContext context)
 {
     private const string SchemaVersion = "0.1";
     private static readonly TimeSpan SetupTokenLifetime = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan AuthStateLockTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan AuthStateLockStaleAfter = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan AuthStateLockRetryDelay = TimeSpan.FromMilliseconds(50);
     private const string Usage = """
         Usage:
           docker-host auth setup-token
@@ -92,31 +95,39 @@ internal sealed class AuthCommand(CommandContext context)
         var statePath = Path.Combine(authRoot, "state.json");
         Directory.CreateDirectory(authRoot);
 
-        var state = await ReadAuthStateAsync(statePath);
-        if (requireNoAdmin && AdminExists(state))
+        string token;
+        DateTimeOffset expiresAt;
+        JsonObject tokenRecord;
+
+        await using (await AcquireAuthStateLockAsync(statePath))
         {
-            context.Console.MarkupLine("[yellow]A Host administrator already exists.[/]");
-            return 1;
+            var state = await ReadAuthStateAsync(statePath);
+            if (requireNoAdmin && AdminExists(state))
+            {
+                context.Console.MarkupLine("[yellow]A Host administrator already exists.[/]");
+                return 1;
+            }
+
+            token = "dhstp_" + Base64Url(RandomNumberGenerator.GetBytes(32));
+            var now = DateTimeOffset.UtcNow;
+            expiresAt = now.Add(SetupTokenLifetime);
+            tokenRecord = new JsonObject
+            {
+                ["id"] = "setup_" + Guid.NewGuid().ToString("D"),
+                ["tokenHash"] = Sha256Base64Url(token),
+                ["createdAt"] = now.ToString("O"),
+                ["expiresAt"] = expiresAt.ToString("O"),
+                ["purpose"] = purpose,
+            };
+
+            var setupTokens = state["setupTokens"] as JsonArray ?? new JsonArray();
+            setupTokens.Add(tokenRecord);
+            state["setupTokens"] = setupTokens;
+            state["updatedAt"] = now.ToString("O");
+
+            await WriteAuthStateAsync(statePath, state);
         }
 
-        var token = "dhstp_" + Base64Url(RandomNumberGenerator.GetBytes(32));
-        var now = DateTimeOffset.UtcNow;
-        var expiresAt = now.Add(SetupTokenLifetime);
-        var tokenRecord = new JsonObject
-        {
-            ["id"] = "setup_" + Guid.NewGuid().ToString("D"),
-            ["tokenHash"] = Sha256Base64Url(token),
-            ["createdAt"] = now.ToString("O"),
-            ["expiresAt"] = expiresAt.ToString("O"),
-            ["purpose"] = purpose,
-        };
-
-        var setupTokens = state["setupTokens"] as JsonArray ?? new JsonArray();
-        setupTokens.Add(tokenRecord);
-        state["setupTokens"] = setupTokens;
-        state["updatedAt"] = now.ToString("O");
-
-        await WriteAuthStateAsync(statePath, state);
         await AppendLocalAuthAuditEventAsync(
             authRoot,
             purpose == "first-admin" ? "auth.setup_token.created" : "auth.recovery_token.created",
@@ -540,12 +551,61 @@ internal sealed class AuthCommand(CommandContext context)
         state["setupTokens"] ??= new JsonArray();
         state["cliTokens"] ??= new JsonArray();
 
-        var tempPath = statePath + ".tmp";
+        var tempPath = statePath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
         await File.WriteAllTextAsync(
             tempPath,
             state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         File.Move(tempPath, statePath, overwrite: true);
+    }
+
+    private static async Task<AuthStateLock> AcquireAuthStateLockAsync(string statePath)
+    {
+        var lockPath = statePath + ".lock";
+        var startedAt = DateTimeOffset.UtcNow;
+
+        while (true)
+        {
+            try
+            {
+                var stream = new FileStream(
+                    lockPath,
+                    FileMode.CreateNew,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous);
+                var content = Encoding.UTF8.GetBytes(Environment.ProcessId.ToString());
+                await stream.WriteAsync(content);
+                await stream.FlushAsync();
+                return new AuthStateLock(lockPath, stream);
+            }
+            catch (IOException) when (DateTimeOffset.UtcNow - startedAt < AuthStateLockTimeout)
+            {
+                DeleteStaleAuthStateLock(lockPath);
+                await Task.Delay(AuthStateLockRetryDelay);
+            }
+        }
+    }
+
+    private static void DeleteStaleAuthStateLock(string lockPath)
+    {
+        try
+        {
+            if (DateTimeOffset.UtcNow - File.GetLastWriteTimeUtc(lockPath) >= AuthStateLockStaleAfter)
+            {
+                File.Delete(lockPath);
+            }
+        }
+        catch (FileNotFoundException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private static async Task AppendLocalAuthAuditEventAsync(string authRoot, string type, JsonObject details)
@@ -614,6 +674,27 @@ internal sealed class AuthCommand(CommandContext context)
     private sealed record ParsedArguments(
         IReadOnlyList<string> Positionals,
         IReadOnlyDictionary<string, string> Options);
+
+    private sealed class AuthStateLock(string lockPath, FileStream stream) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            await stream.DisposeAsync();
+            try
+            {
+                File.Delete(lockPath);
+            }
+            catch (FileNotFoundException)
+            {
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
 
     private sealed class AuthenticatedHostApiClient(HostApiClient client, Uri baseUri) : IDisposable
     {
