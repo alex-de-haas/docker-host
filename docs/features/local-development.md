@@ -205,7 +205,7 @@ The Host app serves a local metadata fixture for install review UI development:
 http://localhost:3000/fixtures/modules/sample-reports
 ```
 
-The reports fixture references a second local dependency fixture at `/fixtures/modules/sample-identity`, declares editable non-secret settings, one write-only secret, module-owned storage, one required external mount collection, runtime ports, and resource hints. Use the install route's local fixture action to fill the current origin automatically when the dev server runs on a non-default port.
+The reports fixture references a second local dependency fixture at `/fixtures/modules/sample-identity`, declares editable non-secret settings, one optional write-only secret, module-owned storage, one optional external mount collection, runtime ports, and resource hints. Use the install route's local fixture action to fill the current origin automatically when the dev server runs on a non-default port. The default fixture path is intentionally installable without entering settings or external mounts.
 
 The install plan endpoint still requires Docker read access. If the fixture returns a Docker conflict or `503`, validate the UI error state first, then create/start Docker through the normal local setup before testing the successful review state. The install apply endpoint creates the Host-managed module network if it does not already exist.
 
@@ -213,7 +213,7 @@ The install plan endpoint still requires Docker read access. If the fixture retu
 
 Use the same local metadata fixture to exercise `POST /api/modules/install`. After preparing the install request on `/modules/install`, submit the explicit install action. The apply endpoint recomputes the plan, validates submitted settings and external mounts server-side, writes per-module install state to `modules.json`, stores raw metadata copies under `modules/<module-id>/metadata.json`, creates module-owned directories, pulls images according to `pullPolicy`, and creates module containers on the Host-managed network.
 
-For the fixture path, provide an external mount host path that Docker can bind mount. The Host process does not preflight external host paths through local filesystem checks; Docker daemon mount success or failure is the validation boundary.
+Optional external mounts can still be added to the fixture path when testing mount validation. Provide a host path that Docker can bind mount. The Host process does not preflight external host paths through local filesystem checks; Docker daemon mount success or failure is the validation boundary.
 
 ## Verification checklist
 

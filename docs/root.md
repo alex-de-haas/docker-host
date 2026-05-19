@@ -25,6 +25,7 @@ flowchart LR
 ## Documents
 
 - [Future work](todo.md) - lightweight backlog items and follow-up ideas that are not yet dedicated planning documents.
+- [Host app shell plan](planning/host-app-shell.md) - implementation plan for turning Docker Host into a sidebar-based app shell and module app portal.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Module developer mode](features/module-developer-mode.md) - local-only module development targets that proxy through the Host gateway without a full install.
