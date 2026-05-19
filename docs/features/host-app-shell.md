@@ -39,13 +39,24 @@ Implemented Phase 4 behavior:
 - module UIs cannot directly override the shell topbar;
 - the embed route requires Host authentication, validates the selected shell App, proxies only the reserved embed path, injects module identity, strips Host-owned headers, and rewrites root-relative module links and assets through the reserved embed URL.
 
+Implemented Phase 5 behavior:
+
+- `/ingress` combines service/API gateway exposure management with external ingress readiness;
+- administrators can create, edit, enable/disable, and delete gateway exposure records from the Web UI;
+- the exposure form uses a narrow admin-only `/api/gateway/options` endpoint for installed module, public runtime port, active Host user, UI-entrypoint hint, and gateway domain choices;
+- service/API exposures are visibly labeled as separate from shell Apps and excluded from Apps navigation;
+- selecting a runtime port that is also `ui.entrypoint.portKey` shows a warning instead of publishing the module browser UI as a standalone public subdomain;
+- `assignedUsersOnly` exposure editing updates module-wide Host access assignments;
+- deleting an exposure removes linked external ingress readiness state;
+- creating an exposure leaves readiness unmanaged until an administrator explicitly plans ingress.
+
 ## Navigation
 
 The sidebar combines static Host management navigation with dynamic Apps navigation from `/api/apps`.
 
 - Host:
   - Dashboard (`/`)
-  - External ingress (`/ingress`)
+  - Gateway exposures (`/ingress`)
 - Modules:
   - Installed modules (`/#installed-modules`)
   - Install module (`/modules/install`)
@@ -63,7 +74,7 @@ flowchart TD
   C --> D["Dashboard"]
   C --> E["Install module"]
   C --> F["Update module"]
-  C --> G["External ingress"]
+  C --> G["Gateway exposures and external ingress"]
   C --> H["Security settings"]
   C --> M["Apps sidebar"]
   M --> N["App shell route"]
@@ -83,7 +94,7 @@ For embedded module apps, the topbar remains Host-owned. The Host app route sets
 
 ## Page Integration
 
-The dashboard remains focused on installed module status, lifecycle actions, recovery dialogs, and links into install/update flows. External ingress readiness moved to the dedicated `/ingress` page and reuses the existing readiness panel and APIs.
+The dashboard remains focused on installed module status, lifecycle actions, recovery dialogs, and links into install/update flows. Gateway exposure management and external ingress readiness live on the dedicated `/ingress` page and reuse the existing gateway and readiness APIs.
 
 Install, update, and security pages keep their existing backend calls and form behavior. Their previous page headers were replaced by shell page metadata and topbar action slots.
 
@@ -125,7 +136,32 @@ Supported fields:
 
 Missing `ui` metadata is valid. The module can still install and run, but it is not returned as a shell App. Malformed `ui` metadata is rejected during install/update planning, and app registry compatibility checks keep invalid installed metadata hidden from `host.user` while returning safe diagnostics to `host.admin`.
 
+## Gateway Exposure UX
+
+The `/ingress` admin page manages service/API gateway exposures and their external ingress readiness in one workflow.
+
+Gateway exposures are Host-owned service/API publishing records. They contain:
+
+- installed module id;
+- public runtime port key;
+- gateway hostname;
+- exposure policy;
+- module identity mode;
+- enabled state.
+
+When `HOST_GATEWAY_BASE_DOMAIN` is configured, the UI asks for a subdomain and previews the resulting full hostname. Without a base domain, administrators enter the full hostname directly.
+
+The exposure form uses `/api/gateway/options` to load only the data needed by the form: installed modules with public runtime ports, UI-entrypoint hints, active Host users for assignment editing, and Host gateway domain settings. This avoids exposing raw Docker/container details through the client.
+
+Exposure policy is the primary authorization control. Identity mode remains visible as an advanced control with defaults selected from the policy. Public exposures cannot use required identity mode.
+
+For `assignedUsersOnly`, the editor updates module-wide Host assignments. Those assignments are shared by assigned-only service/API exposures and shell Apps for the same module.
+
+Service/API exposure changes do not create shell Apps. If an administrator selects the same public runtime port used by `ui.entrypoint.portKey`, the form warns that browser UIs should remain inside the Host Apps shell.
+
+External ingress readiness remains explicit. Creating an exposure does not create a readiness record automatically; administrators use the readiness section's Plan action. Disabling an exposure preserves readiness state, while deleting an exposure removes linked readiness records.
+
 ## Open Questions
 
-- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, or Phase 4 Apps sidebar/app host page questions remain open.
-- Later phases still need gateway exposure management UX, non-admin user portal behavior, developer mode integration, and full app portal browser smoke coverage.
+- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, Phase 4 Apps sidebar/app host page, or Phase 5 gateway exposure management UX questions remain open.
+- Later phases still need non-admin user portal behavior, developer mode integration, and full app portal browser smoke coverage.

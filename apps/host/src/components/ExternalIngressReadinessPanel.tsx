@@ -42,7 +42,7 @@ const completeChecklist = {
   directOriginProtected: true,
 };
 
-export function ExternalIngressReadinessPanel() {
+export function ExternalIngressReadinessPanel({ refreshSignal = 0 }: { refreshSignal?: number }) {
   const [items, setItems] = useState<ExternalIngressStatusItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +68,7 @@ export function ExternalIngressReadinessPanel() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshSignal]);
 
   async function saveIntent(item: ExternalIngressStatusItem, markReady = false) {
     setPendingExposureId(item.exposure.id);

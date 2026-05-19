@@ -130,13 +130,16 @@ Gateway exposure management is a Host admin operation:
 
 | Route | Method | Behavior |
 | --- | --- | --- |
+| `/api/gateway/options` | `GET` | Return the compact Web UI picker model: installed modules with public runtime ports, UI-entrypoint hints, active Host users, and gateway domain settings. |
 | `/api/gateway/exposures` | `GET` | List configured gateway exposures and assigned Host user ids. |
 | `/api/gateway/exposures` | `POST` | Create a gateway exposure for `moduleId`, `hostname`, `portKey`, optional `exposurePolicy`, and optional `identityMode`. |
 | `/api/gateway/exposures/{exposureId}` | `PUT` | Update hostname, target port, policy, or enabled state. |
-| `/api/gateway/exposures/{exposureId}` | `DELETE` | Remove an exposure. |
+| `/api/gateway/exposures/{exposureId}` | `DELETE` | Remove an exposure and clear linked external ingress readiness state. |
 | `/api/gateway/exposures/{exposureId}/assignments` | `PUT` | Replace assigned Host user ids for the exposure's module. |
 
-The initial API is intentionally low-level so the routing and policy layer can stabilize before adding a richer Web UI.
+The `/ingress` Web UI uses these endpoints to create, edit, enable/disable, and delete service/API gateway exposures. Gateway exposure changes do not create shell Apps. When a selected public runtime port is also the module UI entrypoint, the UI warns that browser UIs should stay inside the Host Apps shell.
+
+Assignment edits remain module-wide. Calling the assignments endpoint through an exposure id updates the Host assignments for that exposure's module, so assigned-only service/API exposures and shell Apps share the same module assignment set.
 
 ## Gateway Proxy Rules
 

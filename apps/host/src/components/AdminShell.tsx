@@ -214,7 +214,7 @@ const navigationSections: NavigationSection[] = [
         isActive: pathname => pathname === '/',
       },
       {
-        label: 'External ingress',
+        label: 'Gateway exposures',
         href: '/ingress',
         icon: Globe2,
         isActive: pathname => pathname === '/ingress',

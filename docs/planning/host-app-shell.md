@@ -379,7 +379,7 @@ Resolved Phase 4 starter decisions:
 
 ### Phase 5 - Gateway exposure management UX
 
-**Status**: Not Started
+**Status**: Completed
 
 Expose gateway exposure APIs through Host UI so administrators can publish service/API endpoints without manual API calls. Module browser UIs remain shell-only and should not be published as standalone public subdomains.
 
@@ -402,6 +402,53 @@ Acceptance criteria:
 - Admins can create externally published service/API endpoints from the Web UI.
 - External ingress readiness still works with the same exposure records.
 - Service/API exposure changes do not create shell Apps unless paired with explicit `ui` metadata.
+
+Implementation notes:
+
+- `/ingress` is the combined admin surface for gateway exposures and external ingress readiness.
+- The gateway exposure section lists configured service/API endpoints and labels them as excluded from Apps navigation.
+- Administrators can create, edit, enable/disable, and delete gateway exposures from the Web UI.
+- The create/edit form uses `/api/gateway/options` to get installed modules, public runtime ports, UI-entrypoint hints, active Host users, and Host gateway domain settings.
+- When `HOST_GATEWAY_BASE_DOMAIN` is configured, the form asks for a subdomain and previews the full hostname.
+- Exposure policy is the primary authorization control. Identity mode is shown as an advanced control with safe defaults and invalid public/required combinations prevented.
+- `assignedUsersOnly` editing uses existing module-wide Host assignments and labels them as module access assignments.
+- Deleting a gateway exposure removes linked external ingress readiness records so stale readiness state is not left behind.
+- Creating an exposure does not create external ingress readiness automatically. The readiness section continues to require an explicit "Plan" action.
+- If the selected public runtime port is also the module `ui.entrypoint`, the form warns that gateway exposures are for service/API traffic and browser UIs should remain in the Host Apps shell.
+
+Resolved Phase 5 starter decisions:
+
+- **Question**: Should gateway exposure management live on the existing `/ingress` page or on a new route?
+  **Answer**: Extend `/ingress` into the combined admin surface for gateway exposure management and external ingress readiness.
+  **Recommendation**: Extend `/ingress` first. Keep the route stable, add a gateway exposure management section before readiness, and avoid splitting one admin workflow across multiple pages until the surface becomes too large.
+
+- **Question**: How should the UI distinguish service/API exposures from shell Apps?
+  **Answer**: Gateway exposure records publish module service/API hostnames. Shell Apps continue to come only from explicit `ui` metadata and `/api/apps`; Phase 5 should not add a new port classification metadata contract.
+  **Recommendation**: Do not add a new metadata contract in Phase 5. Allow public runtime ports that pass existing validation, but make the UI copy explicit: service/API exposures are not Apps and should not be used to publish standalone module browser UIs. Add a warning when the selected port matches `ui.entrypoint.portKey`.
+
+- **Question**: Where should the create/edit form get module and public-port choices?
+  **Answer**: Add a narrow admin-only gateway options endpoint that returns installed modules, public runtime ports, and UI-entrypoint hints for the exposure form.
+  **Recommendation**: Add a narrow admin-only options endpoint for Phase 5. It should return only what the gateway exposure form needs and should reuse the same installed-module and metadata reads as gateway validation.
+
+- **Question**: How should hostname entry work with `HOST_GATEWAY_BASE_DOMAIN`?
+  **Answer**: When `HOST_GATEWAY_BASE_DOMAIN` is set, ask for the subdomain label and render a read-only full-hostname preview. Use full-hostname entry only when no base domain is configured.
+  **Recommendation**: Use a guided subdomain field when `HOST_GATEWAY_BASE_DOMAIN` is set, with a read-only preview of the full hostname. Fall back to full-hostname entry only when no base domain is configured.
+
+- **Question**: How much of exposure policy and identity mode should be visible in the first UI?
+  **Answer**: Show exposure policy as the primary control and expose identity mode as an advanced control with defaults preselected.
+  **Recommendation**: Show policy as the primary control and identity mode as an advanced control with defaults preselected. Disable or explain invalid combinations such as `public` plus `required` identity.
+
+- **Question**: Should assignment editing be per exposure or per module?
+  **Answer**: Keep assignments module-wide in Phase 5 and label the editor as module access assignments.
+  **Recommendation**: Keep module-wide assignments in Phase 5 and label the editor as module access assignments. If per-exposure assignments become necessary, treat that as a separate authorization-model change.
+
+- **Question**: What should happen to external ingress readiness records when an exposure is disabled or deleted?
+  **Answer**: Preserve readiness when disabling an exposure. When deleting an exposure, remove or unlink its readiness record so no orphaned readiness state remains.
+  **Recommendation**: Preserve readiness when disabling, because disable is reversible. On delete, either unlink readiness before deleting or add backend cleanup so deleted exposures do not leave orphaned ingress records.
+
+- **Question**: Should creating an exposure automatically create an external ingress intent?
+  **Answer**: No. Keep readiness explicit and leave new exposures unmanaged until the administrator chooses to plan ingress.
+  **Recommendation**: Keep readiness explicit in Phase 5. After create, show the exposure in the readiness section with a clear "Plan ingress" action rather than creating readiness state automatically.
 
 ### Phase 6 - User portal behavior
 
