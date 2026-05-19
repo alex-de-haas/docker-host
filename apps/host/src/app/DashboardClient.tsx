@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { Boxes, LogOut, LoaderCircle, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ExternalIngressReadinessPanel } from '@/components/ExternalIngressReadinessPanel';
 import { ModuleList } from '@/components/ModuleList';
 import { ModuleStatsCards } from '@/components/ModuleStatsCards';
 import { Button } from '@/components/ui/button';
@@ -120,6 +121,8 @@ export function DashboardClient({ user }: { user: HostPrincipal }) {
             />
           )}
         </section>
+
+        <ExternalIngressReadinessPanel />
       </main>
     </div>
   );

@@ -20,6 +20,8 @@ export interface HostRuntimeConfig {
   authAuditPath: string;
   gatewayRootContainer: string;
   gatewayExposuresPath: string;
+  ingressRootContainer?: string;
+  ingressStatePath?: string;
   gatewayBaseDomain: string | null;
   hostPublicOrigin: string | null;
   hostInternalOrigin: string;
@@ -54,6 +56,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
   const moduleDevRootContainer = path.join(dataRootContainer, 'dev');
   const authRootContainer = path.join(dataRootContainer, 'auth');
   const gatewayRootContainer = path.join(dataRootContainer, 'gateway');
+  const ingressRootContainer = path.join(dataRootContainer, 'ingress');
 
   return {
     dataRootHost,
@@ -68,6 +71,8 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
     gatewayRootContainer,
     gatewayExposuresPath: path.join(gatewayRootContainer, 'exposures.json'),
+    ingressRootContainer,
+    ingressStatePath: path.join(ingressRootContainer, 'external-ingress.json'),
     gatewayBaseDomain: normalizeOptionalRuntimeValue(process.env.HOST_GATEWAY_BASE_DOMAIN),
     hostPublicOrigin: normalizeOptionalRuntimeValue(process.env.HOST_PUBLIC_ORIGIN),
     hostInternalOrigin: normalizeOptionalRuntimeValue(process.env.HOST_INTERNAL_ORIGIN) ?? DEFAULT_HOST_INTERNAL_ORIGIN,
@@ -78,6 +83,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
 
 export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promise<HostDataRootStatus> {
   const moduleDevRootContainer = config.moduleDevRootContainer ?? path.join(config.dataRootContainer, 'dev');
+  const ingressRootContainer = config.ingressRootContainer ?? path.join(config.dataRootContainer, 'ingress');
   try {
     await fs.mkdir(config.dataRootContainer, { recursive: true });
     await fs.mkdir(config.modulesRootContainer, { recursive: true });
@@ -86,6 +92,7 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     }
     await fs.mkdir(config.authRootContainer, { recursive: true });
     await fs.mkdir(config.gatewayRootContainer, { recursive: true });
+    await fs.mkdir(ingressRootContainer, { recursive: true });
     await fs.access(config.dataRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.modulesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     if (config.moduleDevModeEnabled) {
@@ -93,6 +100,7 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     }
     await fs.access(config.authRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.gatewayRootContainer, fs.constants.R_OK | fs.constants.W_OK);
+    await fs.access(ingressRootContainer, fs.constants.R_OK | fs.constants.W_OK);
 
     return {
       hostPath: config.dataRootHost,

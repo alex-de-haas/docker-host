@@ -8,6 +8,7 @@ Demo Module is a small Next.js application used to validate Docker Host module o
 - module-owned storage mounts under `/app/data` and `/app/logs`;
 - optional external mount collections under `/mnt/sources/{key}`;
 - Host gateway identity token propagation and validation;
+- provider-neutral external ingress readiness checks;
 - scoped module directory access through the module service token;
 - module-owned permission mapping from Host identity claims;
 - health-check and inspection endpoints for Host features.
@@ -69,3 +70,15 @@ When the module is installed by Docker Host, the container receives:
 - `DOCKER_HOST_MODULE_SERVICE_TOKEN` for the scoped module directory API.
 
 Requests routed through a Host gateway exposure may include `X-Docker-Host-Identity`. The demo module validates that ES256 JWT against Host discovery and JWKS endpoints, shows the normalized claims on the dashboard, and exposes the same sanitized data through `/api/auth/identity`. The endpoint never returns raw bearer tokens, service tokens, session cookies, or raw identity JWTs.
+
+## External ingress readiness testing
+
+The demo module is suitable as the first manual external ingress readiness target because its metadata declares a public HTTP runtime port and a health endpoint:
+
+```text
+runtime.ports[0].key = http
+runtime.ports[0].public = true
+runtime.healthcheck.path = /api/health
+```
+
+After installing the module, create a Host gateway exposure for the `http` port under `HOST_GATEWAY_BASE_DOMAIN`. The Host external ingress readiness panel can then generate manual DNS, reverse proxy, TLS, OIDC, and trusted-proxy setup guidance for that exposure. Once the external route is configured, use the demo dashboard and `/api/auth/identity` to verify that gateway identity headers, forwarded request headers, and module directory access still behave the same through the external hostname.

@@ -651,23 +651,49 @@ These recommendations are accepted for the first Phase 10 implementation slice s
 - Added explicit local CLI recovery token creation and Web recovery consumption.
 - Added regression tests for audit redaction, audit purge, session revocation, recovery token issuance, recovery completion, and reauthentication gates.
 
-### Phase 11 - External ingress automation
+### Phase 11 - External ingress readiness
 
 **Status**: Not Started
 
-Optionally automate external exposure through providers such as Cloudflare:
+Make externally exposed Host and module gateway deployments understandable, testable, and operable without tying Docker Host to a specific external ingress provider:
 
-- create or validate DNS records;
-- configure Cloudflare Tunnel public hostnames;
-- configure Cloudflare Access applications and policies;
+- define a provider-neutral external ingress state model;
+- generate manual setup instructions for DNS, reverse proxy, TLS, and trusted-proxy/OIDC settings;
+- validate Host-side prerequisites before an administrator publishes an exposure;
 - show exposure status in Host Web UI;
-- keep manual setup as a supported path.
+- document manual reconciliation when external DNS or proxy settings change outside Docker Host.
 
 This phase should happen after Host gateway, authorization, and module identity contracts are stable.
 
-#### Open Questions
+#### Decisions Before Phase 11
 
-- Is Cloudflare automation required for MVP, or is manual Tunnel/DNS/Access configuration enough?
-- Should Host store Cloudflare API credentials, or only generate instructions/config snippets?
-- Should each module hostname get its own Access application, or should access be enforced only by Host?
-- How should Host reconcile external ingress state if DNS/Tunnel settings are changed outside Docker Host?
+These decisions define the provider-neutral first implementation slice. The goal is to finish the Host-owned authorization and external-readiness experience while leaving provider-specific automation as a later optional feature.
+
+| Topic | Options considered | Recommendation |
+| --- | --- | --- |
+| MVP boundary | Manual documentation only; Host-side readiness checks only; provider-neutral state plus instructions and checks. | Implement provider-neutral external ingress readiness: store desired/manual state, generate setup instructions, validate Host prerequisites, and show status. Do not automate provider APIs in Phase 11. |
+| External ingress ownership | Host fully owns external ingress; Host tracks desired state only; Host only documents manual setup. | Host should own only Host-side gateway/auth configuration and a local record of external intent. DNS, TLS termination, reverse proxy, and upstream identity provider configuration remain administrator-owned in this phase. |
+| Hostname eligibility | Any hostname; only hostnames under `HOST_GATEWAY_BASE_DOMAIN`; only enabled gateway exposure hostnames. | Support only enabled gateway exposure hostnames under `HOST_GATEWAY_BASE_DOMAIN`. This keeps manual instructions aligned with the gateway's existing hostname validation and avoids publishing untracked hostnames. |
+| External state storage | Extend `/data/gateway/exposures.json`; store in auth state; create separate ingress state; no persistence. | Create a separate provider-neutral state file, for example `/data/ingress/external-ingress.json`, keyed by gateway exposure id and hostname. Store desired mode, manual status, checklist results, notes, last validation result, and timestamps. |
+| Managed status vocabulary | Boolean exposed/not exposed; detailed provider status; provider-neutral lifecycle states. | Use provider-neutral statuses: `unmanaged`, `planned`, `manualReady`, `validated`, `drifted`, `failed`, and `unknown`. These describe what Host can know without owning the external provider. |
+| Readiness checks | No checks; Host config checks only; Host config plus local network reachability checks. | Validate Host-side prerequisites: `HOST_PUBLIC_ORIGIN`, `HOST_GATEWAY_BASE_DOMAIN`, bind address, HTTPS requirement for non-loopback cookies, gateway exposure enabled state, identity mode, auth provider mode, and whether the Host can serve the exposure hostname from the current request context. |
+| Manual setup output | Static docs only; generated commands/snippets; generated checklist plus provider-neutral diagrams. | Generate per-exposure instructions for DNS target, reverse proxy route, TLS requirement, Host origin, headers to preserve or strip, websocket support, and expected health-check URL. Keep provider-specific commands out of Phase 11. |
+| Trusted proxy/OIDC guidance | Ignore external auth modes; show generic settings only; generate exact Host-side settings. | Generate Host-side guidance for both OIDC and generic trusted proxy mode: required `HOST_PUBLIC_ORIGIN`, callback URL, accepted issuer/audience fields, assertion header name, role mapping expectations, and diagnostics links. Do not configure the external provider. |
+| Direct-origin bypass | Leave to deployment docs; add warnings only; add explicit readiness checks. | Add readiness warnings when a deployment claims trusted-proxy mode but Host is still reachable directly by browser sessions. The Host should explain the risk and point to bind/firewall/reverse-proxy requirements. |
+| Reconciliation model | No reconciliation; manual mark-as-done only; refresh Host-side validation and drift indicators. | Provide explicit `refresh` validation that rechecks Host-side state against saved manual intent. Mark records `drifted` when hostname, exposure policy, identity mode, base domain, or auth mode changes after the manual setup was marked ready. |
+| Resource deletion | Delete external resources; unlink local record; keep historical records forever. | Since Phase 11 does not own external resources, deletion means unlinking the local ingress record and showing cleanup instructions for the administrator. Do not imply that external DNS/proxy resources were removed. |
+| Failure handling | Block exposure changes; fail-fast with error only; preserve partial readiness state. | Preserve partial readiness state and validation errors. A failed readiness check should not disable the gateway exposure; it should block only "validated/ready" status and show remediation steps. |
+| Status UI | Add a full ingress console; add exposure-level readiness panel; CLI-only. | Add an exposure-level readiness panel in the existing module/gateway UI. Show status, last validation time, next required action, and generated manual setup instructions. Defer a full ingress console. |
+| API shape | Fold into gateway exposure endpoints; add provider-neutral ingress endpoints; no API. | Add admin-only provider-neutral endpoints next to the gateway surface: list/status, create/update manual intent, generate instructions, refresh validation, and unlink. Require recent reauthentication only for changes that affect auth mode or trusted-proxy guidance, not for viewing instructions. |
+| Audit events | No audit events; audit status changes only; audit all readiness lifecycle events. | Audit manual ingress intent creation/update, mark-ready, refresh result changes, drift detection, unlink, and changes to generated auth guidance. Do not audit secrets, provider credentials, or full request headers. |
+| Documentation target | Keep notes in planning only; add a feature doc; update existing auth/gateway docs. | Add implemented behavior to the Auth Gateway feature doc when Phase 11 is built, and link it from `docs/root.md` if it becomes a distinct external ingress readiness page. Include a provider-neutral deployment diagram. |
+| Testing strategy | Manual checklist only; service tests only; service plus API/UI tests. | Add tests for state persistence, hostname eligibility, generated instructions, readiness validation, drift detection, audit redaction, and API authorization. Use UI tests only for the minimal status panel once implemented. |
+
+#### Recommended Starting Slice
+
+- Add an external ingress state model under `/data/ingress/` without changing the existing gateway exposure contract.
+- Add provider-neutral service helpers for manual ingress intent, instruction generation, readiness validation, and drift detection.
+- Add admin-only APIs for list/status, create/update manual intent, generate instructions, refresh validation, and unlink.
+- Add minimal Web UI status per gateway exposure with generated manual setup instructions and remediation hints.
+- Add audit events for manual readiness lifecycle changes and validation drift.
+- Document provider-neutral external deployment, including DNS, reverse proxy, TLS, websocket forwarding, OIDC callback, trusted proxy assertion, and direct-origin bypass guidance.

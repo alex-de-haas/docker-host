@@ -486,6 +486,37 @@ Implemented MVP:
 
 More details live in [Module developer mode](module-developer-mode.md).
 
+## External Ingress Readiness
+
+External ingress readiness is provider-neutral. Docker Host does not own DNS, TLS termination, reverse proxy configuration, tunnels, or upstream identity provider configuration in this phase. Instead, Host records the administrator's manual publish intent, generates setup instructions, validates Host-side prerequisites, and reports drift when Host gateway or auth settings change after an exposure was marked ready.
+
+External ingress readiness records live in `/data/ingress/external-ingress.json`. The records are keyed by gateway exposure id and hostname, separate from `/data/gateway/exposures.json`, so the Host gateway contract remains unchanged.
+
+Supported statuses:
+
+| Status | Meaning |
+| --- | --- |
+| `unmanaged` | A gateway exposure exists, but no external ingress intent is recorded. |
+| `planned` | An administrator started a manual publish record. |
+| `manualReady` | The administrator marked the external DNS/proxy/TLS checklist complete. |
+| `validated` | Host-side readiness checks passed for the saved manual intent. |
+| `drifted` | Gateway hostname, policy, identity mode, base domain, public origin, or trusted-proxy mode changed after the manual intent was saved. |
+| `failed` | Host-side readiness checks failed. |
+| `unknown` | Host cannot determine a useful readiness state. |
+
+Readiness checks are intentionally Host-side only:
+
+- `HOST_GATEWAY_BASE_DOMAIN` is configured;
+- `HOST_PUBLIC_ORIGIN` is configured;
+- the gateway exposure is enabled;
+- non-loopback public origins use HTTPS;
+- manual DNS, reverse proxy, TLS, and websocket checklist items are marked complete;
+- direct-origin bypass protection is marked complete when trusted proxy mode is enabled.
+
+The Web UI shows an external ingress readiness panel for gateway exposures. Admin-only APIs are available under `/api/ingress/exposures` for listing status, creating/updating manual intent, marking ready, refreshing validation, and unlinking local readiness records.
+
+Provider-specific automation, including Cloudflare DNS, Tunnel public hostname, or Access application management, is intentionally outside this phase. It can be added later as an optional adapter on top of the provider-neutral readiness model.
+
 ## Open Questions
 
 - Should Host remember a preferred account per module hostname?
