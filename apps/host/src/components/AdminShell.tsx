@@ -2,12 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import {
   BarChart3,
   Boxes,
   ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
   ChevronRight,
   Circle,
   CircleAlert,
@@ -15,7 +17,6 @@ import {
   Globe2,
   LayoutGrid,
   LogOut,
-  Menu,
   PackagePlus,
   PanelsTopLeft,
   RefreshCw,
@@ -23,17 +24,10 @@ import {
   ShieldCheck,
   Settings,
   Users,
-  X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,6 +42,8 @@ import type { HostPrincipal } from '@/types/auth';
 import type { HostAppEntry } from '@/types/apps';
 
 const AdminPrincipalContext = createContext<HostPrincipal | null>(null);
+const SIDEBAR_COMPACT_STORAGE_KEY = 'docker-host.sidebar.compact';
+const SIDEBAR_COMPACT_EVENT = 'docker-host-sidebar-compact-change';
 
 export function AdminPrincipalProvider({
   user,
@@ -72,132 +68,105 @@ export function useAdminPrincipal() {
   return user;
 }
 
-export function AdminShell({
+export function HostPageHeader({
   title,
   description,
   actions,
+}: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0 space-y-1">
+        <h1 className="truncate text-xl font-semibold leading-7">{title}</h1>
+        {description && (
+          <p className="text-sm text-muted-foreground">{description}</p>
+        )}
+      </div>
+      {actions && (
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+          {actions}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function AdminShell({
   children,
   contentClassName,
 }: {
-  title: string;
+  title?: string;
   description?: string;
   actions?: ReactNode;
   children: ReactNode;
   contentClassName?: string;
 }) {
   const user = useAdminPrincipal();
-  const accountLabel = user.email || user.displayName || user.id;
   const shellHomePath = user.role === 'host.user' ? '/apps' : '/';
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const sidebarCompact = useSyncExternalStore(
+    subscribeToSidebarCompactPreference,
+    readSidebarCompactPreference,
+    () => false
+  );
   const appsState = useHostApps();
 
-  async function handleLogout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    window.location.href = '/login';
+  function handleSidebarCompactChange(compact: boolean) {
+    window.localStorage.setItem(SIDEBAR_COMPACT_STORAGE_KEY, String(compact));
+    window.dispatchEvent(new Event(SIDEBAR_COMPACT_EVENT));
   }
 
   return (
-    <div className="min-h-dvh bg-muted/30 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
-      <aside className="sticky top-0 hidden h-dvh border-r bg-sidebar text-sidebar-foreground lg:block">
+    <div
+      className={cn(
+        'grid min-h-dvh bg-muted/30 transition-[grid-template-columns] duration-200',
+        sidebarCompact
+          ? 'grid-cols-[72px_minmax(0,1fr)]'
+          : 'grid-cols-[280px_minmax(0,1fr)]'
+      )}
+    >
+      <aside className="sticky top-0 h-dvh border-r bg-sidebar text-sidebar-foreground">
         <AdminSidebar
           appsState={appsState}
           shellHomePath={shellHomePath}
           user={user}
-          onNavigate={() => undefined}
+          compact={sidebarCompact}
+          onCompactChange={handleSidebarCompactChange}
         />
       </aside>
 
-      <Dialog open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-        <DialogContent
-          className="left-0 top-0 h-dvh w-80 max-w-[85vw] translate-x-0 translate-y-0 gap-0 rounded-none border-y-0 border-l-0 border-r bg-sidebar p-0 text-sidebar-foreground shadow-xl sm:max-w-80"
-          showCloseButton={false}
-        >
-          <DialogTitle className="sr-only">Host navigation</DialogTitle>
-          <DialogDescription className="sr-only">
-            Navigate between available Host tools, module management, apps, and settings.
-          </DialogDescription>
-          <AdminSidebar
-            appsState={appsState}
-            shellHomePath={shellHomePath}
-            user={user}
-            onNavigate={() => setMobileSidebarOpen(false)}
-            closeButton={(
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Close navigation"
-                onClick={() => setMobileSidebarOpen(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
-          />
-        </DialogContent>
-      </Dialog>
-
-      <div className="min-w-0">
-        <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-          <div className="flex min-h-16 flex-wrap items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="lg:hidden"
-              aria-label="Open navigation"
-              onClick={() => setMobileSidebarOpen(true)}
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-lg font-semibold leading-6">{title}</h1>
-              {description && (
-                <p className="truncate text-sm text-muted-foreground">{description}</p>
-              )}
-            </div>
-            {actions && (
-              <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
-                {actions}
-              </div>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="max-w-[11rem] px-2 sm:max-w-[16rem]"
-                  suppressHydrationWarning
-                >
-                  <span className="min-w-0 truncate text-xs sm:text-sm">{accountLabel}</span>
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel className="space-y-1">
-                  <span className="block truncate text-sm">{accountLabel}</span>
-                  <Badge variant="outline">{user.role}</Badge>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={event => {
-                    event.preventDefault();
-                    void handleLogout();
-                  }}
-                >
-                  <LogOut className="h-4 w-4" />
-                  Log out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </header>
-
+      <div className="h-dvh min-w-0 overflow-y-auto">
         <main className={cn('mx-auto w-full max-w-7xl space-y-8 px-4 py-6 sm:px-6 lg:px-8', contentClassName)}>
           {children}
         </main>
       </div>
     </div>
   );
+}
+
+function readSidebarCompactPreference() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.localStorage.getItem(SIDEBAR_COMPACT_STORAGE_KEY) === 'true';
+}
+
+function subscribeToSidebarCompactPreference(onStoreChange: () => void) {
+  if (typeof window === 'undefined') {
+    return () => undefined;
+  }
+
+  const listener = () => onStoreChange();
+  window.addEventListener('storage', listener);
+  window.addEventListener(SIDEBAR_COMPACT_EVENT, listener);
+
+  return () => {
+    window.removeEventListener('storage', listener);
+    window.removeEventListener(SIDEBAR_COMPACT_EVENT, listener);
+  };
 }
 
 type NavigationItem = {
@@ -231,16 +200,12 @@ const navigationSections: NavigationSection[] = [
         icon: Globe2,
         isActive: pathname => pathname === '/ingress',
       },
-    ],
-  },
-  {
-    title: 'Modules',
-    items: [
       {
         label: 'Installed modules',
-        href: '/#installed-modules',
+        href: '/modules',
         icon: Boxes,
-        isActive: pathname => pathname.startsWith('/modules/') && pathname !== '/modules/install',
+        isActive: pathname => pathname === '/modules' ||
+          (pathname.startsWith('/modules/') && pathname !== '/modules/install'),
       },
       {
         label: 'Install module',
@@ -279,37 +244,71 @@ function AdminSidebar({
   appsState,
   shellHomePath,
   user,
-  onNavigate,
-  closeButton,
+  compact,
+  onCompactChange,
 }: {
   appsState: AppsState;
   shellHomePath: string;
   user: HostPrincipal;
-  onNavigate: () => void;
-  closeButton?: ReactNode;
+  compact: boolean;
+  onCompactChange: (compact: boolean) => void;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const selectedAppPath = normalizeSelectedAppPath(searchParams.get('path'));
   const sections = getNavigationSections(user);
+  const accountLabel = user.displayName || user.email || user.id;
+  const accountDescription = user.email && user.email !== accountLabel ? user.email : user.role;
+
+  async function handleLogout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/login';
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-16 shrink-0 items-center justify-between border-b px-4">
-        <Link href={shellHomePath} className="flex min-w-0 items-center gap-2" onClick={onNavigate}>
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
+      <div className={cn('relative flex h-18 shrink-0 items-center border-b px-3', compact ? 'justify-center' : 'gap-2')}>
+        <Link
+          href={shellHomePath}
+          className={cn(
+            'flex min-w-0 items-center gap-3 rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+            compact && 'justify-center'
+          )}
+          title="Docker Host"
+        >
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground">
             <PanelsTopLeft className="h-5 w-5" />
           </span>
-          <span className="min-w-0 truncate text-sm font-semibold">Docker Host</span>
+          {!compact && (
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold">DOCKER HOST</span>
+            </span>
+          )}
         </Link>
-        {closeButton}
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          className="absolute right-0 top-1/2 z-20 size-7 -translate-y-1/2 translate-x-1/2 rounded-full bg-background shadow-sm"
+          aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={compact ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={() => onCompactChange(!compact)}
+        >
+          {compact ? (
+            <ChevronsRight className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronsLeft className="h-3.5 w-3.5" />
+          )}
+        </Button>
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-4" aria-label="Host navigation">
-        <div className="space-y-6">
+      <nav className={cn('min-h-0 flex-1 overflow-y-auto py-4', compact ? 'px-2' : 'px-3')} aria-label="Host navigation">
+        <div className={cn(compact ? 'space-y-4' : 'space-y-6')}>
           {sections.map(section => (
             <div key={section.title} className="space-y-2">
-              <h2 className="px-2 text-xs font-medium uppercase text-muted-foreground">{section.title}</h2>
+              <h2 className={cn('px-2 text-xs font-medium uppercase text-muted-foreground', compact && 'sr-only')}>
+                {section.title}
+              </h2>
               <div className="space-y-1">
                 {section.title === 'Apps'
                   ? (
@@ -318,7 +317,7 @@ function AdminSidebar({
                         pathname={pathname}
                         selectedAppPath={selectedAppPath}
                         user={user}
-                        onNavigate={onNavigate}
+                        compact={compact}
                       />
                     )
                   : section.items.map(item => (
@@ -326,7 +325,7 @@ function AdminSidebar({
                         key={`${section.title}:${item.label}`}
                         item={item}
                         pathname={pathname}
-                        onNavigate={onNavigate}
+                        compact={compact}
                       />
                     ))}
               </div>
@@ -334,6 +333,59 @@ function AdminSidebar({
           ))}
         </div>
       </nav>
+
+      <div className={cn('shrink-0 border-t', compact ? 'space-y-2 px-2 py-3' : 'space-y-3 p-3')}>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant={compact ? 'ghost' : 'outline'}
+              size={compact ? 'icon-lg' : 'default'}
+              className={cn(
+                compact
+                  ? 'mx-auto flex size-11 rounded-md'
+                  : 'h-auto w-full justify-start px-3 py-2 text-left'
+              )}
+              title={compact ? accountLabel : undefined}
+              suppressHydrationWarning
+            >
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-rose-700 text-xs font-semibold text-white">
+                {getAccountInitials(user)}
+              </span>
+              {!compact && (
+                <>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{accountLabel}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{accountDescription}</span>
+                  </span>
+                  <ChevronDown className="h-4 w-4" />
+                </>
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="end" className="w-64">
+            <DropdownMenuLabel className="space-y-1">
+              <span className="block truncate text-sm">{accountLabel}</span>
+              {user.email && user.email !== accountLabel && (
+                <span className="block truncate text-xs font-normal text-muted-foreground">{user.email}</span>
+              )}
+              <Badge variant="outline">{user.role}</Badge>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={event => {
+                event.preventDefault();
+                void handleLogout();
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+              Log out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+      </div>
     </div>
   );
 }
@@ -343,13 +395,13 @@ function AppNavigationSection({
   pathname,
   selectedAppPath,
   user,
-  onNavigate,
+  compact,
 }: {
   appsState: AppsState;
   pathname: string;
   selectedAppPath: string;
   user: HostPrincipal;
-  onNavigate: () => void;
+  compact: boolean;
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
 
@@ -359,6 +411,7 @@ function AppNavigationSection({
         icon={RefreshCw}
         label="Loading apps"
         className="animate-pulse"
+        compact={compact}
       />
     );
   }
@@ -370,6 +423,7 @@ function AppNavigationSection({
         icon={loginRequired ? ShieldCheck : CircleAlert}
         label={loginRequired ? 'Login required' : 'Apps unavailable'}
         title={appsState.error}
+        compact={compact}
       />
     );
   }
@@ -379,6 +433,7 @@ function AppNavigationSection({
       <NavigationPlaceholder
         icon={LayoutGrid}
         label={user.role === 'host.user' ? 'No assigned apps' : 'No apps registered'}
+        compact={compact}
       />
     );
   }
@@ -395,7 +450,8 @@ function AppNavigationSection({
           <Link
             href={app.entryPath}
             className={cn(
-              'flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-sm transition-colors',
+              'relative flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md text-sm transition-colors',
+              compact ? 'justify-center px-0' : 'px-2',
               isActive
                 ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
                 : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
@@ -408,24 +464,30 @@ function AppNavigationSection({
                 event.preventDefault();
                 return;
               }
-              onNavigate();
             }}
           >
             <Icon className="h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{app.displayName}</span>
-            {app.source === 'developer' && (
-              <Badge
-                variant="outline"
-                className="shrink-0 border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] leading-4 text-sky-700"
-              >
-                Dev
-              </Badge>
+            {!compact && (
+              <>
+                <span className="min-w-0 flex-1 truncate">{app.displayName}</span>
+                {app.source === 'developer' && (
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] leading-4 text-sky-700"
+                  >
+                    Dev
+                  </Badge>
+                )}
+                {app.status !== 'available' && (
+                  <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+                )}
+              </>
             )}
-            {app.status !== 'available' && (
-              <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+            {compact && (
+              <AppCompactMarkers app={app} />
             )}
           </Link>
-          {app.navigation.length > 0 && (
+          {!compact && app.navigation.length > 0 && (
             <Button
               type="button"
               variant="ghost"
@@ -454,7 +516,7 @@ function AppNavigationSection({
             </Button>
           )}
         </div>
-        {expanded && app.navigation.length > 0 && (
+        {!compact && expanded && app.navigation.length > 0 && (
           <div className="ml-6 space-y-1 border-l border-sidebar-border pl-2">
             {app.navigation.map(item => {
               const childActive = isActive && selectedAppPath === item.path;
@@ -468,7 +530,6 @@ function AppNavigationSection({
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
                       : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                   )}
-                  onClick={onNavigate}
                 >
                   <Circle className="h-2 w-2 shrink-0 fill-current" />
                   <span className="min-w-0 truncate">{item.label}</span>
@@ -487,23 +548,26 @@ function NavigationPlaceholder({
   label,
   className,
   title,
+  compact,
 }: {
   icon: LucideIcon;
   label: string;
   className?: string;
   title?: string;
+  compact: boolean;
 }) {
   return (
     <div
       className={cn(
-        'flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground opacity-70',
+        'flex min-h-9 items-center gap-2 rounded-md text-sm text-muted-foreground opacity-70',
+        compact ? 'justify-center px-0' : 'px-2',
         className
       )}
       aria-disabled="true"
-      title={title}
+      title={title ?? (compact ? label : undefined)}
     >
       <Icon className="h-4 w-4 shrink-0" />
-      <span className="min-w-0 truncate">{label}</span>
+      <span className={cn('min-w-0 truncate', compact && 'sr-only')}>{label}</span>
     </div>
   );
 }
@@ -511,16 +575,17 @@ function NavigationPlaceholder({
 function NavigationLink({
   item,
   pathname,
-  onNavigate,
+  compact,
 }: {
   item: NavigationItem;
   pathname: string;
-  onNavigate: () => void;
+  compact: boolean;
 }) {
   const active = item.isActive?.(pathname) ?? false;
   const Icon = item.icon;
   const className = cn(
-    'flex min-h-9 items-center gap-2 rounded-md px-2 text-sm transition-colors',
+    'flex min-h-9 items-center gap-2 rounded-md text-sm transition-colors',
+    compact ? 'justify-center px-0' : 'px-2',
     active
       ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
       : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
@@ -529,19 +594,53 @@ function NavigationLink({
 
   if (!item.href || item.disabled) {
     return (
-      <div className={className} aria-disabled="true">
+      <div className={className} aria-disabled="true" title={compact ? item.label : undefined}>
         <Icon className="h-4 w-4 shrink-0" />
-        <span className="min-w-0 truncate">{item.label}</span>
+        <span className={cn('min-w-0 truncate', compact && 'sr-only')}>{item.label}</span>
       </div>
     );
   }
 
   return (
-    <Link href={item.href} className={className} onClick={onNavigate}>
+    <Link href={item.href} className={className} title={compact ? item.label : undefined}>
       <Icon className="h-4 w-4 shrink-0" />
-      <span className="min-w-0 truncate">{item.label}</span>
+      <span className={cn('min-w-0 truncate', compact && 'sr-only')}>{item.label}</span>
     </Link>
   );
+}
+
+function AppCompactMarkers({ app }: { app: HostAppEntry }) {
+  if (app.source !== 'developer' && app.status === 'available') {
+    return null;
+  }
+
+  return (
+    <span className="absolute right-1 top-1 flex gap-0.5" aria-hidden="true">
+      {app.source === 'developer' && (
+        <span className="size-1.5 rounded-full bg-sky-500" />
+      )}
+      {app.status !== 'available' && (
+        <span className="size-1.5 rounded-full bg-amber-500" />
+      )}
+    </span>
+  );
+}
+
+function getAccountInitials(user: HostPrincipal) {
+  const source = user.displayName || user.email || user.id;
+  const parts = source
+    .replace(/@.*/, '')
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return 'U';
+  }
+
+  return parts
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase() ?? '')
+    .join('');
 }
 
 function getAppIcon(iconKey?: string): LucideIcon {

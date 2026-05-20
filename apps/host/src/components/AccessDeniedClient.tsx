@@ -14,7 +14,7 @@ export function AccessDeniedClient({
     <AdminShell
       title="Access denied"
       description={`${resourceName} requires a Host administrator account.`}
-      contentClassName="flex min-h-[calc(100dvh-4rem)] items-center justify-center"
+      contentClassName="flex min-h-full items-center justify-center"
     >
       <section className="w-full max-w-lg rounded-md border bg-background px-6 py-10 text-center">
         <div className="mx-auto flex size-12 items-center justify-center rounded-md bg-muted">

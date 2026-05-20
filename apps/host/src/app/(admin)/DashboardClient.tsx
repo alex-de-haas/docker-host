@@ -1,104 +1,43 @@
 'use client';
 
-import Link from 'next/link';
-import { LoaderCircle, Plus, RefreshCw } from 'lucide-react';
-import { AdminShell } from '@/components/AdminShell';
-import { ModuleList } from '@/components/ModuleList';
-import { ModuleStatsCards } from '@/components/ModuleStatsCards';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { AdminShell, HostPageHeader } from '@/components/AdminShell';
+import { InstalledModulesWidget } from '@/components/InstalledModulesWidget';
 import { useModules } from '@/hooks/useModules';
 
 export function DashboardClient() {
   const {
     modules,
-    loading,
     error,
     lastUpdatedAt,
     refreshState,
-    pendingAction,
     refetch,
-    performAction,
-    getRecoveryPlan,
-    applyRecoveryAction,
   } = useModules();
 
-  const isRefreshing = refreshState !== 'idle';
-  const refreshLabel =
-    refreshState === 'refreshing'
-      ? 'Refreshing data'
-      : lastUpdatedAt
-        ? `Updated ${new Intl.DateTimeFormat(undefined, {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-          }).format(lastUpdatedAt)}`
-        : 'Waiting for first sync';
-
   return (
-    <AdminShell
-      title="Dashboard"
-      description="Installed modules and Docker runtime state"
-      actions={(
-        <>
-          <Badge variant="outline" className="hidden sm:inline-flex">
-            {isRefreshing ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <span className="h-2 w-2 rounded-full bg-emerald-500" />}
-            {refreshLabel}
-          </Badge>
-          <Button variant="outline" size="icon" onClick={refetch} disabled={isRefreshing} aria-label="Refresh modules">
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </Button>
-        </>
+    <AdminShell>
+      <HostPageHeader
+        title="Dashboard"
+        description="Host overview widgets"
+      />
+
+      {error && (
+        <div className="bg-destructive/10 text-destructive rounded-lg p-4">
+          <p className="text-sm font-medium">Error: {error}</p>
+          <p className="text-xs mt-1">
+            Module lifecycle actions require the Host backend to reach Docker and the Host modules store.
+          </p>
+        </div>
       )}
-    >
-        {error && (
-          <div className="bg-destructive/10 text-destructive rounded-lg p-4">
-            <p className="text-sm font-medium">Error: {error}</p>
-            <p className="text-xs mt-1">
-              Module lifecycle actions require the Host backend to reach Docker and the Host modules store.
-            </p>
-          </div>
-        )}
 
-        <section>
-          <ModuleStatsCards modules={modules} />
-        </section>
-
-        <section id="installed-modules" className="scroll-mt-24 space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">Installed modules</h2>
-              <p className="text-sm text-muted-foreground">
-                Module state is resolved through the Host backend API and Docker runtime state.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">
-                {modules.length} module{modules.length !== 1 ? 's' : ''}
-              </span>
-              <Button asChild>
-                <Link href="/modules/install">
-                  <Plus className="h-4 w-4" />
-                  Install module
-                </Link>
-              </Button>
-            </div>
-          </div>
-
-          {loading && modules.length === 0 ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <ModuleList
-              modules={modules}
-              pendingAction={pendingAction}
-              onAction={performAction}
-              onRecoveryPlan={getRecoveryPlan}
-              onRecoveryApply={applyRecoveryAction}
-            />
-          )}
-        </section>
+      <section>
+        <InstalledModulesWidget
+          modules={modules}
+          lastUpdatedAt={lastUpdatedAt}
+          refreshState={refreshState}
+          onRefresh={refetch}
+          installedModulesHref="/modules"
+        />
+      </section>
     </AdminShell>
   );
 }

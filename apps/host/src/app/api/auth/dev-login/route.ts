@@ -8,7 +8,7 @@ import {
   isLoopbackRequest,
 } from '@/lib/auth-http';
 import {
-  createDevAdminSession,
+  createDevSession,
   isDevAuthAutoLoginEnabled,
 } from '@/lib/auth-service';
 
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
 
   try {
     assertSecureEnoughForCookies(request);
-    const result = await createDevAdminSession(getRequestMeta(request));
+    const result = await createDevSession(getRequestMeta(request));
     return createSessionRedirectResponse(request, getRedirectTo(request), result.sessionToken);
   } catch (error) {
     return authExceptionResponse(error);

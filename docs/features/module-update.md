@@ -138,7 +138,7 @@ The installed module record stores the last operation, reviewed update plan dige
 
 The update review UI uses the dedicated route `/modules/{moduleId}/update`, while reusing install review components where practical.
 
-Dashboard rows expose update as an action for installed modules. Failed updates show retry/update-review recovery actions without treating them as failed installs.
+Installed module rows expose update as an action for installed modules. Failed updates show retry/update-review recovery actions without treating them as failed installs.
 
 ## Test Bar
 

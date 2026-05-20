@@ -18,7 +18,7 @@ import {
   Settings2,
   Trash2,
 } from 'lucide-react';
-import { AdminShell } from '@/components/AdminShell';
+import { AdminShell, HostPageHeader } from '@/components/AdminShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -156,16 +156,17 @@ export function InstallModuleClient() {
   }
 
   return (
-    <AdminShell
-      title="Install module"
-      description="Review metadata plan"
-      actions={plan && (
-        <Badge variant={plan.conflicts.length > 0 ? 'destructive' : 'outline'}>
-          {plan.conflicts.length > 0 ? 'Blocked' : 'Ready'}
-        </Badge>
-      )}
-      contentClassName="space-y-6"
-    >
+    <AdminShell contentClassName="space-y-6">
+        <HostPageHeader
+          title="Install module"
+          description="Review metadata plan"
+          actions={plan && (
+            <Badge variant={plan.conflicts.length > 0 ? 'destructive' : 'outline'}>
+              {plan.conflicts.length > 0 ? 'Blocked' : 'Ready'}
+            </Badge>
+          )}
+        />
+
         <section className="rounded-lg border bg-card p-5">
           <form onSubmit={handlePlanSubmit} className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
             <div className="space-y-2">

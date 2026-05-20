@@ -1,23 +1,25 @@
-# Web UI dashboard
+# Web UI Dashboard
 
 The Web UI is the primary daily interface for Docker Host module operations. The dashboard is centered on installed modules from the Host backend API instead of direct raw Docker container management.
 
 ## Scope
 
-The dashboard reads installed modules from `GET /api/modules`, shows Host/Docker status cards, and uses module lifecycle routes for row actions:
+The dashboard reads installed modules from `GET /api/modules` and shows Host overview widgets. The current Installed modules widget combines module count, runtime health, summary metrics, widget-local refresh state, and a link to `/modules` for the detailed module management page. It intentionally avoids rendering the module list because installed module counts can grow large.
+
+The `/modules` page owns the installed module table and uses module lifecycle routes for row actions:
 
 - `POST /api/modules/{moduleId}/start`
 - `POST /api/modules/{moduleId}/stop`
 - `POST /api/modules/{moduleId}/restart`
 
-The dashboard displays module metadata, image reference, operation status, Docker runtime state, container identity, timestamps, and any recorded module/runtime error. Rows can expand for details. Lifecycle actions are enabled only for modules in `operationStatus=installed`; failed or removing modules expose recovery actions instead.
+The `/modules` page displays module metadata, image reference, operation status, Docker runtime state, container identity, timestamps, and any recorded module/runtime error. Rows can expand for details. Lifecycle actions are enabled only for modules in `operationStatus=installed`; failed or removing modules expose recovery actions instead.
 
-The dashboard is an admin-only Host management surface inside the authenticated shell. Non-admin `host.user` principals use the `/apps` portal instead and do not receive dashboard module lifecycle controls or the admin navigation groups.
+The dashboard and `/modules` page are admin-only Host management surfaces inside the authenticated shell. Non-admin `host.user` principals use the `/apps` portal instead and do not receive module lifecycle controls or the admin navigation groups.
 
 Implemented module-management flows:
 
 - Install uses the dedicated `/modules/install` route. It accepts a metadata URL, calls `POST /api/modules/install/plan`, renders the reviewed plan, collects setting values and external mount selections, shows a redacted payload preview, then submits `POST /api/modules/install`.
-- Update uses the dedicated `/modules/{moduleId}/update` route. Dashboard rows link to it for installed modules. The route calls `POST /api/modules/{moduleId}/update/plan`, shows refreshed metadata changes and prompts, builds a redacted update request, then submits `POST /api/modules/{moduleId}/update`.
+- Update uses the dedicated `/modules/{moduleId}/update` route. Installed module rows link to it for installed modules. The route calls `POST /api/modules/{moduleId}/update/plan`, shows refreshed metadata changes and prompts, builds a redacted update request, then submits `POST /api/modules/{moduleId}/update`.
 - Failed update rows expose `POST /api/modules/{moduleId}/update/retry` plus a link to review the update again.
 - Failed install rows expose `POST /api/modules/{moduleId}/retry` and cleanup through a backend-generated confirmation dialog.
 - Installed rows expose remove through a backend-generated confirmation dialog.
@@ -28,10 +30,11 @@ Implemented module-management flows:
 ```mermaid
 flowchart TD
   A["Web UI dashboard"] --> B["GET /api/modules"]
-  A --> C["Lifecycle row actions"]
-  A --> D["/modules/install"]
-  A --> E["/modules/{moduleId}/update"]
-  A --> F["Recovery dialogs"]
+  A --> U["/modules installed modules page"]
+  U --> C["Lifecycle row actions"]
+  U --> D["/modules/install"]
+  U --> E["/modules/{moduleId}/update"]
+  U --> F["Recovery dialogs"]
   A --> Q["/ingress gateway page"]
   C --> G["start/stop/restart API"]
   D --> H["install plan/apply API"]
@@ -61,5 +64,9 @@ Failed modules remain visible with their last operation error so administrators 
 ## Open Questions
 
 - What detail view should own module logs once diagnostics endpoints are added?
+
+## TODO
+
+- Define a module-provided dashboard widget contract. The intended direction is for installed apps/modules to declare lightweight dashboard widgets that the Host can render, likely as isolated iframe surfaces with declared data endpoints, refresh behavior, sizing, and access policy.
 
 Resolved decision: module update uses a dedicated review route at `/modules/{moduleId}/update`, while reusing install review interaction patterns where practical.

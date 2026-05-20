@@ -17,7 +17,7 @@ import {
   Settings2,
   Trash2,
 } from 'lucide-react';
-import { AdminShell } from '@/components/AdminShell';
+import { AdminShell, HostPageHeader } from '@/components/AdminShell';
 import {
   buildModuleUpdateRequest,
   getUpdateSettingFieldName,
@@ -152,23 +152,24 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
   }
 
   return (
-    <AdminShell
-      title="Update module"
-      description={moduleId}
-      actions={(
-          <div className="flex items-center gap-2">
-            {plan && (
-              <Badge variant={plan.conflicts.length > 0 ? 'destructive' : 'outline'}>
-                {plan.conflicts.length > 0 ? 'Blocked' : 'Ready'}
-              </Badge>
-            )}
-            <Button variant="outline" size="icon" onClick={() => void loadPlan()} disabled={isPlanning}>
-              {isPlanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            </Button>
-          </div>
-      )}
-      contentClassName="space-y-6"
-    >
+    <AdminShell contentClassName="space-y-6">
+        <HostPageHeader
+          title="Update module"
+          description={moduleId}
+          actions={(
+            <div className="flex items-center gap-2">
+              {plan && (
+                <Badge variant={plan.conflicts.length > 0 ? 'destructive' : 'outline'}>
+                  {plan.conflicts.length > 0 ? 'Blocked' : 'Ready'}
+                </Badge>
+              )}
+              <Button variant="outline" size="icon" onClick={() => void loadPlan()} disabled={isPlanning}>
+                {isPlanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              </Button>
+            </div>
+          )}
+        />
+
         {isPlanning && (
           <section className="rounded-lg border bg-card p-5">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">

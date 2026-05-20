@@ -57,7 +57,13 @@ The repository uses npm workspace scripts from the root. `npm run host:dev`, `np
 Use this mode for fast UI work when the first screen should be the dashboard:
 
 ```bash
-npm run host:dev:auto-auth
+npm run host:dev:auth-admin
+```
+
+Use this mode when the first shell session should be a non-admin user:
+
+```bash
+npm run host:dev:auth-user
 ```
 
 This script sets:
@@ -65,15 +71,25 @@ This script sets:
 - `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the repository-local `.docker-host-dev/` directory;
 - `HOST_DEV_AUTH=auto`, which enables development-only auto-login.
 
+The user-role script uses `.docker-host-dev-user/` and also sets `HOST_DEV_AUTH_ROLE=user`.
+
 When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only from loopback hosts such as `127.0.0.1` or `localhost`.
 
-The route does not disable authentication. It creates or updates a normal local `host.admin` account, issues a normal browser session cookie, and then redirects back to the dashboard. The default development account is:
+The route does not disable authentication. It creates or updates normal local accounts, issues a normal browser session cookie, and then redirects back to the shell. The default development administrator account is:
 
 - email: `admin@docker-host.local`;
 - password: `docker-host-dev-admin`;
-- display name: `Docker Host Dev Admin`.
+- display name: `Dev Admin`.
 
 Override these values with `HOST_DEV_ADMIN_EMAIL`, `HOST_DEV_ADMIN_PASSWORD`, and `HOST_DEV_ADMIN_NAME` if a local test needs different credentials. The password still has to satisfy the normal local password policy.
+
+When `HOST_DEV_AUTH_ROLE=user` is set, auto-login also creates or updates a normal local user account and signs in as that user:
+
+- email: `user@docker-host.local`;
+- password: `docker-host-dev-user`;
+- display name: `Dev User`.
+
+Override these values with `HOST_DEV_USER_EMAIL`, `HOST_DEV_USER_PASSWORD`, and `HOST_DEV_USER_NAME`. The administrator account is still seeded so the Host is not left in setup-required mode.
 
 Production runs and direct `npm run host:dev` runs do not enable this behavior. They continue to require a CLI-generated setup token for first administrator setup.
 

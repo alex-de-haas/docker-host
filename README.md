@@ -56,12 +56,21 @@ For UI work where you want to land directly on the dashboard with isolated
 development state:
 
 ```bash
-npm run host:dev:auto-auth
+npm run host:dev:auth-admin
 ```
 
 This uses `.docker-host-dev/` in the repository as the Host data root and enables
 development-only auto-login. It creates a normal local `host.admin` user and
 browser session; production setup-token behavior is unchanged.
+
+For user-role shell testing, use:
+
+```bash
+npm run host:dev:auth-user
+```
+
+That command uses `.docker-host-dev-user/`, seeds a local `host.admin` so setup is
+complete, and signs the browser in as a normal local `host.user`.
 
 The server connects to Docker using:
 

@@ -7,10 +7,10 @@ The Host Web UI uses an authenticated admin shell for protected Host pages. The 
 Implemented Phase 1 behavior:
 
 - protected admin pages live under a Next.js route group and keep their public URLs stable;
-- `/`, `/modules/install`, `/modules/{moduleId}/update`, `/ingress`, and `/settings/security` render inside the shared shell;
+- `/`, `/modules`, `/modules/install`, `/modules/{moduleId}/update`, `/ingress`, and `/settings/security` render inside the shared shell;
 - `/login`, `/setup`, and `/recovery` remain standalone pages outside the shell;
 - the route group layout enforces the existing `host.admin` page guard;
-- the shell owns the sidebar, mobile drawer, sticky topbar, account menu, logout action, and page action slot.
+- the shell owns the persistent sidebar, compact sidebar toggle, account menu, logout action, and app navigation chrome.
 
 Implemented Phase 2 behavior:
 
@@ -35,8 +35,8 @@ Implemented Phase 4 behavior:
 - app entries can show nested navigation from `ui.navigation`;
 - `/apps/{moduleId}` opens a Host-owned app page without proxying that path to module containers;
 - the Host app page embeds module UIs in an iframe using `/api/apps/{moduleId}/embed?path=...`;
-- the shell topbar remains Host-owned and shows app context, status, and refresh controls;
-- module UIs cannot directly override the shell topbar;
+- the shell keeps Host-owned app navigation in the sidebar and shows app status/developer markers next to app entries;
+- module UIs own their in-page headers, page actions, and internal navigation;
 - the embed route requires Host authentication, validates the selected shell App, proxies only the reserved embed path, injects module identity, strips Host-owned headers, and rewrites root-relative module links and assets through the reserved embed URL.
 
 Implemented Phase 5 behavior:
@@ -68,7 +68,7 @@ Implemented Phase 7 behavior:
 - developer app ids are qualified as `dev:{targetId}` while module identity still uses the target's `moduleId`;
 - developer apps open through `/apps/dev/{targetId}` and the same-origin embed transport `/api/apps/dev/{targetId}/embed`;
 - developer embed transport uses the target's local URL and path prefix while preserving Host authentication, module identity token behavior, Host-owned header stripping, and scoped module cookies;
-- the Apps sidebar, Apps portal, and app topbar mark developer entries with a compact `Dev` badge.
+- the Apps sidebar and Apps portal mark developer entries with a compact `Dev` badge or marker.
 
 Implemented Phase 8 behavior:
 
@@ -86,8 +86,7 @@ The sidebar combines static Host management navigation with dynamic Apps navigat
 - Host:
   - Dashboard (`/`)
   - Gateway exposures (`/ingress`)
-- Modules:
-  - Installed modules (`/#installed-modules`)
+  - Installed modules (`/modules`)
   - Install module (`/modules/install`)
 - Apps:
   - loading, error, and empty states when app registry data is unavailable or empty
@@ -96,14 +95,17 @@ The sidebar combines static Host management navigation with dynamic Apps navigat
 - Settings:
   - Security (`/settings/security`)
 
-For `host.user`, the sidebar is reduced to Apps navigation plus the account menu. Host, Modules, and Settings navigation are hidden because those workflows remain administrative.
+For `host.user`, the sidebar is reduced to Apps navigation plus the account menu. Host and Settings navigation are hidden because those workflows remain administrative.
+
+The sidebar is always visible. Users can switch it between an expanded mode with labels and nested app navigation, and a compact mode that keeps only the primary icons visible. The selected mode is stored locally in the browser. The mobile drawer was removed with the topbar because navigation no longer disappears below the desktop breakpoint.
 
 ```mermaid
 flowchart TD
   A["Shell route group"] --> B["Authenticated shell guard"]
   B --> C["Shared Host shell"]
   C --> D["Dashboard"]
-  C --> E["Install module"]
+  C --> E["Installed modules"]
+  C --> X["Install module"]
   C --> F["Update module"]
   C --> G["Gateway exposures and external ingress"]
   C --> H["Security settings"]
@@ -119,21 +121,21 @@ flowchart TD
 
 ## Responsive Behavior
 
-The shell uses a static sidebar on desktop (`lg` and wider). Below that breakpoint, navigation is hidden behind a drawer opened from the topbar. Selecting a drawer navigation item closes the drawer and navigates to the target route.
+The shell uses a persistent sidebar at every viewport size. Expanded mode gives the Host and Apps navigation enough space for labels, nested entries, and account details. Compact mode narrows the sidebar to an icon rail for workflows that need more horizontal room.
 
-The topbar contains page title and description, a page-specific action slot, and the account dropdown. Long titles, descriptions, and account text truncate instead of causing horizontal page overflow.
+The shared topbar has been removed. Host management pages render any needed title, description, and page actions inside their own page content. Embedded module apps receive the main content area without Host page chrome above the iframe, so each module remains responsible for its own headers and page-level actions.
 
-For embedded module apps, the topbar remains Host-owned. The Host app route sets the app name, selected nested navigation label, status badge, and iframe refresh action. Module UIs may render their own internal headers inside the iframe, but they do not receive runtime control over the shell chrome. If module-provided topbar actions are needed later, they should be added through a new declarative metadata contract.
+For embedded module apps, the sidebar remains Host-owned. The Host app route uses the selected app and nested navigation state to highlight sidebar entries, while the module UI renders its own internal header, navigation, and actions inside the iframe. If module-provided global shell actions are needed later, they should be added through a new declarative metadata contract instead of giving modules direct runtime control over Host chrome.
 
-Developer app entries use the same shell chrome and add a compact `Dev` badge in the topbar. The badge identifies local developer targets without changing module access rules or production exposure state.
+Developer app entries use the same shell chrome and add a compact `Dev` marker next to the app entry. The marker identifies local developer targets without changing module access rules or production exposure state.
 
 ## Page Integration
 
-The dashboard remains focused on installed module status, lifecycle actions, recovery dialogs, and links into install/update flows. Gateway exposure management and external ingress readiness live on the dedicated `/ingress` page and reuse the existing gateway and readiness APIs.
+The dashboard remains focused on Host overview widgets and links into the dedicated `/modules` management page. The current Installed modules widget owns its own refresh status and quick health summary. Installed module lifecycle actions, recovery dialogs, and links into install/update flows live on `/modules`. Gateway exposure management and external ingress readiness live on the dedicated `/ingress` page and reuse the existing gateway and readiness APIs.
 
-Install, update, and security pages keep their existing backend calls and form behavior. Their previous page headers were replaced by shell page metadata and topbar action slots.
+Install, update, and security pages keep their existing backend calls and form behavior. Their page headers and actions now live inside the page content instead of the shared shell.
 
-Non-admin users do not receive Host management pages. Opening `/`, `/ingress`, `/modules/install`, `/modules/{moduleId}/update`, or `/settings/security` as `host.user` keeps the authenticated shell but routes the user to `/apps` or renders an access-denied state. The underlying management APIs continue to require `host.admin`.
+Non-admin users do not receive Host management pages. Opening `/`, `/ingress`, `/modules`, `/modules/install`, `/modules/{moduleId}/update`, or `/settings/security` as `host.user` keeps the authenticated shell but routes the user to `/apps` or renders an access-denied state. The underlying management APIs continue to require `host.admin`.
 
 `/apps` is the default portal page for `host.user`. It renders the current principal's app registry entries, lets users open available apps, and shows clear empty states when no apps are assigned, app registry data is unavailable, or the session needs login again.
 
@@ -183,6 +185,7 @@ Rendered release smoke checks should cover:
 - empty `/apps` state for an authenticated user with no visible apps;
 - one visible app in the Apps portal and sidebar;
 - nested app navigation from `ui.navigation`;
+- expanded and compact persistent sidebar states;
 - blocked iframe fallback when a module sends `X-Frame-Options: DENY` or `Content-Security-Policy: frame-ancestors 'none'`;
 - admin sidebar versus user sidebar filtering.
 

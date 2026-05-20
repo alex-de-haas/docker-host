@@ -199,7 +199,7 @@ Key local-auth decisions:
 - the first `host.admin` is created through a local CLI-generated setup token;
 - setup tokens are single-use, stored hashed, expire after 15 minutes, and are invalidated after first admin creation;
 - browser sessions use opaque random tokens in HttpOnly cookies with server-side hashed token records;
-- development auto-login is available only through explicit `HOST_DEV_AUTH=auto` configuration in development runtime and issues a normal local administrator session instead of disabling authorization;
+- development auto-login is available only through explicit `HOST_DEV_AUTH=auto` configuration in development runtime and issues a normal local administrator or user session instead of disabling authorization;
 - default browser sessions use a 12-hour idle timeout and a 14-day absolute lifetime;
 - logout revokes the current account session by default;
 - multiple browser accounts may be remembered, with one active account per request;

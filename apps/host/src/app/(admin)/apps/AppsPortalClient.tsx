@@ -10,7 +10,7 @@ import {
   LockKeyhole,
   RefreshCw,
 } from 'lucide-react';
-import { AdminShell, useAdminPrincipal } from '@/components/AdminShell';
+import { AdminShell, HostPageHeader, useAdminPrincipal } from '@/components/AdminShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useHostApps } from '@/hooks/useHostApps';
@@ -23,24 +23,26 @@ export function AppsPortalClient() {
   const isRefreshing = appsState.refreshState !== 'idle';
 
   return (
-    <AdminShell
-      title="Apps"
-      description={user.role === 'host.admin'
-        ? 'Shell apps available through Docker Host'
-        : 'Assigned apps available to your account'}
-      actions={(
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={isRefreshing}
-          onClick={() => void appsState.refetch()}
-        >
-          <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-          Refresh
-        </Button>
-      )}
-    >
+    <AdminShell>
+      <HostPageHeader
+        title="Apps"
+        description={user.role === 'host.admin'
+          ? 'Shell apps available through Docker Host'
+          : 'Assigned apps available to your account'}
+        actions={(
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isRefreshing}
+            onClick={() => void appsState.refetch()}
+          >
+            <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+            Refresh
+          </Button>
+        )}
+      />
+
       {renderPortalContent({ appsState, isUser: user.role === 'host.user' })}
     </AdminShell>
   );

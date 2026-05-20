@@ -3,20 +3,17 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { AdminShell } from '@/components/AdminShell';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useHostApps } from '@/hooks/useHostApps';
-import { cn } from '@/lib/utils';
 import type { HostAppEntry, HostAppNavigationItem } from '@/types/apps';
 
 export function AppHostClient({ appId }: { appId: string }) {
   const searchParams = useSearchParams();
   const selectedPath = normalizeSelectedPath(searchParams.get('path'));
   const appsState = useHostApps();
-  const [reloadVersion, setReloadVersion] = useState(0);
   const [frameWarning, setFrameWarning] = useState<string | null>(null);
 
   const app = useMemo(
@@ -31,61 +28,12 @@ export function AppHostClient({ appId }: { appId: string }) {
     ? getEmbeddedUrl(app, selectedNavigation, selectedPath)
     : null;
 
-  const title = app?.displayName ?? 'Opening app';
-  const description = app
-    ? selectedNavigation?.label ?? app.description ?? 'Embedded module UI'
-    : 'Embedded module UI';
-  const statusLabel = getStatusLabel(app);
-
   return (
-    <AdminShell
-      title={title}
-      description={description}
-      actions={(
-        <>
-          {app?.source === 'developer' && (
-            <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-              Dev
-            </Badge>
-          )}
-          {statusLabel && (
-            <Badge
-              variant="outline"
-              className={cn(
-                app?.status === 'available'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : 'border-amber-200 bg-amber-50 text-amber-800'
-              )}
-            >
-              {statusLabel}
-            </Badge>
-          )}
-          {embeddedUrl && app?.status === 'available' && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={appsState.refreshState === 'refreshing'}
-              onClick={() => {
-                setFrameWarning(null);
-                setReloadVersion(current => current + 1);
-                void appsState.refetch();
-              }}
-            >
-              <RefreshCw className={cn('h-4 w-4', appsState.refreshState === 'refreshing' && 'animate-spin')} />
-              Refresh
-            </Button>
-          )}
-        </>
-      )}
-      contentClassName="flex min-h-[calc(100dvh-4rem)] max-w-none flex-col space-y-4 px-4 py-4 sm:px-6 lg:px-8"
-    >
+    <AdminShell contentClassName="flex h-full max-w-none flex-col p-0">
       {renderAppHostContent({
         appsState,
         app,
         embeddedUrl,
-        reloadVersion,
-        selectedPath,
         frameWarning,
         setFrameWarning,
       })}
@@ -97,16 +45,12 @@ function renderAppHostContent({
   appsState,
   app,
   embeddedUrl,
-  reloadVersion,
-  selectedPath,
   frameWarning,
   setFrameWarning,
 }: {
   appsState: ReturnType<typeof useHostApps>;
   app: HostAppEntry | null;
   embeddedUrl: string | null;
-  reloadVersion: number;
-  selectedPath: string;
   frameWarning: string | null;
   setFrameWarning: (message: string | null) => void;
 }) {
@@ -174,7 +118,7 @@ function renderAppHostContent({
   }
 
   return (
-    <section className="flex min-h-[560px] flex-1 flex-col overflow-hidden rounded-md border bg-background">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {frameWarning && (
         <div className="flex items-start gap-3 border-b bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -194,10 +138,10 @@ function renderAppHostContent({
         </div>
       )}
       <iframe
-        key={`${embeddedUrl}:${reloadVersion}`}
+        key={embeddedUrl}
         src={embeddedUrl}
         title={`${app.displayName} module UI`}
-        className="min-h-[560px] flex-1 border-0 bg-white"
+        className="min-h-0 flex-1 border-0 bg-white"
         onError={() => {
           setFrameWarning('The module UI could not be embedded. Open it through the Host shell after the module supports iframe embedding.');
         }}
@@ -205,13 +149,6 @@ function renderAppHostContent({
           setFrameWarning(null);
         }}
       />
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-        <span className="min-w-0 truncate">Module path: {selectedPath}</span>
-        <span className="inline-flex items-center gap-1">
-          <ExternalLink className="h-3.5 w-3.5" />
-          Host-owned embedded transport
-        </span>
-      </div>
     </section>
   );
 }
@@ -263,14 +200,6 @@ function getEmbeddedUrl(
   }
 
   return `/api/apps/${encodeURIComponent(app.moduleId)}/embed?path=${encodeURIComponent(selectedPath)}`;
-}
-
-function getStatusLabel(app: HostAppEntry | null) {
-  if (!app) {
-    return null;
-  }
-
-  return app.status === 'available' ? 'Available' : 'Unavailable';
 }
 
 function normalizeSelectedPath(path: string | null) {

@@ -10,7 +10,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
-import { AdminShell } from '@/components/AdminShell';
+import { AdminShell, HostPageHeader } from '@/components/AdminShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -200,16 +200,17 @@ export function SecuritySettingsClient() {
   }
 
   return (
-    <AdminShell
-      title="Security settings"
-      description="Sessions, reauthentication, diagnostics, and audit events"
-      actions={(
-        <Button variant="outline" size="icon" onClick={() => void loadSecurityState()} disabled={loading} aria-label="Refresh security settings">
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-        </Button>
-      )}
-      contentClassName="space-y-6"
-    >
+    <AdminShell contentClassName="space-y-6">
+        <HostPageHeader
+          title="Security settings"
+          description="Sessions, reauthentication, diagnostics, and audit events"
+          actions={(
+            <Button variant="outline" size="icon" onClick={() => void loadSecurityState()} disabled={loading} aria-label="Refresh security settings">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
+          )}
+        />
+
         {error && (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {error}

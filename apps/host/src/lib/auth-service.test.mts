@@ -10,6 +10,7 @@ import {
   bootstrapFirstAdmin,
   createCliTokenForAdmin,
   createDevAdminSession,
+  createDevSession,
   createSetupToken,
   getAuthStatus,
   hasRecentSessionReauthentication,
@@ -56,13 +57,16 @@ test('bootstraps the first admin with a setup token and creates a session', asyn
 test('development auto-login creates a normal admin session only when enabled', async t => {
   const config = await createTestConfig();
   const previousDevAuth = process.env.HOST_DEV_AUTH;
+  const previousDevAuthRole = process.env.HOST_DEV_AUTH_ROLE;
   const previousRuntimeMode = process.env.HOST_RUNTIME_MODE;
   t.after(() => {
     restoreEnv('HOST_DEV_AUTH', previousDevAuth);
+    restoreEnv('HOST_DEV_AUTH_ROLE', previousDevAuthRole);
     restoreEnv('HOST_RUNTIME_MODE', previousRuntimeMode);
   });
 
   delete process.env.HOST_DEV_AUTH;
+  delete process.env.HOST_DEV_AUTH_ROLE;
   process.env.HOST_RUNTIME_MODE = 'development';
   assert.equal(isDevAuthAutoLoginEnabled(), false);
   await assert.rejects(
@@ -80,6 +84,7 @@ test('development auto-login creates a normal admin session only when enabled', 
   const result = await createDevAdminSession({ userAgent: 'Dev Browser' }, config);
 
   assert.equal(result.user.email, 'admin@docker-host.local');
+  assert.equal(result.user.displayName, 'Dev Admin');
   assert.equal(result.user.role, 'host.admin');
   assert.equal((await authenticateSessionToken(result.sessionToken, undefined, config))?.id, result.user.id);
   assert.equal((await getAuthStatus(config)).setupRequired, false);
@@ -89,6 +94,37 @@ test('development auto-login creates a normal admin session only when enabled', 
   assert.equal(state.sessions.length, 1);
   assert.equal(state.setupTokens.length, 0);
   assert.equal(JSON.stringify(state).includes('docker-host-dev-admin'), false);
+});
+
+test('development auto-login can create a normal user session with a seeded admin', async t => {
+  const config = await createTestConfig();
+  const previousDevAuth = process.env.HOST_DEV_AUTH;
+  const previousDevAuthRole = process.env.HOST_DEV_AUTH_ROLE;
+  const previousRuntimeMode = process.env.HOST_RUNTIME_MODE;
+  t.after(() => {
+    restoreEnv('HOST_DEV_AUTH', previousDevAuth);
+    restoreEnv('HOST_DEV_AUTH_ROLE', previousDevAuthRole);
+    restoreEnv('HOST_RUNTIME_MODE', previousRuntimeMode);
+  });
+
+  process.env.HOST_DEV_AUTH = 'auto';
+  process.env.HOST_DEV_AUTH_ROLE = 'user';
+  process.env.HOST_RUNTIME_MODE = 'development';
+
+  const result = await createDevSession({ userAgent: 'Dev Browser' }, config);
+
+  assert.equal(result.user.email, 'user@docker-host.local');
+  assert.equal(result.user.displayName, 'Dev User');
+  assert.equal(result.user.role, 'host.user');
+  assert.equal((await authenticateSessionToken(result.sessionToken, undefined, config))?.id, result.user.id);
+  assert.equal((await getAuthStatus(config)).setupRequired, false);
+
+  const state = await readAuthStateSnapshot(config);
+  assert.equal(state.users.length, 2);
+  assert.equal(state.sessions.length, 1);
+  assert.equal(state.users.some(user => user.role === 'host.admin' && user.displayName === 'Dev Admin'), true);
+  assert.equal(state.users.some(user => user.role === 'host.user' && user.displayName === 'Dev User'), true);
+  assert.equal(JSON.stringify(state).includes('docker-host-dev-user'), false);
 });
 
 test('rejects weak passwords before consuming a setup token', async () => {
