@@ -99,6 +99,8 @@ For `host.user`, the sidebar is reduced to Apps navigation plus the account menu
 
 The sidebar is always visible. Users can switch it between an expanded mode with labels and nested app navigation, and a compact mode that keeps only the primary icons visible. The selected mode is stored locally in the browser. The mobile drawer was removed with the topbar because navigation no longer disappears below the desktop breakpoint.
 
+When the Host runs in development runtime, the sidebar header shows a `DEV` marker next to `DOCKER HOST`. Compact mode keeps the same signal as a small marker on the Host icon.
+
 ```mermaid
 flowchart TD
   A["Shell route group"] --> B["Authenticated shell guard"]

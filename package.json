@@ -13,6 +13,7 @@
     "host:dev": "npm run dev --workspace @haas/docker-host-app",
     "host:dev:auth-admin": "HOST_DATA_ROOT_HOST=\"$PWD/.docker-host-dev\" HOST_DATA_ROOT_CONTAINER=\"$PWD/.docker-host-dev\" HOST_DEV_AUTH=auto npm run host:dev",
     "host:dev:auth-user": "HOST_DATA_ROOT_HOST=\"$PWD/.docker-host-dev-user\" HOST_DATA_ROOT_CONTAINER=\"$PWD/.docker-host-dev-user\" HOST_DEV_AUTH=auto HOST_DEV_AUTH_ROLE=user npm run host:dev",
+    "host:dev:demo": "node scripts/dev-demo-shell.mjs",
     "host:build": "npm run build --workspace @haas/docker-host-app",
     "host:start": "npm run start --workspace @haas/docker-host-app",
     "host:lint": "npm run lint --workspace @haas/docker-host-app",
@@ -22,6 +23,7 @@
     "demo-module:start": "npm run start --workspace @haas/docker-host-demo-module",
     "demo-module:lint": "npm run lint --workspace @haas/docker-host-demo-module",
     "demo-module:docker:build": "docker build -f modules/demo-module/Dockerfile -t ghcr.io/alex-de-haas/demo-module:latest .",
+    "demo-module:docker:build:local": "docker build -f modules/demo-module/Dockerfile -t docker-host-demo-module:dev .",
     "cli:build": "dotnet build apps/cli/src/Haas.DockerHost.Cli/Haas.DockerHost.Cli.csproj",
     "cli:test": "dotnet test apps/cli/tests/Haas.DockerHost.Cli.Tests/Haas.DockerHost.Cli.Tests.csproj",
     "ci": "npm run host:lint && npm run host:test && npm run host:build && npm run cli:build && npm run cli:test"

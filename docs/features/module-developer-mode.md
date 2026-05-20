@@ -51,10 +51,10 @@ Create/update input:
 
 ```json
 {
-  "metadataUrl": "http://localhost:3000/fixtures/modules/sample-reports",
-  "hostname": "reports.example.test",
-  "portKey": "web",
-  "targetBaseUrl": "http://127.0.0.1:3001",
+  "metadataUrl": "http://localhost:3000/fixtures/modules/demo-module",
+  "hostname": "demo.localhost",
+  "portKey": "http",
+  "targetBaseUrl": "http://127.0.0.1:3100",
   "exposurePolicy": "loginRequired",
   "identityMode": "required",
   "enabled": true
@@ -100,13 +100,14 @@ Enable developer mode:
 ```bash
 docker-host config set HOST_MODULE_DEV_MODE enabled
 docker-host restart
+npm run demo-module:dev
 ```
 
 Manage targets:
 
 ```bash
 docker-host modules dev list
-docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>
+docker-host modules dev link http://localhost:3000/fixtures/modules/demo-module demo.localhost http http://127.0.0.1:3100
 docker-host modules dev unlink <target-id>
 ```
 

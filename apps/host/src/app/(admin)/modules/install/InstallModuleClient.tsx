@@ -97,6 +97,11 @@ export function InstallModuleClient() {
     setMetadataUrl(`${origin}/fixtures/modules/sample-reports`);
   }
 
+  function handleUseCurrentDemo() {
+    const origin = window.location.origin;
+    setMetadataUrl(`${origin}/fixtures/modules/demo-module`);
+  }
+
   function handlePrepareRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!plan || plan.conflicts.length > 0) {
@@ -168,7 +173,7 @@ export function InstallModuleClient() {
         />
 
         <section className="rounded-lg border bg-card p-5">
-          <form onSubmit={handlePlanSubmit} className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
+          <form onSubmit={handlePlanSubmit} className="grid gap-4 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">
             <div className="space-y-2">
               <Label htmlFor="metadata-url">Metadata URL</Label>
               <Input
@@ -183,6 +188,10 @@ export function InstallModuleClient() {
             <Button type="button" variant="outline" onClick={handleUseFixture}>
               <Database className="h-4 w-4" />
               Local fixture
+            </Button>
+            <Button type="button" variant="outline" onClick={handleUseCurrentDemo}>
+              <GitBranch className="h-4 w-4" />
+              Current demo
             </Button>
             <Button type="submit" disabled={isPlanning}>
               {isPlanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}

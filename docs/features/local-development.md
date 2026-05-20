@@ -75,6 +75,8 @@ The user-role script uses `.docker-host-dev-user/` and also sets `HOST_DEV_AUTH_
 
 When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only from loopback hosts such as `127.0.0.1` or `localhost`.
 
+Development runtime is visible in the shell: the sidebar header shows a `DEV` marker next to `DOCKER HOST`, with a compact marker on the Host icon when the sidebar is collapsed.
+
 The route does not disable authentication. It creates or updates normal local accounts, issues a normal browser session cookie, and then redirects back to the shell. The default development administrator account is:
 
 - email: `admin@docker-host.local`;
@@ -92,6 +94,29 @@ When `HOST_DEV_AUTH_ROLE=user` is set, auto-login also creates or updates a norm
 Override these values with `HOST_DEV_USER_EMAIL`, `HOST_DEV_USER_PASSWORD`, and `HOST_DEV_USER_NAME`. The administrator account is still seeded so the Host is not left in setup-required mode.
 
 Production runs and direct `npm run host:dev` runs do not enable this behavior. They continue to require a CLI-generated setup token for first administrator setup.
+
+## Direct host-run development with a demo shell app
+
+Use this mode when testing the Host shell, Apps sidebar, nested app navigation, or embedded app transport against the demo module from the current repository checkout:
+
+```bash
+npm run host:dev:demo
+```
+
+This script starts both local development servers:
+
+- Docker Host at `http://localhost:3000`;
+- the repository-local demo module at `http://localhost:3100`.
+
+Before starting the servers, the script seeds a deterministic developer target in `.docker-host-dev-demo/dev/module-targets.json`. The target points at the current checkout's `modules/demo-module` UI and stores the current metadata `ui` snapshot, so `/api/apps` immediately returns a `Dev` app without a manual link step. The script also enables `HOST_DEV_AUTH=auto`, `HOST_MODULE_DEV_MODE=enabled`, and local metadata fixtures for the Host process.
+
+The default app is available through the Host shell at:
+
+```text
+http://localhost:3000/apps/dev/mdev_local_demo_module
+```
+
+Use this path for quick smoke tests. It validates shell navigation, app registry output, iframe embedding, route rewriting, and Host identity token injection against current branch code. It does not create a managed Docker container or exercise module install/lifecycle operations.
 
 ## Native Windows CLI development
 
@@ -203,15 +228,39 @@ Then link a target:
 
 ```bash
 docker-host modules dev link \
-  http://localhost:3000/fixtures/modules/sample-reports \
-  reports.localhost \
-  web \
-  http://127.0.0.1:3001
+  http://localhost:3000/fixtures/modules/demo-module \
+  demo.localhost \
+  http \
+  http://127.0.0.1:3100
 ```
 
 Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They are active only while `HOST_MODULE_DEV_MODE=enabled`; they do not modify installed module records, module metadata, or production gateway exposure records.
 
 See [Module developer mode](module-developer-mode.md) for API, CLI, and gateway details.
+
+## Current branch demo module install
+
+Use this mode when the smoke test must exercise a real managed module container from the current repository checkout.
+
+First build the local demo module image:
+
+```bash
+npm run demo-module:docker:build:local
+```
+
+That command tags the image as:
+
+```text
+docker-host-demo-module:dev
+```
+
+Then run the Host and install the current demo metadata fixture from `/modules/install`. Use the `Current demo` action to fill:
+
+```text
+http://localhost:3000/fixtures/modules/demo-module
+```
+
+The fixture reads `modules/demo-module/metadata.json` from the current checkout and rewrites the image reference to `docker-host-demo-module:dev` with `pullPolicy: ifNotPresent`. This keeps install testing on the current branch instead of the published GitHub Container Registry image.
 
 ## Local install fixture
 

@@ -41,31 +41,42 @@ import { cn } from '@/lib/utils';
 import type { HostPrincipal } from '@/types/auth';
 import type { HostAppEntry } from '@/types/apps';
 
-const AdminPrincipalContext = createContext<HostPrincipal | null>(null);
+interface AdminShellContextValue {
+  user: HostPrincipal;
+  isDevelopmentRuntime: boolean;
+}
+
+const AdminPrincipalContext = createContext<AdminShellContextValue | null>(null);
 const SIDEBAR_COMPACT_STORAGE_KEY = 'docker-host.sidebar.compact';
 const SIDEBAR_COMPACT_EVENT = 'docker-host-sidebar-compact-change';
 
 export function AdminPrincipalProvider({
   user,
+  isDevelopmentRuntime = false,
   children,
 }: {
   user: HostPrincipal;
+  isDevelopmentRuntime?: boolean;
   children: ReactNode;
 }) {
   return (
-    <AdminPrincipalContext.Provider value={user}>
+    <AdminPrincipalContext.Provider value={{ user, isDevelopmentRuntime }}>
       {children}
     </AdminPrincipalContext.Provider>
   );
 }
 
 export function useAdminPrincipal() {
-  const user = useContext(AdminPrincipalContext);
-  if (!user) {
+  return useAdminShellContext().user;
+}
+
+function useAdminShellContext() {
+  const context = useContext(AdminPrincipalContext);
+  if (!context) {
     throw new Error('useAdminPrincipal must be used within AdminPrincipalProvider.');
   }
 
-  return user;
+  return context;
 }
 
 export function HostPageHeader({
@@ -104,7 +115,7 @@ export function AdminShell({
   children: ReactNode;
   contentClassName?: string;
 }) {
-  const user = useAdminPrincipal();
+  const { user, isDevelopmentRuntime } = useAdminShellContext();
   const shellHomePath = user.role === 'host.user' ? '/apps' : '/';
   const sidebarCompact = useSyncExternalStore(
     subscribeToSidebarCompactPreference,
@@ -132,6 +143,7 @@ export function AdminShell({
           appsState={appsState}
           shellHomePath={shellHomePath}
           user={user}
+          isDevelopmentRuntime={isDevelopmentRuntime}
           compact={sidebarCompact}
           onCompactChange={handleSidebarCompactChange}
         />
@@ -244,12 +256,14 @@ function AdminSidebar({
   appsState,
   shellHomePath,
   user,
+  isDevelopmentRuntime,
   compact,
   onCompactChange,
 }: {
   appsState: AppsState;
   shellHomePath: string;
   user: HostPrincipal;
+  isDevelopmentRuntime: boolean;
   compact: boolean;
   onCompactChange: (compact: boolean) => void;
 }) {
@@ -276,12 +290,23 @@ function AdminSidebar({
           )}
           title="Docker Host"
         >
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground">
+          <span className="relative flex size-10 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground">
             <PanelsTopLeft className="h-5 w-5" />
+            {compact && isDevelopmentRuntime && (
+              <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-amber-500 ring-2 ring-sidebar" aria-hidden="true" />
+            )}
           </span>
           {!compact && (
-            <span className="min-w-0">
+            <span className="flex min-w-0 items-center gap-2">
               <span className="block truncate text-sm font-semibold">DOCKER HOST</span>
+              {isDevelopmentRuntime && (
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 bg-amber-100 px-2 py-0 text-[10px] font-semibold leading-4 text-amber-900"
+                >
+                  DEV
+                </Badge>
+              )}
             </span>
           )}
         </Link>

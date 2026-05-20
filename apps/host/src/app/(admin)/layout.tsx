@@ -12,8 +12,17 @@ export default async function AdminLayout({
   const user = await requireHostPrincipalPage();
 
   return (
-    <AdminPrincipalProvider user={user}>
+    <AdminPrincipalProvider user={user} isDevelopmentRuntime={isDevelopmentRuntime()}>
       {children}
     </AdminPrincipalProvider>
   );
+}
+
+function isDevelopmentRuntime() {
+  const hostRuntimeMode = process.env.HOST_RUNTIME_MODE?.trim().toLowerCase();
+  if (hostRuntimeMode) {
+    return hostRuntimeMode === 'development';
+  }
+
+  return process.env.NODE_ENV === 'development';
 }

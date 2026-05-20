@@ -47,6 +47,14 @@ npm run demo-module:dev
 
 The development server listens on `http://localhost:3100`.
 
+Run the Host shell with this current checkout's demo module already linked as a developer app:
+
+```bash
+npm run host:dev:demo
+```
+
+This starts Docker Host with auto-login and module developer mode enabled, starts the demo module dev server, and seeds `.docker-host-dev-demo/dev/module-targets.json` so the app appears in the Apps sidebar immediately.
+
 ## Docker Image
 
 Build the local image from the repository root:
@@ -60,6 +68,20 @@ The metadata uses:
 ```text
 ghcr.io/alex-de-haas/demo-module:latest
 ```
+
+For current-branch install testing, build the local development tag instead:
+
+```bash
+npm run demo-module:docker:build:local
+```
+
+Then install the Host fixture metadata at:
+
+```text
+http://localhost:3000/fixtures/modules/demo-module
+```
+
+That fixture rewrites the image reference to `docker-host-demo-module:dev` with `pullPolicy: ifNotPresent`, so the Host installs the locally built image instead of the published registry image.
 
 The CI image workflow publishes `latest` and SHA tags to GitHub Container Registry. It authenticates with the built-in `GITHUB_TOKEN`, so no extra registry secrets are required. The metadata uses `pullPolicy: always`, so Docker Host pulls the rolling image on install and update.
 

@@ -29,7 +29,7 @@ export function AppHostClient({ appId }: { appId: string }) {
     : null;
 
   return (
-    <AdminShell contentClassName="flex h-full max-w-none flex-col p-0">
+    <AdminShell contentClassName="flex h-full max-w-none flex-col p-0 sm:px-0 lg:px-0">
       {renderAppHostContent({
         appsState,
         app,

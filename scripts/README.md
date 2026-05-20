@@ -2,6 +2,8 @@
 
 This directory contains repository-level bootstrap scripts.
 
+`scripts/dev-demo-shell.mjs` starts a local Host development session with the current checkout's demo module prelinked as a developer app for shell smoke testing.
+
 The Unix installer is `scripts/install.sh`. It stays a thin shell bootstrap:
 
 - download the matching `docker-host` CLI artifact from the rolling `cli-dev` GitHub Release;
