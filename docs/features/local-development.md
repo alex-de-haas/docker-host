@@ -71,7 +71,7 @@ This script sets:
 - `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the repository-local `.docker-host-dev/` directory;
 - `HOST_DEV_AUTH=auto`, which enables development-only auto-login.
 
-The user-role script uses `.docker-host-dev-user/` and also sets `HOST_DEV_AUTH_ROLE=user`.
+The user-role script uses `.docker-host-dev-user/` and also sets `HOST_DEV_AUTH_ROLE=user`. Both auto-login scripts are backed by a Node wrapper rather than POSIX inline environment assignments, so the same npm commands work from POSIX shells, PowerShell, and cmd.
 
 When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only when the Host server observes the client socket as a loopback address such as `127.0.0.1` or `::1`.
 

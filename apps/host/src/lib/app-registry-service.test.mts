@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { listHostApps } from './app-registry-service.ts';
+import { createCachedRuntimeStatusReader, listHostApps } from './app-registry-service.ts';
 import { createEmptyAuthState, writeAuthState } from './auth-store.ts';
 import { writeModuleDevTargetState } from './module-dev-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
@@ -105,20 +105,21 @@ test('hides unavailable apps from host users and returns safe diagnostics to adm
     operationStatus: 'updating',
   });
 
-  const userApps = await listHostApps(assignedUser, {
-    config,
-    runtimeStatusReader: runtimeStatus('running'),
-  });
-  const adminApps = await listHostApps(admin, {
-    config,
-    runtimeStatusReader: runtimeStatus('running'),
-  });
+  let runtimeStatusReads = 0;
+  const runtimeStatusReader = async (): Promise<ModuleRuntimeStatus> => {
+    runtimeStatusReads += 1;
+    throw new Error('runtime status should not be read for modules with unavailable operations');
+  };
+
+  const userApps = await listHostApps(assignedUser, { config, runtimeStatusReader });
+  const adminApps = await listHostApps(admin, { config, runtimeStatusReader });
 
   assert.equal(userApps.length, 0);
   assert.equal(adminApps.length, 1);
   assert.equal(adminApps[0].status, 'unavailable');
   assert.equal(adminApps[0].statusReason, 'moduleOperationUnavailable');
   assert.equal(adminApps[0].operationStatus, 'updating');
+  assert.equal(runtimeStatusReads, 0);
 });
 
 test('hides stopped shell apps from host users and does not expose raw runtime internals', async () => {
@@ -145,6 +146,49 @@ test('hides stopped shell apps from host users and does not expose raw runtime i
   assert.equal(adminApps[0].runtimeState, 'not_created');
   assert.equal('containerId' in adminApps[0], false);
   assert.equal('containerName' in adminApps[0], false);
+});
+
+test('reuses cached runtime status between app registry reads', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    withUi: true,
+  });
+
+  let now = 1_000;
+  let runtimeStatusReads = 0;
+  const cachedRuntimeStatusReader = createCachedRuntimeStatusReader(async () => {
+    runtimeStatusReads += 1;
+    return {
+      state: 'running',
+      containerId: 'container_1',
+      containerName: 'mod-test',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+    };
+  }, {
+    ttlMs: 5_000,
+    now: () => now,
+  });
+
+  assert.equal((await listHostApps(admin, {
+    config,
+    runtimeStatusReader: cachedRuntimeStatusReader,
+  })).length, 1);
+  assert.equal((await listHostApps(admin, {
+    config,
+    runtimeStatusReader: cachedRuntimeStatusReader,
+  })).length, 1);
+  assert.equal(runtimeStatusReads, 1);
+
+  now += 5_001;
+
+  assert.equal((await listHostApps(admin, {
+    config,
+    runtimeStatusReader: cachedRuntimeStatusReader,
+  })).length, 1);
+  assert.equal(runtimeStatusReads, 2);
 });
 
 test('does not infer shell apps from modules without explicit UI metadata', async () => {

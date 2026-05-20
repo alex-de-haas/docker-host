@@ -25,12 +25,68 @@ import type {
 
 export interface ListHostAppsOptions {
   config?: HostRuntimeConfig;
-  runtimeStatusReader?: (module: InstalledModuleRecord) => Promise<ModuleRuntimeStatus>;
+  runtimeStatusReader?: RuntimeStatusReader;
+}
+
+type RuntimeStatusReader = (module: InstalledModuleRecord) => Promise<ModuleRuntimeStatus>;
+
+const DEFAULT_RUNTIME_STATUS_CACHE_TTL_MS = 2_000;
+
+interface RuntimeStatusCacheEntry {
+  expiresAt: number;
+  promise?: Promise<ModuleRuntimeStatus>;
+  settled: boolean;
 }
 
 interface ModuleAppCandidate {
   app: HostAppEntry | null;
   visibleToUsers: boolean;
+}
+
+export function createCachedRuntimeStatusReader(
+  runtimeStatusReader: RuntimeStatusReader,
+  options: {
+    ttlMs?: number;
+    now?: () => number;
+  } = {}
+): RuntimeStatusReader {
+  const ttlMs = options.ttlMs ?? DEFAULT_RUNTIME_STATUS_CACHE_TTL_MS;
+  const now = options.now ?? (() => Date.now());
+  const cache = new Map<string, RuntimeStatusCacheEntry>();
+
+  return async module => {
+    if (ttlMs <= 0) {
+      return runtimeStatusReader(module);
+    }
+
+    const cacheKey = getRuntimeStatusCacheKey(module);
+    const currentTime = now();
+    const cached = cache.get(cacheKey);
+    if (cached?.promise && (!cached.settled || cached.expiresAt > currentTime)) {
+      return cached.promise;
+    }
+
+    const entry: RuntimeStatusCacheEntry = {
+      expiresAt: Number.POSITIVE_INFINITY,
+      settled: false,
+    };
+    const promise = Promise.resolve()
+      .then(() => runtimeStatusReader(module))
+      .then(status => {
+        entry.settled = true;
+        entry.expiresAt = now() + ttlMs;
+        return status;
+      })
+      .catch(error => {
+        cache.delete(cacheKey);
+        throw error;
+      });
+
+    entry.promise = promise;
+    cache.set(cacheKey, entry);
+
+    return promise;
+  };
 }
 
 export async function listHostApps(
@@ -69,15 +125,19 @@ export async function listHostApps(
     .sort(compareHostApps);
 }
 
-async function getDefaultRuntimeStatusReader() {
-  const moduleDocker = await import('./module-docker.ts');
-  return moduleDocker.getModuleRuntimeStatus;
+let defaultRuntimeStatusReaderPromise: Promise<RuntimeStatusReader> | null = null;
+
+async function getDefaultRuntimeStatusReader(): Promise<RuntimeStatusReader> {
+  defaultRuntimeStatusReaderPromise ??= import('./module-docker.ts')
+    .then(moduleDocker => createCachedRuntimeStatusReader(moduleDocker.getModuleRuntimeStatus));
+
+  return defaultRuntimeStatusReaderPromise;
 }
 
 async function buildModuleAppCandidate(
   module: InstalledModuleRecord,
   assignments: ModuleAccessAssignment[],
-  runtimeStatusReader: (module: InstalledModuleRecord) => Promise<ModuleRuntimeStatus>,
+  runtimeStatusReader: RuntimeStatusReader,
   config: HostRuntimeConfig
 ): Promise<ModuleAppCandidate> {
   const metadataResult = await safeReadInstalledMetadata(module, config);
@@ -114,9 +174,31 @@ async function buildModuleAppCandidate(
   }
 
   const operationStatus = module.operationStatus || 'installed';
-  const runtimeStatus = await safeReadRuntimeStatus(module, runtimeStatusReader);
   const accessMode = getShellAccessMode(module.id, assignments);
-  const available = operationStatus === 'installed' && runtimeStatus.state === 'running';
+  if (operationStatus !== 'installed') {
+    return {
+      app: {
+        id: module.id,
+        source: 'installed',
+        moduleId: module.id,
+        displayName: metadataResult.metadata.name || module.id,
+        ...(metadataResult.metadata.description ? { description: metadataResult.metadata.description } : {}),
+        ...(uiResult.ui.icon ? { icon: uiResult.ui.icon } : {}),
+        version: metadataResult.metadata.version || 'unknown',
+        status: 'unavailable',
+        statusReason: 'moduleOperationUnavailable',
+        accessMode,
+        operationStatus,
+        entryPath: buildAppEntryPath(module.id, uiResult.ui.entrypoint.path),
+        embeddedUrl: buildEmbeddedUrl(module.id, uiResult.ui.entrypoint.path),
+        navigation: buildNavigation(module.id, uiResult.ui.navigation),
+      },
+      visibleToUsers: false,
+    };
+  }
+
+  const runtimeStatus = await safeReadRuntimeStatus(module, runtimeStatusReader);
+  const available = runtimeStatus.state === 'running';
 
   return {
     app: {
@@ -128,11 +210,7 @@ async function buildModuleAppCandidate(
       ...(uiResult.ui.icon ? { icon: uiResult.ui.icon } : {}),
       version: metadataResult.metadata.version || 'unknown',
       status: available ? 'available' : 'unavailable',
-      statusReason: available
-        ? 'available'
-        : operationStatus !== 'installed'
-          ? 'moduleOperationUnavailable'
-          : 'runtimeUnavailable',
+      statusReason: available ? 'available' : 'runtimeUnavailable',
       accessMode,
       operationStatus,
       runtimeState: runtimeStatus.state,
@@ -208,7 +286,7 @@ function normalizeInstalledModuleUi(
 
 async function safeReadRuntimeStatus(
   module: InstalledModuleRecord,
-  runtimeStatusReader: (module: InstalledModuleRecord) => Promise<ModuleRuntimeStatus>
+  runtimeStatusReader: RuntimeStatusReader
 ): Promise<ModuleRuntimeStatus> {
   try {
     return await runtimeStatusReader(module);
@@ -222,6 +300,10 @@ async function safeReadRuntimeStatus(
       error: error instanceof Error ? error.message : 'Unknown runtime status error',
     };
   }
+}
+
+function getRuntimeStatusCacheKey(module: InstalledModuleRecord) {
+  return `${module.id}:${module.containerName || ''}`;
 }
 
 function buildUnavailableApp({
