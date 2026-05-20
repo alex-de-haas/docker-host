@@ -28,6 +28,7 @@ flowchart LR
 - [Host app shell](features/host-app-shell.md) - implemented admin shell foundation, navigation groups, responsive drawer behavior, and protected page integration.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
+- [Production-like demo environment](features/production-like-demo-environment.md) - local Host image plus real installed demo module for lifecycle and app-shell validation.
 - [Module developer mode](features/module-developer-mode.md) - local-only module development targets that proxy through the Host gateway without a full install.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
 - [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.

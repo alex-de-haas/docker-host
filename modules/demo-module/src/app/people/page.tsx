@@ -1,3 +1,13 @@
+import { Users } from "lucide-react";
+import {
+  DemoNavigation,
+  DemoPageHeader,
+  DemoShell,
+  JsonButton,
+  MetricCard,
+  PeopleList,
+  SectionCard,
+} from "@/components/DemoModuleUi";
 import { getDemoPeople } from "@/lib/demo-data";
 import { getDemoConfig } from "@/lib/demo-config";
 
@@ -8,35 +18,30 @@ export default function PeoplePage() {
   const people = getDemoPeople();
 
   return (
-    <main className="shell">
-      <section className="topbar" aria-label="People summary">
-        <div>
-          <p className="eyebrow">{config.moduleId}</p>
-          <h1>People</h1>
-        </div>
-        <div className="statusPill">
-          <span aria-hidden="true" />
-          {people.length} records
-        </div>
-      </section>
+    <DemoShell>
+      <DemoPageHeader
+        eyebrow={config.moduleId}
+        title="People"
+        description="Stable sample directory route for shell navigation and API checks."
+        actions={<JsonButton href="/api/people" />}
+      />
+      <DemoNavigation active="people" />
 
-      <section className="panel" aria-label="People directory">
-        <div className="panelHeader">
-          <h2>Directory sample</h2>
-          <a href="/api/people">JSON</a>
-        </div>
-        <div className="peopleList">
-          {people.map(person => (
-            <div className="personRow" key={person.id}>
-              <div>
-                <strong>{person.name}</strong>
-                <span>{person.role}</span>
-              </div>
-              <span className={`state state-${person.status}`}>{person.status}</span>
-            </div>
-          ))}
-        </div>
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,0.35fr)_minmax(0,1fr)]">
+        <MetricCard
+          icon={Users}
+          label="Records"
+          value={people.length}
+          description="Loaded from module configuration or fallback data."
+        />
+
+        <SectionCard
+          title="Directory sample"
+          description="Sample records exposed by the demo people endpoint."
+        >
+          <PeopleList people={people} />
+        </SectionCard>
       </section>
-    </main>
+    </DemoShell>
   );
 }

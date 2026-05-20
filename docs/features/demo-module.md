@@ -4,7 +4,7 @@
 
 Demo Module is a repository-local Docker Host module under `modules/demo-module`. It is a small Next.js application that gives Docker Host a stable target for validating module operations during development.
 
-The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, sample people data, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
+The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, sample people data, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The UI uses the same Tailwind v4, shadcn `new-york` component style, semantic theme tokens, and lucide icon library as the Host app so embedded module screens keep the Host visual language. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
 
 ```mermaid
 flowchart LR
@@ -31,6 +31,9 @@ flowchart LR
 - `modules/demo-module/src/app/page.tsx` - demo dashboard.
 - `modules/demo-module/src/app/people/page.tsx` - stable people page for shell app navigation.
 - `modules/demo-module/src/app/settings/page.tsx` - stable settings page for shell app navigation.
+- `modules/demo-module/src/app/globals.css` - Tailwind v4 theme tokens aligned with `apps/host/src/app/globals.css`.
+- `modules/demo-module/src/components/DemoModuleUi.tsx` - shared dashboard layout, metric, detail, people, and storage UI composition.
+- `modules/demo-module/src/components/ui/*` - local shadcn UI primitives mirrored from the Host app where needed.
 - `modules/demo-module/src/app/api/health/route.ts` - health and writable-storage probe.
 - `modules/demo-module/src/app/api/config/route.ts` - sanitized runtime configuration.
 - `modules/demo-module/src/app/api/people/route.ts` - sample people payload.
@@ -54,6 +57,14 @@ npm run host:dev:demo
 ```
 
 This starts Docker Host with auto-login and module developer mode enabled, starts the demo module dev server, and seeds `.docker-host-dev-demo/dev/module-targets.json` so the app appears in the Apps sidebar immediately.
+
+Run Docker Host from a built Host image and install the built demo module image as a real managed module:
+
+```bash
+npm run host:dev:prod-demo
+```
+
+This mode is slower, but it exercises the same installed-module lifecycle path used by production-like runs: install plan, install apply, module container creation, start/stop/restart, runtime status, storage mounts, shell app discovery, embedded navigation, and Host identity propagation.
 
 ## Docker Image
 

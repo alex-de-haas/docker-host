@@ -14,6 +14,8 @@ Demo Module is a small Next.js application used to validate Docker Host module o
 - module-owned permission mapping from Host identity claims;
 - health-check and inspection endpoints for Host features.
 
+The module UI uses the same Tailwind v4, shadcn `new-york` primitives, semantic theme tokens, and lucide icon library as the Host app. This keeps the standalone demo routes and embedded Host app surface visually consistent.
+
 ## Metadata
 
 The module metadata lives at:
