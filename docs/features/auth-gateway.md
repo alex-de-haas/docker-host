@@ -156,6 +156,8 @@ The gateway sanitizes proxied requests:
 
 For responses, the gateway preserves relative redirects and rewrites absolute redirects from the internal module target back to the external module hostname. Module `Set-Cookie` headers are passed through with `Domain` stripped so module cookies stay host-only for the module subdomain.
 
+The shell embed transport applies the same security boundary for module browser UIs opened inside the Host shell. Reserved embed routes under `/api/apps/{moduleId}/embed` and `/api/apps/dev/{targetId}/embed` require Host authentication, strip Host session cookies, strip inbound `X-Docker-Host-*` and trusted-proxy assertion headers, inject Host-signed module identity when required, scope module cookies to the embed route, and return an iframe-friendly fallback when module response headers explicitly block framing.
+
 ## Host Roles
 
 Initial Host roles are intentionally small:
@@ -274,6 +276,7 @@ Token decisions:
 - The discovery `jwks_uri` uses `HOST_INTERNAL_ORIGIN`, defaulting to `http://docker-host:3000`, so module containers can validate tokens from inside the Docker network.
 - Tokens use a 5-minute lifetime and are minted for each authenticated proxied HTTP request or WebSocket/SSE/long-poll setup request.
 - Host strips inbound `X-Docker-Host-*` request headers before adding its own identity header.
+- Shell embed traffic uses the same Host-signed identity token contract as gateway traffic. Installed app embeds use the installed module id as `aud`; developer app embeds preserve the developer target's `moduleId` as `aud`.
 
 Example claims:
 
@@ -323,6 +326,8 @@ For realtime transports:
 - Long-lived connections need a defined maximum lifetime or revalidation policy.
 
 Subdomain routing is preferred because realtime applications often assume stable root-relative URLs and a dedicated origin.
+
+Opening a module UI from the Host shell does not replace the service/API gateway model for realtime endpoints. Modules that need WebSocket, SignalR, SSE, or long-poll service traffic should continue to use their dedicated gateway exposure or another module-owned endpoint contract rather than relying on `/apps/{moduleId}` as a standalone proxy URL.
 
 ## Account Switching
 

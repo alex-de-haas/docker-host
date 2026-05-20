@@ -121,6 +121,32 @@ test('hides unavailable apps from host users and returns safe diagnostics to adm
   assert.equal(adminApps[0].operationStatus, 'updating');
 });
 
+test('hides stopped shell apps from host users and does not expose raw runtime internals', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    withUi: true,
+  });
+
+  const userApps = await listHostApps(assignedUser, {
+    config,
+    runtimeStatusReader: runtimeStatus('not_created'),
+  });
+  const adminApps = await listHostApps(admin, {
+    config,
+    runtimeStatusReader: runtimeStatus('not_created'),
+  });
+
+  assert.equal(userApps.length, 0);
+  assert.equal(adminApps.length, 1);
+  assert.equal(adminApps[0].status, 'unavailable');
+  assert.equal(adminApps[0].statusReason, 'runtimeUnavailable');
+  assert.equal(adminApps[0].runtimeState, 'not_created');
+  assert.equal('containerId' in adminApps[0], false);
+  assert.equal('containerName' in adminApps[0], false);
+});
+
 test('does not infer shell apps from modules without explicit UI metadata', async () => {
   const config = await createAppRegistryTestConfig();
   await writeInstalledModule(config, {

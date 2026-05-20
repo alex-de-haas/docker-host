@@ -70,6 +70,15 @@ Implemented Phase 7 behavior:
 - developer embed transport uses the target's local URL and path prefix while preserving Host authentication, module identity token behavior, Host-owned header stripping, and scoped module cookies;
 - the Apps sidebar, Apps portal, and app topbar mark developer entries with a compact `Dev` badge.
 
+Implemented Phase 8 behavior:
+
+- app registry tests cover construction, access filtering, unavailable runtime diagnostics, developer target inclusion, and response shapes that omit raw Docker or local developer target internals;
+- `/api/apps` route tests cover unauthenticated rejection, authenticated `host.user` access, developer app entries, and assigned-only principal filtering;
+- embed transport tests cover Host session cookie stripping, Host-owned header stripping, module identity token injection, scoped module cookies, root-relative content rewriting, and blocked iframe fallback HTML;
+- existing gateway tests continue to cover WebSocket-compatible upgrade forwarding, identity injection, and Host session cookie stripping for service/API gateway traffic;
+- rendered shell smoke coverage is tracked as a release verification checklist instead of introducing a new browser/e2e dependency in this hardening phase;
+- durable shell, gateway, dashboard, and metadata behavior has been moved from the implementation plan into feature documentation.
+
 ## Navigation
 
 The sidebar combines static Host management navigation with dynamic Apps navigation from `/api/apps`.
@@ -158,6 +167,59 @@ The embed transport rewrites root-relative links and assets in HTML/CSS response
 
 Developer embed transport follows the same same-origin pattern under `/api/apps/dev/{targetId}/embed`. It resolves the local target URL and path prefix from developer target state, forwards through the Host shell, applies module access rules, injects module identity according to the target identity mode, strips Host-owned headers, and scopes module cookies to the developer embed route.
 
+## Verification And Hardening
+
+Phase 8 keeps the implemented behavior stable rather than adding new product scope.
+
+Automated coverage includes:
+
+- app registry construction and access filtering for installed apps and developer apps;
+- `/api/apps` route authentication, principal filtering, and response safety;
+- embed transport header sanitization, Host session cookie stripping, module identity token claims, root-relative asset rewriting, scoped module cookies, and frame-blocked fallback rendering;
+- gateway proxy behavior for HTTP and WebSocket-compatible upgrade requests, including Host-owned header stripping and module identity injection.
+
+Rendered release smoke checks should cover:
+
+- empty `/apps` state for an authenticated user with no visible apps;
+- one visible app in the Apps portal and sidebar;
+- nested app navigation from `ui.navigation`;
+- blocked iframe fallback when a module sends `X-Frame-Options: DENY` or `Content-Security-Policy: frame-ancestors 'none'`;
+- admin sidebar versus user sidebar filtering.
+
+Phase 8 decisions:
+
+- **Question**: What is the boundary of Phase 8?
+  **Answer**: Tests, verification, and documentation hardening.
+  **Recommendation**: Do not add new product behavior except minimal fixes required by failed acceptance criteria.
+
+- **Question**: Which checks block completion?
+  **Answer**: Existing tests must pass, and Host shell changes should pass lint and production build.
+  **Recommendation**: Use `npm run host:test`, `npm run host:lint`, and `npm run host:build` as the minimum gate. Run `npm run ci` before release handoff when CLI coverage is in scope.
+
+- **Question**: Should UI smoke coverage be automated or manual?
+  **Answer**: Use the existing Node test stack for stable behavior and browser smoke the rendered shell without adding a new dependency.
+  **Recommendation**: Keep rendered smoke checks in the release checklist unless a broader e2e test strategy is introduced.
+
+- **Question**: What route coverage is sufficient for `/api/apps`?
+  **Answer**: Authentication, principal filtering, developer entry inclusion, unavailable diagnostics, and safe response shape.
+  **Recommendation**: Assert that unauthenticated callers receive no discovery data, `host.user` receives only allowed apps, `host.admin` can diagnose unavailable apps, and response bodies do not leak local target or Docker internals.
+
+- **Question**: How should WebSocket/SSE gateway behavior be verified?
+  **Answer**: Keep focused gateway tests and a rendered release smoke expectation.
+  **Recommendation**: Treat identity injection, Host cookie stripping, and upgrade/header forwarding as regression blockers.
+
+- **Question**: What defines unchanged module identity token behavior?
+  **Answer**: Tokens remain signed, module-scoped, and principal-scoped across gateway, installed app embed, and developer app embed paths.
+  **Recommendation**: Verify issuer, audience, subject, and module access claims for authenticated proxy setup requests.
+
+- **Question**: What cookie and header stripping checks are mandatory?
+  **Answer**: Host session cookies and Host-owned spoofable headers must be stripped before module traffic is proxied.
+  **Recommendation**: Treat this as a security blocker for gateway and embed transport. Module-owned cookies may pass through after Host session cookie removal.
+
+- **Question**: What should happen to bugs found during hardening?
+  **Answer**: Fix bugs that block Phase 8 acceptance criteria; defer unrelated enhancements.
+  **Recommendation**: Record non-blocking follow-up ideas in `docs/todo.md` or a separate planning document.
+
 ## Module UI Metadata
 
 The `ui` contract is shell-only. It describes how the Host can list and later embed a module UI; it does not publish a module UI hostname and does not create a service/API gateway exposure.
@@ -199,5 +261,4 @@ External ingress readiness remains explicit. Creating an exposure does not creat
 
 ## Open Questions
 
-- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, Phase 4 Apps sidebar/app host page, Phase 5 gateway exposure management UX, Phase 6 user portal behavior, or Phase 7 developer mode integration questions remain open.
-- Later phases still need full app portal browser smoke coverage.
+- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, Phase 4 Apps sidebar/app host page, Phase 5 gateway exposure management UX, Phase 6 user portal behavior, Phase 7 developer mode integration, or Phase 8 verification questions remain open.

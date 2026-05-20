@@ -1,6 +1,6 @@
 # Module metadata files
 
-Этот документ описывает черновую модель добавления модулей в Docker Host. Это только продуктовая и техническая документация, без требований к текущей имплементации.
+Этот документ описывает модель добавления модулей в Docker Host. Основной MVP-контракт уже реализован в Host backend, а будущие расширения явно отмечены как future work.
 
 ## Идея
 
@@ -42,8 +42,8 @@ Metadata file описывает:
 - **External storage mount** - host path, выбранный администратором и находящийся за пределами module directory.
 - **Mount collection** - декларация в metadata, которая разрешает администратору добавить динамическое количество external storage mounts одного типа.
 - **Runtime endpoint** - именованный port зависимого модуля, по которому другие модули могут получить internal base URL.
-- **Shell UI entrypoint** - будущий metadata contract для browser UI, который открывается только внутри Host shell на root domain.
-- **Service/API exposure** - отдельная будущая декларация для endpoint, который можно публиковать на dedicated subdomain для сторонних клиентов. Такая декларация не делает browser UI модуля публичным.
+- **Shell UI entrypoint** - metadata contract для browser UI, который открывается только внутри Host shell на root domain.
+- **Service/API exposure** - отдельная Host-owned gateway запись для endpoint, который можно публиковать на dedicated subdomain для сторонних клиентов. Такая запись не делает browser UI модуля публичным.
 
 ## Metadata URL
 
@@ -451,6 +451,8 @@ For `schemaVersion: "0.1"`, metadata validation is strict: unknown fields are re
 The `ui` contract never requests a public module UI hostname. The Host app registry remains authenticated and returns same-origin Host shell paths only. Modules without `ui` metadata can still be installed, but they do not appear as shell Apps.
 
 Invalid `ui` metadata is rejected during install or update planning. Missing `ui` metadata is valid and means the module does not appear as a shell App. The Host does not infer shell Apps from gateway exposure records, public runtime ports, service/API endpoint hostnames, or runtime route probing.
+
+The Host app registry and embed transport treat `ui` metadata as shell state, not a networking shortcut. `/api/apps` returns only same-origin shell and embed URLs, and the reserved embed route preserves Host authentication, module identity token injection, Host-owned header stripping, and module cookie scoping.
 
 ## Field notes
 
@@ -993,6 +995,9 @@ Host не должен знать, как эти files организованы 
 - если future service/API exposure feature публикует module ports наружу, public ports не должны конфликтовать с уже опубликованными портами;
 - `runtime.ports[].key` должен быть уникален внутри одного metadata file;
 - `runtime.ports[].containerPort` должен быть валидным container port;
+- если `ui` указан, `ui.entrypoint.portKey` должен ссылаться на public runtime port;
+- если `ui.navigation` указан, navigation paths должны быть уникальными same-origin absolute paths;
+- shell App discovery must come only from explicit `ui` metadata plus Host access policy, not from public runtime ports or gateway exposure records;
 - Host-generated network alias должен быть уникален среди установленных модулей;
 
 ## Trust and security

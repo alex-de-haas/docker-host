@@ -12,6 +12,8 @@ The dashboard reads installed modules from `GET /api/modules`, shows Host/Docker
 
 The dashboard displays module metadata, image reference, operation status, Docker runtime state, container identity, timestamps, and any recorded module/runtime error. Rows can expand for details. Lifecycle actions are enabled only for modules in `operationStatus=installed`; failed or removing modules expose recovery actions instead.
 
+The dashboard is an admin-only Host management surface inside the authenticated shell. Non-admin `host.user` principals use the `/apps` portal instead and do not receive dashboard module lifecycle controls or the admin navigation groups.
+
 Implemented module-management flows:
 
 - Install uses the dedicated `/modules/install` route. It accepts a metadata URL, calls `POST /api/modules/install/plan`, renders the reviewed plan, collects setting values and external mount selections, shows a redacted payload preview, then submits `POST /api/modules/install`.
@@ -21,6 +23,7 @@ Implemented module-management flows:
 - Installed rows expose remove through a backend-generated confirmation dialog.
 - Cleanup and remove dialogs call `POST /api/modules/{moduleId}/cleanup/plan` or `POST /api/modules/{moduleId}/remove/plan` before apply, default to preserving module-owned data, and only submit apply after explicit confirmation.
 - Gateway exposure management and external ingress readiness are available on the dedicated `/ingress` shell page. The page calls `/api/gateway/options`, `/api/gateway/exposures`, and `/api/ingress/exposures`, lets administrators create/edit/disable/delete service/API exposure hostnames, supports assigned-user editing for assigned-only module access, shows provider-neutral publish status, renders generated manual setup instructions, supports mark-ready/refresh/unlink actions, and keeps provider-specific DNS, tunnel, or identity-provider automation out of the Web UI.
+- Shell Apps are not managed from the dashboard. They are derived from explicit module `ui` metadata and Host access policy, then rendered through the Apps sidebar, `/apps` portal, and `/apps/{moduleId}` app host route.
 
 ```mermaid
 flowchart TD
