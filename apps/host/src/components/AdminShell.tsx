@@ -372,7 +372,6 @@ function AdminSidebar({
                   : 'h-auto w-full justify-start px-3 py-2 text-left'
               )}
               title={compact ? accountLabel : undefined}
-              suppressHydrationWarning
             >
               <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-rose-700 text-xs font-semibold text-white">
                 {getAccountInitials(user)}

@@ -4,6 +4,7 @@ import {
   authError,
   authExceptionResponse,
   createSessionRedirectResponse,
+  getRequestOrigin,
   getRequestMeta,
   isLoopbackRequest,
 } from '@/lib/auth-http';
@@ -46,16 +47,4 @@ function getRedirectTo(request: Request) {
   const value = new URL(request.url).searchParams.get('redirectTo') || '/';
   const path = value.startsWith('/') && !value.startsWith('//') ? value : '/';
   return `${getRequestOrigin(request)}${path}`;
-}
-
-function getRequestOrigin(request: Request) {
-  const host = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim() ||
-    request.headers.get('host')?.split(',')[0]?.trim();
-  if (!host) {
-    return new URL(request.url).origin;
-  }
-
-  const protocol = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ||
-    new URL(request.url).protocol.replace(/:$/, '');
-  return `${protocol}://${host}`;
 }

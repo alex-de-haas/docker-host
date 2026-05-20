@@ -347,19 +347,35 @@ export function isLoopbackRequest(request: Request) {
   return [
     new URL(request.url).hostname,
     parseHeaderHostname(request.headers.get('host')),
-    parseHeaderHostname(request.headers.get('x-forwarded-host')),
   ].some(hostname => hostname ? isLoopbackHostname(hostname) : false);
 }
 
-function getRequestOrigin(request: Request) {
+export function getRequestOrigin(request: Request) {
+  const configuredOrigin = getConfiguredPublicOrigin();
+  if (configuredOrigin) {
+    return configuredOrigin;
+  }
+
   const url = new URL(request.url);
-  const host = parseHeaderHost(request.headers.get('x-forwarded-host')) ||
-    parseHeaderHost(request.headers.get('host')) ||
+  const host = parseHeaderHost(request.headers.get('host')) ||
     url.host;
   const protocol = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ||
     url.protocol.replace(/:$/, '');
 
   return `${protocol}://${host}`;
+}
+
+function getConfiguredPublicOrigin() {
+  const origin = getHostRuntimeConfig().hostPublicOrigin;
+  if (!origin) {
+    return null;
+  }
+
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return origin.replace(/\/+$/, '') || null;
+  }
 }
 
 function parseHeaderHost(value: string | null) {

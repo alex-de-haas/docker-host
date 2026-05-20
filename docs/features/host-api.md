@@ -350,7 +350,7 @@ Example:
 /api/apps/com.acme.reports/embed?path=%2Fpeople
 ```
 
-The endpoint proxies to the module runtime port declared by `ui.entrypoint`, injects module identity where applicable, strips Host-owned request headers, scopes module cookies to the reserved embed route, and rewrites root-relative HTML/CSS links through the reserved embed URL. It is not a public module UI hostname and `/apps/{moduleId}` is not a direct proxy path.
+The endpoint proxies to the module runtime port declared by `ui.entrypoint`, injects module identity where applicable, strips Host-owned request headers, scopes module cookies to the reserved embed route, and rewrites root-relative HTML/CSS links through the reserved embed URL. Rewriting is limited to HTML tag attributes, style attributes, and style element CSS so inline script contents remain unchanged. It is not a public module UI hostname and `/apps/{moduleId}` is not a direct proxy path.
 
 ### `GET /api/apps/dev/{targetId}/embed`
 
@@ -364,7 +364,7 @@ Example:
 /api/apps/dev/mdev_reports/embed?path=%2Fpeople
 ```
 
-The endpoint proxies to the developer target's local `targetBaseUrl`, preserves the target path prefix, injects module identity according to the developer target identity mode, strips Host-owned request headers, scopes module cookies to the developer embed route, and rewrites root-relative HTML/CSS links through the reserved developer embed URL. It does not create or read production gateway exposure records.
+The endpoint proxies to the developer target's local `targetBaseUrl`, preserves the target path prefix, injects module identity according to the developer target identity mode, strips Host-owned request headers, scopes module cookies to the developer embed route, and rewrites root-relative HTML/CSS links through the reserved developer embed URL using the same tag/style-only rewrite rules as installed module embeds. It does not create or read production gateway exposure records.
 
 ### `GET /api/modules/{moduleId}`
 

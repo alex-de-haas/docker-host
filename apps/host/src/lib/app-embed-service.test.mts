@@ -65,6 +65,32 @@ test('rewrites root-relative module links through reserved embed URLs', () => {
   assert.match(rewritten, /url\(\/api\/apps\/com\.example\.reports\/embed\?path=%2Fhero\.png\)/);
 });
 
+test('leaves inline scripts unchanged while rewriting tag attributes and style content', () => {
+  const rewritten = rewriteEmbeddedContent(
+    '<script src="/_next/static/app.js"></script><script>const html = \'<a href="/people">People</a>\'; const image = "url(/hero.png)";</script><div style="background:url(/tile.png)"></div><style>.hero{background:url(/hero.png)}</style>',
+    {
+      app: {
+        id: 'com.example.reports',
+        source: 'installed',
+        moduleId: 'com.example.reports',
+        displayName: 'Reports',
+        version: '1.0.0',
+        status: 'available',
+        statusReason: 'available',
+        accessMode: 'allAuthenticated',
+        entryPath: '/apps/com.example.reports',
+        embeddedUrl: buildEmbedUrl('com.example.reports', '/'),
+        navigation: [],
+      },
+    }
+  );
+
+  assert.match(rewritten, /src="\/api\/apps\/com\.example\.reports\/embed\?path=%2F_next%2Fstatic%2Fapp\.js"/);
+  assert.match(rewritten, /<script>const html = '<a href="\/people">People<\/a>'; const image = "url\(\/hero\.png\)";<\/script>/);
+  assert.match(rewritten, /style="background:url\(\/api\/apps\/com\.example\.reports\/embed\?path=%2Ftile\.png\)"/);
+  assert.match(rewritten, /\.hero\{background:url\(\/api\/apps\/com\.example\.reports\/embed\?path=%2Fhero\.png\)\}/);
+});
+
 test('builds reserved embed URLs for developer apps', () => {
   assert.equal(
     buildAppEmbedUrl({

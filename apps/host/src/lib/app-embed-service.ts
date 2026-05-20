@@ -292,16 +292,240 @@ export function rewriteEmbeddedContent(
 ) {
   const toEmbedPath = (modulePath: string) => buildAppEmbedUrl(target.app, modulePath);
 
-  return content
-    .replace(/\b(href|src|action)=("|')\/(?!\/)([^"']*)\2/g, (_match, attribute: string, quote: string, path: string) => (
-      `${attribute}=${quote}${toEmbedPath(`/${path}`)}${quote}`
-    ))
-    .replace(/\b(srcset)=("|')([^"']+)\2/g, (_match, attribute: string, quote: string, value: string) => (
-      `${attribute}=${quote}${rewriteSrcSet(value, toEmbedPath)}${quote}`
-    ))
-    .replace(/url\((["']?)\/(?!\/)([^)"']+)\1\)/g, (_match, quote: string, path: string) => (
-      `url(${quote}${toEmbedPath(`/${path}`)}${quote})`
-    ));
+  return rewriteHtmlFragment(content, toEmbedPath);
+}
+
+function rewriteHtmlFragment(
+  content: string,
+  toEmbedPath: (modulePath: string) => string
+) {
+  let result = '';
+  let offset = 0;
+
+  while (offset < content.length) {
+    const tagStart = content.indexOf('<', offset);
+    if (tagStart === -1) {
+      result += content.slice(offset);
+      break;
+    }
+
+    result += content.slice(offset, tagStart);
+
+    if (content.startsWith('<!--', tagStart)) {
+      const commentEnd = content.indexOf('-->', tagStart + 4);
+      if (commentEnd === -1) {
+        result += content.slice(tagStart);
+        break;
+      }
+
+      result += content.slice(tagStart, commentEnd + 3);
+      offset = commentEnd + 3;
+      continue;
+    }
+
+    const tagEnd = findHtmlTagEnd(content, tagStart);
+    if (tagEnd === -1) {
+      result += content.slice(tagStart);
+      break;
+    }
+
+    const tag = content.slice(tagStart, tagEnd + 1);
+    const tagName = getHtmlTagName(tag);
+    result += rewriteHtmlTagAttributes(tag, toEmbedPath);
+    offset = tagEnd + 1;
+
+    if (!tagName || isClosingHtmlTag(tag) || isSelfClosingHtmlTag(tag)) {
+      continue;
+    }
+
+    if (tagName === 'script') {
+      const rawText = readRawTextElement(content, offset, tagName);
+      if (rawText) {
+        result += rawText.body + rawText.closingTag;
+        offset = rawText.nextOffset;
+      }
+      continue;
+    }
+
+    if (tagName === 'style') {
+      const rawText = readRawTextElement(content, offset, tagName);
+      if (rawText) {
+        result += rewriteCssUrls(rawText.body, toEmbedPath) + rawText.closingTag;
+        offset = rawText.nextOffset;
+      }
+    }
+  }
+
+  return result;
+}
+
+function findHtmlTagEnd(content: string, tagStart: number) {
+  let quote: '"' | "'" | null = null;
+  for (let index = tagStart + 1; index < content.length; index += 1) {
+    const char = content[index];
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === '>') {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function getHtmlTagName(tag: string) {
+  return /^<\s*\/?\s*([a-z][\w:-]*)/i.exec(tag)?.[1]?.toLowerCase() ?? null;
+}
+
+function isClosingHtmlTag(tag: string) {
+  return /^<\s*\//.test(tag);
+}
+
+function isSelfClosingHtmlTag(tag: string) {
+  return /\/\s*>$/.test(tag);
+}
+
+function readRawTextElement(content: string, bodyStart: number, tagName: string) {
+  const lowerContent = content.toLowerCase();
+  const closingStart = lowerContent.indexOf(`</${tagName}`, bodyStart);
+  if (closingStart === -1) {
+    return null;
+  }
+
+  const closingEnd = findHtmlTagEnd(content, closingStart);
+  if (closingEnd === -1) {
+    return null;
+  }
+
+  return {
+    body: content.slice(bodyStart, closingStart),
+    closingTag: content.slice(closingStart, closingEnd + 1),
+    nextOffset: closingEnd + 1,
+  };
+}
+
+function rewriteHtmlTagAttributes(
+  tag: string,
+  toEmbedPath: (modulePath: string) => string
+) {
+  const tagNameMatch = /^<\s*\/?\s*[a-z][\w:-]*/i.exec(tag);
+  if (!tagNameMatch) {
+    return tag;
+  }
+
+  let result = tag.slice(0, tagNameMatch[0].length);
+  let offset = tagNameMatch[0].length;
+
+  while (offset < tag.length) {
+    const char = tag[offset];
+    if (!char || char === '>' || char === '/') {
+      result += tag.slice(offset);
+      break;
+    }
+
+    if (/\s/.test(char)) {
+      result += char;
+      offset += 1;
+      continue;
+    }
+
+    const nameStart = offset;
+    while (offset < tag.length && !/[\s=/>]/.test(tag[offset] ?? '')) {
+      offset += 1;
+    }
+
+    const name = tag.slice(nameStart, offset);
+    result += name;
+
+    while (offset < tag.length && /\s/.test(tag[offset] ?? '')) {
+      result += tag[offset];
+      offset += 1;
+    }
+
+    if (tag[offset] !== '=') {
+      continue;
+    }
+
+    result += '=';
+    offset += 1;
+
+    while (offset < tag.length && /\s/.test(tag[offset] ?? '')) {
+      result += tag[offset];
+      offset += 1;
+    }
+
+    const quote = tag[offset];
+    if (quote === '"' || quote === "'") {
+      const valueStart = offset + 1;
+      const valueEnd = tag.indexOf(quote, valueStart);
+      if (valueEnd === -1) {
+        result += tag.slice(offset);
+        break;
+      }
+
+      const value = tag.slice(valueStart, valueEnd);
+      result += `${quote}${rewriteHtmlAttributeValue(name, value, toEmbedPath)}${quote}`;
+      offset = valueEnd + 1;
+      continue;
+    }
+
+    const valueStart = offset;
+    while (offset < tag.length && !/[\s>]/.test(tag[offset] ?? '')) {
+      offset += 1;
+    }
+
+    const value = tag.slice(valueStart, offset);
+    result += rewriteHtmlAttributeValue(name, value, toEmbedPath);
+  }
+
+  return result;
+}
+
+function rewriteHtmlAttributeValue(
+  name: string,
+  value: string,
+  toEmbedPath: (modulePath: string) => string
+) {
+  switch (name.toLowerCase()) {
+    case 'href':
+    case 'src':
+    case 'action':
+      return rewriteRootRelativeUrl(value, toEmbedPath);
+    case 'srcset':
+      return rewriteSrcSet(value, toEmbedPath);
+    case 'style':
+      return rewriteCssUrls(value, toEmbedPath);
+    default:
+      return value;
+  }
+}
+
+function rewriteRootRelativeUrl(
+  value: string,
+  toEmbedPath: (modulePath: string) => string
+) {
+  return value.startsWith('/') && !value.startsWith('//')
+    ? toEmbedPath(value)
+    : value;
+}
+
+function rewriteCssUrls(
+  value: string,
+  toEmbedPath: (modulePath: string) => string
+) {
+  return value.replace(/url\((["']?)\/(?!\/)([^)"']+)\1\)/g, (_match, quote: string, path: string) => (
+    `url(${quote}${toEmbedPath(`/${path}`)}${quote})`
+  ));
 }
 
 export function buildEmbedUrl(moduleId: string, modulePath: string) {

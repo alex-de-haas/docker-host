@@ -141,7 +141,8 @@ function renderAppHostContent({
         key={embeddedUrl}
         src={embeddedUrl}
         title={`${app.displayName} module UI`}
-        className="min-h-0 flex-1 border-0 bg-white"
+        sandbox="allow-forms allow-popups allow-scripts allow-same-origin"
+        className="min-h-0 flex-1 border-0 bg-background"
         onError={() => {
           setFrameWarning('The module UI could not be embedded. Open it through the Host shell after the module supports iframe embedding.');
         }}
