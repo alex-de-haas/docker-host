@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server.js';
+import { NextResponse } from 'next/server';
 import { canAccessModule } from './auth-policy.ts';
 import { SESSION_COOKIE_NAME } from './auth-service.ts';
 import { readAuthStateSnapshot } from './auth-store.ts';

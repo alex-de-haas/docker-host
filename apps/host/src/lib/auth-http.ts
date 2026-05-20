@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server.js';
+import { NextResponse } from 'next/server';
 import { canUseHostApi } from './auth-policy.ts';
 import { getHostRuntimeConfig } from './host-runtime.ts';
 import {

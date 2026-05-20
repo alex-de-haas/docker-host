@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server.js';
-import { requireHostPrincipal } from '../../../lib/auth-http.ts';
-import { listHostApps } from '../../../lib/app-registry-service.ts';
+import { NextResponse } from 'next/server';
+import { requireHostPrincipal } from '@/lib/auth-http';
+import { listHostApps } from '@/lib/app-registry-service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,8 +18,10 @@ export async function GET(request: Request) {
     console.error('Error listing Host apps:', error);
     return NextResponse.json(
       {
-        error: 'Failed to list Host apps',
-        details: error instanceof Error ? error.message : 'Unknown app registry API error',
+        error: {
+          code: 'host_apps_failed',
+          message: error instanceof Error ? error.message : 'Unknown app registry API error',
+        },
       },
       { status: 500 }
     );

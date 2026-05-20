@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "node server.mjs --production",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test \"src/**/*.test.mts\""
+    "test": "node --experimental-strip-types --import ./scripts/test-loader-register.mjs --test \"src/**/*.test.mts\""
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

@@ -195,6 +195,41 @@ test('GET /api/apps applies assigned developer target filtering by principal', a
   assert.equal((await adminResponse.json() as { apps?: unknown[] }).apps?.length, 1);
 });
 
+test('GET /api/apps returns structured registry errors', async t => {
+  const config = await createRouteTestConfig();
+  setRouteTestEnv(t, config);
+  const now = new Date().toISOString();
+
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    users: [
+      {
+        id: 'user_admin',
+        email: 'admin@example.test',
+        role: 'host.admin',
+        authProvider: 'local',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+  }, config);
+  const session = await createSessionForUser('user_admin', 'auth.test.session.created', undefined, config);
+  await fs.mkdir(path.dirname(config.modulesStorePath), { recursive: true });
+  await fs.writeFile(config.modulesStorePath, '{invalid json', 'utf-8');
+  t.mock.method(console, 'error', () => {});
+
+  const response = await GET(new Request('http://localhost:3000/api/apps', {
+    headers: {
+      cookie: `${SESSION_COOKIE_NAME}=${session.sessionToken}`,
+    },
+  }));
+  const body = await response.json() as { error?: { code?: string; message?: string } };
+
+  assert.equal(response.status, 500);
+  assert.equal(body.error?.code, 'host_apps_failed');
+  assert.equal(typeof body.error?.message, 'string');
+});
+
 async function createRouteTestConfig(): Promise<HostRuntimeConfig> {
   const dataRootContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-host-apps-route-'));
   const authRootContainer = path.join(dataRootContainer, 'auth');

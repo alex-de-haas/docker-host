@@ -1,10 +1,10 @@
-import { NextResponse } from 'next/server.js';
+import { NextResponse } from 'next/server';
 import {
   appEmbedErrorResponse,
   proxyHostAppEmbedRequest,
   resolveHostDeveloperAppEmbedTarget,
-} from '../../../../../../lib/app-embed-service.ts';
-import { requireHostPrincipal } from '../../../../../../lib/auth-http.ts';
+} from '@/lib/app-embed-service';
+import { requireHostPrincipal } from '@/lib/auth-http';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
