@@ -15,6 +15,13 @@ const metadataUrl = process.env.HOST_DEMO_MODULE_METADATA_URL ||
   `http://localhost:${hostPort}/fixtures/modules/demo-module`;
 const targetBaseUrl = process.env.HOST_DEMO_MODULE_TARGET_URL ||
   `http://127.0.0.1:${demoPort}`;
+const npmExecPath = process.env.npm_execpath;
+const npmCommand = npmExecPath
+  ? process.execPath
+  : process.platform === 'win32'
+    ? 'npm.cmd'
+    : 'npm';
+const npmBaseArgs = npmExecPath ? [npmExecPath] : [];
 
 const metadata = await readDemoMetadata();
 const target = buildDemoTarget(metadata);
@@ -57,7 +64,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 }
 
 function start(label, args, env) {
-  const child = spawn('npm', args, {
+  const child = spawn(npmCommand, [...npmBaseArgs, ...args], {
     cwd: repoRoot,
     env: {
       ...process.env,

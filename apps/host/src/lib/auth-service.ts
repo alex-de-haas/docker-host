@@ -1205,7 +1205,7 @@ function isExpired(expiresAt: string, now: Date) {
   return Date.parse(expiresAt) <= now.getTime();
 }
 
-function isDevelopmentRuntime() {
+export function isDevelopmentRuntime() {
   const hostRuntimeMode = process.env.HOST_RUNTIME_MODE?.trim().toLowerCase();
   if (hostRuntimeMode) {
     return hostRuntimeMode === 'development';
