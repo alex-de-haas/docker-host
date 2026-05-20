@@ -516,7 +516,25 @@ export async function createDevSession(
     throw new AuthServiceError('dev_auth_disabled', 'Development auto-login is not enabled.');
   }
 
-  const credentials = getDevAuthCredentials();
+  return createDevSessionForCredentials(getDevAuthCredentials(), request, config);
+}
+
+export async function createDevAdminSession(
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  if (!isDevAuthAutoLoginEnabled()) {
+    throw new AuthServiceError('dev_auth_disabled', 'Development auto-login is not enabled.');
+  }
+
+  return createDevSessionForCredentials(getDevAccountCredentials('host.admin'), request, config);
+}
+
+async function createDevSessionForCredentials(
+  credentials: DevAuthCredentials,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
   const adminCredentials = getDevAccountCredentials('host.admin');
   const accountCredentials = credentials.role === 'host.user'
     ? [adminCredentials, credentials]
@@ -594,13 +612,6 @@ export async function createDevSession(
     session,
     user: toPrincipal(user),
   };
-}
-
-export async function createDevAdminSession(
-  request?: AuthRequestMeta,
-  config?: HostRuntimeConfig
-) {
-  return createDevSession(request, config);
 }
 
 export async function authenticateSessionToken(

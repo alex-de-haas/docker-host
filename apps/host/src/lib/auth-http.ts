@@ -339,15 +339,17 @@ function passesSameOriginCheck(request: Request) {
 }
 
 function isSecureRequest(request: Request) {
-  return request.headers.get('x-forwarded-proto') === 'https' ||
+  return getFirstHeaderValue(request.headers.get('x-forwarded-proto')).toLowerCase() === 'https' ||
     new URL(request.url).protocol === 'https:';
 }
 
 export function isLoopbackRequest(request: Request) {
-  return [
-    new URL(request.url).hostname,
-    parseHeaderHostname(request.headers.get('host')),
-  ].some(hostname => hostname ? isLoopbackHostname(hostname) : false);
+  const remoteAddress = getFirstHeaderValue(request.headers.get('x-docker-host-remote-address'));
+  if (remoteAddress) {
+    return isLoopbackAddress(remoteAddress);
+  }
+
+  return isLoopbackHostname(new URL(request.url).hostname);
 }
 
 export function getRequestOrigin(request: Request) {
@@ -359,8 +361,8 @@ export function getRequestOrigin(request: Request) {
   const url = new URL(request.url);
   const host = parseHeaderHost(request.headers.get('host')) ||
     url.host;
-  const protocol = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ||
-    url.protocol.replace(/:$/, '');
+  const protocol = (getFirstHeaderValue(request.headers.get('x-forwarded-proto')) ||
+    url.protocol.replace(/:$/, '')).toLowerCase();
 
   return `${protocol}://${host}`;
 }
@@ -379,29 +381,52 @@ function getConfiguredPublicOrigin() {
 }
 
 function parseHeaderHost(value: string | null) {
-  return value?.split(',')[0]?.trim() || null;
-}
-
-function parseHeaderHostname(value: string | null) {
-  const host = parseHeaderHost(value);
-  if (!host) {
-    return null;
-  }
-
-  if (host.startsWith('[')) {
-    const end = host.indexOf(']');
-    return end === -1 ? host : host.slice(1, end);
-  }
-
-  return host.split(':')[0] || null;
+  return getFirstHeaderValue(value) || null;
 }
 
 function isLoopbackHostname(hostname: string) {
   const normalized = hostname.toLowerCase();
-  return normalized === 'localhost' ||
-    normalized === '127.0.0.1' ||
-    normalized === '::1' ||
-    normalized.endsWith('.localhost');
+  const unbracketed = normalized.startsWith('[') && normalized.endsWith(']')
+    ? normalized.slice(1, -1)
+    : normalized;
+  return unbracketed === 'localhost' ||
+    unbracketed.endsWith('.localhost') ||
+    isLoopbackAddress(unbracketed);
+}
+
+function isLoopbackAddress(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') {
+    return true;
+  }
+
+  const ipv4 = normalized.startsWith('::ffff:')
+    ? normalized.slice('::ffff:'.length)
+    : normalized;
+  return isLoopbackIpv4Address(ipv4);
+}
+
+function isLoopbackIpv4Address(value: string) {
+  const octets = value.split('.');
+  if (octets.length !== 4) {
+    return false;
+  }
+
+  const numbers = octets.map(octet => Number.parseInt(octet, 10));
+  return numbers.every((octet, index) =>
+    Number.isInteger(octet) &&
+    octet >= 0 &&
+    octet <= 255 &&
+    String(octet) === octets[index]
+  ) && numbers[0] === 127;
+}
+
+function getFirstHeaderValue(value: string | null) {
+  return value?.split(',')[0]?.trim() || '';
 }
 
 function getSessionCookieDomain(request: Request) {

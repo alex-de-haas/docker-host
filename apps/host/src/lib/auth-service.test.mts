@@ -127,6 +127,29 @@ test('development auto-login can create a normal user session with a seeded admi
   assert.equal(JSON.stringify(state).includes('docker-host-dev-user'), false);
 });
 
+test('development admin session helper always creates an admin session', async t => {
+  const config = await createTestConfig();
+  const previousDevAuth = process.env.HOST_DEV_AUTH;
+  const previousDevAuthRole = process.env.HOST_DEV_AUTH_ROLE;
+  const previousRuntimeMode = process.env.HOST_RUNTIME_MODE;
+  t.after(() => {
+    restoreEnv('HOST_DEV_AUTH', previousDevAuth);
+    restoreEnv('HOST_DEV_AUTH_ROLE', previousDevAuthRole);
+    restoreEnv('HOST_RUNTIME_MODE', previousRuntimeMode);
+  });
+
+  process.env.HOST_DEV_AUTH = 'auto';
+  process.env.HOST_DEV_AUTH_ROLE = 'user';
+  process.env.HOST_RUNTIME_MODE = 'development';
+
+  const result = await createDevAdminSession({ userAgent: 'Dev Browser' }, config);
+
+  assert.equal(result.user.email, 'admin@docker-host.local');
+  assert.equal(result.user.displayName, 'Dev Admin');
+  assert.equal(result.user.role, 'host.admin');
+  assert.equal((await authenticateSessionToken(result.sessionToken, undefined, config))?.role, 'host.admin');
+});
+
 test('rejects weak passwords before consuming a setup token', async () => {
   const config = await createTestConfig();
   const setup = await createSetupToken('first-admin', config);

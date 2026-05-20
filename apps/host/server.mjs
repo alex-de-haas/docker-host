@@ -17,6 +17,7 @@ import {
 } from './src/lib/trusted-proxy.mjs';
 
 const SESSION_COOKIE_NAME = 'docker_host_session';
+const INTERNAL_REMOTE_ADDRESS_HEADER = 'x-docker-host-remote-address';
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
 const DEFAULT_MODULE_EXPOSURE_POLICY = 'loginRequired';
 const HOP_BY_HOP_HEADERS = new Set([
@@ -44,6 +45,8 @@ let handleNextRequest;
 
 const server = createServer(async (req, res) => {
   try {
+    stampInternalRequestHeaders(req);
+
     const gatewayTarget = await resolveGatewayRequest(req);
     if (gatewayTarget) {
       await proxyHttpRequest(req, res, gatewayTarget);
@@ -743,6 +746,10 @@ function appendForwardedFor(req) {
   const current = req.headers['x-forwarded-for'];
   const remoteAddress = req.socket.remoteAddress || '';
   return current ? `${current}, ${remoteAddress}` : remoteAddress;
+}
+
+function stampInternalRequestHeaders(req) {
+  req.headers[INTERNAL_REMOTE_ADDRESS_HEADER] = req.socket.remoteAddress || '';
 }
 
 function getRequestProtocol(req) {
