@@ -120,7 +120,7 @@ Use this path for quick smoke tests. It validates shell navigation, app registry
 
 ## Native Windows CLI development
 
-Native Windows CLI support targets Docker Desktop with the WSL 2 Linux engine. Windows containers mode is unsupported for the MVP because the Host image and module runtime are Linux-container based.
+Native Windows CLI support targets Docker Desktop with the WSL 2 Linux engine. Windows containers mode is unsupported because the Host image and module runtime are Linux-container based.
 
 The Windows CLI artifact should connect to Docker Engine through:
 
@@ -297,7 +297,3 @@ For a launch/runtime change:
 - verify the Web UI opens;
 - verify Docker operations still work from inside the Host container;
 - verify the isolated data root is used.
-
-## Open Questions
-
-No local development questions are currently open.

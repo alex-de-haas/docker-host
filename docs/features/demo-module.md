@@ -61,10 +61,15 @@ This starts Docker Host with auto-login and module developer mode enabled, start
 Run Docker Host from a built Host image and install the built demo module image as a real managed module:
 
 ```bash
-npm run host:dev:prod-demo
+docker build -f apps/host/Dockerfile -t docker-host:dev .
+npm run demo-module:docker:build:local
+docker-host config set HOST_IMAGE docker-host:dev
+docker-host config set HOST_DATA_ROOT_HOST "$HOME/.docker-host-dev"
+docker-host start
+docker-host open
 ```
 
-This mode is slower, but it exercises the same installed-module lifecycle path used by production-like runs: install plan, install apply, module container creation, start/stop/restart, runtime status, storage mounts, shell app discovery, embedded navigation, and Host identity propagation.
+Then install the fixture metadata from `/modules/install` using `http://localhost:3000/fixtures/modules/demo-module`. This mode is slower, but it exercises the same installed-module lifecycle path used by production-like runs: install plan, install apply, module container creation, start/stop/restart, runtime status, storage mounts, shell app discovery, embedded navigation, and Host identity propagation.
 
 ## Docker Image
 
@@ -111,7 +116,7 @@ The module currently validates these Host flows:
 - module-owned storage directory creation and mounting;
 - optional external mount collection input;
 - container start, stop, restart, remove, and update paths;
-- future health-check integration through `/api/health`;
+- health-check metadata and the module's own `/api/health` endpoint;
 - shell app discovery through `ui.entrypoint` and nested navigation for `/`, `/people`, and `/settings`;
 - gateway exposure policies through the presence or absence of a Host identity token;
 - module identity token validation through Host discovery and JWKS endpoints;

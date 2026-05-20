@@ -13,7 +13,7 @@ Docker Host should be the access-control boundary for:
 - module access assignment;
 - Host-level roles and sessions.
 
-Docker Host should not depend on a regular managed module for its own authentication. A managed identity module may exist later as an external provider or system-level integration, but the Host must be able to protect and recover its own Web UI and API independently.
+Docker Host should not depend on a regular managed module for its own authentication. The Host must be able to protect and recover its own Web UI and API independently.
 
 ## Accepted Decisions
 
@@ -28,9 +28,9 @@ Docker Host should not depend on a regular managed module for its own authentica
 - Modules may receive Host identity through module-scoped signed tokens.
 - Modules may query only a scoped list of users relevant to that module.
 - Multiple real-world accounts are modeled as multiple Host users with account switching.
-- Identity profiles are deferred until there is a concrete need to link multiple external identities into one Host person.
+- Identity profiles are not part of the current account model.
 - Local authentication stores Host-owned users, sessions, CLI tokens, assignments, and audit state in dedicated versioned JSON files under the Host data root.
-- SQLite is not part of the planned local auth persistence model.
+- SQLite is not part of the local auth persistence model.
 
 ## Gateway Routing
 
@@ -148,7 +148,7 @@ The gateway sanitizes proxied requests:
 - strips hop-by-hop headers;
 - strips CLI `Authorization`;
 - strips the Host session cookie before traffic reaches the module;
-- strips inbound `X-Docker-Host-*` headers so clients cannot spoof future identity headers;
+- strips inbound `X-Docker-Host-*` headers so clients cannot spoof Host-owned identity headers;
 - strips trusted proxy assertion headers before traffic reaches the module;
 - adds `X-Docker-Host-Identity` with a short-lived signed JWT when the exposure identity mode and authenticated Host principal require identity propagation;
 - adds `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For`;
@@ -269,7 +269,7 @@ Host must not forward its own session cookie to modules. When a gateway request 
 
 Token decisions:
 
-- JWTs are signed with an asymmetric Host-owned key. The MVP algorithm is `ES256`.
+- JWTs are signed with an asymmetric Host-owned key using `ES256`.
 - Private signing keys live under `/data/auth/module-identity-keys.json`, separate from users, sessions, CLI tokens, and module assignments.
 - Public keys are published as JWKS at `/.well-known/docker-host/jwks.json`.
 - Discovery metadata is published at `/.well-known/docker-host/module-identity.json`.
@@ -311,7 +311,7 @@ Rules:
 - `loginRequired` and `assignedUsersOnly` exposures default to `identityMode: "required"`.
 - modules must validate tokens against Host JWKS and must reject tokens with the wrong audience, issuer, signature, or expiration.
 
-Host does not pass unsigned identity convenience headers in the MVP. If convenience headers are added later, the signed token remains the only authoritative identity artifact.
+Host does not pass unsigned identity convenience headers. The signed token is the authoritative identity artifact.
 
 ## Realtime Traffic
 
@@ -331,18 +331,16 @@ Opening a module UI from the Host shell does not replace the service/API gateway
 
 ## Account Switching
 
-The accepted MVP direction is not to introduce mandatory identity profiles. Instead, different real-world accounts are represented as different Host users:
+The accepted direction is not to introduce mandatory identity profiles. Different real-world accounts are represented as different Host users:
 
 ```text
 personal@example.com -> host.admin
 work@example.com     -> host.user
 ```
 
-The Web UI should eventually support quick account switching, similar to common account switchers in Google, GitHub, or Microsoft products. When a module is opened, the Host session selected for that module determines which `sub`, email, and Host role appear in the module identity token.
+When a module is opened, the Host session selected for that module determines which `sub`, email, and Host role appear in the module identity token.
 
-Host may later remember a preferred account per module hostname, but this is a user-experience feature, not a separate identity model.
-
-Identity profiles remain a future option if Docker Host later needs to link multiple external identities into a single person.
+Host does not link multiple external identities into a single person.
 
 ## Scoped Module User Directory
 
@@ -359,7 +357,7 @@ Preferred model:
 - Modules should store module-owned permissions against stable Host user ids from Host-issued token `sub`.
 - Email is omitted by default and requires a module directory policy opt-in.
 - Disabled Host users are hidden from normal directory responses.
-- The MVP endpoint is `GET /api/internal/modules/{moduleId}/directory/users`.
+- The endpoint is `GET /api/internal/modules/{moduleId}/directory/users`.
 - Newly created module containers receive `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN`.
 
 Example response:
@@ -378,7 +376,7 @@ Example response:
 }
 ```
 
-The directory response is schema-versioned and may include pagination fields even when the first implementation returns all assigned users in one response. Modules may cache responses briefly, for example for 60 seconds, but Host remains authoritative for assignment changes.
+The directory response is schema-versioned and may include pagination fields. Modules may cache responses briefly, for example for 60 seconds, but Host remains authoritative for assignment changes.
 
 ## External Providers
 
@@ -399,7 +397,7 @@ External providers authenticate users. Docker Host still owns:
 
 ### Generic OIDC Provider
 
-The first generic OIDC implementation supports one active browser login provider using Authorization Code with PKCE.
+The generic OIDC implementation supports one active browser login provider using Authorization Code with PKCE.
 
 Implemented OIDC login surface:
 
@@ -420,9 +418,9 @@ Provider configuration can be supplied through Host auth state or environment va
 | `HOST_OIDC_USER_GROUPS` | Groups that map to `host.user`. |
 | `HOST_OIDC_CALLBACK_URL` | Optional explicit callback URL. |
 
-The OIDC MVP uses explicit claim mappings and denies login when no mapping grants `host.admin` or `host.user`. Just-in-time provisioning creates a Host user only after the ID token is verified and a role mapping succeeds. Host stores the external identity as `providerId + issuer + sub`, while modules continue to see the Host-owned user id in module identity tokens.
+OIDC uses explicit claim mappings and denies login when no mapping grants `host.admin` or `host.user`. Just-in-time provisioning creates a Host user only after the ID token is verified and a role mapping succeeds. Host stores the external identity as `providerId + issuer + sub`, while modules continue to see the Host-owned user id in module identity tokens.
 
-Host does not persist OIDC access tokens, refresh tokens, or ID tokens. Provider logout, multiple active OIDC providers, automatic email-based account linking, OIDC admin UI, and background group revalidation are deferred.
+Host does not persist OIDC access tokens, refresh tokens, or ID tokens. Provider logout, multiple active OIDC providers, automatic email-based account linking, OIDC admin UI, and background group revalidation are not part of this contract.
 
 ### Trusted Proxy Provider
 
@@ -485,7 +483,7 @@ Integrated development should be used to verify:
 - realtime transports;
 - module access policies.
 
-Implemented MVP:
+Supported developer mode behavior:
 
 - developer mode is disabled by default and enabled with `HOST_MODULE_DEV_MODE=enabled`;
 - developer target records live in `/data/dev/module-targets.json`;
@@ -542,11 +540,4 @@ The Web UI shows an external ingress readiness panel for gateway exposures. Admi
 
 External ingress lifecycle changes are audited as sanitized events for saved manual intent, mark-ready, validation refresh, drift detection, and unlink. These events reference the gateway exposure target but do not log provider credentials, assertions, secrets, or full request headers.
 
-Provider-specific automation, including Cloudflare DNS, Cloudflare Tunnel public hostname, Cloudflare Access application management, or other provider adapters, is intentionally outside this feature. It can be added later as an optional adapter on top of the provider-neutral readiness model.
-
-## Open Questions
-
-- Should Host remember a preferred account per module hostname?
-- What exact revalidation policy should long-lived realtime connections use?
-- Should generated `.env` output for standalone modules be added to developer mode, or should that wait for a module SDK?
-- Should per-dependency developer target overrides be represented as independent records or as a root target overlay?
+Provider-specific automation, including Cloudflare DNS, Cloudflare Tunnel public hostname, Cloudflare Access application management, or other provider adapters, is not part of the provider-neutral readiness model.

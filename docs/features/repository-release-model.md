@@ -47,7 +47,7 @@ docs/
 
 Repository physically follows this skeleton: the Host app lives in `apps/host`, the CLI lives in `apps/cli`, repository-local modules live in `modules`, and the Host API contract is documented in `docs/features/host-api.md`.
 
-Host API contract между Web UI, Host backend API и CLI должен быть определен в `docs/features/host-api.md` при введении CLI-facing Host API surface. Отдельный package contract, generated OpenAPI artifact и generated clients не входят в MVP.
+Host API contract между Web UI, Host backend API и CLI определен в `docs/features/host-api.md`. Отдельный package contract, generated OpenAPI artifact и generated clients не входят в repository contract.
 
 ## Component boundaries
 
@@ -118,9 +118,9 @@ ghcr.io/<owner>/<repo>:latest
 ghcr.io/<owner>/<repo>:sha-<commit>
 ```
 
-This matches the current repository workflow, which publishes one Host image for the repository. There is no need to add a nested `/docker-host` image path unless the repository later publishes multiple different container images.
+This matches the current repository workflow, which publishes one Host image for the repository. There is no nested `/docker-host` image path because the repository publishes a single Host container image.
 
-Immutable Host versions are created from `host-v*` git tags. The Host image workflow must not publish versioned Host images for CLI tags such as `cli-dev` or future `cli-v*` tags. The `latest` tag tracks the default branch, and `sha-<commit>` tags provide traceability for every published image.
+Immutable Host versions are created from `host-v*` git tags. The Host image workflow must not publish versioned Host images for CLI tags such as `cli-dev` or `cli-v*`. The `latest` tag tracks the default branch, and `sha-<commit>` tags provide traceability for every published image.
 
 The Host image should be published as a multi-platform Linux image for `linux/amd64` and `linux/arm64`, so Docker Desktop users on Apple Silicon and standard x64 Linux hosts can pull the same image reference without local emulation setup.
 
@@ -152,7 +152,7 @@ Unix users install the current development CLI through `scripts/install.sh`:
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
 ```
 
-Stable CLI versions are deferred until the project needs public stable releases. Later stable CLI versions can be published as immutable GitHub releases, for example `cli-v0.2.1`. Those stable release assets should not be overwritten. GitHub Actions artifacts may still be used for CI/debugging, but they are not the installation channel because they have retention limits and less convenient download URLs.
+Stable CLI versions use immutable GitHub releases such as `cli-v0.2.1` when that channel is enabled. Those stable release assets should not be overwritten. GitHub Actions artifacts may still be used for CI/debugging, but they are not the installation channel because they have retention limits and less convenient download URLs.
 
 `install.sh` detects OS/architecture, downloads the right `cli-dev` artifact, verifies checksums when available, installs the executable to `~/.docker-host/bin/docker-host`, marks it executable, and adds the install directory to a detected shell profile. If a POSIX-compatible profile cannot be detected or the profile update is disabled, it prints PATH instructions instead. If `SHA256SUMS` is available, checksum verification is mandatory; an installer that cannot verify the checksum should fail with a clear next step.
 
@@ -179,7 +179,7 @@ The manual release checklist is:
 - update an installed module and confirm the update plan, apply, and retry behavior work against the published Host image;
 - run `docker-host update` and confirm the CLI channel plus Host image update path still works.
 
-This checklist can later move into an automated smoke workflow, but the manual checklist is the MVP release gate.
+This manual checklist is the release gate for published artifacts.
 
 ## Versioning
 
@@ -202,9 +202,7 @@ During early development, `cli-dev` is the main CLI distribution channel. Immuta
 
 ## Why not separate repositories
 
-Отдельные repositories стоит рассматривать позже, если CLI станет самостоятельным продуктом с отдельным release process, командой или roadmap.
-
-На текущем этапе отдельные repositories создадут больше проблем, чем пользы:
+Separate repositories are not part of the current architecture because they create more problems than value:
 
 - сложнее менять API-контракт атомарно;
 - сложнее гарантировать совместимость CLI и Host API;

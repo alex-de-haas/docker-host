@@ -1,6 +1,6 @@
 # Docker Host API
 
-Этот документ описывает API surface для Docker Host. В MVP это не executable OpenAPI specification, а human-readable endpoint catalog для согласования backend, Web UI и будущих CLI module commands.
+Этот документ описывает API surface для Docker Host. Это human-readable endpoint catalog для согласования backend, Web UI и CLI module commands.
 
 Host API реализуется внутри full-stack Next.js Host application. Web UI вызывает этот API напрямую. `docker-host` CLI использует этот же API только для module commands; lifecycle самого Host container CLI выполняет через Docker daemon.
 
@@ -9,13 +9,13 @@ Host API реализуется внутри full-stack Next.js Host application
 - Host backend API is the owner of module management logic.
 - Runtime status is read from Docker daemon, not from persistent JSON files.
 - Persistent installed module registry is stored in root-level `modules.json`.
-- The current pre-auth MVP API is local/private-network only. The Auth Gateway feature supersedes this by requiring Host-owned authentication and `host.admin` authorization for Host API functionality.
+- Host API functionality requires Host-owned authentication and `host.admin` authorization unless an endpoint explicitly documents a narrower permission.
 - API responses must not expose raw secret setting values.
-- The API contract remains this Markdown endpoint catalog for the MVP. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
+- The API contract remains this Markdown endpoint catalog. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
 
 ## Implemented API Surface
 
-The current MVP API surface includes:
+The current API surface includes:
 
 - return Host runtime, Docker daemon, module network, and installed module store status;
 - list installed modules;
@@ -29,7 +29,7 @@ The current MVP API surface includes:
 - serve scoped module directory responses to modules through an internal service-token API;
 - return authenticated, principal-filtered shell App registry data through `/api/apps`.
 
-Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, module health checks, and richer external module exposure controls are later API slices.
+Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, and module health checks are not supported API functionality.
 
 The shared domain vocabulary for this API is defined in [Docker Host domain model](domain-model.md).
 
@@ -67,7 +67,7 @@ Returned by list and lifecycle endpoints.
 
 `operationStatus` is persistent Host bookkeeping from `modules.json`. `runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state.
 
-The MVP API does not expose module health or readiness. `runtimeStatus` reports only Docker container state. Health checks, including any future Docker healthcheck-based status, are deferred to a later feature.
+The API does not expose module health or readiness. `runtimeStatus` reports only Docker container state.
 
 Allowed `operationStatus` values:
 
@@ -128,7 +128,7 @@ It includes all `ModuleSummary` fields plus:
 }
 ```
 
-Secret setting values are never returned. For non-secret settings, later settings endpoints may return values when needed by the UI.
+Secret setting values are never returned. Non-secret setting values are exposed only through reviewed install/update flows.
 
 ### `HostAppEntry`
 
@@ -273,7 +273,7 @@ This endpoint creates the Host data root, `modules/` directory, `modules.json`, 
 
 ## Endpoints
 
-The endpoints in this section are implemented for the MVP Host API.
+The endpoints in this section are implemented by the Host API.
 
 ### `GET /api/modules`
 
@@ -413,23 +413,9 @@ Response should include:
 - updated runtime status from Docker daemon;
 - clear Docker error details when restart fails.
 
-## Deferred Diagnostics Endpoints
-
-These endpoints are not implemented in the module API yet, but remain the expected diagnostics surface.
-
-### `GET /api/modules/{moduleId}/logs`
-
-Returns recent logs for one module container.
-
-Recommended query parameters:
-
-- `tail` - number of recent lines;
-- `since` - optional timestamp or duration boundary;
-- `timestamps` - whether Docker log timestamps should be included.
-
 ## Module installation
 
-The module installation API is implemented for the MVP install flow:
+The module installation API:
 
 - `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker names, network aliases, and runtime ports;
 - `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install.
@@ -505,7 +491,7 @@ The install plan request body is intentionally minimal:
 }
 ```
 
-The MVP install flow does not include request flags such as refresh behavior, diagnostics toggles, or conflict-check bypasses.
+The install flow does not include request flags such as refresh behavior, diagnostics toggles, or conflict-check bypasses.
 
 Successful `200` responses should use one top-level `plan` object:
 
@@ -542,7 +528,7 @@ Successful `200` responses should use one top-level `plan` object:
 }
 ```
 
-The `dependencies` array represents the resolved dependency tree. `installOrder` is the topological module id order used for later apply. `normalizedMetadata` contains the normalized root metadata after defaults are applied. `settings` contains prompts, defaults, targets, and secret redaction markers, but never raw secret values.
+The `dependencies` array represents the resolved dependency tree. `installOrder` is the topological module id order used for apply. `normalizedMetadata` contains the normalized root metadata after defaults are applied. `settings` contains prompts, defaults, targets, and secret redaction markers, but never raw secret values.
 
 The implementation returns dependency nodes with their own normalized metadata, Docker name, network alias, module paths, install action (`install` or `reuse`), and dependency connection mappings. The top-level `paths` object identifies the root module directory and local `metadata.json` copy paths in both host and Host-container path spaces.
 
@@ -561,7 +547,7 @@ Digest semantics:
 - `planDigest` is the SHA-256 digest of a canonical JSON representation of the normalized install plan. It covers normalized root metadata, dependency metadata tree, dependency install order, image references, computed paths, setting prompts, storage requirements, Docker container names, network aliases, and runtime ports. It must exclude timestamps, transient download details, Docker runtime status, read-only Docker conflict observations, and other fields that can change without changing the reviewed plan.
 - `planDigest` is the primary review guard for install apply. The apply endpoint must recompute the plan from the submitted `metadataUrl` and administrator decisions, then reject the request if the recomputed `planDigest` differs from the reviewed `planDigest`.
 
-The MVP should not persist pending install plans as durable state. Apply endpoints should recompute the plan and compare the reviewed `planDigest` before changing files, module state, images, or containers.
+The Host should not persist pending install plans as durable state. Apply endpoints should recompute the plan and compare the reviewed `planDigest` before changing files, module state, images, or containers.
 
 Install plan validation and conflict status boundaries:
 
@@ -625,7 +611,7 @@ The update contract is defined in [Module update flow](module-update.md). The AP
 - `POST /api/modules/{moduleId}/update` - recompute the update plan from refreshed metadata and submitted administrator decisions, compare the reviewed update plan digest, then apply image, container, settings, storage, and dependency changes after confirmation;
 - `POST /api/modules/{moduleId}/update/retry` - retry a failed update attempt using update semantics and the stored failed update context.
 
-The MVP update API does not accept a replacement metadata URL. It updates from the metadata URL stored in the installed module record.
+The update API does not accept a replacement metadata URL. It updates from the metadata URL stored in the installed module record.
 
 `POST /api/modules/{moduleId}/update/plan` has no request body. It returns HTTP `200` with a top-level `plan` object when the refreshed metadata can be reviewed:
 
@@ -712,7 +698,7 @@ The recovery API adds explicit actions for failed installs, failed updates, fail
 
 Cleanup and remove plan requests accept `{ "deleteModuleData": true | false }` so the Web UI can refresh the preview before confirmation. Plans return `canApply`, container state, image reference, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts.
 
-The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. Docker images and external host paths are never deleted by the MVP recovery flows; external mount mappings are only removed from Host state.
+The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. Docker images and external host paths are never deleted by recovery flows; external mount mappings are only removed from Host state.
 
 Installed module removal is blocked when other installed modules depend on the target module. Remove sets `operationStatus=removing` only while the operation is in progress. If removal fails before the registry entry is deleted, the module returns to `installed` with `lastError`.
 
@@ -777,7 +763,7 @@ External ingress readiness APIs track manual provider-neutral publishing state f
 - `POST /api/ingress/exposures/{exposureId}/refresh` reruns Host-side validation and marks the record `validated`, `failed`, or `drifted`.
 - `DELETE /api/ingress/exposures/{exposureId}` unlinks the local readiness record without implying that external DNS, proxy, tunnel, or provider resources were deleted.
 
-These endpoints require `modules.exposure.manage`. They validate only Host-owned prerequisites and stored manual checklist state; provider API automation is intentionally deferred.
+These endpoints require `modules.exposure.manage`. They validate only Host-owned prerequisites and stored manual checklist state; provider API automation is not part of this API.
 
 ### Module identity discovery
 
@@ -825,21 +811,6 @@ Example response:
 }
 ```
 
-### Settings and storage
-
-Future endpoints should support:
-
-- editing module setting values stored in `modules.json`;
-- write-only handling for secret settings;
-- configuring external storage mounts;
-- validating mount behavior through Docker daemon where needed.
-
 ## Documentation status
 
-This document is the Host API contract for the MVP. It should be updated when implementation decisions change.
-
-## Open Questions
-
-No MVP Host API questions remain open for the implemented install, recovery, remove, update, auth, gateway exposure, external ingress readiness, and internal module directory flows.
-
-Later implementation slices may reopen API details for settings writes, storage reconfiguration, module diagnostics, logs streaming, health checks, and provider-specific external ingress automation.
+This document is the Host API contract. It should be updated when implementation decisions change.

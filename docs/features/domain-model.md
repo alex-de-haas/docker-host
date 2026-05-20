@@ -1,12 +1,12 @@
 # Docker Host domain model
 
-This document defines the Docker Host domain model. It is the shared vocabulary for Host backend API, Web UI, future CLI module commands, and persistent files.
+This document defines the Docker Host domain model. It is the shared vocabulary for Host backend API, Web UI, CLI module commands, and persistent files.
 
 ## Scope
 
-The MVP product model is module-first. Docker containers are an implementation detail managed by Docker Host, not the primary user-facing entity.
+The product model is module-first. Docker containers are an implementation detail managed by Docker Host, not the primary user-facing entity.
 
-In scope for the implemented MVP:
+The domain model covers:
 
 - installed module registry;
 - Docker runtime status for installed modules;
@@ -15,14 +15,14 @@ In scope for the implemented MVP:
 - installed module removal;
 - module update planning, apply, and retry;
 - persistent launch and module state files;
-- domain contracts for later settings, storage, and dependency work.
+- settings, storage, and dependency contracts.
 
-Out of scope for the current MVP:
+The domain model does not include:
 
 - settings edit UI and APIs;
 - storage configuration UI and APIs;
 - module health checks beyond Docker daemon state;
-- authentication and authorization.
+- authentication and authorization details, which are covered by [Auth Gateway](auth-gateway.md).
 
 ## Core Entities
 
@@ -74,7 +74,7 @@ The installed module record is stored in root-level `modules.json` and includes:
 
 Docker runtime status is not persisted in the installed module record. The Host reads it from Docker daemon when serving API responses.
 
-`modules.json` is also the MVP location for any Host backend-owned settings that are not CLI launch settings. There is no separate `host-settings.json` file in the MVP.
+`modules.json` is also the location for any Host backend-owned settings that are not CLI launch settings. There is no separate `host-settings.json` file.
 
 ### Module directory
 
@@ -89,7 +89,7 @@ The directory contains:
 - `metadata.json` - local copy of the source metadata document;
 - module-owned storage directories such as `settings/`, `data/`, `cache/`, or other metadata-declared paths.
 
-There are no per-module `module-state.json`, `module-installation.json`, or `module-settings.json` files in the MVP.
+There are no per-module `module-state.json`, `module-installation.json`, or `module-settings.json` files.
 
 ### Host launch configuration
 
@@ -111,14 +111,14 @@ It owns Host container lifecycle settings, not module state:
 - `HOST_DOCKER_SOCKET`;
 - `HOST_MODULE_NETWORK`.
 
-The standalone `docker-host` CLI reads this file for Host lifecycle commands. `HOST_DOCKER_ENDPOINT` is the CLI-side Docker Engine endpoint, such as `unix:///var/run/docker.sock` on macOS/Linux/WSL or `npipe:////./pipe/docker_engine` on native Windows. `HOST_DOCKER_SOCKET` is the socket path mounted into the Linux Host container and remains `/var/run/docker.sock` in the MVP.
+The standalone `docker-host` CLI reads this file for Host lifecycle commands. `HOST_DOCKER_ENDPOINT` is the CLI-side Docker Engine endpoint, such as `unix:///var/run/docker.sock` on macOS/Linux/WSL or `npipe:////./pipe/docker_engine` on native Windows. `HOST_DOCKER_SOCKET` is the socket path mounted into the Linux Host container and remains `/var/run/docker.sock`.
 
 ## Persistent Files
 
 | Path | Owner | Responsibility |
 | --- | --- | --- |
 | `~/.docker-host/config/launch.env` | CLI | Host container launch settings. |
-| `~/.docker-host/modules.json` | Host backend | Installed module registry, persistent module state, and MVP Host-owned settings. |
+| `~/.docker-host/modules.json` | Host backend | Installed module registry, persistent module state, and Host-owned settings. |
 | `~/.docker-host/modules/<module-id>/metadata.json` | Host backend | Local copy of downloaded module metadata. |
 | `~/.docker-host/modules/<module-id>/<storage-key>/` | Host backend | Default bind-mount target for module-owned persistent storage. |
 
@@ -213,7 +213,7 @@ Persistent operation status is stored in `modules.json` and describes Host-manag
 | `failed` | Last install/update/start preparation operation failed and needs explicit administrator action. |
 | `removing` | Remove operation is in progress. This state is temporary and should return to `installed` with `lastError` if removal fails before the registry entry is deleted. |
 
-The MVP does not include a disabled module state.
+The domain model does not include a disabled module state.
 
 ### Docker runtime status
 
@@ -230,26 +230,26 @@ Docker runtime status is read from Docker daemon for each installed module conta
 | `dead` | Docker reports the container as dead. |
 | `unknown` | Host could not determine container state. |
 
-The MVP does not expose module health or readiness status. Future health support may use Docker healthcheck data or another unified model, but the current module API reports only Docker container state.
+The module API reports Docker container state only. It does not expose module health or readiness status.
 
 ## Settings
 
 Module settings are declared by metadata and stored as values in `modules.json`.
 
-MVP rules:
+Rules:
 
 - every setting target is treated as an environment variable;
 - setting values are stored as typed JSON values in `modules.json`;
 - Docker environment variables are stringified only when Host creates a module container;
 - secret values are write-only in API responses;
 - API responses may expose whether a secret value is set, but never the raw value;
-- settings changes are a later API slice.
+- settings changes outside install/update review are not supported.
 
 ## Storage Mappings
 
 Storage declarations come from `metadata.json`. Computed or configured mappings are stored in `modules.json`.
 
-MVP rules:
+Rules:
 
 - `storage.directories[].mount.type` supports `bind`;
 - default module-owned bind paths are created under `~/.docker-host/modules/<module-id>/`;
@@ -269,7 +269,7 @@ The Host:
 - computes internal base URLs from dependency runtime ports;
 - injects base URLs into the consumer container through environment variables.
 
-Optional dependencies are not implemented in the MVP. Metadata with `dependencies[].required: false` should be rejected as unsupported or deferred to a later feature slice.
+Optional dependencies are not supported. Metadata with `dependencies[].required: false` is rejected as unsupported.
 
 ## Install And Update Plans
 
@@ -301,9 +301,9 @@ An update plan describes:
 - dependency changes;
 - container replacement steps.
 
-The MVP does not rely on durable pending plan state. Install and update apply operations recompute the reviewed plan from source metadata and submitted administrator decisions, then compare the reviewed plan digest before mutating files, module state, images, or containers.
+Docker Host does not rely on durable pending plan state. Install and update apply operations recompute the reviewed plan from source metadata and submitted administrator decisions, then compare the reviewed plan digest before mutating files, module state, images, or containers.
 
-The MVP uses optimistic fail-fast behavior. If an install or update fails after changes have started, Host records failure state and preserves created files, directories, images, and containers for diagnosis.
+Install and update use optimistic fail-fast behavior. If an install or update fails after changes have started, Host records failure state and preserves created files, directories, images, and containers for diagnosis.
 
 ## Naming Contracts
 
@@ -324,7 +324,3 @@ Example:
 ```text
 com.modulis.storage -> mod-com-modulis-storage
 ```
-
-## Open Questions
-
-No MVP domain model questions remain open. Later slices may reopen details for optional dependencies, external storage UX, and stable API version negotiation.

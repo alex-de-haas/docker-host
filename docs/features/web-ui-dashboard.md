@@ -61,12 +61,4 @@ The empty state is shown when the Host modules store has no installed module rec
 
 Failed modules remain visible with their last operation error so administrators can choose the correct recovery path. Failed installs use install retry or cleanup. Failed updates use update retry or update review. Cleanup and remove previews list affected containers, metadata files, module directories, module-owned storage, external mount mappings, dependents, warnings, and conflicts before any destructive action runs.
 
-## Open Questions
-
-- What detail view should own module logs once diagnostics endpoints are added?
-
-## TODO
-
-- Define a module-provided dashboard widget contract. The intended direction is for installed apps/modules to declare lightweight dashboard widgets that the Host can render, likely as isolated iframe surfaces with declared data endpoints, refresh behavior, sizing, and access policy.
-
-Resolved decision: module update uses a dedicated review route at `/modules/{moduleId}/update`, while reusing install review interaction patterns where practical.
+Module update uses a dedicated review route at `/modules/{moduleId}/update`, while reusing install review interaction patterns where practical. Module-provided dashboard widgets and module log detail views are not part of the dashboard contract.

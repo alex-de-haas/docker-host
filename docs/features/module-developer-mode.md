@@ -33,8 +33,8 @@ Integrated mode is intended for testing gateway behavior that standalone mode ca
 | Target safety | unrestricted, loopback only, or local/private networks | Allow `localhost`, `*.localhost`, `host.docker.internal`, loopback, and private IP ranges. Reject public target URLs. |
 | Gateway behavior | separate dev gateway, path routing, or override in existing gateway | Reuse the existing subdomain gateway and override the upstream target only while developer mode is enabled. |
 | Identity | mock headers, Host-signed token, or no identity | Integrated mode uses the normal Host-signed `X-Docker-Host-Identity` token. Standalone mocks remain module-owned. |
-| Dependencies | all mocked, all installed, or per-dependency overrides | MVP supports a root module developer target. Per-dependency overrides can be added to the same local-only state later. |
-| UI | full UI, minimal diagnostics, or CLI/API first | Use CLI/API first. A richer UI can be added when module author workflows are clearer. |
+| Dependencies | all mocked, all installed, or per-dependency overrides | Support a root module developer target. Per-dependency overrides are not part of the current local-only state model. |
+| UI | full UI, minimal diagnostics, or CLI/API first | Use CLI/API first. |
 
 ## API
 

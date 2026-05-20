@@ -1,6 +1,6 @@
 # Host launch model
 
-Этот документ описывает черновую модель запуска самого Docker Host. Это отдельный вопрос от запуска модулей: сначала нужно надежно поднять Host, а уже через него управлять modules.
+Этот документ описывает модель запуска самого Docker Host. Это отдельный вопрос от запуска модулей: сначала нужно надежно поднять Host, а уже через него управлять modules.
 
 ## Решение
 
@@ -14,9 +14,7 @@ Production-like запуск Host должен быть container-first:
 - CLI может выполнять module operations, но через тот же Host backend API, что и Web UI;
 - бизнес-логика установки и обновления модулей живет в Host backend, а не дублируется в CLI.
 
-Standalone `docker-host` CLI реализуется первым, потому что он должен быть надежным recovery path для Host container lifecycle: install, start, stop, restart, update, status, logs, open и configuration. Module metadata runtime начинается после того, как CLI умеет стабильно bootstrap/manage Host container.
-
-Для первого CLI milestone Host container может продолжать запускать существующий Host application code. Текущий Next.js Docker container management UI остается рабочим launch target и smoke-test example, пока CLI bootstrap flow строится вокруг production-like Host container запуска.
+Standalone `docker-host` CLI является надежным recovery path для Host container lifecycle: install, start, stop, restart, update, status, logs, open и configuration. Module management runtime работает через Host backend после запуска Host container.
 
 ## Компоненты
 
@@ -61,7 +59,7 @@ Web UI - основной рабочий интерфейс администра
 - просмотр логов;
 - update modules.
 
-В MVP Host не вводит module health checks или readiness probes. UI показывает только состояние контейнера, которое возвращает Docker daemon. Унифицированные module health checks должны быть отдельной future feature.
+Host не вводит module health checks или readiness probes. UI показывает только состояние контейнера, которое возвращает Docker daemon.
 
 ### `docker-host` CLI executable
 
@@ -69,7 +67,7 @@ CLI нужен в первую очередь для bootstrap и lifecycle са
 
 `docker-host` CLI должен распространяться как standalone executable без внешнего runtime. Базовая реализация: .NET self-contained single-file application с использованием Spectre.Console для terminal UI, prompts, status output, tables, progress indicators и командной структуры.
 
-Это решение является обязательным для первой CLI implementation. CLI artifact должен запускаться без установленного .NET runtime на машине администратора.
+CLI artifact должен запускаться без установленного .NET runtime на машине администратора.
 
 Базовые команды:
 
@@ -93,7 +91,7 @@ Auth bootstrap and recovery commands also remain local-first. `docker-host auth 
 
 `docker-host uninstall` сохраняет сам CLI executable, но удаляет Host-managed runtime и local state: Host container, known module containers, Host/module images when Docker allows it, shared module network when it is no longer in use, launch configuration, and Host state under the data root. После этого `docker-host install` должен восстановить launch configuration и базовую структуру директорий.
 
-В первой CLI implementation lifecycle-команды будут обращаться к Docker daemon напрямую через Docker Engine API. CLI не должен запускать установленный Docker CLI executable для Host lifecycle operations.
+Lifecycle-команды обращаются к Docker daemon напрямую через Docker Engine API. CLI не должен запускать установленный Docker CLI executable для Host lifecycle operations.
 
 Docker Engine communication должен быть изолирован в adapter layer, чтобы CLI commands не знали конкретные HTTP endpoint paths, request bodies и transport details.
 
@@ -153,7 +151,7 @@ docker-host open
 
 `install.sh` должен оставаться shell-only bootstrap layer for Unix-like systems. Сам `docker-host` CLI при этом не является shell script: это standalone executable, который не требует установленного .NET runtime, Node.js/npm или другого package manager.
 
-На базовом этапе CLI implementation target:
+CLI implementation target:
 
 - `net10.0` .NET self-contained single-file executable;
 - project file `Haas.DockerHost.Cli.csproj`;
@@ -199,7 +197,7 @@ macOS/Linux/WSL: unix:///var/run/docker.sock
 native Windows: npipe:////./pipe/docker_engine
 ```
 
-Native Windows support targets Docker Desktop with the WSL 2 Linux engine. Windows containers mode is explicitly unsupported for the MVP. If Docker reports `OSType != linux`, `docker-host install/start/status` should fail with a clear diagnostic that Docker Host requires Docker Desktop Linux containers.
+Native Windows support targets Docker Desktop with the WSL 2 Linux engine. Windows containers mode is explicitly unsupported. If Docker reports `OSType != linux`, `docker-host install/start/status` should fail with a clear diagnostic that Docker Host requires Docker Desktop Linux containers.
 
 CLI использует `HOST_DOCKER_ENDPOINT` для lifecycle commands самого Host container. Это endpoint на машине администратора, через который CLI общается с Docker Engine.
 
@@ -211,9 +209,9 @@ Host container остается Linux-based и получает доступ к 
 
 `HOST_DOCKER_SOCKET` обозначает container-side socket path, который Host container видит как `/var/run/docker.sock`. Это отдельное значение от `HOST_DOCKER_ENDPOINT`: на native Windows CLI endpoint будет named pipe, но Host container socket mount still uses `/var/run/docker.sock`.
 
-`DOCKER_HOST`, TCP, SSH, TLS и non-standard Docker daemon endpoints не входят в scope первой implementation. Их можно рассмотреть позже, если появится требование поддерживать remote Docker daemons.
+`DOCKER_HOST`, TCP, SSH, TLS и non-standard Docker daemon endpoints are not supported by the local Host launch model.
 
-Для первой CLI implementation доступ к Docker daemon выполняется напрямую через Docker Engine API over local Unix socket or Windows named pipe. Docker CLI executable не является runtime dependency для `docker-host` CLI.
+CLI access to Docker daemon is performed directly through Docker Engine API over local Unix socket or Windows named pipe. Docker CLI executable не является runtime dependency для `docker-host` CLI.
 
 Пример итоговой структуры после `install.sh`:
 
@@ -273,7 +271,7 @@ Gateway-related launch settings:
 
 `docker-host config` должен быть typed interface к известным Host launch settings, а не произвольным editor для `launch.env`.
 
-MVP syntax:
+Config command syntax:
 
 ```text
 docker-host config list
@@ -286,7 +284,7 @@ docker-host config reset HOST_IMAGE
 
 `config list` печатает все launch settings с текущими значениями. `config get <KEY>` печатает одно значение. `config set <KEY> <VALUE>` и удобная форма `config set <KEY>=<VALUE>` записывают значение в `launch.env`. `config reset <KEY>` возвращает настройку к default value.
 
-CLI должен валидировать known keys перед записью. Unknown keys должны возвращать понятную ошибку. `HOST_UI_PORT` должен принимать `auto` или valid TCP port number. `HOST_BIND_ADDRESS` должен принимать `127.0.0.1` или `0.0.0.0`. `HOST_PUBLIC_ORIGIN` должен быть absolute `http`/`https` origin без path. `HOST_GATEWAY_BASE_DOMAIN` должен быть valid DNS name или empty value. `HOST_DOCKER_ENDPOINT` должен принимать только supported local endpoints для текущей платформы: Unix socket on macOS/Linux/WSL или Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` и `HOST_DOCKER_SOCKET` должны оставаться `/data` и `/var/run/docker.sock` для MVP launch model и не должны изменяться через обычный config flow.
+CLI должен валидировать known keys перед записью. Unknown keys должны возвращать понятную ошибку. `HOST_UI_PORT` должен принимать `auto` или valid TCP port number. `HOST_BIND_ADDRESS` должен принимать `127.0.0.1` или `0.0.0.0`. `HOST_PUBLIC_ORIGIN` должен быть absolute `http`/`https` origin без path. `HOST_GATEWAY_BASE_DOMAIN` должен быть valid DNS name или empty value. `HOST_DOCKER_ENDPOINT` должен принимать только supported local endpoints для текущей платформы: Unix socket on macOS/Linux/WSL или Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` и `HOST_DOCKER_SOCKET` должны оставаться `/data` и `/var/run/docker.sock` и не должны изменяться через обычный config flow.
 
 Если `~/.docker-host/bin` не находится в `PATH`, install script должен добавить idempotent PATH-блок в shell profile. Для `zsh` используется `~/.zshrc`; для `bash` используется типичный bash profile текущей платформы; для `sh` используется `~/.profile`. Если profile нельзя определить или запись отключена через `DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE=1`, script должен напечатать инструкцию:
 
@@ -398,7 +396,7 @@ CLI должен читать этот файл для `start`, `restart`, `upda
 docker-host modules update <module-id>
 ```
 
-Host UI может позже получить кнопку self-update, но CLI должен оставаться recovery path, потому что UI недоступен во время recreate самого Host container.
+Self-update остается CLI-owned flow, потому что UI недоступен во время recreate самого Host container.
 
 ## Shared API model
 
