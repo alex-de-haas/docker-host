@@ -30,6 +30,13 @@ const HOP_BY_HOP_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
+const CLIENT_CONTROLLED_PROXY_HEADERS = new Set([
+  'forwarded',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-real-ip',
+]);
 
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -338,7 +345,12 @@ export function buildProxyRequestHeaders(req, target, upgrade, identityToken = n
 
   for (const [name, value] of Object.entries(req.headers)) {
     const lowerName = name.toLowerCase();
-    if (HOP_BY_HOP_HEADERS.has(lowerName) || lowerName === 'authorization') {
+    if (
+      HOP_BY_HOP_HEADERS.has(lowerName) ||
+      CLIENT_CONTROLLED_PROXY_HEADERS.has(lowerName) ||
+      lowerName === 'authorization' ||
+      lowerName === 'host'
+    ) {
       continue;
     }
 
@@ -393,9 +405,7 @@ export function buildProxyUpgradeHeaderLines(req, target, identityToken = null) 
       HOP_BY_HOP_HEADERS.has(lowerName) ||
       lowerName === 'authorization' ||
       lowerName === 'host' ||
-      lowerName === 'x-forwarded-host' ||
-      lowerName === 'x-forwarded-proto' ||
-      lowerName === 'x-forwarded-for'
+      CLIENT_CONTROLLED_PROXY_HEADERS.has(lowerName)
     ) {
       continue;
     }
@@ -743,9 +753,7 @@ function hashToken(token) {
 }
 
 function appendForwardedFor(req) {
-  const current = req.headers['x-forwarded-for'];
-  const remoteAddress = req.socket.remoteAddress || '';
-  return current ? `${current}, ${remoteAddress}` : remoteAddress;
+  return req.socket.remoteAddress || '';
 }
 
 function stampInternalRequestHeaders(req) {
@@ -753,12 +761,25 @@ function stampInternalRequestHeaders(req) {
 }
 
 function getRequestProtocol(req) {
-  const forwardedProto = req.headers['x-forwarded-proto'];
-  if (typeof forwardedProto === 'string' && forwardedProto) {
-    return forwardedProto.split(',')[0].trim();
+  const configuredProtocol = parseProtocolFromOrigin(getRuntimeConfig().hostPublicOrigin);
+  if (configuredProtocol) {
+    return configuredProtocol;
   }
 
   return req.socket.encrypted ? 'https' : 'http';
+}
+
+function parseProtocolFromOrigin(origin) {
+  if (!origin) {
+    return null;
+  }
+
+  try {
+    const protocol = new URL(origin).protocol.replace(/:$/, '');
+    return protocol === 'http' || protocol === 'https' ? protocol : null;
+  } catch {
+    return null;
+  }
 }
 
 function getHostPublicOrigin(req) {

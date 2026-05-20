@@ -6,6 +6,12 @@
     "apps/host",
     "modules/demo-module"
   ],
+  "overrides": {
+    "next": {
+      ".": "16.2.6",
+      "postcss": "8.5.15"
+    }
+  },
   "scripts": {
     "dev": "npm run host:dev",
     "build": "npm run host:build",

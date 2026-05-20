@@ -129,6 +129,12 @@ test('embed proxy strips Host-owned headers and injects a scoped identity token'
       authorization: 'Bearer cli-token',
       cookie: `${SESSION_COOKIE_NAME}=host-session; module_cookie=kept`,
       'cf-access-jwt-assertion': 'trusted-proxy-assertion',
+      forwarded: 'for=10.0.0.1;proto=https;host=evil.example.test',
+      'x-forwarded-for': '10.0.0.1',
+      'x-forwarded-host': 'evil.example.test',
+      'x-forwarded-proto': 'gopher',
+      'x-real-ip': '10.0.0.2',
+      'x-docker-host-remote-address': '203.0.113.10',
       'x-docker-host-identity': 'spoofed-token',
       'x-docker-host-other': 'spoofed',
       'x-custom': 'kept',
@@ -142,10 +148,13 @@ test('embed proxy strips Host-owned headers and injects a scoped identity token'
   assert.equal(capturedHeaders.get('authorization'), null);
   assert.equal(capturedHeaders.get('cookie'), 'module_cookie=kept');
   assert.equal(capturedHeaders.get('cf-access-jwt-assertion'), null);
+  assert.equal(capturedHeaders.get('forwarded'), null);
   assert.equal(capturedHeaders.get('x-docker-host-other'), null);
+  assert.equal(capturedHeaders.get('x-real-ip'), null);
   assert.equal(capturedHeaders.get('x-custom'), 'kept');
   assert.equal(capturedHeaders.get('x-forwarded-host'), 'host.example.test');
   assert.equal(capturedHeaders.get('x-forwarded-proto'), 'https');
+  assert.equal(capturedHeaders.get('x-forwarded-for'), '203.0.113.10');
   assert.notEqual(capturedHeaders.get(MODULE_IDENTITY_TOKEN_HEADER), 'spoofed-token');
 
   const identityToken = capturedHeaders.get(MODULE_IDENTITY_TOKEN_HEADER);

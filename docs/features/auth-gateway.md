@@ -149,6 +149,7 @@ The gateway sanitizes proxied requests:
 - strips CLI `Authorization`;
 - strips the Host session cookie before traffic reaches the module;
 - strips inbound `X-Docker-Host-*` headers so clients cannot spoof Host-owned identity headers;
+- strips inbound `Forwarded`, `X-Forwarded-*`, and `X-Real-IP` before setting Host-owned forwarding headers for the module;
 - strips trusted proxy assertion headers before traffic reaches the module;
 - adds `X-Docker-Host-Identity` with a short-lived signed JWT when the exposure identity mode and authenticated Host principal require identity propagation;
 - adds `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For`;
@@ -156,7 +157,9 @@ The gateway sanitizes proxied requests:
 
 For responses, the gateway preserves relative redirects and rewrites absolute redirects from the internal module target back to the external module hostname. Module `Set-Cookie` headers are passed through with `Domain` stripped so module cookies stay host-only for the module subdomain.
 
-The shell embed transport applies the same security boundary for module browser UIs opened inside the Host shell. Reserved embed routes under `/api/apps/{moduleId}/embed` and `/api/apps/dev/{targetId}/embed` require Host authentication, strip Host session cookies, strip inbound `X-Docker-Host-*` and trusted-proxy assertion headers, inject Host-signed module identity when required, scope module cookies to the embed route, and return an iframe-friendly fallback when module response headers explicitly block framing.
+The shell embed transport applies the same security boundary for module browser UIs opened inside the Host shell. Reserved embed routes under `/api/apps/{moduleId}/embed` and `/api/apps/dev/{targetId}/embed` require Host authentication, strip Host session cookies, strip inbound `X-Docker-Host-*`, client-supplied forwarding headers, and trusted-proxy assertion headers, inject Host-signed module identity when required, scope module cookies to the embed route, and return an iframe-friendly fallback when module response headers explicitly block framing.
+
+Embedded module UIs are rendered in an iframe sandbox that intentionally omits `allow-same-origin`. Module HTML is proxied from the Host origin, so granting same-origin privileges would allow module scripts to act against Host Web UI and API state as the signed-in user.
 
 ## Host Roles
 

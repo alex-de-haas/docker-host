@@ -6,6 +6,7 @@ import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { InstalledModuleRecord, ModuleMetadata, ModulesStoreData } from '@/types/modules';
 
 const STORE_SCHEMA_VERSION = '0.1';
+const PRIVATE_STORE_FILE_MODE = 0o600;
 
 export interface ModulesStoreStatus {
   path: string;
@@ -63,8 +64,12 @@ export async function writeModulesStore(
     updatedAt: new Date().toISOString(),
   };
   const temporaryPath = `${config.modulesStorePath}.${process.pid}.${randomUUID()}.tmp`;
-  await fs.writeFile(temporaryPath, `${JSON.stringify(nextStore, null, 2)}\n`, 'utf-8');
+  await fs.writeFile(temporaryPath, `${JSON.stringify(nextStore, null, 2)}\n`, {
+    encoding: 'utf-8',
+    mode: PRIVATE_STORE_FILE_MODE,
+  });
   await fs.rename(temporaryPath, config.modulesStorePath);
+  await fs.chmod(config.modulesStorePath, PRIVATE_STORE_FILE_MODE);
 }
 
 export async function getModulesStoreStatus(

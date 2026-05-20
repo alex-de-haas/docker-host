@@ -37,6 +37,13 @@ const HOP_BY_HOP_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
+const CLIENT_CONTROLLED_PROXY_HEADERS = new Set([
+  'forwarded',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-real-ip',
+]);
 const REWRITABLE_CONTENT_TYPES = [
   'text/html',
   'text/css',
@@ -568,6 +575,7 @@ function buildEmbedRequestHeaders(
     const lowerName = name.toLowerCase();
     if (
       HOP_BY_HOP_HEADERS.has(lowerName) ||
+      CLIENT_CONTROLLED_PROXY_HEADERS.has(lowerName) ||
       lowerName === 'authorization' ||
       lowerName === 'host' ||
       lowerName === 'content-length' ||
@@ -804,20 +812,16 @@ function stripCookieValue(value: string, cookieName: string) {
 }
 
 function appendForwardedFor(request: Request) {
-  const current = request.headers.get('x-forwarded-for');
-  const remoteAddress = request.headers.get('x-real-ip') ?? '';
-  return current ? `${current}, ${remoteAddress}` : remoteAddress;
+  return request.headers.get('x-docker-host-remote-address')?.split(',')[0]?.trim() ?? '';
 }
 
 function getRequestHost(request: Request) {
-  return request.headers.get('x-forwarded-host')?.split(',')[0]?.trim() ||
-    request.headers.get('host') ||
+  return request.headers.get('host') ||
     new URL(request.url).host;
 }
 
 function getRequestProtocol(request: Request) {
-  return request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ||
-    new URL(request.url).protocol.replace(/:$/, '');
+  return new URL(request.url).protocol.replace(/:$/, '');
 }
 
 function getExposurePolicy(accessMode: HostAppAccessMode): ModuleExposurePolicy {

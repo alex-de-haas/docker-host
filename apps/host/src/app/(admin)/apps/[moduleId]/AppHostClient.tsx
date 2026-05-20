@@ -137,11 +137,12 @@ function renderAppHostContent({
           </Button>
         </div>
       )}
+      {/* Module HTML is proxied under the Host origin; same-origin sandboxing would let module scripts reach Host APIs as the user. */}
       <iframe
         key={embeddedUrl}
         src={embeddedUrl}
         title={`${app.displayName} module UI`}
-        sandbox="allow-forms allow-popups allow-scripts allow-same-origin"
+        sandbox="allow-forms allow-popups allow-scripts"
         className="min-h-0 flex-1 border-0 bg-background"
         onError={() => {
           setFrameWarning('The module UI could not be embedded. Open it through the Host shell after the module supports iframe embedding.');
