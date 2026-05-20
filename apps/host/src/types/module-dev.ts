@@ -6,6 +6,7 @@ export interface ModuleDevTargetRecord {
   moduleId: string;
   moduleName: string;
   moduleVersion: string;
+  moduleDescription?: string;
   metadataUrl: string;
   hostname: string;
   portKey: string;
@@ -16,8 +17,22 @@ export interface ModuleDevTargetRecord {
   exposurePolicy: ModuleExposurePolicy;
   identityMode: ModuleIdentityMode;
   enabled: boolean;
+  shellApp?: ModuleDevTargetShellApp;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ModuleDevTargetShellApp {
+  displayName: string;
+  description?: string;
+  icon?: string;
+  entrypointPath: string;
+  navigation: ModuleDevTargetShellNavigationItem[];
+}
+
+export interface ModuleDevTargetShellNavigationItem {
+  label: string;
+  path: string;
 }
 
 export interface ModuleDevTargetState {

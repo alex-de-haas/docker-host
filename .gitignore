@@ -27,6 +27,10 @@
 # misc
 .DS_Store
 *.pem
+.docker-host-dev/
+.docker-host-dev-demo/
+.docker-host-dev-user/
+.docker-host-prod-demo/
 
 # debug
 npm-debug.log*

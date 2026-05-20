@@ -117,7 +117,7 @@ The high-level adapter owns Docker Engine paths, request payloads, response pars
 
 `docker-host install` creates the root directories and writes `launch.env`.
 
-`docker-host uninstall` removes Host-managed runtime and local state while preserving the CLI executable. It removes installed module containers known from `modules.json`, removes the Host container, attempts to remove Host/module images and the Host-managed module network, deletes launch configuration, and deletes Host state files. When the data root is the default `~/.docker-host`, uninstall clears that directory except for `bin/` so the installed CLI remains runnable. If `HOST_DATA_ROOT_HOST` points outside the CLI root, uninstall removes only known Host state paths such as `modules.json` and `modules/` from that external data root. A later `docker-host install` recreates launch configuration and Host directories.
+`docker-host uninstall` removes Host-managed runtime and local state while preserving the CLI executable. It removes installed module containers known from `modules.json`, removes the Host container, attempts to remove Host/module images and the Host-managed module network, deletes launch configuration, and deletes Host state files. When the data root is the default `~/.docker-host`, uninstall clears that directory except for `bin/` so the installed CLI remains runnable. If `HOST_DATA_ROOT_HOST` points outside the CLI root, uninstall removes only known Host state paths such as `modules.json` and `modules/` from that external data root. `docker-host install` recreates launch configuration and Host directories after uninstall.
 
 `docker-host start`:
 
@@ -134,7 +134,4 @@ The high-level adapter owns Docker Engine paths, request payloads, response pars
 
 `docker-host open` uses Docker container port metadata to open the current Host UI URL, with a plain URL fallback when browser launch fails.
 
-## Open Questions
-
-- Windows self-replacement may need an additional delayed-replace strategy if replacing the running `.exe` fails on native Windows.
-- Remote Docker endpoints, TLS, SSH, and `DOCKER_HOST` environment discovery remain out of scope for the local Host launch model.
+Remote Docker endpoints, TLS, SSH, and `DOCKER_HOST` environment discovery are not part of the local Host launch model.

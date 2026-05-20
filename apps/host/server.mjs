@@ -17,6 +17,7 @@ import {
 } from './src/lib/trusted-proxy.mjs';
 
 const SESSION_COOKIE_NAME = 'docker_host_session';
+const INTERNAL_REMOTE_ADDRESS_HEADER = 'x-docker-host-remote-address';
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
 const DEFAULT_MODULE_EXPOSURE_POLICY = 'loginRequired';
 const HOP_BY_HOP_HEADERS = new Set([
@@ -29,6 +30,13 @@ const HOP_BY_HOP_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
+const CLIENT_CONTROLLED_PROXY_HEADERS = new Set([
+  'forwarded',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-real-ip',
+]);
 
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -38,11 +46,14 @@ const dev = process.argv.includes('--dev')
   : process.argv.includes('--production')
     ? false
     : process.env.NODE_ENV !== 'production';
+process.env.HOST_RUNTIME_MODE = dev ? 'development' : 'production';
 
 let handleNextRequest;
 
 const server = createServer(async (req, res) => {
   try {
+    stampInternalRequestHeaders(req);
+
     const gatewayTarget = await resolveGatewayRequest(req);
     if (gatewayTarget) {
       await proxyHttpRequest(req, res, gatewayTarget);
@@ -334,7 +345,12 @@ export function buildProxyRequestHeaders(req, target, upgrade, identityToken = n
 
   for (const [name, value] of Object.entries(req.headers)) {
     const lowerName = name.toLowerCase();
-    if (HOP_BY_HOP_HEADERS.has(lowerName) || lowerName === 'authorization') {
+    if (
+      HOP_BY_HOP_HEADERS.has(lowerName) ||
+      CLIENT_CONTROLLED_PROXY_HEADERS.has(lowerName) ||
+      lowerName === 'authorization' ||
+      lowerName === 'host'
+    ) {
       continue;
     }
 
@@ -389,9 +405,7 @@ export function buildProxyUpgradeHeaderLines(req, target, identityToken = null) 
       HOP_BY_HOP_HEADERS.has(lowerName) ||
       lowerName === 'authorization' ||
       lowerName === 'host' ||
-      lowerName === 'x-forwarded-host' ||
-      lowerName === 'x-forwarded-proto' ||
-      lowerName === 'x-forwarded-for'
+      CLIENT_CONTROLLED_PROXY_HEADERS.has(lowerName)
     ) {
       continue;
     }
@@ -739,18 +753,33 @@ function hashToken(token) {
 }
 
 function appendForwardedFor(req) {
-  const current = req.headers['x-forwarded-for'];
-  const remoteAddress = req.socket.remoteAddress || '';
-  return current ? `${current}, ${remoteAddress}` : remoteAddress;
+  return req.socket.remoteAddress || '';
+}
+
+function stampInternalRequestHeaders(req) {
+  req.headers[INTERNAL_REMOTE_ADDRESS_HEADER] = req.socket.remoteAddress || '';
 }
 
 function getRequestProtocol(req) {
-  const forwardedProto = req.headers['x-forwarded-proto'];
-  if (typeof forwardedProto === 'string' && forwardedProto) {
-    return forwardedProto.split(',')[0].trim();
+  const configuredProtocol = parseProtocolFromOrigin(getRuntimeConfig().hostPublicOrigin);
+  if (configuredProtocol) {
+    return configuredProtocol;
   }
 
   return req.socket.encrypted ? 'https' : 'http';
+}
+
+function parseProtocolFromOrigin(origin) {
+  if (!origin) {
+    return null;
+  }
+
+  try {
+    const protocol = new URL(origin).protocol.replace(/:$/, '');
+    return protocol === 'http' || protocol === 'https' ? protocol : null;
+  } catch {
+    return null;
+  }
 }
 
 function getHostPublicOrigin(req) {

@@ -21,6 +21,41 @@ export interface AuthenticatedRequest {
   source: 'session' | 'cli-token' | 'trusted-proxy';
 }
 
+export async function requireHostPrincipal(
+  request: Request,
+  action: HostApiAction
+): Promise<AuthenticatedRequest | NextResponse> {
+  const status = await getAuthStatus();
+  if (status.setupRequired) {
+    return authError('setup_required', 'Docker Host setup must be completed first.', 403, {
+      action,
+      nextStep: 'Open /setup and complete the first administrator setup.',
+    });
+  }
+
+  const auth = await authenticateRequest(request);
+  if (!auth.principal) {
+    await appendDeniedHostApiAudit(action, 'unauthorized', null, request);
+    return authError('unauthorized', 'Authentication is required.', 401, {
+      action,
+      nextStep: 'Sign in to Docker Host.',
+    });
+  }
+
+  if (auth.source !== 'cli-token' && isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
+    await appendDeniedHostApiAudit(action, 'csrf_rejected', auth.principal, request);
+    return authError('csrf_rejected', 'State-changing requests must come from the same origin.', 403, {
+      action,
+      nextStep: 'Retry the action from the Docker Host Web UI.',
+    });
+  }
+
+  return {
+    principal: auth.principal,
+    source: auth.source,
+  };
+}
+
 export async function requireHostAdmin(
   request: Request,
   action: HostApiAction
@@ -304,21 +339,108 @@ function passesSameOriginCheck(request: Request) {
 }
 
 function isSecureRequest(request: Request) {
-  return request.headers.get('x-forwarded-proto') === 'https' ||
+  const configuredOrigin = getConfiguredPublicOrigin();
+  if (configuredOrigin && isHttpsOrigin(configuredOrigin)) {
+    return true;
+  }
+
+  const forwardedProto = getFirstHeaderValue(request.headers.get('x-forwarded-proto')).toLowerCase();
+  return forwardedProto === 'https' ||
     new URL(request.url).protocol === 'https:';
 }
 
-function isLoopbackRequest(request: Request) {
-  const hostname = new URL(request.url).hostname.toLowerCase();
-  return hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname.endsWith('.localhost');
+export function isLoopbackRequest(request: Request) {
+  const remoteAddress = getFirstHeaderValue(request.headers.get('x-docker-host-remote-address'));
+  if (remoteAddress) {
+    return isLoopbackAddress(remoteAddress);
+  }
+
+  return isLoopbackHostname(new URL(request.url).hostname);
 }
 
-function getRequestOrigin(request: Request) {
+export function getRequestOrigin(request: Request) {
+  const configuredOrigin = getConfiguredPublicOrigin();
+  if (configuredOrigin) {
+    return configuredOrigin;
+  }
+
   const url = new URL(request.url);
-  return `${url.protocol}//${url.host}`;
+  const host = parseHeaderHost(request.headers.get('host')) ||
+    url.host;
+  const protocol = (getFirstHeaderValue(request.headers.get('x-forwarded-proto')) ||
+    url.protocol.replace(/:$/, '')).toLowerCase();
+
+  return `${protocol}://${host}`;
+}
+
+function getConfiguredPublicOrigin() {
+  const origin = getHostRuntimeConfig().hostPublicOrigin;
+  if (!origin) {
+    return null;
+  }
+
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return origin.replace(/\/+$/, '') || null;
+  }
+}
+
+function parseHeaderHost(value: string | null) {
+  return getFirstHeaderValue(value) || null;
+}
+
+function isHttpsOrigin(value: string) {
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackHostname(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  const unbracketed = normalized.startsWith('[') && normalized.endsWith(']')
+    ? normalized.slice(1, -1)
+    : normalized;
+  return unbracketed === 'localhost' ||
+    unbracketed.endsWith('.localhost') ||
+    isLoopbackAddress(unbracketed);
+}
+
+function isLoopbackAddress(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') {
+    return true;
+  }
+
+  const ipv4 = normalized.startsWith('::ffff:')
+    ? normalized.slice('::ffff:'.length)
+    : normalized;
+  return isLoopbackIpv4Address(ipv4);
+}
+
+function isLoopbackIpv4Address(value: string) {
+  const octets = value.split('.');
+  if (octets.length !== 4) {
+    return false;
+  }
+
+  const numbers = octets.map(octet => Number.parseInt(octet, 10));
+  return numbers.every((octet, index) =>
+    Number.isInteger(octet) &&
+    octet >= 0 &&
+    octet <= 255 &&
+    String(octet) === octets[index]
+  ) && numbers[0] === 127;
+}
+
+function getFirstHeaderValue(value: string | null) {
+  return value?.split(',')[0]?.trim() || '';
 }
 
 function getSessionCookieDomain(request: Request) {

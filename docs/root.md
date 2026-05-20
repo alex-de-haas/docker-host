@@ -24,7 +24,7 @@ flowchart LR
 
 ## Documents
 
-- [Future work](todo.md) - lightweight backlog items and follow-up ideas that are not yet dedicated planning documents.
+- [Host app shell](features/host-app-shell.md) - implemented admin shell foundation, navigation groups, persistent sidebar behavior, and protected page integration.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Module developer mode](features/module-developer-mode.md) - local-only module development targets that proxy through the Host gateway without a full install.
@@ -32,9 +32,9 @@ flowchart LR
 - [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.
 - [CLI bootstrap](features/cli-bootstrap.md) - `docker-host` command surface, launch configuration, and direct Docker Engine lifecycle integration.
 - [CLI module commands](features/cli-module-commands.md) - terminal module management commands using the Host backend API.
-- [Docker Host API](features/host-api.md) - Host backend API endpoint catalog for Web UI and future CLI module commands.
+- [Docker Host API](features/host-api.md) - Host backend API endpoint catalog for Web UI and CLI module commands.
 - [Docker Host domain model](features/domain-model.md) - shared vocabulary for installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
-- [Module metadata files](features/module-metadata.md) - detailed draft for installing Docker-hosted modules from JSON metadata URLs.
+- [Module metadata files](features/module-metadata.md) - detailed contract for installing Docker-hosted modules from JSON metadata URLs.
 - [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.
 - [Demo Module](features/demo-module.md) - repository-local Next.js module for validating Docker Host module operations.

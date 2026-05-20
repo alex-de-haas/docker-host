@@ -3,6 +3,7 @@ export type HostRole = 'host.admin' | 'host.user';
 export type ModuleExposurePolicy = 'public' | 'loginRequired' | 'assignedUsersOnly';
 
 export type HostApiAction =
+  | 'apps.read'
   | 'host.read'
   | 'host.configure'
   | 'host.auth.configure'

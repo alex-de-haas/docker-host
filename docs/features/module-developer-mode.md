@@ -33,8 +33,8 @@ Integrated mode is intended for testing gateway behavior that standalone mode ca
 | Target safety | unrestricted, loopback only, or local/private networks | Allow `localhost`, `*.localhost`, `host.docker.internal`, loopback, and private IP ranges. Reject public target URLs. |
 | Gateway behavior | separate dev gateway, path routing, or override in existing gateway | Reuse the existing subdomain gateway and override the upstream target only while developer mode is enabled. |
 | Identity | mock headers, Host-signed token, or no identity | Integrated mode uses the normal Host-signed `X-Docker-Host-Identity` token. Standalone mocks remain module-owned. |
-| Dependencies | all mocked, all installed, or per-dependency overrides | MVP supports a root module developer target. Per-dependency overrides can be added to the same local-only state later. |
-| UI | full UI, minimal diagnostics, or CLI/API first | Use CLI/API first. A richer UI can be added when module author workflows are clearer. |
+| Dependencies | all mocked, all installed, or per-dependency overrides | Support a root module developer target. Per-dependency overrides are not part of the current local-only state model. |
+| UI | full UI, minimal diagnostics, or CLI/API first | Use CLI/API first. |
 
 ## API
 
@@ -51,10 +51,10 @@ Create/update input:
 
 ```json
 {
-  "metadataUrl": "http://localhost:3000/fixtures/modules/sample-reports",
-  "hostname": "reports.example.test",
-  "portKey": "web",
-  "targetBaseUrl": "http://127.0.0.1:3001",
+  "metadataUrl": "http://localhost:3000/fixtures/modules/demo-module",
+  "hostname": "demo.localhost",
+  "portKey": "http",
+  "targetBaseUrl": "http://127.0.0.1:3100",
   "exposurePolicy": "loginRequired",
   "identityMode": "required",
   "enabled": true
@@ -63,6 +63,36 @@ Create/update input:
 
 The Host downloads and validates the metadata graph, resolves the root module id, checks that `portKey` exists and is marked `public: true`, and stores the normalized target.
 
+When the selected `portKey` matches valid module `ui.entrypoint` metadata, the Host also stores a shell app snapshot on the developer target:
+
+- display name and description from module metadata;
+- optional shell icon from `ui.icon`;
+- entrypoint path from `ui.entrypoint.path`;
+- nested navigation from `ui.navigation`.
+
+This snapshot keeps `/api/apps` fast and deterministic. Module authors should re-link or update a developer target when UI metadata changes.
+
+## Apps Portal
+
+When `HOST_MODULE_DEV_MODE=enabled`, enabled developer targets with shell app snapshots appear in the authenticated Apps portal alongside installed module apps.
+
+Developer app behavior:
+
+- `/api/apps` returns developer entries with `source: "developer"` and `developerTargetId`;
+- app ids use `dev:{targetId}` to avoid collisions with installed module ids;
+- shell pages use `/apps/dev/{targetId}`;
+- embedded transport uses `/api/apps/dev/{targetId}/embed`;
+- the Apps sidebar, Apps portal, and app topbar show a compact `Dev` badge;
+- disabled targets and all targets under disabled developer mode are hidden from `/api/apps`.
+
+Developer app visibility reuses the target exposure policy after Host authentication:
+
+- `public` and `loginRequired` targets are visible to authenticated Host users;
+- `assignedUsersOnly` targets use existing module access assignments;
+- anonymous shell App discovery is not supported.
+
+Developer app entries remain local-only portal state. They do not create production gateway exposure records or external ingress readiness state.
+
 ## CLI
 
 Enable developer mode:
@@ -70,13 +100,14 @@ Enable developer mode:
 ```bash
 docker-host config set HOST_MODULE_DEV_MODE enabled
 docker-host restart
+npm run demo-module:dev
 ```
 
 Manage targets:
 
 ```bash
 docker-host modules dev list
-docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>
+docker-host modules dev link http://localhost:3000/fixtures/modules/demo-module demo.localhost http http://127.0.0.1:3100
 docker-host modules dev unlink <target-id>
 ```
 

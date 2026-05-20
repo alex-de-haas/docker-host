@@ -1,4 +1,37 @@
 import { headers } from "next/headers";
+import {
+  Activity,
+  Clock3,
+  Database,
+  Fingerprint,
+  HardDrive,
+  Route,
+} from "lucide-react";
+import {
+  DemoNavigation,
+  DemoPageHeader,
+  DemoShell,
+  DetailList,
+  JsonButton,
+  MetricCard,
+  PeopleList,
+  SectionCard,
+  StateBadge,
+  StorageGrid,
+  type StateTone,
+} from "@/components/DemoModuleUi";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Status,
+  StatusIndicator,
+  StatusLabel,
+} from "@/components/ui/status";
 import { getDemoConfig, inspectStorage, moduleStartedAt } from "@/lib/demo-config";
 import { getDemoPeople } from "@/lib/demo-data";
 import { getDemoAuthSnapshot } from "@/lib/host-auth";
@@ -13,268 +46,237 @@ export default async function Home() {
   const auth = await getDemoAuthSnapshot(await headers());
 
   return (
-    <main className="shell">
-      <section className="topbar" aria-label="Module summary">
-        <div>
-          <p className="eyebrow">{config.moduleId}</p>
-          <h1>Docker Host Demo Module</h1>
-        </div>
-        <div className="statusPill">
-          <span aria-hidden="true" />
-          Running
+    <DemoShell>
+      <DemoPageHeader
+        eyebrow={config.moduleId}
+        title="Docker Host Demo Module"
+        description="Runtime diagnostics for Docker Host module lifecycle development."
+        actions={
+          <Status status="online">
+            <StatusIndicator />
+            <StatusLabel>Running</StatusLabel>
+          </Status>
+        }
+      />
+      <DemoNavigation active="overview" />
+
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+        <Card className="justify-center">
+          <CardHeader>
+            <CardDescription>{config.greeting}</CardDescription>
+            <CardTitle className="max-w-3xl text-2xl font-semibold leading-tight sm:text-3xl">
+              Module operations test surface
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-5">
+            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+              A compact module that exposes runtime config, storage probes, sample
+              people data, and health endpoints for Docker Host development.
+            </p>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <MetricCard
+            icon={Activity}
+            label="Version"
+            value={config.moduleVersion}
+          />
+          <MetricCard
+            icon={Route}
+            label="Channel"
+            value={config.releaseChannel}
+          />
+          <MetricCard
+            icon={Clock3}
+            label="Refresh"
+            value={`${config.refreshSeconds}s`}
+          />
+          <MetricCard
+            icon={HardDrive}
+            label="Started"
+            value={new Date(moduleStartedAt).toLocaleTimeString("en", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          />
+          <MetricCard
+            icon={Fingerprint}
+            label="Identity"
+            value={formatIdentityStatus(auth.identity.status)}
+          />
+          <MetricCard
+            icon={Database}
+            label="Directory"
+            value={formatDirectoryStatus(auth.directory.status)}
+          />
         </div>
       </section>
 
-      <section className="hero">
-        <div className="heroCopy">
-          <p className="greeting">{config.greeting}</p>
-          <h2>Module operations test surface</h2>
-          <p>
-            A compact module that exposes runtime config, storage probes, sample
-            people data, and health endpoints for Docker Host development.
-          </p>
-        </div>
-        <dl className="metricGrid">
-          <div>
-            <dt>Version</dt>
-            <dd>{config.moduleVersion}</dd>
-          </div>
-          <div>
-            <dt>Channel</dt>
-            <dd>{config.releaseChannel}</dd>
-          </div>
-          <div>
-            <dt>Refresh</dt>
-            <dd>{config.refreshSeconds}s</dd>
-          </div>
-          <div>
-            <dt>Started</dt>
-            <dd>{new Date(moduleStartedAt).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" })}</dd>
-          </div>
-          <div>
-            <dt>Identity</dt>
-            <dd>{formatIdentityStatus(auth.identity.status)}</dd>
-          </div>
-          <div>
-            <dt>Directory</dt>
-            <dd>{formatDirectoryStatus(auth.directory.status)}</dd>
-          </div>
-        </dl>
+      <section className="grid gap-4 lg:grid-cols-2" aria-label="Runtime details">
+        <SectionCard title="Runtime config" action={<JsonButton href="/api/config" />}>
+          <DetailList
+            items={[
+              { label: "Public URL", value: config.publicUrl },
+              { label: "Auth preview", value: config.authPreview ? "Enabled" : "Disabled" },
+              { label: "Identity audience", value: config.host.moduleId },
+              { label: "Host internal origin", value: config.host.internalOrigin },
+              {
+                label: "Service token",
+                value: config.host.moduleServiceTokenConfigured ? "Configured" : "Missing",
+              },
+              { label: "Health endpoint", value: "/api/health" },
+            ]}
+          />
+        </SectionCard>
+
+        <SectionCard title="People" action={<JsonButton href="/api/people" />}>
+          <PeopleList people={people} />
+        </SectionCard>
       </section>
 
-      <section className="grid twoColumns" aria-label="Runtime details">
-        <article className="panel">
-          <div className="panelHeader">
-            <h2>Runtime config</h2>
-            <a href="/api/config">JSON</a>
-          </div>
-          <dl className="detailList">
-            <div>
-              <dt>Public URL</dt>
-              <dd>{config.publicUrl}</dd>
-            </div>
-            <div>
-              <dt>Auth preview</dt>
-              <dd>{config.authPreview ? "Enabled" : "Disabled"}</dd>
-            </div>
-            <div>
-              <dt>Identity audience</dt>
-              <dd>{config.host.moduleId}</dd>
-            </div>
-            <div>
-              <dt>Host internal origin</dt>
-              <dd>{config.host.internalOrigin}</dd>
-            </div>
-            <div>
-              <dt>Service token</dt>
-              <dd>{config.host.moduleServiceTokenConfigured ? "Configured" : "Missing"}</dd>
-            </div>
-            <div>
-              <dt>Health endpoint</dt>
-              <dd>/api/health</dd>
-            </div>
-          </dl>
-        </article>
-
-        <article className="panel">
-          <div className="panelHeader">
-            <h2>People</h2>
-            <a href="/api/people">JSON</a>
-          </div>
-          <div className="peopleList">
-            {people.map(person => (
-              <div className="personRow" key={person.id}>
-                <div>
-                  <strong>{person.name}</strong>
-                  <span>{person.role}</span>
-                </div>
-                <span className={`state state-${person.status}`}>{person.status}</span>
-              </div>
-            ))}
-          </div>
-        </article>
-      </section>
-
-      <section className="grid twoColumns" aria-label="Host authorization">
-        <article className="panel">
-          <div className="panelHeader">
-            <h2>Host identity</h2>
-            <a href="/api/auth/identity">JSON</a>
-          </div>
-          <div className="authStack">
-            <div className="authStatusRow">
-              <span className={identityStateClass(auth.identity.status)}>
+      <section className="grid gap-4 lg:grid-cols-2" aria-label="Host authorization">
+        <SectionCard title="Host identity" action={<JsonButton href="/api/auth/identity" />}>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <StateBadge tone={identityStateTone(auth.identity.status)}>
                 {formatIdentityStatus(auth.identity.status)}
+              </StateBadge>
+              <span className="break-all text-xs text-muted-foreground">
+                {auth.identity.headerName}
               </span>
-              <span className="smallText">{auth.identity.headerName}</span>
             </div>
             {auth.identity.claims ? (
-              <dl className="detailList compactList">
-                <div>
-                  <dt>Subject</dt>
-                  <dd>{auth.identity.claims.subject}</dd>
-                </div>
-                <div>
-                  <dt>User</dt>
-                  <dd>{auth.identity.claims.name || auth.identity.claims.email || "Unnamed Host user"}</dd>
-                </div>
-                <div>
-                  <dt>Host role</dt>
-                  <dd>{auth.identity.claims.hostRole || "Unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Module access</dt>
-                  <dd>{auth.identity.claims.moduleAccess || "Unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Exposure policy</dt>
-                  <dd>{auth.identity.claims.moduleExposurePolicy || "Unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Expires</dt>
-                  <dd>{auth.identity.claims.expiresAt || "Unknown"}</dd>
-                </div>
-              </dl>
+              <DetailList
+                items={[
+                  { label: "Subject", value: auth.identity.claims.subject },
+                  {
+                    label: "User",
+                    value:
+                      auth.identity.claims.name ||
+                      auth.identity.claims.email ||
+                      "Unnamed Host user",
+                  },
+                  { label: "Host role", value: auth.identity.claims.hostRole || "Unknown" },
+                  {
+                    label: "Module access",
+                    value: auth.identity.claims.moduleAccess || "Unknown",
+                  },
+                  {
+                    label: "Exposure policy",
+                    value: auth.identity.claims.moduleExposurePolicy || "Unknown",
+                  },
+                  { label: "Expires", value: auth.identity.claims.expiresAt || "Unknown" },
+                ]}
+              />
             ) : (
-              <p className="emptyText">{auth.identity.error || "No Host identity token was received."}</p>
+              <p className="text-sm leading-6 text-muted-foreground">
+                {auth.identity.error || "No Host identity token was received."}
+              </p>
             )}
           </div>
-        </article>
+        </SectionCard>
 
-        <article className="panel">
-          <div className="panelHeader">
-            <h2>Module directory</h2>
-            <span className={directoryStateClass(auth.directory.status)}>
+        <SectionCard
+          title="Module directory"
+          action={
+            <StateBadge tone={directoryStateTone(auth.directory.status)}>
               {formatDirectoryStatus(auth.directory.status)}
-            </span>
-          </div>
-          <div className="authStack">
-            <dl className="detailList compactList">
-              <div>
-                <dt>Endpoint</dt>
-                <dd>{auth.directory.endpoint || "Unavailable"}</dd>
-              </div>
-              <div>
-                <dt>Assigned users</dt>
-                <dd>{auth.directory.pagination?.total ?? auth.directory.users.length}</dd>
-              </div>
-            </dl>
+            </StateBadge>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            <DetailList
+              items={[
+                { label: "Endpoint", value: auth.directory.endpoint || "Unavailable" },
+                {
+                  label: "Assigned users",
+                  value: auth.directory.pagination?.total ?? auth.directory.users.length,
+                },
+              ]}
+            />
             {auth.directory.users.length > 0 ? (
-              <div className="peopleList">
+              <div className="grid gap-1">
                 {auth.directory.users.map(user => (
-                  <div className="personRow" key={user.id}>
-                    <div>
-                      <strong>{user.displayName || user.email || user.id}</strong>
-                      <span>{user.email || user.id}</span>
+                  <div
+                    className="flex min-h-14 items-center justify-between gap-3 border-b py-3 last:border-b-0"
+                    key={user.id}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">
+                        {user.displayName || user.email || user.id}
+                      </div>
+                      <div className="truncate text-sm text-muted-foreground">
+                        {user.email || user.id}
+                      </div>
                     </div>
-                    <span className="state state-active">{user.hostRole}</span>
+                    <StateBadge tone="success">{user.hostRole}</StateBadge>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="emptyText">
+              <p className="text-sm leading-6 text-muted-foreground">
                 {auth.directory.error?.message || "No assigned Host users were returned."}
               </p>
             )}
           </div>
-        </article>
+        </SectionCard>
       </section>
 
-      <section className="grid twoColumns" aria-label="Module-owned authorization">
-        <article className="panel">
-          <div className="panelHeader">
-            <h2>Module permissions</h2>
-            <span className="state state-active">{auth.modulePermissions.role}</span>
-          </div>
-          <dl className="detailList compactList">
-            <div>
-              <dt>Principal</dt>
-              <dd>{auth.modulePermissions.principal}</dd>
-            </div>
-            <div>
-              <dt>Permissions</dt>
-              <dd>{auth.modulePermissions.permissions.join(", ")}</dd>
-            </div>
-          </dl>
-        </article>
+      <section
+        className="grid gap-4 lg:grid-cols-2"
+        aria-label="Module-owned authorization"
+      >
+        <SectionCard
+          title="Module permissions"
+          action={<StateBadge tone="success">{auth.modulePermissions.role}</StateBadge>}
+        >
+          <DetailList
+            items={[
+              { label: "Principal", value: auth.modulePermissions.principal },
+              { label: "Permissions", value: auth.modulePermissions.permissions.join(", ") },
+            ]}
+          />
+        </SectionCard>
 
-        <article className="panel">
-          <div className="panelHeader">
-            <h2>Gateway request</h2>
-            <span className={auth.gateway.hostSessionCookieForwarded ? "state state-disabled" : "state state-active"}>
+        <SectionCard
+          title="Gateway request"
+          action={
+            <StateBadge tone={auth.gateway.hostSessionCookieForwarded ? "danger" : "success"}>
               Host cookie {auth.gateway.hostSessionCookieForwarded ? "present" : "stripped"}
-            </span>
-          </div>
-          <dl className="detailList compactList">
-            <div>
-              <dt>Host</dt>
-              <dd>{auth.gateway.host || "Unknown"}</dd>
-            </div>
-            <div>
-              <dt>Forwarded host</dt>
-              <dd>{auth.gateway.forwardedHost || "Missing"}</dd>
-            </div>
-            <div>
-              <dt>Forwarded proto</dt>
-              <dd>{auth.gateway.forwardedProto || "Missing"}</dd>
-            </div>
-            <div>
-              <dt>X-Docker-Host headers</dt>
-              <dd>{auth.gateway.dockerHostHeaders.length > 0 ? auth.gateway.dockerHostHeaders.join(", ") : "None"}</dd>
-            </div>
-          </dl>
-        </article>
+            </StateBadge>
+          }
+        >
+          <DetailList
+            items={[
+              { label: "Host", value: auth.gateway.host || "Unknown" },
+              { label: "Forwarded host", value: auth.gateway.forwardedHost || "Missing" },
+              { label: "Forwarded proto", value: auth.gateway.forwardedProto || "Missing" },
+              {
+                label: "X-Docker-Host headers",
+                value:
+                  auth.gateway.dockerHostHeaders.length > 0
+                    ? auth.gateway.dockerHostHeaders.join(", ")
+                    : "None",
+              },
+            ]}
+          />
+        </SectionCard>
       </section>
 
-      <section className="panel" aria-label="Storage">
-        <div className="panelHeader">
-          <h2>Storage probes</h2>
-          <a href="/api/health">Health</a>
+      <section className="flex flex-col gap-4" aria-label="Storage">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <h2 className="text-xl font-semibold leading-7">Storage probes</h2>
+            <p className="text-sm text-muted-foreground">
+              Module-owned data, log, and external source mount checks.
+            </p>
+          </div>
+          <JsonButton href="/api/health" />
         </div>
-        <div className="storageGrid">
-          {storage.map(item => (
-            <article className="storageItem" key={item.key}>
-              <div>
-                <h3>{item.label}</h3>
-                <p>{item.path}</p>
-              </div>
-              <span className={item.exists ? "state state-active" : "state state-disabled"}>
-                {item.exists ? "mounted" : "missing"}
-              </span>
-              {item.entries.length > 0 ? (
-                <ul>
-                  {item.entries.map(entry => (
-                    <li key={entry}>{entry}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="emptyText">{item.error || "No visible entries."}</p>
-              )}
-            </article>
-          ))}
-        </div>
+        <StorageGrid storage={storage} />
       </section>
-    </main>
+    </DemoShell>
   );
 }
 
@@ -306,18 +308,18 @@ function formatDirectoryStatus(status: ModuleDirectoryStatus) {
   }
 }
 
-function identityStateClass(status: ModuleIdentityStatus) {
+function identityStateTone(status: ModuleIdentityStatus): StateTone {
   if (status === "verified") {
-    return "state state-active";
+    return "success";
   }
 
-  return status === "not-present" ? "state state-invited" : "state state-disabled";
+  return status === "not-present" ? "warning" : "danger";
 }
 
-function directoryStateClass(status: ModuleDirectoryStatus) {
+function directoryStateTone(status: ModuleDirectoryStatus): StateTone {
   if (status === "ok") {
-    return "state state-active";
+    return "success";
   }
 
-  return status === "not-configured" ? "state state-invited" : "state state-disabled";
+  return status === "not-configured" ? "warning" : "danger";
 }

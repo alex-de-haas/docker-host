@@ -183,6 +183,7 @@ let authStoreMutex: Promise<void> = Promise.resolve();
 const AUTH_STATE_LOCK_STALE_MS = 2 * 60 * 1000;
 const AUTH_STATE_LOCK_TIMEOUT_MS = 30 * 1000;
 const AUTH_STATE_LOCK_RETRY_MS = 50;
+const PRIVATE_AUTH_STATE_FILE_MODE = 0o600;
 
 export async function readAuthState(config = getHostRuntimeConfig()): Promise<AuthState> {
   await ensureAuthState(config);
@@ -212,8 +213,12 @@ export async function writeAuthState(
     updatedAt: new Date().toISOString(),
   });
   const temporaryPath = `${config.authStatePath}.${process.pid}.${randomUUID()}.tmp`;
-  await fs.writeFile(temporaryPath, `${JSON.stringify(nextState, null, 2)}\n`, 'utf-8');
+  await fs.writeFile(temporaryPath, `${JSON.stringify(nextState, null, 2)}\n`, {
+    encoding: 'utf-8',
+    mode: PRIVATE_AUTH_STATE_FILE_MODE,
+  });
   await fs.rename(temporaryPath, config.authStatePath);
+  await fs.chmod(config.authStatePath, PRIVATE_AUTH_STATE_FILE_MODE);
 }
 
 export async function updateAuthState<T>(

@@ -1,6 +1,6 @@
 # Module update flow
 
-This document describes the implemented MVP behavior for updating installed modules.
+This document describes the behavior for updating installed modules.
 Module update is a metadata refresh plus reviewed change plan, not only a Docker image pull.
 
 ## Scope
@@ -12,7 +12,7 @@ The update flow implements:
 - an update apply API;
 - explicit retry behavior for failed updates.
 
-Out of scope for the MVP update flow:
+The update flow does not support:
 
 - automatic rollback after partial update failure;
 - recursive automatic updates of already installed dependencies;
@@ -27,7 +27,7 @@ The Host uses separate update endpoints:
 - `POST /api/modules/{moduleId}/update`
 - `POST /api/modules/{moduleId}/update/retry`
 
-The plan endpoint reads the installed module record from `modules.json` and refreshes the stored `metadataUrl`. The MVP update API does not accept a replacement metadata URL during update. Changing the metadata URL is a separate future source-management action.
+The plan endpoint reads the installed module record from `modules.json` and refreshes the stored `metadataUrl`. The update API does not accept a replacement metadata URL during update.
 
 The apply endpoint recomputes the update plan from the installed record, refreshed metadata, and submitted administrator decisions. It rejects the request when the reviewed `updatePlanDigest` no longer matches the recomputed plan.
 
@@ -116,7 +116,7 @@ It does not automatically update already installed dependencies just because the
 
 ## Container Replacement
 
-The MVP replacement strategy is simple and explicit:
+The replacement strategy is explicit:
 
 - set the module record to `operationStatus=updating`;
 - pull the proposed image according to refreshed `pullPolicy`;
@@ -138,24 +138,4 @@ The installed module record stores the last operation, reviewed update plan dige
 
 The update review UI uses the dedicated route `/modules/{moduleId}/update`, while reusing install review components where practical.
 
-Dashboard rows expose update as an action for installed modules. Failed updates show retry/update-review recovery actions without treating them as failed installs.
-
-## Test Bar
-
-Focused tests cover:
-
-- update plan digest stability and mismatch handling;
-- same-module-id validation;
-- settings preservation and prompts for new required settings;
-- secret redaction and preservation rules;
-- storage mapping preservation and new directory planning;
-- external mount compatibility and required mount prompts;
-- dependency conflicts and missing dependency installation;
-- apply failure marking `operationStatus=failed`;
-- update retry routing and digest mismatch behavior.
-
-Use mocked Docker boundaries for apply/retry tests and keep manual Docker verification for the full install-update-remove flow.
-
-## Open Questions
-
-No MVP update flow questions remain open.
+Installed module rows expose update as an action for installed modules. Failed updates show retry/update-review recovery actions without treating them as failed installs.

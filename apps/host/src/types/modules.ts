@@ -124,6 +124,7 @@ export interface ModuleMetadata {
     healthcheck?: unknown;
     resources?: Record<string, unknown>;
   };
+  ui?: ModuleUiMetadata;
 }
 
 export interface ModuleDependencyMetadata {
@@ -185,6 +186,21 @@ export interface ModuleRuntimePortMetadata {
   containerPort: number;
   protocol: string;
   public: boolean;
+}
+
+export interface ModuleUiNavigationItemMetadata {
+  label: string;
+  path: string;
+}
+
+export interface ModuleUiMetadata {
+  category?: 'Apps';
+  icon?: string;
+  entrypoint: {
+    portKey: string;
+    path: string;
+  };
+  navigation: ModuleUiNavigationItemMetadata[];
 }
 
 export interface ModuleSummary {
@@ -332,6 +348,7 @@ export interface NormalizedModuleMetadata {
       memory?: string;
     };
   };
+  ui?: ModuleUiMetadata;
 }
 
 export interface InstallPlanValidationError {

@@ -14,8 +14,8 @@ export function GET(request: Request) {
     description: 'Development reports module fixture.',
     version: '1.0.0',
     image: {
-      repository: 'ghcr.io/example/docker-host-reports',
-      tag: '1.0.0',
+      repository: 'ghcr.io/alex-de-haas/demo-module',
+      tag: 'latest',
       pullPolicy: 'ifNotPresent',
     },
     dependencies: [
@@ -54,7 +54,7 @@ export function GET(request: Request) {
       {
         key: 'EXTERNAL_API_TOKEN',
         type: 'secret',
-        required: true,
+        required: false,
         target: {
           type: 'env',
           name: 'EXTERNAL_API_TOKEN',
@@ -97,8 +97,8 @@ export function GET(request: Request) {
           label: 'Report libraries',
           description: 'External folders scanned by the reports module.',
           purpose: 'data',
-          required: true,
-          minItems: 1,
+          required: false,
+          minItems: 0,
           maxItems: 3,
           writable: true,
           containerPathPrefix: '/storage/libraries',
@@ -114,7 +114,7 @@ export function GET(request: Request) {
       ports: [
         {
           key: 'http',
-          containerPort: 8080,
+          containerPort: 3000,
           protocol: 'http',
           public: true,
         },
@@ -123,6 +123,28 @@ export function GET(request: Request) {
         cpus: 0.5,
         memory: '256m',
       },
+    },
+    ui: {
+      category: 'Apps',
+      icon: 'boxes',
+      entrypoint: {
+        portKey: 'http',
+        path: '/',
+      },
+      navigation: [
+        {
+          label: 'Overview',
+          path: '/',
+        },
+        {
+          label: 'People',
+          path: '/people',
+        },
+        {
+          label: 'Settings',
+          path: '/settings',
+        },
+      ],
     },
   });
 }

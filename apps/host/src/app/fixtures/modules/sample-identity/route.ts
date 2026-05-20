@@ -14,8 +14,8 @@ export function GET() {
     description: 'Development identity service fixture.',
     version: '1.0.0',
     image: {
-      repository: 'ghcr.io/example/docker-host-identity',
-      tag: '1.0.0',
+      repository: 'ghcr.io/alex-de-haas/demo-module',
+      tag: 'latest',
       pullPolicy: 'ifNotPresent',
     },
     dependencies: [],
@@ -54,7 +54,7 @@ export function GET() {
       ports: [
         {
           key: 'http',
-          containerPort: 8080,
+          containerPort: 3000,
           protocol: 'http',
           public: false,
         },

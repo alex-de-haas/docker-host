@@ -8,37 +8,37 @@ Docker Host should be the access-control boundary for:
 
 - Host Web UI;
 - Host backend API;
-- externally exposed module UIs;
+- externally exposed module service/API endpoints;
 - module gateway routing;
 - module access assignment;
 - Host-level roles and sessions.
 
-Docker Host should not depend on a regular managed module for its own authentication. A managed identity module may exist later as an external provider or system-level integration, but the Host must be able to protect and recover its own Web UI and API independently.
+Docker Host should not depend on a regular managed module for its own authentication. The Host must be able to protect and recover its own Web UI and API independently.
 
 ## Accepted Decisions
 
-- Module UIs use dedicated subdomains, not path-based routing.
-- All external module UI traffic goes through the Host gateway by default.
+- Module browser UIs are opened through the Host shell. Dedicated subdomains are reserved for separate service/API exposures.
+- All external service/API exposure traffic goes through the Host gateway by default.
 - Direct public module ports are not the primary exposure model and are allowed only as an explicit development override.
 - Host has two initial global roles: `host.admin` and `host.user`.
 - Host decides whether a user can reach a module.
 - Local Host instances, including `localhost`, require authentication by default. Development bypass must be explicit configuration.
-- The default exposure policy for externally opened module UIs is `loginRequired`.
+- The default exposure policy for externally opened service/API endpoints is `loginRequired`.
 - Each module owns its internal permission model.
 - Modules may receive Host identity through module-scoped signed tokens.
 - Modules may query only a scoped list of users relevant to that module.
 - Multiple real-world accounts are modeled as multiple Host users with account switching.
-- Identity profiles are deferred until there is a concrete need to link multiple external identities into one Host person.
+- Identity profiles are not part of the current account model.
 - Local authentication stores Host-owned users, sessions, CLI tokens, assignments, and audit state in dedicated versioned JSON files under the Host data root.
-- SQLite is not part of the planned local auth persistence model.
+- SQLite is not part of the local auth persistence model.
 
 ## Gateway Routing
 
-The target production routing model is subdomain based:
+The target production routing model for service/API exposures is subdomain based:
 
 ```text
 host.example.com    -> Docker Host Web UI
-reports.example.com -> Docker Host Gateway -> mod-reports:8080
+reports-api.example.com -> Docker Host Gateway -> mod-reports:8080
 media.example.com   -> Docker Host Gateway -> mod-media:3000
 ```
 
@@ -51,7 +51,7 @@ The Host gateway maps each module hostname to an installed module target inside 
 - exposure policy;
 - assigned users, if applicable.
 
-Path-based module routing is not part of the accepted target model. Many module UIs assume they run at `/`, and realtime transports are simpler on a dedicated origin.
+Path-based service/API routing is not part of the accepted target model. Realtime transports are simpler on a dedicated origin. Module browser UIs are handled separately by the Host shell app portal.
 
 The first gateway implementation runs as a custom Node server in the Host container. It checks the incoming `Host` header before handing the request to Next.js:
 
@@ -101,7 +101,7 @@ Each exposure points to a specific `moduleId + runtime.ports[].key`. The referen
 
 ```mermaid
 flowchart LR
-  U["Browser"] --> D["Module subdomain"]
+  U["Client"] --> D["Module service/API subdomain"]
   D --> G["Docker Host Gateway"]
   G --> A["Access policy"]
   A --> M["Module container"]
@@ -110,17 +110,17 @@ flowchart LR
 
 ## Exposure Policy
 
-The module exposure model uses explicit policy states instead of the older `private` and `protected` terminology.
+The module exposure model uses explicit policy states instead of the older `private` and `protected` terminology. These gateway exposure policies apply to separately published service/API endpoints, not to shell Apps. Shell Apps are discovered only after Host authentication through `/api/apps`.
 
 | Policy | Login required | Host assignment required | Behavior |
 | --- | --- | --- | --- |
-| `public` | no | no | Anyone who can reach the hostname can open the module UI. |
-| `loginRequired` | yes | no | Any authenticated Host user can open the module. |
-| `assignedUsersOnly` | yes | yes for `host.user` | Selected Host users can open the module; `host.admin` can also reach it for bootstrap and configuration. |
+| `public` | no | no | Anyone who can reach the hostname can reach the exposed service/API endpoint. |
+| `loginRequired` | yes | no | Any authenticated Host user can reach the exposed service/API endpoint. |
+| `assignedUsersOnly` | yes | yes for `host.user` | Selected Host users can reach the exposed service/API endpoint; `host.admin` can also reach it for bootstrap and configuration. |
 
 These policies control only whether traffic reaches the module. They do not define what the user can do inside the module.
 
-The existing metadata field `runtime.ports[].public` is only a port capability hint that says an endpoint is suitable for future external UI exposure. It is not an authorization policy. Host-owned exposure policy decides whether the gateway treats an externally reachable module hostname as `public`, `loginRequired`, or `assignedUsersOnly`.
+The existing metadata field `runtime.ports[].public` is only a port capability hint that says an endpoint is suitable for Host-managed routing beyond internal module-to-module URLs. It is not an authorization policy and does not create a shell App. Host-owned exposure policy decides whether the gateway treats an externally reachable service/API hostname as `public`, `loginRequired`, or `assignedUsersOnly`.
 
 Module access assignments are stored in the auth state as Host-owned authorization data. They are separate from the gateway hostname registry and from module-owned permissions.
 
@@ -130,13 +130,16 @@ Gateway exposure management is a Host admin operation:
 
 | Route | Method | Behavior |
 | --- | --- | --- |
+| `/api/gateway/options` | `GET` | Return the compact Web UI picker model: installed modules with public runtime ports, UI-entrypoint hints, active Host users, and gateway domain settings. |
 | `/api/gateway/exposures` | `GET` | List configured gateway exposures and assigned Host user ids. |
 | `/api/gateway/exposures` | `POST` | Create a gateway exposure for `moduleId`, `hostname`, `portKey`, optional `exposurePolicy`, and optional `identityMode`. |
 | `/api/gateway/exposures/{exposureId}` | `PUT` | Update hostname, target port, policy, or enabled state. |
-| `/api/gateway/exposures/{exposureId}` | `DELETE` | Remove an exposure. |
+| `/api/gateway/exposures/{exposureId}` | `DELETE` | Remove an exposure and clear linked external ingress readiness state. |
 | `/api/gateway/exposures/{exposureId}/assignments` | `PUT` | Replace assigned Host user ids for the exposure's module. |
 
-The initial API is intentionally low-level so the routing and policy layer can stabilize before adding a richer Web UI.
+The `/ingress` Web UI uses these endpoints to create, edit, enable/disable, and delete service/API gateway exposures. Gateway exposure changes do not create shell Apps. When a selected public runtime port is also the module UI entrypoint, the UI warns that browser UIs should stay inside the Host Apps shell.
+
+Assignment edits remain module-wide. Calling the assignments endpoint through an exposure id updates the Host assignments for that exposure's module, so assigned-only service/API exposures and shell Apps share the same module assignment set.
 
 ## Gateway Proxy Rules
 
@@ -145,13 +148,18 @@ The gateway sanitizes proxied requests:
 - strips hop-by-hop headers;
 - strips CLI `Authorization`;
 - strips the Host session cookie before traffic reaches the module;
-- strips inbound `X-Docker-Host-*` headers so clients cannot spoof future identity headers;
+- strips inbound `X-Docker-Host-*` headers so clients cannot spoof Host-owned identity headers;
+- strips inbound `Forwarded`, `X-Forwarded-*`, and `X-Real-IP` before setting Host-owned forwarding headers for the module;
 - strips trusted proxy assertion headers before traffic reaches the module;
 - adds `X-Docker-Host-Identity` with a short-lived signed JWT when the exposure identity mode and authenticated Host principal require identity propagation;
 - adds `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For`;
 - preserves the external module `Host` header for applications that generate root-relative or same-origin URLs.
 
 For responses, the gateway preserves relative redirects and rewrites absolute redirects from the internal module target back to the external module hostname. Module `Set-Cookie` headers are passed through with `Domain` stripped so module cookies stay host-only for the module subdomain.
+
+The shell embed transport applies the same security boundary for module browser UIs opened inside the Host shell. Reserved embed routes under `/api/apps/{moduleId}/embed` and `/api/apps/dev/{targetId}/embed` require Host authentication, strip Host session cookies, strip inbound `X-Docker-Host-*`, client-supplied forwarding headers, and trusted-proxy assertion headers, inject Host-signed module identity when required, scope module cookies to the embed route, and return an iframe-friendly fallback when module response headers explicitly block framing.
+
+Embedded module UIs are rendered in an iframe sandbox that intentionally omits `allow-same-origin`. Module HTML is proxied from the Host origin, so granting same-origin privileges would allow module scripts to act against Host Web UI and API state as the signed-in user.
 
 ## Host Roles
 
@@ -160,11 +168,13 @@ Initial Host roles are intentionally small:
 | Role | Meaning |
 | --- | --- |
 | `host.admin` | Can manage Host configuration, auth settings, users, module install/update/remove, exposure, and recovery. |
-| `host.user` | Can access module subdomains allowed by exposure policy and assignment state. It cannot call Host API functionality, including module listing or Host status views. |
+| `host.user` | Can load the Host shell as an Apps portal and access module subdomains allowed by exposure policy and assignment state. It cannot call Host management API functionality, including module listing or Host status views. |
 
 Host role is included in module identity so modules can make bootstrap or admin UX decisions when appropriate. A module may decide to treat `host.admin` as an internal module administrator, but module-specific permissions still belong to the module.
 
 `host.admin` is allowed through the Host gateway for module bootstrap and configuration. This does not force the module to grant internal administrator rights automatically; the module may grant, map, or ignore the Host role according to its own permission model.
+
+`host.user` shell access is intentionally narrow. The user can call the app registry and embedded app transport paths needed by `/apps`, but module install/update/remove/lifecycle, gateway exposure management, external ingress management, security settings, user management, and Host status APIs remain `host.admin` only.
 
 ## CLI Access
 
@@ -192,6 +202,7 @@ Key local-auth decisions:
 - the first `host.admin` is created through a local CLI-generated setup token;
 - setup tokens are single-use, stored hashed, expire after 15 minutes, and are invalidated after first admin creation;
 - browser sessions use opaque random tokens in HttpOnly cookies with server-side hashed token records;
+- development auto-login is available only through explicit `HOST_DEV_AUTH=auto` configuration in development runtime and issues a normal local administrator or user session instead of disabling authorization;
 - default browser sessions use a 12-hour idle timeout and a 14-day absolute lifetime;
 - logout revokes the current account session by default;
 - multiple browser accounts may be remembered, with one active account per request;
@@ -261,13 +272,14 @@ Host must not forward its own session cookie to modules. When a gateway request 
 
 Token decisions:
 
-- JWTs are signed with an asymmetric Host-owned key. The MVP algorithm is `ES256`.
+- JWTs are signed with an asymmetric Host-owned key using `ES256`.
 - Private signing keys live under `/data/auth/module-identity-keys.json`, separate from users, sessions, CLI tokens, and module assignments.
 - Public keys are published as JWKS at `/.well-known/docker-host/jwks.json`.
 - Discovery metadata is published at `/.well-known/docker-host/module-identity.json`.
 - The discovery `jwks_uri` uses `HOST_INTERNAL_ORIGIN`, defaulting to `http://docker-host:3000`, so module containers can validate tokens from inside the Docker network.
 - Tokens use a 5-minute lifetime and are minted for each authenticated proxied HTTP request or WebSocket/SSE/long-poll setup request.
 - Host strips inbound `X-Docker-Host-*` request headers before adding its own identity header.
+- Shell embed traffic uses the same Host-signed identity token contract as gateway traffic. Installed app embeds use the installed module id as `aud`; developer app embeds preserve the developer target's `moduleId` as `aud`.
 
 Example claims:
 
@@ -302,7 +314,7 @@ Rules:
 - `loginRequired` and `assignedUsersOnly` exposures default to `identityMode: "required"`.
 - modules must validate tokens against Host JWKS and must reject tokens with the wrong audience, issuer, signature, or expiration.
 
-Host does not pass unsigned identity convenience headers in the MVP. If convenience headers are added later, the signed token remains the only authoritative identity artifact.
+Host does not pass unsigned identity convenience headers. The signed token is the authoritative identity artifact.
 
 ## Realtime Traffic
 
@@ -318,20 +330,20 @@ For realtime transports:
 
 Subdomain routing is preferred because realtime applications often assume stable root-relative URLs and a dedicated origin.
 
+Opening a module UI from the Host shell does not replace the service/API gateway model for realtime endpoints. Modules that need WebSocket, SignalR, SSE, or long-poll service traffic should continue to use their dedicated gateway exposure or another module-owned endpoint contract rather than relying on `/apps/{moduleId}` as a standalone proxy URL.
+
 ## Account Switching
 
-The accepted MVP direction is not to introduce mandatory identity profiles. Instead, different real-world accounts are represented as different Host users:
+The accepted direction is not to introduce mandatory identity profiles. Different real-world accounts are represented as different Host users:
 
 ```text
 personal@example.com -> host.admin
 work@example.com     -> host.user
 ```
 
-The Web UI should eventually support quick account switching, similar to common account switchers in Google, GitHub, or Microsoft products. When a module is opened, the Host session selected for that module determines which `sub`, email, and Host role appear in the module identity token.
+When a module is opened, the Host session selected for that module determines which `sub`, email, and Host role appear in the module identity token.
 
-Host may later remember a preferred account per module hostname, but this is a user-experience feature, not a separate identity model.
-
-Identity profiles remain a future option if Docker Host later needs to link multiple external identities into a single person.
+Host does not link multiple external identities into a single person.
 
 ## Scoped Module User Directory
 
@@ -348,7 +360,7 @@ Preferred model:
 - Modules should store module-owned permissions against stable Host user ids from Host-issued token `sub`.
 - Email is omitted by default and requires a module directory policy opt-in.
 - Disabled Host users are hidden from normal directory responses.
-- The MVP endpoint is `GET /api/internal/modules/{moduleId}/directory/users`.
+- The endpoint is `GET /api/internal/modules/{moduleId}/directory/users`.
 - Newly created module containers receive `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN`.
 
 Example response:
@@ -367,7 +379,7 @@ Example response:
 }
 ```
 
-The directory response is schema-versioned and may include pagination fields even when the first implementation returns all assigned users in one response. Modules may cache responses briefly, for example for 60 seconds, but Host remains authoritative for assignment changes.
+The directory response is schema-versioned and may include pagination fields. Modules may cache responses briefly, for example for 60 seconds, but Host remains authoritative for assignment changes.
 
 ## External Providers
 
@@ -388,7 +400,7 @@ External providers authenticate users. Docker Host still owns:
 
 ### Generic OIDC Provider
 
-The first generic OIDC implementation supports one active browser login provider using Authorization Code with PKCE.
+The generic OIDC implementation supports one active browser login provider using Authorization Code with PKCE.
 
 Implemented OIDC login surface:
 
@@ -409,9 +421,9 @@ Provider configuration can be supplied through Host auth state or environment va
 | `HOST_OIDC_USER_GROUPS` | Groups that map to `host.user`. |
 | `HOST_OIDC_CALLBACK_URL` | Optional explicit callback URL. |
 
-The OIDC MVP uses explicit claim mappings and denies login when no mapping grants `host.admin` or `host.user`. Just-in-time provisioning creates a Host user only after the ID token is verified and a role mapping succeeds. Host stores the external identity as `providerId + issuer + sub`, while modules continue to see the Host-owned user id in module identity tokens.
+OIDC uses explicit claim mappings and denies login when no mapping grants `host.admin` or `host.user`. Just-in-time provisioning creates a Host user only after the ID token is verified and a role mapping succeeds. Host stores the external identity as `providerId + issuer + sub`, while modules continue to see the Host-owned user id in module identity tokens.
 
-Host does not persist OIDC access tokens, refresh tokens, or ID tokens. Provider logout, multiple active OIDC providers, automatic email-based account linking, OIDC admin UI, and background group revalidation are deferred.
+Host does not persist OIDC access tokens, refresh tokens, or ID tokens. Provider logout, multiple active OIDC providers, automatic email-based account linking, OIDC admin UI, and background group revalidation are not part of this contract.
 
 ### Trusted Proxy Provider
 
@@ -474,7 +486,7 @@ Integrated development should be used to verify:
 - realtime transports;
 - module access policies.
 
-Implemented MVP:
+Supported developer mode behavior:
 
 - developer mode is disabled by default and enabled with `HOST_MODULE_DEV_MODE=enabled`;
 - developer target records live in `/data/dev/module-targets.json`;
@@ -531,11 +543,4 @@ The Web UI shows an external ingress readiness panel for gateway exposures. Admi
 
 External ingress lifecycle changes are audited as sanitized events for saved manual intent, mark-ready, validation refresh, drift detection, and unlink. These events reference the gateway exposure target but do not log provider credentials, assertions, secrets, or full request headers.
 
-Provider-specific automation, including Cloudflare DNS, Cloudflare Tunnel public hostname, Cloudflare Access application management, or other provider adapters, is intentionally outside this feature. It can be added later as an optional adapter on top of the provider-neutral readiness model.
-
-## Open Questions
-
-- Should Host remember a preferred account per module hostname?
-- What exact revalidation policy should long-lived realtime connections use?
-- Should generated `.env` output for standalone modules be added to developer mode, or should that wait for a module SDK?
-- Should per-dependency developer target overrides be represented as independent records or as a root target overlay?
+Provider-specific automation, including Cloudflare DNS, Cloudflare Tunnel public hostname, Cloudflare Access application management, or other provider adapters, is not part of the provider-neutral readiness model.

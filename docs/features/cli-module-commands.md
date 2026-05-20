@@ -25,7 +25,7 @@ flowchart LR
 - Keep CLI output readable for administrators and useful in CI logs.
 - Support interactive review for install and update plans.
 - Keep direct Docker Engine access limited to Host container lifecycle and Host URL discovery.
-- Provide a path for later non-interactive automation without making automation the first UX.
+- Keep the command surface interactive and human-readable.
 
 ## Non-goals
 
@@ -34,7 +34,7 @@ flowchart LR
 - CLI must not bypass reviewed digest semantics for install or update.
 - CLI must not expose raw secret values in normal output, errors, diagnostics, or JSON previews.
 - CLI module commands do not replace Host recovery commands for the Host container itself.
-- Remote Host management, authentication, TLS, SSH, and multi-user authorization remain out of scope for the MVP.
+- Remote Host management, authentication setup, TLS, SSH, and multi-user authorization are not part of CLI module commands.
 
 ## Command surface
 
@@ -92,11 +92,7 @@ CLI output should use a compact table with:
 
 When no modules are installed, CLI should print a short empty-state message and suggest `docker-host modules install <metadata-url>`.
 
-Later automation support can add:
-
-```text
-docker-host modules list --json
-```
+JSON output is not part of the current `modules list` command.
 
 ## `modules install`
 
@@ -294,29 +290,14 @@ Failed update retry uses `POST /api/modules/{moduleId}/update/retry`, but retry 
 
 ## Output modes
 
-The MVP should prioritize interactive human-readable output.
+CLI module commands use interactive human-readable output. Automation flags, JSON output, `--yes`, `--setting`, `--secret-from-env`, and `--mount` are not part of the current command surface.
 
-Later automation flags can be added without changing the backend contract:
-
-```text
-docker-host modules list --json
-docker-host modules install <metadata-url> --yes
-docker-host modules install <metadata-url> --json
-docker-host modules install <metadata-url> --setting MODULE_ID.KEY=VALUE
-docker-host modules install <metadata-url> --secret-from-env MODULE_ID.KEY=ENV_NAME
-docker-host modules install <metadata-url> --mount MODULE_ID.COLLECTION.KEY=/host/path
-docker-host modules update <module-id> --yes
-docker-host modules update <module-id> --json
-```
-
-Automation flags must fail clearly when required settings or external mounts are missing. `--yes` should only skip final confirmation when all required input is already supplied or has safe defaults.
-
-## Resolved MVP decisions
+## Command decisions
 
 - `install` is the canonical command. `add` is supported as an alias.
 - Module commands do not auto-start the Host container. If Host is stopped, CLI prints `docker-host start` as the next step.
 - Install and update call `GET /api/host/status` before requesting a plan.
-- The first implementation is interactive-first. Automation flags and JSON output are later slices.
+- Module commands are interactive-first.
 - Interactive install and update always ask for final confirmation before apply.
 - Settings are collected through typed prompts. Optional empty values are omitted.
 - Secret settings use masked prompts and are redacted from previews and diagnostics.
@@ -374,8 +355,3 @@ Command code should own:
 - terminal tables and prompts;
 - redacted request preview;
 - non-zero exit codes.
-
-## Open Questions
-
-- What exact JSON output schema should `--json` use for CI and automation?
-- Should non-interactive install/update input support compact flags, JSON files, or both?

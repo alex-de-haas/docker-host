@@ -28,12 +28,25 @@ test('module dev target links metadata to a local gateway override', async () =>
 
     assert.equal(target.moduleId, 'com.example.reports');
     assert.equal(target.moduleName, 'Reports');
+    assert.equal(target.moduleDescription, 'Reports dev fixture.');
     assert.equal(target.hostname, 'reports.localhost');
     assert.equal(target.targetBaseUrl, 'http://127.0.0.1:3001/dev');
     assert.equal(target.targetPathPrefix, '/dev');
     assert.equal(target.containerPort, 8080);
     assert.equal(target.exposurePolicy, 'loginRequired');
     assert.equal(target.identityMode, 'required');
+    assert.deepEqual(target.shellApp, {
+      displayName: 'Reports',
+      description: 'Reports dev fixture.',
+      icon: 'boxes',
+      entrypointPath: '/',
+      navigation: [
+        {
+          label: 'People',
+          path: '/people',
+        },
+      ],
+    });
 
     const listed = await listModuleDevTargets(config);
     assert.equal(listed.developerModeEnabled, true);
@@ -97,6 +110,7 @@ function createMetadataServer() {
       schemaVersion: '0.1',
       id: 'com.example.reports',
       name: 'Reports',
+      description: 'Reports dev fixture.',
       version: '1.0.0',
       image: {
         repository: 'reports-module',
@@ -110,6 +124,19 @@ function createMetadataServer() {
           protocol: 'http',
           public: true,
         }],
+      },
+      ui: {
+        icon: 'boxes',
+        entrypoint: {
+          portKey: 'web',
+          path: '/',
+        },
+        navigation: [
+          {
+            label: 'People',
+            path: '/people',
+          },
+        ],
       },
     }));
   });
