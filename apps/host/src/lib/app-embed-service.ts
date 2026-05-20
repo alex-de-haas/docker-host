@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server.js';
 import { canAccessModule } from './auth-policy.ts';
 import { SESSION_COOKIE_NAME } from './auth-service.ts';
+import { readAuthStateSnapshot } from './auth-store.ts';
 import { listHostApps } from './app-registry-service.ts';
 import { getModuleNetworkAlias } from './gateway-service.ts';
 import { getHostRuntimeConfig } from './host-runtime.ts';
 import { validateModuleUiMetadata } from './module-metadata.ts';
+import { readModuleDevTargetStateSnapshot } from './module-dev-store.ts';
 import {
   readModuleMetadata,
   readModulesStoreSnapshot,
@@ -18,6 +20,8 @@ import type { ListHostAppsOptions } from './app-registry-service.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostPrincipal, ModuleExposurePolicy } from '../types/auth.ts';
 import type { HostAppAccessMode, HostAppEntry } from '../types/apps.ts';
+import type { ModuleIdentityMode } from '../types/gateway.ts';
+import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
 import type {
   InstalledModuleRecord,
   ModuleRuntimePortMetadata,
@@ -42,11 +46,12 @@ const MAX_EMBED_PATH_LENGTH = 2048;
 
 export interface HostAppEmbedTarget {
   app: HostAppEntry;
-  installedModule: InstalledModuleRecord;
-  port: ModuleRuntimePortMetadata;
+  installedModule?: InstalledModuleRecord;
+  port?: ModuleRuntimePortMetadata;
   config: HostRuntimeConfig;
   modulePath: string;
   targetOrigin: string;
+  targetPathPrefix?: string;
   upstreamUrl: string;
   requestHost: string;
   requestProtocol: string;
@@ -57,7 +62,7 @@ export interface HostAppEmbedTarget {
       hostname: string;
       portKey: string;
       exposurePolicy: ModuleExposurePolicy;
-      identityMode: 'required';
+      identityMode: ModuleIdentityMode;
     };
     access: ReturnType<typeof canAccessModule>;
     principal: HostPrincipal;
@@ -88,7 +93,10 @@ export async function resolveHostAppEmbedTarget(
     ...options,
     config,
   });
-  const app = apps.find(candidate => candidate.moduleId === moduleId);
+  const app = apps.find(candidate =>
+    candidate.source === 'installed' &&
+    candidate.moduleId === moduleId
+  );
 
   if (!app) {
     throw new HostAppEmbedError(
@@ -164,6 +172,82 @@ export async function resolveHostAppEmbedTarget(
   };
 }
 
+export async function resolveHostDeveloperAppEmbedTarget(
+  request: Request,
+  principal: HostPrincipal,
+  targetId: string,
+  options: ListHostAppsOptions & { config?: HostRuntimeConfig } = {}
+): Promise<HostAppEmbedTarget> {
+  const config = options.config ?? getHostRuntimeConfig();
+  const modulePath = normalizeEmbedModulePath(new URL(request.url).searchParams.get('path'));
+  const apps = await listHostApps(principal, {
+    ...options,
+    config,
+  });
+  const app = apps.find(candidate =>
+    candidate.source === 'developer' &&
+    candidate.developerTargetId === targetId
+  );
+
+  if (!app) {
+    throw new HostAppEmbedError(
+      'app_not_found',
+      `Developer module app "${targetId}" is not registered for the current Host principal.`,
+      404
+    );
+  }
+
+  if (app.status !== 'available') {
+    throw new HostAppEmbedError(
+      'app_unavailable',
+      `Developer module app "${targetId}" is not available.`,
+      503
+    );
+  }
+
+  const developerTarget = await readEnabledDeveloperTarget(targetId, config);
+  if (!developerTarget?.shellApp) {
+    throw new HostAppEmbedError(
+      'developer_target_not_found',
+      `Developer module app "${targetId}" is not available.`,
+      404
+    );
+  }
+
+  const requestHost = getRequestHost(request);
+  const requestProtocol = getRequestProtocol(request);
+  const authState = await readAuthStateSnapshot(config);
+  const access = canAccessModule({
+    principal,
+    moduleId: developerTarget.moduleId,
+    exposurePolicy: developerTarget.exposurePolicy,
+    assignments: authState.moduleAssignments,
+  });
+
+  return {
+    app,
+    config,
+    modulePath,
+    targetOrigin: new URL(developerTarget.targetBaseUrl).origin,
+    targetPathPrefix: developerTarget.targetPathPrefix,
+    upstreamUrl: buildDeveloperUpstreamUrl(developerTarget, modulePath),
+    requestHost,
+    requestProtocol,
+    identityInput: {
+      exposure: {
+        id: developerTarget.id,
+        moduleId: developerTarget.moduleId,
+        hostname: requestHost,
+        portKey: developerTarget.portKey,
+        exposurePolicy: developerTarget.exposurePolicy,
+        identityMode: developerTarget.identityMode,
+      },
+      access,
+      principal,
+    },
+  };
+}
+
 export async function proxyHostAppEmbedRequest(
   request: Request,
   target: HostAppEmbedTarget
@@ -206,7 +290,7 @@ export function rewriteEmbeddedContent(
   content: string,
   target: Pick<HostAppEmbedTarget, 'app'>
 ) {
-  const toEmbedPath = (modulePath: string) => buildEmbedUrl(target.app.moduleId, modulePath);
+  const toEmbedPath = (modulePath: string) => buildAppEmbedUrl(target.app, modulePath);
 
   return content
     .replace(/\b(href|src|action)=("|')\/(?!\/)([^"']*)\2/g, (_match, attribute: string, quote: string, path: string) => (
@@ -222,6 +306,16 @@ export function rewriteEmbeddedContent(
 
 export function buildEmbedUrl(moduleId: string, modulePath: string) {
   return `/api/apps/${encodeURIComponent(moduleId)}/embed?path=${encodeURIComponent(modulePath)}`;
+}
+
+export function buildDeveloperEmbedUrl(targetId: string, modulePath: string) {
+  return `/api/apps/dev/${encodeURIComponent(targetId)}/embed?path=${encodeURIComponent(modulePath)}`;
+}
+
+export function buildAppEmbedUrl(app: Pick<HostAppEntry, 'source' | 'moduleId' | 'developerTargetId'>, modulePath: string) {
+  return app.source === 'developer' && app.developerTargetId
+    ? buildDeveloperEmbedUrl(app.developerTargetId, modulePath)
+    : buildEmbedUrl(app.moduleId, modulePath);
 }
 
 export function appEmbedErrorResponse(error: unknown) {
@@ -342,7 +436,7 @@ function buildEmbedResponseHeaders(
     }
 
     if (lowerName === 'set-cookie') {
-      headers.set(name, rewriteSetCookieHeader(value, target.app.moduleId));
+      headers.set(name, rewriteSetCookieHeader(value, target.app));
       return;
     }
 
@@ -369,7 +463,10 @@ function rewriteLocationHeader(
       parsed.origin === targetOrigin.origin ||
       !/^[a-z][a-z\d+.-]*:/i.test(location)
     ) {
-      return new URL(buildEmbedUrl(target.app.moduleId, `${parsed.pathname}${parsed.search}${parsed.hash}`), request.url).toString();
+      return new URL(
+        buildAppEmbedUrl(target.app, getModulePathFromUpstreamUrl(parsed, target.targetPathPrefix)),
+        request.url
+      ).toString();
     }
   } catch {
     return location;
@@ -378,8 +475,10 @@ function rewriteLocationHeader(
   return location;
 }
 
-function rewriteSetCookieHeader(value: string, moduleId: string) {
-  const embedPath = `/api/apps/${encodeURIComponent(moduleId)}/embed`;
+function rewriteSetCookieHeader(value: string, app: Pick<HostAppEntry, 'source' | 'moduleId' | 'developerTargetId'>) {
+  const embedPath = app.source === 'developer' && app.developerTargetId
+    ? `/api/apps/dev/${encodeURIComponent(app.developerTargetId)}/embed`
+    : `/api/apps/${encodeURIComponent(app.moduleId)}/embed`;
   return value
     .replace(/;\s*domain=[^;]*/ig, '')
     .replace(/;\s*path=[^;]*/ig, '')
@@ -499,6 +598,42 @@ function getRequestProtocol(request: Request) {
 
 function getExposurePolicy(accessMode: HostAppAccessMode): ModuleExposurePolicy {
   return accessMode === 'assignedUsersOnly' ? 'assignedUsersOnly' : 'loginRequired';
+}
+
+async function readEnabledDeveloperTarget(
+  targetId: string,
+  config: HostRuntimeConfig
+) {
+  if (!config.moduleDevModeEnabled) {
+    return null;
+  }
+
+  const state = await readModuleDevTargetStateSnapshot(config);
+  return state.targets.find(target => target.id === targetId && target.enabled) ?? null;
+}
+
+function buildDeveloperUpstreamUrl(target: ModuleDevTargetRecord, modulePath: string) {
+  const base = new URL(target.targetBaseUrl);
+  const pathPrefix = target.targetPathPrefix || '';
+  const normalizedModulePath = modulePath.startsWith('/') ? modulePath : `/${modulePath}`;
+  return new URL(`${pathPrefix}${normalizedModulePath}`, base.origin).toString();
+}
+
+function getModulePathFromUpstreamUrl(url: URL, targetPathPrefix: string | undefined) {
+  const upstreamPath = `${url.pathname}${url.search}${url.hash}`;
+  if (!targetPathPrefix) {
+    return upstreamPath;
+  }
+
+  if (url.pathname === targetPathPrefix) {
+    return `/${url.search}${url.hash}`;
+  }
+
+  if (url.pathname.startsWith(`${targetPathPrefix}/`)) {
+    return `${url.pathname.slice(targetPathPrefix.length)}${url.search}${url.hash}`;
+  }
+
+  return upstreamPath;
 }
 
 function escapeHtml(value: string) {

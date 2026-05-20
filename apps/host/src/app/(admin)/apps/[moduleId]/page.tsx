@@ -9,5 +9,5 @@ export default async function AppHostPage({
   params: Promise<{ moduleId: string }>;
 }) {
   const { moduleId } = await params;
-  return <AppHostClient moduleId={moduleId} />;
+  return <AppHostClient appId={moduleId} />;
 }

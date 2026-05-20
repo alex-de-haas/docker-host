@@ -137,6 +137,7 @@ Returned by `GET /api/apps`.
 ```json
 {
   "id": "com.acme.reports",
+  "source": "installed",
   "moduleId": "com.acme.reports",
   "displayName": "Reports",
   "description": "Generates operational reports.",
@@ -157,6 +158,25 @@ Returned by `GET /api/apps`.
       "embeddedUrl": "/api/apps/com.acme.reports/embed?path=%2Fpeople"
     }
   ]
+}
+```
+
+Developer app entries use the same shape with `source: "developer"` and `developerTargetId`:
+
+```json
+{
+  "id": "dev:mdev_reports",
+  "source": "developer",
+  "moduleId": "com.acme.reports",
+  "developerTargetId": "mdev_reports",
+  "displayName": "Reports Dev",
+  "version": "1.0.0",
+  "status": "available",
+  "statusReason": "available",
+  "accessMode": "allAuthenticated",
+  "entryPath": "/apps/dev/mdev_reports",
+  "embeddedUrl": "/api/apps/dev/mdev_reports/embed?path=%2F",
+  "navigation": []
 }
 ```
 
@@ -290,6 +310,8 @@ This endpoint requires authentication but does not require `host.admin`. Unauthe
 
 The backend reads installed module records from `modules.json`, reads each module's local `metadata.json`, requires explicit `ui` metadata, applies Host-owned module assignments, and reads runtime state for availability. It does not infer shell Apps from gateway exposure records or from `runtime.ports[].public` alone.
 
+When `HOST_MODULE_DEV_MODE=enabled`, the backend also reads enabled developer targets with stored shell app snapshots from `/data/dev/module-targets.json`. These entries are marked as `source: "developer"` and use developer app routes. Disabled developer mode and disabled targets are omitted from `/api/apps`.
+
 Response body:
 
 ```json
@@ -301,7 +323,9 @@ Response body:
 Response entries include:
 
 - app id;
+- source (`installed` or `developer`);
 - module id;
+- developer target id, for developer entries;
 - display name;
 - description, if available;
 - icon key, if declared by module `ui` metadata;
@@ -327,6 +351,20 @@ Example:
 ```
 
 The endpoint proxies to the module runtime port declared by `ui.entrypoint`, injects module identity where applicable, strips Host-owned request headers, scopes module cookies to the reserved embed route, and rewrites root-relative HTML/CSS links through the reserved embed URL. It is not a public module UI hostname and `/apps/{moduleId}` is not a direct proxy path.
+
+### `GET /api/apps/dev/{targetId}/embed`
+
+Reserved iframe transport for developer shell App UI content.
+
+This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. It is available only when module developer mode is enabled and the selected developer target is enabled, visible to the current principal, and has a stored shell app snapshot.
+
+Example:
+
+```text
+/api/apps/dev/mdev_reports/embed?path=%2Fpeople
+```
+
+The endpoint proxies to the developer target's local `targetBaseUrl`, preserves the target path prefix, injects module identity according to the developer target identity mode, strips Host-owned request headers, scopes module cookies to the developer embed route, and rewrites root-relative HTML/CSS links through the reserved developer embed URL. It does not create or read production gateway exposure records.
 
 ### `GET /api/modules/{moduleId}`
 

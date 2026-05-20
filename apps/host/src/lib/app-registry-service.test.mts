@@ -5,8 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { listHostApps } from './app-registry-service.ts';
 import { createEmptyAuthState, writeAuthState } from './auth-store.ts';
+import { writeModuleDevTargetState } from './module-dev-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostPrincipal } from '../types/auth.ts';
+import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
 import type { ModuleRuntimeState, ModuleRuntimeStatus } from '../types/modules.ts';
 
 const admin: HostPrincipal = {
@@ -199,15 +201,95 @@ test('reports missing metadata only to admins', async () => {
   assert.equal(adminApps[0].statusReason, 'metadataMissing');
 });
 
-async function createAppRegistryTestConfig(): Promise<HostRuntimeConfig> {
+test('includes enabled developer targets when module developer mode is active', async () => {
+  const config = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
+  await writeModuleDevTargetState({
+    schemaVersion: '0.1',
+    targets: [createDeveloperTarget()],
+    updatedAt: new Date().toISOString(),
+  }, config);
+
+  const apps = await listHostApps(assignedUser, { config });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].id, 'dev:mdev_reports');
+  assert.equal(apps[0].source, 'developer');
+  assert.equal(apps[0].moduleId, 'com.example.reports');
+  assert.equal(apps[0].developerTargetId, 'mdev_reports');
+  assert.equal(apps[0].displayName, 'Reports Dev');
+  assert.equal(apps[0].status, 'available');
+  assert.equal(apps[0].entryPath, '/apps/dev/mdev_reports');
+  assert.equal(apps[0].embeddedUrl, '/api/apps/dev/mdev_reports/embed?path=%2F');
+  assert.deepEqual(apps[0].navigation, [
+    {
+      label: 'People',
+      path: '/people',
+      entryPath: '/apps/dev/mdev_reports?path=%2Fpeople',
+      embeddedUrl: '/api/apps/dev/mdev_reports/embed?path=%2Fpeople',
+    },
+  ]);
+});
+
+test('keeps developer targets out of apps when developer mode or the target is disabled', async () => {
+  const disabledModeConfig = await createAppRegistryTestConfig({ moduleDevModeEnabled: false });
+  await writeModuleDevTargetState({
+    schemaVersion: '0.1',
+    targets: [createDeveloperTarget()],
+    updatedAt: new Date().toISOString(),
+  }, disabledModeConfig);
+
+  const disabledTargetConfig = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
+  await writeModuleDevTargetState({
+    schemaVersion: '0.1',
+    targets: [createDeveloperTarget({ enabled: false })],
+    updatedAt: new Date().toISOString(),
+  }, disabledTargetConfig);
+
+  assert.deepEqual(await listHostApps(admin, { config: disabledModeConfig }), []);
+  assert.deepEqual(await listHostApps(admin, { config: disabledTargetConfig }), []);
+});
+
+test('filters assigned developer targets for host users but keeps them visible to admins', async () => {
+  const config = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
+  await writeModuleDevTargetState({
+    schemaVersion: '0.1',
+    targets: [createDeveloperTarget({ exposurePolicy: 'assignedUsersOnly' })],
+    updatedAt: new Date().toISOString(),
+  }, config);
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    moduleAssignments: [
+      {
+        moduleId: 'com.example.reports',
+        userId: assignedUser.id,
+      },
+    ],
+  }, config);
+
+  const assignedApps = await listHostApps(assignedUser, { config });
+  const unassignedApps = await listHostApps(unassignedUser, { config });
+  const adminApps = await listHostApps(admin, { config });
+
+  assert.equal(assignedApps.length, 1);
+  assert.equal(assignedApps[0].accessMode, 'assignedUsersOnly');
+  assert.equal(unassignedApps.length, 0);
+  assert.equal(adminApps.length, 1);
+  assert.equal(adminApps[0].accessMode, 'assignedUsersOnly');
+});
+
+async function createAppRegistryTestConfig(input: { moduleDevModeEnabled?: boolean } = {}): Promise<HostRuntimeConfig> {
   const dataRootContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-host-apps-'));
   const authRootContainer = path.join(dataRootContainer, 'auth');
   const gatewayRootContainer = path.join(dataRootContainer, 'gateway');
+  const moduleDevRootContainer = path.join(dataRootContainer, 'dev');
   return {
     dataRootHost: dataRootContainer,
     dataRootContainer,
     modulesRootContainer: path.join(dataRootContainer, 'modules'),
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
+    moduleDevModeEnabled: input.moduleDevModeEnabled,
+    moduleDevRootContainer,
+    moduleDevTargetsPath: path.join(moduleDevRootContainer, 'module-targets.json'),
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
@@ -218,6 +300,46 @@ async function createAppRegistryTestConfig(): Promise<HostRuntimeConfig> {
     hostInternalOrigin: 'http://docker-host:3000',
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
+  };
+}
+
+function createDeveloperTarget(
+  input: {
+    enabled?: boolean;
+    exposurePolicy?: ModuleDevTargetRecord['exposurePolicy'];
+  } = {}
+): ModuleDevTargetRecord {
+  const now = new Date().toISOString();
+  return {
+    id: 'mdev_reports',
+    moduleId: 'com.example.reports',
+    moduleName: 'Reports',
+    moduleVersion: '1.0.0',
+    moduleDescription: 'Reports developer target.',
+    metadataUrl: 'http://127.0.0.1:3000/metadata.json',
+    hostname: 'reports.localhost',
+    portKey: 'web',
+    targetBaseUrl: 'http://127.0.0.1:3001/dev',
+    targetPathPrefix: '/dev',
+    containerPort: 3000,
+    protocol: 'http',
+    exposurePolicy: input.exposurePolicy ?? 'loginRequired',
+    identityMode: 'required',
+    enabled: input.enabled ?? true,
+    shellApp: {
+      displayName: 'Reports Dev',
+      description: 'Reports developer target.',
+      icon: 'boxes',
+      entrypointPath: '/',
+      navigation: [
+        {
+          label: 'People',
+          path: '/people',
+        },
+      ],
+    },
+    createdAt: now,
+    updatedAt: now,
   };
 }
 

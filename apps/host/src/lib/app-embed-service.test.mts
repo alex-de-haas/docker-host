@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   HostAppEmbedError,
   appEmbedErrorResponse,
+  buildAppEmbedUrl,
   buildEmbedUrl,
   normalizeEmbedModulePath,
   rewriteEmbeddedContent,
@@ -28,6 +29,7 @@ test('rewrites root-relative module links through reserved embed URLs', () => {
     {
       app: {
         id: 'com.example.reports',
+        source: 'installed',
         moduleId: 'com.example.reports',
         displayName: 'Reports',
         version: '1.0.0',
@@ -46,6 +48,17 @@ test('rewrites root-relative module links through reserved embed URLs', () => {
   assert.match(rewritten, /href="\/api\/apps\/com\.example\.reports\/embed\?path=%2Fpeople"/);
   assert.match(rewritten, /\/api\/apps\/com\.example\.reports\/embed\?path=%2Fa\.png 1x/);
   assert.match(rewritten, /url\(\/api\/apps\/com\.example\.reports\/embed\?path=%2Fhero\.png\)/);
+});
+
+test('builds reserved embed URLs for developer apps', () => {
+  assert.equal(
+    buildAppEmbedUrl({
+      source: 'developer',
+      moduleId: 'com.example.reports',
+      developerTargetId: 'mdev_reports',
+    }, '/people'),
+    '/api/apps/dev/mdev_reports/embed?path=%2Fpeople'
+  );
 });
 
 test('renders authenticated embed failures as iframe-friendly HTML', async t => {

@@ -12,7 +12,7 @@ import { useHostApps } from '@/hooks/useHostApps';
 import { cn } from '@/lib/utils';
 import type { HostAppEntry, HostAppNavigationItem } from '@/types/apps';
 
-export function AppHostClient({ moduleId }: { moduleId: string }) {
+export function AppHostClient({ appId }: { appId: string }) {
   const searchParams = useSearchParams();
   const selectedPath = normalizeSelectedPath(searchParams.get('path'));
   const appsState = useHostApps();
@@ -20,8 +20,8 @@ export function AppHostClient({ moduleId }: { moduleId: string }) {
   const [frameWarning, setFrameWarning] = useState<string | null>(null);
 
   const app = useMemo(
-    () => appsState.apps.find(candidate => candidate.moduleId === moduleId) ?? null,
-    [appsState.apps, moduleId]
+    () => appsState.apps.find(candidate => candidate.id === appId) ?? null,
+    [appsState.apps, appId]
   );
   const selectedNavigation = useMemo(
     () => app?.navigation.find(item => item.path === selectedPath) ?? null,
@@ -43,6 +43,11 @@ export function AppHostClient({ moduleId }: { moduleId: string }) {
       description={description}
       actions={(
         <>
+          {app?.source === 'developer' && (
+            <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+              Dev
+            </Badge>
+          )}
           {statusLabel && (
             <Badge
               variant="outline"
@@ -251,6 +256,10 @@ function getEmbeddedUrl(
 
   if (selectedPath === '/') {
     return app.embeddedUrl;
+  }
+
+  if (app.source === 'developer' && app.developerTargetId) {
+    return `/api/apps/dev/${encodeURIComponent(app.developerTargetId)}/embed?path=${encodeURIComponent(selectedPath)}`;
   }
 
   return `/api/apps/${encodeURIComponent(app.moduleId)}/embed?path=${encodeURIComponent(selectedPath)}`;

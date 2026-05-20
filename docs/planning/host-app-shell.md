@@ -507,7 +507,7 @@ Resolved Phase 6 decisions:
 
 ### Phase 7 - Developer mode integration
 
-**Status**: Not Started
+**Status**: Completed
 
 Integrate module developer targets into the same Apps portal behavior when `HOST_MODULE_DEV_MODE=enabled`.
 
@@ -523,6 +523,83 @@ Acceptance criteria:
 
 - Module authors can open a local module dev server through the Host shell.
 - Developer app entries do not leak into production gateway exposure state.
+
+Implementation notes:
+
+- `/api/apps` now includes enabled developer targets only when `HOST_MODULE_DEV_MODE=enabled`.
+- Developer targets are included only when their stored metadata snapshot has shell app data from valid `ui` metadata.
+- Developer app entries use `dev:{targetId}` as the app id while preserving `moduleId` for module identity and access checks.
+- Developer apps open through `/apps/dev/{targetId}` and `/api/apps/dev/{targetId}/embed`.
+- The developer embed route keeps same-origin Host shell transport, module identity behavior, Host-owned header stripping, module cookie scoping, and target path-prefix handling.
+- Developer entries render compact `Dev` badges in the Apps sidebar, Apps portal, and app topbar.
+- Disabled developer mode and individually disabled developer targets stay out of `/api/apps`; disabled targets remain visible only through developer target management.
+- Developer app registry and embed behavior are covered by app registry, module developer mode, and route tests.
+
+Resolved Phase 7 decisions:
+
+- **Question**: Should developer targets appear through `/api/apps` or through a separate app registry endpoint?
+  **Options**:
+  - Keep `/api/apps` installed-module only and add a separate developer app endpoint.
+  - Include enabled developer targets in `/api/apps` only when `HOST_MODULE_DEV_MODE=enabled`.
+  - Keep developer targets admin-only and out of the Apps portal.
+  **Answer**: Include enabled developer targets in `/api/apps` only when module developer mode is enabled.
+  **Recommendation**: Treat developer targets as additional app candidates inside the existing app registry. Keep stored targets inert when developer mode is disabled and never create or modify production gateway exposure records from the Apps portal path.
+
+- **Question**: What identifier should a developer app entry use when the same module may also be installed?
+  **Options**:
+  - Reuse `moduleId` for installed and developer app entries.
+  - Use the developer target id as the app id and keep `moduleId` as module identity.
+  - Override the installed module app entry with the developer target entry while development mode is enabled.
+  **Answer**: Use a developer-qualified app id derived from the developer target id, while preserving `moduleId` for module identity, access checks, and identity-token audience.
+  **Recommendation**: Avoid route and sidebar collisions with installed module apps. Add reserved developer app URLs such as `/apps/dev/{targetId}` and `/api/apps/dev/{targetId}/embed`, or an equivalent app-id route, instead of overloading `/apps/{moduleId}`.
+
+- **Question**: Where should developer app display metadata and nested navigation come from?
+  **Options**:
+  - Re-fetch the metadata URL every time `/api/apps` runs.
+  - Store a normalized shell UI snapshot when the developer target is created or updated.
+  - Derive display data only from the current `ModuleDevTargetRecord`.
+  **Answer**: Store enough normalized shell UI metadata on the developer target during create/update.
+  **Recommendation**: Extend developer target state with app display fields, entrypoint path, optional icon, description, and `ui.navigation`. The existing link/update flow already validates the metadata graph, so `/api/apps` can stay fast and deterministic. Module authors can re-link or update the target when metadata changes.
+
+- **Question**: How should developer app visibility map to Host access rules?
+  **Options**:
+  - Make all developer app entries admin-only.
+  - Reuse the developer target's `exposurePolicy`.
+  - Add a new shell-only developer visibility policy.
+  **Answer**: Reuse the developer target's `exposurePolicy` for principal filtering, while keeping `/api/apps` authenticated.
+  **Recommendation**: Map `public` and `loginRequired` developer targets to shell visibility for authenticated Host users, and map `assignedUsersOnly` to existing module assignments. Keep developer target mutation APIs admin-only. Anonymous gateway access for a `public` developer target should not become anonymous Apps discovery.
+
+- **Question**: How should the embedded app transport reach a local developer target?
+  **Options**:
+  - Point iframe sources directly at the developer gateway hostname.
+  - Duplicate developer target proxy logic inside the app embed service.
+  - Keep Host-owned same-origin embed URLs and share developer target resolution rules with the gateway path.
+  **Answer**: Keep Host-owned same-origin embed URLs and resolve developer targets with the same local target and path-prefix rules used by the gateway.
+  **Recommendation**: Factor the reusable developer target resolution pieces out of the gateway/server path as needed. Preserve existing shell embed behavior: Host authentication, identity token injection, Host-owned header stripping, module cookie scoping, path validation, and local target URL safety.
+
+- **Question**: How should the UI distinguish developer app entries from installed module apps?
+  **Options**:
+  - Put developer apps in a separate sidebar section.
+  - Show an inline developer badge on app entries and the app topbar.
+  - Change only the display name suffix.
+  **Answer**: Show an inline developer badge and keep developer apps in the existing Apps section.
+  **Recommendation**: Add explicit app registry metadata such as `source: "installed" | "developer"` or `developerTargetId` instead of inferring developer state from ids or URLs. Use the metadata to render a compact badge in the sidebar and app topbar.
+
+- **Question**: What should happen when developer mode or an individual developer target is disabled?
+  **Options**:
+  - Return disabled developer app entries as unavailable diagnostics.
+  - Hide all developer entries from `/api/apps`.
+  - Keep disabled entries visible only to `host.admin`.
+  **Answer**: Hide developer entries from `/api/apps` when developer mode is disabled, and hide individually disabled developer targets from the Apps portal even when developer mode is enabled.
+  **Recommendation**: Keep disabled targets visible in the developer target management API, but not in the user-facing app registry. Add tests for disabled global mode, disabled target records, and enabled target records.
+
+- **Question**: What test coverage should define Phase 7 as complete?
+  **Options**:
+  - Cover only `/api/apps` registry inclusion.
+  - Cover registry inclusion plus embed target resolution.
+  - Cover registry, embed transport, authorization filtering, disabled-state behavior, and UI markings.
+  **Answer**: Cover registry, embed transport, authorization filtering, disabled-state behavior, and UI markings.
+  **Recommendation**: Add unit tests for app registry construction with enabled and disabled developer mode, route tests for developer embed URLs, and focused UI coverage that verifies developer badges appear without changing production gateway exposure state.
 
 ### Phase 8 - Verification, hardening, and documentation
 

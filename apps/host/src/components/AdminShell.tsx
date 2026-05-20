@@ -384,8 +384,8 @@ function AppNavigationSection({
   }
 
   return appsState.apps.map(app => {
-    const isActive = pathname === `/apps/${encodeURIComponent(app.moduleId)}` ||
-      pathname === `/apps/${app.moduleId}`;
+    const appPathname = app.entryPath.split('?')[0] || app.entryPath;
+    const isActive = pathname === appPathname;
     const expanded = isActive || expandedAppIds.has(app.id);
     const Icon = getAppIcon(app.icon);
 
@@ -413,6 +413,14 @@ function AppNavigationSection({
           >
             <Icon className="h-4 w-4 shrink-0" />
             <span className="min-w-0 flex-1 truncate">{app.displayName}</span>
+            {app.source === 'developer' && (
+              <Badge
+                variant="outline"
+                className="shrink-0 border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] leading-4 text-sky-700"
+              >
+                Dev
+              </Badge>
+            )}
             {app.status !== 'available' && (
               <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
             )}

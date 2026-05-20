@@ -4,6 +4,8 @@ export type HostAppAccessMode = 'allAuthenticated' | 'assignedUsersOnly';
 
 export type HostAppStatus = 'available' | 'unavailable';
 
+export type HostAppSource = 'installed' | 'developer';
+
 export type HostAppStatusReason =
   | 'available'
   | 'metadataMissing'
@@ -22,7 +24,9 @@ export interface HostAppNavigationItem {
 
 export interface HostAppEntry {
   id: string;
+  source: HostAppSource;
   moduleId: string;
+  developerTargetId?: string;
   displayName: string;
   description?: string;
   icon?: string;

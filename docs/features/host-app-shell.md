@@ -60,6 +60,16 @@ Implemented Phase 6 behavior:
 - module lifecycle, install/update/remove, gateway exposure management, external ingress management, security settings, and other Host management APIs remain `host.admin` only;
 - the Apps portal includes empty states for no assigned apps, apps unavailable, login required, and access denied.
 
+Implemented Phase 7 behavior:
+
+- enabled module developer targets can appear in `/api/apps` when `HOST_MODULE_DEV_MODE=enabled`;
+- developer app entries are hidden when developer mode is disabled or the individual target is disabled;
+- developer targets remain local-only state and do not create production gateway exposure records;
+- developer app ids are qualified as `dev:{targetId}` while module identity still uses the target's `moduleId`;
+- developer apps open through `/apps/dev/{targetId}` and the same-origin embed transport `/api/apps/dev/{targetId}/embed`;
+- developer embed transport uses the target's local URL and path prefix while preserving Host authentication, module identity token behavior, Host-owned header stripping, and scoped module cookies;
+- the Apps sidebar, Apps portal, and app topbar mark developer entries with a compact `Dev` badge.
+
 ## Navigation
 
 The sidebar combines static Host management navigation with dynamic Apps navigation from `/api/apps`.
@@ -106,6 +116,8 @@ The topbar contains page title and description, a page-specific action slot, and
 
 For embedded module apps, the topbar remains Host-owned. The Host app route sets the app name, selected nested navigation label, status badge, and iframe refresh action. Module UIs may render their own internal headers inside the iframe, but they do not receive runtime control over the shell chrome. If module-provided topbar actions are needed later, they should be added through a new declarative metadata contract.
 
+Developer app entries use the same shell chrome and add a compact `Dev` badge in the topbar. The badge identifies local developer targets without changing module access rules or production exposure state.
+
 ## Page Integration
 
 The dashboard remains focused on installed module status, lifecycle actions, recovery dialogs, and links into install/update flows. Gateway exposure management and external ingress readiness live on the dedicated `/ingress` page and reuse the existing gateway and readiness APIs.
@@ -132,6 +144,10 @@ The response intentionally returns same-origin Host paths, such as `/apps/{modul
 
 Modules appear in the app registry only when local metadata includes an explicit `ui` contract. `runtime.ports[].public` is still only a capability hint and does not create an app entry by itself.
 
+When module developer mode is enabled, `/api/apps` also reads enabled developer targets from local developer target state. A developer target appears as a shell App only when the target stores a valid shell app metadata snapshot. The response marks these entries with `source: "developer"` and `developerTargetId`, uses `/apps/dev/{targetId}` for shell navigation, and uses `/api/apps/dev/{targetId}/embed` for iframe transport.
+
+Developer target visibility reuses the target exposure policy after Host authentication. `public` and `loginRequired` targets are visible to authenticated Host users. `assignedUsersOnly` targets use existing module access assignments. Anonymous shell App discovery is still not supported.
+
 ## Embedded App Route
 
 `/apps/{moduleId}` is shell state. It renders the Host shell around the selected module UI and uses the optional `path` query parameter to select nested module navigation, for example `/apps/com.acme.reports?path=%2Fpeople`.
@@ -139,6 +155,8 @@ Modules appear in the app registry only when local metadata includes an explicit
 The iframe uses the reserved embedded transport URL returned by `/api/apps`: `/api/apps/{moduleId}/embed?path=...`. This endpoint requires Host authentication and validates the current principal against the app registry before proxying to a module. It does not publish module UIs as standalone public hostnames and does not turn `/apps/{moduleId}` into a direct module proxy.
 
 The embed transport rewrites root-relative links and assets in HTML/CSS responses back through the reserved embed URL so module pages can load common assets while remaining inside the Host shell. If a module response explicitly blocks framing with headers such as `X-Frame-Options: DENY` or `Content-Security-Policy: frame-ancestors 'none'`, the embed route returns a concise fallback page explaining that the module UI must support Host shell embedding.
+
+Developer embed transport follows the same same-origin pattern under `/api/apps/dev/{targetId}/embed`. It resolves the local target URL and path prefix from developer target state, forwards through the Host shell, applies module access rules, injects module identity according to the target identity mode, strips Host-owned headers, and scopes module cookies to the developer embed route.
 
 ## Module UI Metadata
 
@@ -181,5 +199,5 @@ External ingress readiness remains explicit. Creating an exposure does not creat
 
 ## Open Questions
 
-- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, Phase 4 Apps sidebar/app host page, Phase 5 gateway exposure management UX, or Phase 6 user portal behavior questions remain open.
-- Later phases still need developer mode integration and full app portal browser smoke coverage.
+- No Phase 1 shell foundation, Phase 2 app registry starter, Phase 3 module UI metadata contract, Phase 4 Apps sidebar/app host page, Phase 5 gateway exposure management UX, Phase 6 user portal behavior, or Phase 7 developer mode integration questions remain open.
+- Later phases still need full app portal browser smoke coverage.

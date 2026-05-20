@@ -63,6 +63,36 @@ Create/update input:
 
 The Host downloads and validates the metadata graph, resolves the root module id, checks that `portKey` exists and is marked `public: true`, and stores the normalized target.
 
+When the selected `portKey` matches valid module `ui.entrypoint` metadata, the Host also stores a shell app snapshot on the developer target:
+
+- display name and description from module metadata;
+- optional shell icon from `ui.icon`;
+- entrypoint path from `ui.entrypoint.path`;
+- nested navigation from `ui.navigation`.
+
+This snapshot keeps `/api/apps` fast and deterministic. Module authors should re-link or update a developer target when UI metadata changes.
+
+## Apps Portal
+
+When `HOST_MODULE_DEV_MODE=enabled`, enabled developer targets with shell app snapshots appear in the authenticated Apps portal alongside installed module apps.
+
+Developer app behavior:
+
+- `/api/apps` returns developer entries with `source: "developer"` and `developerTargetId`;
+- app ids use `dev:{targetId}` to avoid collisions with installed module ids;
+- shell pages use `/apps/dev/{targetId}`;
+- embedded transport uses `/api/apps/dev/{targetId}/embed`;
+- the Apps sidebar, Apps portal, and app topbar show a compact `Dev` badge;
+- disabled targets and all targets under disabled developer mode are hidden from `/api/apps`.
+
+Developer app visibility reuses the target exposure policy after Host authentication:
+
+- `public` and `loginRequired` targets are visible to authenticated Host users;
+- `assignedUsersOnly` targets use existing module access assignments;
+- anonymous shell App discovery is not supported.
+
+Developer app entries remain local-only portal state. They do not create production gateway exposure records or external ingress readiness state.
+
 ## CLI
 
 Enable developer mode:

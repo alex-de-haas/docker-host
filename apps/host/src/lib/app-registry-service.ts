@@ -5,14 +5,17 @@ import {
   readModuleMetadata,
   readModulesStoreSnapshot,
 } from './module-store.ts';
+import { readModuleDevTargetStateSnapshot } from './module-dev-store.ts';
 import { validateModuleUiMetadata } from './module-metadata.ts';
 import type { HostPrincipal, ModuleAccessAssignment } from '../types/auth.ts';
+import type { ModuleExposurePolicy } from '../types/auth.ts';
 import type {
   HostAppAccessMode,
   HostAppEntry,
   HostAppNavigationItem,
   HostAppStatusReason,
 } from '../types/apps.ts';
+import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
 import type {
   InstalledModuleRecord,
   ModuleMetadata,
@@ -35,27 +38,35 @@ export async function listHostApps(
   options: ListHostAppsOptions = {}
 ): Promise<HostAppEntry[]> {
   const config = options.config ?? getHostRuntimeConfig();
-  const [modulesStore, authState] = await Promise.all([
+  const [modulesStore, authState, developerTargetState] = await Promise.all([
     readModulesStoreSnapshot(config),
     readAuthStateSnapshot(config),
+    config.moduleDevModeEnabled
+      ? readModuleDevTargetStateSnapshot(config)
+      : Promise.resolve(null),
   ]);
-  if (modulesStore.modules.length === 0) {
-    return [];
-  }
 
-  const runtimeStatusReader = options.runtimeStatusReader ?? await getDefaultRuntimeStatusReader();
+  const runtimeStatusReader = modulesStore.modules.length > 0
+    ? options.runtimeStatusReader ?? (await getDefaultRuntimeStatusReader())
+    : null;
 
-  const candidates = await Promise.all(
-    modulesStore.modules.map(module =>
-      buildModuleAppCandidate(module, authState.moduleAssignments, runtimeStatusReader, config)
-    )
-  );
+  const installedCandidates = runtimeStatusReader
+    ? await Promise.all(
+        modulesStore.modules.map(module =>
+          buildModuleAppCandidate(module, authState.moduleAssignments, runtimeStatusReader, config)
+        )
+      )
+    : [];
+  const developerCandidates = developerTargetState
+    ? developerTargetState.targets.map(target => buildDeveloperAppCandidate(target))
+    : [];
+  const candidates = [...installedCandidates, ...developerCandidates];
 
   return candidates
     .filter(candidate => candidate.app)
     .filter(candidate => shouldReturnApp(candidate as ModuleAppCandidate & { app: HostAppEntry }, principal, authState.moduleAssignments))
     .map(candidate => candidate.app as HostAppEntry)
-    .sort((left, right) => left.displayName.localeCompare(right.displayName));
+    .sort(compareHostApps);
 }
 
 async function getDefaultRuntimeStatusReader() {
@@ -110,6 +121,7 @@ async function buildModuleAppCandidate(
   return {
     app: {
       id: module.id,
+      source: 'installed',
       moduleId: module.id,
       displayName: metadataResult.metadata.name || module.id,
       ...(metadataResult.metadata.description ? { description: metadataResult.metadata.description } : {}),
@@ -226,6 +238,7 @@ function buildUnavailableApp({
   const operationStatus = module.operationStatus || 'installed';
   return {
     id: module.id,
+    source: 'installed',
     moduleId: module.id,
     displayName: metadata?.name || module.id,
     ...(metadata?.description ? { description: metadata.description } : {}),
@@ -240,6 +253,39 @@ function buildUnavailableApp({
   };
 }
 
+function buildDeveloperAppCandidate(target: ModuleDevTargetRecord): ModuleAppCandidate {
+  if (!target.enabled || !target.shellApp) {
+    return {
+      app: null,
+      visibleToUsers: false,
+    };
+  }
+
+  const accessMode = getDeveloperShellAccessMode(target.exposurePolicy);
+
+  return {
+    app: {
+      id: getDeveloperAppId(target.id),
+      source: 'developer',
+      moduleId: target.moduleId,
+      developerTargetId: target.id,
+      displayName: target.shellApp.displayName || target.moduleName || target.moduleId,
+      ...(target.shellApp.description || target.moduleDescription
+        ? { description: target.shellApp.description || target.moduleDescription }
+        : {}),
+      ...(target.shellApp.icon ? { icon: target.shellApp.icon } : {}),
+      version: target.moduleVersion || 'unknown',
+      status: 'available',
+      statusReason: 'available',
+      accessMode,
+      entryPath: buildDeveloperAppEntryPath(target.id, target.shellApp.entrypointPath),
+      embeddedUrl: buildDeveloperEmbeddedUrl(target.id, target.shellApp.entrypointPath),
+      navigation: buildDeveloperNavigation(target.id, target.shellApp.navigation),
+    },
+    visibleToUsers: true,
+  };
+}
+
 function getShellAccessMode(
   moduleId: string,
   assignments: ModuleAccessAssignment[]
@@ -247,6 +293,10 @@ function getShellAccessMode(
   return assignments.some(assignment => assignment.moduleId === moduleId)
     ? 'assignedUsersOnly'
     : 'allAuthenticated';
+}
+
+function getDeveloperShellAccessMode(exposurePolicy: ModuleExposurePolicy): HostAppAccessMode {
+  return exposurePolicy === 'assignedUsersOnly' ? 'assignedUsersOnly' : 'allAuthenticated';
 }
 
 function shouldReturnApp(
@@ -284,6 +334,18 @@ function buildNavigation(
   }));
 }
 
+function buildDeveloperNavigation(
+  targetId: string,
+  navigation: NonNullable<ModuleDevTargetRecord['shellApp']>['navigation']
+): HostAppNavigationItem[] {
+  return navigation.map(item => ({
+    label: item.label,
+    path: item.path,
+    entryPath: buildDeveloperAppEntryPath(targetId, item.path),
+    embeddedUrl: buildDeveloperEmbeddedUrl(targetId, item.path),
+  }));
+}
+
 function buildAppEntryPath(moduleId: string, modulePath: string) {
   const moduleSegment = encodeURIComponent(moduleId);
   return modulePath === '/'
@@ -293,4 +355,28 @@ function buildAppEntryPath(moduleId: string, modulePath: string) {
 
 function buildEmbeddedUrl(moduleId: string, modulePath: string) {
   return `/api/apps/${encodeURIComponent(moduleId)}/embed?path=${encodeURIComponent(modulePath)}`;
+}
+
+function getDeveloperAppId(targetId: string) {
+  return `dev:${targetId}`;
+}
+
+function buildDeveloperAppEntryPath(targetId: string, modulePath: string) {
+  const targetSegment = encodeURIComponent(targetId);
+  return modulePath === '/'
+    ? `/apps/dev/${targetSegment}`
+    : `/apps/dev/${targetSegment}?path=${encodeURIComponent(modulePath)}`;
+}
+
+function buildDeveloperEmbeddedUrl(targetId: string, modulePath: string) {
+  return `/api/apps/dev/${encodeURIComponent(targetId)}/embed?path=${encodeURIComponent(modulePath)}`;
+}
+
+function compareHostApps(left: HostAppEntry, right: HostAppEntry) {
+  const nameComparison = left.displayName.localeCompare(right.displayName);
+  if (nameComparison !== 0) {
+    return nameComparison;
+  }
+
+  return left.id.localeCompare(right.id);
 }

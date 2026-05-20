@@ -12,7 +12,12 @@ import {
 } from './module-dev-store.ts';
 import { isAllowedGatewayHostname, normalizeGatewayHostname } from './gateway-service.ts';
 import type { InstallPlanValidationError } from '../types/modules.ts';
-import type { ModuleDevTargetInput, ModuleDevTargetRecord } from '../types/module-dev.ts';
+import type { ModuleMetadata } from '../types/modules.ts';
+import type {
+  ModuleDevTargetInput,
+  ModuleDevTargetRecord,
+  ModuleDevTargetShellApp,
+} from '../types/module-dev.ts';
 
 export async function listModuleDevTargets(config = getHostRuntimeConfig()) {
   const state = await readModuleDevTargetStateSnapshot(config);
@@ -194,11 +199,14 @@ export async function validateModuleDevTargetInput(
     );
   }
 
+  const shellApp = buildModuleDevTargetShellApp(root.metadata, portKey);
+
   return {
     id: input.id?.trim() || `mdev_${randomUUID()}`,
     moduleId: root.metadata.id,
     moduleName: root.metadata.name,
     moduleVersion: root.metadata.version,
+    ...(root.metadata.description ? { moduleDescription: root.metadata.description } : {}),
     metadataUrl: root.metadataUrl,
     hostname,
     portKey,
@@ -209,6 +217,7 @@ export async function validateModuleDevTargetInput(
     exposurePolicy,
     identityMode,
     enabled,
+    ...(shellApp ? { shellApp } : {}),
     createdAt: '',
     updatedAt: '',
   };
@@ -334,4 +343,24 @@ function isPrivateIpv4(value: string) {
 
 function isExposurePolicy(value: unknown) {
   return value === 'public' || value === 'loginRequired' || value === 'assignedUsersOnly';
+}
+
+function buildModuleDevTargetShellApp(
+  metadata: ModuleMetadata,
+  portKey: string
+): ModuleDevTargetShellApp | null {
+  if (!metadata.ui || metadata.ui.entrypoint.portKey !== portKey) {
+    return null;
+  }
+
+  return {
+    displayName: metadata.name || metadata.id,
+    ...(metadata.description ? { description: metadata.description } : {}),
+    ...(metadata.ui.icon ? { icon: metadata.ui.icon } : {}),
+    entrypointPath: metadata.ui.entrypoint.path,
+    navigation: metadata.ui.navigation.map(item => ({
+      label: item.label,
+      path: item.path,
+    })),
+  };
 }

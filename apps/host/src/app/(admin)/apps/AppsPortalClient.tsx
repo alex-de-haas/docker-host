@@ -128,6 +128,11 @@ function AppPortalEntry({ app }: { app: HostAppEntry }) {
         </Badge>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        {app.source === 'developer' && (
+          <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+            Dev
+          </Badge>
+        )}
         <Badge variant="secondary">
           {app.accessMode === 'assignedUsersOnly' ? 'Assigned' : 'All users'}
         </Badge>
