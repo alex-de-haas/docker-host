@@ -90,6 +90,23 @@ test('secure request checks normalize forwarded proto chains', () => {
   assert.doesNotThrow(() => assertSecureEnoughForCookies(request));
 });
 
+test('secure request checks trust an https public origin when forwarded proto is absent', t => {
+  const previousPublicOrigin = process.env.HOST_PUBLIC_ORIGIN;
+  process.env.HOST_PUBLIC_ORIGIN = 'https://host.example.test';
+  t.after(() => {
+    restoreEnvValue('HOST_PUBLIC_ORIGIN', previousPublicOrigin);
+  });
+
+  const request = new Request('http://docker-host:3000/api/auth/login', {
+    headers: {
+      host: 'docker-host:3000',
+      'x-docker-host-remote-address': '203.0.113.10',
+    },
+  });
+
+  assert.doesNotThrow(() => assertSecureEnoughForCookies(request));
+});
+
 function restoreEnvValue(name: string, value: string | undefined) {
   if (value === undefined) {
     delete process.env[name];

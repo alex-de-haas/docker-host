@@ -339,7 +339,13 @@ function passesSameOriginCheck(request: Request) {
 }
 
 function isSecureRequest(request: Request) {
-  return getFirstHeaderValue(request.headers.get('x-forwarded-proto')).toLowerCase() === 'https' ||
+  const configuredOrigin = getConfiguredPublicOrigin();
+  if (configuredOrigin && isHttpsOrigin(configuredOrigin)) {
+    return true;
+  }
+
+  const forwardedProto = getFirstHeaderValue(request.headers.get('x-forwarded-proto')).toLowerCase();
+  return forwardedProto === 'https' ||
     new URL(request.url).protocol === 'https:';
 }
 
@@ -382,6 +388,14 @@ function getConfiguredPublicOrigin() {
 
 function parseHeaderHost(value: string | null) {
   return getFirstHeaderValue(value) || null;
+}
+
+function isHttpsOrigin(value: string) {
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function isLoopbackHostname(hostname: string) {
