@@ -48,8 +48,14 @@ internal sealed class UpdateCommand(CommandContext context)
         }
 
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-        await docker.EnsureLinuxEngineAsync();
-        await docker.EnsureNetworkAsync(settings.HostModuleNetwork);
+        await CommandStatus.RunAsync(
+            context,
+            "Checking Docker Engine...",
+            async () => await docker.EnsureLinuxEngineAsync());
+        await CommandStatus.RunAsync(
+            context,
+            $"Preparing module network [grey]{Markup.Escape(settings.HostModuleNetwork)}[/]...",
+            async () => await docker.EnsureNetworkAsync(settings.HostModuleNetwork));
 
         await HostLifecycle.PullHostImageAsync(context, docker, settings.HostImage);
 
@@ -57,12 +63,18 @@ internal sealed class UpdateCommand(CommandContext context)
         var previousPort = HostLifecycle.TryGetMappedPort(existing);
         if (existing?.State?.Running == true)
         {
-            await docker.StopContainerAsync(settings.HostContainerName);
+            await CommandStatus.RunAsync(
+                context,
+                $"Stopping Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                async () => await docker.StopContainerAsync(settings.HostContainerName));
         }
 
         if (existing is not null)
         {
-            await docker.RemoveContainerAsync(settings.HostContainerName);
+            await CommandStatus.RunAsync(
+                context,
+                $"Removing Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                async () => await docker.RemoveContainerAsync(settings.HostContainerName));
         }
 
         var hostPort = settings.GetFixedHostPort() ?? previousPort ?? PortAllocator.GetFreeLoopbackPort();
@@ -80,8 +92,14 @@ internal sealed class UpdateCommand(CommandContext context)
             settings.HostModuleDevMode,
             hostPort);
 
-        await docker.CreateHostContainerAsync(plan);
-        await docker.StartContainerAsync(settings.HostContainerName);
+        await CommandStatus.RunAsync(
+            context,
+            $"Creating Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+            async () => await docker.CreateHostContainerAsync(plan));
+        await CommandStatus.RunAsync(
+            context,
+            $"Starting Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+            async () => await docker.StartContainerAsync(settings.HostContainerName));
 
         context.Console.MarkupLine($"[green]Host container updated.[/] {Markup.Escape($"http://localhost:{hostPort}")}");
         return 0;

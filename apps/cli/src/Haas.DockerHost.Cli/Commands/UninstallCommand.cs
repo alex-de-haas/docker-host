@@ -25,16 +25,23 @@ internal sealed class UninstallCommand(CommandContext context)
         }
 
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-        await docker.EnsureLinuxEngineAsync();
+        await CommandStatus.RunAsync(
+            context,
+            "Checking Docker Engine...",
+            async () => await docker.EnsureLinuxEngineAsync());
 
         foreach (var module in moduleLoadResult.Modules)
         {
-            context.Console.MarkupLine($"Removing module container [grey]{Markup.Escape(module.ContainerName)}[/]...");
-            await docker.RemoveContainerAsync(module.ContainerName);
+            await CommandStatus.RunAsync(
+                context,
+                $"Removing module container [grey]{Markup.Escape(module.ContainerName)}[/]...",
+                async () => await docker.RemoveContainerAsync(module.ContainerName));
         }
 
-        context.Console.MarkupLine($"Removing Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...");
-        await docker.RemoveContainerAsync(settings.HostContainerName);
+        await CommandStatus.RunAsync(
+            context,
+            $"Removing Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+            async () => await docker.RemoveContainerAsync(settings.HostContainerName));
 
         foreach (var image in EnumerateImages(settings, moduleLoadResult.Modules))
         {
@@ -64,8 +71,10 @@ internal sealed class UninstallCommand(CommandContext context)
     {
         try
         {
-            context.Console.MarkupLine($"Removing module network [grey]{Markup.Escape(networkName)}[/]...");
-            await docker.RemoveNetworkAsync(networkName);
+            await CommandStatus.RunAsync(
+                context,
+                $"Removing module network [grey]{Markup.Escape(networkName)}[/]...",
+                async () => await docker.RemoveNetworkAsync(networkName));
         }
         catch (DockerEngineException ex)
         {
@@ -81,8 +90,10 @@ internal sealed class UninstallCommand(CommandContext context)
     {
         try
         {
-            context.Console.MarkupLine($"Removing Docker image [grey]{Markup.Escape(image)}[/]...");
-            await docker.RemoveImageAsync(image);
+            await CommandStatus.RunAsync(
+                context,
+                $"Removing Docker image [grey]{Markup.Escape(image)}[/]...",
+                async () => await docker.RemoveImageAsync(image));
         }
         catch (DockerEngineException ex)
         {

@@ -12,18 +12,30 @@ internal sealed class HostLifecycle(CommandContext context)
         Directory.CreateDirectory(settings.ResolveHostDataRoot(context.Environment));
 
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-        await docker.EnsureLinuxEngineAsync(cancellationToken);
-        await docker.EnsureNetworkAsync(settings.HostModuleNetwork, cancellationToken);
+        await CommandStatus.RunAsync(
+            context,
+            "Checking Docker Engine...",
+            async () => await docker.EnsureLinuxEngineAsync(cancellationToken));
+        await CommandStatus.RunAsync(
+            context,
+            $"Preparing module network [grey]{Markup.Escape(settings.HostModuleNetwork)}[/]...",
+            async () => await docker.EnsureNetworkAsync(settings.HostModuleNetwork, cancellationToken));
 
         var existing = await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
         if (existing is not null && recreate)
         {
             if (existing.State?.Running == true)
             {
-                await docker.StopContainerAsync(settings.HostContainerName, cancellationToken);
+                await CommandStatus.RunAsync(
+                    context,
+                    $"Stopping Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                    async () => await docker.StopContainerAsync(settings.HostContainerName, cancellationToken));
             }
 
-            await docker.RemoveContainerAsync(settings.HostContainerName, cancellationToken);
+            await CommandStatus.RunAsync(
+                context,
+                $"Removing Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                async () => await docker.RemoveContainerAsync(settings.HostContainerName, cancellationToken));
             existing = null;
         }
 
@@ -35,7 +47,10 @@ internal sealed class HostLifecycle(CommandContext context)
                 return existing;
             }
 
-            await docker.StartContainerAsync(settings.HostContainerName, cancellationToken);
+            await CommandStatus.RunAsync(
+                context,
+                $"Starting Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                async () => await docker.StartContainerAsync(settings.HostContainerName, cancellationToken));
             context.Console.MarkupLine("[green]Host container started.[/]");
             return await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
         }
@@ -60,8 +75,14 @@ internal sealed class HostLifecycle(CommandContext context)
             settings.HostModuleDevMode,
             hostPort);
 
-        await docker.CreateHostContainerAsync(plan, cancellationToken);
-        await docker.StartContainerAsync(settings.HostContainerName, cancellationToken);
+        await CommandStatus.RunAsync(
+            context,
+            $"Creating Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+            async () => await docker.CreateHostContainerAsync(plan, cancellationToken));
+        await CommandStatus.RunAsync(
+            context,
+            $"Starting Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+            async () => await docker.StartContainerAsync(settings.HostContainerName, cancellationToken));
 
         context.Console.MarkupLine($"[green]Host container started on[/] {Markup.Escape(BuildUrl(hostPort))}");
         return await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
@@ -84,7 +105,10 @@ internal sealed class HostLifecycle(CommandContext context)
             return;
         }
 
-        await docker.StopContainerAsync(settings.HostContainerName, cancellationToken);
+        await CommandStatus.RunAsync(
+            context,
+            $"Stopping Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+            async () => await docker.StopContainerAsync(settings.HostContainerName, cancellationToken));
         context.Console.MarkupLine("[green]Host container stopped.[/]");
     }
 
@@ -126,12 +150,10 @@ internal sealed class HostLifecycle(CommandContext context)
         DockerEngineClient docker,
         string image,
         CancellationToken cancellationToken = default)
-        => await context.Console
-            .Status()
-            .Spinner(Spinner.Known.Default)
-            .StartAsync(
-                $"Pulling Host image [grey]{Markup.Escape(image)}[/]...",
-                async _ => await docker.PullImageAsync(image, cancellationToken));
+        => await CommandStatus.RunAsync(
+            context,
+            $"Pulling Host image [grey]{Markup.Escape(image)}[/]...",
+            async () => await docker.PullImageAsync(image, cancellationToken));
 
     internal static async Task EnsureHostImageInstalledAsync(
         CommandContext context,

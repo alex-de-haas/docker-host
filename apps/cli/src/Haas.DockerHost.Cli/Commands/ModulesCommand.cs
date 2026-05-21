@@ -169,7 +169,10 @@ internal sealed class ModulesCommand(CommandContext context)
             return 130;
         }
 
-        var applyResponse = await hostApi.ApplyInstallAsync(request);
+        var applyResponse = await CommandStatus.RunAsync(
+            context,
+            $"Installing module [grey]{Markup.Escape(plan.Module.Id)}[/]...",
+            async () => await hostApi.ApplyInstallAsync(request));
         var applyBody = applyResponse.Body;
         if (!applyResponse.IsSuccess || applyBody?.Error is not null)
         {
@@ -214,7 +217,18 @@ internal sealed class ModulesCommand(CommandContext context)
             return 1;
         }
 
-        var response = await hostApi.RunModuleActionAsync(args[0], action);
+        var moduleId = args[0];
+        var statusVerb = action switch
+        {
+            "start" => "Starting",
+            "stop" => "Stopping",
+            "restart" => "Restarting",
+            _ => "Running",
+        };
+        var response = await CommandStatus.RunAsync(
+            context,
+            $"{statusVerb} module [grey]{Markup.Escape(moduleId)}[/]...",
+            async () => await hostApi.RunModuleActionAsync(moduleId, action));
         var body = response.Body;
         if (!response.IsSuccess || body?.Success != true)
         {
@@ -298,7 +312,10 @@ internal sealed class ModulesCommand(CommandContext context)
             return 130;
         }
 
-        var applyResponse = await hostApi.ApplyUpdateAsync(moduleId, request);
+        var applyResponse = await CommandStatus.RunAsync(
+            context,
+            $"Updating module [grey]{Markup.Escape(moduleId)}[/]...",
+            async () => await hostApi.ApplyUpdateAsync(moduleId, request));
         var applyBody = applyResponse.Body;
         if (!applyResponse.IsSuccess || applyBody?.Error is not null)
         {
