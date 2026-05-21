@@ -1,6 +1,6 @@
 # Module metadata files
 
-Этот документ описывает черновую модель добавления модулей в Docker Host. Это только продуктовая и техническая документация, без требований к текущей имплементации.
+Этот документ описывает реализованный контракт добавления модулей в Docker Host.
 
 ## Идея
 
@@ -182,7 +182,7 @@ Host использует `modules.json` как registry установленн�
 
 External storage mounts могут находиться за пределами `modules/<module-id>/`. В этом случае внутри module directory хранится только mapping configuration, а сами данные остаются в выбранной администратором физической папке.
 
-## Metadata draft
+## Metadata example
 
 ```json
 {
@@ -333,7 +333,7 @@ External storage mounts могут находиться за пределами 
 
 ## Schema source of truth
 
-На текущем этапе источником правды для module metadata schema является этот документ: пример `Metadata draft`, `Schema outline`, field notes и validation rules ниже вместе описывают ожидаемый контракт.
+Источником правды для module metadata schema является этот документ: пример `Metadata example`, `Schema outline`, field notes и validation rules ниже вместе описывают поддерживаемый контракт.
 
 Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes only `schemaVersion: "0.2"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from install/update planning. Отдельный shared contracts package или generated schema artifact для metadata MVP не требуется; этот документ остается источником правды для supported metadata contract.
 
@@ -343,7 +343,7 @@ Top-level metadata object:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `schemaVersion` | string | yes | Version of the metadata file schema supported by Host. Current draft value: `0.2`. |
+| `schemaVersion` | string | yes | Version of the metadata file schema supported by Host. Current supported value: `0.2`. |
 | `id` | string | yes | Stable unique module id, recommended reverse-DNS format. |
 | `name` | string | yes | Human-readable module name. |
 | `description` | string | no | Short module description for UI display. |
