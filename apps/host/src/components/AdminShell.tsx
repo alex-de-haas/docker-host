@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { createContext, useContext, useState, useSyncExternalStore } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import {
   BarChart3,
   Boxes,
@@ -273,6 +273,7 @@ function AdminSidebar({
   const sections = getNavigationSections(user);
   const accountLabel = user.displayName || user.email || user.id;
   const accountDescription = user.email && user.email !== accountLabel ? user.email : user.role;
+  const accountAvatarStyle = getAccountAvatarStyle(accountLabel);
 
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -373,7 +374,10 @@ function AdminSidebar({
               )}
               title={compact ? accountLabel : undefined}
             >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-rose-700 text-xs font-semibold text-white">
+              <span
+                className="flex size-9 shrink-0 items-center justify-center rounded-md text-xs font-semibold"
+                style={accountAvatarStyle}
+              >
                 {getAccountInitials(user)}
               </span>
               {!compact && (
@@ -675,6 +679,60 @@ function getAccountInitials(user: HostPrincipal) {
     .slice(0, 2)
     .map(part => part[0]?.toUpperCase() ?? '')
     .join('');
+}
+
+function getAccountAvatarStyle(source: string): CSSProperties {
+  const backgroundColor = stringToAvatarHexColor(source);
+
+  return {
+    backgroundColor,
+    color: getReadableTextColor(backgroundColor),
+  };
+}
+
+function stringToAvatarHexColor(source: string) {
+  let hash = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) - hash + source.charCodeAt(index)) | 0;
+  }
+
+  const hue = Math.abs(hash) % 360;
+
+  return hslToHex(hue, 64, 42);
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number) {
+  const normalizedSaturation = saturation / 100;
+  const normalizedLightness = lightness / 100;
+  const chroma = (1 - Math.abs(2 * normalizedLightness - 1)) * normalizedSaturation;
+  const huePrime = hue / 60;
+  const x = chroma * (1 - Math.abs((huePrime % 2) - 1));
+  const m = normalizedLightness - chroma / 2;
+  const [red, green, blue] = huePrime < 1
+    ? [chroma, x, 0]
+    : huePrime < 2
+      ? [x, chroma, 0]
+      : huePrime < 3
+        ? [0, chroma, x]
+        : huePrime < 4
+          ? [0, x, chroma]
+          : huePrime < 5
+            ? [x, 0, chroma]
+            : [chroma, 0, x];
+
+  return `#${[red, green, blue]
+    .map(channel => Math.round((channel + m) * 255).toString(16).padStart(2, '0'))
+    .join('')}`;
+}
+
+function getReadableTextColor(hexColor: string) {
+  const red = parseInt(hexColor.slice(1, 3), 16);
+  const green = parseInt(hexColor.slice(3, 5), 16);
+  const blue = parseInt(hexColor.slice(5, 7), 16);
+  const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
+
+  return luminance > 0.55 ? '#111827' : '#ffffff';
 }
 
 function getAppIcon(iconKey?: string): LucideIcon {

@@ -214,7 +214,7 @@ Implemented local-auth surface:
 
 - `/setup` creates the first Host administrator when supplied with a valid setup token;
 - `/recovery` restores or recreates a local `host.admin` account when supplied with a valid setup or recovery token;
-- `/settings/security` gives Host administrators a security operations surface for sessions, recent reauthentication, provider diagnostics, audit review, and audit retention;
+- `/settings/security` gives Host administrators a tabbed security operations surface for sessions, provider diagnostics, audit review, and audit retention; long session and audit tables scroll inside their tabs, and sensitive auth actions open a contextual reauthentication dialog when needed;
 - `/login` authenticates existing Host users;
 - `/api/auth/bootstrap`, `/api/auth/login`, `/api/auth/logout`, and `/api/auth/status` own browser auth flow;
 - `/api/auth/recovery` consumes setup or recovery tokens, resets local administrator credentials, revokes old sessions for that account, and creates a new browser session;

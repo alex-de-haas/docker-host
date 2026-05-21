@@ -295,10 +295,12 @@ The dashboard stays module-first and shows services as nested runtime details.
 Implemented UI behavior:
 
 - module rows show aggregate runtime status;
-- the old image-focused column is represented as services/image information;
-- service chips summarize per-container state, such as `frontend Running` and `backend Running`;
+- the old image-focused column is represented as a service count on the module row;
+- module rows expose a metadata tooltip next to the module name for version, metadata URL, install/update timestamps, pull policy, description, and last-error context;
+- normal `installed` operation state is omitted from the table; non-standard module operation states, such as `failed`, `updating`, or `removing`, appear as contextual badges next to the module name;
+- expanded rows list each service as a table row with service key, network alias, container name, short container id, per-container runtime state, and per-container uptime;
 - aggregate copy uses service counts such as `2/2 running`, `1/2 degraded`, or `0/2 stopped`;
-- expanded rows show service key, image reference, Docker state, container name, container id, network alias, endpoints, ports, timestamps, and per-container error;
+- the module uptime column shows the longest-running service in that module, while expanded service rows show each service's own running duration;
 - stats cards count installed modules and running services;
 - install review shows containers, images, endpoints, dependency URL targets, storage targets, and environment targets;
 - update review shows changes per container;
