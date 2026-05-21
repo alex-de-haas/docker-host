@@ -51,6 +51,17 @@ public sealed class AuthCommandTests : IDisposable
         Assert.False(File.Exists(lockPath));
     }
 
+    [Fact]
+    public async Task RunAsync_RecoveryToken_WhenAuthRootCannotBeCreated_ReturnsConfigurationError()
+    {
+        Directory.CreateDirectory(rootDirectory);
+        await File.WriteAllTextAsync(Path.Combine(rootDirectory, "auth"), "not a directory");
+
+        var exitCode = await CommandLine.RunAsync(["auth", "recovery-token"]);
+
+        Assert.Equal(2, exitCode);
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);

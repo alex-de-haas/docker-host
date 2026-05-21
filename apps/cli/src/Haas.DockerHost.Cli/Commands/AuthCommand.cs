@@ -93,7 +93,14 @@ internal sealed class AuthCommand(CommandContext context)
         var dataRoot = settings.ResolveHostDataRoot(context.Environment);
         var authRoot = Path.Combine(dataRoot, "auth");
         var statePath = Path.Combine(authRoot, "state.json");
-        Directory.CreateDirectory(authRoot);
+        try
+        {
+            Directory.CreateDirectory(authRoot);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw CreateAuthStateAccessException(authRoot, ex);
+        }
 
         string token;
         DateTimeOffset expiresAt;
@@ -541,6 +548,10 @@ internal sealed class AuthCommand(CommandContext context)
         {
             throw new ConfigurationException($"Unable to parse auth state '{statePath}'.");
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw CreateAuthStateAccessException(statePath, ex);
+        }
     }
 
     private static async Task WriteAuthStateAsync(string statePath, JsonObject state)
@@ -552,11 +563,19 @@ internal sealed class AuthCommand(CommandContext context)
         state["cliTokens"] ??= new JsonArray();
 
         var tempPath = statePath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
-        await File.WriteAllTextAsync(
-            tempPath,
-            state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        File.Move(tempPath, statePath, overwrite: true);
+        try
+        {
+            await File.WriteAllTextAsync(
+                tempPath,
+                state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.Move(tempPath, statePath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            DeleteTemporaryAuthStateFile(tempPath);
+            throw CreateAuthStateAccessException(statePath, ex);
+        }
     }
 
     private static async Task<AuthStateLock> AcquireAuthStateLockAsync(string statePath)
@@ -580,13 +599,28 @@ internal sealed class AuthCommand(CommandContext context)
                 await stream.FlushAsync();
                 return new AuthStateLock(lockPath, stream);
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                throw CreateAuthStateAccessException(lockPath, ex);
+            }
             catch (IOException) when (DateTimeOffset.UtcNow - startedAt < AuthStateLockTimeout)
             {
                 DeleteStaleAuthStateLock(lockPath);
                 await Task.Delay(AuthStateLockRetryDelay);
             }
+            catch (IOException ex)
+            {
+                throw new ConfigurationException(
+                    $"Unable to acquire auth state lock '{lockPath}' within {AuthStateLockTimeout.TotalSeconds:0} seconds. " +
+                    $"If no docker-host auth command is running, remove the lock file or fix ownership and permissions. {ex.Message}");
+            }
         }
     }
+
+    private static ConfigurationException CreateAuthStateAccessException(string path, Exception ex)
+        => new(
+            $"Unable to access auth state path '{path}': {ex.Message} " +
+            "Ensure the current user owns the Docker Host data directory and can write to it.");
 
     private static void DeleteStaleAuthStateLock(string lockPath)
     {
@@ -610,7 +644,6 @@ internal sealed class AuthCommand(CommandContext context)
 
     private static async Task AppendLocalAuthAuditEventAsync(string authRoot, string type, JsonObject details)
     {
-        Directory.CreateDirectory(authRoot);
         var auditPath = Path.Combine(authRoot, "audit.ndjson");
         var auditEvent = new JsonObject
         {
@@ -621,10 +654,35 @@ internal sealed class AuthCommand(CommandContext context)
             ["details"] = details,
         };
 
-        await File.AppendAllTextAsync(
-            auditPath,
-            auditEvent.ToJsonString(new JsonSerializerOptions { WriteIndented = false }) + Environment.NewLine,
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        try
+        {
+            Directory.CreateDirectory(authRoot);
+            await File.AppendAllTextAsync(
+                auditPath,
+                auditEvent.ToJsonString(new JsonSerializerOptions { WriteIndented = false }) + Environment.NewLine,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw CreateAuthStateAccessException(auditPath, ex);
+        }
+    }
+
+    private static void DeleteTemporaryAuthStateFile(string tempPath)
+    {
+        try
+        {
+            File.Delete(tempPath);
+        }
+        catch (FileNotFoundException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private static JsonObject CreateEmptyAuthState()
