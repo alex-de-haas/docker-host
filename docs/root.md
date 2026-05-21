@@ -26,6 +26,7 @@ flowchart LR
 
 - [Host app shell](features/host-app-shell.md) - implemented admin shell foundation, navigation groups, persistent sidebar behavior, and protected page integration.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
+- [Browser account switching](features/account-switching.md) - browser-scoped remembered Host accounts, sidebar switching, account-set persistence, logout behavior, and cookie hygiene.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Multi-container modules](features/multi-container-modules.md) - module-owned containers, per-container runtime state, endpoint resolution, storage targets, lifecycle behavior, and Web UI service display.
 - [Module developer mode](features/module-developer-mode.md) - local-only module development targets that proxy through the Host gateway without a full install.
@@ -39,7 +40,3 @@ flowchart LR
 - [Module metadata files](features/module-metadata.md) - supported metadata contract for installing Docker-hosted modules from JSON metadata URLs.
 - [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.
 - [Demo Module](features/demo-module.md) - repository-local Next.js module for validating Docker Host module operations.
-
-## Planning
-
-- [Browser account switching](planning/account-switching.md) - implementation plan for remembering multiple browser accounts and switching the active Host user from the sidebar.

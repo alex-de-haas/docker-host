@@ -338,7 +338,9 @@ Opening a module UI from the Host shell does not replace the service/API gateway
 
 ## Account Switching
 
-The accepted direction is not to introduce mandatory identity profiles. Different real-world accounts are represented as different Host users:
+Detailed account-switching behavior is documented in [Browser account switching](account-switching.md).
+
+Docker Host does not use mandatory identity profiles. Different real-world accounts are represented as different Host users:
 
 ```text
 personal@example.com -> host.admin
@@ -347,17 +349,17 @@ work@example.com     -> host.user
 
 When a module is opened, the Host session selected for that module determines which `sub`, email, and Host role appear in the module identity token.
 
-Host does not link multiple external identities into a single person.
+Host does not link multiple external identities into a single person, and account switching does not create additional local users.
 
 Browser account switching remembers multiple Host users per browser through a server-side account set. The browser stores only an HttpOnly `docker_host_accounts` token. The Host stores only the token hash in `/data/auth/state.json` under `accountSets`, along with remembered user ids, timestamps, expiry, and revocation state. Raw session tokens and raw account-set tokens are not persisted in auth state.
 
-Successful local login, setup, recovery, development auto-login, and OIDC callback flows add the authenticated Host user to the current browser account set or create a new account set when none exists. Remembered account sets use the same 14-day absolute lifetime as browser sessions in the first implementation.
+Successful local login, setup, recovery, development auto-login, and OIDC callback flows add the authenticated Host user to the current browser account set or create a new account set when none exists. Remembered account sets use the same 14-day absolute lifetime as browser sessions.
 
 The sidebar account menu loads remembered users from `/api/auth/accounts`, shows the active account first, and can switch to another remembered user. Switching validates the account-set cookie, verifies that the target user is still enabled and remembered in this browser, then creates a fresh active Host session. Switching does not set `reauthenticatedAt`, so sensitive administrator operations still require the existing recent reauthentication flow.
 
 `Log out current account` removes the active user from the browser account set and revokes the active session. `Log out all accounts` revokes the browser account set and the active session. Disabled users are omitted from switch targets and cannot be activated.
 
-Trusted proxy deployments remain outside the first account-switching scope because the upstream proxy owns browser identity selection.
+Gateway and embedded-app proxying strip the active session cookie and the account-set cookie before forwarding traffic to modules. Trusted proxy deployments do not use local browser account switching because the upstream proxy owns browser identity selection.
 
 ## Scoped Module User Directory
 

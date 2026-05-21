@@ -776,6 +776,8 @@ Implemented browser auth endpoints:
 
 OIDC login denies access when the transaction state is invalid or expired, ID token verification fails, the token has no subject, no role mapping matches, or the mapped Host user is disabled. OIDC provider access tokens, refresh tokens, and ID tokens are not persisted.
 
+Account switching endpoints use the active Host session for authorization and the HttpOnly `docker_host_accounts` cookie to find the browser account set. The account-set cookie is not a module credential and is stripped from gateway and embedded-app proxy traffic.
+
 ### CLI admin tokens
 
 CLI admin tokens authenticate local CLI commands to Host API routes as `host.admin` operations. The Host stores only token hashes and returns raw token material only when a token is created or rotated.
