@@ -28,6 +28,10 @@
 .DS_Store
 *.pem
 
+# local Docker Host runtime state
+/.docker-host-dev/
+/.docker-host-dev-demo/
+
 # debug
 npm-debug.log*
 yarn-debug.log*
