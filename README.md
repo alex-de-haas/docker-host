@@ -8,7 +8,7 @@ Monorepo for Docker Host Manager, including the Host Web UI/backend API and the 
 
 ## Install Current CLI Build
 
-The Unix installer downloads the rolling `cli-dev` CLI release, verifies `SHA256SUMS` when available, installs `docker-host` under `~/.docker-host/bin`, adds that directory to your shell profile when possible, and delegates Docker preflight plus launch configuration setup to the CLI:
+The Unix installer downloads the rolling `cli-dev` CLI release, verifies `SHA256SUMS` when available, installs `docker-host` under `~/.docker-host/bin`, adds that directory to your shell profile when possible, and delegates Docker preflight, Host image pull, and launch configuration setup to the CLI:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
@@ -33,7 +33,7 @@ To remove the Host container, Host-managed Docker resources, launch configuratio
 docker-host uninstall
 ```
 
-Run `docker-host install` again to recreate launch configuration and Host directories.
+Run `docker-host install` again to recreate launch configuration, Host directories, and refresh the configured Host image.
 
 For one-command install and start:
 

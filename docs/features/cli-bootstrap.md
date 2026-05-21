@@ -115,9 +115,9 @@ The high-level adapter owns Docker Engine paths, request payloads, response pars
 
 ## Lifecycle behavior
 
-`docker-host install` creates the root directories and writes `launch.env`.
+`docker-host install` creates the root directories, writes `launch.env`, validates Docker Engine Linux container mode, and pulls the configured Host image so rolling tags such as `latest` are refreshed before the first start. If `HOST_IMAGE` is a single-component local tag such as `docker-host:dev` and that image already exists locally, install keeps the local image and skips the registry pull.
 
-`docker-host uninstall` removes Host-managed runtime and local state while preserving the CLI executable. It removes installed module containers known from `modules.json`, removes the Host container, attempts to remove Host/module images and the Host-managed module network, deletes launch configuration, and deletes Host state files. When the data root is the default `~/.docker-host`, uninstall clears that directory except for `bin/` so the installed CLI remains runnable. If `HOST_DATA_ROOT_HOST` points outside the CLI root, uninstall removes only known Host state paths such as `modules.json` and `modules/` from that external data root. `docker-host install` recreates launch configuration and Host directories after uninstall.
+`docker-host uninstall` removes Host-managed runtime and local state while preserving the CLI executable. It removes installed module containers known from `modules.json`, removes the Host container, attempts to remove Host/module images and the Host-managed module network, deletes launch configuration, and deletes Host state files. When the data root is the default `~/.docker-host`, uninstall clears that directory except for `bin/` so the installed CLI remains runnable. If `HOST_DATA_ROOT_HOST` points outside the CLI root, uninstall removes only known Host state paths such as `modules.json` and `modules/` from that external data root. `docker-host install` recreates launch configuration and Host directories after uninstall and refreshes the configured Host image.
 
 `docker-host start`:
 

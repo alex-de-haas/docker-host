@@ -134,5 +134,24 @@ internal sealed class HostLifecycle(CommandContext context)
                 $"Pulling Host image [grey]{Markup.Escape(image)}[/]...",
                 async _ => await docker.PullImageAsync(image, cancellationToken));
 
+    internal static async Task EnsureHostImageInstalledAsync(
+        CommandContext context,
+        DockerEngineClient docker,
+        string image,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsSingleComponentImageReference(image) ||
+            !await docker.ImageExistsAsync(image, cancellationToken))
+        {
+            await PullHostImageAsync(context, docker, image, cancellationToken);
+            return;
+        }
+
+        context.Console.MarkupLine($"[grey]Using local Host image {Markup.Escape(image)}.[/]");
+    }
+
+    private static bool IsSingleComponentImageReference(string image)
+        => !image.Contains('/', StringComparison.Ordinal);
+
     private static string BuildUrl(int port) => $"http://localhost:{port}";
 }

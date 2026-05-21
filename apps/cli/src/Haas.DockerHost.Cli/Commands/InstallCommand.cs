@@ -16,6 +16,7 @@ internal sealed class InstallCommand(CommandContext context)
 
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
         await docker.EnsureLinuxEngineAsync();
+        await HostLifecycle.EnsureHostImageInstalledAsync(context, docker, settings.HostImage);
 
         context.Console.MarkupLine("[green]Launch configuration is ready.[/]");
         context.Console.MarkupLine($"Config: [grey]{Markup.Escape(context.Environment.LaunchConfigPath)}[/]");
