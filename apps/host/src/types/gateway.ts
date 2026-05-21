@@ -6,7 +6,7 @@ export interface GatewayExposureRecord {
   id: string;
   moduleId: string;
   hostname: string;
-  portKey: string;
+  endpointKey: string;
   exposurePolicy: ModuleExposurePolicy;
   identityMode: ModuleIdentityMode;
   enabled: boolean;
@@ -15,7 +15,7 @@ export interface GatewayExposureRecord {
 }
 
 export interface GatewayExposureState {
-  schemaVersion: '0.1';
+  schemaVersion: '0.2';
   exposures: GatewayExposureRecord[];
   updatedAt: string;
 }
@@ -23,7 +23,8 @@ export interface GatewayExposureState {
 export interface GatewayExposureInput {
   moduleId: string;
   hostname: string;
-  portKey: string;
+  endpointKey?: string;
+  portKey?: string;
   exposurePolicy?: ModuleExposurePolicy;
   identityMode?: ModuleIdentityMode;
   enabled?: boolean;

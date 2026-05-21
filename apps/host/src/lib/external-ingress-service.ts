@@ -432,14 +432,14 @@ function validateIngressReadiness(
 }
 
 function createSnapshot(
-  exposure: Pick<GatewayExposureRecord, 'moduleId' | 'hostname' | 'portKey' | 'exposurePolicy' | 'identityMode'>,
+  exposure: Pick<GatewayExposureRecord, 'moduleId' | 'hostname' | 'endpointKey' | 'exposurePolicy' | 'identityMode'>,
   trustedProxyMode: boolean,
   config: HostRuntimeConfig
 ): ExternalIngressSnapshot {
   return {
     moduleId: exposure.moduleId,
     hostname: exposure.hostname,
-    portKey: exposure.portKey,
+    endpointKey: exposure.endpointKey,
     exposurePolicy: exposure.exposurePolicy,
     identityMode: exposure.identityMode,
     gatewayBaseDomain: config.gatewayBaseDomain,
@@ -472,7 +472,7 @@ function getDrift(previous: ExternalIngressSnapshot, current: ExternalIngressSna
   const fields: Array<keyof ExternalIngressSnapshot> = [
     'moduleId',
     'hostname',
-    'portKey',
+    'endpointKey',
     'exposurePolicy',
     'identityMode',
     'gatewayBaseDomain',

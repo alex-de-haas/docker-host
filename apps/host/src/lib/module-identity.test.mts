@@ -33,7 +33,7 @@ test('creates a signed module identity token that validates against JWKS', async
       id: 'gw_1',
       moduleId: 'com.example.reports',
       hostname: 'reports.example.test',
-      portKey: 'web',
+      endpointKey: 'web',
       exposurePolicy: 'assignedUsersOnly' as const,
       identityMode: 'required' as const,
     },
@@ -60,7 +60,7 @@ test('creates a signed module identity token that validates against JWKS', async
   assert.equal(verified.payload.name, 'User One');
   assert.equal(verified.payload.gatewayExposureId, 'gw_1');
   assert.equal(verified.payload.hostname, 'reports.example.test');
-  assert.equal(verified.payload.portKey, 'web');
+  assert.equal(verified.payload.endpointKey, 'web');
 
   await assert.rejects(
     jwtVerify(token!, createLocalJWKSet(jwks), {
@@ -89,7 +89,7 @@ test('does not issue identity for default public exposure, but supports optional
       id: 'gw_public',
       moduleId: 'com.example.public',
       hostname: 'public.example.test',
-      portKey: 'web',
+      endpointKey: 'web',
       exposurePolicy: 'public' as const,
     },
   };

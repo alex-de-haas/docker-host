@@ -141,7 +141,7 @@ export async function resolveGatewayRequest(req) {
         id: devTarget.id,
         moduleId: devTarget.moduleId,
         hostname: hostnameValue,
-        portKey: devTarget.portKey,
+        endpointKey: devTarget.portKey,
         exposurePolicy: devTarget.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY,
         identityMode: getExposureIdentityMode(devTarget, devTarget.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY),
       },
@@ -161,7 +161,7 @@ export async function resolveGatewayRequest(req) {
   }
 
   const gateway = await readJsonIfExists(config.gatewayExposuresPath, {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     exposures: [],
   });
   const exposure = Array.isArray(gateway.exposures)
@@ -198,9 +198,10 @@ export async function resolveGatewayRequest(req) {
   }
 
   const metadata = await readModuleMetadata(installedModule, config);
-  const endpointTarget = resolveModuleEndpointTarget(metadata, exposure.portKey);
+  const endpointKey = exposure.endpointKey || exposure.portKey;
+  const endpointTarget = resolveModuleEndpointTarget(metadata, endpointKey);
   if (!endpointTarget) {
-    throw new Error(`Module "${exposure.moduleId}" does not define endpoint "${exposure.portKey}".`);
+    throw new Error(`Module "${exposure.moduleId}" does not define endpoint "${endpointKey}".`);
   }
 
   const trustedProxy = await authenticateTrustedProxyRequest(req, config);
@@ -222,6 +223,7 @@ export async function resolveGatewayRequest(req) {
   return {
     exposure: {
       ...exposure,
+      endpointKey,
       exposurePolicy: policy,
       identityMode: getExposureIdentityMode(exposure, policy),
       hostname: hostnameValue,
@@ -911,7 +913,7 @@ async function appendGatewayAuditEvent(req, target, allowed = false) {
     details: {
       moduleId: target.exposure.moduleId,
       hostname: target.exposure.hostname,
-      portKey: target.exposure.portKey,
+      endpointKey: target.exposure.endpointKey,
       exposurePolicy: target.exposure.exposurePolicy,
       reason: target.access.reason,
       path: req.url || '/',

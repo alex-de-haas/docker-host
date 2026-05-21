@@ -266,7 +266,7 @@ export function ModuleList({
                     <div className="flex flex-wrap gap-1">
                       {module.containers.map(container => (
                         <Badge key={container.key} variant="outline" className="max-w-[180px] truncate">
-                          {container.key}
+                          {container.key} {runtimeLabels[container.runtimeStatus.state]}
                         </Badge>
                       ))}
                     </div>

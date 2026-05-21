@@ -127,13 +127,13 @@ async function seedGatewayExposure(
 ) {
   const now = new Date().toISOString();
   await writeGatewayExposureState({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     exposures: [
       {
         id: input.id,
         moduleId: 'com.example.reports',
         hostname: 'reports.example.test',
-        portKey: 'web',
+        endpointKey: 'web',
         exposurePolicy: input.exposurePolicy ?? 'loginRequired',
         identityMode: 'required',
         enabled: true,

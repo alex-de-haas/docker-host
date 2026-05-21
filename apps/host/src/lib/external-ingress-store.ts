@@ -123,12 +123,14 @@ function normalizeExternalIngressState(parsed: unknown): ExternalIngressState {
 }
 
 function normalizeExternalIngressRecord(value: unknown): ExternalIngressRecord | null {
+  const snapshot = normalizeExternalIngressSnapshot(isObject(value) ? value.snapshot : null);
+
   if (!isObject(value) ||
     typeof value.id !== 'string' ||
     typeof value.gatewayExposureId !== 'string' ||
     value.mode !== 'manual' ||
     !isExternalIngressStatus(value.status) ||
-    !isExternalIngressSnapshot(value.snapshot) ||
+    !snapshot ||
     typeof value.createdAt !== 'string' ||
     typeof value.updatedAt !== 'string') {
     return null;
@@ -141,7 +143,7 @@ function normalizeExternalIngressRecord(value: unknown): ExternalIngressRecord |
     status: value.status,
     checklist: isExternalIngressChecklist(value.checklist) ? value.checklist : {},
     ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
-    snapshot: value.snapshot,
+    snapshot,
     ...(isExternalIngressValidationResult(value.lastValidation)
       ? { lastValidation: value.lastValidation }
       : {}),
@@ -151,11 +153,21 @@ function normalizeExternalIngressRecord(value: unknown): ExternalIngressRecord |
   };
 }
 
-function isExternalIngressSnapshot(value: unknown): value is ExternalIngressSnapshot {
-  return isObject(value) &&
+function normalizeExternalIngressSnapshot(value: unknown): ExternalIngressSnapshot | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const endpointKey = typeof value.endpointKey === 'string'
+    ? value.endpointKey
+    : typeof value.portKey === 'string'
+      ? value.portKey
+      : null;
+
+  if (
     typeof value.moduleId === 'string' &&
     typeof value.hostname === 'string' &&
-    typeof value.portKey === 'string' &&
+    typeof endpointKey === 'string' &&
     (value.exposurePolicy === 'public' ||
       value.exposurePolicy === 'loginRequired' ||
       value.exposurePolicy === 'assignedUsersOnly') &&
@@ -164,7 +176,21 @@ function isExternalIngressSnapshot(value: unknown): value is ExternalIngressSnap
       value.identityMode === 'required') &&
     (typeof value.gatewayBaseDomain === 'string' || value.gatewayBaseDomain === null) &&
     (typeof value.hostPublicOrigin === 'string' || value.hostPublicOrigin === null) &&
-    typeof value.trustedProxyMode === 'boolean';
+    typeof value.trustedProxyMode === 'boolean'
+  ) {
+    return {
+      moduleId: value.moduleId,
+      hostname: value.hostname,
+      endpointKey,
+      exposurePolicy: value.exposurePolicy,
+      identityMode: value.identityMode,
+      gatewayBaseDomain: value.gatewayBaseDomain,
+      hostPublicOrigin: value.hostPublicOrigin,
+      trustedProxyMode: value.trustedProxyMode,
+    };
+  }
+
+  return null;
 }
 
 function isExternalIngressChecklist(value: unknown): value is ExternalIngressChecklist {

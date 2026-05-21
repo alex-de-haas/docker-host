@@ -70,7 +70,7 @@ export async function upsertGatewayExposure(
           ...state.exposures[existingIndex],
           moduleId: normalized.moduleId,
           hostname: normalized.hostname,
-          portKey: normalized.portKey,
+          endpointKey: normalized.endpointKey,
           exposurePolicy: normalized.exposurePolicy,
           identityMode: normalized.identityMode,
           enabled: normalized.enabled,
@@ -80,7 +80,7 @@ export async function upsertGatewayExposure(
           id: normalized.id,
           moduleId: normalized.moduleId,
           hostname: normalized.hostname,
-          portKey: normalized.portKey,
+          endpointKey: normalized.endpointKey,
           exposurePolicy: normalized.exposurePolicy,
           identityMode: normalized.identityMode,
           enabled: normalized.enabled,
@@ -109,7 +109,7 @@ export async function upsertGatewayExposure(
       exposureId: exposure.id,
       moduleId: exposure.moduleId,
       hostname: exposure.hostname,
-      portKey: exposure.portKey,
+      endpointKey: exposure.endpointKey,
       exposurePolicy: exposure.exposurePolicy,
       identityMode: exposure.identityMode,
       enabled: exposure.enabled,
@@ -229,11 +229,11 @@ export async function resolveGatewayTarget(
   }
 
   const metadata = await readInstalledModuleMetadata(installedModule, config);
-  const target = metadata ? resolveEndpointTarget(metadata, exposure.portKey) : null;
+  const target = metadata ? resolveEndpointTarget(metadata, exposure.endpointKey) : null;
   if (!target) {
     throw new GatewayServiceError(
-      'port_not_found',
-      `Module "${exposure.moduleId}" does not define endpoint "${exposure.portKey}".`
+      'endpoint_not_found',
+      `Module "${exposure.moduleId}" does not define endpoint "${exposure.endpointKey}".`
     );
   }
 
@@ -262,13 +262,14 @@ export async function validateGatewayExposureInput(
   config = getHostRuntimeConfig()
 ): Promise<GatewayExposureInput & {
   id: string;
+  endpointKey: string;
   hostname: string;
   exposurePolicy: GatewayExposureRecord['exposurePolicy'];
   identityMode: GatewayExposureRecord['identityMode'];
   enabled: boolean;
 }> {
   const moduleId = input.moduleId.trim();
-  const portKey = input.portKey.trim();
+  const endpointKey = (input.endpointKey ?? input.portKey ?? '').trim();
   const hostname = normalizeGatewayHostname(input.hostname);
   const exposurePolicy = input.exposurePolicy ?? DEFAULT_MODULE_EXPOSURE_POLICY;
   const identityMode = input.identityMode ?? getDefaultModuleIdentityMode(exposurePolicy);
@@ -278,8 +279,8 @@ export async function validateGatewayExposureInput(
     throw new GatewayServiceError('invalid_module_id', 'Module id is required.');
   }
 
-  if (!portKey) {
-    throw new GatewayServiceError('invalid_port_key', 'Runtime port key is required.');
+  if (!endpointKey) {
+    throw new GatewayServiceError('invalid_endpoint_key', 'Module endpoint key is required.');
   }
 
   if (!isAllowedGatewayHostname(hostname, config)) {
@@ -312,18 +313,18 @@ export async function validateGatewayExposureInput(
   }
 
   const metadata = await readInstalledModuleMetadata(installedModule, config);
-  const target = metadata ? resolveEndpointTarget(metadata, portKey) : null;
+  const target = metadata ? resolveEndpointTarget(metadata, endpointKey) : null;
   if (!target) {
     throw new GatewayServiceError(
-      'port_not_found',
-      `Module "${moduleId}" does not define endpoint "${portKey}".`
+      'endpoint_not_found',
+      `Module "${moduleId}" does not define endpoint "${endpointKey}".`
     );
   }
 
   if (!target.endpoint.public) {
     throw new GatewayServiceError(
-      'port_not_public',
-      `Endpoint "${portKey}" is not marked as externally exposable.`
+      'endpoint_not_public',
+      `Endpoint "${endpointKey}" is not marked as externally exposable.`
     );
   }
 
@@ -331,7 +332,7 @@ export async function validateGatewayExposureInput(
     id: input.id?.trim() || `gw_${randomUUID()}`,
     moduleId,
     hostname,
-    portKey,
+    endpointKey,
     exposurePolicy,
     identityMode,
     enabled,

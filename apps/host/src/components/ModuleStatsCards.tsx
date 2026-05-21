@@ -9,7 +9,10 @@ interface ModuleStatsCardsProps {
 }
 
 export function ModuleStatsCards({ modules }: ModuleStatsCardsProps) {
-  const running = modules.filter(module => module.runtimeStatus.state === 'running').length;
+  const runningServices = modules.reduce(
+    (count, module) => count + module.containers.filter(container => container.runtimeStatus.state === 'running').length,
+    0
+  );
   const attention = modules.filter(module =>
     module.operationStatus === 'failed' ||
     module.runtimeStatus.state === 'degraded' ||
@@ -26,8 +29,8 @@ export function ModuleStatsCards({ modules }: ModuleStatsCardsProps) {
       bg: 'bg-sky-500/10',
     },
     {
-      title: 'Running',
-      value: running,
+      title: 'Running services',
+      value: runningServices,
       icon: Activity,
       color: 'text-emerald-600',
       bg: 'bg-emerald-500/10',

@@ -79,13 +79,13 @@ Gateway exposure records live in `/data/gateway/exposures.json`:
 
 ```json
 {
-  "schemaVersion": "0.1",
+  "schemaVersion": "0.2",
   "exposures": [
     {
       "id": "gw_...",
       "moduleId": "com.acme.reports",
       "hostname": "reports.example.com",
-      "portKey": "web",
+      "endpointKey": "web",
       "exposurePolicy": "loginRequired",
       "identityMode": "required",
       "enabled": true,
@@ -131,8 +131,8 @@ Gateway exposure management is a Host admin operation:
 | Route | Method | Behavior |
 | --- | --- | --- |
 | `/api/gateway/exposures` | `GET` | List configured gateway exposures and assigned Host user ids. |
-| `/api/gateway/exposures` | `POST` | Create a gateway exposure for `moduleId`, `hostname`, `portKey`, optional `exposurePolicy`, and optional `identityMode`. |
-| `/api/gateway/exposures/{exposureId}` | `PUT` | Update hostname, target port, policy, or enabled state. |
+| `/api/gateway/exposures` | `POST` | Create a gateway exposure for `moduleId`, `hostname`, `endpointKey`, optional `exposurePolicy`, and optional `identityMode`. |
+| `/api/gateway/exposures/{exposureId}` | `PUT` | Update hostname, endpoint key, policy, identity mode, or enabled state. |
 | `/api/gateway/exposures/{exposureId}` | `DELETE` | Remove an exposure. |
 | `/api/gateway/exposures/{exposureId}/assignments` | `PUT` | Replace assigned Host user ids for the exposure's module. |
 
@@ -286,7 +286,7 @@ Example claims:
   "name": "Work User",
   "gatewayExposureId": "gw_...",
   "hostname": "reports.example.com",
-  "portKey": "web"
+  "endpointKey": "web"
 }
 ```
 
@@ -479,7 +479,7 @@ Implemented MVP:
 - developer mode is disabled by default and enabled with `HOST_MODULE_DEV_MODE=enabled`;
 - developer target records live in `/data/dev/module-targets.json`;
 - Host validates a metadata URL before linking a developer target;
-- each target maps a hostname and metadata runtime `portKey` to an HTTP local target URL;
+- each target maps a hostname and developer-target `portKey` to an HTTP local target URL; this field stores a metadata endpoint key in the developer-mode store;
 - target URLs are limited to localhost, `*.localhost`, `host.docker.internal`, loopback, and private IP ranges;
 - gateway developer targets are checked before production gateway exposures while developer mode is enabled;
 - integrated requests use the normal Host access policy and the normal Host-signed `X-Docker-Host-Identity` token;

@@ -11,7 +11,7 @@ export const MODULE_IDENTITY_TOKEN_TTL_SECONDS: number;
 export interface ModuleIdentityTokenInput {
   principal: HostPrincipal | null | undefined;
   access: ModuleAccessDecision;
-  exposure: Pick<GatewayExposureRecord, 'id' | 'moduleId' | 'hostname' | 'portKey' | 'exposurePolicy'> & {
+  exposure: Pick<GatewayExposureRecord, 'id' | 'moduleId' | 'hostname' | 'endpointKey' | 'exposurePolicy'> & {
     identityMode?: ModuleIdentityMode;
   };
 }

@@ -427,13 +427,13 @@ Dashboard должен остаться плотным и module-first.
 
 ### Phase 4 - Install, update, retry, cleanup, and remove
 
-**Status**: In Progress
+**Status**: Completed
 
 Перевести module mutation flows с одного container на несколько containers.
 
 - Persist multi-container installing state.
 - Write metadata и create module-owned directories один раз на модуль.
-- Create service tokens и environment для каждого container.
+- Create module directory service tokens и environment для каждого container.
 - Apply settings, dependencies, internal connections и storage в правильные container targets.
 - Update retry должен пересоздавать containers модуля из local metadata и stored state.
 - Cleanup/remove plans должны показывать все containers и все image references.
@@ -441,7 +441,7 @@ Dashboard должен остаться плотным и module-first.
 
 ### Phase 5 - Gateway, ingress, and dependency resolution
 
-**Status**: In Progress
+**Status**: Completed
 
 Перевести public и internal routing с raw port keys на stable module endpoints.
 
@@ -452,9 +452,11 @@ Dashboard должен остаться плотным и module-first.
 - Inject dependency URLs в declared target containers.
 - Update external ingress readiness snapshots и labels на endpoints.
 
+Implementation note: gateway exposure state is written as schema `0.2` with `endpointKey`. Existing local exposure records and external ingress snapshots that still contain `portKey` are normalized to `endpointKey` when read, so local development state survives the rename. Module developer-mode targets still use their separate `portKey` field because that store is not gateway exposure state.
+
 ### Phase 6 - Web UI
 
-**Status**: In Progress
+**Status**: Completed
 
 Обновить dashboard и review flows для multi-container modules.
 
@@ -467,7 +469,7 @@ Dashboard должен остаться плотным и module-first.
 
 ### Phase 7 - Demo module, docs, and verification
 
-**Status**: In Progress
+**Status**: Completed
 
 Обновить sample artifacts и tests так, чтобы repository валидировал только новую модель.
 
@@ -476,7 +478,16 @@ Dashboard должен остаться плотным и module-first.
 - Обновить feature documentation после реализации.
 - Обновить Host API docs с новыми response shapes.
 - Обновить unit tests для metadata validation, install planning, update planning, lifecycle, recovery, gateway resolution и UI rendering.
-- После implementation удалить выполненный planning content из этого файла и перенести стабильное поведение в `docs/features/`.
+- Стабильное поведение описано в `docs/features/`; этот planning-документ оставлен как implementation audit trail и phase checklist.
+
+## Verification
+
+Reconciled on 2026-05-21:
+
+- `npm run host:lint` passes.
+- `npm run host:test` passes: 66 tests.
+- `dotnet test apps/cli/tests/Haas.DockerHost.Cli.Tests/Haas.DockerHost.Cli.Tests.csproj` passes: 42 tests.
+- `npm run host:build` passes. Next.js reports an existing Turbopack NFT tracing warning for `module-dev-store.ts`; the build still completes successfully.
 
 ## Open Questions And Answers
 

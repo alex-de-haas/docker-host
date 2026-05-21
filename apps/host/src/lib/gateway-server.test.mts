@@ -468,7 +468,7 @@ function gatewayTarget(input: {
       id: `gw_${moduleId.replace(/[^a-z0-9]+/gi, '_')}`,
       moduleId,
       hostname,
-      portKey: 'web',
+      endpointKey: 'web',
       exposurePolicy: input.exposurePolicy,
       ...(input.identityMode ? { identityMode: input.identityMode } : {}),
     },
@@ -611,14 +611,16 @@ async function seedGatewayTargetFiles(
     }],
   }, null, 2)}\n`, 'utf-8');
   await fs.writeFile(config.gatewayExposuresPath, `${JSON.stringify({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     exposures: [{
       id: 'gw_reports',
       moduleId,
       hostname: 'reports.example.test',
-      portKey: 'web',
+      endpointKey: 'web',
       exposurePolicy: 'loginRequired',
       enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     }],
   }, null, 2)}\n`, 'utf-8');
 }

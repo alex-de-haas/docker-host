@@ -689,8 +689,8 @@ Session revocation and audit purge require `host.auth.configure`; mutating brows
 Gateway exposure APIs manage Host-owned module subdomain routing:
 
 - `GET /api/gateway/exposures` lists gateway exposures and assigned Host user ids.
-- `POST /api/gateway/exposures` creates or updates an exposure for `moduleId`, `hostname`, endpoint key in `portKey`, optional `exposurePolicy`, and optional `identityMode`.
-- `PUT /api/gateway/exposures/{exposureId}` updates hostname, port, policy, identity mode, or enabled state.
+- `POST /api/gateway/exposures` creates or updates an exposure for `moduleId`, `hostname`, endpoint key in `endpointKey`, optional `exposurePolicy`, and optional `identityMode`.
+- `PUT /api/gateway/exposures/{exposureId}` updates hostname, endpoint key, policy, identity mode, or enabled state.
 - `DELETE /api/gateway/exposures/{exposureId}` removes an exposure.
 - `PUT /api/gateway/exposures/{exposureId}/assignments` replaces assigned Host user ids for the exposure's module.
 
