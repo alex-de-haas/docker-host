@@ -712,6 +712,34 @@ export async function addUserToBrowserAccountSet(
   request?: AuthRequestMeta,
   config?: HostRuntimeConfig
 ) {
+  const userId = input.userId.trim();
+  const result = await addUsersToBrowserAccountSet({
+    accountSetToken: input.accountSetToken,
+    userIds: [userId],
+  }, request, config);
+
+  return {
+    accountSetToken: result.accountSetToken,
+    accountSetId: result.accountSetId,
+    expiresAt: result.expiresAt,
+    created: result.created,
+    added: result.addedUserIds.includes(userId),
+  };
+}
+
+export async function addUsersToBrowserAccountSet(
+  input: {
+    accountSetToken?: string | null;
+    userIds: string[];
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const userIds = Array.from(new Set(input.userIds.map(userId => userId.trim()).filter(Boolean)));
+  if (userIds.length === 0) {
+    throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+  }
+
   const now = new Date();
   const incomingToken = normalizeToken(input.accountSetToken);
   const newAccountSetToken = generateToken(ACCOUNT_SET_TOKEN_PREFIX);
@@ -722,10 +750,15 @@ export async function addUserToBrowserAccountSet(
     accountSet: AuthAccountSetRecord;
     accountSetToken: string;
     created: boolean;
-    added: boolean;
+    addedUserIds: string[];
   }>(state => {
-    const user = state.users.find(candidate => candidate.id === input.userId && !candidate.disabled);
-    if (!user) {
+    const usersById = new Map(
+      state.users
+        .filter(candidate => !candidate.disabled)
+        .map(candidate => [candidate.id, candidate])
+    );
+    const users = userIds.map(userId => usersById.get(userId));
+    if (users.some(user => !user)) {
       throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
     }
 
@@ -734,10 +767,22 @@ export async function addUserToBrowserAccountSet(
       ? findActiveAccountSetByTokenHash(accountSets, incomingTokenHash, now)
       : null;
     const accountSet = existingAccountSet ?? createAccountSetRecord(newAccountSetTokenHash, now, request);
-    const existingUser = accountSet.users.find(candidate => candidate.userId === user.id);
+    let accountSetUsers = accountSet.users;
+    const addedUserIds: string[] = [];
+    for (const user of users) {
+      if (!user) {
+        continue;
+      }
+      const existingUser = accountSetUsers.find(candidate => candidate.userId === user.id);
+      if (!existingUser) {
+        addedUserIds.push(user.id);
+      }
+      accountSetUsers = upsertAccountSetUser(accountSetUsers, user.id, now);
+    }
+
     const nextAccountSet: AuthAccountSetRecord = {
       ...accountSet,
-      users: upsertAccountSetUser(accountSet.users, user.id, now),
+      users: accountSetUsers,
       updatedAt: now.toISOString(),
     };
 
@@ -752,15 +797,15 @@ export async function addUserToBrowserAccountSet(
         accountSet: nextAccountSet,
         accountSetToken: existingAccountSet ? incomingToken ?? newAccountSetToken : newAccountSetToken,
         created: !existingAccountSet,
-        added: !existingUser,
+        addedUserIds,
       },
     };
   }, config);
 
-  if (result.added) {
+  for (const userId of result.addedUserIds) {
     await appendAuthAuditEvent({
       type: 'auth.account_set.account_added',
-      actorUserId: input.userId,
+      actorUserId: userId,
       target: {
         type: 'auth.account_set',
         id: result.accountSet.id,
@@ -779,7 +824,8 @@ export async function addUserToBrowserAccountSet(
     accountSetId: result.accountSet.id,
     expiresAt: result.accountSet.expiresAt,
     created: result.created,
-    added: result.added,
+    added: result.addedUserIds.length > 0,
+    addedUserIds: result.addedUserIds,
   };
 }
 

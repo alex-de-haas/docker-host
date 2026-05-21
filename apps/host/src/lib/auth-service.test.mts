@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   addUserToBrowserAccountSet,
+  addUsersToBrowserAccountSet,
   authenticateCliToken,
   authenticatePassword,
   authenticateSessionToken,
@@ -161,16 +162,14 @@ test('development auto-login can seed switchable admin and user browser accounts
   assert.equal(result.browserAccountUsers.some(user => user.role === 'host.admin'), true);
   assert.equal(result.browserAccountUsers.some(user => user.role === 'host.user'), true);
 
-  let accountSetToken: string | null = null;
-  for (const user of result.browserAccountUsers) {
-    const accountSet = await addUserToBrowserAccountSet({
-      accountSetToken,
-      userId: user.id,
-    }, undefined, config);
-    accountSetToken = accountSet.accountSetToken;
-  }
+  const accountSet = await addUsersToBrowserAccountSet({
+    accountSetToken: null,
+    userIds: result.browserAccountUsers.map(user => user.id),
+  }, undefined, config);
 
-  const listed = await listBrowserAccounts(accountSetToken, result.user, config);
+  assert.equal(accountSet.addedUserIds.length, 2);
+
+  const listed = await listBrowserAccounts(accountSet.accountSetToken, result.user, config);
   assert.equal(listed.accounts.length, 2);
   assert.equal(listed.accounts[0]?.email, 'admin@docker-host.local');
   assert.equal(listed.accounts[0]?.active, true);
@@ -206,12 +205,10 @@ test('development browser account seeding repairs an existing admin-only account
 
   process.env.HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS = 'enabled';
   const devUsers = await prepareDevBrowserAccountUsers(config);
-  for (const user of devUsers) {
-    accountSet = await addUserToBrowserAccountSet({
-      accountSetToken: accountSet.accountSetToken,
-      userId: user.id,
-    }, undefined, config);
-  }
+  accountSet = await addUsersToBrowserAccountSet({
+    accountSetToken: accountSet.accountSetToken,
+    userIds: devUsers.map(user => user.id),
+  }, undefined, config);
 
   const listed = await listBrowserAccounts(accountSet.accountSetToken, login.user, config);
   assert.equal(listed.accounts.length, 2);

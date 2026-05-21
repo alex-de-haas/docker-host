@@ -11,7 +11,7 @@ import {
   setAccountSetCookie,
 } from '@/lib/auth-http';
 import {
-  addUserToBrowserAccountSet,
+  addUsersToBrowserAccountSet,
   clearBrowserAccountSet,
   isDevAuthBrowserAccountSeedEnabled,
   listBrowserAccounts,
@@ -34,13 +34,11 @@ export async function GET(request: Request) {
     try {
       assertSecureEnoughForCookies(request);
       const devUsers = await prepareDevBrowserAccountUsers();
-      for (const user of devUsers) {
-        const accountSet = await addUserToBrowserAccountSet({
-          accountSetToken,
-          userId: user.id,
-        }, getRequestMeta(request));
-        accountSetToken = accountSet.accountSetToken;
-      }
+      const accountSet = await addUsersToBrowserAccountSet({
+        accountSetToken,
+        userIds: devUsers.map(user => user.id),
+      }, getRequestMeta(request));
+      accountSetToken = accountSet.accountSetToken;
     } catch (error) {
       return authExceptionResponse(error);
     }
