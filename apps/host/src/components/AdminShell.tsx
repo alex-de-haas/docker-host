@@ -210,6 +210,26 @@ type BrowserAccountsResponse = {
   accounts: BrowserAccountSummary[];
 };
 
+type AccountSwitchResponse = {
+  redirectTo?: string;
+  error?: {
+    message?: string;
+  };
+};
+
+async function readJsonResponse<T>(response: Response): Promise<T | null> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    return null;
+  }
+
+  try {
+    return await response.json() as T;
+  } catch {
+    return null;
+  }
+}
+
 const navigationSections: NavigationSection[] = [
   {
     title: 'Host',
@@ -290,6 +310,7 @@ function AdminSidebar({
   const accountAvatarStyle = getAccountAvatarStyle(accountLabel);
   const [accounts, setAccounts] = useState<BrowserAccountSummary[]>([]);
   const [accountActionUserId, setAccountActionUserId] = useState<string | null>(null);
+  const [accountActionError, setAccountActionError] = useState<string | null>(null);
   const search = searchParams.toString();
   const currentPath = `${pathname}${search ? `?${search}` : ''}`;
 
@@ -336,16 +357,21 @@ function AdminSidebar({
     }
 
     setAccountActionUserId(userId);
+    setAccountActionError(null);
     try {
       const response = await fetch('/api/auth/accounts/switch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),
       });
-      const data = await response.json() as { redirectTo?: string };
+      const data = await readJsonResponse<AccountSwitchResponse>(response);
       if (response.ok) {
-        window.location.href = data.redirectTo || '/';
+        window.location.href = data?.redirectTo || '/';
+        return;
       }
+      setAccountActionError(data?.error?.message || 'Unable to switch account.');
+    } catch {
+      setAccountActionError('Unable to switch account.');
     } finally {
       setAccountActionUserId(null);
     }
@@ -493,6 +519,15 @@ function AdminSidebar({
               <Badge variant="outline">{user.role}</Badge>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            {accountActionError && (
+              <>
+                <DropdownMenuLabel className="flex items-start gap-2 whitespace-normal text-xs font-normal text-destructive">
+                  <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{accountActionError}</span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+              </>
+            )}
             {accountMenuItems.map(account => {
               const label = account.displayName || account.email || account.id;
               const description = account.email && account.email !== label ? account.email : account.role;

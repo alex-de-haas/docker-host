@@ -25,6 +25,7 @@ export async function POST(request: Request) {
     const result = await switchBrowserAccount({
       accountSetToken: getRequestAccountSetToken(request),
       userId: readString(body, 'userId'),
+      actorUserId: auth.principal.id,
     }, getRequestMeta(request));
 
     return createSessionCookieResponse(request, {

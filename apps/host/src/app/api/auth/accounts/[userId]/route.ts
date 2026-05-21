@@ -29,6 +29,7 @@ export async function DELETE(
       accountSetToken: getRequestAccountSetToken(request),
       userId,
       activeSessionToken: auth.principal.id === userId ? getRequestSessionToken(request) : null,
+      actorUserId: auth.principal.id,
     }, getRequestMeta(request));
   } catch (error) {
     return authExceptionResponse(error);

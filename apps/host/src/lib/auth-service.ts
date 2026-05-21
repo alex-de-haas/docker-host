@@ -735,10 +735,11 @@ export async function addUsersToBrowserAccountSet(
   request?: AuthRequestMeta,
   config?: HostRuntimeConfig
 ) {
-  const userIds = Array.from(new Set(input.userIds.map(userId => userId.trim()).filter(Boolean)));
-  if (userIds.length === 0) {
-    throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+  const normalizedUserIds = input.userIds.map(userId => userId.trim());
+  if (normalizedUserIds.length === 0 || normalizedUserIds.some(userId => userId.length === 0)) {
+    throw new AuthServiceError('invalid_user_id', 'At least one Host user id is required.');
   }
+  const userIds = Array.from(new Set(normalizedUserIds));
 
   const now = new Date();
   const incomingToken = normalizeToken(input.accountSetToken);
@@ -870,6 +871,7 @@ export async function switchBrowserAccount(
   input: {
     accountSetToken: string | null | undefined;
     userId: string;
+    actorUserId?: string;
   },
   request?: AuthRequestMeta,
   config?: HostRuntimeConfig
@@ -883,6 +885,7 @@ export async function switchBrowserAccount(
   const sessionToken = generateToken('dhs_');
   const tokenHash = hashToken(token);
   const targetUserId = input.userId.trim();
+  const actorUserId = input.actorUserId?.trim() || undefined;
 
   const result = await updateAuthState<{
     accountSet: AuthAccountSetRecord;
@@ -932,7 +935,7 @@ export async function switchBrowserAccount(
 
   await appendAuthAuditEvent({
     type: 'auth.account_set.switched',
-    actorUserId: result.user.id,
+    actorUserId,
     target: {
       type: 'auth.account_set',
       id: result.accountSet.id,
@@ -941,6 +944,7 @@ export async function switchBrowserAccount(
     request,
     details: {
       sessionId: result.session.id,
+      switchedToUserId: result.user.id,
     },
   }, config);
 
@@ -956,6 +960,7 @@ export async function removeBrowserAccount(
     accountSetToken: string | null | undefined;
     userId: string;
     activeSessionToken?: string | null;
+    actorUserId?: string;
   },
   request?: AuthRequestMeta,
   config?: HostRuntimeConfig
@@ -970,6 +975,7 @@ export async function removeBrowserAccount(
   const targetUserId = input.userId.trim();
   const activeSessionToken = normalizeToken(input.activeSessionToken);
   const activeSessionTokenHash = activeSessionToken ? hashToken(activeSessionToken) : null;
+  const actorUserId = input.actorUserId?.trim() || undefined;
 
   const result = await updateAuthState<{
     accountSetId: string;
@@ -1023,7 +1029,7 @@ export async function removeBrowserAccount(
   if (result.removed) {
     await appendAuthAuditEvent({
       type: 'auth.account_set.account_removed',
-      actorUserId: targetUserId,
+      actorUserId,
       target: {
         type: 'auth.account_set',
         id: result.accountSetId,
@@ -1031,6 +1037,7 @@ export async function removeBrowserAccount(
       success: true,
       request,
       details: {
+        removedUserId: targetUserId,
         accountSetRevoked: result.accountSetRevoked,
         activeSessionRevoked: result.activeSessionRevoked,
       },

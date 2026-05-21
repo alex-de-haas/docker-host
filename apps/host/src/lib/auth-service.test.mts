@@ -9,6 +9,7 @@ import {
   authenticateCliToken,
   authenticatePassword,
   authenticateSessionToken,
+  AuthServiceError,
   bootstrapFirstAdmin,
   clearBrowserAccountSet,
   createCliTokenForAdmin,
@@ -216,6 +217,18 @@ test('development browser account seeding repairs an existing admin-only account
   assert.equal(listed.accounts.some(account => account.email === 'user@docker-host.local'), true);
 });
 
+test('browser account set seeding rejects blank user ids as invalid input', async () => {
+  const config = await createTestConfig();
+
+  await assert.rejects(
+    addUsersToBrowserAccountSet({
+      accountSetToken: null,
+      userIds: [' '],
+    }, undefined, config),
+    (error: unknown) => error instanceof AuthServiceError && error.code === 'invalid_user_id'
+  );
+});
+
 test('development admin session helper always creates an admin session', async t => {
   const config = await createTestConfig();
   const previousDevAuth = process.env.HOST_DEV_AUTH;
@@ -313,6 +326,7 @@ test('browser account sets remember users and switch with a fresh session', asyn
   const switched = await switchBrowserAccount({
     accountSetToken: firstAccountSet.accountSetToken,
     userId: regularUser.id,
+    actorUserId: admin.user.id,
   }, { userAgent: 'Test Browser' }, config);
 
   assert.equal(switched.user.role, 'host.user');
@@ -325,6 +339,8 @@ test('browser account sets remember users and switch with a fresh session', asyn
 
   const audit = await listAuthAuditEvents({ type: 'auth.account_set.switched' }, config);
   assert.equal(audit.events.length, 1);
+  assert.equal(audit.events[0]?.actorUserId, admin.user.id);
+  assert.equal(audit.events[0]?.details?.switchedToUserId, regularUser.id);
 });
 
 test('browser account sets exclude disabled users and refuse switching to them', async () => {
@@ -401,12 +417,18 @@ test('browser account removal and clear revoke active sessions', async () => {
     accountSetToken: accountSet.accountSetToken,
     userId: regularUser.id,
     activeSessionToken: switched.sessionToken,
+    actorUserId: regularUser.id,
   }, undefined, config);
 
   assert.equal(removed.removed, true);
   assert.equal(removed.activeSessionRevoked, true);
   assert.equal(await authenticateSessionToken(switched.sessionToken, undefined, config), null);
   assert.equal((await listBrowserAccounts(accountSet.accountSetToken, admin.user, config)).accounts.length, 1);
+
+  const removalAudit = await listAuthAuditEvents({ type: 'auth.account_set.account_removed' }, config);
+  assert.equal(removalAudit.events.length, 1);
+  assert.equal(removalAudit.events[0]?.actorUserId, regularUser.id);
+  assert.equal(removalAudit.events[0]?.details?.removedUserId, regularUser.id);
 
   const cleared = await clearBrowserAccountSet({
     accountSetToken: accountSet.accountSetToken,
@@ -418,6 +440,37 @@ test('browser account removal and clear revoke active sessions', async () => {
   assert.equal(cleared.activeSessionRevoked, true);
   assert.equal(await authenticateSessionToken(admin.sessionToken, undefined, config), null);
   assert.equal((await listBrowserAccounts(accountSet.accountSetToken, admin.user, config)).accounts.length, 0);
+});
+
+test('browser account removal audit keeps actor separate from removed account', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const admin = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+  const regularUser = await addTestUser(config, {
+    id: 'user_regular',
+    email: 'user@example.test',
+    displayName: 'Regular User',
+    role: 'host.user',
+  });
+  const accountSet = await addUsersToBrowserAccountSet({
+    accountSetToken: null,
+    userIds: [admin.user.id, regularUser.id],
+  }, undefined, config);
+
+  await removeBrowserAccount({
+    accountSetToken: accountSet.accountSetToken,
+    userId: regularUser.id,
+    actorUserId: admin.user.id,
+  }, undefined, config);
+
+  const audit = await listAuthAuditEvents({ type: 'auth.account_set.account_removed' }, config);
+  assert.equal(audit.events.length, 1);
+  assert.equal(audit.events[0]?.actorUserId, admin.user.id);
+  assert.equal(audit.events[0]?.details?.removedUserId, regularUser.id);
 });
 
 test('throttles session activity writes for recently seen sessions', async () => {
