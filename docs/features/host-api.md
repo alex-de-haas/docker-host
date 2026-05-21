@@ -636,7 +636,7 @@ The recovery API adds explicit actions for failed installs, failed updates, fail
 - `POST /api/modules/{moduleId}/remove/plan` returns a backend-generated removal preview for an installed module.
 - `POST /api/modules/{moduleId}/remove` applies a confirmed removal request. Request body: `{ "confirmed": true, "deleteModuleData": false }`.
 
-Cleanup and remove plan requests accept `{ "deleteModuleData": true | false }` so the Web UI can refresh the preview before confirmation. Plans return `canApply`, container states, image references, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts.
+Cleanup and remove plan requests accept `{ "deleteModuleData": true | false }` so the Web UI can refresh the preview before confirmation. Plans return `canApply`, `containers[]` states, `images[]` references, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts.
 
 The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. Docker images and external host paths are never deleted by the MVP recovery flows; external mount mappings are only removed from Host state.
 

@@ -292,17 +292,19 @@ export interface ModuleRecoveryPlan {
   canApply: boolean;
   deleteModuleDataDefault: false;
   deleteModuleData: boolean;
-  container: {
+  containers: Array<{
+    key: string;
     name: string;
     exists: boolean;
     id: string | null;
     image: string | null;
     willRemove: boolean;
-  };
-  image: {
+  }>;
+  images: Array<{
+    container: string;
     reference: string;
     willRemove: false;
-  };
+  }>;
   metadataFile: {
     path: string;
     exists: boolean;

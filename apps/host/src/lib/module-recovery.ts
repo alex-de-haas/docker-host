@@ -3,18 +3,25 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ensureHostDataRoot, getHostRuntimeConfig, pathExists } from '@/lib/host-runtime';
 import {
+  buildModuleServiceEnvironment,
+  createModuleServiceToken,
+  revokeModuleServiceToken,
+} from '@/lib/module-directory-service';
+import {
   createAndStartModuleContainer,
   ensureModuleContainerStarted,
   ensureModuleNetwork,
   getModuleContainerName,
+  getModuleDockerName,
   getModuleNetworkAlias,
   inspectContainerNameReadOnly,
   pullModuleImage,
-  removeModuleContainerIfExists,
+  removeModuleContainersIfExist,
   toModuleOperationError,
 } from '@/lib/module-docker';
 import { validateAndNormalizeMetadata } from '@/lib/module-metadata';
 import { withModuleMutationLock } from '@/lib/module-mutation-lock';
+import { getModuleContainersInStartOrder } from '@/lib/module-lifecycle';
 import {
   readModulesStore,
   resolveModuleMetadataPath,
@@ -29,9 +36,6 @@ import {
 } from '@/lib/module-recovery-model';
 import { listInstalledModules } from '@/lib/module-service';
 import type { HostRuntimeConfig } from '@/lib/host-runtime';
-import type {
-  DockerContainerNameStatus,
-} from '@/lib/module-docker';
 import type {
   InstallPlanConflict,
   InstallPlanErrorEnvelope,
@@ -70,7 +74,7 @@ export type ModuleRetryResult = {
 
 export interface ModuleRecoveryDockerOperations {
   inspectContainerName: typeof inspectContainerNameReadOnly;
-  removeContainerIfExists: typeof removeModuleContainerIfExists;
+  removeContainersIfExist: typeof removeModuleContainersIfExist;
   ensureNetwork: typeof ensureModuleNetwork;
   pullImage: typeof pullModuleImage;
   createAndStartContainer: typeof createAndStartModuleContainer;
@@ -85,7 +89,7 @@ export interface ModuleRecoveryOptions {
 
 const defaultDockerOperations: ModuleRecoveryDockerOperations = {
   inspectContainerName: inspectContainerNameReadOnly,
-  removeContainerIfExists: removeModuleContainerIfExists,
+  removeContainersIfExist: removeModuleContainersIfExist,
   ensureNetwork: ensureModuleNetwork,
   pullImage: pullModuleImage,
   createAndStartContainer: createAndStartModuleContainer,
@@ -202,6 +206,8 @@ export async function retryFailedModuleInstall(
       });
     }
 
+    let moduleServiceTokenId: string | null = null;
+
     try {
       await updateModuleRecord(moduleId, config, existing => ({
         ...existing,
@@ -212,24 +218,40 @@ export async function retryFailedModuleInstall(
 
       await ensureModuleOwnedDirectories(installedModule, config);
       await startResolvedDependencies(installedModule, store, docker);
-      await docker.removeContainerIfExists(installedModule);
+      await docker.removeContainersIfExist(installedModule);
 
-      const containerRecord = installedModule.containers[0];
-      const metadataContainer = metadataResult.metadata.containers.find(container => container.key === containerRecord?.key) ??
-        metadataResult.metadata.containers[0];
-      const image = buildInstallImage(installedModule, metadataResult.metadata, metadataContainer?.key);
-      await docker.pullImage(image);
-      await docker.createAndStartContainer({
+      const retryContainers = getRetryContainersInStartOrder(installedModule, metadataResult.metadata);
+      for (const container of retryContainers) {
+        await docker.pullImage(buildInstallImage(installedModule, metadataResult.metadata, container.key));
+      }
+
+      const moduleServiceToken = await createModuleServiceToken({
         moduleId,
-        containerName: containerRecord?.containerName || getModuleContainerName(installedModule),
-        networkName: config.moduleNetwork,
-        networkAlias: containerRecord?.networkAlias || getModuleNetworkAlias(installedModule.id),
-        imageReference: image.reference,
-        env: buildRetryEnvironment(installedModule, metadataResult.metadata, metadataContainer?.key ?? containerRecord?.key ?? ''),
-        mounts: buildRetryMounts(installedModule, metadataContainer?.key ?? containerRecord?.key ?? ''),
-        ports: metadataContainer?.runtime.ports ?? [],
-        ...(metadataContainer?.runtime.resources ? { resources: metadataContainer.runtime.resources } : {}),
-      });
+        label: 'Module container directory API token',
+      }, undefined, config);
+      moduleServiceTokenId = moduleServiceToken.tokenId;
+
+      for (const containerRecord of retryContainers) {
+        const metadataContainer = metadataResult.metadata.containers.find(container => container.key === containerRecord.key);
+        const image = buildInstallImage(installedModule, metadataResult.metadata, containerRecord.key);
+        await docker.createAndStartContainer({
+          moduleId,
+          containerName: containerRecord.containerName,
+          networkName: config.moduleNetwork,
+          networkAlias: containerRecord.networkAlias,
+          imageReference: image.reference,
+          env: buildRetryEnvironment(
+            installedModule,
+            metadataResult.metadata,
+            containerRecord.key,
+            moduleServiceToken.token,
+            config
+          ),
+          mounts: buildRetryMounts(installedModule, containerRecord.key),
+          ports: metadataContainer?.runtime.ports ?? [],
+          ...(metadataContainer?.runtime.resources ? { resources: metadataContainer.runtime.resources } : {}),
+        });
+      }
 
       await updateModuleRecord(moduleId, config, existing => ({
         ...existing,
@@ -238,6 +260,7 @@ export async function retryFailedModuleInstall(
         installedAt: existing.installedAt || now(),
         lastError: null,
       }));
+      moduleServiceTokenId = null;
 
       const modules = await listInstalledModules();
       return {
@@ -249,6 +272,9 @@ export async function retryFailedModuleInstall(
         },
       };
     } catch (error) {
+      if (moduleServiceTokenId) {
+        await revokeModuleServiceToken(moduleServiceTokenId, undefined, config);
+      }
       const operation = toModuleOperationError(
         `module.retry.${moduleId}`,
         error,
@@ -307,9 +333,23 @@ async function buildModuleRecoveryPlan(
     };
   }
 
-  let container: DockerContainerNameStatus;
+  const metadata = await readLocalMetadataJson(installedModule, config);
+  const recoveryContainers = getRecoveryContainerRecords(installedModule, metadata);
+  let containers: ModuleRecoveryPlan['containers'];
   try {
-    container = await docker.inspectContainerName(getModuleContainerName(installedModule));
+    containers = await Promise.all(
+      recoveryContainers.map(async containerRecord => {
+        const status = await docker.inspectContainerName(containerRecord.containerName);
+        return {
+          key: containerRecord.key,
+          name: status.name,
+          exists: status.exists,
+          id: status.id,
+          image: status.image,
+          willRemove: status.exists,
+        };
+      })
+    );
   } catch (error) {
     return {
       status: 503,
@@ -322,7 +362,6 @@ async function buildModuleRecoveryPlan(
     };
   }
 
-  const metadata = await readLocalMetadataJson(installedModule, config);
   const dependents = findDependentModules(installedModule.id, store);
   const conflicts = collectRecoveryConflicts(action, installedModule, dependents);
   const status = installedModule.operationStatus || 'installed';
@@ -349,17 +388,12 @@ async function buildModuleRecoveryPlan(
     canApply,
     deleteModuleDataDefault: false,
     deleteModuleData,
-    container: {
-      name: container.name,
-      exists: container.exists,
-      id: container.id,
-      image: container.image,
-      willRemove: container.exists,
-    },
-    image: {
-      reference: buildImageReference(installedModule, metadata),
+    containers,
+    images: recoveryContainers.map(container => ({
+      container: container.key,
+      reference: buildImageReference(installedModule, metadata, container.key),
       willRemove: false,
-    },
+    })),
     metadataFile: {
       path: metadataPath,
       exists: metadataExists,
@@ -377,7 +411,7 @@ async function buildModuleRecoveryPlan(
     })),
     dependents,
     conflicts,
-    warnings: buildPlanWarnings(action, installedModule, container, metadataExists, deleteModuleData),
+    warnings: buildPlanWarnings(action, containers, metadataExists, deleteModuleData, installedModule),
   };
 
   return {
@@ -423,7 +457,7 @@ async function applyCleanupOrRemove(
   }
 
   try {
-    await docker.removeContainerIfExists(installedModule);
+    await docker.removeContainersIfExist(installedModule);
     await removeModuleFiles(installedModule, plan.deleteModuleData, config);
     await removeModuleRecord(plan.moduleId, config);
 
@@ -517,15 +551,20 @@ function collectRecoveryConflicts(
 
 function buildPlanWarnings(
   action: ModuleRecoveryAction,
-  module: InstalledModuleRecord,
-  container: DockerContainerNameStatus,
+  containers: ModuleRecoveryPlan['containers'],
   metadataExists: boolean,
-  deleteModuleData: boolean
+  deleteModuleData: boolean,
+  module: InstalledModuleRecord
 ) {
   const warnings: string[] = [];
+  const missingContainers = containers.filter(container => !container.exists);
 
-  if (!container.exists) {
-    warnings.push(`Docker container "${getModuleContainerName(module)}" is already missing.`);
+  if (missingContainers.length > 0) {
+    warnings.push(
+      missingContainers.length === 1
+        ? `Docker container "${missingContainers[0]?.name || getModuleContainerName(module)}" is already missing.`
+        : `${missingContainers.length} Docker containers are already missing: ${missingContainers.map(container => `"${container.name}"`).join(', ')}.`
+    );
   }
 
   if (!metadataExists) {
@@ -609,15 +648,27 @@ function validateStoredStorageMappings(
   module: InstalledModuleRecord,
   metadata: NormalizedModuleMetadata
 ) {
-  const mappings = new Map(getStoredStorageMappings(module).map(mapping => [mapping.key, mapping]));
+  const mappings = new Set(
+    getStoredStorageMappings(module).map(mapping => storageMappingKey(
+      mapping.key,
+      mapping.container,
+      mapping.containerPath
+    ))
+  );
 
   for (const directory of metadata.storage.directories.filter(candidate => candidate.required)) {
-    if (!mappings.has(directory.key)) {
-      return `Required storage mapping "${directory.key}" is missing.`;
+    for (const target of directory.targets) {
+      if (!mappings.has(storageMappingKey(directory.key, target.container, target.containerPath))) {
+        return `Required storage mapping "${directory.key}" for container "${target.container}" at "${target.containerPath}" is missing.`;
+      }
     }
   }
 
   return null;
+}
+
+function storageMappingKey(key: string, container: string, containerPath: string) {
+  return `${key}:${container}:${containerPath}`;
 }
 
 async function ensureModuleOwnedDirectories(
@@ -654,9 +705,15 @@ async function startResolvedDependencies(
 function buildRetryEnvironment(
   module: InstalledModuleRecord,
   metadata: NormalizedModuleMetadata,
-  containerKey: string
+  containerKey: string,
+  moduleServiceToken: string,
+  config: HostRuntimeConfig
 ) {
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = buildModuleServiceEnvironment({
+    moduleId: module.id,
+    serviceToken: moduleServiceToken,
+    hostInternalOrigin: config.hostInternalOrigin,
+  });
   const settings = module.settings || {};
 
   for (const setting of metadata.settings) {
@@ -673,6 +730,20 @@ function buildRetryEnvironment(
       for (const target of (dependency.targets ?? []).filter(target => target.container === containerKey)) {
         env[target.name] = dependency.resolvedBaseUrl;
       }
+    }
+  }
+
+  for (const connection of metadata.connections) {
+    const endpoint = metadata.endpoints.find(candidate => candidate.key === connection.source.key);
+    const sourceContainer = getRecoveryContainerRecords(module, metadata).find(candidate => candidate.key === endpoint?.container);
+    const metadataContainer = metadata.containers.find(candidate => candidate.key === endpoint?.container);
+    const port = metadataContainer?.runtime.ports.find(candidate => candidate.key === endpoint?.port);
+    if (!endpoint || !sourceContainer || !port) {
+      continue;
+    }
+
+    for (const target of connection.targets.filter(target => target.container === containerKey)) {
+      env[target.name] = `http://${sourceContainer.networkAlias}:${port.containerPort}`;
     }
   }
 
@@ -719,12 +790,62 @@ function buildInstallImage(
   };
 }
 
-function buildImageReference(
+function getRetryContainersInStartOrder(
+  module: InstalledModuleRecord,
+  metadata: NormalizedModuleMetadata
+) {
+  return getModuleContainersInStartOrder(
+    {
+      containers: getRecoveryContainerRecords(module, metadata),
+    },
+    metadata
+  );
+}
+
+function getRecoveryContainerRecords(
   module: InstalledModuleRecord,
   metadata: NormalizedModuleMetadata | null
 ) {
-  const storedContainer = module.containers[0];
-  const metadataContainer = metadata?.containers[0];
+  if (module.containers.length > 0) {
+    return module.containers;
+  }
+
+  if (!metadata) {
+    return [{
+      key: 'main',
+      containerName: getModuleContainerName(module),
+      networkAlias: getModuleNetworkAlias(module.id),
+      image: {
+        repository: 'unknown',
+        tag: 'latest',
+        reference: 'unknown:latest',
+      },
+    }];
+  }
+
+  return metadata.containers.map(container => {
+    const image = buildInstallImage(module, metadata, container.key);
+    return {
+      key: container.key,
+      containerName: getModuleDockerName(module.id, container.key),
+      networkAlias: getModuleNetworkAlias(module.id, container.key),
+      image: {
+        repository: image.repository,
+        tag: image.tag,
+        reference: image.reference,
+        pullPolicy: image.pullPolicy,
+      },
+    };
+  });
+}
+
+function buildImageReference(
+  module: InstalledModuleRecord,
+  metadata: NormalizedModuleMetadata | null,
+  containerKey: string
+) {
+  const storedContainer = module.containers.find(container => container.key === containerKey) ?? module.containers[0];
+  const metadataContainer = metadata?.containers.find(container => container.key === containerKey) ?? metadata?.containers[0];
 
   if (storedContainer?.image.reference) {
     return storedContainer.image.reference;

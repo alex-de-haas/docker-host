@@ -849,6 +849,19 @@ function buildContainerEnvironment(
     }
   }
 
+  for (const connection of context.metadata.connections) {
+    const endpoint = context.metadata.endpoints.find(candidate => candidate.key === connection.source.key);
+    const container = context.containers.find(candidate => candidate.key === endpoint?.container);
+    const port = container?.ports.find(candidate => candidate.key === endpoint?.port);
+    if (!endpoint || !container || !port) {
+      continue;
+    }
+
+    for (const target of connection.targets.filter(target => target.container === containerKey)) {
+      env[target.name] = `http://${container.networkAlias}:${port.containerPort}`;
+    }
+  }
+
   return env;
 }
 

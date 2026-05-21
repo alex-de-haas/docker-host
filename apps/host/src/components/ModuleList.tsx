@@ -63,17 +63,6 @@ interface ModuleListProps {
   ) => Promise<boolean>;
 }
 
-const runtimeStatusMap: Record<ModuleRuntimeState, 'online' | 'offline' | 'maintenance' | 'degraded'> = {
-  not_created: 'offline',
-  created: 'offline',
-  running: 'online',
-  paused: 'degraded',
-  restarting: 'maintenance',
-  exited: 'offline',
-  dead: 'offline',
-  unknown: 'degraded',
-};
-
 const runtimeLabels: Record<ModuleRuntimeState, string> = {
   not_created: 'Not created',
   created: 'Created',
@@ -456,8 +445,14 @@ function RecoveryPlanDialog({
         {plan && (
           <div className="grid gap-4">
             <div className="grid gap-3 rounded-md border p-3 text-sm sm:grid-cols-2">
-              <PlanItem label="Container" value={`${plan.container.name} (${plan.container.exists ? 'will be removed' : 'missing'})`} />
-              <PlanItem label="Image" value={`${plan.image.reference} (preserved)`} />
+              <PlanItem
+                label="Services"
+                value={plan.containers.map(container => `${container.key}: ${container.name} (${container.exists ? 'will be removed' : 'missing'})`).join(', ') || 'none'}
+              />
+              <PlanItem
+                label="Images"
+                value={plan.images.map(image => `${image.container}: ${image.reference} (preserved)`).join(', ') || 'none'}
+              />
               <PlanItem label="Metadata" value={plan.metadataFile.exists ? 'will be deleted' : 'missing'} />
               <PlanItem label="Dependents" value={plan.dependents.length ? plan.dependents.map(item => item.id).join(', ') : 'none'} />
             </div>
@@ -470,8 +465,8 @@ function RecoveryPlanDialog({
                 ) : (
                   <ul className="divide-y text-sm">
                     {plan.storageDirectories.map(directory => (
-                      <li key={directory.key} className="grid gap-1 p-3">
-                        <span className="font-medium">{directory.key}</span>
+                      <li key={`${directory.key}:${directory.container}:${directory.containerPath}`} className="grid gap-1 p-3">
+                        <span className="font-medium">{directory.key} / {directory.container}</span>
                         <span className="break-all text-xs text-muted-foreground">{directory.hostPath}</span>
                         <span className="text-xs text-muted-foreground">
                           {directory.willDelete ? 'will be deleted' : 'will be preserved'}
@@ -489,8 +484,8 @@ function RecoveryPlanDialog({
                 <div className="max-h-32 overflow-auto rounded-md border">
                   <ul className="divide-y text-sm">
                     {plan.externalMounts.map(mount => (
-                      <li key={`${mount.collectionKey}:${mount.key}`} className="grid gap-1 p-3">
-                        <span className="font-medium">{mount.label || mount.key}</span>
+                      <li key={`${mount.collectionKey}:${mount.key}:${mount.container}:${mount.containerPath}`} className="grid gap-1 p-3">
+                        <span className="font-medium">{mount.label || mount.key} / {mount.container}</span>
                         <span className="break-all text-xs text-muted-foreground">{mount.hostPath}</span>
                         <span className="text-xs text-muted-foreground">mapping removed; host path preserved</span>
                       </li>
