@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_MODULE_EXPOSURE_POLICY, canAccessModule } from './auth-policy.ts';
 import { appendAuthAuditEvent, readAuthStateSnapshot, updateAuthState } from './auth-store.ts';
-import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
+import { getHostRuntimeConfig } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import { getDefaultModuleIdentityMode, isModuleIdentityMode } from './module-identity.mjs';
+import { readModulesStoreSnapshot } from './module-store.ts';
 import {
   readGatewayExposureStateSnapshot,
   updateGatewayExposureState,
@@ -21,7 +22,6 @@ import type {
   InstalledModuleRecord,
   ModuleMetadata,
   ModuleRuntimePortMetadata,
-  ModulesStoreData,
 } from '../types/modules.ts';
 
 export interface GatewayResolvedTarget {
@@ -491,31 +491,6 @@ async function findInstalledModuleSnapshot(
   return store.modules.find(module => module.id === moduleId) ?? null;
 }
 
-async function readModulesStoreSnapshot(config: HostRuntimeConfig): Promise<ModulesStoreData> {
-  if (!(await pathExists(config.modulesStorePath))) {
-    return {
-      schemaVersion: '0.2',
-      hostSettings: {},
-      modules: [],
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
-  const raw = await fs.readFile(config.modulesStorePath, 'utf-8');
-  const parsed = JSON.parse(raw) as unknown;
-
-  if (!isObject(parsed)) {
-    throw new GatewayServiceError('modules_store_invalid', 'modules.json must contain a JSON object.', 500);
-  }
-
-  return {
-    schemaVersion: '0.2',
-    hostSettings: isObject(parsed.hostSettings) ? parsed.hostSettings : {},
-    modules: Array.isArray(parsed.modules) ? parsed.modules.filter(isInstalledModuleRecord) : [],
-    updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
-  };
-}
-
 async function readInstalledModuleMetadata(
   module: InstalledModuleRecord,
   config: HostRuntimeConfig
@@ -538,17 +513,6 @@ async function readInstalledModuleMetadata(
   }
 }
 
-function isInstalledModuleRecord(value: unknown): value is InstalledModuleRecord {
-  return isObject(value) &&
-    typeof value.id === 'string' &&
-    typeof value.metadataUrl === 'string' &&
-    Array.isArray(value.containers);
-}
-
 function isExposurePolicy(value: unknown): value is GatewayExposureRecord['exposurePolicy'] {
   return value === 'public' || value === 'loginRequired' || value === 'assignedUsersOnly';
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

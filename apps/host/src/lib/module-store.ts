@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
-import type { InstalledModuleRecord, ModuleMetadata, ModulesStoreData } from '@/types/modules';
+import type {
+  InstalledModuleContainerRecord,
+  InstalledModuleRecord,
+  ModuleImage,
+  ModuleMetadata,
+  ModulesStoreData,
+} from '@/types/modules';
 
 const STORE_SCHEMA_VERSION = '0.2';
 const PRIVATE_STORE_FILE_MODE = 0o600;
@@ -156,6 +162,15 @@ async function ensureModulesStore(config: HostRuntimeConfig) {
 }
 
 function normalizeStore(parsed: unknown): ModulesStoreData {
+  if (Array.isArray(parsed)) {
+    return normalizeStore({
+      schemaVersion: STORE_SCHEMA_VERSION,
+      hostSettings: {},
+      modules: parsed,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
   if (!isObject(parsed)) {
     throw new Error('modules.json must contain a JSON object.');
   }
@@ -166,16 +181,97 @@ function normalizeStore(parsed: unknown): ModulesStoreData {
   return {
     schemaVersion: STORE_SCHEMA_VERSION,
     hostSettings,
-    modules: modules.filter(isInstalledModuleRecord),
+    modules: modules
+      .map(normalizeInstalledModuleRecord)
+      .filter((module): module is InstalledModuleRecord => module !== null),
     updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
   };
 }
 
-function isInstalledModuleRecord(value: unknown): value is InstalledModuleRecord {
+function normalizeInstalledModuleRecord(value: unknown): InstalledModuleRecord | null {
+  if (!isInstalledModuleRecord(value)) {
+    return null;
+  }
+
+  const {
+    containerName: legacyContainerName,
+    networkAlias: legacyNetworkAlias,
+    image: legacyImage,
+    containers,
+    ...record
+  } = value;
+
+  return {
+    ...record,
+    containers: Array.isArray(containers)
+      ? containers
+      : [
+          buildLegacyContainerRecord({
+            moduleId: value.id,
+            containerName: legacyContainerName,
+            networkAlias: legacyNetworkAlias,
+            image: legacyImage,
+          }),
+        ],
+  } as InstalledModuleRecord;
+}
+
+function isInstalledModuleRecord(
+  value: unknown
+): value is Record<string, unknown> & { id: string; metadataUrl: string } {
   return isObject(value) &&
     typeof value.id === 'string' &&
-    typeof value.metadataUrl === 'string' &&
-    Array.isArray(value.containers);
+    typeof value.metadataUrl === 'string';
+}
+
+function buildLegacyContainerRecord(input: {
+  moduleId: string;
+  containerName: unknown;
+  networkAlias: unknown;
+  image: unknown;
+}): InstalledModuleContainerRecord {
+  const legacyName = getLegacyModuleDockerName(input.moduleId);
+  return {
+    key: 'main',
+    containerName: typeof input.containerName === 'string' && input.containerName
+      ? input.containerName
+      : legacyName,
+    networkAlias: typeof input.networkAlias === 'string' && input.networkAlias
+      ? input.networkAlias
+      : legacyName,
+    image: normalizeLegacyImage(input.image),
+  };
+}
+
+function normalizeLegacyImage(image: unknown): ModuleImage {
+  const source = isObject(image) ? image : {};
+  const repository = typeof source.repository === 'string' && source.repository
+    ? source.repository
+    : 'unknown';
+  const tag = typeof source.tag === 'string' && source.tag ? source.tag : 'latest';
+  const reference = typeof source.reference === 'string' && source.reference
+    ? source.reference
+    : `${repository}:${tag}`;
+  const pullPolicy = typeof source.pullPolicy === 'string' && source.pullPolicy
+    ? source.pullPolicy
+    : undefined;
+
+  return {
+    repository,
+    tag,
+    reference,
+    ...(pullPolicy ? { pullPolicy } : {}),
+  };
+}
+
+function getLegacyModuleDockerName(moduleId: string) {
+  const normalized = moduleId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
+  return `mod-${normalized || 'module'}`;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -576,14 +576,16 @@ async function readModulesStore(config) {
     return {
       schemaVersion: '0.2',
       hostSettings: {},
-      modules: store.filter(isInstalledModuleRecord),
+      modules: store.map(normalizeInstalledModuleRecord).filter(Boolean),
     };
   }
 
   return {
     schemaVersion: '0.2',
     hostSettings: isObject(store.hostSettings) ? store.hostSettings : {},
-    modules: Array.isArray(store.modules) ? store.modules.filter(isInstalledModuleRecord) : [],
+    modules: Array.isArray(store.modules)
+      ? store.modules.map(normalizeInstalledModuleRecord).filter(Boolean)
+      : [],
   };
 }
 
@@ -958,11 +960,73 @@ async function appendGatewayAuditEvent(req, target, allowed = false) {
   }
 }
 
+function normalizeInstalledModuleRecord(value) {
+  if (!isInstalledModuleRecord(value)) {
+    return null;
+  }
+
+  const {
+    containerName: legacyContainerName,
+    networkAlias: legacyNetworkAlias,
+    image: legacyImage,
+    containers,
+    ...record
+  } = value;
+
+  return {
+    ...record,
+    containers: Array.isArray(containers)
+      ? containers
+      : [
+          {
+            key: 'main',
+            containerName: typeof legacyContainerName === 'string' && legacyContainerName
+              ? legacyContainerName
+              : getLegacyModuleDockerName(value.id),
+            networkAlias: typeof legacyNetworkAlias === 'string' && legacyNetworkAlias
+              ? legacyNetworkAlias
+              : getLegacyModuleDockerName(value.id),
+            image: normalizeLegacyImage(legacyImage),
+          },
+        ],
+  };
+}
+
 function isInstalledModuleRecord(value) {
   return isObject(value) &&
     typeof value.id === 'string' &&
-    typeof value.metadataUrl === 'string' &&
-    Array.isArray(value.containers);
+    typeof value.metadataUrl === 'string';
+}
+
+function normalizeLegacyImage(image) {
+  const source = isObject(image) ? image : {};
+  const repository = typeof source.repository === 'string' && source.repository
+    ? source.repository
+    : 'unknown';
+  const tag = typeof source.tag === 'string' && source.tag ? source.tag : 'latest';
+  const reference = typeof source.reference === 'string' && source.reference
+    ? source.reference
+    : `${repository}:${tag}`;
+  const pullPolicy = typeof source.pullPolicy === 'string' && source.pullPolicy
+    ? source.pullPolicy
+    : undefined;
+
+  return {
+    repository,
+    tag,
+    reference,
+    ...(pullPolicy ? { pullPolicy } : {}),
+  };
+}
+
+function getLegacyModuleDockerName(moduleId) {
+  const normalized = moduleId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
+  return `mod-${normalized || 'module'}`;
 }
 
 function isObject(value) {

@@ -642,16 +642,19 @@ function validateExternalMountSelections(
     selectedHostPaths.set(normalizedHostPath, selection);
 
     const moduleMounts = externalMountsByModule.get(selection.moduleId) ?? [];
-    moduleMounts.push(...collection.targets.map(target => ({
-      collectionKey: selection.collectionKey,
-      key: selection.key,
-      ...(selection.label ? { label: selection.label } : {}),
-      hostPath: selection.hostPath,
-      container: target.container,
-      containerPath: target.itemContainerPathTemplate.replace('{key}', selection.key),
-      access: selection.access,
-      readOnly: selection.access === 'readOnly' || !target.writable,
-    })));
+    moduleMounts.push(...collection.targets.map(target => {
+      const readOnly = selection.access === 'readOnly' || !target.writable;
+      return {
+        collectionKey: selection.collectionKey,
+        key: selection.key,
+        ...(selection.label ? { label: selection.label } : {}),
+        hostPath: selection.hostPath,
+        container: target.container,
+        containerPath: target.itemContainerPathTemplate.replace('{key}', selection.key),
+        access: readOnly ? 'readOnly' : selection.access,
+        readOnly,
+      };
+    }));
     externalMountsByModule.set(selection.moduleId, moduleMounts);
   }
 

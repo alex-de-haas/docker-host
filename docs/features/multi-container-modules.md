@@ -197,6 +197,8 @@ Required storage mappings are validated before container start. Missing required
 
 `modules.json` stores installed module records with container-aware runtime configuration. It does not store legacy single-container fields such as top-level `containerName`, top-level `image`, or a single persisted runtime status.
 
+When reading existing state from before schema `0.2`, Host tolerates legacy module records that used top-level `containerName`, `networkAlias`, and `image`. It projects those fields into a single `containers[]` entry with key `main` so installed modules are not dropped during upgrade. Subsequent writes persist only the schema `0.2` shape.
+
 Installed records include:
 
 - module id and source metadata URL;

@@ -48,6 +48,31 @@ test('creates gateway exposure for a public module port and resolves target', as
   assert.equal(userTarget?.access.reason, 'authenticated');
 });
 
+test('resolves gateway target for legacy single-container module records', async () => {
+  const config = await createGatewayTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.legacy',
+    portPublic: true,
+    containerKey: 'main',
+    legacyStoreRecord: true,
+  });
+
+  await upsertGatewayExposure({
+    moduleId: 'com.example.legacy',
+    hostname: 'legacy.example.test',
+    endpointKey: 'web',
+  }, 'user_admin', config);
+
+  const target = await resolveGatewayTarget(
+    'legacy.example.test',
+    { id: 'user_1', role: 'host.user', email: 'user@example.test' },
+    config
+  );
+
+  assert.equal(target?.targetBaseUrl, 'http://legacy-alias:8080');
+  assert.equal(target?.networkAlias, 'legacy-alias');
+});
+
 test('rejects exposure for endpoints not marked public', async () => {
   const config = await createGatewayTestConfig();
   await writeInstalledModule(config, {
@@ -263,30 +288,47 @@ async function writeInstalledModule(
     moduleId: string;
     portPublic: boolean;
     uiEntrypoint?: boolean;
+    containerKey?: string;
+    legacyStoreRecord?: boolean;
   }
 ) {
+  const containerKey = input.containerKey ?? 'app';
   const moduleRoot = path.join(config.modulesRootContainer, input.moduleId);
   await fs.mkdir(moduleRoot, { recursive: true });
   await fs.writeFile(config.modulesStorePath, `${JSON.stringify({
     schemaVersion: '0.2',
     hostSettings: {},
     modules: [
-      {
-        id: input.moduleId,
-        metadataUrl: 'https://modules.example.test/module.json',
-        operationStatus: 'installed',
-        containers: [{
-          key: 'app',
-          containerName: `mod-${input.moduleId.replace(/\./g, '-')}-app`,
-          networkAlias: `mod-${input.moduleId.replace(/\./g, '-')}-app`,
-          image: {
-            repository: 'ghcr.io/example/module',
-            tag: 'latest',
-            reference: 'ghcr.io/example/module:latest',
-            pullPolicy: 'ifNotPresent',
+      input.legacyStoreRecord
+        ? {
+            id: input.moduleId,
+            metadataUrl: 'https://modules.example.test/module.json',
+            operationStatus: 'installed',
+            containerName: 'legacy-container',
+            networkAlias: 'legacy-alias',
+            image: {
+              repository: 'ghcr.io/example/module',
+              tag: 'latest',
+              reference: 'ghcr.io/example/module:latest',
+              pullPolicy: 'ifNotPresent',
+            },
+          }
+        : {
+            id: input.moduleId,
+            metadataUrl: 'https://modules.example.test/module.json',
+            operationStatus: 'installed',
+            containers: [{
+              key: containerKey,
+              containerName: `mod-${input.moduleId.replace(/\./g, '-')}-${containerKey}`,
+              networkAlias: `mod-${input.moduleId.replace(/\./g, '-')}-${containerKey}`,
+              image: {
+                repository: 'ghcr.io/example/module',
+                tag: 'latest',
+                reference: 'ghcr.io/example/module:latest',
+                pullPolicy: 'ifNotPresent',
+              },
+            }],
           },
-        }],
-      },
     ],
     updatedAt: new Date().toISOString(),
   }, null, 2)}\n`);
@@ -296,7 +338,7 @@ async function writeInstalledModule(
     name: 'Example Module',
     version: '1.0.0',
     containers: [{
-      key: 'app',
+      key: containerKey,
       image: {
         repository: 'ghcr.io/example/module',
         tag: 'latest',
@@ -311,7 +353,7 @@ async function writeInstalledModule(
     }],
     endpoints: [{
       key: 'web',
-      container: 'app',
+      container: containerKey,
       port: 'http',
       public: input.portPublic,
     }],
