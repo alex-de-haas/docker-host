@@ -31,8 +31,8 @@ import { isSafeExternalMountKey } from '@/lib/module-install-request';
 import type { MetadataGraph, MetadataGraphNode } from '@/lib/module-metadata';
 import type {
   InstallPlanConflict,
+  InstallPlanContainer,
   InstallPlanErrorEnvelope,
-  InstallPlanImage,
   InstallPlanValidationError,
   InstalledExternalMountMapping,
   InstalledModuleRecord,
@@ -72,13 +72,11 @@ interface UpdateNodeContext {
   metadataUrl: string;
   metadata: NormalizedModuleMetadata;
   graphNode: MetadataGraphNode;
-  image: InstallPlanImage;
   paths: {
     moduleDirectoryContainer: string;
     metadataPathContainer: string;
   };
-  containerName: string;
-  networkAlias: string;
+  containers: InstallPlanContainer[];
   storageDirectories: InstalledStorageMappingWithContainerPath[];
   settings: Record<string, InstalledSettingValue>;
   externalMounts: InstalledExternalMountMapping[];
@@ -288,47 +286,55 @@ async function applyValidatedUpdateRequest(
       await persistInstalledDependency(context, plan, config, now);
       await writeModuleFiles(context);
       await createModuleOwnedDirectories(context);
-      await pullModuleImage(context.image);
+      for (const image of context.containers.map(container => container.image)) {
+        await pullModuleImage(image);
+      }
       const moduleServiceToken = await createModuleServiceToken({
         moduleId: context.id,
-        label: 'Container directory API token',
+        label: 'Module container directory API token',
       }, undefined, config);
-      await createAndStartModuleContainer({
-        moduleId: context.id,
-        containerName: context.containerName,
-        networkName: config.moduleNetwork,
-        networkAlias: context.networkAlias,
-        imageReference: context.image.reference,
-        env: buildContainerEnvironment(context, moduleServiceToken.token, config),
-        mounts: buildContainerMounts(context),
-        ports: context.metadata.runtime.ports,
-        ...(context.metadata.runtime.resources ? { resources: context.metadata.runtime.resources } : {}),
-      });
+      for (const container of sortPlanContainers(context.containers)) {
+        await createAndStartModuleContainer({
+          moduleId: context.id,
+          containerName: container.containerName,
+          networkName: config.moduleNetwork,
+          networkAlias: container.networkAlias,
+          imageReference: container.image.reference,
+          env: buildContainerEnvironment(context, container.key, moduleServiceToken.token, config),
+          mounts: buildContainerMounts(context, container.key),
+          ports: container.ports,
+          ...(container.resources ? { resources: container.resources } : {}),
+        });
+      }
       await markModuleInstalled(context.id, config, now);
       installedDependencyIds.push(dependencyId);
     }
 
     const rootContext = buildRootUpdateContext(plan, graphResult.graph, installedModule, decisionValidation.decisions);
     await createModuleOwnedDirectories(rootContext);
-    await pullModuleImage(rootContext.image);
+    for (const image of rootContext.containers.map(container => container.image)) {
+      await pullModuleImage(image);
+    }
 
     if (plan.docker.replacementRequired) {
       await removeModuleContainerIfExists(installedModule);
       const moduleServiceToken = await createModuleServiceToken({
         moduleId: rootContext.id,
-        label: 'Container directory API token',
+        label: 'Module container directory API token',
       }, undefined, config);
-      await createAndStartModuleContainer({
-        moduleId,
-        containerName: rootContext.containerName,
-        networkName: config.moduleNetwork,
-        networkAlias: rootContext.networkAlias,
-        imageReference: rootContext.image.reference,
-        env: buildContainerEnvironment(rootContext, moduleServiceToken.token, config),
-        mounts: buildContainerMounts(rootContext),
-        ports: rootContext.metadata.runtime.ports,
-        ...(rootContext.metadata.runtime.resources ? { resources: rootContext.metadata.runtime.resources } : {}),
-      });
+      for (const container of sortPlanContainers(rootContext.containers)) {
+        await createAndStartModuleContainer({
+          moduleId,
+          containerName: container.containerName,
+          networkName: config.moduleNetwork,
+          networkAlias: container.networkAlias,
+          imageReference: container.image.reference,
+          env: buildContainerEnvironment(rootContext, container.key, moduleServiceToken.token, config),
+          mounts: buildContainerMounts(rootContext, container.key),
+          ports: container.ports,
+          ...(container.resources ? { resources: container.resources } : {}),
+        });
+      }
     }
 
     await writeModuleFiles(rootContext);
@@ -578,7 +584,8 @@ function validateExternalMountSelections(
       continue;
     }
 
-    const expectedContainerPath = collection.itemContainerPathTemplate.replace('{key}', selection.key);
+    const primaryTarget = collection.targets[0];
+    const expectedContainerPath = primaryTarget?.itemContainerPathTemplate.replace('{key}', selection.key);
     if (selection.containerPath !== expectedContainerPath) {
       validationErrors.push({
         code: 'update_external_mount_container_path_mismatch',
@@ -589,10 +596,10 @@ function validateExternalMountSelections(
       continue;
     }
 
-    if (!collection.writable && selection.access !== 'readOnly') {
+    if (!collection.targets.some(target => target.writable) && selection.access !== 'readOnly') {
       validationErrors.push({
         code: 'update_external_mount_access_invalid',
-        message: 'Read-only external mount collections cannot submit readWrite access.',
+        message: 'Read-only external mount collection targets cannot submit readWrite access.',
         path: '$.externalMounts',
         node: selection.moduleId,
       });
@@ -600,15 +607,16 @@ function validateExternalMountSelections(
     }
 
     const moduleMounts = externalMountsByModule.get(selection.moduleId) ?? [];
-    moduleMounts.push({
+    moduleMounts.push(...collection.targets.map(target => ({
       collectionKey: selection.collectionKey,
       key: selection.key,
       ...(selection.label ? { label: selection.label } : {}),
       hostPath: selection.hostPath,
-      containerPath: selection.containerPath,
+      container: target.container,
+      containerPath: target.itemContainerPathTemplate.replace('{key}', selection.key),
       access: selection.access,
-      readOnly: selection.access === 'readOnly',
-    });
+      readOnly: selection.access === 'readOnly' || !target.writable,
+    })));
     externalMountsByModule.set(selection.moduleId, moduleMounts);
   }
 
@@ -643,6 +651,28 @@ function validateExternalMountSelections(
   return { externalMountsByModule, validationErrors, conflicts };
 }
 
+function sortPlanContainers(containers: InstallPlanContainer[]) {
+  const ordered: InstallPlanContainer[] = [];
+  const remaining = new Map(containers.map(container => [container.key, container]));
+
+  while (remaining.size > 0) {
+    const ready = [...remaining.values()].filter(container =>
+      container.dependsOn.every(dependencyKey => !remaining.has(dependencyKey))
+    );
+
+    if (ready.length === 0) {
+      return containers;
+    }
+
+    for (const container of ready) {
+      ordered.push(container);
+      remaining.delete(container.key);
+    }
+  }
+
+  return ordered;
+}
+
 function buildDependencyInstallContext(
   plan: ModuleUpdatePlan,
   graph: MetadataGraph,
@@ -651,9 +681,8 @@ function buildDependencyInstallContext(
 ): UpdateNodeContext {
   const node = graph.nodes.get(moduleId);
   const dependency = plan.dependencies.find(candidate => candidate.id === moduleId);
-  const image = plan.images.find(candidate => candidate.moduleId === moduleId);
 
-  if (!node || !dependency || !image) {
+  if (!node || !dependency) {
     throw new Error(`Update plan dependency details are missing for module "${moduleId}".`);
   }
 
@@ -662,13 +691,11 @@ function buildDependencyInstallContext(
     metadataUrl: node.metadataUrl,
     metadata: node.metadata,
     graphNode: node,
-    image,
     paths: {
       moduleDirectoryContainer: dependency.paths.moduleDirectoryContainer,
       metadataPathContainer: dependency.paths.metadataPathContainer,
     },
-    containerName: dependency.docker.containerName,
-    networkAlias: dependency.docker.networkAlias,
+    containers: dependency.containers,
     storageDirectories: plan.storage.directories
       .filter(directory => directory.moduleId === moduleId)
       .map(directory => ({ ...directory })),
@@ -685,9 +712,8 @@ function buildRootUpdateContext(
   decisions: UpdateDecisions
 ): UpdateNodeContext {
   const node = graph.nodes.get(plan.moduleId);
-  const image = plan.images.find(candidate => candidate.moduleId === plan.moduleId);
 
-  if (!node || !image) {
+  if (!node) {
     throw new Error(`Update plan root details are missing for module "${plan.moduleId}".`);
   }
 
@@ -696,13 +722,11 @@ function buildRootUpdateContext(
     metadataUrl: node.metadataUrl,
     metadata: node.metadata,
     graphNode: node,
-    image,
     paths: {
       moduleDirectoryContainer: plan.paths.moduleDirectoryContainer,
       metadataPathContainer: plan.paths.metadataPathContainer,
     },
-    containerName: installedModule.containerName || plan.docker.containerName,
-    networkAlias: plan.docker.networkAliases[0],
+    containers: plan.docker.containers,
     storageDirectories: plan.storage.directories
       .filter(directory => directory.moduleId === plan.moduleId)
       .map(directory => ({ ...directory })),
@@ -758,21 +782,20 @@ function buildInstalledModuleRecord(
     metadataPath: path.posix.join('modules', context.id, 'metadata.json'),
     metadataDigest: `sha256:${createHash('sha256').update(context.graphNode.rawBytes).digest('hex')}`,
     planDigest,
-    containerName: context.containerName,
-    image: {
-      repository: context.image.repository,
-      tag: context.image.tag,
-      reference: context.image.reference,
-      pullPolicy: context.image.pullPolicy,
-    },
+    containers: context.containers.map(container => ({
+      key: container.key,
+      containerName: container.containerName,
+      networkAlias: container.networkAlias,
+      image: {
+        repository: container.image.repository,
+        tag: container.image.tag,
+        reference: container.image.reference,
+        pullPolicy: container.image.pullPolicy,
+      },
+    })),
     operationStatus: existing?.operationStatus || 'installing',
     settings: context.settings,
-    storageMappings: Object.fromEntries(
-      context.storageDirectories.map(directory => [
-        directory.key,
-        toInstalledStorageMapping(directory),
-      ])
-    ),
+    storageMappings: context.storageDirectories.map(directory => toInstalledStorageMapping(directory)),
     externalMounts: context.externalMounts,
     resolvedDependencies: context.resolvedDependencies,
     installedAt: existing?.installedAt,
@@ -797,6 +820,7 @@ async function createModuleOwnedDirectories(context: UpdateNodeContext) {
 
 function buildContainerEnvironment(
   context: UpdateNodeContext,
+  containerKey: string,
   moduleServiceToken: string,
   config: HostRuntimeConfig
 ) {
@@ -809,27 +833,31 @@ function buildContainerEnvironment(
   for (const setting of context.metadata.settings) {
     const value = context.settings[setting.key];
     if (value !== undefined) {
-      env[setting.target.name] = stringifySettingValue(value);
+      for (const target of setting.targets.filter(target => target.container === containerKey)) {
+        env[target.name] = stringifySettingValue(value);
+      }
     }
   }
 
   for (const dependency of context.resolvedDependencies) {
-    if (dependency.baseUrlEnv && dependency.resolvedBaseUrl) {
-      env[dependency.baseUrlEnv] = dependency.resolvedBaseUrl;
+    if (dependency.resolvedBaseUrl) {
+      for (const target of (dependency.targets ?? []).filter(target => target.container === containerKey)) {
+        env[target.name] = dependency.resolvedBaseUrl;
+      }
     }
   }
 
   return env;
 }
 
-function buildContainerMounts(context: UpdateNodeContext) {
+function buildContainerMounts(context: UpdateNodeContext, containerKey: string) {
   return [
-    ...context.storageDirectories.map(directory => ({
+    ...context.storageDirectories.filter(directory => directory.container === containerKey).map(directory => ({
       hostPath: directory.hostPath,
       containerPath: directory.containerPath,
       readOnly: directory.readOnly ?? !directory.writable,
     })),
-    ...context.externalMounts.map(mount => ({
+    ...context.externalMounts.filter(mount => mount.container === containerKey).map(mount => ({
       hostPath: mount.hostPath,
       containerPath: mount.containerPath,
       readOnly: mount.readOnly,
@@ -893,6 +921,7 @@ async function markModuleUpdateFailed(
       return {
         id: moduleId,
         metadataUrl: '',
+        containers: [],
         operationStatus: 'failed',
         lastOperation: 'update',
         updateAttempt: {
@@ -955,7 +984,7 @@ function getResolvedDependenciesForConsumer(
       .map(connection => ({
         id: connection.dependencyId,
         endpoint: connection.endpoint,
-        baseUrlEnv: connection.baseUrlEnv,
+        targets: connection.targets,
         resolvedBaseUrl: connection.resolvedBaseUrl,
       }))
   );
@@ -1182,6 +1211,7 @@ function toInstalledStorageMapping(
 ): InstalledStorageMapping {
   return {
     key: directory.key,
+    container: directory.container,
     containerPath: directory.containerPath,
     hostPath: directory.hostPath,
     required: directory.required,

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "0.1",
+  "activeKeyId": "mik_84b8c052-cd0d-4924-84cb-037a61946908",
+  "keys": [
+    {
+      "kid": "mik_84b8c052-cd0d-4924-84cb-037a61946908",
+      "alg": "ES256",
+      "active": true,
+      "createdAt": "2026-05-20T13:48:05.259Z",
+      "publicJwk": {
+        "kty": "EC",
+        "x": "HsK86BujfUF-o5bCwGqDXDUWGnjUjG-d6DjesLtgrMk",
+        "y": "kUFlKv00YTTEPqg9Lpbfou5fXsWTl54FLDBTF2-3epM",
+        "crv": "P-256",
+        "kid": "mik_84b8c052-cd0d-4924-84cb-037a61946908",
+        "alg": "ES256",
+        "use": "sig"
+      },
+      "privateJwk": {
+        "kty": "EC",
+        "x": "HsK86BujfUF-o5bCwGqDXDUWGnjUjG-d6DjesLtgrMk",
+        "y": "kUFlKv00YTTEPqg9Lpbfou5fXsWTl54FLDBTF2-3epM",
+        "crv": "P-256",
+        "d": "sbOMRxZwCTzm_YaFkCRBlVvQiKc6hPBOwk9ROUv-pRM",
+        "kid": "mik_84b8c052-cd0d-4924-84cb-037a61946908",
+        "alg": "ES256",
+        "use": "sig"
+      }
+    }
+  ],
+  "updatedAt": "2026-05-20T19:11:35.129Z"
+}

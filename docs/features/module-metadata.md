@@ -16,22 +16,22 @@ Docker Host должен уметь добавлять не просто Docker 
 
 Имя файла не важно. Важно только, чтобы содержимое соответствовало ожидаемой JSON-структуре Docker Host.
 
-Один Git repository или один сайт может хранить сразу много metadata JSON files для разных модулей. Host не должен скачивать repository целиком: ему достаточно получить конкретный JSON-файл, прочитать из него Docker image и дополнительные metadata, а затем скачать нужный image.
+Один Git repository или один сайт может хранить сразу много metadata JSON files для разных модулей. Host не должен скачивать repository целиком: ему достаточно получить конкретный JSON-файл, прочитать из него container images и дополнительные metadata, а затем скачать нужные images.
 
 Metadata file описывает:
 
 - уникальный идентификатор и человекочитаемое название модуля;
-- Docker image, который нужно скачать и запустить;
+- Docker containers и images, которые нужно скачать и запустить;
 - ссылки на metadata files зависимых модулей и правила передачи base URLs этих зависимостей;
 - конфигурационные параметры, которые Host может запросить у администратора;
 - используемые приложением директории внутри container image и правила их маппинга в host storage;
 - динамические коллекции внешних storage mounts, если модуль должен работать с произвольным числом физических папок;
-- минимальные runtime-требования: порты, переменные окружения, ресурсы.
+- минимальные runtime-требования: endpoints, ports, переменные окружения, ресурсы.
 
 ## Термины
 
 - **Host** - текущее приложение Docker Host, которое управляет модулями и контейнерами.
-- **Module** - логическая функциональная единица, размещенная в Docker container.
+- **Module** - логическая функциональная единица, размещенная в одном или нескольких Docker containers.
 - **Module metadata file** - JSON-файл, который описывает один модуль.
 - **Module metadata URL** - прямая ссылка на module metadata file.
 - **Image repository** - registry path, где лежит Docker image модуля, например `ghcr.io/acme/reports-module`.
@@ -41,7 +41,7 @@ Metadata file описывает:
 - **Module-owned storage** - storage-директория, которая физически находится внутри module directory.
 - **External storage mount** - host path, выбранный администратором и находящийся за пределами module directory.
 - **Mount collection** - декларация в metadata, которая разрешает администратору добавить динамическое количество external storage mounts одного типа.
-- **Runtime endpoint** - именованный port зависимого модуля, по которому другие модули могут получить internal base URL.
+- **Runtime endpoint** - именованный module endpoint, по которому другие модули или gateway могут получить internal base URL.
 
 ## Metadata URL
 
@@ -78,16 +78,16 @@ Branch URL удобен для разработки, но он менее пре
 
 1. Администратор вводит module metadata URL.
 2. Host скачивает JSON по этому URL.
-3. Host валидирует `schemaVersion`, `id`, `image` и базовые runtime-поля.
+3. Host валидирует `schemaVersion`, `id`, `containers`, `endpoints` и базовые runtime-поля.
 4. Host рекурсивно читает зависимости из `dependencies`, используя их `metadataUrl`.
 5. Host готовит module directory: `<host-data-root>/modules/<module-id>/`.
 6. Host рассчитывает volume mappings для директорий из `storage.directories`.
 7. Если metadata объявляет `storage.mountCollections`, Host дает администратору добавить внешние storage mounts.
-8. Host показывает администратору итоговый install plan: модуль, image, зависимости, settings, module directory, storage mappings, external storage mounts, порты и потенциальные конфликты.
+8. Host показывает администратору итоговый install plan: модуль, containers/images, зависимости, settings, module directory, storage mappings, external storage mounts, endpoints и потенциальные конфликты.
 9. После подтверждения Host сохраняет metadata file в module directory, скачивает images и создает контейнеры зависимостей.
 10. Host вычисляет internal base URLs зависимых модулей и прокидывает их в контейнер потребителя через environment variables.
-11. Host запускает контейнер устанавливаемого модуля.
-12. Host сохраняет установленный module source: metadata URL, image reference, computed storage mappings, resolved dependency URLs и external storage mounts.
+11. Host запускает containers устанавливаемого модуля.
+12. Host сохраняет установленный module source: metadata URL, container image references, computed storage mappings, resolved dependency URLs и external storage mounts.
 
 Host должен хранить локальную копию metadata file, который был использован для установки или последнего обновления модуля.
 
@@ -110,7 +110,7 @@ removing
 Implemented recovery rules:
 
 - failed install retry запускается явно и по умолчанию использует локальный `metadata.json` плюс сохраненный install record;
-- retry пересоздает failed module container и сохраняет module-owned data directories;
+- retry пересоздает failed module containers и сохраняет module-owned data directories;
 - cleanup failed install и remove installed module используют backend-generated plan перед apply;
 - module-owned data удаляется только при явном `deleteModuleData=true`;
 - external host paths никогда не удаляются, Host удаляет только mappings из своего состояния;
@@ -126,7 +126,7 @@ Module update всегда должен refresh metadata URL установле�
 2. Host скачивает свежий metadata JSON из сохраненного metadata URL.
 3. Host валидирует metadata schema и проверяет, что `id` совпадает с установленным module id.
 4. Host сравнивает свежий metadata file с локально сохраненным `metadata.json`.
-5. Host показывает update plan: изменения image, settings schema, storage mappings, dependency metadata URLs, runtime ports/resources и потенциальные конфликты.
+5. Host показывает update plan: изменения containers/images, settings schema, storage mappings, dependency metadata URLs, endpoints/runtime resources и потенциальные конфликты.
 6. После подтверждения Host применяет update на основе новых metadata.
 7. Host пересоздает или обновляет container configuration согласно новым metadata.
 8. Host сохраняет свежий metadata file как локальный `metadata.json`.
@@ -186,16 +186,42 @@ External storage mounts могут находиться за пределами 
 
 ```json
 {
-  "schemaVersion": "0.1",
+  "schemaVersion": "0.2",
   "id": "com.acme.reports",
   "name": "Reports",
   "description": "Generates operational reports from host-managed data.",
   "version": "1.0.0",
-  "image": {
-    "repository": "ghcr.io/acme/reports-module",
-    "tag": "1.0.0",
-    "pullPolicy": "ifNotPresent"
-  },
+  "containers": [
+    {
+      "key": "app",
+      "image": {
+        "repository": "ghcr.io/acme/reports-module",
+        "tag": "1.0.0",
+        "pullPolicy": "ifNotPresent"
+      },
+      "runtime": {
+        "ports": [
+          {
+            "key": "http",
+            "containerPort": 8080,
+            "protocol": "http"
+          }
+        ],
+        "resources": {
+          "cpus": 1,
+          "memory": "512m"
+        }
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "http",
+      "container": "app",
+      "port": "http",
+      "public": true
+    }
+  ],
   "dependencies": [
     {
       "id": "com.acme.identity",
@@ -204,7 +230,13 @@ External storage mounts могут находиться за пределами 
       "metadataUrl": "https://raw.githubusercontent.com/acme/docker-host-modules/main/identity.json",
       "connection": {
         "endpoint": "http",
-        "baseUrlEnv": "IDENTITY_BASE_URL"
+        "targets": [
+          {
+            "container": "app",
+            "type": "env",
+            "name": "IDENTITY_BASE_URL"
+          }
+        ]
       }
     }
   ],
@@ -214,19 +246,25 @@ External storage mounts могут находиться за пределами 
       "type": "number",
       "required": true,
       "default": 30,
-      "target": {
-        "type": "env",
-        "name": "REPORT_RETENTION_DAYS"
-      }
+      "targets": [
+        {
+          "container": "app",
+          "type": "env",
+          "name": "REPORT_RETENTION_DAYS"
+        }
+      ]
     },
     {
       "key": "EXTERNAL_API_TOKEN",
       "type": "secret",
       "required": false,
-      "target": {
-        "type": "env",
-        "name": "EXTERNAL_API_TOKEN"
-      }
+      "targets": [
+        {
+          "container": "app",
+          "type": "env",
+          "name": "EXTERNAL_API_TOKEN"
+        }
+      ]
     }
   ],
   "storage": {
@@ -235,10 +273,15 @@ External storage mounts могут находиться за пределами 
         "key": "settings",
         "label": "Settings",
         "description": "Persistent module configuration files.",
-        "containerPath": "/app/settings",
         "purpose": "settings",
         "required": true,
-        "writable": true,
+        "targets": [
+          {
+            "container": "app",
+            "containerPath": "/app/settings",
+            "writable": true
+          }
+        ],
         "mount": {
           "recommended": true,
           "type": "bind",
@@ -249,10 +292,15 @@ External storage mounts могут находиться за пределами 
         "key": "data",
         "label": "Data",
         "description": "Generated reports and local module state.",
-        "containerPath": "/app/data",
         "purpose": "data",
         "required": true,
-        "writable": true,
+        "targets": [
+          {
+            "container": "app",
+            "containerPath": "/app/data",
+            "writable": true
+          }
+        ],
         "mount": {
           "recommended": true,
           "type": "bind",
@@ -262,31 +310,23 @@ External storage mounts могут находиться за пределами 
       {
         "key": "cache",
         "label": "Cache",
-        "containerPath": "/app/cache",
         "purpose": "cache",
         "required": false,
-        "writable": true,
+        "targets": [
+          {
+            "container": "app",
+            "containerPath": "/app/cache",
+            "writable": true
+          }
+        ],
         "mount": {
           "recommended": true,
           "type": "bind",
           "modulePath": "cache"
         }
       }
-    ]
-  },
-  "runtime": {
-    "ports": [
-      {
-        "key": "http",
-        "containerPort": 8080,
-        "protocol": "http",
-        "public": true
-      }
     ],
-    "resources": {
-      "cpus": 1,
-      "memory": "512m"
-    }
+    "mountCollections": []
   }
 }
 ```
@@ -295,7 +335,7 @@ External storage mounts могут находиться за пределами 
 
 На текущем этапе источником правды для module metadata schema является этот документ: пример `Metadata draft`, `Schema outline`, field notes и validation rules ниже вместе описывают ожидаемый контракт.
 
-Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes `schemaVersion: "0.1"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from the read-only install planner. Отдельный shared contracts package или generated schema artifact для metadata MVP не требуется; этот документ остается источником правды для supported metadata contract.
+Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes only `schemaVersion: "0.2"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from install/update planning. Отдельный shared contracts package или generated schema artifact для metadata MVP не требуется; этот документ остается источником правды для supported metadata contract.
 
 ## Schema outline
 
@@ -303,24 +343,66 @@ Top-level metadata object:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `schemaVersion` | string | yes | Version of the metadata file schema supported by Host. Current draft value: `0.1`. |
+| `schemaVersion` | string | yes | Version of the metadata file schema supported by Host. Current draft value: `0.2`. |
 | `id` | string | yes | Stable unique module id, recommended reverse-DNS format. |
 | `name` | string | yes | Human-readable module name. |
 | `description` | string | no | Short module description for UI display. |
 | `version` | string | yes | Module contract version. Host uses the major part for dependency compatibility in the first implementation. |
-| `image` | object | yes | Docker image reference and pull behavior. |
+| `containers` | array | yes | Runtime services owned by this module. At least one container is required. |
+| `endpoints` | array | no | Stable module endpoints used by gateway exposure and dependency resolution. Default: empty array. |
+| `connections` | array | no | Internal module endpoint URLs injected from one container into other containers. Default: empty array. |
 | `dependencies` | array | no | Dependency metadata URLs and connection mappings. Default: empty array. |
 | `settings` | array | no | Configuration schema. Values are stored by Host, not in metadata. Default: empty array. |
 | `storage` | object | no | Module-owned storage directories and dynamic external mount collections. |
-| `runtime` | object | yes | Minimal launch requirements: ports and resource hints. |
 
-`image` object:
+`containers[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | Stable lowercase container key, unique inside the module. |
+| `dependsOn` | array | no | Container keys that must start before this container. Default: empty array. |
+| `image` | object | yes | Docker image reference and pull behavior for this container. |
+| `runtime` | object | no | Container ports, ignored healthcheck metadata, and resource hints. Default: no ports. |
+
+`containers[].image` object:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `repository` | string | yes | Docker image repository, for example `ghcr.io/acme/reports-module`. |
 | `tag` | string | yes | Docker image tag. |
 | `pullPolicy` | string | no | One of `ifNotPresent`, `always`, or `manual`. Default: `ifNotPresent`. |
+
+`containers[].runtime` object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ports` | array | no | Named container ports. Worker and sidecar containers may omit ports. |
+| `healthcheck` | object | no | Reserved for future module health checks. Ignored by the first implementation. |
+| `resources` | object | no | CPU and memory hints. |
+
+`containers[].runtime.ports[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | Stable port key, unique inside the container. |
+| `containerPort` | number | yes | Container port number. |
+| `protocol` | string | yes | First implementation target: `http`. |
+
+`endpoints[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | Stable module endpoint key, unique inside the module. |
+| `container` | string | yes | Container key that owns the target port. |
+| `port` | string | yes | Port key inside the selected container. |
+| `public` | boolean | yes | Whether this endpoint is suitable for Host gateway exposure. This is a capability hint, not an authorization policy. |
+
+`connections[]` item:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `source` | object | yes | Endpoint source. Current form: `{ "type": "endpoint", "key": "<endpointKey>" }`. |
+| `targets` | array | yes | Environment targets that receive the resolved internal URL. |
 
 `dependencies[]` item:
 
@@ -336,8 +418,8 @@ Top-level metadata object:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `endpoint` | string | yes | Dependency `runtime.ports[].key` to use. |
-| `baseUrlEnv` | string | yes | Environment variable name that receives the resolved internal base URL. |
+| `endpoint` | string | yes | Dependency `endpoints[].key` to use. |
+| `targets` | array | yes | Environment targets in the consumer containers that receive the resolved internal base URL. |
 
 `settings[]` item:
 
@@ -347,7 +429,15 @@ Top-level metadata object:
 | `type` | string | yes | One of `string`, `number`, `boolean`, `url`, or `secret`. |
 | `required` | boolean | yes | Whether the administrator must provide or confirm a value. |
 | `default` | any | no | Default value. Secrets must not contain real secret values in `default`. |
-| `target` | object | no | Runtime target for the resolved setting. First implementation target type: `env`. |
+| `targets` | array | no | Runtime targets for the resolved setting. First implementation target type: `env`. Default: empty array. |
+
+Environment target object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `container` | string | yes | Container key that receives the environment variable. |
+| `type` | string | yes | Current supported value: `env`. |
+| `name` | string | yes | Environment variable name. |
 
 `storage` object:
 
@@ -363,10 +453,9 @@ Top-level metadata object:
 | `key` | string | yes | Stable storage key, unique inside the metadata file. |
 | `label` | string | no | Human-readable label for UI display. |
 | `description` | string | no | Short explanation for UI display. |
-| `containerPath` | string | yes | Absolute Unix path inside the module container. |
 | `purpose` | string | no | Suggested purpose, for example `settings`, `data`, `cache`, `logs`, or `temp`. |
 | `required` | boolean | yes | Whether the mapping must exist before container start. |
-| `writable` | boolean | yes | Whether the module expects write access. |
+| `targets` | array | yes | Container-specific mount targets. |
 | `mount` | object | yes | Mount recommendation. Base implementation supports only `type: "bind"`. |
 
 `storage.mountCollections[]` item:
@@ -380,29 +469,27 @@ Top-level metadata object:
 | `required` | boolean | yes | Whether at least the configured minimum must be present. |
 | `minItems` | number | no | Minimum number of external mounts. Default: `0`. |
 | `maxItems` | number or null | no | Maximum number of external mounts. `null` means no fixed limit. |
-| `writable` | boolean | yes | Whether items are writable by default. |
-| `containerPathPrefix` | string | yes | Absolute Unix prefix for collection item paths inside the container. |
-| `itemContainerPathTemplate` | string | yes | Template for item paths. Must contain a safe `{key}` segment. |
+| `targets` | array | yes | Container-specific dynamic mount targets. |
 | `hostPathPolicy` | object | yes | Host path selection policy. External paths are administrator-selected. |
 
-`runtime` object:
+Storage target object:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `ports` | array | yes | Named container endpoints. |
-| `healthcheck` | object | no | Reserved for future module health checks. Ignored by the first implementation. |
-| `resources` | object | no | CPU and memory hints. |
+| `container` | string | yes | Container key receiving the mount. |
+| `containerPath` | string | yes | Absolute Unix path inside the container. |
+| `writable` | boolean | yes | Whether the module expects write access for this mount. |
 
-For `schemaVersion: "0.1"`, metadata validation is strict: unknown fields are rejected at every object level. The MVP does not reserve or accept extension namespaces such as `x-*`. Future extensions must use a new schema version or a separately documented namespace. The only reserved field accepted by the MVP schema is `runtime.healthcheck`, and the MVP runtime must ignore it.
-
-`runtime.ports[]` item:
+Mount collection target object:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `key` | string | yes | Stable endpoint key, unique inside the metadata file. |
-| `containerPort` | number | yes | Container port number. |
-| `protocol` | string | yes | First implementation target: `http`. |
-| `public` | boolean | yes | Whether the endpoint is suitable for external UI exposure through a future Host gateway. This is a capability hint, not an authorization policy. The first implementation should not publish module host ports automatically. |
+| `container` | string | yes | Container key receiving each selected item. |
+| `containerPathPrefix` | string | yes | Absolute Unix prefix for collection item paths inside the container. |
+| `itemContainerPathTemplate` | string | yes | Template for item paths. Must contain a safe `{key}` segment. |
+| `writable` | boolean | yes | Whether selected items are writable in this container. |
+
+For `schemaVersion: "0.2"`, metadata validation is strict: unknown fields are rejected at every object level. The MVP does not reserve or accept extension namespaces such as `x-*`. Future extensions must use a new schema version or a separately documented namespace. The only reserved field accepted by the MVP schema is `containers[].runtime.healthcheck`, and the MVP runtime must ignore it.
 
 ## Field notes
 
@@ -419,21 +506,27 @@ Host должен использовать `id` для:
 
 `id` берется из metadata file, а не из URL. Один и тот же модуль может быть доступен по разным URLs, но Host должен считать его тем же модулем, если `id` совпадает.
 
-### `image`
+### `containers`
 
-`image.repository` и `image.tag` задают Docker image. Metadata не фиксирует immutable image reference: обычные обновления модуля должны происходить через обновление Docker image, на который указывает tag.
+`containers[]` описывает Docker containers, которые вместе образуют один логический модуль. В пользовательском интерфейсе они могут отображаться как services внутри module row/detail view, но в manifest и backend contracts используется термин `containers`.
+
+`containers[].key` должен быть стабильным lowercase identifier, например `app`, `api`, `worker` или `db`. Host использует key для Docker names/aliases, target references, storage mappings и per-container runtime status. Key является частью контракта: его изменение считается runtime-affecting update.
+
+`containers[].image.repository` и `containers[].image.tag` задают Docker image конкретного container. Metadata не фиксирует immutable image reference: обычные обновления модуля могут происходить через обновление Docker image, на который указывает tag.
 
 Metadata model не задает общего naming convention для Docker image repositories. Module author может указать image из Docker Hub, GHCR, internal registry или любого другого container registry, доступного Docker daemon.
 
-Если `image.tag` равен `latest`, metadata URL может оставаться неизменным, а новый Docker image может публиковаться под тем же tag. При module update Host все равно сначала refreshes metadata URL, затем применяет image/container update на основе актуальных metadata. Если нужен более стабильный канал, tag может быть `1`, `1.0`, `stable` или другим соглашением автора модуля.
+Если `containers[].image.tag` равен `latest`, metadata URL может оставаться неизменным, а новый Docker image может публиковаться под тем же tag. При module update Host все равно сначала refreshes metadata URL, затем применяет image/container update на основе актуальных metadata. Если нужен более стабильный канал, tag может быть `1`, `1.0`, `stable` или другим соглашением автора модуля.
 
-`image.pullPolicy` задает, когда Host должен пытаться скачать image:
+`containers[].image.pullPolicy` задает, когда Host должен пытаться скачать image:
 
 - `ifNotPresent` - скачать image только если его еще нет локально;
 - `always` - при запуске или update check пытаться подтянуть актуальный image для указанного tag;
 - `manual` - не подтягивать автоматически, только по явному действию администратора.
 
 Если `pullPolicy` не указан, default должен быть `ifNotPresent`. Для CI-style модулей с tag `latest` автор metadata может указать `always`.
+
+`containers[].dependsOn` задает startup order только внутри текущего модуля. Это не dependency boundary между модулями и не version solver. Cycles в `dependsOn` отклоняются validator.
 
 ### Versioning and compatibility
 
@@ -444,7 +537,7 @@ Metadata model не задает общего naming convention для Docker im
 Обычный CI-flow выглядит так:
 
 - metadata file остается тем же;
-- `image.repository` и `image.tag` остаются теми же;
+- `containers[].image.repository` и `containers[].image.tag` остаются теми же;
 - автор модуля публикует новый Docker image под тем же tag;
 - при module update Host refreshes metadata URL, видит тот же image reference, подтягивает актуальный Docker image для tag согласно `pullPolicy` и обновляет container.
 
@@ -472,7 +565,13 @@ Metadata model не задает общего naming convention для Docker im
   "metadataUrl": "https://modules.acme.internal/identity/1.2.0/metadata.json",
   "connection": {
     "endpoint": "http",
-    "baseUrlEnv": "IDENTITY_BASE_URL"
+    "targets": [
+      {
+        "container": "app",
+        "type": "env",
+        "name": "IDENTITY_BASE_URL"
+      }
+    ]
   }
 }
 ```
@@ -481,10 +580,10 @@ Metadata model не задает общего naming convention для Docker im
 
 `dependencies[].connection` описывает, как потребляющий модуль узнает runtime URL зависимого модуля:
 
-- `endpoint` - имя endpoint в `runtime.ports[]` зависимого модуля;
-- `baseUrlEnv` - environment variable, которую Host должен передать в контейнер потребляющего модуля.
+- `endpoint` - имя endpoint в `endpoints[]` зависимого модуля;
+- `targets` - environment variables, которые Host должен передать в целевые containers потребляющего модуля.
 
-Если dependency объявляет `connection`, поля `endpoint` и `baseUrlEnv` обязательны. Host не должен угадывать endpoint по protocol или выбирать первый порт. Потребитель всегда явно указывает `runtime.ports[].key` зависимого модуля.
+Если dependency объявляет `connection`, поля `endpoint` и `targets` обязательны. Host не должен угадывать endpoint по protocol или выбирать первый порт. Потребитель всегда явно указывает `endpoints[].key` зависимого модуля и container targets, куда нужно прокинуть URL.
 
 Например, storage module может иметь два HTTP endpoint:
 
@@ -492,22 +591,54 @@ Metadata model не задает общего naming convention для Docker im
 {
   "id": "com.modulis.storage",
   "version": "1.0.0",
-  "runtime": {
-    "ports": [
-      {
-        "key": "api",
-        "containerPort": 8080,
-        "protocol": "http",
-        "public": false
+  "containers": [
+    {
+      "key": "api",
+      "image": {
+        "repository": "ghcr.io/modulis/storage-api",
+        "tag": "1.0.0"
       },
-      {
-        "key": "admin",
-        "containerPort": 9090,
-        "protocol": "http",
-        "public": false
+      "runtime": {
+        "ports": [
+          {
+            "key": "http",
+            "containerPort": 8080,
+            "protocol": "http"
+          }
+        ]
       }
-    ]
-  }
+    },
+    {
+      "key": "admin",
+      "image": {
+        "repository": "ghcr.io/modulis/storage-admin",
+        "tag": "1.0.0"
+      },
+      "runtime": {
+        "ports": [
+          {
+            "key": "http",
+            "containerPort": 9090,
+            "protocol": "http"
+          }
+        ]
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "api",
+      "container": "api",
+      "port": "http",
+      "public": false
+    },
+    {
+      "key": "admin",
+      "container": "admin",
+      "port": "http",
+      "public": false
+    }
+  ]
 }
 ```
 
@@ -521,7 +652,13 @@ Media server должен явно выбрать, какой endpoint ему н
   "metadataUrl": "https://modules.example.com/storage.json",
   "connection": {
     "endpoint": "api",
-    "baseUrlEnv": "STORAGE_BASE_URL"
+    "targets": [
+      {
+        "container": "app",
+        "type": "env",
+        "name": "STORAGE_BASE_URL"
+      }
+    ]
   }
 }
 ```
@@ -540,24 +677,30 @@ Media server должен явно выбрать, какой endpoint ему н
   "metadataUrl": "https://modules.example.com/storage.json",
   "connection": {
     "endpoint": "api",
-    "baseUrlEnv": "STORAGE_BASE_URL"
+    "targets": [
+      {
+        "container": "app",
+        "type": "env",
+        "name": "STORAGE_BASE_URL"
+      }
+    ]
   }
 }
 ```
 
-После запуска storage module Host вычисляет internal base URL, например `http://mod-com-modulis-storage:8080`, и запускает media server с переменной окружения:
+После запуска storage module Host вычисляет internal base URL, например `http://mod-com-modulis-storage-api:8080`, и запускает media server с переменной окружения:
 
 ```text
-STORAGE_BASE_URL=http://mod-com-modulis-storage:8080
+STORAGE_BASE_URL=http://mod-com-modulis-storage-api:8080
 ```
 
-В этом примере `mod-com-modulis-storage` - не имя контейнера и не Compose service name. Это стабильный network alias, который Host назначает контейнеру зависимого модуля внутри user-defined Docker network.
+В этом примере `mod-com-modulis-storage-api` - не Compose service name. Это стабильный per-container network alias, который Host назначает контейнеру зависимого модуля внутри user-defined Docker network.
 
-Network alias должен строиться детерминированно из module `id`:
+Network alias должен строиться детерминированно из module `id` и `containers[].key`:
 
 ```text
-com.modulis.storage -> mod-com-modulis-storage
-com.acme.media-server -> mod-com-acme-media-server
+com.modulis.storage + api -> mod-com-modulis-storage-api
+com.acme.media-server + app -> mod-com-acme-media-server-app
 ```
 
 Базовое правило нормализации:
@@ -565,14 +708,14 @@ com.acme.media-server -> mod-com-acme-media-server
 - привести `id` к lowercase;
 - заменить все символы кроме `a-z`, `0-9` на `-`;
 - схлопнуть повторяющиеся `-`;
-- добавить префикс `mod-`;
+- добавить префикс `mod-` и suffix container key;
 - проверить итоговый alias на уникальность среди установленных модулей.
 
 Если нормализация дает конфликт или слишком длинный DNS label, Host должен использовать детерминированный hash suffix, но это остается внутренней деталью Host. Модуль-потребитель не должен сам собирать alias по `id`: он получает готовый URL через env-переменную.
 
 Docker Compose не является обязательным требованием. Host может сам создать Docker network и подключать контейнеры к ней через Docker API, назначая нужные aliases. Compose можно использовать как внутреннюю реализацию, но metadata model не должна зависеть от Compose-файла.
 
-Metadata не должна фиксировать container name, host port или absolute URL зависимого модуля. Она только описывает, какой endpoint нужен потребителю и в какую env-переменную Host должен положить resolved base URL.
+Metadata не должна фиксировать container name, host port или absolute URL зависимого модуля. Она только описывает, какой endpoint нужен потребителю и в какие target env-переменные Host должен положить resolved base URL.
 
 Resolved dependency base URLs должны быть только internal Docker-network URLs. Host не использует metadata dependency model для передачи внешних public URLs между модулями. Если модулю нужны внешние сервисы, такие URLs остаются ответственностью самого модуля или его обычных settings.
 
@@ -580,7 +723,7 @@ Resolved dependency base URLs должны быть только internal Docker
 
 Если dependency уже установлена и install plan помечает ее как reusable, planner и install apply проверяют `modules.json`, major-совместимость локального `metadata.json` и наличие Docker container. Apply повторяет эти проверки до начала мутаций нового consumer module. Если reusable dependency container отсутствует, установка consumer module отклоняется как конфликт; автоматическое восстановление dependency остается отдельным recovery flow.
 
-Future optional dependencies behavior: если dependency опциональная (`required: false`) и она не установлена или отключена, Host должен не задавать `baseUrlEnv` или передать пустое значение. Потребляющий модуль должен трактовать пустую или отсутствующую env-переменную как "integration unavailable" и работать без этой dependency. Это не входит в first implementation scope.
+Future optional dependencies behavior: если dependency опциональная (`required: false`) и она не установлена или отключена, Host должен не задавать target env или передать пустое значение. Потребляющий модуль должен трактовать пустую или отсутствующую env-переменную как "integration unavailable" и работать без этой dependency. Это не входит в first implementation scope.
 
 Future optional dependency example:
 
@@ -592,7 +735,13 @@ Future optional dependency example:
   "metadataUrl": "https://modules.example.com/recommendations.json",
   "connection": {
     "endpoint": "http",
-    "baseUrlEnv": "RECOMMENDATIONS_BASE_URL"
+    "targets": [
+      {
+        "container": "app",
+        "type": "env",
+        "name": "RECOMMENDATIONS_BASE_URL"
+      }
+    ]
   }
 }
 ```
@@ -619,8 +768,8 @@ Host должен уметь:
 - скачать dependency metadata files;
 - показать дерево зависимостей до установки;
 - проверить, что `id` и major-версия скачанного dependency metadata совпадают с объявленной dependency;
-- проверить, что каждый `dependencies[].connection` содержит `endpoint` и `baseUrlEnv`;
-- проверить, что запрошенный `connection.endpoint` есть в `runtime.ports[]` dependency metadata;
+- проверить, что каждый `dependencies[].connection` содержит `endpoint` и `targets`;
+- проверить, что запрошенный `connection.endpoint` есть в `endpoints[]` dependency metadata;
 - передать resolved dependency base URLs в environment variables потребляющего модуля;
 - не запускать потребителя, если обязательная dependency не может быть resolved;
 - в future optional dependency feature оставлять target environment variable пустой или unset, если optional dependency недоступна;
@@ -642,7 +791,7 @@ Host не требует отдельный публичный `metadataDigest` 
 - `url`;
 - `secret`.
 
-В первой реализации все module settings считаются environment variables. Значения хранятся в `modules.json` как key/value pairs внутри записи установленного модуля. Ключ setting соответствует `settings[].key` из metadata и используется как environment variable name. Если позже появятся не-env targets, schema хранения settings может быть расширена.
+В первой реализации setting values могут прокидываться в один или несколько containers через `settings[].targets`. Значения хранятся в `modules.json` как key/value pairs внутри записи установленного модуля. Ключ setting соответствует `settings[].key` из metadata; конкретные environment variable names задаются в targets. Если позже появятся не-env targets, schema хранения settings может быть расширена.
 
 Секреты не должны храниться в metadata file. Metadata только объявляет, что такой секрет нужен.
 
@@ -653,7 +802,7 @@ Host должен обращаться с secret settings как с write-only v
 - API responses, которые использует Web UI, не должны возвращать raw secret value;
 - UI может показывать, что значение задано, и должен позволять set, change и clear без раскрытия текущего значения;
 - install plan, status views, logs, error messages и diagnostics должны показывать redacted value, а не реальный secret;
-- secret value может быть передан в runtime configuration модуля, например как environment variable, если так задано в setting target.
+- secret value может быть передан в runtime configuration модуля, например как environment variable, если так задано в setting targets.
 
 Такой подход считается достаточным для local-first MVP. Основная защита на первом этапе - не допустить случайного раскрытия token/API key через Web UI, API responses, logs или diagnostics. Шифрование secret files, OS keychain integration, protected local files и external secret managers можно рассмотреть позже как advanced storage backends.
 
@@ -675,10 +824,15 @@ Host должен обращаться с secret settings как с write-only v
 {
   "key": "data",
   "label": "Data",
-  "containerPath": "/app/data",
   "purpose": "data",
   "required": true,
-  "writable": true,
+  "targets": [
+    {
+      "container": "app",
+      "containerPath": "/app/data",
+      "writable": true
+    }
+  ],
   "mount": {
     "recommended": true,
     "type": "bind",
@@ -692,14 +846,14 @@ Host должен использовать эти данные для volume map
 - показать администратору список директорий, которые модуль хочет использовать;
 - вычислить host path внутри module directory, например `~/.docker-host/modules/com.acme.reports/data`;
 - создать bind mount на физическую папку Host;
-- передать mapping в Docker как volume mount, например `~/.docker-host/modules/com.acme.reports/data:/app/data`;
+- передать mapping в целевые containers как Docker volume mounts, например `~/.docker-host/modules/com.acme.reports/data:/app/data`;
 - сохранить computed mapping как часть установленного модуля.
 
 На базовом уровне `mount.type` должен быть `bind`, чтобы обычные module-owned данные физически лежали в module directory Host. Docker named volumes можно рассмотреть позже как advanced mode, но они не являются базовым контрактом этой metadata-схемы.
 
 `modulePath` должен быть относительным путем внутри module directory. Если `modulePath` не указан, Host может использовать `storage.directories[].key` как имя подпапки. Metadata file не должен навязывать absolute host paths вроде `/etc`, `/var/run` или `/Users/...`.
 
-Host не должен давать администратору менять `modulePath` или `containerPath` для обычных `storage.directories`. Эти значения являются частью контракта модуля: автор модуля сам решает, какая структура папок нужна приложению.
+Host не должен давать администратору менять `modulePath` или `targets[].containerPath` для обычных `storage.directories`. Эти значения являются частью контракта модуля: автор модуля сам решает, какая структура папок нужна приложению.
 
 Например, для module id `com.acme.reports` и `modulePath: "data"` итоговый host path будет:
 
@@ -747,9 +901,14 @@ Module container mount path:
         "required": false,
         "minItems": 0,
         "maxItems": null,
-        "writable": true,
-        "containerPathPrefix": "/storage/libraries",
-        "itemContainerPathTemplate": "/storage/libraries/{key}",
+        "targets": [
+          {
+            "container": "app",
+            "containerPathPrefix": "/storage/libraries",
+            "itemContainerPathTemplate": "/storage/libraries/{key}",
+            "writable": true
+          }
+        ],
         "hostPathPolicy": {
           "mode": "adminSelected",
           "allowExternal": true
@@ -772,6 +931,7 @@ Module container mount path:
         "key": "main-media",
         "label": "Main media disk",
         "hostPath": "/mnt/media",
+        "container": "app",
         "containerPath": "/storage/libraries/main-media",
         "access": "readWrite"
       },
@@ -779,6 +939,7 @@ Module container mount path:
         "key": "archive",
         "label": "Archive disk",
         "hostPath": "/Volumes/archive",
+        "container": "app",
         "containerPath": "/storage/libraries/archive",
         "access": "readOnly"
       }
@@ -802,7 +963,7 @@ Module container mount path:
 
 Host все равно должен хранить metadata, настройки и список подключенных external mounts внутри module directory. Это позволяет пересоздать контейнер с теми же Docker mounts, но backup самих external paths должен быть отдельной ответственностью администратора или storage module.
 
-`containerPath` для каждого item вычисляется из `itemContainerPathTemplate`. `{key}` должен быть безопасным path segment, например `main-media`, а не произвольной строкой с `/` или `..`.
+`containerPath` для каждого item и container target вычисляется из `targets[].itemContainerPathTemplate`. `{key}` должен быть безопасным path segment, например `main-media`, а не произвольной строкой с `/` или `..`.
 
 External host paths всегда выбирает администратор. Metadata file может только объявить, что модуль поддерживает такую коллекцию mounts. Metadata не должна содержать готовые absolute host paths.
 
@@ -835,50 +996,64 @@ Host не должен пытаться валидировать external host p
 
 В такой модели Host не монтирует storage одного модуля напрямую в контейнер другого модуля. Storage module остается единственным владельцем физических папок и сам решает, как давать доступ к файлам.
 
-### `runtime`
+### `runtime` and `endpoints`
 
-`runtime` описывает минимальные параметры запуска. На первом этапе достаточно:
+`containers[].runtime` описывает минимальные параметры запуска конкретного container:
 
 - named container ports;
-- public/private marker для порта;
-- CPU и memory hints.
+- CPU и memory hints;
+- reserved healthcheck metadata, ignored by the first implementation.
 
-The install/update runtime applies resource hints when creating Docker containers. `runtime.resources.cpus` maps to Docker `NanoCpus`. `runtime.resources.memory` supports plain byte counts and `k`, `m`, or `g` suffixes, for example `512m` or `1g`.
+Containers may omit `runtime` or declare no ports. This is valid for workers, schedulers, sidecars, and other services that do not expose network endpoints.
 
-В первой implementation Host не вводит runtime health checks или readiness probes для модулей. Статус модуля определяется только через Docker daemon container state: container created, running, stopped, exited или failed по данным Docker.
+The install/update runtime applies resource hints when creating Docker containers. `containers[].runtime.resources.cpus` maps to Docker `NanoCpus`. `containers[].runtime.resources.memory` supports plain byte counts and `k`, `m`, or `g` suffixes, for example `512m` or `1g`.
 
-Для required dependencies Host считает dependency запущенной, если Docker успешно стартовал dependency container и Host может вычислить internal Docker-network base URL. Host не ждет HTTP health endpoint или custom readiness signal на первом этапе.
-
-Module health checks должны быть отдельной future feature. В будущем health status может опираться на Docker healthcheck или другой унифицированный сигнал, но на первом этапе Host не рассчитывает и не возвращает health/readiness.
-
-Эти поля не обязаны полностью заменять Docker Compose. Их задача - дать Host достаточно информации для управляемого запуска и отображения в UI.
-
-`runtime.ports[].key` нужен для ссылок из `dependencies[].connection.endpoint`. Если другой модуль просит endpoint `http`, Host ищет у dependency port с `key: "http"` и строит internal base URL из protocol, Host-managed network alias и `containerPort`.
+`endpoints[]` is the stable module-level contract for dependency resolution and gateway exposure. Each endpoint references one `containers[].runtime.ports[]` item through `endpoint.container` and `endpoint.port`.
 
 Пример:
 
 ```json
 {
-  "runtime": {
-    "ports": [
-      {
-        "key": "http",
-        "containerPort": 8080,
-        "protocol": "http",
-        "public": false
+  "containers": [
+    {
+      "key": "api",
+      "image": {
+        "repository": "ghcr.io/acme/api",
+        "tag": "1.0.0"
+      },
+      "runtime": {
+        "ports": [
+          {
+            "key": "http",
+            "containerPort": 8080,
+            "protocol": "http"
+          }
+        ]
       }
-    ]
-  }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "api",
+      "container": "api",
+      "port": "http",
+      "public": false
+    }
+  ]
 }
 ```
 
-`public: false` означает, что endpoint нужен только внутри Host-managed Docker network. Для module-to-module коммуникации Host должен использовать internal URL, а не опубликованный host port.
+`endpoints[].public: false` означает, что endpoint нужен только внутри Host-managed Docker network. Для module-to-module коммуникации Host должен использовать internal URL, а не опубликованный host port.
 
-В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `runtime.ports[].public`. Наружная публикация выбранных модулей должна быть отдельной feature с explicit authorization и exposure settings. Auth Gateway owns the actual module exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
+В первой implementation Host не должен автоматически публиковать module host ports наружу только на основании `endpoints[].public`. Наружная публикация выбранных модулей должна быть отдельной feature с explicit authorization и exposure settings. Auth Gateway owns the actual module exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
+
+В первой implementation Host не вводит runtime health checks или readiness probes для модулей. Статус модуля определяется через Docker daemon container states: individual container states plus aggregate module status.
+
+Для required dependencies Host считает dependency запущенной, если Docker успешно стартовал dependency containers и Host может вычислить internal Docker-network base URL для requested endpoint. Host не ждет HTTP health endpoint или custom readiness signal на первом этапе.
 
 Host-managed Docker network должна быть одной общей user-defined network для всех managed modules. Default bridge network не подходит, потому что не дает достаточно надежной DNS-модели для module-to-module names.
 
-Для каждого installed module Host должен назначать стабильный alias, построенный из module `id`. Alias должен быть уникален внутри общего Host-managed network и не обязан совпадать с Docker container name.
+Для каждого installed module container Host должен назначать стабильный alias, построенный из module `id` и container key. Alias должен быть уникален внутри общего Host-managed network и не обязан совпадать с Docker container name.
 
 ## Multiple modules in one location
 
@@ -908,44 +1083,55 @@ Host не должен знать, как эти files организованы 
 Минимальные правила валидации metadata file:
 
 - JSON должен соответствовать поддерживаемой `schemaVersion`;
-- unknown fields must be rejected at every object level for `schemaVersion: "0.1"`;
+- unknown fields must be rejected at every object level for `schemaVersion: "0.2"`;
 - extension namespaces such as `x-*` are not accepted in the MVP metadata schema;
-- `id`, `name`, `version`, `image.repository` и `image.tag` обязательны;
-- `image.pullPolicy`, если указан, должен быть `ifNotPresent`, `always` или `manual`;
+- `id`, `name`, `version` и `containers[]` обязательны;
+- `containers[].key` должен быть уникальным внутри module metadata и соответствовать safe lowercase identifier;
+- `containers[].dependsOn` должен ссылаться только на containers текущего модуля и не должен образовывать cycles;
+- `containers[].image.repository` и `containers[].image.tag` обязательны;
+- `containers[].image.pullPolicy`, если указан, должен быть `ifNotPresent`, `always` или `manual`;
+- `containers[].runtime.ports[].key` должен быть уникален внутри одного container;
+- `containers[].runtime.ports[].containerPort` должен быть валидным container port;
+- `endpoints[].key` должен быть уникален внутри одного metadata file;
+- `endpoints[].container` должен ссылаться на существующий `containers[].key`;
+- `endpoints[].port` должен ссылаться на existing `containers[].runtime.ports[].key` внутри выбранного container;
+- `connections[].source.key` должен ссылаться на existing `endpoints[].key`;
+- `connections[].targets[]` должны ссылаться на existing `containers[].key` и valid env names;
 - `version` должен иметь читаемую major-часть; рекомендуемый формат - `MAJOR.MINOR.PATCH`;
 - `id` должен быть уникален среди установленных модулей;
 - `dependencies[].id` не должен совпадать с `id` текущего модуля;
 - каждый dependency должен иметь `version`, `required` и `metadataUrl`;
 - `dependencies[].version` должен быть major-версией контракта, например `"1"`;
 - первая implementation поддерживает только `dependencies[].required: true`; `required: false` зарезервирован для отдельной optional dependencies feature;
-- если dependency содержит `connection`, `dependencies[].connection.endpoint` и `dependencies[].connection.baseUrlEnv` обязательны;
-- `dependencies[].connection.baseUrlEnv` должен быть валидным environment variable name;
+- если dependency содержит `connection`, `dependencies[].connection.endpoint` и `dependencies[].connection.targets` обязательны;
+- `dependencies[].connection.targets[]` должны ссылаться на existing consumer containers и valid env names;
 - `dependencies[].required: true` означает, что dependency должна быть resolved до запуска потребителя;
-- future support для `dependencies[].required: false` означает, что пустая или отсутствующая `baseUrlEnv` является допустимым runtime state;
+- future support для `dependencies[].required: false` означает, что пустой или отсутствующий target env является допустимым runtime state;
 - dependency graph may include root metadata plus at most 32 unique dependency nodes;
 - после загрузки dependency metadata Host должен проверить, что major часть `dependencyMetadata.version` совпадает с `dependencies[].version`;
-- если dependency объявляет `connection.endpoint`, dependency metadata должен содержать `runtime.ports[]` с таким `key`;
+- если dependency объявляет `connection.endpoint`, dependency metadata должен содержать `endpoints[]` с таким `key`;
 - dependency graph не должен содержать циклов;
 - setting keys должны быть уникальны внутри одного metadata file;
+- `settings[].targets[]`, если указаны, должны ссылаться на existing containers и valid env names;
 - setting с `type: "secret"` не должен иметь real secret в `default`;
 - `storage.directories[].key` должен быть уникален внутри одного metadata file;
-- `storage.directories[].containerPath` должен быть абсолютным Unix path внутри container filesystem;
-- `storage.directories[].containerPath` не должен пересекаться с другим declared container path без явного разрешения Host;
+- `storage.directories[].targets[]` обязательны и должны ссылаться на existing containers;
+- `storage.directories[].targets[].containerPath` должен быть абсолютным Unix path внутри container filesystem;
+- `storage.directories[].targets[].containerPath` не должен пересекаться с другим declared container path в том же container без явного разрешения Host;
 - `storage.directories[].mount.type` на базовом этапе должен быть `bind`;
 - `storage.directories[].mount.modulePath`, если указан, должен быть относительным путем внутри module directory без `..`;
 - resolved host paths для `storage.directories` должны оставаться внутри `<host-data-root>/modules/<module-id>/`;
 - `storage.mountCollections[].key` должен быть уникален внутри одного metadata file;
-- `storage.mountCollections[].containerPathPrefix` и `itemContainerPathTemplate` должны быть absolute Unix paths внутри container filesystem;
+- `storage.mountCollections[].targets[]` обязательны и должны ссылаться на existing containers;
+- `storage.mountCollections[].targets[].containerPathPrefix` и `itemContainerPathTemplate` должны быть absolute Unix paths внутри container filesystem;
 - `storage.mountCollections[].hostPathPolicy.allowExternal` должен быть `true`, если collection допускает paths за пределами module directory;
 - external host paths не должны приходить из metadata file, их выбирает только администратор;
 - resolved external host paths должны быть сохранены в локальном state Host и явно показаны в install/update plan;
 - Host не должен применять глобальный allow-list для external storage roots;
 - Host не должен проверять external host path через filesystem Host UI процесса;
 - external host path считается валидным только после успешной Docker bind mount operation;
-- если future exposure feature публикует module ports наружу, public ports не должны конфликтовать с уже опубликованными портами;
-- `runtime.ports[].key` должен быть уникален внутри одного metadata file;
-- `runtime.ports[].containerPort` должен быть валидным container port;
-- Host-generated network alias должен быть уникален среди установленных модулей;
+- если future exposure feature публикует module endpoints наружу, public endpoints не должны конфликтовать с уже опубликованными hostnames;
+- Host-generated network alias должен быть уникален среди installed module containers;
 
 ## Trust and security
 
@@ -965,13 +1151,13 @@ Module metadata URL является trust boundary. Даже если это в
 - metadata URL;
 - module id, name и version;
 - module directory;
-- image repository и tag;
+- containers, image repositories и tags;
 - зависимости, их ожидаемые major-версии и metadata URLs;
-- dependency connection mappings: dependency id, endpoint key, resolved internal base URL и target environment variable;
+- dependency connection mappings: dependency id, endpoint key, resolved internal base URL и target environment variables;
 - запрашиваемые settings;
-- директории внутри container image и выбранные volume mappings;
+- директории внутри container images и выбранные volume mappings;
 - dynamic external storage mounts: collection key, host path, container path и access mode;
-- port declarations;
+- endpoint and port declarations;
 - requested resources.
 
 Желательные будущие улучшения:

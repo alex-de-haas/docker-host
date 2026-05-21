@@ -9,7 +9,7 @@ import type {
   ModuleRuntimeState,
   ModuleRuntimeStatus,
   ModuleRuntimePortMetadata,
-  NormalizedModuleMetadata,
+  NormalizedModuleContainerMetadata,
 } from '@/types/modules';
 
 export interface DockerDaemonStatus {
@@ -61,7 +61,7 @@ export interface CreateModuleContainerInput {
   env: Record<string, string>;
   mounts: ModuleContainerMount[];
   ports: ModuleRuntimePortMetadata[];
-  resources?: NormalizedModuleMetadata['runtime']['resources'];
+  resources?: NormalizedModuleContainerMetadata['runtime']['resources'];
 }
 
 type DockerError = Error & {
@@ -73,21 +73,21 @@ type DockerError = Error & {
 };
 
 export function getModuleContainerName(module: InstalledModuleRecord) {
-  return module.containerName || getModuleDockerName(module.id);
+  return module.containers[0]?.containerName || getModuleDockerName(module.id, 'main');
 }
 
-export function getModuleNetworkAlias(moduleId: string) {
-  return getModuleDockerName(moduleId);
+export function getModuleNetworkAlias(moduleId: string, containerKey = 'main') {
+  return getModuleDockerName(moduleId, containerKey);
 }
 
-export function getModuleDockerName(moduleId: string) {
+export function getModuleDockerName(moduleId: string, containerKey = 'main') {
   const normalized = moduleId
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-');
 
-  return `mod-${normalized || 'module'}`;
+  return `mod-${normalized || 'module'}-${containerKey}`;
 }
 
 export async function getDockerDaemonStatus(): Promise<DockerDaemonStatus> {
@@ -269,7 +269,16 @@ export async function createAndStartModuleContainer(config: CreateModuleContaine
   return getModuleRuntimeStatus({
     id: config.moduleId,
     metadataUrl: '',
-    containerName: config.containerName,
+    containers: [{
+      key: 'main',
+      containerName: config.containerName,
+      networkAlias: config.networkAlias,
+      image: {
+        repository: config.imageReference,
+        tag: 'latest',
+        reference: config.imageReference,
+      },
+    }],
   });
 }
 
@@ -363,7 +372,7 @@ async function ensureModuleContainerNetwork(module: InstalledModuleRecord) {
   await docker.getNetwork(network.name).connect({
     Container: info.Id,
     EndpointConfig: {
-      Aliases: [getModuleNetworkAlias(module.id)],
+      Aliases: [module.containers[0]?.networkAlias || getModuleNetworkAlias(module.id)],
     },
   });
 }
@@ -447,7 +456,7 @@ function buildModuleContainerCreateOptions(
 }
 
 function buildResourceHostConfig(
-  resources: NormalizedModuleMetadata['runtime']['resources'] | undefined
+  resources: NormalizedModuleContainerMetadata['runtime']['resources'] | undefined
 ): Partial<Docker.HostConfig> {
   if (!resources) {
     return {};

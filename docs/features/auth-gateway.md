@@ -97,7 +97,7 @@ Gateway exposure records live in `/data/gateway/exposures.json`:
 }
 ```
 
-Each exposure points to a specific `moduleId + runtime.ports[].key`. The referenced metadata port must be marked `public: true`; the administrator still chooses the Host-owned exposure policy separately.
+Each exposure points to a specific `moduleId + endpoints[].key`. The referenced metadata endpoint must be marked `public: true`; the administrator still chooses the Host-owned exposure policy separately.
 
 ```mermaid
 flowchart LR
@@ -120,7 +120,7 @@ The module exposure model uses explicit policy states instead of the older `priv
 
 These policies control only whether traffic reaches the module. They do not define what the user can do inside the module.
 
-The existing metadata field `runtime.ports[].public` is only a port capability hint that says an endpoint is suitable for future external UI exposure. It is not an authorization policy. Host-owned exposure policy decides whether the gateway treats an externally reachable module hostname as `public`, `loginRequired`, or `assignedUsersOnly`.
+The metadata field `endpoints[].public` is only an endpoint capability hint that says an endpoint is suitable for external UI exposure. It is not an authorization policy. Host-owned exposure policy decides whether the gateway treats an externally reachable module hostname as `public`, `loginRequired`, or `assignedUsersOnly`.
 
 Module access assignments are stored in the auth state as Host-owned authorization data. They are separate from the gateway hostname registry and from module-owned permissions.
 

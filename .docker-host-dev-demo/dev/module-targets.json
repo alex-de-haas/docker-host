@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "0.1",
+  "targets": [
+    {
+      "id": "mdev_local_demo_module",
+      "moduleId": "com.haas.demo-module",
+      "moduleName": "Demo Module",
+      "moduleVersion": "0.2.0",
+      "moduleDescription": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, gateway authorization, identity propagation, and module directory flows.",
+      "metadataUrl": "http://localhost:3000/fixtures/modules/demo-module",
+      "hostname": "demo.localhost",
+      "portKey": "http",
+      "targetBaseUrl": "http://127.0.0.1:3100",
+      "targetPathPrefix": "",
+      "containerPort": 3000,
+      "protocol": "http",
+      "exposurePolicy": "loginRequired",
+      "identityMode": "required",
+      "enabled": true,
+      "shellApp": {
+        "displayName": "Demo Module",
+        "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, gateway authorization, identity propagation, and module directory flows.",
+        "icon": "boxes",
+        "entrypointPath": "/",
+        "navigation": [
+          {
+            "label": "Overview",
+            "path": "/"
+          },
+          {
+            "label": "People",
+            "path": "/people"
+          },
+          {
+            "label": "Settings",
+            "path": "/settings"
+          }
+        ]
+      },
+      "createdAt": "2026-05-20T13:47:43.154Z",
+      "updatedAt": "2026-05-20T18:44:56.805Z"
+    }
+  ],
+  "updatedAt": "2026-05-20T18:44:56.805Z"
+}

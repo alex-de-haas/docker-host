@@ -45,18 +45,37 @@ Returned by list and lifecycle endpoints.
   "description": "Generates operational reports.",
   "version": "1.0.0",
   "metadataUrl": "https://modules.example/reports/metadata.json",
-  "image": {
-    "repository": "ghcr.io/acme/reports-module",
-    "tag": "1.0.0",
-    "reference": "ghcr.io/acme/reports-module:1.0.0"
-  },
+  "containers": [
+    {
+      "key": "app",
+      "image": {
+        "repository": "ghcr.io/acme/reports-module",
+        "tag": "1.0.0",
+        "reference": "ghcr.io/acme/reports-module:1.0.0"
+      },
+      "networkAlias": "mod-com-acme-reports-app",
+      "endpoints": [
+        {
+          "key": "http",
+          "container": "app",
+          "port": "http",
+          "public": true
+        }
+      ],
+      "runtimeStatus": {
+        "state": "running",
+        "containerId": "4b8d...",
+        "containerName": "mod-com-acme-reports-app",
+        "startedAt": "2026-05-13T09:30:00Z",
+        "finishedAt": null
+      }
+    }
+  ],
   "operationStatus": "installed",
   "runtimeStatus": {
     "state": "running",
-    "containerId": "4b8d...",
-    "containerName": "mod-com-acme-reports",
-    "startedAt": "2026-05-13T09:30:00Z",
-    "finishedAt": null
+    "runningContainers": 1,
+    "totalContainers": 1
   },
   "installedAt": "2026-05-13T09:00:00Z",
   "updatedAt": "2026-05-13T09:30:00Z",
@@ -64,7 +83,7 @@ Returned by list and lifecycle endpoints.
 }
 ```
 
-`operationStatus` is persistent Host bookkeeping from `modules.json`. `runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state.
+`operationStatus` is persistent Host bookkeeping from `modules.json`. `containers[].runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state. Top-level `runtimeStatus` is an aggregate derived from the module containers.
 
 The MVP API does not expose module health or readiness. `runtimeStatus` reports only Docker container state. Health checks, including any future Docker healthcheck-based status, are deferred to a later feature.
 
@@ -76,7 +95,7 @@ Allowed `operationStatus` values:
 - `failed`;
 - `removing`.
 
-Allowed `runtimeStatus.state` values:
+Allowed `containers[].runtimeStatus.state` values:
 
 - `not_created`;
 - `created`;
@@ -85,6 +104,14 @@ Allowed `runtimeStatus.state` values:
 - `restarting`;
 - `exited`;
 - `dead`;
+- `unknown`.
+
+Allowed aggregate `runtimeStatus.state` values:
+
+- `not_created`;
+- `running`;
+- `degraded`;
+- `exited`;
 - `unknown`.
 
 ### `ModuleDetail`
@@ -100,7 +127,9 @@ It includes all `ModuleSummary` fields plus:
       "key": "EXTERNAL_API_TOKEN",
       "type": "secret",
       "required": false,
-      "target": { "type": "env", "name": "EXTERNAL_API_TOKEN" },
+      "targets": [
+        { "container": "app", "type": "env", "name": "EXTERNAL_API_TOKEN" }
+      ],
       "valueSet": true
     }
   ],
@@ -108,6 +137,7 @@ It includes all `ModuleSummary` fields plus:
     "directories": [
       {
         "key": "data",
+        "container": "app",
         "containerPath": "/app/data",
         "hostPath": "~/.docker-host/modules/com.acme.reports/data",
         "required": true,
@@ -120,8 +150,10 @@ It includes all `ModuleSummary` fields plus:
       "id": "com.acme.identity",
       "required": true,
       "metadataUrl": "https://modules.example/identity/metadata.json",
-      "resolvedBaseUrl": "http://mod-com-acme-identity:8080",
-      "baseUrlEnv": "IDENTITY_BASE_URL"
+      "resolvedBaseUrl": "http://mod-com-acme-identity-app:8080",
+      "targets": [
+        { "container": "app", "type": "env", "name": "IDENTITY_BASE_URL" }
+      ]
     }
   ]
 }
@@ -140,7 +172,8 @@ Returned by lifecycle actions.
     "id": "com.acme.reports",
     "runtimeStatus": {
       "state": "running",
-      "containerName": "mod-com-acme-reports"
+      "runningContainers": 1,
+      "totalContainers": 1
     }
   },
   "error": null
@@ -236,7 +269,7 @@ Response should include, per module:
 - description, if available;
 - version;
 - source metadata URL;
-- Docker image reference;
+- Docker containers and image references;
 - lifecycle/install bookkeeping status from `modules.json`, if any;
 - Docker runtime status;
 - timestamps such as installed and last updated, if available;
@@ -259,9 +292,9 @@ Response should include:
 
 ### `POST /api/modules/{moduleId}/start`
 
-Starts the Docker container for an installed module.
+Starts the Docker containers for an installed module.
 
-The backend resolves the module from `modules.json`, maps it to the corresponding Docker container, and asks Docker daemon to start it.
+The backend resolves the module from `modules.json`, maps it to the corresponding Docker containers, and asks Docker daemon to start them.
 
 Response should include:
 
@@ -271,7 +304,7 @@ Response should include:
 
 ### `POST /api/modules/{moduleId}/stop`
 
-Stops the Docker container for an installed module.
+Stops the Docker containers for an installed module.
 
 Response should include:
 
@@ -281,7 +314,7 @@ Response should include:
 
 ### `POST /api/modules/{moduleId}/restart`
 
-Restarts the Docker container for an installed module.
+Restarts the Docker containers for an installed module.
 
 Response should include:
 
@@ -307,7 +340,7 @@ Recommended query parameters:
 
 The module installation API is implemented for the MVP install flow:
 
-- `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker names, network aliases, and runtime ports;
+- `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker container names, network aliases, and endpoints/ports;
 - `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install.
 
 The install apply endpoint returns HTTP `201` on success:
@@ -328,7 +361,7 @@ Apply request validation failures use HTTP `422` and the shared error envelope. 
 Install apply persists each newly installed module in root-level `modules.json` with:
 
 - source `metadataUrl`, local `metadataPath`, root or dependency `metadataDigest`, and reviewed `planDigest`;
-- Docker image reference, pull policy, container name, and operation status;
+- Docker container image references, pull policies, container names, and operation status;
 - typed setting values, including write-only secret values;
 - computed module-owned `storageMappings`;
 - selected `externalMounts`;
@@ -407,11 +440,28 @@ Successful `200` responses should use one top-level `plan` object:
       "mountCollections": []
     },
     "runtime": {
-      "ports": []
+      "endpoints": []
     },
     "docker": {
-      "containerName": "mod-com-acme-reports",
-      "networkAliases": ["mod-com-acme-reports"]
+      "containers": [
+        {
+          "moduleId": "com.acme.reports",
+          "key": "app",
+          "containerName": "mod-com-acme-reports-app",
+          "networkAlias": "mod-com-acme-reports-app",
+          "image": {
+            "moduleId": "com.acme.reports",
+            "container": "app",
+            "repository": "ghcr.io/acme/reports-module",
+            "tag": "1.0.0",
+            "reference": "ghcr.io/acme/reports-module:1.0.0",
+            "pullPolicy": "ifNotPresent"
+          },
+          "dependsOn": [],
+          "ports": [],
+          "endpoints": []
+        }
+      ]
     },
     "conflicts": []
   }
@@ -420,7 +470,7 @@ Successful `200` responses should use one top-level `plan` object:
 
 The `dependencies` array represents the resolved dependency tree. `installOrder` is the topological module id order used for later apply. `normalizedMetadata` contains the normalized root metadata after defaults are applied. `settings` contains prompts, defaults, targets, and secret redaction markers, but never raw secret values.
 
-The implementation returns dependency nodes with their own normalized metadata, Docker name, network alias, module paths, install action (`install` or `reuse`), and dependency connection mappings. The top-level `paths` object identifies the root module directory and local `metadata.json` copy paths in both host and Host-container path spaces.
+The implementation returns dependency nodes with their own normalized metadata, Docker container names, network aliases, module paths, install action (`install` or `reuse`), and dependency connection mappings. The top-level `paths` object identifies the root module directory and local `metadata.json` copy paths in both host and Host-container path spaces.
 
 Install plan Docker checks:
 
@@ -434,7 +484,7 @@ Install plan Docker checks:
 Digest semantics:
 
 - `metadataDigest` is the SHA-256 digest of the root metadata JSON bytes downloaded from the submitted `metadataUrl`. It is used for source transparency, diagnostics, and explaining when the same URL now returns different metadata.
-- `planDigest` is the SHA-256 digest of a canonical JSON representation of the normalized install plan. It covers normalized root metadata, dependency metadata tree, dependency install order, image references, computed paths, setting prompts, storage requirements, Docker container names, network aliases, and runtime ports. It must exclude timestamps, transient download details, Docker runtime status, read-only Docker conflict observations, and other fields that can change without changing the reviewed plan.
+- `planDigest` is the SHA-256 digest of a canonical JSON representation of the normalized install plan. It covers normalized root metadata, dependency metadata tree, dependency install order, image references, computed paths, setting prompts, storage requirements, Docker container names, network aliases, endpoints, and runtime ports. It must exclude timestamps, transient download details, Docker runtime status, read-only Docker conflict observations, and other fields that can change without changing the reviewed plan.
 - `planDigest` is the primary review guard for install apply. The apply endpoint must recompute the plan from the submitted `metadataUrl` and administrator decisions, then reject the request if the recomputed `planDigest` differs from the reviewed `planDigest`.
 
 The MVP should not persist pending install plans as durable state. Apply endpoints should recompute the plan and compare the reviewed `planDigest` before changing files, module state, images, or containers.
@@ -443,7 +493,7 @@ Install plan validation and conflict status boundaries:
 
 - HTTP `422` is used when metadata is invalid by itself, dependency graph validation fails, or the metadata requests unsupported fields, setting types, protocols, storage mount types, or unsafe paths.
 - HTTP `409` is used when metadata is valid but conflicts with current Host or Docker state, such as an already installed module id, generated container name collision, network alias collision, environment variable target collision, or storage mapping collision.
-- `validationErrors[].path` should use a JSONPath-like string pointing to the failing metadata field, for example `$.image.repository` or `$.dependencies[0].connection.endpoint`.
+- `validationErrors[].path` should use a JSONPath-like string pointing to the failing metadata field, for example `$.containers[0].image.repository` or `$.dependencies[0].connection.endpoint`.
 - `validationErrors[].node` should identify the dependency graph node when the error belongs to dependency metadata rather than the root metadata. For the root metadata, `node` can be omitted or set to the root module id.
 - `409` responses should include the partial install plan together with `conflicts[]` so the Web UI can show the reviewed plan and highlight conflict locations.
 - The planner should aggregate as many validation errors and conflicts as possible in one response.
@@ -527,7 +577,7 @@ The MVP update API does not accept a replacement metadata URL. It updates from t
 }
 ```
 
-The full `ModuleUpdatePlan` includes current and proposed module identity, normalized refreshed metadata, dependency install/reuse decisions, install order, image references, setting prompts, preserved settings, storage mappings, preserved and removed external mount mappings, runtime port/resource details, deterministic Docker container configuration, replacement requirements, warnings, and conflicts.
+The full `ModuleUpdatePlan` includes current and proposed module identity, normalized refreshed metadata, dependency install/reuse decisions, install order, image references, setting prompts, preserved settings, storage mappings, preserved and removed external mount mappings, endpoints/runtime resource details, deterministic Docker container configurations, replacement requirements, warnings, and conflicts.
 
 The reviewed update request payload shape is:
 
@@ -571,7 +621,7 @@ Successful apply responses use HTTP `200`:
 
 Update apply preserves compatible setting values, preserves compatible module-owned storage paths and external mount selections, removes deleted settings from runtime state after success, installs missing new required dependencies, and reuses/starts compatible installed dependencies. It does not recursively update already installed dependencies.
 
-When runtime configuration changes, update apply stops/removes/recreates the module container with the deterministic container name. Metadata-only updates may skip container replacement. If refreshed `pullPolicy` is `always`, the Host pulls and recreates even when the image reference is unchanged.
+When runtime configuration changes, update apply stops/removes/recreates the module containers with deterministic container names. Metadata-only updates may skip container replacement. If refreshed `pullPolicy` is `always`, the Host pulls and recreates affected containers even when an image reference is unchanged.
 
 Failed update apply uses the shared install-plan error envelope for validation/conflict failures before mutation. Partial failures after mutation has started mark the module `failed`, set `lastOperation` to `update`, preserve files, storage, images, and containers for diagnosis, and store enough update attempt context for `POST /api/modules/{moduleId}/update/retry`.
 
@@ -579,14 +629,14 @@ Failed update apply uses the shared install-plan error envelope for validation/c
 
 The recovery API adds explicit actions for failed installs, failed updates, failed install cleanup, and installed module removal.
 
-- `POST /api/modules/{moduleId}/retry` retries a failed install from the local `metadata.json` and stored install record. Retry removes and recreates the failed module container, preserves module-owned data directories, starts stored dependencies when needed, and records fresh diagnostics if it fails again.
+- `POST /api/modules/{moduleId}/retry` retries a failed install from the local `metadata.json` and stored install record. Retry removes and recreates failed module containers, preserves module-owned data directories, starts stored dependencies when needed, and records fresh diagnostics if it fails again.
 - `POST /api/modules/{moduleId}/update/retry` retries a failed update and is documented in [Module update](#module-update).
 - `POST /api/modules/{moduleId}/cleanup/plan` returns a backend-generated cleanup preview for a failed module.
 - `POST /api/modules/{moduleId}/cleanup` applies a confirmed cleanup request. Request body: `{ "confirmed": true, "deleteModuleData": false }`.
 - `POST /api/modules/{moduleId}/remove/plan` returns a backend-generated removal preview for an installed module.
 - `POST /api/modules/{moduleId}/remove` applies a confirmed removal request. Request body: `{ "confirmed": true, "deleteModuleData": false }`.
 
-Cleanup and remove plan requests accept `{ "deleteModuleData": true | false }` so the Web UI can refresh the preview before confirmation. Plans return `canApply`, container state, image reference, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts.
+Cleanup and remove plan requests accept `{ "deleteModuleData": true | false }` so the Web UI can refresh the preview before confirmation. Plans return `canApply`, container states, image references, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts.
 
 The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. Docker images and external host paths are never deleted by the MVP recovery flows; external mount mappings are only removed from Host state.
 
@@ -639,7 +689,7 @@ Session revocation and audit purge require `host.auth.configure`; mutating brows
 Gateway exposure APIs manage Host-owned module subdomain routing:
 
 - `GET /api/gateway/exposures` lists gateway exposures and assigned Host user ids.
-- `POST /api/gateway/exposures` creates or updates an exposure for `moduleId`, `hostname`, `portKey`, optional `exposurePolicy`, and optional `identityMode`.
+- `POST /api/gateway/exposures` creates or updates an exposure for `moduleId`, `hostname`, endpoint key in `portKey`, optional `exposurePolicy`, and optional `identityMode`.
 - `PUT /api/gateway/exposures/{exposureId}` updates hostname, port, policy, identity mode, or enabled state.
 - `DELETE /api/gateway/exposures/{exposureId}` removes an exposure.
 - `PUT /api/gateway/exposures/{exposureId}/assignments` replaces assigned Host user ids for the exposure's module.

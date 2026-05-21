@@ -22,6 +22,7 @@ import type {
   ModuleRecoveryAction,
   ModuleRecoveryPlan,
   ModuleRecoveryPlanResponse,
+  ModuleAggregateRuntimeState,
   ModuleRuntimeState,
   ModuleSummary,
 } from '@/types/modules';
@@ -81,6 +82,22 @@ const runtimeLabels: Record<ModuleRuntimeState, string> = {
   restarting: 'Restarting',
   exited: 'Exited',
   dead: 'Dead',
+  unknown: 'Unknown',
+};
+
+const aggregateRuntimeStatusMap: Record<ModuleAggregateRuntimeState, 'online' | 'offline' | 'maintenance' | 'degraded'> = {
+  not_created: 'offline',
+  running: 'online',
+  degraded: 'degraded',
+  exited: 'offline',
+  unknown: 'degraded',
+};
+
+const aggregateRuntimeLabels: Record<ModuleAggregateRuntimeState, string> = {
+  not_created: 'Not created',
+  running: 'Running',
+  degraded: 'Degraded',
+  exited: 'Stopped',
   unknown: 'Unknown',
 };
 
@@ -217,7 +234,7 @@ export function ModuleList({
             <TableRow>
               <TableHead className="w-12" />
               <TableHead className="min-w-[220px]">Module</TableHead>
-              <TableHead className="min-w-[180px]">Image</TableHead>
+              <TableHead className="min-w-[180px]">Services</TableHead>
               <TableHead>Runtime</TableHead>
               <TableHead>Operation</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -257,12 +274,18 @@ export function ModuleList({
                     </div>
                   </TableCell>
                   <TableCell>
-                    <code className="rounded bg-muted px-2 py-1 text-xs">{module.image.reference}</code>
+                    <div className="flex flex-wrap gap-1">
+                      {module.containers.map(container => (
+                        <Badge key={container.key} variant="outline" className="max-w-[180px] truncate">
+                          {container.key}
+                        </Badge>
+                      ))}
+                    </div>
                   </TableCell>
                   <TableCell>
-                    <Status status={runtimeStatusMap[module.runtimeStatus.state]} title={module.runtimeStatus.containerName}>
+                    <Status status={aggregateRuntimeStatusMap[module.runtimeStatus.state]} title={`${module.runtimeStatus.runningContainers}/${module.runtimeStatus.totalContainers} running`}>
                       <StatusIndicator />
-                      <StatusLabel>{runtimeLabels[module.runtimeStatus.state]}</StatusLabel>
+                      <StatusLabel>{aggregateRuntimeLabels[module.runtimeStatus.state]}</StatusLabel>
                     </Status>
                   </TableCell>
                   <TableCell>
@@ -547,8 +570,6 @@ function EmptyModuleState() {
 function ModuleDetails({ module }: { module: ModuleSummary }) {
   const installedAt = formatDate(module.installedAt);
   const updatedAt = formatDate(module.updatedAt);
-  const startedAt = formatDate(module.runtimeStatus.startedAt);
-  const finishedAt = formatDate(module.runtimeStatus.finishedAt);
 
   return (
     <div className="grid gap-4 border-t px-4 py-4 md:grid-cols-3">
@@ -561,19 +582,25 @@ function ModuleDetails({ module }: { module: ModuleSummary }) {
         </dl>
       </section>
       <section className="space-y-2">
-        <h4 className="text-sm font-medium">Container</h4>
-        <dl className="space-y-1 text-sm">
-          <DetailRow label="Name" value={module.runtimeStatus.containerName} />
-          <DetailRow label="Container ID" value={module.runtimeStatus.containerId || '-'} />
-          <DetailRow label="Started" value={startedAt} />
-          <DetailRow label="Finished" value={finishedAt} />
-        </dl>
+        <h4 className="text-sm font-medium">Services</h4>
+        <div className="space-y-3 text-sm">
+          {module.containers.map(container => (
+            <dl key={container.key} className="space-y-1 rounded-md border p-3">
+              <DetailRow label="Service" value={container.key} />
+              <DetailRow label="Name" value={container.runtimeStatus.containerName} />
+              <DetailRow label="Container ID" value={container.runtimeStatus.containerId || '-'} />
+              <DetailRow label="Runtime" value={runtimeLabels[container.runtimeStatus.state]} />
+              <DetailRow label="Started" value={formatDate(container.runtimeStatus.startedAt)} />
+              <DetailRow label="Finished" value={formatDate(container.runtimeStatus.finishedAt)} />
+            </dl>
+          ))}
+        </div>
       </section>
       <section className="space-y-2">
         <h4 className="text-sm font-medium">Install record</h4>
         <dl className="space-y-1 text-sm">
           <DetailRow label="Installed" value={installedAt} />
-          <DetailRow label="Pull policy" value={module.image.pullPolicy || '-'} />
+          <DetailRow label="Pull policy" value={module.containers.map(container => `${container.key}: ${container.image.pullPolicy || '-'}`).join(', ') || '-'} />
           {module.description && <DetailRow label="Description" value={module.description} />}
           {(module.lastError || module.runtimeStatus.error) && (
             <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900">

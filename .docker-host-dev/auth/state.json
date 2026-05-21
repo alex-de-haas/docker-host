@@ -1,0 +1,409 @@
+{
+  "schemaVersion": "0.1",
+  "users": [
+    {
+      "id": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "email": "admin@docker-host.local",
+      "displayName": "Dev Admin",
+      "role": "host.admin",
+      "authProvider": "local",
+      "passwordHash": "scrypt$n=16384,r=8,p=1,keylen=64$PQZcQUs_G1PDc-0ByFFNLg$OPIx1KD2iHPnth3S51tXYx1VoKczgg-AiBZSmEdIpOHSD4kCqtQqUeyePYvEcs1XQgPiCIOhQ9Uf6EuNMVG9dA",
+      "createdAt": "2026-05-19T16:41:38.814Z",
+      "updatedAt": "2026-05-20T14:34:40.302Z",
+      "disabled": false
+    }
+  ],
+  "sessions": [
+    {
+      "id": "session_badab85c-d1e8-413a-b842-7dd2c1cd8cdb",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "XpU3qNbwdV6aTRmV5XKGjz5-qNWER87Gmr7btrkWjzM",
+      "createdAt": "2026-05-20T08:07:39.935Z",
+      "lastSeenAt": "2026-05-20T09:26:48.894Z",
+      "idleExpiresAt": "2026-05-20T21:26:48.894Z",
+      "absoluteExpiresAt": "2026-06-03T08:07:39.935Z",
+      "request": {
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Codex/26.513.31313 Chrome/148.0.7778.97 Electron/42.0.1 Safari/537.36"
+      }
+    },
+    {
+      "id": "session_a5bcbafc-2a9d-4d9c-8507-3509c38c13d4",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "vQYdKUbi2FGLonMvSJZWKLAjzXBGHAefmuvWdNbqIqQ",
+      "createdAt": "2026-05-20T08:07:39.935Z",
+      "lastSeenAt": "2026-05-20T08:07:39.935Z",
+      "idleExpiresAt": "2026-05-20T20:07:39.935Z",
+      "absoluteExpiresAt": "2026-06-03T08:07:39.935Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_34424287-4925-4bb7-803b-4c8571fb3e01",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "bJ1sOjuLsQqULgVQV-Tq1rjwR4NWfBrU0reXyTbmcv0",
+      "createdAt": "2026-05-20T08:07:39.952Z",
+      "lastSeenAt": "2026-05-20T08:07:39.952Z",
+      "idleExpiresAt": "2026-05-20T20:07:39.952Z",
+      "absoluteExpiresAt": "2026-06-03T08:07:39.952Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_2802e773-662b-4462-984e-ee07589b379b",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "FXVHi2q5fsDh7oWGXXVn1Yi9neHXWomk2K_pnw6OIgo",
+      "createdAt": "2026-05-20T08:55:17.129Z",
+      "lastSeenAt": "2026-05-20T08:55:17.129Z",
+      "idleExpiresAt": "2026-05-20T20:55:17.129Z",
+      "absoluteExpiresAt": "2026-06-03T08:55:17.129Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_8c7ff7f4-17c9-426d-82a9-88c02aed7add",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "eDRPQVdUE_zgh3P9ubAYaACLk0H1a96b7bTZmaGkY2U",
+      "createdAt": "2026-05-20T08:55:20.623Z",
+      "lastSeenAt": "2026-05-20T08:55:20.623Z",
+      "idleExpiresAt": "2026-05-20T20:55:20.623Z",
+      "absoluteExpiresAt": "2026-06-03T08:55:20.623Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_ec2808d1-1497-46cd-bb13-959b9004a2c7",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "-a_EsI2o2Roff6hA2Y5Be6KSjwbj1d5QdKypdTXY7tU",
+      "createdAt": "2026-05-20T08:55:26.641Z",
+      "lastSeenAt": "2026-05-20T08:55:26.641Z",
+      "idleExpiresAt": "2026-05-20T20:55:26.641Z",
+      "absoluteExpiresAt": "2026-06-03T08:55:26.641Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_628d65c4-f529-41a9-8034-c224d7e5b889",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "Ky8UTf1C6BlzvJcwhnEn5IFrqkL3OtX3ZmJrHV_E0JY",
+      "createdAt": "2026-05-20T09:53:17.765Z",
+      "lastSeenAt": "2026-05-20T11:02:31.731Z",
+      "idleExpiresAt": "2026-05-20T23:02:31.731Z",
+      "absoluteExpiresAt": "2026-06-03T09:53:17.765Z",
+      "request": {
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Codex/26.513.31313 Chrome/148.0.7778.97 Electron/42.0.1 Safari/537.36"
+      }
+    },
+    {
+      "id": "session_956bd642-a7bd-41d2-8b48-040eb6640e76",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "O314V3GLFzbydCyD0itnRw0LcG70qs5UHJtW1iHJOgY",
+      "createdAt": "2026-05-20T11:06:19.267Z",
+      "lastSeenAt": "2026-05-20T11:06:19.267Z",
+      "idleExpiresAt": "2026-05-20T23:06:19.267Z",
+      "absoluteExpiresAt": "2026-06-03T11:06:19.267Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_4076547c-0e96-4c95-9767-87d4f91105fb",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "hmhQIO6SV9gQxTcVz7TLl98P-Or6oR4UEOVVTzkKcQE",
+      "createdAt": "2026-05-20T11:06:19.618Z",
+      "lastSeenAt": "2026-05-20T11:06:19.618Z",
+      "idleExpiresAt": "2026-05-20T23:06:19.618Z",
+      "absoluteExpiresAt": "2026-06-03T11:06:19.618Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_08d2f9b8-013d-447c-bf39-fd31e16edd62",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "LONy-TDpscmNmxLtSycHY4bjTG0zf_8-9XV48ZQUMRw",
+      "createdAt": "2026-05-20T11:06:19.766Z",
+      "lastSeenAt": "2026-05-20T11:06:19.766Z",
+      "idleExpiresAt": "2026-05-20T23:06:19.766Z",
+      "absoluteExpiresAt": "2026-06-03T11:06:19.766Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_85ba560b-a20e-4eb6-be04-4b019f847b12",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "hoSb81_ar192xpzI-j_RfghFhr6zf6Q0tJWzcbDL6yQ",
+      "createdAt": "2026-05-20T11:06:19.768Z",
+      "lastSeenAt": "2026-05-20T11:06:19.768Z",
+      "idleExpiresAt": "2026-05-20T23:06:19.768Z",
+      "absoluteExpiresAt": "2026-06-03T11:06:19.768Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_5d883608-3970-4d4d-8e6a-991640b67911",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "lWH0V2HrdZOoIMpUAHeyrl5QTH5XJUBNHm8ThkHbOOc",
+      "createdAt": "2026-05-20T11:06:19.777Z",
+      "lastSeenAt": "2026-05-20T11:06:19.777Z",
+      "idleExpiresAt": "2026-05-20T23:06:19.777Z",
+      "absoluteExpiresAt": "2026-06-03T11:06:19.777Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_7a0fe3be-36ef-40a6-8509-4c6462048a94",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "EHsjX3gcmbL9jHPyFtNdOTkMrEXWbnrfehca9slxvpU",
+      "createdAt": "2026-05-20T11:28:01.992Z",
+      "lastSeenAt": "2026-05-20T11:28:01.992Z",
+      "idleExpiresAt": "2026-05-20T23:28:01.992Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:01.992Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_b6a4303f-4e44-4293-90fd-4c4d0a5e8235",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "Jmu_dUa2cPIPcMeSXk2Nv3hdCao6Q-z5rPaZiMJ-pl4",
+      "createdAt": "2026-05-20T11:28:02.068Z",
+      "lastSeenAt": "2026-05-20T11:28:02.068Z",
+      "idleExpiresAt": "2026-05-20T23:28:02.068Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:02.068Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_5688e8fa-3693-48c4-8e51-33462b20a38d",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "6knlJJ4gJGT2UOdrTjkU2brl0LnU_H-b8ujv2qnjgvY",
+      "createdAt": "2026-05-20T11:28:02.276Z",
+      "lastSeenAt": "2026-05-20T11:28:02.276Z",
+      "idleExpiresAt": "2026-05-20T23:28:02.276Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:02.276Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_da227b97-9272-47c8-bc3b-87006694ae80",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "cbkfU5XgUGyNeIZWILYAfe3AEBw-CUtSofro_8xREjk",
+      "createdAt": "2026-05-20T11:28:02.377Z",
+      "lastSeenAt": "2026-05-20T11:28:02.377Z",
+      "idleExpiresAt": "2026-05-20T23:28:02.377Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:02.377Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_6f90dc93-2d4f-4bd7-8324-c336a5c49bb7",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "XJIqf8iA2kmqRMbYYlhuOlvzaiRrhlDmMz1tKX-jqCk",
+      "createdAt": "2026-05-20T11:28:03.694Z",
+      "lastSeenAt": "2026-05-20T13:07:42.291Z",
+      "idleExpiresAt": "2026-05-21T01:07:42.291Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:03.694Z",
+      "request": {
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Codex/26.513.31313 Chrome/148.0.7778.97 Electron/42.0.1 Safari/537.36"
+      }
+    },
+    {
+      "id": "session_1d59e60a-cc5c-4a0a-8916-68fe99001435",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "ldSZ5Q14kYqtZa_Fo6dxWB9RGug1ntCwOuW9RlrcKjA",
+      "createdAt": "2026-05-20T11:28:03.784Z",
+      "lastSeenAt": "2026-05-20T11:28:03.784Z",
+      "idleExpiresAt": "2026-05-20T23:28:03.784Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:03.784Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_2cd6c0db-0c55-46b6-a1e1-6cdf9790b86e",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "HzoDX01umUjNDU8oatF7q_J_GBor5998pcwKNPG4h44",
+      "createdAt": "2026-05-20T11:28:03.943Z",
+      "lastSeenAt": "2026-05-20T11:28:03.943Z",
+      "idleExpiresAt": "2026-05-20T23:28:03.943Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:03.943Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_39f8a66c-d4bc-4190-86bf-7cde3aec06ce",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "H-AUFmEz1oJRDSffJGIZhm9cb7o5k23Jw9v5iAsNz1s",
+      "createdAt": "2026-05-20T11:28:03.947Z",
+      "lastSeenAt": "2026-05-20T11:28:03.947Z",
+      "idleExpiresAt": "2026-05-20T23:28:03.947Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:03.947Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_1944ed39-692f-47c9-a5b9-42193e841314",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "6ynRgTZ17mCQNv3p9gEz-sn75ec1RTuYcU3RVqOPf6w",
+      "createdAt": "2026-05-20T11:28:03.956Z",
+      "lastSeenAt": "2026-05-20T11:28:03.956Z",
+      "idleExpiresAt": "2026-05-20T23:28:03.956Z",
+      "absoluteExpiresAt": "2026-06-03T11:28:03.956Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_9273c4e2-077f-4540-8af1-f31ecc86ef54",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "np_aRBwusFdUNiae-w9V7TcwEC1ycRNJAmU8xPzS8Fg",
+      "createdAt": "2026-05-20T13:11:41.139Z",
+      "lastSeenAt": "2026-05-20T13:11:41.139Z",
+      "idleExpiresAt": "2026-05-21T01:11:41.139Z",
+      "absoluteExpiresAt": "2026-06-03T13:11:41.139Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_69c0444e-2ae5-4f26-ba04-a4dd14f7f48d",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "7--09MKDjojwP-f5YirYMhJhzx4vcNstlyRQdiYxxuA",
+      "createdAt": "2026-05-20T13:11:41.495Z",
+      "lastSeenAt": "2026-05-20T13:11:41.495Z",
+      "idleExpiresAt": "2026-05-21T01:11:41.495Z",
+      "absoluteExpiresAt": "2026-06-03T13:11:41.495Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_3699f43c-2514-4579-9b77-94f1c80bf6d0",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "eJsMQJkpJaxOIP2FUFcmaWLNjU775eG8QKOBltJHMs4",
+      "createdAt": "2026-05-20T13:11:41.714Z",
+      "lastSeenAt": "2026-05-20T13:11:41.714Z",
+      "idleExpiresAt": "2026-05-21T01:11:41.714Z",
+      "absoluteExpiresAt": "2026-06-03T13:11:41.714Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_d7058a2a-a200-41ae-ab87-b65f6404381b",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "pRHZtJ-9CdlJDtqZlZivE7v5EP-tUedAJOo1GdJwqOg",
+      "createdAt": "2026-05-20T13:11:41.716Z",
+      "lastSeenAt": "2026-05-20T13:11:41.716Z",
+      "idleExpiresAt": "2026-05-21T01:11:41.716Z",
+      "absoluteExpiresAt": "2026-06-03T13:11:41.716Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_97677baf-c5a3-45ab-b55e-ef9776f373b1",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "cJ1beRqrwfkGy3YG8h_G3Zx0zgzCqCMdfiF_v7lE8eA",
+      "createdAt": "2026-05-20T13:11:41.717Z",
+      "lastSeenAt": "2026-05-20T13:11:41.717Z",
+      "idleExpiresAt": "2026-05-21T01:11:41.717Z",
+      "absoluteExpiresAt": "2026-06-03T13:11:41.717Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_da9f4cad-1e51-42cf-9a48-31679763be77",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "eU5WRybcZ9ybcWD8YmgH4hLKrrK5XvMpgjAxWEhI460",
+      "createdAt": "2026-05-20T13:11:41.727Z",
+      "lastSeenAt": "2026-05-20T13:11:41.727Z",
+      "idleExpiresAt": "2026-05-21T01:11:41.727Z",
+      "absoluteExpiresAt": "2026-06-03T13:11:41.727Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    },
+    {
+      "id": "session_f2dd8137-250c-4086-bf2b-b5b7602f8584",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "kqOdKdfw5AkUx3UhchwjVsaR0cgqKeWiW2G7ZTdAFIo",
+      "createdAt": "2026-05-20T14:34:40.302Z",
+      "lastSeenAt": "2026-05-20T14:39:44.151Z",
+      "idleExpiresAt": "2026-05-21T02:39:44.151Z",
+      "absoluteExpiresAt": "2026-06-03T14:34:40.302Z",
+      "request": {
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Codex/26.513.31313 Chrome/148.0.7778.97 Electron/42.0.1 Safari/537.36"
+      }
+    },
+    {
+      "id": "session_d6149fcd-1395-4593-b24b-122125313176",
+      "userId": "user_51d45406-c126-4338-a2de-70add0f06539",
+      "tokenHash": "gHnB1Qemd_npG3POqlP_O_f8pQyVHVQRyF5gddF4Bl0",
+      "createdAt": "2026-05-20T14:34:40.302Z",
+      "lastSeenAt": "2026-05-20T14:34:40.302Z",
+      "idleExpiresAt": "2026-05-21T02:34:40.302Z",
+      "absoluteExpiresAt": "2026-06-03T14:34:40.302Z",
+      "request": {
+        "userAgent": "Codex local server discovery"
+      }
+    }
+  ],
+  "setupTokens": [],
+  "cliTokens": [],
+  "moduleServiceTokens": [
+    {
+      "id": "mst_f61d965c-fe8e-40c0-bcc3-3702c212a7f7",
+      "moduleId": "com.example.identity",
+      "tokenHash": "jEX9sAOoKEMdbKZGx2k_0iSF4eXBQkL6BHJ6zwHq1Ig",
+      "label": "Container directory API token",
+      "createdAt": "2026-05-19T16:57:55.816Z",
+      "scope": "module.directory"
+    },
+    {
+      "id": "mst_d8ea97d9-014a-422b-89ae-d875f8b7fa5b",
+      "moduleId": "com.example.reports",
+      "tokenHash": "Ucbnxe9_IZTrK6Xf_sLjTROu-MTJNYa7SS7mgi9SQmw",
+      "label": "Container directory API token",
+      "createdAt": "2026-05-19T16:57:55.928Z",
+      "scope": "module.directory"
+    },
+    {
+      "id": "mst_f003027a-e02c-42e6-b060-b8f0a9f1e7fb",
+      "moduleId": "com.haas.demo-module",
+      "tokenHash": "oQZ0sD4zGKhiKznG5UjnD6tisjJqnUj34G7dHASVylw",
+      "label": "Container directory API token",
+      "createdAt": "2026-05-20T11:39:09.124Z",
+      "scope": "module.directory"
+    },
+    {
+      "id": "mst_6d890090-e5e5-43ce-8130-4d39d6cc6892",
+      "moduleId": "com.haas.demo-module",
+      "tokenHash": "1MosbKu_aXUzEf_w-OXazxbwMAchNyMOE5CqZ6RniAQ",
+      "label": "Container directory API token",
+      "createdAt": "2026-05-20T14:40:07.719Z",
+      "scope": "module.directory"
+    }
+  ],
+  "moduleDirectoryPolicies": [],
+  "externalIdentities": [],
+  "oidcProviders": [],
+  "oidcTransactions": [],
+  "trustedProxyProviders": [],
+  "moduleAssignments": [],
+  "updatedAt": "2026-05-20T14:40:07.720Z"
+}

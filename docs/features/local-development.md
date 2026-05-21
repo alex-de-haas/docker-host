@@ -133,15 +133,20 @@ The launch model must preserve these capabilities:
 
 Test modules do not need to be pushed if their metadata references a Docker image tag already available to the local Docker daemon.
 
-Example metadata image reference for local module testing:
+Example metadata container image reference for local module testing:
 
 ```json
 {
-  "image": {
-    "repository": "acme-reports-module",
-    "tag": "dev",
-    "pullPolicy": "ifNotPresent"
-  }
+  "containers": [
+    {
+      "key": "app",
+      "image": {
+        "repository": "acme-reports-module",
+        "tag": "dev",
+        "pullPolicy": "ifNotPresent"
+      }
+    }
+  ]
 }
 ```
 
@@ -164,7 +169,7 @@ Then link a target:
 docker-host modules dev link \
   http://localhost:3000/fixtures/modules/sample-reports \
   reports.localhost \
-  web \
+  http \
   http://127.0.0.1:3001
 ```
 
@@ -180,7 +185,7 @@ The Host app serves a local metadata fixture for install review UI development:
 http://localhost:3000/fixtures/modules/sample-reports
 ```
 
-The reports fixture references a second local dependency fixture at `/fixtures/modules/sample-identity`, declares editable non-secret settings, one write-only secret, module-owned storage, one required external mount collection, runtime ports, and resource hints. Use the install route's local fixture action to fill the current origin automatically when the dev server runs on a non-default port.
+The reports fixture references a second local dependency fixture at `/fixtures/modules/sample-identity`, declares editable non-secret settings, one write-only secret, module-owned storage, one required external mount collection, endpoints, runtime ports, and resource hints. Use the install route's local fixture action to fill the current origin automatically when the dev server runs on a non-default port.
 
 The install plan endpoint still requires Docker read access. If the fixture returns a Docker conflict or `503`, validate the UI error state first, then create/start Docker through the normal local setup before testing the successful review state. The install apply endpoint creates the Host-managed module network if it does not already exist.
 

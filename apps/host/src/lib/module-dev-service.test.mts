@@ -94,23 +94,31 @@ function createMetadataServer() {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      schemaVersion: '0.1',
+      schemaVersion: '0.2',
       id: 'com.example.reports',
       name: 'Reports',
       version: '1.0.0',
-      image: {
-        repository: 'reports-module',
-        tag: 'dev',
-        pullPolicy: 'ifNotPresent',
-      },
-      runtime: {
-        ports: [{
-          key: 'web',
-          containerPort: 8080,
-          protocol: 'http',
-          public: true,
-        }],
-      },
+      containers: [{
+        key: 'app',
+        image: {
+          repository: 'reports-module',
+          tag: 'dev',
+          pullPolicy: 'ifNotPresent',
+        },
+        runtime: {
+          ports: [{
+            key: 'http',
+            containerPort: 8080,
+            protocol: 'http',
+          }],
+        },
+      }],
+      endpoints: [{
+        key: 'web',
+        container: 'app',
+        port: 'http',
+        public: true,
+      }],
     }));
   });
 }

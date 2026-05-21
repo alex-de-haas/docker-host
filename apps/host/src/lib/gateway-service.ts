@@ -229,11 +229,11 @@ export async function resolveGatewayTarget(
   }
 
   const metadata = await readInstalledModuleMetadata(installedModule, config);
-  const port = metadata?.runtime?.ports?.find(candidate => candidate.key === exposure.portKey);
-  if (!port) {
+  const target = metadata ? resolveEndpointTarget(metadata, exposure.portKey) : null;
+  if (!target) {
     throw new GatewayServiceError(
       'port_not_found',
-      `Module "${exposure.moduleId}" does not define runtime port "${exposure.portKey}".`
+      `Module "${exposure.moduleId}" does not define endpoint "${exposure.portKey}".`
     );
   }
 
@@ -244,14 +244,15 @@ export async function resolveGatewayTarget(
     exposurePolicy: exposure.exposurePolicy,
     assignments: auth.moduleAssignments,
   });
-  const networkAlias = getModuleNetworkAlias(exposure.moduleId);
+  const networkAlias = installedModule.containers.find(container => container.key === target.endpoint.container)?.networkAlias ||
+    getModuleNetworkAlias(exposure.moduleId, target.endpoint.container);
 
   return {
     exposure,
-    targetBaseUrl: `http://${networkAlias}:${port.containerPort}`,
+    targetBaseUrl: `http://${networkAlias}:${target.port.containerPort}`,
     networkAlias,
-    containerPort: port.containerPort,
-    port,
+    containerPort: target.port.containerPort,
+    port: target.port,
     access,
   };
 }
@@ -311,18 +312,18 @@ export async function validateGatewayExposureInput(
   }
 
   const metadata = await readInstalledModuleMetadata(installedModule, config);
-  const port = metadata?.runtime?.ports?.find(candidate => candidate.key === portKey);
-  if (!port) {
+  const target = metadata ? resolveEndpointTarget(metadata, portKey) : null;
+  if (!target) {
     throw new GatewayServiceError(
       'port_not_found',
-      `Module "${moduleId}" does not define runtime port "${portKey}".`
+      `Module "${moduleId}" does not define endpoint "${portKey}".`
     );
   }
 
-  if (!port.public) {
+  if (!target.endpoint.public) {
     throw new GatewayServiceError(
       'port_not_public',
-      `Runtime port "${portKey}" is not marked as externally exposable.`
+      `Endpoint "${portKey}" is not marked as externally exposable.`
     );
   }
 
@@ -335,6 +336,14 @@ export async function validateGatewayExposureInput(
     identityMode,
     enabled,
   };
+}
+
+function resolveEndpointTarget(metadata: ModuleMetadata, endpointKey: string) {
+  const endpoint = metadata.endpoints?.find(candidate => candidate.key === endpointKey);
+  const container = metadata.containers.find(candidate => candidate.key === endpoint?.container);
+  const port = container?.runtime?.ports?.find(candidate => candidate.key === endpoint?.port);
+
+  return endpoint && container && port ? { endpoint, container, port } : null;
 }
 
 export function normalizeGatewayHostname(hostname: string) {
@@ -374,14 +383,14 @@ export function isAllowedGatewayHostname(hostname: string, config = getHostRunti
   return hostname.endsWith(`.${baseDomain}`) && hostname !== `host.${baseDomain}`;
 }
 
-export function getModuleNetworkAlias(moduleId: string) {
+export function getModuleNetworkAlias(moduleId: string, containerKey = 'main') {
   const normalized = moduleId
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-');
 
-  return `mod-${normalized || 'module'}`;
+  return `mod-${normalized || 'module'}-${containerKey}`;
 }
 
 export function isGatewayServiceError(error: unknown): error is GatewayServiceError {
@@ -415,7 +424,7 @@ async function findInstalledModuleSnapshot(
 async function readModulesStoreSnapshot(config: HostRuntimeConfig): Promise<ModulesStoreData> {
   if (!(await pathExists(config.modulesStorePath))) {
     return {
-      schemaVersion: '0.1',
+      schemaVersion: '0.2',
       hostSettings: {},
       modules: [],
       updatedAt: new Date().toISOString(),
@@ -430,7 +439,7 @@ async function readModulesStoreSnapshot(config: HostRuntimeConfig): Promise<Modu
   }
 
   return {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: isObject(parsed.hostSettings) ? parsed.hostSettings : {},
     modules: Array.isArray(parsed.modules) ? parsed.modules.filter(isInstalledModuleRecord) : [],
     updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
@@ -460,7 +469,10 @@ async function readInstalledModuleMetadata(
 }
 
 function isInstalledModuleRecord(value: unknown): value is InstalledModuleRecord {
-  return isObject(value) && typeof value.id === 'string' && typeof value.metadataUrl === 'string';
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.metadataUrl === 'string' &&
+    Array.isArray(value.containers);
 }
 
 function isExposurePolicy(value: unknown): value is GatewayExposureRecord['exposurePolicy'] {

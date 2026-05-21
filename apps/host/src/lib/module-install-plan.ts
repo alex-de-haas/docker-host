@@ -15,6 +15,7 @@ import { readModulesStoreSnapshot } from '@/lib/module-store';
 import type {
   InstallPlan,
   InstallPlanConflict,
+  InstallPlanContainer,
   InstallPlanDependencyConnection,
   InstallPlanDependencyNode,
   InstallPlanErrorEnvelope,
@@ -144,7 +145,7 @@ function buildPlan(
   const dependencies = orderedNodes
     .filter(node => node.id !== graph.rootId)
     .map(node => buildDependencyNode(graph, node.id, store, config));
-  const images = orderedNodes.map(node => buildImage(node.id, node.metadata));
+  const images = orderedNodes.flatMap(node => buildImages(node.id, node.metadata));
   const administratorInputModuleIds = new Set([
     graph.rootId,
     ...dependencies
@@ -162,8 +163,7 @@ function buildPlan(
     buildMountCollections(node.id, node.metadata)
   );
   const rootPaths = buildModulePaths(root.id, config);
-  const rootContainerName = getModuleDockerName(root.id);
-  const rootNetworkAlias = getModuleNetworkAlias(root.id);
+  const rootContainers = buildPlanContainers(root.id, root.metadata);
 
   const planWithoutDigest: Omit<InstallPlan, 'planDigest'> = {
     metadataUrl: root.metadataUrl,
@@ -184,17 +184,12 @@ function buildPlan(
       mountCollections,
     },
     runtime: {
-      ports: root.metadata.runtime.ports.map(port => ({
-        ...port,
-        hostPublished: false,
-      })),
-      ...(root.metadata.runtime.resources ? { resources: root.metadata.runtime.resources } : {}),
+      endpoints: root.metadata.endpoints,
     },
     paths: rootPaths,
     docker: {
       networkName: config.moduleNetwork,
-      containerName: rootContainerName,
-      networkAliases: [rootNetworkAlias],
+      containers: rootContainers,
     },
     conflicts: [],
   };
@@ -230,10 +225,7 @@ function buildDependencyNode(
     requiredBy: [...new Set(node.requiredBy)].sort(),
     normalizedMetadata: node.metadata,
     installAction: existingModule ? 'reuse' : 'install',
-    docker: {
-      containerName: getModuleDockerName(node.id),
-      networkAlias: getModuleNetworkAlias(node.id),
-    },
+    containers: buildPlanContainers(node.id, node.metadata),
     paths: buildModulePaths(node.id, config),
     connections: buildDependencyConnections(graph, node.id),
   };
@@ -256,11 +248,18 @@ export function buildDependencyConnections(
         continue;
       }
 
-      const endpoint = dependencyNode.metadata.runtime.ports.find(
-        port => port.key === edge.declaration.connection?.endpoint
+      const endpoint = dependencyNode.metadata.endpoints.find(
+        candidate => candidate.key === edge.declaration.connection?.endpoint
       );
 
       if (!endpoint) {
+        continue;
+      }
+
+      const container = dependencyNode.metadata.containers.find(candidate => candidate.key === endpoint.container);
+      const port = container?.runtime.ports.find(candidate => candidate.key === endpoint.port);
+
+      if (!container || !port) {
         continue;
       }
 
@@ -268,8 +267,8 @@ export function buildDependencyConnections(
         consumerId: consumer.id,
         dependencyId,
         endpoint: edge.declaration.connection.endpoint,
-        baseUrlEnv: edge.declaration.connection.baseUrlEnv,
-        resolvedBaseUrl: `http://${getModuleNetworkAlias(dependencyId)}:${endpoint.containerPort}`,
+        targets: edge.declaration.connection.targets,
+        resolvedBaseUrl: `http://${getModuleNetworkAlias(dependencyId, container.key)}:${port.containerPort}`,
       });
     }
   }
@@ -305,14 +304,46 @@ export function buildInstallOrder(
   return order;
 }
 
-export function buildImage(moduleId: string, metadata: NormalizedModuleMetadata): InstallPlanImage {
-  return {
+export function buildImages(moduleId: string, metadata: NormalizedModuleMetadata): InstallPlanImage[] {
+  return metadata.containers.map(container => ({
     moduleId,
-    repository: metadata.image.repository,
-    tag: metadata.image.tag,
-    reference: `${metadata.image.repository}:${metadata.image.tag}`,
-    pullPolicy: metadata.image.pullPolicy,
-  };
+    container: container.key,
+    repository: container.image.repository,
+    tag: container.image.tag,
+    reference: `${container.image.repository}:${container.image.tag}`,
+    pullPolicy: container.image.pullPolicy,
+  }));
+}
+
+export function buildPlanContainers(
+  moduleId: string,
+  metadata: NormalizedModuleMetadata
+): InstallPlanContainer[] {
+  return metadata.containers.map(container => {
+    const image: InstallPlanImage = {
+      moduleId,
+      container: container.key,
+      repository: container.image.repository,
+      tag: container.image.tag,
+      reference: `${container.image.repository}:${container.image.tag}`,
+      pullPolicy: container.image.pullPolicy,
+    };
+
+    return {
+      moduleId,
+      key: container.key,
+      containerName: getModuleDockerName(moduleId, container.key),
+      networkAlias: getModuleNetworkAlias(moduleId, container.key),
+      image,
+      dependsOn: container.dependsOn,
+      ports: container.runtime.ports.map(port => ({
+        ...port,
+        hostPublished: false,
+      })),
+      ...(container.runtime.resources ? { resources: container.runtime.resources } : {}),
+      endpoints: metadata.endpoints.filter(endpoint => endpoint.container === container.key),
+    };
+  });
 }
 
 export function buildSettingPrompts(
@@ -324,7 +355,7 @@ export function buildSettingPrompts(
     key: setting.key,
     type: setting.type,
     required: setting.required,
-    target: setting.target,
+    targets: setting.targets,
     ...(setting.type !== 'secret' && Object.prototype.hasOwnProperty.call(setting, 'default')
       ? { default: setting.default }
       : {}),
@@ -340,7 +371,7 @@ export function buildStorageDirectories(
 ): InstallPlanStorageDirectory[] {
   const modulePaths = buildModulePaths(moduleId, config);
 
-  return metadata.storage.directories.map(directory => {
+  return metadata.storage.directories.flatMap(directory => directory.targets.map(target => {
     const modulePathSegments = directory.mount.modulePath.split('/');
     const hostPath = path.join(modulePaths.moduleDirectoryHost, ...modulePathSegments);
     const containerHostPath = path.join(modulePaths.moduleDirectoryContainer, ...modulePathSegments);
@@ -348,15 +379,16 @@ export function buildStorageDirectories(
     return {
       moduleId,
       key: directory.key,
-      containerPath: directory.containerPath,
+      container: target.container,
+      containerPath: target.containerPath,
       modulePath: directory.mount.modulePath,
       hostPath,
       containerHostPath,
       required: directory.required,
-      writable: directory.writable,
-      readOnly: !directory.writable,
+      writable: target.writable,
+      readOnly: !target.writable,
     };
-  });
+  }));
 }
 
 export function buildMountCollections(
@@ -403,13 +435,10 @@ function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
     });
   }
 
-  for (const nodeId of plan.installOrder) {
-    const nodeContainerName = nodeId === plan.module.id
-      ? plan.docker.containerName
-      : plan.dependencies.find(dependency => dependency.id === nodeId)?.docker.containerName;
-    const nodeAlias = nodeId === plan.module.id
-      ? plan.docker.networkAliases[0]
-      : plan.dependencies.find(dependency => dependency.id === nodeId)?.docker.networkAlias;
+  for (const target of getPlanContainers(plan)) {
+    const nodeId = target.moduleId;
+    const nodeContainerName = target.containerName;
+    const nodeAlias = target.networkAlias;
 
     if (nodeContainerName) {
       const existingNode = plannedContainerNames.get(nodeContainerName);
@@ -467,37 +496,40 @@ function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
       continue;
     }
 
-    const existingContainerName =
-      installedModule.containerName || getModuleDockerName(installedModule.id);
-    const plannedContainerOwner = plannedContainerNames.get(existingContainerName);
+    for (const installedContainer of installedModule.containers) {
+      const existingContainerName = installedContainer.containerName;
+      const plannedContainerOwner = plannedContainerNames.get(existingContainerName);
 
-    if (plannedContainerOwner) {
-      conflicts.push({
-        code: 'container_name_conflict',
-        message: `Generated container name "${existingContainerName}" conflicts with installed module "${installedModule.id}".`,
-        resourceType: 'docker_container',
-        resourceId: existingContainerName,
-        path: '$.id',
-        node: plannedContainerOwner,
-        existingValue: installedModule.id,
-        proposedValue: plannedContainerOwner,
-      });
+      if (plannedContainerOwner) {
+        conflicts.push({
+          code: 'container_name_conflict',
+          message: `Generated container name "${existingContainerName}" conflicts with installed module "${installedModule.id}".`,
+          resourceType: 'docker_container',
+          resourceId: existingContainerName,
+          path: '$.id',
+          node: plannedContainerOwner,
+          existingValue: installedModule.id,
+          proposedValue: plannedContainerOwner,
+        });
+      }
     }
 
-    const existingAlias = getModuleNetworkAlias(installedModule.id);
-    const plannedAliasOwner = plannedNetworkAliases.get(existingAlias);
+    for (const installedContainer of installedModule.containers) {
+      const existingAlias = installedContainer.networkAlias;
+      const plannedAliasOwner = plannedNetworkAliases.get(existingAlias);
 
-    if (plannedAliasOwner) {
-      conflicts.push({
-        code: 'network_alias_conflict',
-        message: `Generated network alias "${existingAlias}" conflicts with installed module "${installedModule.id}".`,
-        resourceType: 'docker_network_alias',
-        resourceId: existingAlias,
-        path: '$.id',
-        node: plannedAliasOwner,
-        existingValue: installedModule.id,
-        proposedValue: plannedAliasOwner,
-      });
+      if (plannedAliasOwner) {
+        conflicts.push({
+          code: 'network_alias_conflict',
+          message: `Generated network alias "${existingAlias}" conflicts with installed module "${installedModule.id}".`,
+          resourceType: 'docker_network_alias',
+          resourceId: existingAlias,
+          path: '$.id',
+          node: plannedAliasOwner,
+          existingValue: installedModule.id,
+          proposedValue: plannedAliasOwner,
+        });
+      }
     }
   }
 
@@ -562,15 +594,18 @@ export function collectEnvironmentTargetConflicts(plan: InstallPlan): InstallPla
     const envTargets = new Map<string, { path: string; source: string }>();
 
     metadata.settings.forEach((setting, index) => {
-      addEnvTarget({
-        envTargets,
-        conflicts,
-        moduleId,
-        name: setting.target.name,
-        path: moduleId === plan.module.id
-          ? `$.settings[${index}].target.name`
-          : `$.dependencies[?(@.id=="${moduleId}")].normalizedMetadata.settings[${index}].target.name`,
-        source: `setting:${setting.key}`,
+      setting.targets.forEach((target, targetIndex) => {
+        addEnvTarget({
+          envTargets,
+          conflicts,
+          moduleId,
+          container: target.container,
+          name: target.name,
+          path: moduleId === plan.module.id
+            ? `$.settings[${index}].targets[${targetIndex}].name`
+            : `$.dependencies[?(@.id=="${moduleId}")].normalizedMetadata.settings[${index}].targets[${targetIndex}].name`,
+          source: `setting:${setting.key}`,
+        });
       });
     });
 
@@ -579,15 +614,32 @@ export function collectEnvironmentTargetConflicts(plan: InstallPlan): InstallPla
         return;
       }
 
-      addEnvTarget({
-        envTargets,
-        conflicts,
-        moduleId,
-        name: dependency.connection.baseUrlEnv,
-        path: moduleId === plan.module.id
-          ? `$.dependencies[${index}].connection.baseUrlEnv`
-          : `$.dependencies[?(@.id=="${moduleId}")].normalizedMetadata.dependencies[${index}].connection.baseUrlEnv`,
-        source: `dependency:${dependency.id}`,
+      dependency.connection.targets.forEach((target, targetIndex) => addEnvTarget({
+          envTargets,
+          conflicts,
+          moduleId,
+          container: target.container,
+          name: target.name,
+          path: moduleId === plan.module.id
+            ? `$.dependencies[${index}].connection.targets[${targetIndex}].name`
+            : `$.dependencies[?(@.id=="${moduleId}")].normalizedMetadata.dependencies[${index}].connection.targets[${targetIndex}].name`,
+          source: `dependency:${dependency.id}`,
+        }));
+    });
+
+    metadata.connections.forEach((connection, index) => {
+      connection.targets.forEach((target, targetIndex) => {
+        addEnvTarget({
+          envTargets,
+          conflicts,
+          moduleId,
+          container: target.container,
+          name: target.name,
+          path: moduleId === plan.module.id
+            ? `$.connections[${index}].targets[${targetIndex}].name`
+            : `$.dependencies[?(@.id=="${moduleId}")].normalizedMetadata.connections[${index}].targets[${targetIndex}].name`,
+          source: `connection:${connection.source.key}`,
+        });
       });
     });
   }
@@ -599,6 +651,7 @@ function addEnvTarget({
   envTargets,
   conflicts,
   moduleId,
+  container,
   name,
   path: targetPath,
   source,
@@ -606,18 +659,20 @@ function addEnvTarget({
   envTargets: Map<string, { path: string; source: string }>;
   conflicts: InstallPlanConflict[];
   moduleId: string;
+  container: string;
   name: string;
   path: string;
   source: string;
 }) {
-  const existing = envTargets.get(name);
+  const targetKey = `${container}:${name}`;
+  const existing = envTargets.get(targetKey);
 
   if (existing) {
     conflicts.push({
       code: 'environment_variable_target_conflict',
-      message: `Environment variable "${name}" is assigned by multiple plan inputs for module "${moduleId}".`,
+      message: `Environment variable "${name}" is assigned by multiple plan inputs for module "${moduleId}" container "${container}".`,
       resourceType: 'environment_variable',
-      resourceId: name,
+      resourceId: targetKey,
       path: targetPath,
       node: moduleId,
       existingValue: existing.source,
@@ -626,7 +681,7 @@ function addEnvTarget({
     return;
   }
 
-  envTargets.set(name, { path: targetPath, source });
+  envTargets.set(targetKey, { path: targetPath, source });
 }
 
 async function collectDockerConflicts(
@@ -662,20 +717,23 @@ async function collectDockerConflicts(
   const existingById = new Map(store.modules.map(module => [module.id, module]));
   const plannedDockerTargets = new Map<string, { moduleId: string; containerName: string; alias: string }>();
 
-  plannedDockerTargets.set(plan.module.id, {
-    moduleId: plan.module.id,
-    containerName: plan.docker.containerName,
-    alias: plan.docker.networkAliases[0],
-  });
-
+  for (const container of plan.docker.containers) {
+    plannedDockerTargets.set(`${container.moduleId}:${container.key}`, {
+      moduleId: container.moduleId,
+      containerName: container.containerName,
+      alias: container.networkAlias,
+    });
+  }
   for (const dependency of plan.dependencies) {
     const installed = existingById.get(dependency.id);
-
-    plannedDockerTargets.set(dependency.id, {
-      moduleId: dependency.id,
-      containerName: installed?.containerName || dependency.docker.containerName,
-      alias: dependency.docker.networkAlias,
-    });
+    const containers = installed?.containers ?? dependency.containers;
+    for (const container of containers) {
+      plannedDockerTargets.set(`${dependency.id}:${container.key}`, {
+        moduleId: dependency.id,
+        containerName: container.containerName,
+        alias: container.networkAlias,
+      });
+    }
   }
 
   for (const target of plannedDockerTargets.values()) {
@@ -720,9 +778,8 @@ async function collectDockerConflicts(
 
       const reusable = isReusableInstalledDependency(target.moduleId, plan.module.id, existingById);
       const installed = existingById.get(target.moduleId);
-      const installedContainerName = installed?.containerName || (installed ? getModuleDockerName(installed.id) : null);
-      const aliasBelongsToReusableContainer =
-        reusable && installedContainerName && aliasReservation.containerName === installedContainerName;
+      const installedContainerNames = new Set((installed?.containers ?? []).map(container => container.containerName));
+      const aliasBelongsToReusableContainer = reusable && installedContainerNames.has(aliasReservation.containerName);
 
       if (!aliasBelongsToReusableContainer) {
         conflicts.push({
@@ -730,7 +787,7 @@ async function collectDockerConflicts(
           message: `Network alias "${target.alias}" is already used on Docker network "${config.moduleNetwork}".`,
           resourceType: 'docker_network_alias',
           resourceId: target.alias,
-          path: '$.docker.networkAliases',
+          path: '$.docker.containers',
           node: target.moduleId,
           existingValue: aliasReservation.containerName,
           proposedValue: target.alias,
@@ -767,6 +824,13 @@ function isReusableInstalledDependency(
   existingById: Map<string, InstalledModuleRecord>
 ) {
   return moduleId !== rootModuleId && existingById.has(moduleId);
+}
+
+function getPlanContainers(plan: InstallPlan): InstallPlanContainer[] {
+  return [
+    ...plan.docker.containers,
+    ...plan.dependencies.flatMap(dependency => dependency.containers),
+  ];
 }
 
 function getInstalledStorageMappings(module: InstalledModuleRecord): InstalledStorageMapping[] {

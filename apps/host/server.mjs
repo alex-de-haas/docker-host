@@ -198,9 +198,9 @@ export async function resolveGatewayRequest(req) {
   }
 
   const metadata = await readModuleMetadata(installedModule, config);
-  const runtimePort = metadata?.runtime?.ports?.find(port => port.key === exposure.portKey);
-  if (!runtimePort) {
-    throw new Error(`Module "${exposure.moduleId}" does not define runtime port "${exposure.portKey}".`);
+  const endpointTarget = resolveModuleEndpointTarget(metadata, exposure.portKey);
+  if (!endpointTarget) {
+    throw new Error(`Module "${exposure.moduleId}" does not define endpoint "${exposure.portKey}".`);
   }
 
   const trustedProxy = await authenticateTrustedProxyRequest(req, config);
@@ -213,7 +213,11 @@ export async function resolveGatewayRequest(req) {
     exposurePolicy: policy,
     assignments: authState.moduleAssignments || [],
   });
-  const networkAlias = getModuleNetworkAlias(exposure.moduleId);
+  const installedContainer = Array.isArray(installedModule.containers)
+    ? installedModule.containers.find(container => container.key === endpointTarget.containerKey)
+    : null;
+  const networkAlias = installedContainer?.networkAlias ||
+    getModuleNetworkAlias(exposure.moduleId, endpointTarget.containerKey);
 
   return {
     exposure: {
@@ -225,8 +229,8 @@ export async function resolveGatewayRequest(req) {
     access,
     principal,
     networkAlias,
-    containerPort: runtimePort.containerPort,
-    targetOrigin: `http://${networkAlias}:${runtimePort.containerPort}`,
+    containerPort: endpointTarget.port.containerPort,
+    targetOrigin: `http://${networkAlias}:${endpointTarget.port.containerPort}`,
     requestHost: req.headers.host,
     requestProtocol: getRequestProtocol(req),
     trustedProxyAssertionHeaders: trustedProxy.assertionHeaders,
@@ -547,21 +551,21 @@ function canAccessModule({ principal, moduleId, exposurePolicy, assignments }) {
 
 async function readModulesStore(config) {
   const store = await readJsonIfExists(config.modulesStorePath, {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: {},
     modules: [],
   });
 
   if (Array.isArray(store)) {
     return {
-      schemaVersion: '0.1',
+      schemaVersion: '0.2',
       hostSettings: {},
       modules: store.filter(isInstalledModuleRecord),
     };
   }
 
   return {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: isObject(store.hostSettings) ? store.hostSettings : {},
     modules: Array.isArray(store.modules) ? store.modules.filter(isInstalledModuleRecord) : [],
   };
@@ -624,14 +628,42 @@ function getRuntimeConfig() {
   };
 }
 
-function getModuleNetworkAlias(moduleId) {
+function getModuleNetworkAlias(moduleId, containerKey = 'main') {
   const normalized = moduleId
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-');
 
-  return `mod-${normalized || 'module'}`;
+  return `mod-${normalized || 'module'}-${containerKey}`;
+}
+
+function resolveModuleEndpointTarget(metadata, endpointKey) {
+  if (!isObject(metadata) || !Array.isArray(metadata.endpoints) || !Array.isArray(metadata.containers)) {
+    return null;
+  }
+
+  const endpoint = metadata.endpoints.find(candidate =>
+    candidate &&
+    candidate.key === endpointKey &&
+    typeof candidate.container === 'string' &&
+    typeof candidate.port === 'string'
+  );
+  if (!endpoint) {
+    return null;
+  }
+
+  const container = metadata.containers.find(candidate => candidate?.key === endpoint.container);
+  const port = container?.runtime?.ports?.find(candidate => candidate?.key === endpoint.port);
+  if (!port || typeof port.containerPort !== 'number') {
+    return null;
+  }
+
+  return {
+    containerKey: endpoint.container,
+    endpoint,
+    port,
+  };
 }
 
 async function resolveModuleDevTarget(hostnameValue, config) {
@@ -896,7 +928,10 @@ async function appendGatewayAuditEvent(req, target, allowed = false) {
 }
 
 function isInstalledModuleRecord(value) {
-  return isObject(value) && typeof value.id === 'string' && typeof value.metadataUrl === 'string';
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.metadataUrl === 'string' &&
+    Array.isArray(value.containers);
 }
 
 function isObject(value) {

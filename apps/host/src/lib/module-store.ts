@@ -5,7 +5,7 @@ import { getHostRuntimeConfig, pathExists } from '@/lib/host-runtime';
 import type { HostRuntimeConfig } from '@/lib/host-runtime';
 import type { InstalledModuleRecord, ModuleMetadata, ModulesStoreData } from '@/types/modules';
 
-const STORE_SCHEMA_VERSION = '0.1';
+const STORE_SCHEMA_VERSION = '0.2';
 
 export interface ModulesStoreStatus {
   path: string;
@@ -167,7 +167,10 @@ function normalizeStore(parsed: unknown): ModulesStoreData {
 }
 
 function isInstalledModuleRecord(value: unknown): value is InstalledModuleRecord {
-  return isObject(value) && typeof value.id === 'string' && typeof value.metadataUrl === 'string';
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.metadataUrl === 'string' &&
+    Array.isArray(value.containers);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

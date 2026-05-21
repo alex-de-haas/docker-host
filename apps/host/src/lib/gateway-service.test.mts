@@ -29,7 +29,7 @@ test('creates gateway exposure for a public module port and resolves target', as
   assert.equal(exposure.identityMode, 'required');
 
   const anonymousTarget = await resolveGatewayTarget('reports.example.test', null, config);
-  assert.equal(anonymousTarget?.targetBaseUrl, 'http://mod-com-example-reports:8080');
+  assert.equal(anonymousTarget?.targetBaseUrl, 'http://mod-com-example-reports-app:8080');
   assert.equal(anonymousTarget?.access.allowed, false);
   assert.equal(anonymousTarget?.access.reason, 'loginRequired');
 
@@ -42,7 +42,7 @@ test('creates gateway exposure for a public module port and resolves target', as
   assert.equal(userTarget?.access.reason, 'authenticated');
 });
 
-test('rejects exposure for runtime ports not marked public', async () => {
+test('rejects exposure for endpoints not marked public', async () => {
   const config = await createGatewayTestConfig();
   await writeInstalledModule(config, {
     moduleId: 'com.example.identity',
@@ -168,34 +168,52 @@ async function writeInstalledModule(
   const moduleRoot = path.join(config.modulesRootContainer, input.moduleId);
   await fs.mkdir(moduleRoot, { recursive: true });
   await fs.writeFile(config.modulesStorePath, `${JSON.stringify({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: {},
     modules: [
       {
         id: input.moduleId,
         metadataUrl: 'https://modules.example.test/module.json',
         operationStatus: 'installed',
+        containers: [{
+          key: 'app',
+          containerName: `mod-${input.moduleId.replace(/\./g, '-')}-app`,
+          networkAlias: `mod-${input.moduleId.replace(/\./g, '-')}-app`,
+          image: {
+            repository: 'ghcr.io/example/module',
+            tag: 'latest',
+            reference: 'ghcr.io/example/module:latest',
+            pullPolicy: 'ifNotPresent',
+          },
+        }],
       },
     ],
     updatedAt: new Date().toISOString(),
   }, null, 2)}\n`);
   await fs.writeFile(path.join(moduleRoot, 'metadata.json'), `${JSON.stringify({
+    schemaVersion: '0.2',
     id: input.moduleId,
     name: 'Example Module',
     version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/module',
-      tag: 'latest',
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'web',
+    containers: [{
+      key: 'app',
+      image: {
+        repository: 'ghcr.io/example/module',
+        tag: 'latest',
+      },
+      runtime: {
+        ports: [{
+          key: 'http',
           containerPort: 8080,
           protocol: 'http',
-          public: input.portPublic,
-        },
-      ],
-    },
+        }],
+      },
+    }],
+    endpoints: [{
+      key: 'web',
+      container: 'app',
+      port: 'http',
+      public: input.portPublic,
+    }],
   }, null, 2)}\n`);
 }

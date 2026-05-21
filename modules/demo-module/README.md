@@ -21,7 +21,7 @@ The module metadata lives at:
 modules/demo-module/metadata.json
 ```
 
-For Docker Host testing, install the module from the raw metadata URL in this repository. The metadata uses the GitHub Container Registry image reference:
+For Docker Host testing, install the module from the raw metadata URL in this repository. The metadata declares one `app` container using the GitHub Container Registry image reference:
 
 ```text
 ghcr.io/alex-de-haas/demo-module:latest

@@ -8,16 +8,42 @@ export function GET() {
   }
 
   return NextResponse.json({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     id: 'com.example.identity',
     name: 'Example Identity',
     description: 'Development identity service fixture.',
     version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/docker-host-identity',
-      tag: '1.0.0',
-      pullPolicy: 'ifNotPresent',
-    },
+    containers: [
+      {
+        key: 'app',
+        image: {
+          repository: 'ghcr.io/example/docker-host-identity',
+          tag: '1.0.0',
+          pullPolicy: 'ifNotPresent',
+        },
+        runtime: {
+          ports: [
+            {
+              key: 'http',
+              containerPort: 8080,
+              protocol: 'http',
+            },
+          ],
+          resources: {
+            cpus: 0.25,
+            memory: '128m',
+          },
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'http',
+        container: 'app',
+        port: 'http',
+        public: false,
+      },
+    ],
     dependencies: [],
     settings: [
       {
@@ -25,10 +51,13 @@ export function GET() {
         type: 'url',
         required: true,
         default: 'https://identity.example.test',
-        target: {
-          type: 'env',
-          name: 'IDENTITY_ISSUER',
-        },
+        targets: [
+          {
+            container: 'app',
+            type: 'env',
+            name: 'IDENTITY_ISSUER',
+          },
+        ],
       },
     ],
     storage: {
@@ -37,10 +66,15 @@ export function GET() {
           key: 'data',
           label: 'Data',
           description: 'Identity state.',
-          containerPath: '/app/data',
           purpose: 'data',
           required: true,
-          writable: true,
+          targets: [
+            {
+              container: 'app',
+              containerPath: '/app/data',
+              writable: true,
+            },
+          ],
           mount: {
             recommended: true,
             type: 'bind',
@@ -49,20 +83,6 @@ export function GET() {
         },
       ],
       mountCollections: [],
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'http',
-          containerPort: 8080,
-          protocol: 'http',
-          public: false,
-        },
-      ],
-      resources: {
-        cpus: 0.25,
-        memory: '128m',
-      },
     },
   });
 }

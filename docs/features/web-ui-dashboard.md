@@ -10,7 +10,7 @@ The dashboard reads installed modules from `GET /api/modules`, shows Host/Docker
 - `POST /api/modules/{moduleId}/stop`
 - `POST /api/modules/{moduleId}/restart`
 
-The dashboard displays module metadata, image reference, operation status, Docker runtime state, container identity, timestamps, and any recorded module/runtime error. Rows can expand for details. Lifecycle actions are enabled only for modules in `operationStatus=installed`; failed or removing modules expose recovery actions instead.
+The dashboard displays module metadata, service/image references, operation status, aggregate Docker runtime state, per-service runtime state, timestamps, and any recorded module/runtime error. Rows can expand for details. Lifecycle actions are enabled only for modules in `operationStatus=installed`; failed or removing modules expose recovery actions instead.
 
 Implemented module-management flows:
 

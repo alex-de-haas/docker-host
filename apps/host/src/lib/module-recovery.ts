@@ -214,18 +214,21 @@ export async function retryFailedModuleInstall(
       await startResolvedDependencies(installedModule, store, docker);
       await docker.removeContainerIfExists(installedModule);
 
-      const image = buildInstallImage(installedModule, metadataResult.metadata);
+      const containerRecord = installedModule.containers[0];
+      const metadataContainer = metadataResult.metadata.containers.find(container => container.key === containerRecord?.key) ??
+        metadataResult.metadata.containers[0];
+      const image = buildInstallImage(installedModule, metadataResult.metadata, metadataContainer?.key);
       await docker.pullImage(image);
       await docker.createAndStartContainer({
         moduleId,
-        containerName: getModuleContainerName(installedModule),
+        containerName: containerRecord?.containerName || getModuleContainerName(installedModule),
         networkName: config.moduleNetwork,
-        networkAlias: getModuleNetworkAlias(installedModule.id),
+        networkAlias: containerRecord?.networkAlias || getModuleNetworkAlias(installedModule.id),
         imageReference: image.reference,
-        env: buildRetryEnvironment(installedModule, metadataResult.metadata),
-        mounts: buildRetryMounts(installedModule),
-        ports: metadataResult.metadata.runtime.ports,
-        ...(metadataResult.metadata.runtime.resources ? { resources: metadataResult.metadata.runtime.resources } : {}),
+        env: buildRetryEnvironment(installedModule, metadataResult.metadata, metadataContainer?.key ?? containerRecord?.key ?? ''),
+        mounts: buildRetryMounts(installedModule, metadataContainer?.key ?? containerRecord?.key ?? ''),
+        ports: metadataContainer?.runtime.ports ?? [],
+        ...(metadataContainer?.runtime.resources ? { resources: metadataContainer.runtime.resources } : {}),
       });
 
       await updateModuleRecord(moduleId, config, existing => ({
@@ -650,7 +653,8 @@ async function startResolvedDependencies(
 
 function buildRetryEnvironment(
   module: InstalledModuleRecord,
-  metadata: NormalizedModuleMetadata
+  metadata: NormalizedModuleMetadata,
+  containerKey: string
 ) {
   const env: Record<string, string> = {};
   const settings = module.settings || {};
@@ -658,27 +662,31 @@ function buildRetryEnvironment(
   for (const setting of metadata.settings) {
     const value = settings[setting.key];
     if (value !== undefined) {
-      env[setting.target.name] = stringifySettingValue(value);
+      for (const target of setting.targets.filter(target => target.container === containerKey)) {
+        env[target.name] = stringifySettingValue(value);
+      }
     }
   }
 
   for (const dependency of getResolvedDependencies(module)) {
-    if (dependency.baseUrlEnv && dependency.resolvedBaseUrl) {
-      env[dependency.baseUrlEnv] = dependency.resolvedBaseUrl;
+    if (dependency.resolvedBaseUrl) {
+      for (const target of (dependency.targets ?? []).filter(target => target.container === containerKey)) {
+        env[target.name] = dependency.resolvedBaseUrl;
+      }
     }
   }
 
   return env;
 }
 
-function buildRetryMounts(module: InstalledModuleRecord) {
+function buildRetryMounts(module: InstalledModuleRecord, containerKey: string) {
   return [
-    ...getStoredStorageMappings(module).map(mapping => ({
+    ...getStoredStorageMappings(module).filter(mapping => mapping.container === containerKey).map(mapping => ({
       hostPath: mapping.hostPath,
       containerPath: mapping.containerPath,
       readOnly: Boolean(mapping.readOnly),
     })),
-    ...getStoredExternalMounts(module).map(mount => ({
+    ...getStoredExternalMounts(module).filter(mount => mount.container === containerKey).map(mount => ({
       hostPath: mount.hostPath,
       containerPath: mount.containerPath,
       readOnly: mount.readOnly,
@@ -688,21 +696,26 @@ function buildRetryMounts(module: InstalledModuleRecord) {
 
 function buildInstallImage(
   module: InstalledModuleRecord,
-  metadata: NormalizedModuleMetadata
+  metadata: NormalizedModuleMetadata,
+  containerKey?: string
 ): InstallPlanImage {
-  const repository = module.image?.repository || metadata.image.repository;
-  const tag = module.image?.tag || metadata.image.tag;
+  const storedContainer = module.containers.find(container => container.key === containerKey) ?? module.containers[0];
+  const metadataContainer = metadata.containers.find(container => container.key === containerKey) ?? metadata.containers[0];
+  const repository = storedContainer?.image.repository || metadataContainer?.image.repository || 'unknown';
+  const tag = storedContainer?.image.tag || metadataContainer?.image.tag || 'latest';
+  const pullPolicy = storedContainer?.image.pullPolicy === 'always' ||
+    storedContainer?.image.pullPolicy === 'manual' ||
+    storedContainer?.image.pullPolicy === 'ifNotPresent'
+    ? storedContainer.image.pullPolicy
+    : metadataContainer?.image.pullPolicy || 'ifNotPresent';
 
   return {
     moduleId: module.id,
+    container: containerKey || storedContainer?.key || metadataContainer?.key || 'main',
     repository,
     tag,
-    reference: module.image?.reference || `${repository}:${tag}`,
-    pullPolicy: module.image?.pullPolicy === 'always' ||
-      module.image?.pullPolicy === 'manual' ||
-      module.image?.pullPolicy === 'ifNotPresent'
-      ? module.image.pullPolicy
-      : metadata.image.pullPolicy,
+    reference: storedContainer?.image.reference || `${repository}:${tag}`,
+    pullPolicy,
   };
 }
 
@@ -710,12 +723,15 @@ function buildImageReference(
   module: InstalledModuleRecord,
   metadata: NormalizedModuleMetadata | null
 ) {
-  if (module.image?.reference) {
-    return module.image.reference;
+  const storedContainer = module.containers[0];
+  const metadataContainer = metadata?.containers[0];
+
+  if (storedContainer?.image.reference) {
+    return storedContainer.image.reference;
   }
 
-  const repository = module.image?.repository || metadata?.image.repository || 'unknown';
-  const tag = module.image?.tag || metadata?.image.tag || 'latest';
+  const repository = storedContainer?.image.repository || metadataContainer?.image.repository || 'unknown';
+  const tag = storedContainer?.image.tag || metadataContainer?.image.tag || 'latest';
   return `${repository}:${tag}`;
 }
 

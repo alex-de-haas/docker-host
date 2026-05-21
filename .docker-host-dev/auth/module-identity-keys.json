@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "0.1",
+  "activeKeyId": "mik_562c420a-c6f4-4b24-b35f-e89c6e7ae3cc",
+  "keys": [
+    {
+      "kid": "mik_562c420a-c6f4-4b24-b35f-e89c6e7ae3cc",
+      "alg": "ES256",
+      "active": true,
+      "createdAt": "2026-05-19T19:20:42.818Z",
+      "publicJwk": {
+        "kty": "EC",
+        "x": "_HZrP-syGG3Ry82b6OULBup3-CrPCik56DcQPT6IvZA",
+        "y": "sRDCt7ePXv63lJ9tcMSpguwvIR6YmI-c-27Q1XbqCrc",
+        "crv": "P-256",
+        "kid": "mik_562c420a-c6f4-4b24-b35f-e89c6e7ae3cc",
+        "alg": "ES256",
+        "use": "sig"
+      },
+      "privateJwk": {
+        "kty": "EC",
+        "x": "_HZrP-syGG3Ry82b6OULBup3-CrPCik56DcQPT6IvZA",
+        "y": "sRDCt7ePXv63lJ9tcMSpguwvIR6YmI-c-27Q1XbqCrc",
+        "crv": "P-256",
+        "d": "ruPcD4wyiOFa2IndXzhDlY6tA9ITXx2_KuV570q_FRo",
+        "kid": "mik_562c420a-c6f4-4b24-b35f-e89c6e7ae3cc",
+        "alg": "ES256",
+        "use": "sig"
+      }
+    }
+  ],
+  "updatedAt": "2026-05-20T14:40:31.217Z"
+}

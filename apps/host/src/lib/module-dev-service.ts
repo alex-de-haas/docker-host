@@ -179,18 +179,20 @@ export async function validateModuleDevTargetInput(
     throw new ModuleDevServiceError('module_dev_metadata_invalid', 'Module metadata root is missing.', 422);
   }
 
-  const port = root.metadata.runtime.ports.find(candidate => candidate.key === portKey);
-  if (!port) {
+  const endpoint = root.metadata.endpoints.find(candidate => candidate.key === portKey);
+  const container = root.metadata.containers.find(candidate => candidate.key === endpoint?.container);
+  const port = container?.runtime.ports.find(candidate => candidate.key === endpoint?.port);
+  if (!endpoint || !port) {
     throw new ModuleDevServiceError(
       'module_dev_port_not_found',
-      `Module "${root.metadata.id}" does not define runtime port "${portKey}".`
+      `Module "${root.metadata.id}" does not define endpoint "${portKey}".`
     );
   }
 
-  if (!port.public) {
+  if (!endpoint.public) {
     throw new ModuleDevServiceError(
       'module_dev_port_not_public',
-      `Runtime port "${portKey}" is not marked as externally exposable.`
+      `Endpoint "${portKey}" is not marked as externally exposable.`
     );
   }
 

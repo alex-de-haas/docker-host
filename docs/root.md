@@ -4,17 +4,17 @@
 
 Docker Host Manager is a local application for managing Docker containers. The module model extends this from direct container management to logical modules described by JSON metadata files.
 
-A module is a Docker-hosted functional unit. Administrators add a module by providing a direct URL to a JSON metadata file. The Host downloads that JSON file, reads the Docker image reference and module metadata, then prepares local storage and container configuration.
+A module is a Docker-hosted functional unit. Administrators add a module by providing a direct URL to a JSON metadata file. The Host downloads that JSON file, reads module container/image metadata, then prepares local storage and container configuration.
 
 The Host itself is expected to run as a Docker container in production-like usage. A standalone `docker-host` CLI executable bootstraps and manages the Host container lifecycle, while the Web UI remains the primary interface for daily module management.
 
-When one module depends on another service module, the consumer declares which dependency endpoint it needs and which environment variable should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the consumer container. Network aliases are derived from module ids, for example `com.modulis.storage` becomes `mod-com-modulis-storage`. This does not require Docker Compose, although Compose could be one possible implementation detail.
+When one module depends on another service module, the consumer declares which dependency endpoint it needs and which target environment variables should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the requested consumer containers. Network aliases are derived from module ids and container keys, for example `com.modulis.storage` + `api` becomes `mod-com-modulis-storage-api`. This does not require Docker Compose, although Compose could be one possible implementation detail.
 
 ```mermaid
 flowchart LR
   A["Metadata JSON URL"] --> B["Docker Host"]
   B --> C["Module metadata"]
-  C --> D["Docker image"]
+  C --> D["Docker containers/images"]
   C --> E["Dependencies"]
   C --> F["Settings schema"]
   C --> G["Storage mappings"]
@@ -25,6 +25,7 @@ flowchart LR
 ## Documents
 
 - [Future work](todo.md) - lightweight backlog items and follow-up ideas that are not yet dedicated planning documents.
+- [Multi-container modules plan](planning/multi-container-modules.md) - implementation plan for replacing the single-container module manifest with module-owned containers and per-container runtime state.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Module developer mode](features/module-developer-mode.md) - local-only module development targets that proxy through the Host gateway without a full install.

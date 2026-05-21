@@ -10,6 +10,13 @@ export type ModuleRuntimeState =
   | 'dead'
   | 'unknown';
 
+export type ModuleAggregateRuntimeState =
+  | 'not_created'
+  | 'running'
+  | 'degraded'
+  | 'exited'
+  | 'unknown';
+
 export type ModuleImagePullPolicy = 'ifNotPresent' | 'always' | 'manual';
 
 export interface ModuleImage {
@@ -28,6 +35,13 @@ export interface ModuleRuntimeStatus {
   error?: string;
 }
 
+export interface ModuleAggregateRuntimeStatus {
+  state: ModuleAggregateRuntimeState;
+  runningContainers: number;
+  totalContainers: number;
+  error?: string;
+}
+
 export interface ModuleOperationError {
   operation?: string;
   httpStatus?: number;
@@ -40,6 +54,7 @@ export interface ModuleOperationError {
 
 export interface InstalledStorageMapping {
   key: string;
+  container: string;
   containerPath: string;
   hostPath: string;
   required?: boolean;
@@ -54,16 +69,30 @@ export interface InstalledExternalMountMapping {
   key: string;
   label?: string;
   hostPath: string;
+  container: string;
   containerPath: string;
   access: ModuleInstallExternalMountAccess;
   readOnly: boolean;
 }
 
+export interface ModuleEnvTarget {
+  container: string;
+  type: 'env';
+  name: string;
+}
+
 export interface ResolvedDependency {
   id: string;
   endpoint?: string;
-  baseUrlEnv?: string;
+  targets?: ModuleEnvTarget[];
   resolvedBaseUrl?: string;
+}
+
+export interface InstalledModuleContainerRecord {
+  key: string;
+  containerName: string;
+  networkAlias: string;
+  image: ModuleImage;
 }
 
 export interface InstalledModuleRecord {
@@ -72,8 +101,7 @@ export interface InstalledModuleRecord {
   metadataPath?: string;
   metadataDigest?: string;
   planDigest?: string;
-  containerName?: string;
-  image?: Partial<ModuleImage>;
+  containers: InstalledModuleContainerRecord[];
   operationStatus?: ModuleOperationStatus;
   settings?: Record<string, InstalledSettingValue>;
   storage?: {
@@ -96,7 +124,7 @@ export interface InstalledModuleRecord {
 }
 
 export interface ModulesStoreData {
-  schemaVersion: '0.1';
+  schemaVersion: '0.2';
   hostSettings: Record<string, unknown>;
   modules: InstalledModuleRecord[];
   updatedAt: string;
@@ -108,22 +136,45 @@ export interface ModuleMetadata {
   name: string;
   description?: string;
   version: string;
-  image: {
-    repository: string;
-    tag: string;
-    pullPolicy?: ModuleImage['pullPolicy'];
-  };
+  containers: ModuleContainerMetadata[];
+  endpoints?: ModuleEndpointMetadata[];
+  connections?: ModuleConnectionMetadata[];
   dependencies?: ModuleDependencyMetadata[];
   settings?: ModuleSettingMetadata[];
   storage?: {
     directories?: ModuleStorageDirectoryMetadata[];
     mountCollections?: ModuleStorageMountCollectionMetadata[];
   };
+}
+
+export interface ModuleContainerMetadata {
+  key: string;
+  dependsOn?: string[];
+  image: {
+    repository: string;
+    tag: string;
+    pullPolicy?: ModuleImage['pullPolicy'];
+  };
   runtime?: {
     ports?: ModuleRuntimePortMetadata[];
     healthcheck?: unknown;
     resources?: Record<string, unknown>;
   };
+}
+
+export interface ModuleEndpointMetadata {
+  key: string;
+  container: string;
+  port: string;
+  public: boolean;
+}
+
+export interface ModuleConnectionMetadata {
+  source: {
+    type: 'endpoint';
+    key: string;
+  };
+  targets: ModuleEnvTarget[];
 }
 
 export interface ModuleDependencyMetadata {
@@ -133,7 +184,7 @@ export interface ModuleDependencyMetadata {
   metadataUrl: string;
   connection?: {
     endpoint: string;
-    baseUrlEnv: string;
+    targets: ModuleEnvTarget[];
   };
 }
 
@@ -142,25 +193,27 @@ export interface ModuleSettingMetadata {
   type: string;
   required: boolean;
   default?: unknown;
-  target?: {
-    type: string;
-    name?: string;
-  };
+  targets?: ModuleEnvTarget[];
 }
 
 export interface ModuleStorageDirectoryMetadata {
   key: string;
   label?: string;
   description?: string;
-  containerPath: string;
   purpose?: string;
   required: boolean;
-  writable: boolean;
   mount?: {
     recommended?: boolean;
     type: string;
     modulePath?: string;
   };
+  targets: ModuleStorageTarget[];
+}
+
+export interface ModuleStorageTarget {
+  container: string;
+  containerPath: string;
+  writable: boolean;
 }
 
 export interface ModuleStorageMountCollectionMetadata {
@@ -171,20 +224,24 @@ export interface ModuleStorageMountCollectionMetadata {
   required: boolean;
   minItems: number;
   maxItems: number | null;
-  writable: boolean;
-  containerPathPrefix: string;
-  itemContainerPathTemplate: string;
   hostPathPolicy: {
     mode: 'adminSelected';
     allowExternal: true;
   };
+  targets: ModuleStorageMountCollectionTarget[];
+}
+
+export interface ModuleStorageMountCollectionTarget {
+  container: string;
+  containerPathPrefix: string;
+  itemContainerPathTemplate: string;
+  writable: boolean;
 }
 
 export interface ModuleRuntimePortMetadata {
   key: string;
   containerPort: number;
   protocol: string;
-  public: boolean;
 }
 
 export interface ModuleSummary {
@@ -193,13 +250,21 @@ export interface ModuleSummary {
   description?: string;
   version: string;
   metadataUrl: string;
-  image: ModuleImage;
+  containers: ModuleContainerSummary[];
   operationStatus: ModuleOperationStatus;
-  runtimeStatus: ModuleRuntimeStatus;
+  runtimeStatus: ModuleAggregateRuntimeStatus;
   installedAt?: string;
   updatedAt?: string;
   lastOperation?: InstalledModuleRecord['lastOperation'];
   lastError: ModuleOperationError | null;
+}
+
+export interface ModuleContainerSummary {
+  key: string;
+  image: ModuleImage;
+  runtimeStatus: ModuleRuntimeStatus;
+  networkAlias: string;
+  endpoints: ModuleEndpointMetadata[];
 }
 
 export interface ModuleDetail extends ModuleSummary {
@@ -285,14 +350,15 @@ export type ModuleSettingType = 'string' | 'number' | 'boolean' | 'url' | 'secre
 
 export interface NormalizedModuleSettingMetadata extends ModuleSettingMetadata {
   type: ModuleSettingType;
-  target: {
-    type: 'env';
-    name: string;
-  };
+  targets: ModuleEnvTarget[];
 }
 
 export interface NormalizedModuleDependencyMetadata extends ModuleDependencyMetadata {
   required: true;
+  connection?: {
+    endpoint: string;
+    targets: ModuleEnvTarget[];
+  };
 }
 
 export interface NormalizedModuleStorageDirectoryMetadata
@@ -302,25 +368,21 @@ export interface NormalizedModuleStorageDirectoryMetadata
     type: 'bind';
     modulePath: string;
   };
+  targets: ModuleStorageTarget[];
 }
 
-export interface NormalizedModuleMetadata {
-  schemaVersion: '0.1';
-  id: string;
-  name: string;
-  description?: string;
-  version: string;
+export interface NormalizedModuleStorageMountCollectionMetadata
+  extends ModuleStorageMountCollectionMetadata {
+  targets: ModuleStorageMountCollectionTarget[];
+}
+
+export interface NormalizedModuleContainerMetadata extends ModuleContainerMetadata {
   image: {
     repository: string;
     tag: string;
     pullPolicy: ModuleImagePullPolicy;
   };
-  dependencies: NormalizedModuleDependencyMetadata[];
-  settings: NormalizedModuleSettingMetadata[];
-  storage: {
-    directories: NormalizedModuleStorageDirectoryMetadata[];
-    mountCollections: ModuleStorageMountCollectionMetadata[];
-  };
+  dependsOn: string[];
   runtime: {
     ports: ModuleRuntimePortMetadata[];
     healthcheck?: {
@@ -331,6 +393,35 @@ export interface NormalizedModuleMetadata {
       cpus?: number;
       memory?: string;
     };
+  };
+}
+
+export interface NormalizedModuleEndpointMetadata extends ModuleEndpointMetadata {
+  public: boolean;
+}
+
+export interface NormalizedModuleConnectionMetadata extends ModuleConnectionMetadata {
+  source: {
+    type: 'endpoint';
+    key: string;
+  };
+  targets: ModuleEnvTarget[];
+}
+
+export interface NormalizedModuleMetadata {
+  schemaVersion: '0.2';
+  id: string;
+  name: string;
+  description?: string;
+  version: string;
+  containers: NormalizedModuleContainerMetadata[];
+  endpoints: NormalizedModuleEndpointMetadata[];
+  connections: NormalizedModuleConnectionMetadata[];
+  dependencies: NormalizedModuleDependencyMetadata[];
+  settings: NormalizedModuleSettingMetadata[];
+  storage: {
+    directories: NormalizedModuleStorageDirectoryMetadata[];
+    mountCollections: NormalizedModuleStorageMountCollectionMetadata[];
   };
 }
 
@@ -354,6 +445,7 @@ export interface InstallPlanConflict {
 
 export interface InstallPlanImage {
   moduleId: string;
+  container: string;
   repository: string;
   tag: string;
   reference: string;
@@ -363,6 +455,7 @@ export interface InstallPlanImage {
 export interface InstallPlanStorageDirectory {
   moduleId: string;
   key: string;
+  container: string;
   containerPath: string;
   modulePath: string;
   hostPath: string;
@@ -381,10 +474,7 @@ export interface InstallPlanSettingPrompt {
   key: string;
   type: ModuleSettingType;
   required: boolean;
-  target: {
-    type: 'env';
-    name: string;
-  };
+  targets: ModuleEnvTarget[];
   default?: unknown;
   secret: boolean;
   redacted: boolean;
@@ -394,8 +484,20 @@ export interface InstallPlanDependencyConnection {
   consumerId: string;
   dependencyId: string;
   endpoint: string;
-  baseUrlEnv: string;
+  targets: ModuleEnvTarget[];
   resolvedBaseUrl: string;
+}
+
+export interface InstallPlanContainer {
+  moduleId: string;
+  key: string;
+  containerName: string;
+  networkAlias: string;
+  image: InstallPlanImage;
+  dependsOn: string[];
+  ports: Array<ModuleRuntimePortMetadata & { hostPublished: false }>;
+  resources?: NormalizedModuleContainerMetadata['runtime']['resources'];
+  endpoints: NormalizedModuleEndpointMetadata[];
 }
 
 export interface InstallPlanDependencyNode {
@@ -407,10 +509,7 @@ export interface InstallPlanDependencyNode {
   requiredBy: string[];
   normalizedMetadata: NormalizedModuleMetadata;
   installAction: 'install' | 'reuse';
-  docker: {
-    containerName: string;
-    networkAlias: string;
-  };
+  containers: InstallPlanContainer[];
   paths: {
     moduleDirectoryHost: string;
     moduleDirectoryContainer: string;
@@ -440,8 +539,7 @@ export interface InstallPlan {
     mountCollections: InstallPlanMountCollection[];
   };
   runtime: {
-    ports: Array<ModuleRuntimePortMetadata & { hostPublished: false }>;
-    resources?: NormalizedModuleMetadata['runtime']['resources'];
+    endpoints: NormalizedModuleEndpointMetadata[];
   };
   paths: {
     moduleDirectoryHost: string;
@@ -451,8 +549,7 @@ export interface InstallPlan {
   };
   docker: {
     networkName: string;
-    containerName: string;
-    networkAliases: string[];
+    containers: InstallPlanContainer[];
   };
   conflicts: InstallPlanConflict[];
 }
@@ -564,10 +661,7 @@ export interface ModuleUpdatePlan {
     moduleId: string;
     key: string;
     secret: boolean;
-    target: {
-      type: 'env';
-      name: string;
-    };
+    targets: ModuleEnvTarget[];
   }>;
   storage: {
     directories: InstallPlanStorageDirectory[];
@@ -576,8 +670,7 @@ export interface ModuleUpdatePlan {
     removedExternalMounts: InstalledExternalMountMapping[];
   };
   runtime: {
-    ports: Array<ModuleRuntimePortMetadata & { hostPublished: false }>;
-    resources?: NormalizedModuleMetadata['runtime']['resources'];
+    endpoints: NormalizedModuleEndpointMetadata[];
   };
   paths: {
     moduleDirectoryHost: string;
@@ -587,8 +680,7 @@ export interface ModuleUpdatePlan {
   };
   docker: {
     networkName: string;
-    containerName: string;
-    networkAliases: string[];
+    containers: InstallPlanContainer[];
     replacementRequired: boolean;
     replacementReasons: string[];
   };

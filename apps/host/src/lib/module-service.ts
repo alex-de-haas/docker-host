@@ -24,6 +24,7 @@ import type {
   ModuleDetail,
   ModuleImage,
   ModuleMetadata,
+  ModuleRuntimeState,
   ModuleRuntimeStatus,
   ModuleSummary,
   ResolvedDependency,
@@ -66,12 +67,12 @@ export async function listInstalledModules(): Promise<ModuleSummary[]> {
 
   return Promise.all(
     store.modules.map(async installedModule => {
-      const [metadata, runtimeStatus] = await Promise.all([
+      const [metadata, runtimeStatuses] = await Promise.all([
         safeReadModuleMetadata(installedModule, config),
-        getModuleRuntimeStatus(installedModule),
+        getModuleRuntimeStatuses(installedModule),
       ]);
 
-      return toModuleSummary(installedModule, metadata, runtimeStatus);
+      return toModuleSummary(installedModule, metadata, runtimeStatuses);
     })
   );
 }
@@ -85,11 +86,11 @@ export async function getInstalledModuleDetail(moduleId: string): Promise<Module
     return null;
   }
 
-  const [metadata, runtimeStatus] = await Promise.all([
+  const [metadata, runtimeStatuses] = await Promise.all([
     safeReadModuleMetadata(installedModule, config),
-    getModuleRuntimeStatus(installedModule),
+    getModuleRuntimeStatuses(installedModule),
   ]);
-  const summary = toModuleSummary(installedModule, metadata, runtimeStatus);
+  const summary = toModuleSummary(installedModule, metadata, runtimeStatuses);
 
   return {
     ...summary,
@@ -177,7 +178,7 @@ async function runModuleAction(
 
     return {
       success: true,
-      module: toModuleSummary(installedModule, metadata, runtimeStatus),
+      module: toModuleSummary(installedModule, metadata, [runtimeStatus]),
       error: null,
     };
   } catch (error) {
@@ -219,14 +220,16 @@ async function getPersistentLifecyclePreflightError(
       continue;
     }
 
-    if (!getStoredStorageMapping(module, directory.key)) {
-      return {
-        operation,
-        httpStatus: 409,
-        message: `Module "${module.id}" is missing required storage mapping "${directory.key}".`,
-        nextStep: 'Clean up the module record or review the install again.',
-        occurredAt: new Date().toISOString(),
-      };
+    for (const target of directory.targets) {
+      if (!getStoredStorageMapping(module, directory.key, target.container)) {
+        return {
+          operation,
+          httpStatus: 409,
+          message: `Module "${module.id}" is missing required storage mapping "${directory.key}" for container "${target.container}".`,
+          nextStep: 'Clean up the module record or review the install again.',
+          occurredAt: new Date().toISOString(),
+        };
+      }
     }
   }
 
@@ -268,20 +271,37 @@ async function safeReadModuleMetadata(
   }
 }
 
+async function getModuleRuntimeStatuses(module: InstalledModuleRecord) {
+  if (module.containers.length === 0) {
+    return [await getModuleRuntimeStatus(module)];
+  }
+
+  return Promise.all(
+    module.containers.map(container =>
+      getModuleRuntimeStatus({
+        ...module,
+        containers: [container],
+      })
+    )
+  );
+}
+
 function toModuleSummary(
   module: InstalledModuleRecord,
   metadata: ModuleMetadata | null,
-  runtimeStatus: ModuleRuntimeStatus
+  runtimeStatuses: ModuleRuntimeStatus[]
 ): ModuleSummary {
+  const containers = buildContainerSummaries(module, metadata, runtimeStatuses);
+
   return {
     id: module.id,
     name: metadata?.name || module.id,
     description: metadata?.description,
     version: metadata?.version || 'unknown',
     metadataUrl: module.metadataUrl,
-    image: buildImage(module, metadata),
+    containers,
     operationStatus: module.operationStatus || 'installed',
-    runtimeStatus,
+    runtimeStatus: buildAggregateRuntimeStatus(runtimeStatuses),
     installedAt: module.installedAt,
     updatedAt: module.updatedAt,
     lastOperation: module.lastOperation,
@@ -289,18 +309,72 @@ function toModuleSummary(
   };
 }
 
-function buildImage(module: InstalledModuleRecord, metadata: ModuleMetadata | null): ModuleImage {
-  const repository = metadata?.image?.repository || module.image?.repository || 'unknown';
-  const tag = metadata?.image?.tag || module.image?.tag || 'latest';
-  const reference = metadata?.image
-    ? `${metadata.image.repository}:${metadata.image.tag}`
-    : module.image?.reference || `${repository}:${tag}`;
+function buildContainerSummaries(
+  module: InstalledModuleRecord,
+  metadata: ModuleMetadata | null,
+  runtimeStatuses: ModuleRuntimeStatus[]
+): ModuleSummary['containers'] {
+  return module.containers.map((container, index) => {
+    const metadataContainer = metadata?.containers.find(candidate => candidate.key === container.key);
+    const runtimeStatus = runtimeStatuses[index] ?? {
+      state: 'unknown' as ModuleRuntimeState,
+      containerId: null,
+      containerName: container.containerName,
+      startedAt: null,
+      finishedAt: null,
+    };
+
+    return {
+      key: container.key,
+      image: buildContainerImage(container.image, metadataContainer?.image),
+      runtimeStatus,
+      networkAlias: container.networkAlias,
+      endpoints: metadata?.endpoints?.filter(endpoint => endpoint.container === container.key) ?? [],
+    };
+  });
+}
+
+function buildContainerImage(
+  storedImage: ModuleImage,
+  metadataImage: ModuleMetadata['containers'][number]['image'] | undefined
+): ModuleImage {
+  const repository = metadataImage?.repository || storedImage.repository || 'unknown';
+  const tag = metadataImage?.tag || storedImage.tag || 'latest';
 
   return {
     repository,
     tag,
-    reference,
-    pullPolicy: metadata?.image?.pullPolicy || module.image?.pullPolicy,
+    reference: metadataImage ? `${repository}:${tag}` : storedImage.reference || `${repository}:${tag}`,
+    pullPolicy: metadataImage?.pullPolicy || storedImage.pullPolicy,
+  };
+}
+
+function buildAggregateRuntimeStatus(runtimeStatuses: ModuleRuntimeStatus[]): ModuleSummary['runtimeStatus'] {
+  if (runtimeStatuses.length === 0) {
+    return {
+      state: 'not_created',
+      runningContainers: 0,
+      totalContainers: 0,
+    };
+  }
+
+  const runningContainers = runtimeStatuses.filter(status => status.state === 'running').length;
+  const states = runtimeStatuses.map(status => status.state);
+  const state = states.every(candidate => candidate === 'not_created')
+    ? 'not_created'
+    : states.every(candidate => candidate === 'running')
+      ? 'running'
+      : states.every(candidate => candidate === 'exited' || candidate === 'created' || candidate === 'not_created')
+        ? 'exited'
+        : states.some(candidate => candidate === 'unknown')
+          ? 'unknown'
+          : 'degraded';
+
+  return {
+    state,
+    runningContainers,
+    totalContainers: runtimeStatuses.length,
+    ...(runtimeStatuses.find(status => status.error)?.error ? { error: runtimeStatuses.find(status => status.error)?.error } : {}),
   };
 }
 
@@ -319,21 +393,22 @@ function buildStorageDirectories(
 ): InstalledStorageMapping[] {
   const config = getHostRuntimeConfig();
 
-  return (metadata?.storage?.directories || []).map(directory => {
-    const storedMapping = getStoredStorageMapping(module, directory.key);
+  return (metadata?.storage?.directories || []).flatMap(directory => directory.targets.map(target => {
+    const storedMapping = getStoredStorageMapping(module, directory.key, target.container);
     const modulePath = directory.mount?.modulePath || directory.key;
 
     return {
       key: directory.key,
-      containerPath: storedMapping?.containerPath || directory.containerPath,
+      container: target.container,
+      containerPath: storedMapping?.containerPath || target.containerPath,
       hostPath:
         storedMapping?.hostPath ||
         path.join(config.dataRootHost, 'modules', module.id, modulePath),
       required: storedMapping?.required ?? directory.required,
-      writable: storedMapping?.writable ?? directory.writable,
-      readOnly: storedMapping?.readOnly ?? !directory.writable,
+      writable: storedMapping?.writable ?? target.writable,
+      readOnly: storedMapping?.readOnly ?? !target.writable,
     };
-  });
+  }));
 }
 
 function buildDependencies(
@@ -347,20 +422,21 @@ function buildDependencies(
     return {
       id: dependency.id,
       endpoint: resolved?.endpoint || dependency.connection?.endpoint,
-      baseUrlEnv: resolved?.baseUrlEnv || dependency.connection?.baseUrlEnv,
+      targets: resolved?.targets || dependency.connection?.targets,
       resolvedBaseUrl: resolved?.resolvedBaseUrl,
     };
   });
 }
 
-function getStoredStorageMapping(module: InstalledModuleRecord, key: string) {
+function getStoredStorageMapping(module: InstalledModuleRecord, key: string, container?: string) {
   const mappings = module.storageMappings || module.storage?.directories;
 
   if (Array.isArray(mappings)) {
-    return mappings.find(mapping => mapping.key === key);
+    return mappings.find(mapping => mapping.key === key && (!container || mapping.container === container));
   }
 
-  return mappings?.[key];
+  const mapping = mappings?.[key];
+  return mapping && (!container || mapping.container === container) ? mapping : undefined;
 }
 
 function getStoredExternalMounts(module: InstalledModuleRecord): InstalledExternalMountMapping[] {

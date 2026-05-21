@@ -8,16 +8,42 @@ export function GET(request: Request) {
   }
 
   return NextResponse.json({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     id: 'com.example.reports',
     name: 'Example Reports',
     description: 'Development reports module fixture.',
     version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/docker-host-reports',
-      tag: '1.0.0',
-      pullPolicy: 'ifNotPresent',
-    },
+    containers: [
+      {
+        key: 'app',
+        image: {
+          repository: 'ghcr.io/example/docker-host-reports',
+          tag: '1.0.0',
+          pullPolicy: 'ifNotPresent',
+        },
+        runtime: {
+          ports: [
+            {
+              key: 'http',
+              containerPort: 8080,
+              protocol: 'http',
+            },
+          ],
+          resources: {
+            cpus: 0.5,
+            memory: '256m',
+          },
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'http',
+        container: 'app',
+        port: 'http',
+        public: true,
+      },
+    ],
     dependencies: [
       {
         id: 'com.example.identity',
@@ -26,7 +52,13 @@ export function GET(request: Request) {
         metadataUrl: new URL('/fixtures/modules/sample-identity', request.url).toString(),
         connection: {
           endpoint: 'http',
-          baseUrlEnv: 'IDENTITY_BASE_URL',
+          targets: [
+            {
+              container: 'app',
+              type: 'env',
+              name: 'IDENTITY_BASE_URL',
+            },
+          ],
         },
       },
     ],
@@ -36,29 +68,38 @@ export function GET(request: Request) {
         type: 'number',
         required: true,
         default: 30,
-        target: {
-          type: 'env',
-          name: 'REPORT_RETENTION_DAYS',
-        },
+        targets: [
+          {
+            container: 'app',
+            type: 'env',
+            name: 'REPORT_RETENTION_DAYS',
+          },
+        ],
       },
       {
         key: 'REPORTS_PUBLIC_URL',
         type: 'url',
         required: false,
         default: 'https://reports.example.test',
-        target: {
-          type: 'env',
-          name: 'REPORTS_PUBLIC_URL',
-        },
+        targets: [
+          {
+            container: 'app',
+            type: 'env',
+            name: 'REPORTS_PUBLIC_URL',
+          },
+        ],
       },
       {
         key: 'EXTERNAL_API_TOKEN',
         type: 'secret',
         required: true,
-        target: {
-          type: 'env',
-          name: 'EXTERNAL_API_TOKEN',
-        },
+        targets: [
+          {
+            container: 'app',
+            type: 'env',
+            name: 'EXTERNAL_API_TOKEN',
+          },
+        ],
       },
     ],
     storage: {
@@ -67,10 +108,15 @@ export function GET(request: Request) {
           key: 'data',
           label: 'Data',
           description: 'Generated reports and local state.',
-          containerPath: '/app/data',
           purpose: 'data',
           required: true,
-          writable: true,
+          targets: [
+            {
+              container: 'app',
+              containerPath: '/app/data',
+              writable: true,
+            },
+          ],
           mount: {
             recommended: true,
             type: 'bind',
@@ -80,10 +126,15 @@ export function GET(request: Request) {
         {
           key: 'cache',
           label: 'Cache',
-          containerPath: '/app/cache',
           purpose: 'cache',
           required: false,
-          writable: true,
+          targets: [
+            {
+              container: 'app',
+              containerPath: '/app/cache',
+              writable: true,
+            },
+          ],
           mount: {
             recommended: true,
             type: 'bind',
@@ -100,29 +151,20 @@ export function GET(request: Request) {
           required: true,
           minItems: 1,
           maxItems: 3,
-          writable: true,
-          containerPathPrefix: '/storage/libraries',
-          itemContainerPathTemplate: '/storage/libraries/{key}',
+          targets: [
+            {
+              container: 'app',
+              containerPathPrefix: '/storage/libraries',
+              itemContainerPathTemplate: '/storage/libraries/{key}',
+              writable: true,
+            },
+          ],
           hostPathPolicy: {
             mode: 'adminSelected',
             allowExternal: true,
           },
         },
       ],
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'http',
-          containerPort: 8080,
-          protocol: 'http',
-          public: true,
-        },
-      ],
-      resources: {
-        cpus: 0.5,
-        memory: '256m',
-      },
     },
   });
 }

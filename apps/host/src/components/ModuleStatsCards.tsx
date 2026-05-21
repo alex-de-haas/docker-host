@@ -12,7 +12,7 @@ export function ModuleStatsCards({ modules }: ModuleStatsCardsProps) {
   const running = modules.filter(module => module.runtimeStatus.state === 'running').length;
   const attention = modules.filter(module =>
     module.operationStatus === 'failed' ||
-    module.runtimeStatus.state === 'dead' ||
+    module.runtimeStatus.state === 'degraded' ||
     module.runtimeStatus.state === 'unknown' ||
     Boolean(module.lastError)
   ).length;

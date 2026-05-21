@@ -55,23 +55,31 @@ const planFixture: ModuleUpdatePlan = {
     proposedVersion: '1.1.0',
   },
   normalizedMetadata: {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     id: 'com.example.reports',
     name: 'Reports',
     version: '1.1.0',
-    image: {
-      repository: 'ghcr.io/example/reports',
-      tag: '1.1.0',
-      pullPolicy: 'ifNotPresent',
-    },
+    containers: [
+      {
+        key: 'app',
+        dependsOn: [],
+        image: {
+          repository: 'ghcr.io/example/reports',
+          tag: '1.1.0',
+          pullPolicy: 'ifNotPresent',
+        },
+        runtime: {
+          ports: [],
+        },
+      },
+    ],
+    endpoints: [],
+    connections: [],
     dependencies: [],
     settings: [],
     storage: {
       directories: [],
       mountCollections: [],
-    },
-    runtime: {
-      ports: [],
     },
   },
   dependencies: [],
@@ -84,10 +92,13 @@ const planFixture: ModuleUpdatePlan = {
       type: 'number',
       required: true,
       default: 30,
-      target: {
-        type: 'env',
-        name: 'REPORT_RETENTION_DAYS',
-      },
+      targets: [
+        {
+          container: 'app',
+          type: 'env',
+          name: 'REPORT_RETENTION_DAYS',
+        },
+      ],
       secret: false,
       redacted: false,
     },
@@ -97,10 +108,13 @@ const planFixture: ModuleUpdatePlan = {
       type: 'boolean',
       required: true,
       default: true,
-      target: {
-        type: 'env',
-        name: 'REPORTS_ENABLED',
-      },
+      targets: [
+        {
+          container: 'app',
+          type: 'env',
+          name: 'REPORTS_ENABLED',
+        },
+      ],
       secret: false,
       redacted: false,
     },
@@ -109,10 +123,13 @@ const planFixture: ModuleUpdatePlan = {
       key: 'EXTERNAL_API_TOKEN',
       type: 'secret',
       required: true,
-      target: {
-        type: 'env',
-        name: 'EXTERNAL_API_TOKEN',
-      },
+      targets: [
+        {
+          container: 'app',
+          type: 'env',
+          name: 'EXTERNAL_API_TOKEN',
+        },
+      ],
       secret: true,
       redacted: true,
     },
@@ -125,7 +142,7 @@ const planFixture: ModuleUpdatePlan = {
     removedExternalMounts: [],
   },
   runtime: {
-    ports: [],
+    endpoints: [],
   },
   paths: {
     moduleDirectoryHost: '/Users/example/.docker-host/modules/com.example.reports',
@@ -135,8 +152,25 @@ const planFixture: ModuleUpdatePlan = {
   },
   docker: {
     networkName: 'docker-host-modules',
-    containerName: 'mod-com-example-reports',
-    networkAliases: ['mod-com-example-reports'],
+    containers: [
+      {
+        moduleId: 'com.example.reports',
+        key: 'app',
+        containerName: 'mod-com-example-reports-app',
+        networkAlias: 'mod-com-example-reports-app',
+        image: {
+          moduleId: 'com.example.reports',
+          container: 'app',
+          repository: 'ghcr.io/example/reports',
+          tag: '1.1.0',
+          reference: 'ghcr.io/example/reports:1.1.0',
+          pullPolicy: 'ifNotPresent',
+        },
+        dependsOn: [],
+        ports: [],
+        endpoints: [],
+      },
+    ],
     replacementRequired: true,
     replacementReasons: ['image'],
   },
