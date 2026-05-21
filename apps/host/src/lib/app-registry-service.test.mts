@@ -215,7 +215,7 @@ test('reports invalid shell UI metadata only to admins', async () => {
     withUi: true,
     ui: {
       entrypoint: {
-        portKey: 'http',
+        portKey: 'web',
         path: '/',
       },
       navigation: [
@@ -430,34 +430,59 @@ async function writeInstalledModule(
       id: input.moduleId,
       metadataUrl: 'https://modules.example.test/module.json',
       operationStatus: input.operationStatus || 'installed',
+      containers: [
+        {
+          key: 'app',
+          containerName: `mod-${input.moduleId.replace(/\./g, '-')}-app`,
+          networkAlias: `mod-${input.moduleId.replace(/\./g, '-')}-app`,
+          image: {
+            repository: 'ghcr.io/example/module',
+            tag: 'latest',
+            reference: 'ghcr.io/example/module:latest',
+            pullPolicy: 'ifNotPresent',
+          },
+        },
+      ],
     },
   ]);
   await fs.writeFile(path.join(moduleRoot, 'metadata.json'), `${JSON.stringify({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     id: input.moduleId,
     name: input.name,
     description: `${input.name} fixture.`,
     version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/module',
-      tag: 'latest',
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'http',
-          containerPort: 3000,
-          protocol: 'http',
-          public: true,
+    containers: [
+      {
+        key: 'app',
+        image: {
+          repository: 'ghcr.io/example/module',
+          tag: 'latest',
         },
-      ],
-    },
+        runtime: {
+          ports: [
+            {
+              key: 'http',
+              containerPort: 3000,
+              protocol: 'http',
+            },
+          ],
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'web',
+        container: 'app',
+        port: 'http',
+        public: true,
+      },
+    ],
     ...(input.withUi
       ? {
           ui: input.ui ?? {
             icon: 'boxes',
             entrypoint: {
-              portKey: 'http',
+              portKey: 'web',
               path: '/',
             },
             navigation: [
@@ -478,13 +503,29 @@ async function writeModulesStore(
     id: string;
     metadataUrl: string;
     operationStatus?: 'installed' | 'installing' | 'updating' | 'failed' | 'removing';
+    containers?: unknown[];
   }>
 ) {
   await fs.mkdir(config.modulesRootContainer, { recursive: true });
   await fs.writeFile(config.modulesStorePath, `${JSON.stringify({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: {},
-    modules,
+    modules: modules.map(module => ({
+      ...module,
+      containers: module.containers ?? [
+        {
+          key: 'app',
+          containerName: `mod-${module.id.replace(/\./g, '-')}-app`,
+          networkAlias: `mod-${module.id.replace(/\./g, '-')}-app`,
+          image: {
+            repository: 'ghcr.io/example/module',
+            tag: 'latest',
+            reference: 'ghcr.io/example/module:latest',
+            pullPolicy: 'ifNotPresent',
+          },
+        },
+      ],
+    })),
     updatedAt: new Date().toISOString(),
   }, null, 2)}\n`);
 }

@@ -34,7 +34,7 @@ export function InstalledModulesWidget({
   const installed = modules.filter(module => module.operationStatus === 'installed').length;
   const attention = modules.filter(module =>
     module.operationStatus === 'failed' ||
-    module.runtimeStatus.state === 'dead' ||
+    module.runtimeStatus.state === 'degraded' ||
     module.runtimeStatus.state === 'unknown' ||
     Boolean(module.lastError)
   ).length;

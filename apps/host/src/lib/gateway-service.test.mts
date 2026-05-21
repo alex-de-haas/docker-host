@@ -27,7 +27,7 @@ test('creates gateway exposure for a public module port and resolves target', as
   const exposure = await upsertGatewayExposure({
     moduleId: 'com.example.reports',
     hostname: 'Reports.Example.Test.',
-    portKey: 'web',
+    endpointKey: 'web',
   }, 'user_admin', config);
 
   assert.equal(exposure.hostname, 'reports.example.test');
@@ -35,7 +35,7 @@ test('creates gateway exposure for a public module port and resolves target', as
   assert.equal(exposure.identityMode, 'required');
 
   const anonymousTarget = await resolveGatewayTarget('reports.example.test', null, config);
-  assert.equal(anonymousTarget?.targetBaseUrl, 'http://mod-com-example-reports:8080');
+  assert.equal(anonymousTarget?.targetBaseUrl, 'http://mod-com-example-reports-app:8080');
   assert.equal(anonymousTarget?.access.allowed, false);
   assert.equal(anonymousTarget?.access.reason, 'loginRequired');
 
@@ -48,7 +48,32 @@ test('creates gateway exposure for a public module port and resolves target', as
   assert.equal(userTarget?.access.reason, 'authenticated');
 });
 
-test('rejects exposure for runtime ports not marked public', async () => {
+test('resolves gateway target for legacy single-container module records', async () => {
+  const config = await createGatewayTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.legacy',
+    portPublic: true,
+    containerKey: 'main',
+    legacyStoreRecord: true,
+  });
+
+  await upsertGatewayExposure({
+    moduleId: 'com.example.legacy',
+    hostname: 'legacy.example.test',
+    endpointKey: 'web',
+  }, 'user_admin', config);
+
+  const target = await resolveGatewayTarget(
+    'legacy.example.test',
+    { id: 'user_1', role: 'host.user', email: 'user@example.test' },
+    config
+  );
+
+  assert.equal(target?.targetBaseUrl, 'http://legacy-alias:8080');
+  assert.equal(target?.networkAlias, 'legacy-alias');
+});
+
+test('rejects exposure for endpoints not marked public', async () => {
   const config = await createGatewayTestConfig();
   await writeInstalledModule(config, {
     moduleId: 'com.example.identity',
@@ -59,9 +84,9 @@ test('rejects exposure for runtime ports not marked public', async () => {
     upsertGatewayExposure({
       moduleId: 'com.example.identity',
       hostname: 'identity.example.test',
-      portKey: 'web',
+      endpointKey: 'web',
     }, 'user_admin', config),
-    (error: unknown) => error instanceof GatewayServiceError && error.code === 'port_not_public'
+    (error: unknown) => error instanceof GatewayServiceError && error.code === 'endpoint_not_public'
   );
 });
 
@@ -75,7 +100,7 @@ test('public gateway exposures default to no identity and reject required identi
   const exposure = await upsertGatewayExposure({
     moduleId: 'com.example.public',
     hostname: 'public.example.test',
-    portKey: 'web',
+    endpointKey: 'web',
     exposurePolicy: 'public',
   }, 'user_admin', config);
 
@@ -85,7 +110,7 @@ test('public gateway exposures default to no identity and reject required identi
     upsertGatewayExposure({
       moduleId: 'com.example.public',
       hostname: 'public-required.example.test',
-      portKey: 'web',
+      endpointKey: 'web',
       exposurePolicy: 'public',
       identityMode: 'required',
     }, 'user_admin', config),
@@ -121,7 +146,7 @@ test('assignedUsersOnly exposure checks Host module assignments', async () => {
   await upsertGatewayExposure({
     moduleId: 'com.example.reports',
     hostname: 'reports.example.test',
-    portKey: 'web',
+    endpointKey: 'web',
     exposurePolicy: 'assignedUsersOnly',
   }, 'user_admin', config);
 
@@ -263,40 +288,75 @@ async function writeInstalledModule(
     moduleId: string;
     portPublic: boolean;
     uiEntrypoint?: boolean;
+    containerKey?: string;
+    legacyStoreRecord?: boolean;
   }
 ) {
+  const containerKey = input.containerKey ?? 'app';
   const moduleRoot = path.join(config.modulesRootContainer, input.moduleId);
   await fs.mkdir(moduleRoot, { recursive: true });
   await fs.writeFile(config.modulesStorePath, `${JSON.stringify({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: {},
     modules: [
-      {
-        id: input.moduleId,
-        metadataUrl: 'https://modules.example.test/module.json',
-        operationStatus: 'installed',
-      },
+      input.legacyStoreRecord
+        ? {
+            id: input.moduleId,
+            metadataUrl: 'https://modules.example.test/module.json',
+            operationStatus: 'installed',
+            containerName: 'legacy-container',
+            networkAlias: 'legacy-alias',
+            image: {
+              repository: 'ghcr.io/example/module',
+              tag: 'latest',
+              reference: 'ghcr.io/example/module:latest',
+              pullPolicy: 'ifNotPresent',
+            },
+          }
+        : {
+            id: input.moduleId,
+            metadataUrl: 'https://modules.example.test/module.json',
+            operationStatus: 'installed',
+            containers: [{
+              key: containerKey,
+              containerName: `mod-${input.moduleId.replace(/\./g, '-')}-${containerKey}`,
+              networkAlias: `mod-${input.moduleId.replace(/\./g, '-')}-${containerKey}`,
+              image: {
+                repository: 'ghcr.io/example/module',
+                tag: 'latest',
+                reference: 'ghcr.io/example/module:latest',
+                pullPolicy: 'ifNotPresent',
+              },
+            }],
+          },
     ],
     updatedAt: new Date().toISOString(),
   }, null, 2)}\n`);
   await fs.writeFile(path.join(moduleRoot, 'metadata.json'), `${JSON.stringify({
+    schemaVersion: '0.2',
     id: input.moduleId,
     name: 'Example Module',
     version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/module',
-      tag: 'latest',
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'web',
+    containers: [{
+      key: containerKey,
+      image: {
+        repository: 'ghcr.io/example/module',
+        tag: 'latest',
+      },
+      runtime: {
+        ports: [{
+          key: 'http',
           containerPort: 8080,
           protocol: 'http',
-          public: input.portPublic,
-        },
-      ],
-    },
+        }],
+      },
+    }],
+    endpoints: [{
+      key: 'web',
+      container: containerKey,
+      port: 'http',
+      public: input.portPublic,
+    }],
     ...(input.uiEntrypoint
       ? {
           ui: {

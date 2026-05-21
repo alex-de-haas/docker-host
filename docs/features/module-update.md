@@ -45,16 +45,16 @@ The plan includes:
 - refreshed metadata digest;
 - `updatePlanDigest`;
 - current and proposed module summary;
-- image changes;
+- container/image changes;
 - settings schema changes and setting prompts;
 - storage directory and external mount changes;
 - dependency changes;
-- runtime port/resource changes;
+- endpoint/runtime resource changes;
 - generated container configuration changes;
 - replacement steps;
 - warnings and conflicts.
 
-The digest covers the proposed normalized metadata, dependency tree, computed paths, Docker names, runtime configuration, preserved compatible settings/storage decisions, and administrator decisions that affect generated runtime configuration. It must exclude timestamps, transient Docker status, download timing, and read-only Docker conflict observations.
+The digest covers the proposed normalized metadata, dependency tree, computed paths, Docker names, endpoints/runtime configuration, preserved compatible settings/storage decisions, and administrator decisions that affect generated runtime configuration. It must exclude timestamps, transient Docker status, download timing, and read-only Docker conflict observations.
 
 Secret values must never be returned or embedded in a user-visible plan. When a secret decision affects the plan digest, the digest input may include only a redacted presence marker plus stable metadata such as key, type, and target.
 
@@ -73,15 +73,15 @@ flowchart TD
   I -- "No" --> J["Reject and require review again"]
   I -- "Yes" --> K["Set operationStatus=updating"]
   K --> L["Apply dependency changes"]
-  L --> M["Pull image by refreshed pullPolicy"]
-  M --> N["Replace module container if needed"]
+  L --> M["Pull images by refreshed pullPolicy"]
+  M --> N["Replace module containers if needed"]
   N --> O["Save metadata.json and modules.json"]
   O --> P["Set operationStatus=installed"]
 ```
 
 ## Settings Decisions
 
-Existing settings are preserved only when `key`, `type`, and environment target are compatible.
+Existing settings are preserved only when `key`, `type`, and environment targets are compatible.
 
 - Compatible settings keep their stored typed value.
 - New required settings are shown as prompts in the update review UI.
@@ -109,7 +109,7 @@ During dependency changes, the update flow:
 
 - installs missing new required dependencies;
 - reuses and starts compatible installed dependencies;
-- blocks the update when an installed dependency is incompatible, failed, or missing its container;
+- blocks the update when an installed dependency is incompatible, failed, or missing required containers;
 - updates the consumer's resolved dependency URLs after dependency changes are applied.
 
 It does not automatically update already installed dependencies just because their own metadata URL has changed. Recursive dependency update remains a separate explicit update action.
@@ -119,12 +119,12 @@ It does not automatically update already installed dependencies just because the
 The replacement strategy is explicit:
 
 - set the module record to `operationStatus=updating`;
-- pull the proposed image according to refreshed `pullPolicy`;
-- stop/remove the existing module container when runtime configuration must change;
-- create/start a container with the same deterministic container name;
+- pull proposed images according to refreshed `pullPolicy`;
+- stop/remove existing module containers when runtime configuration must change;
+- create/start containers with deterministic container names;
 - save refreshed `metadata.json` and updated `modules.json` only after successful apply.
 
-If metadata-only changes do not affect image, environment, mounts, ports, resources, or network aliases, the update may skip container replacement. If `pullPolicy` is `always`, update pulls and recreates the container even when the image reference is unchanged.
+If metadata-only changes do not affect images, environment, mounts, endpoints/ports, resources, or network aliases, the update may skip container replacement. If `pullPolicy` is `always`, update pulls and recreates affected containers even when an image reference is unchanged.
 
 Partial failures are optimistic fail-fast. Host records `operationStatus=failed`, keeps `lastError`, and preserves files, directories, images, and containers for explicit administrator recovery.
 

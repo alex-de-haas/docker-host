@@ -310,7 +310,7 @@ function PlanReview({
                 rows={plan.preservedSettings.map(setting => [
                   setting.moduleId,
                   setting.key,
-                  setting.secret ? `${setting.target.name} (secret)` : setting.target.name,
+                  `${setting.targets.map(target => `${target.container}:${target.name}`).join(', ')}${setting.secret ? ' (secret)' : ''}`,
                 ])}
               />
             )}
@@ -321,10 +321,11 @@ function PlanReview({
         <ReviewSection title="Storage" icon={<Folder className="h-4 w-4" />}>
           <div className="space-y-5">
             <TableLike
-              columns={['Module', 'Key', 'Host path', 'Container path']}
+              columns={['Module', 'Key', 'Service', 'Host path', 'Container path']}
               rows={plan.storage.directories.map(directory => [
                 directory.moduleId,
                 directory.key,
+                directory.container,
                 directory.hostPath,
                 directory.containerPath,
               ])}
@@ -354,9 +355,10 @@ function PlanReview({
       <aside className="space-y-6">
         <ReviewSection title="Images" icon={<Database className="h-4 w-4" />}>
           <TableLike
-            columns={['Module', 'Image', 'Pull policy']}
+            columns={['Module', 'Service', 'Image', 'Pull policy']}
             rows={plan.images.map(image => [
               image.moduleId,
+              image.container,
               image.reference,
               image.pullPolicy,
             ])}
@@ -365,12 +367,12 @@ function PlanReview({
 
         <ReviewSection title="Runtime" icon={<HardDrive className="h-4 w-4" />}>
           <TableLike
-            columns={['Key', 'Port', 'Protocol', 'Public']}
-            rows={plan.runtime.ports.map(port => [
-              port.key,
-              String(port.containerPort),
-              port.protocol,
-              port.public ? 'yes' : 'no',
+            columns={['Endpoint', 'Service', 'Port', 'Public']}
+            rows={plan.runtime.endpoints.map(endpoint => [
+              endpoint.key,
+              endpoint.container,
+              endpoint.port,
+              endpoint.public ? 'yes' : 'no',
             ])}
             empty="No runtime ports"
           />
@@ -379,8 +381,8 @@ function PlanReview({
         <ReviewSection title="Docker" icon={<Network className="h-4 w-4" />}>
           <DefinitionGrid>
             <Definition label="Network" value={plan.docker.networkName} />
-            <Definition label="Container" value={plan.docker.containerName} />
-            <Definition label="Aliases" value={plan.docker.networkAliases.join(', ')} />
+            <Definition label="Containers" value={plan.docker.containers.map(container => `${container.key}: ${container.containerName}`).join(', ')} />
+            <Definition label="Aliases" value={plan.docker.containers.map(container => `${container.key}: ${container.networkAlias}`).join(', ')} />
             <Definition label="Replacement" value={plan.docker.replacementRequired ? plan.docker.replacementReasons.join(', ') : 'not required'} />
           </DefinitionGrid>
         </ReviewSection>
@@ -439,7 +441,7 @@ function SettingsInputs({ settings }: { settings: InstallPlanSettingPrompt[] }) 
           <p className="break-all text-xs text-muted-foreground">
             {setting.moduleId}
             {' -> '}
-            {setting.target.name}
+            {setting.targets.map(target => `${target.container}:${target.name}`).join(', ') || 'no runtime targets'}
           </p>
         </div>
       ))}
@@ -525,12 +527,12 @@ function ExternalMountCollections({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{collection.label || collection.key}</span>
                   <Badge variant="outline">{collection.required ? 'required' : 'optional'}</Badge>
-                  <Badge variant="outline">{collection.writable ? 'readWrite' : 'readOnly'}</Badge>
+                  <Badge variant="outline">{collection.targets.some(target => target.writable) ? 'readWrite' : 'readOnly'}</Badge>
                 </div>
                 <p className="mt-1 break-all text-xs text-muted-foreground">
                   {collection.moduleId}
                   {' -> '}
-                  {collection.itemContainerPathTemplate}
+                  {collection.targets.map(target => `${target.container}: ${target.itemContainerPathTemplate}`).join(', ')}
                 </p>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={() => addDraft(collection)}>
@@ -574,11 +576,11 @@ function ExternalMountCollections({
                       aria-label="External host path"
                     />
                     <select
-                      value={collection.writable ? draft.access : 'readOnly'}
+                      value={collection.targets.some(target => target.writable) ? draft.access : 'readOnly'}
                       onChange={event => updateDraft(draft.id, {
                         access: event.target.value === 'readOnly' ? 'readOnly' : 'readWrite',
                       })}
-                      disabled={!collection.writable}
+                      disabled={!collection.targets.some(target => target.writable)}
                       aria-label="External mount access"
                       className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                     >

@@ -3,30 +3,12 @@ import test from 'node:test';
 import { validateAndNormalizeMetadata } from './module-metadata.ts';
 
 test('accepts shell UI metadata with entrypoint and navigation', () => {
-  const result = validateAndNormalizeMetadata({
-    schemaVersion: '0.1',
-    id: 'com.example.reports',
-    name: 'Example Reports',
-    version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/reports',
-      tag: 'latest',
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'http',
-          containerPort: 3000,
-          protocol: 'http',
-          public: true,
-        },
-      ],
-    },
+  const result = validateAndNormalizeMetadata(createMetadata({
     ui: {
       category: 'Apps',
       icon: 'boxes',
       entrypoint: {
-        portKey: 'http',
+        portKey: 'web',
         path: '/',
       },
       navigation: [
@@ -36,10 +18,10 @@ test('accepts shell UI metadata with entrypoint and navigation', () => {
         },
       ],
     },
-  }, '$');
+  }), '$');
 
   assert.deepEqual(result.validationErrors, []);
-  assert.equal(result.metadata?.ui?.entrypoint.portKey, 'http');
+  assert.equal(result.metadata?.ui?.entrypoint.portKey, 'web');
   assert.deepEqual(result.metadata?.ui?.navigation, [
     {
       label: 'People',
@@ -48,33 +30,18 @@ test('accepts shell UI metadata with entrypoint and navigation', () => {
   ]);
 });
 
-test('rejects shell UI metadata that points at a non-public runtime port', () => {
-  const result = validateAndNormalizeMetadata({
-    schemaVersion: '0.1',
+test('rejects shell UI metadata that points at a non-public endpoint', () => {
+  const result = validateAndNormalizeMetadata(createMetadata({
     id: 'com.example.identity',
     name: 'Example Identity',
-    version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/identity',
-      tag: 'latest',
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'http',
-          containerPort: 3000,
-          protocol: 'http',
-          public: false,
-        },
-      ],
-    },
+    endpointPublic: false,
     ui: {
       entrypoint: {
-        portKey: 'http',
+        portKey: 'web',
         path: '/',
       },
     },
-  }, '$');
+  }), '$');
 
   assert.equal(result.metadata, null);
   assert.equal(
@@ -84,32 +51,14 @@ test('rejects shell UI metadata that points at a non-public runtime port', () =>
 });
 
 test('rejects shell UI paths that are not same-origin absolute paths', () => {
-  const result = validateAndNormalizeMetadata({
-    schemaVersion: '0.1',
-    id: 'com.example.reports',
-    name: 'Example Reports',
-    version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/reports',
-      tag: 'latest',
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'http',
-          containerPort: 3000,
-          protocol: 'http',
-          public: true,
-        },
-      ],
-    },
+  const result = validateAndNormalizeMetadata(createMetadata({
     ui: {
       entrypoint: {
-        portKey: 'http',
+        portKey: 'web',
         path: 'https://reports.example.test',
       },
     },
-  }, '$');
+  }), '$');
 
   assert.equal(result.metadata, null);
   assert.equal(
@@ -119,28 +68,10 @@ test('rejects shell UI paths that are not same-origin absolute paths', () => {
 });
 
 test('rejects duplicate shell UI navigation paths', () => {
-  const result = validateAndNormalizeMetadata({
-    schemaVersion: '0.1',
-    id: 'com.example.reports',
-    name: 'Example Reports',
-    version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/reports',
-      tag: 'latest',
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'http',
-          containerPort: 3000,
-          protocol: 'http',
-          public: true,
-        },
-      ],
-    },
+  const result = validateAndNormalizeMetadata(createMetadata({
     ui: {
       entrypoint: {
-        portKey: 'http',
+        portKey: 'web',
         path: '/',
       },
       navigation: [
@@ -154,7 +85,7 @@ test('rejects duplicate shell UI navigation paths', () => {
         },
       ],
     },
-  }, '$');
+  }), '$');
 
   assert.equal(result.metadata, null);
   assert.equal(
@@ -164,34 +95,16 @@ test('rejects duplicate shell UI navigation paths', () => {
 });
 
 test('rejects empty optional shell UI category and icon values', () => {
-  const result = validateAndNormalizeMetadata({
-    schemaVersion: '0.1',
-    id: 'com.example.reports',
-    name: 'Example Reports',
-    version: '1.0.0',
-    image: {
-      repository: 'ghcr.io/example/reports',
-      tag: 'latest',
-    },
-    runtime: {
-      ports: [
-        {
-          key: 'http',
-          containerPort: 3000,
-          protocol: 'http',
-          public: true,
-        },
-      ],
-    },
+  const result = validateAndNormalizeMetadata(createMetadata({
     ui: {
       category: '',
       icon: ' ',
       entrypoint: {
-        portKey: 'http',
+        portKey: 'web',
         path: '/',
       },
     },
-  }, '$');
+  }), '$');
 
   assert.equal(result.metadata, null);
   assert.equal(
@@ -203,3 +116,44 @@ test('rejects empty optional shell UI category and icon values', () => {
     true
   );
 });
+
+function createMetadata(input: {
+  id?: string;
+  name?: string;
+  endpointPublic?: boolean;
+  ui: unknown;
+}) {
+  return {
+    schemaVersion: '0.2',
+    id: input.id ?? 'com.example.reports',
+    name: input.name ?? 'Example Reports',
+    version: '1.0.0',
+    containers: [
+      {
+        key: 'app',
+        image: {
+          repository: 'ghcr.io/example/reports',
+          tag: 'latest',
+        },
+        runtime: {
+          ports: [
+            {
+              key: 'http',
+              containerPort: 3000,
+              protocol: 'http',
+            },
+          ],
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'web',
+        container: 'app',
+        port: 'http',
+        public: input.endpointPublic ?? true,
+      },
+    ],
+    ui: input.ui,
+  };
+}

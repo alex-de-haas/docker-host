@@ -24,6 +24,7 @@ import type { ModuleIdentityMode } from '../types/gateway.ts';
 import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
 import type {
   InstalledModuleRecord,
+  ModuleMetadata,
   ModuleRuntimePortMetadata,
 } from '../types/modules.ts';
 
@@ -129,19 +130,20 @@ export async function resolveHostAppEmbedTarget(
 
   const metadata = await readModuleMetadata(installedModule, config);
   const ui = metadata?.ui
-    ? validateModuleUiMetadata(metadata.ui, '$.ui', metadata.runtime?.ports ?? [], [], moduleId)
+    ? validateModuleUiMetadata(metadata.ui, '$.ui', metadata.endpoints ?? [], [], moduleId)
     : null;
   if (!metadata || !ui) {
     throw new HostAppEmbedError('metadata_invalid', `Module "${moduleId}" does not have valid UI metadata.`, 503);
   }
 
-  const port = metadata.runtime?.ports?.find(candidate => candidate.key === ui.entrypoint.portKey);
-  if (!port) {
-    throw new HostAppEmbedError('ui_port_missing', `Module "${moduleId}" UI port is missing.`, 503);
+  const target = resolveUiEndpointTarget(metadata, ui.entrypoint.portKey);
+  if (!target) {
+    throw new HostAppEmbedError('ui_port_missing', `Module "${moduleId}" UI endpoint is missing.`, 503);
   }
 
-  const networkAlias = getModuleNetworkAlias(moduleId);
-  const targetOrigin = `http://${networkAlias}:${port.containerPort}`;
+  const networkAlias = installedModule.containers.find(container => container.key === target.container.key)?.networkAlias ??
+    getModuleNetworkAlias(moduleId, target.container.key);
+  const targetOrigin = `http://${networkAlias}:${target.port.containerPort}`;
   const upstreamUrl = new URL(modulePath, targetOrigin).toString();
   const requestHost = getRequestHost(request);
   const requestProtocol = getRequestProtocol(request);
@@ -150,7 +152,7 @@ export async function resolveHostAppEmbedTarget(
   return {
     app,
     installedModule,
-    port,
+    port: target.port,
     config,
     modulePath,
     targetOrigin,
@@ -177,6 +179,14 @@ export async function resolveHostAppEmbedTarget(
       principal,
     },
   };
+}
+
+function resolveUiEndpointTarget(metadata: ModuleMetadata, endpointKey: string) {
+  const endpoint = metadata.endpoints?.find(candidate => candidate.key === endpointKey);
+  const container = metadata.containers.find(candidate => candidate.key === endpoint?.container);
+  const port = container?.runtime?.ports?.find(candidate => candidate.key === endpoint?.port);
+
+  return endpoint && container && port ? { endpoint, container, port } : null;
 }
 
 export async function resolveHostDeveloperAppEmbedTarget(

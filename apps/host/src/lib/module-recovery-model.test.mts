@@ -12,7 +12,7 @@ import type { ModulesStoreData } from '../types/modules.ts';
 
 test('findDependentModules uses stored resolved dependency state', () => {
   const store: ModulesStoreData = {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: {},
     updatedAt: '2026-05-15T00:00:00.000Z',
     modules: [
@@ -20,16 +20,46 @@ test('findDependentModules uses stored resolved dependency state', () => {
         id: 'com.example.identity',
         metadataUrl: 'https://example.test/identity.json',
         operationStatus: 'installed',
+        containers: [
+          {
+            key: 'app',
+            containerName: 'mod-com-example-identity-app',
+            networkAlias: 'mod-com-example-identity-app',
+            image: {
+              repository: 'ghcr.io/example/identity',
+              tag: '1.0.0',
+              reference: 'ghcr.io/example/identity:1.0.0',
+            },
+          },
+        ],
       },
       {
         id: 'com.example.reports',
         metadataUrl: 'https://example.test/reports.json',
         operationStatus: 'installed',
+        containers: [
+          {
+            key: 'app',
+            containerName: 'mod-com-example-reports-app',
+            networkAlias: 'mod-com-example-reports-app',
+            image: {
+              repository: 'ghcr.io/example/reports',
+              tag: '1.0.0',
+              reference: 'ghcr.io/example/reports:1.0.0',
+            },
+          },
+        ],
         resolvedDependencies: [
           {
             id: 'com.example.identity',
             endpoint: 'http',
-            baseUrlEnv: 'IDENTITY_BASE_URL',
+            targets: [
+              {
+                container: 'app',
+                type: 'env',
+                name: 'IDENTITY_BASE_URL',
+              },
+            ],
             resolvedBaseUrl: 'http://mod-com-example-identity:8080',
           },
         ],

@@ -135,7 +135,7 @@ export function GatewayExposureManagementPanel({ onChanged }: GatewayExposureMan
       mode: 'edit',
       exposureId: exposure.id,
       moduleId: exposure.moduleId,
-      portKey: exposure.portKey,
+      portKey: exposure.endpointKey,
       hostnameInput: getHostnameInput(exposure.hostname, options?.gatewayBaseDomain ?? null),
       exposurePolicy: exposure.exposurePolicy,
       identityMode: exposure.identityMode,
@@ -152,7 +152,7 @@ export function GatewayExposureManagementPanel({ onChanged }: GatewayExposureMan
 
     const hostname = buildHostname(form.hostnameInput, options.gatewayBaseDomain);
     if (!form.moduleId || !form.portKey || !hostname) {
-      setError('Module, public runtime port, and hostname are required.');
+      setError('Module, public endpoint, and hostname are required.');
       return;
     }
 
@@ -172,7 +172,7 @@ export function GatewayExposureManagementPanel({ onChanged }: GatewayExposureMan
         body: JSON.stringify({
           moduleId: form.moduleId,
           hostname,
-          portKey: form.portKey,
+          endpointKey: form.portKey,
           exposurePolicy: form.exposurePolicy,
           identityMode: form.identityMode,
           enabled: form.enabled,
@@ -294,7 +294,7 @@ export function GatewayExposureManagementPanel({ onChanged }: GatewayExposureMan
             <TableBody>
               {exposures.map(exposure => {
                 const exposureModule = moduleById.get(exposure.moduleId);
-                const port = exposureModule?.ports.find(candidate => candidate.key === exposure.portKey);
+                const port = exposureModule?.ports.find(candidate => candidate.key === exposure.endpointKey);
                 return (
                   <TableRow key={exposure.id}>
                     <TableCell>
@@ -306,7 +306,7 @@ export function GatewayExposureManagementPanel({ onChanged }: GatewayExposureMan
                           </Badge>
                           <Badge variant="secondary">Service/API endpoint</Badge>
                           {port?.isUiEntrypoint && (
-                            <Badge variant="outline">UI entrypoint port</Badge>
+                            <Badge variant="outline">UI entrypoint endpoint</Badge>
                           )}
                         </div>
                       </div>
@@ -323,7 +323,7 @@ export function GatewayExposureManagementPanel({ onChanged }: GatewayExposureMan
                     </TableCell>
                     <TableCell>
                       <code className="rounded bg-muted px-2 py-1 text-xs">
-                        {exposure.portKey}
+                        {exposure.endpointKey}
                         {port ? ` :${port.containerPort}/${port.protocol}` : ''}
                       </code>
                     </TableCell>
@@ -404,7 +404,7 @@ export function GatewayExposureManagementPanel({ onChanged }: GatewayExposureMan
                 </div>
 
                 <div className="grid gap-2">
-                  <Label htmlFor="gateway-port">Public runtime port</Label>
+                  <Label htmlFor="gateway-port">Public endpoint</Label>
                   <select
                     id="gateway-port"
                     className={selectClassName}

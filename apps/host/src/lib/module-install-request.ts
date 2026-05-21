@@ -125,7 +125,7 @@ export function validateExternalMountDrafts(
         ...(draft.label.trim() ? { label: draft.label.trim() } : {}),
         hostPath,
         containerPath: computeExternalMountContainerPath(collection, key),
-        access: collection.writable ? draft.access : 'readOnly',
+        access: collection.targets.some(target => target.writable) ? draft.access : 'readOnly',
       });
     }
   }
@@ -184,7 +184,7 @@ export function createExternalMountDrafts(plan: Pick<InstallPlan, 'storage'>): E
 }
 
 export function createExternalMountDraft(
-  collection: Pick<InstallPlanMountCollection, 'moduleId' | 'key' | 'writable'>,
+  collection: Pick<InstallPlanMountCollection, 'moduleId' | 'key' | 'targets'>,
   index: number
 ): ExternalMountDraft {
   return {
@@ -194,16 +194,18 @@ export function createExternalMountDraft(
     key: '',
     label: '',
     hostPath: '',
-    access: collection.writable ? 'readWrite' : 'readOnly',
+    access: collection.targets.some(target => target.writable) ? 'readWrite' : 'readOnly',
   };
 }
 
 export function computeExternalMountContainerPath(
-  collection: Pick<InstallPlanMountCollection, 'itemContainerPathTemplate'>,
+  collection: Pick<InstallPlanMountCollection, 'targets'>,
   key: string
 ) {
+  const target = collection.targets[0];
+
   return isSafeExternalMountKey(key)
-    ? collection.itemContainerPathTemplate.replace('{key}', key)
+    ? target?.itemContainerPathTemplate.replace('{key}', key) ?? ''
     : '';
 }
 

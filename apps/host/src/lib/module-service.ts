@@ -3,12 +3,13 @@ import { ensureHostDataRoot, getHostRuntimeConfig } from '@/lib/host-runtime';
 import {
   ensureModuleNetwork,
   getDockerDaemonStatus,
-  getModuleRuntimeStatus,
-  restartModuleContainer,
-  startModuleContainer,
-  stopModuleContainer,
+  getModuleRuntimeStatuses,
+  restartModuleContainers,
+  startModuleContainers,
+  stopModuleContainers,
   toModuleOperationError,
 } from '@/lib/module-docker';
+import { buildModuleAggregateRuntimeStatus } from './module-lifecycle.ts';
 import {
   findInstalledModule,
   getModulesStoreStatus,
@@ -24,6 +25,7 @@ import type {
   ModuleDetail,
   ModuleImage,
   ModuleMetadata,
+  ModuleRuntimeState,
   ModuleRuntimeStatus,
   ModuleSummary,
   ResolvedDependency,
@@ -66,12 +68,12 @@ export async function listInstalledModules(): Promise<ModuleSummary[]> {
 
   return Promise.all(
     store.modules.map(async installedModule => {
-      const [metadata, runtimeStatus] = await Promise.all([
+      const [metadata, runtimeStatuses] = await Promise.all([
         safeReadModuleMetadata(installedModule, config),
-        getModuleRuntimeStatus(installedModule),
+        getModuleRuntimeStatuses(installedModule),
       ]);
 
-      return toModuleSummary(installedModule, metadata, runtimeStatus);
+      return toModuleSummary(installedModule, metadata, runtimeStatuses);
     })
   );
 }
@@ -85,11 +87,11 @@ export async function getInstalledModuleDetail(moduleId: string): Promise<Module
     return null;
   }
 
-  const [metadata, runtimeStatus] = await Promise.all([
+  const [metadata, runtimeStatuses] = await Promise.all([
     safeReadModuleMetadata(installedModule, config),
-    getModuleRuntimeStatus(installedModule),
+    getModuleRuntimeStatuses(installedModule),
   ]);
-  const summary = toModuleSummary(installedModule, metadata, runtimeStatus);
+  const summary = toModuleSummary(installedModule, metadata, runtimeStatuses);
 
   return {
     ...summary,
@@ -106,9 +108,9 @@ export async function startInstalledModule(moduleId: string): Promise<ModuleActi
   return runModuleAction(
     moduleId,
     'module.start',
-    startModuleContainer,
-    'Docker could not start the module container.',
-    'Recreate the module container or reinstall the module when install flows are available.'
+    startModuleContainers,
+    'Docker could not start all module containers.',
+    'Retry the failed install or reinstall the module if a container is missing.'
   );
 }
 
@@ -116,9 +118,9 @@ export async function stopInstalledModule(moduleId: string): Promise<ModuleActio
   return runModuleAction(
     moduleId,
     'module.stop',
-    stopModuleContainer,
-    'Docker could not stop the module container.',
-    'Inspect the module container in Docker, then retry the stop action.'
+    stopModuleContainers,
+    'Docker could not stop all module containers.',
+    'Inspect the module containers in Docker, then retry the stop action.'
   );
 }
 
@@ -126,16 +128,16 @@ export async function restartInstalledModule(moduleId: string): Promise<ModuleAc
   return runModuleAction(
     moduleId,
     'module.restart',
-    restartModuleContainer,
-    'Docker could not restart the module container.',
-    'Inspect the module container logs and recreate it when install flows are available.'
+    restartModuleContainers,
+    'Docker could not restart all module containers.',
+    'Inspect the module container logs and retry the restart action.'
   );
 }
 
 async function runModuleAction(
   moduleId: string,
   operation: string,
-  action: (module: InstalledModuleRecord) => Promise<ModuleRuntimeStatus>,
+  action: (module: InstalledModuleRecord, metadata?: ModuleMetadata | null) => Promise<ModuleRuntimeStatus[]>,
   fallbackMessage: string,
   nextStep: string
 ): Promise<ModuleActionResult> {
@@ -172,12 +174,12 @@ async function runModuleAction(
   }
 
   try {
-    const runtimeStatus = await action(installedModule);
     const metadata = await safeReadModuleMetadata(installedModule, config);
+    const runtimeStatuses = await action(installedModule, metadata);
 
     return {
       success: true,
-      module: toModuleSummary(installedModule, metadata, runtimeStatus),
+      module: toModuleSummary(installedModule, metadata, runtimeStatuses),
       error: null,
     };
   } catch (error) {
@@ -194,12 +196,13 @@ async function getPersistentLifecyclePreflightError(
   operation: string,
   config = getHostRuntimeConfig()
 ): Promise<ModuleActionResult['error']> {
-  const runtimeStatus = await getModuleRuntimeStatus(module);
-  if (runtimeStatus.state === 'not_created') {
+  const runtimeStatuses = await getModuleRuntimeStatuses(module);
+  const missingContainers = runtimeStatuses.filter(status => status.state === 'not_created');
+  if (missingContainers.length > 0) {
     return {
       operation,
       httpStatus: 409,
-      message: `Module "${module.id}" is missing Docker container "${runtimeStatus.containerName}".`,
+      message: `Module "${module.id}" is missing Docker container${missingContainers.length === 1 ? '' : 's'} ${missingContainers.map(status => `"${status.containerName}"`).join(', ')}.`,
       nextStep: 'Retry the failed install or remove the module and install it again.',
       occurredAt: new Date().toISOString(),
     };
@@ -219,14 +222,16 @@ async function getPersistentLifecyclePreflightError(
       continue;
     }
 
-    if (!getStoredStorageMapping(module, directory.key)) {
-      return {
-        operation,
-        httpStatus: 409,
-        message: `Module "${module.id}" is missing required storage mapping "${directory.key}".`,
-        nextStep: 'Clean up the module record or review the install again.',
-        occurredAt: new Date().toISOString(),
-      };
+    for (const target of directory.targets) {
+      if (!getStoredStorageMapping(module, directory.key, target.container)) {
+        return {
+          operation,
+          httpStatus: 409,
+          message: `Module "${module.id}" is missing required storage mapping "${directory.key}" for container "${target.container}".`,
+          nextStep: 'Clean up the module record or review the install again.',
+          occurredAt: new Date().toISOString(),
+        };
+      }
     }
   }
 
@@ -271,17 +276,19 @@ async function safeReadModuleMetadata(
 function toModuleSummary(
   module: InstalledModuleRecord,
   metadata: ModuleMetadata | null,
-  runtimeStatus: ModuleRuntimeStatus
+  runtimeStatuses: ModuleRuntimeStatus[]
 ): ModuleSummary {
+  const containers = buildContainerSummaries(module, metadata, runtimeStatuses);
+
   return {
     id: module.id,
     name: metadata?.name || module.id,
     description: metadata?.description,
     version: metadata?.version || 'unknown',
     metadataUrl: module.metadataUrl,
-    image: buildImage(module, metadata),
+    containers,
     operationStatus: module.operationStatus || 'installed',
-    runtimeStatus,
+    runtimeStatus: buildModuleAggregateRuntimeStatus(runtimeStatuses),
     installedAt: module.installedAt,
     updatedAt: module.updatedAt,
     lastOperation: module.lastOperation,
@@ -289,18 +296,43 @@ function toModuleSummary(
   };
 }
 
-function buildImage(module: InstalledModuleRecord, metadata: ModuleMetadata | null): ModuleImage {
-  const repository = metadata?.image?.repository || module.image?.repository || 'unknown';
-  const tag = metadata?.image?.tag || module.image?.tag || 'latest';
-  const reference = metadata?.image
-    ? `${metadata.image.repository}:${metadata.image.tag}`
-    : module.image?.reference || `${repository}:${tag}`;
+function buildContainerSummaries(
+  module: InstalledModuleRecord,
+  metadata: ModuleMetadata | null,
+  runtimeStatuses: ModuleRuntimeStatus[]
+): ModuleSummary['containers'] {
+  return module.containers.map((container, index) => {
+    const metadataContainer = metadata?.containers.find(candidate => candidate.key === container.key);
+    const runtimeStatus = runtimeStatuses[index] ?? {
+      state: 'unknown' as ModuleRuntimeState,
+      containerId: null,
+      containerName: container.containerName,
+      startedAt: null,
+      finishedAt: null,
+    };
+
+    return {
+      key: container.key,
+      image: buildContainerImage(container.image, metadataContainer?.image),
+      runtimeStatus,
+      networkAlias: container.networkAlias,
+      endpoints: metadata?.endpoints?.filter(endpoint => endpoint.container === container.key) ?? [],
+    };
+  });
+}
+
+function buildContainerImage(
+  storedImage: ModuleImage,
+  metadataImage: ModuleMetadata['containers'][number]['image'] | undefined
+): ModuleImage {
+  const repository = metadataImage?.repository || storedImage.repository || 'unknown';
+  const tag = metadataImage?.tag || storedImage.tag || 'latest';
 
   return {
     repository,
     tag,
-    reference,
-    pullPolicy: metadata?.image?.pullPolicy || module.image?.pullPolicy,
+    reference: metadataImage ? `${repository}:${tag}` : storedImage.reference || `${repository}:${tag}`,
+    pullPolicy: metadataImage?.pullPolicy || storedImage.pullPolicy,
   };
 }
 
@@ -319,21 +351,22 @@ function buildStorageDirectories(
 ): InstalledStorageMapping[] {
   const config = getHostRuntimeConfig();
 
-  return (metadata?.storage?.directories || []).map(directory => {
-    const storedMapping = getStoredStorageMapping(module, directory.key);
+  return (metadata?.storage?.directories || []).flatMap(directory => directory.targets.map(target => {
+    const storedMapping = getStoredStorageMapping(module, directory.key, target.container);
     const modulePath = directory.mount?.modulePath || directory.key;
 
     return {
       key: directory.key,
-      containerPath: storedMapping?.containerPath || directory.containerPath,
+      container: target.container,
+      containerPath: storedMapping?.containerPath || target.containerPath,
       hostPath:
         storedMapping?.hostPath ||
         path.join(config.dataRootHost, 'modules', module.id, modulePath),
       required: storedMapping?.required ?? directory.required,
-      writable: storedMapping?.writable ?? directory.writable,
-      readOnly: storedMapping?.readOnly ?? !directory.writable,
+      writable: storedMapping?.writable ?? target.writable,
+      readOnly: storedMapping?.readOnly ?? !target.writable,
     };
-  });
+  }));
 }
 
 function buildDependencies(
@@ -347,20 +380,21 @@ function buildDependencies(
     return {
       id: dependency.id,
       endpoint: resolved?.endpoint || dependency.connection?.endpoint,
-      baseUrlEnv: resolved?.baseUrlEnv || dependency.connection?.baseUrlEnv,
+      targets: resolved?.targets || dependency.connection?.targets,
       resolvedBaseUrl: resolved?.resolvedBaseUrl,
     };
   });
 }
 
-function getStoredStorageMapping(module: InstalledModuleRecord, key: string) {
+function getStoredStorageMapping(module: InstalledModuleRecord, key: string, container?: string) {
   const mappings = module.storageMappings || module.storage?.directories;
 
   if (Array.isArray(mappings)) {
-    return mappings.find(mapping => mapping.key === key);
+    return mappings.find(mapping => mapping.key === key && (!container || mapping.container === container));
   }
 
-  return mappings?.[key];
+  const mapping = mappings?.[key];
+  return mapping && (!container || mapping.container === container) ? mapping : undefined;
 }
 
 function getStoredExternalMounts(module: InstalledModuleRecord): InstalledExternalMountMapping[] {

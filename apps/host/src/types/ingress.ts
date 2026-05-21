@@ -23,7 +23,7 @@ export interface ExternalIngressChecklist {
 export interface ExternalIngressSnapshot {
   moduleId: string;
   hostname: string;
-  portKey: string;
+  endpointKey: string;
   exposurePolicy: GatewayExposureRecord['exposurePolicy'];
   identityMode: GatewayExposureRecord['identityMode'];
   gatewayBaseDomain: string | null;

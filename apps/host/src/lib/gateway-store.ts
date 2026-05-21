@@ -5,7 +5,7 @@ import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { GatewayExposureRecord, GatewayExposureState } from '../types/gateway.ts';
 
-const GATEWAY_STORE_SCHEMA_VERSION = '0.1' as const;
+const GATEWAY_STORE_SCHEMA_VERSION = '0.2' as const;
 
 let gatewayStoreMutex: Promise<void> = Promise.resolve();
 
@@ -105,11 +105,17 @@ function normalizeGatewayExposureState(parsed: unknown): GatewayExposureState {
 }
 
 function normalizeGatewayExposureRecord(value: unknown): GatewayExposureRecord | null {
+  const endpointKey = isObject(value) && typeof value.endpointKey === 'string'
+    ? value.endpointKey
+    : isObject(value) && typeof value.portKey === 'string'
+      ? value.portKey
+      : null;
+
   if (!isObject(value) ||
     typeof value.id !== 'string' ||
     typeof value.moduleId !== 'string' ||
     typeof value.hostname !== 'string' ||
-    typeof value.portKey !== 'string' ||
+    typeof endpointKey !== 'string' ||
     !isExposurePolicy(value.exposurePolicy) ||
     typeof value.createdAt !== 'string' ||
     typeof value.updatedAt !== 'string') {
@@ -120,7 +126,7 @@ function normalizeGatewayExposureRecord(value: unknown): GatewayExposureRecord |
     id: value.id,
     moduleId: value.moduleId,
     hostname: value.hostname.toLowerCase(),
-    portKey: value.portKey,
+    endpointKey,
     exposurePolicy: value.exposurePolicy,
     identityMode: isIdentityMode(value.identityMode)
       ? value.identityMode

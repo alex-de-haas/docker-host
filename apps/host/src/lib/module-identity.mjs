@@ -61,7 +61,7 @@ export async function createModuleIdentityToken(input, config, now = new Date())
     ...(principal.displayName ? { name: principal.displayName } : {}),
     ...(exposure.id ? { gatewayExposureId: exposure.id } : {}),
     ...(exposure.hostname ? { hostname: exposure.hostname } : {}),
-    ...(exposure.portKey ? { portKey: exposure.portKey } : {}),
+    ...(exposure.endpointKey ? { endpointKey: exposure.endpointKey } : {}),
   };
 
   return await new SignJWT(payload)

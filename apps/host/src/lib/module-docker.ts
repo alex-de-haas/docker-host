@@ -1,15 +1,21 @@
 import Docker from 'dockerode';
 import docker, { dockerConnectionDescription, formatDockerError } from '@/lib/docker';
 import { getHostRuntimeConfig } from '@/lib/host-runtime';
+import {
+  getModuleContainersInStartOrder,
+  getModuleContainersInStopOrder,
+} from './module-lifecycle.ts';
 import type { HostRuntimeConfig } from '@/lib/host-runtime';
 import type {
   InstallPlanImage,
+  InstalledModuleContainerRecord,
   InstalledModuleRecord,
+  ModuleMetadata,
   ModuleOperationError,
   ModuleRuntimeState,
   ModuleRuntimeStatus,
   ModuleRuntimePortMetadata,
-  NormalizedModuleMetadata,
+  NormalizedModuleContainerMetadata,
 } from '@/types/modules';
 
 export interface DockerDaemonStatus {
@@ -61,7 +67,7 @@ export interface CreateModuleContainerInput {
   env: Record<string, string>;
   mounts: ModuleContainerMount[];
   ports: ModuleRuntimePortMetadata[];
-  resources?: NormalizedModuleMetadata['runtime']['resources'];
+  resources?: NormalizedModuleContainerMetadata['runtime']['resources'];
 }
 
 type DockerError = Error & {
@@ -73,21 +79,21 @@ type DockerError = Error & {
 };
 
 export function getModuleContainerName(module: InstalledModuleRecord) {
-  return module.containerName || getModuleDockerName(module.id);
+  return module.containers[0]?.containerName || getModuleDockerName(module.id, 'main');
 }
 
-export function getModuleNetworkAlias(moduleId: string) {
-  return getModuleDockerName(moduleId);
+export function getModuleNetworkAlias(moduleId: string, containerKey = 'main') {
+  return getModuleDockerName(moduleId, containerKey);
 }
 
-export function getModuleDockerName(moduleId: string) {
+export function getModuleDockerName(moduleId: string, containerKey = 'main') {
   const normalized = moduleId
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-');
 
-  return `mod-${normalized || 'module'}`;
+  return `mod-${normalized || 'module'}-${containerKey}`;
 }
 
 export async function getDockerDaemonStatus(): Promise<DockerDaemonStatus> {
@@ -156,8 +162,22 @@ export async function ensureModuleNetwork(
 export async function getModuleRuntimeStatus(
   module: InstalledModuleRecord
 ): Promise<ModuleRuntimeStatus> {
-  const containerName = getModuleContainerName(module);
+  return getModuleContainerRuntimeStatus(getModuleContainerName(module));
+}
 
+export async function getModuleRuntimeStatuses(
+  module: InstalledModuleRecord
+): Promise<ModuleRuntimeStatus[]> {
+  return Promise.all(
+    getRuntimeContainerRecords(module).map(container =>
+      getModuleContainerRuntimeStatus(container.containerName)
+    )
+  );
+}
+
+async function getModuleContainerRuntimeStatus(
+  containerName: string
+): Promise<ModuleRuntimeStatus> {
   try {
     const info = await docker.getContainer(containerName).inspect();
     return mapContainerRuntimeStatus(info, containerName);
@@ -266,28 +286,182 @@ export async function pullModuleImage(image: InstallPlanImage) {
 export async function createAndStartModuleContainer(config: CreateModuleContainerInput) {
   const container = await docker.createContainer(buildModuleContainerCreateOptions(config));
   await container.start();
-  return getModuleRuntimeStatus({
-    id: config.moduleId,
-    metadataUrl: '',
-    containerName: config.containerName,
-  });
+  return getModuleContainerRuntimeStatus(config.containerName);
 }
 
-export async function ensureModuleContainerStarted(module: InstalledModuleRecord) {
-  await ensureModuleContainerNetwork(module);
-  const container = docker.getContainer(getModuleContainerName(module));
-  const info = await container.inspect();
-
-  if (!info.State.Running) {
-    await container.start();
+export async function ensureModuleContainersStarted(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  for (const container of getRuntimeContainersInStartOrder(module, metadata)) {
+    await startModuleContainerRecord(module.id, container);
   }
 
-  return getModuleRuntimeStatus(module);
+  return getModuleRuntimeStatuses(module);
+}
+
+export async function ensureModuleContainerStarted(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  return ensureModuleContainersStarted(module, metadata);
+}
+
+export async function removeModuleContainersIfExist(module: InstalledModuleRecord) {
+  const results = [];
+
+  for (const containerRecord of getRuntimeContainerRecords(module)) {
+    results.push(await removeModuleContainerRecordIfExists(containerRecord));
+  }
+
+  return results;
 }
 
 export async function removeModuleContainerIfExists(module: InstalledModuleRecord) {
-  const containerName = getModuleContainerName(module);
+  const results = await removeModuleContainersIfExist(module);
+  return results[0] ?? {
+    removed: false,
+    existed: false,
+    containerName: getModuleContainerName(module),
+  };
+}
 
+export async function startModuleContainers(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  for (const container of getRuntimeContainersInStartOrder(module, metadata)) {
+    await startModuleContainerRecord(module.id, container);
+  }
+
+  return getModuleRuntimeStatuses(module);
+}
+
+export async function stopModuleContainers(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  for (const container of getRuntimeContainersInStopOrder(module, metadata)) {
+    await stopModuleContainerRecord(container);
+  }
+
+  return getModuleRuntimeStatuses(module);
+}
+
+export async function restartModuleContainers(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  for (const container of getRuntimeContainersInStopOrder(module, metadata)) {
+    await stopModuleContainerRecord(container);
+  }
+
+  for (const container of getRuntimeContainersInStartOrder(module, metadata)) {
+    await startModuleContainerRecord(module.id, container);
+  }
+
+  return getModuleRuntimeStatuses(module);
+}
+
+export async function startModuleContainer(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  const statuses = await startModuleContainers(module, metadata);
+  return statuses[0] ?? getModuleRuntimeStatus(module);
+}
+
+export async function stopModuleContainer(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  const statuses = await stopModuleContainers(module, metadata);
+  return statuses[0] ?? getModuleRuntimeStatus(module);
+}
+
+export async function restartModuleContainer(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  const statuses = await restartModuleContainers(module, metadata);
+  return statuses[0] ?? getModuleRuntimeStatus(module);
+}
+
+export function getRuntimeContainerRecords(module: InstalledModuleRecord): InstalledModuleContainerRecord[] {
+  if (module.containers.length > 0) {
+    return module.containers;
+  }
+
+  return [{
+    key: 'main',
+    containerName: getModuleDockerName(module.id, 'main'),
+    networkAlias: getModuleNetworkAlias(module.id),
+    image: {
+      repository: 'unknown',
+      tag: 'latest',
+      reference: 'unknown:latest',
+    },
+  }];
+}
+
+function getRuntimeContainersInStartOrder(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  return getModuleContainersInStartOrder(
+    {
+      containers: getRuntimeContainerRecords(module),
+    },
+    metadata
+  );
+}
+
+function getRuntimeContainersInStopOrder(
+  module: InstalledModuleRecord,
+  metadata?: ModuleMetadata | null
+) {
+  return getModuleContainersInStopOrder(
+    {
+      containers: getRuntimeContainerRecords(module),
+    },
+    metadata
+  );
+}
+
+async function startModuleContainerRecord(
+  moduleId: string,
+  containerRecord: InstalledModuleContainerRecord
+) {
+  await ensureModuleContainerNetwork(moduleId, containerRecord);
+  const container = docker.getContainer(containerRecord.containerName);
+
+  try {
+    await container.start();
+  } catch (error) {
+    if (getDockerStatusCode(error) !== 304) {
+      throw error;
+    }
+  }
+}
+
+async function stopModuleContainerRecord(
+  containerRecord: InstalledModuleContainerRecord
+) {
+  const container = docker.getContainer(containerRecord.containerName);
+
+  try {
+    await container.stop();
+  } catch (error) {
+    if (getDockerStatusCode(error) !== 304) {
+      throw error;
+    }
+  }
+}
+
+async function removeModuleContainerRecordIfExists(
+  containerRecord: InstalledModuleContainerRecord
+) {
+  const containerName = containerRecord.containerName;
   try {
     const container = docker.getContainer(containerName);
     await container.inspect();
@@ -310,26 +484,6 @@ export async function removeModuleContainerIfExists(module: InstalledModuleRecor
   }
 }
 
-export async function startModuleContainer(module: InstalledModuleRecord) {
-  await ensureModuleContainerNetwork(module);
-  const container = docker.getContainer(getModuleContainerName(module));
-  await container.start();
-  return getModuleRuntimeStatus(module);
-}
-
-export async function stopModuleContainer(module: InstalledModuleRecord) {
-  const container = docker.getContainer(getModuleContainerName(module));
-  await container.stop();
-  return getModuleRuntimeStatus(module);
-}
-
-export async function restartModuleContainer(module: InstalledModuleRecord) {
-  await ensureModuleContainerNetwork(module);
-  const container = docker.getContainer(getModuleContainerName(module));
-  await container.restart();
-  return getModuleRuntimeStatus(module);
-}
-
 export function toModuleOperationError(
   operation: string,
   error: unknown,
@@ -347,13 +501,16 @@ export function toModuleOperationError(
   };
 }
 
-async function ensureModuleContainerNetwork(module: InstalledModuleRecord) {
+async function ensureModuleContainerNetwork(
+  moduleId: string,
+  containerRecord: InstalledModuleContainerRecord
+) {
   const network = await ensureModuleNetwork();
   if (!network.ready) {
     throw new Error(network.error || `Docker network "${network.name}" is unavailable.`);
   }
 
-  const containerName = getModuleContainerName(module);
+  const containerName = containerRecord.containerName;
   const info = await docker.getContainer(containerName).inspect();
 
   if (info.NetworkSettings.Networks?.[network.name]) {
@@ -363,7 +520,7 @@ async function ensureModuleContainerNetwork(module: InstalledModuleRecord) {
   await docker.getNetwork(network.name).connect({
     Container: info.Id,
     EndpointConfig: {
-      Aliases: [getModuleNetworkAlias(module.id)],
+      Aliases: [containerRecord.networkAlias || getModuleNetworkAlias(moduleId, containerRecord.key)],
     },
   });
 }
@@ -416,7 +573,7 @@ function buildModuleContainerCreateOptions(
   config: CreateModuleContainerInput
 ): Docker.ContainerCreateOptions {
   const exposedPorts = Object.fromEntries(
-    config.ports.map(port => [`${port.containerPort}/tcp`, {}])
+    config.ports.map(port => [`${port.containerPort}/${toDockerPortProtocol(port.protocol)}`, {}])
   );
   const resources = buildResourceHostConfig(config.resources);
 
@@ -446,8 +603,13 @@ function buildModuleContainerCreateOptions(
   };
 }
 
+function toDockerPortProtocol(protocol: string) {
+  const normalized = protocol.toLowerCase();
+  return normalized === 'udp' ? 'udp' : 'tcp';
+}
+
 function buildResourceHostConfig(
-  resources: NormalizedModuleMetadata['runtime']['resources'] | undefined
+  resources: NormalizedModuleContainerMetadata['runtime']['resources'] | undefined
 ): Partial<Docker.HostConfig> {
   if (!resources) {
     return {};

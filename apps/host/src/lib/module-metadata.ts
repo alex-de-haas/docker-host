@@ -6,14 +6,18 @@ import type {
   ModuleRuntimePortMetadata,
   ModuleSettingType,
   ModuleStorageMountCollectionMetadata,
+  ModuleEnvTarget,
+  NormalizedModuleContainerMetadata,
   ModuleUiMetadata,
   NormalizedModuleDependencyMetadata,
+  NormalizedModuleEndpointMetadata,
   NormalizedModuleMetadata,
   NormalizedModuleSettingMetadata,
+  NormalizedModuleStorageMountCollectionMetadata,
   NormalizedModuleStorageDirectoryMetadata,
 } from '@/types/modules';
 
-const SUPPORTED_SCHEMA_VERSION = '0.1';
+const SUPPORTED_SCHEMA_VERSION = '0.2';
 const MAX_METADATA_BYTES = 1024 * 1024;
 const METADATA_FETCH_TIMEOUT_MS = 10_000;
 const MAX_DEPENDENCY_NODES = 32;
@@ -254,8 +258,8 @@ async function loadNode({
     node.dependencies.push({ declaration: dependency, dependencyId });
 
     if (dependency.connection) {
-      const endpoint = dependencyNode.metadata.runtime.ports.find(
-        port => port.key === dependency.connection?.endpoint
+      const endpoint = dependencyNode.metadata.endpoints.find(
+        candidate => candidate.key === dependency.connection?.endpoint
       );
 
       if (!endpoint) {
@@ -415,7 +419,7 @@ export function validateAndNormalizeMetadata(
   rejectUnknownFields(
     value,
     nodePath,
-    ['schemaVersion', 'id', 'name', 'description', 'version', 'image', 'dependencies', 'settings', 'storage', 'runtime', 'ui'],
+    ['schemaVersion', 'id', 'name', 'description', 'version', 'containers', 'endpoints', 'connections', 'dependencies', 'settings', 'storage', 'ui'],
     validationErrors
   );
 
@@ -424,12 +428,15 @@ export function validateAndNormalizeMetadata(
   const name = readRequiredString(value, 'name', nodePath, validationErrors);
   const description = readOptionalString(value, 'description', nodePath, validationErrors);
   const version = readRequiredString(value, 'version', nodePath, validationErrors);
-  const image = validateImage(value.image, `${nodePath}.image`, validationErrors);
-  const dependencies = validateDependencies(value.dependencies, `${nodePath}.dependencies`, validationErrors, id);
-  const settings = validateSettings(value.settings, `${nodePath}.settings`, validationErrors);
-  const storage = validateStorage(value.storage, `${nodePath}.storage`, validationErrors, id);
-  const runtime = validateRuntime(value.runtime, `${nodePath}.runtime`, validationErrors);
-  const ui = validateModuleUiMetadata(value.ui, `${nodePath}.ui`, runtime?.ports ?? [], validationErrors, id);
+  const containers = validateContainers(value.containers, `${nodePath}.containers`, validationErrors, id);
+  const containerKeys = new Set(containers.map(container => container.key));
+  const endpoints = validateEndpoints(value.endpoints, `${nodePath}.endpoints`, containers, validationErrors, id);
+  const endpointKeys = new Set(endpoints.map(endpoint => endpoint.key));
+  const connections = validateConnections(value.connections, `${nodePath}.connections`, endpointKeys, containerKeys, validationErrors, id);
+  const dependencies = validateDependencies(value.dependencies, `${nodePath}.dependencies`, validationErrors, id, containerKeys);
+  const settings = validateSettings(value.settings, `${nodePath}.settings`, validationErrors, containerKeys);
+  const storage = validateStorage(value.storage, `${nodePath}.storage`, validationErrors, id, containerKeys);
+  const ui = validateModuleUiMetadata(value.ui, `${nodePath}.ui`, endpoints, validationErrors, id);
 
   if (schemaVersion && schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
     validationErrors.push({
@@ -458,7 +465,7 @@ export function validateAndNormalizeMetadata(
     });
   }
 
-  if (validationErrors.length > 0 || !schemaVersion || !id || !name || !version || !image || !runtime) {
+  if (validationErrors.length > 0 || !schemaVersion || !id || !name || !version || containers.length === 0) {
     return { metadata: null, validationErrors };
   }
 
@@ -469,41 +476,236 @@ export function validateAndNormalizeMetadata(
       name,
       ...(description ? { description } : {}),
       version,
-      image,
+      containers,
+      endpoints,
+      connections,
       dependencies,
       settings,
       storage,
-      runtime,
       ...(ui ? { ui } : {}),
     },
     validationErrors,
   };
 }
 
+function validateContainers(
+  value: unknown,
+  pathToContainers: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleContainerMetadata[] {
+  if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'containers must be a non-empty array.',
+      path: pathToContainers,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  if (value.length === 0) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'containers must include at least one container.',
+      path: pathToContainers,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  const containers: NormalizedModuleContainerMetadata[] = [];
+  const seenKeys = new Set<string>();
+
+  value.forEach((item, index) => {
+    const itemPath = `${pathToContainers}[${index}]`;
+
+    if (!isPlainObject(item)) {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'containers[] item must be an object.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    rejectUnknownFields(item, itemPath, ['key', 'dependsOn', 'image', 'runtime'], validationErrors, moduleId);
+    const key = readRequiredString(item, 'key', itemPath, validationErrors, moduleId);
+    const image = validateImage(item.image, `${itemPath}.image`, validationErrors, moduleId);
+    const dependsOn = validateContainerDependsOn(item.dependsOn, `${itemPath}.dependsOn`, validationErrors, moduleId);
+    const runtime = validateRuntime(item.runtime, `${itemPath}.runtime`, validationErrors, moduleId);
+
+    if (key && seenKeys.has(key)) {
+      validationErrors.push({
+        code: 'container_key_duplicate',
+        message: `Container key "${key}" is declared more than once.`,
+        path: `${itemPath}.key`,
+        node: moduleId,
+      });
+    }
+    if (key) {
+      seenKeys.add(key);
+    }
+
+    if (key && !isSafeContractKey(key)) {
+      validationErrors.push({
+        code: 'container_key_invalid',
+        message: 'containers[].key must match ^[a-z][a-z0-9-]{0,62}$.',
+        path: `${itemPath}.key`,
+        node: moduleId,
+      });
+    }
+
+    if (key && isSafeContractKey(key) && image && runtime) {
+      containers.push({
+        key,
+        dependsOn,
+        image,
+        runtime,
+      });
+    }
+  });
+
+  validateContainerDependencyGraph(containers, pathToContainers, validationErrors, moduleId);
+  return containers;
+}
+
+function validateContainerDependsOn(
+  value: unknown,
+  pathToDependsOn: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'metadata_field_invalid',
+      message: 'containers[].dependsOn must be an array.',
+      path: pathToDependsOn,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  const dependencies: string[] = [];
+  const seen = new Set<string>();
+
+  value.forEach((item, index) => {
+    const itemPath = `${pathToDependsOn}[${index}]`;
+    if (typeof item !== 'string' || item.trim() === '') {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'containers[].dependsOn[] must be a non-empty string.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    const key = item.trim();
+    if (!isSafeContractKey(key)) {
+      validationErrors.push({
+        code: 'container_key_invalid',
+        message: 'containers[].dependsOn[] must match ^[a-z][a-z0-9-]{0,62}$.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    if (!seen.has(key)) {
+      dependencies.push(key);
+      seen.add(key);
+    }
+  });
+
+  return dependencies;
+}
+
+function validateContainerDependencyGraph(
+  containers: NormalizedModuleContainerMetadata[],
+  pathToContainers: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+) {
+  const containerKeys = new Set(containers.map(container => container.key));
+
+  containers.forEach((container, index) => {
+    container.dependsOn.forEach((dependencyKey, dependencyIndex) => {
+      if (!containerKeys.has(dependencyKey)) {
+        validationErrors.push({
+          code: 'container_dependency_missing',
+          message: `Container "${container.key}" depends on unknown container "${dependencyKey}".`,
+          path: `${pathToContainers}[${index}].dependsOn[${dependencyIndex}]`,
+          node: moduleId,
+        });
+      }
+    });
+  });
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  function visit(container: NormalizedModuleContainerMetadata, stack: string[]) {
+    if (visited.has(container.key)) {
+      return;
+    }
+
+    if (visiting.has(container.key)) {
+      validationErrors.push({
+        code: 'container_dependency_cycle',
+        message: `Container dependency graph contains a cycle: ${[...stack, container.key].join(' -> ')}.`,
+        path: pathToContainers,
+        node: moduleId,
+      });
+      return;
+    }
+
+    visiting.add(container.key);
+    for (const dependencyKey of container.dependsOn) {
+      const dependency = containers.find(candidate => candidate.key === dependencyKey);
+      if (dependency) {
+        visit(dependency, [...stack, container.key]);
+      }
+    }
+    visiting.delete(container.key);
+    visited.add(container.key);
+  }
+
+  containers.forEach(container => visit(container, []));
+}
+
 function validateImage(
   value: unknown,
   pathToImage: string,
-  validationErrors: InstallPlanValidationError[]
-): NormalizedModuleMetadata['image'] | null {
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleContainerMetadata['image'] | null {
   if (!isPlainObject(value)) {
     validationErrors.push({
       code: 'metadata_field_required',
       message: 'image must be an object.',
       path: pathToImage,
+      node: moduleId,
     });
     return null;
   }
 
-  rejectUnknownFields(value, pathToImage, ['repository', 'tag', 'pullPolicy'], validationErrors);
-  const repository = readRequiredString(value, 'repository', pathToImage, validationErrors);
-  const tag = readRequiredString(value, 'tag', pathToImage, validationErrors);
-  const pullPolicy = readOptionalString(value, 'pullPolicy', pathToImage, validationErrors) ?? 'ifNotPresent';
+  rejectUnknownFields(value, pathToImage, ['repository', 'tag', 'pullPolicy'], validationErrors, moduleId);
+  const repository = readRequiredString(value, 'repository', pathToImage, validationErrors, moduleId);
+  const tag = readRequiredString(value, 'tag', pathToImage, validationErrors, moduleId);
+  const pullPolicy = readOptionalString(value, 'pullPolicy', pathToImage, validationErrors, moduleId) ?? 'ifNotPresent';
 
   if (repository && /\s/.test(repository)) {
     validationErrors.push({
       code: 'image_repository_invalid',
       message: 'image.repository must not contain whitespace.',
       path: `${pathToImage}.repository`,
+      node: moduleId,
     });
   }
 
@@ -512,6 +714,7 @@ function validateImage(
       code: 'image_tag_invalid',
       message: 'image.tag must not contain whitespace.',
       path: `${pathToImage}.tag`,
+      node: moduleId,
     });
   }
 
@@ -520,6 +723,7 @@ function validateImage(
       code: 'unsupported_pull_policy',
       message: `image.pullPolicy "${pullPolicy}" is not supported.`,
       path: `${pathToImage}.pullPolicy`,
+      node: moduleId,
     });
   }
 
@@ -534,11 +738,202 @@ function validateImage(
   };
 }
 
+function validateEndpoints(
+  value: unknown,
+  pathToEndpoints: string,
+  containers: NormalizedModuleContainerMetadata[],
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleEndpointMetadata[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'metadata_field_invalid',
+      message: 'endpoints must be an array.',
+      path: pathToEndpoints,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  const endpoints: NormalizedModuleEndpointMetadata[] = [];
+  const seenKeys = new Set<string>();
+  const containersByKey = new Map(containers.map(container => [container.key, container]));
+
+  value.forEach((item, index) => {
+    const itemPath = `${pathToEndpoints}[${index}]`;
+
+    if (!isPlainObject(item)) {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'endpoints[] item must be an object.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    rejectUnknownFields(item, itemPath, ['key', 'container', 'port', 'public'], validationErrors, moduleId);
+    const key = readRequiredString(item, 'key', itemPath, validationErrors, moduleId);
+    const containerKey = readRequiredString(item, 'container', itemPath, validationErrors, moduleId);
+    const portKey = readRequiredString(item, 'port', itemPath, validationErrors, moduleId);
+    const isPublic = readRequiredBoolean(item, 'public', itemPath, validationErrors, moduleId);
+
+    if (key && seenKeys.has(key)) {
+      validationErrors.push({
+        code: 'endpoint_key_duplicate',
+        message: `Endpoint key "${key}" is declared more than once.`,
+        path: `${itemPath}.key`,
+        node: moduleId,
+      });
+    }
+    if (key) {
+      seenKeys.add(key);
+    }
+
+    if (key && !isSafeContractKey(key)) {
+      validationErrors.push({
+        code: 'endpoint_key_invalid',
+        message: 'endpoints[].key must match ^[a-z][a-z0-9-]{0,62}$.',
+        path: `${itemPath}.key`,
+        node: moduleId,
+      });
+    }
+
+    const container = containerKey ? containersByKey.get(containerKey) : undefined;
+    if (containerKey && !container) {
+      validationErrors.push({
+        code: 'endpoint_container_missing',
+        message: `Endpoint "${key || index}" references unknown container "${containerKey}".`,
+        path: `${itemPath}.container`,
+        node: moduleId,
+      });
+    }
+
+    const port = container?.runtime.ports.find(candidate => candidate.key === portKey);
+    if (container && portKey && !port) {
+      validationErrors.push({
+        code: 'endpoint_port_missing',
+        message: `Endpoint "${key || index}" references unknown port "${portKey}" on container "${container.key}".`,
+        path: `${itemPath}.port`,
+        node: moduleId,
+      });
+    }
+
+    if (key && isSafeContractKey(key) && container && port && isPublic !== undefined) {
+      endpoints.push({
+        key,
+        container: container.key,
+        port: port.key,
+        public: isPublic,
+      });
+    }
+  });
+
+  return endpoints;
+}
+
+function validateConnections(
+  value: unknown,
+  pathToConnections: string,
+  endpointKeys: Set<string>,
+  containerKeys: Set<string>,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleMetadata['connections'] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'metadata_field_invalid',
+      message: 'connections must be an array.',
+      path: pathToConnections,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  return value.flatMap((item, index) => {
+    const itemPath = `${pathToConnections}[${index}]`;
+
+    if (!isPlainObject(item)) {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'connections[] item must be an object.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return [];
+    }
+
+    rejectUnknownFields(item, itemPath, ['source', 'targets'], validationErrors, moduleId);
+    const source = validateConnectionSource(item.source, `${itemPath}.source`, endpointKeys, validationErrors, moduleId);
+    const targets = validateEnvTargets(item.targets, `${itemPath}.targets`, containerKeys, validationErrors, moduleId, {
+      required: true,
+      fieldName: 'connections[].targets',
+    });
+
+    return source && targets.length > 0
+      ? [{ source, targets }]
+      : [];
+  });
+}
+
+function validateConnectionSource(
+  value: unknown,
+  pathToSource: string,
+  endpointKeys: Set<string>,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleMetadata['connections'][number]['source'] | null {
+  if (!isPlainObject(value)) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'connections[].source must be an object.',
+      path: pathToSource,
+      node: moduleId,
+    });
+    return null;
+  }
+
+  rejectUnknownFields(value, pathToSource, ['type', 'key'], validationErrors, moduleId);
+  const type = readRequiredString(value, 'type', pathToSource, validationErrors, moduleId);
+  const key = readRequiredString(value, 'key', pathToSource, validationErrors, moduleId);
+
+  if (type && type !== 'endpoint') {
+    validationErrors.push({
+      code: 'unsupported_connection_source',
+      message: `Connection source type "${type}" is not supported.`,
+      path: `${pathToSource}.type`,
+      node: moduleId,
+    });
+  }
+
+  if (key && !endpointKeys.has(key)) {
+    validationErrors.push({
+      code: 'connection_endpoint_missing',
+      message: `Connection source references unknown endpoint "${key}".`,
+      path: `${pathToSource}.key`,
+      node: moduleId,
+    });
+  }
+
+  return type === 'endpoint' && key && endpointKeys.has(key)
+    ? { type: 'endpoint', key }
+    : null;
+}
+
 function validateDependencies(
   value: unknown,
   pathToDependencies: string,
   validationErrors: InstallPlanValidationError[],
-  moduleId?: string
+  moduleId?: string,
+  containerKeys: Set<string> = new Set()
 ): NormalizedModuleDependencyMetadata[] {
   if (value === undefined) {
     return [];
@@ -575,7 +970,7 @@ function validateDependencies(
     const version = readRequiredString(item, 'version', itemPath, validationErrors, moduleId);
     const required = readRequiredBoolean(item, 'required', itemPath, validationErrors, moduleId);
     const metadataUrl = readRequiredString(item, 'metadataUrl', itemPath, validationErrors, moduleId);
-    const connection = validateDependencyConnection(item.connection, `${itemPath}.connection`, validationErrors, moduleId);
+    const connection = validateDependencyConnection(item.connection, `${itemPath}.connection`, validationErrors, moduleId, containerKeys);
 
     if (id && id === moduleId) {
       validationErrors.push({
@@ -638,7 +1033,8 @@ function validateDependencyConnection(
   value: unknown,
   pathToConnection: string,
   validationErrors: InstallPlanValidationError[],
-  moduleId?: string
+  moduleId?: string,
+  containerKeys: Set<string> = new Set()
 ): NormalizedModuleDependencyMetadata['connection'] | undefined {
   if (value === undefined) {
     return undefined;
@@ -654,30 +1050,25 @@ function validateDependencyConnection(
     return undefined;
   }
 
-  rejectUnknownFields(value, pathToConnection, ['endpoint', 'baseUrlEnv'], validationErrors, moduleId);
+  rejectUnknownFields(value, pathToConnection, ['endpoint', 'targets'], validationErrors, moduleId);
   const endpoint = readRequiredString(value, 'endpoint', pathToConnection, validationErrors, moduleId);
-  const baseUrlEnv = readRequiredString(value, 'baseUrlEnv', pathToConnection, validationErrors, moduleId);
+  const targets = validateEnvTargets(value.targets, `${pathToConnection}.targets`, containerKeys, validationErrors, moduleId, {
+    required: true,
+    fieldName: 'dependencies[].connection.targets',
+  });
 
-  if (baseUrlEnv && !isEnvironmentVariableName(baseUrlEnv)) {
-    validationErrors.push({
-      code: 'environment_variable_invalid',
-      message: 'dependencies[].connection.baseUrlEnv must be a valid environment variable name.',
-      path: `${pathToConnection}.baseUrlEnv`,
-      node: moduleId,
-    });
-  }
-
-  if (!endpoint || !baseUrlEnv || !isEnvironmentVariableName(baseUrlEnv)) {
+  if (!endpoint || targets.length === 0) {
     return undefined;
   }
 
-  return { endpoint, baseUrlEnv };
+  return { endpoint, targets };
 }
 
 function validateSettings(
   value: unknown,
   pathToSettings: string,
-  validationErrors: InstallPlanValidationError[]
+  validationErrors: InstallPlanValidationError[],
+  containerKeys: Set<string>
 ): NormalizedModuleSettingMetadata[] {
   if (value === undefined) {
     return [];
@@ -707,7 +1098,7 @@ function validateSettings(
       return;
     }
 
-    rejectUnknownFields(item, itemPath, ['key', 'type', 'required', 'default', 'target'], validationErrors);
+    rejectUnknownFields(item, itemPath, ['key', 'type', 'required', 'default', 'targets'], validationErrors);
     const key = readRequiredString(item, 'key', itemPath, validationErrors);
     const type = readRequiredString(item, 'type', itemPath, validationErrors);
     const required = readRequiredBoolean(item, 'required', itemPath, validationErrors);
@@ -739,7 +1130,10 @@ function validateSettings(
       });
     }
 
-    const target = validateSettingTarget(item.target, `${itemPath}.target`, key, validationErrors);
+    const targets = validateEnvTargets(item.targets, `${itemPath}.targets`, containerKeys, validationErrors, undefined, {
+      required: false,
+      fieldName: 'settings[].targets',
+    });
     const hasDefault = Object.prototype.hasOwnProperty.call(item, 'default');
 
     if (type === 'secret' && hasDefault) {
@@ -760,7 +1154,6 @@ function validateSettings(
       type &&
       SUPPORTED_SETTING_TYPES.has(type as ModuleSettingType) &&
       required !== undefined &&
-      target &&
       !(type === 'secret' && hasDefault)
     ) {
       settings.push({
@@ -768,7 +1161,7 @@ function validateSettings(
         type: type as ModuleSettingType,
         required,
         ...(hasDefault && type !== 'secret' ? { default: item.default } : {}),
-        target,
+        targets,
       });
     }
   });
@@ -776,57 +1169,118 @@ function validateSettings(
   return settings;
 }
 
-function validateSettingTarget(
+function validateEnvTargets(
   value: unknown,
-  pathToTarget: string,
-  settingKey: string | undefined,
-  validationErrors: InstallPlanValidationError[]
-): NormalizedModuleSettingMetadata['target'] | null {
-  if (!settingKey) {
-    return null;
+  pathToTargets: string,
+  containerKeys: Set<string>,
+  validationErrors: InstallPlanValidationError[],
+  moduleId: string | undefined,
+  options: {
+    required: boolean;
+    fieldName: string;
   }
-
+): ModuleEnvTarget[] {
   if (value === undefined) {
-    return {
-      type: 'env',
-      name: settingKey,
-    };
+    if (options.required) {
+      validationErrors.push({
+        code: 'metadata_field_required',
+        message: `${options.fieldName} must be a non-empty array.`,
+        path: pathToTargets,
+        node: moduleId,
+      });
+    }
+    return [];
   }
 
-  if (!isPlainObject(value)) {
+  if (!Array.isArray(value)) {
     validationErrors.push({
       code: 'metadata_field_invalid',
-      message: 'settings[].target must be an object.',
-      path: pathToTarget,
+      message: `${options.fieldName} must be an array.`,
+      path: pathToTargets,
+      node: moduleId,
     });
-    return null;
+    return [];
   }
 
-  rejectUnknownFields(value, pathToTarget, ['type', 'name'], validationErrors);
-  const type = readRequiredString(value, 'type', pathToTarget, validationErrors);
-  const name = readOptionalString(value, 'name', pathToTarget, validationErrors) ?? settingKey;
-
-  if (type && type !== 'env') {
+  if (options.required && value.length === 0) {
     validationErrors.push({
-      code: 'unsupported_setting_target',
-      message: `Setting target type "${type}" is not supported.`,
-      path: `${pathToTarget}.type`,
+      code: 'metadata_field_required',
+      message: `${options.fieldName} must include at least one target.`,
+      path: pathToTargets,
+      node: moduleId,
     });
   }
 
-  if (!isEnvironmentVariableName(name)) {
-    validationErrors.push({
-      code: 'environment_variable_invalid',
-      message: 'settings[].target.name must be a valid environment variable name.',
-      path: `${pathToTarget}.name`,
-    });
-  }
+  const targets: ModuleEnvTarget[] = [];
+  const seenTargets = new Set<string>();
 
-  if (type !== 'env' || !isEnvironmentVariableName(name)) {
-    return null;
-  }
+  value.forEach((item, index) => {
+    const itemPath = `${pathToTargets}[${index}]`;
 
-  return { type: 'env', name };
+    if (!isPlainObject(item)) {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: `${options.fieldName}[] item must be an object.`,
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    rejectUnknownFields(item, itemPath, ['container', 'type', 'name'], validationErrors, moduleId);
+    const container = readRequiredString(item, 'container', itemPath, validationErrors, moduleId);
+    const type = readRequiredString(item, 'type', itemPath, validationErrors, moduleId);
+    const name = readRequiredString(item, 'name', itemPath, validationErrors, moduleId);
+
+    if (container && !containerKeys.has(container)) {
+      validationErrors.push({
+        code: 'target_container_missing',
+        message: `${options.fieldName}[] references unknown container "${container}".`,
+        path: `${itemPath}.container`,
+        node: moduleId,
+      });
+    }
+
+    if (type && type !== 'env') {
+      validationErrors.push({
+        code: 'unsupported_target_type',
+        message: `Target type "${type}" is not supported.`,
+        path: `${itemPath}.type`,
+        node: moduleId,
+      });
+    }
+
+    if (name && !isEnvironmentVariableName(name)) {
+      validationErrors.push({
+        code: 'environment_variable_invalid',
+        message: `${options.fieldName}[].name must be a valid environment variable name.`,
+        path: `${itemPath}.name`,
+        node: moduleId,
+      });
+    }
+
+    if (container && containerKeys.has(container) && type === 'env' && name && isEnvironmentVariableName(name)) {
+      const targetKey = `${container}:${name}`;
+      if (seenTargets.has(targetKey)) {
+        validationErrors.push({
+          code: 'environment_variable_target_duplicate',
+          message: `Environment variable target "${name}" is declared more than once for container "${container}".`,
+          path: itemPath,
+          node: moduleId,
+        });
+        return;
+      }
+
+      seenTargets.add(targetKey);
+      targets.push({
+        container,
+        type: 'env',
+        name,
+      });
+    }
+  });
+
+  return targets;
 }
 
 function validateSettingDefault(
@@ -872,7 +1326,8 @@ function validateStorage(
   value: unknown,
   pathToStorage: string,
   validationErrors: InstallPlanValidationError[],
-  moduleId?: string
+  moduleId: string | undefined,
+  containerKeys: Set<string>
 ): NormalizedModuleMetadata['storage'] {
   if (value === undefined) {
     return {
@@ -897,8 +1352,8 @@ function validateStorage(
   rejectUnknownFields(value, pathToStorage, ['directories', 'mountCollections'], validationErrors, moduleId);
 
   return {
-    directories: validateStorageDirectories(value.directories, `${pathToStorage}.directories`, validationErrors, moduleId),
-    mountCollections: validateStorageMountCollections(value.mountCollections, `${pathToStorage}.mountCollections`, validationErrors, moduleId),
+    directories: validateStorageDirectories(value.directories, `${pathToStorage}.directories`, validationErrors, moduleId, containerKeys),
+    mountCollections: validateStorageMountCollections(value.mountCollections, `${pathToStorage}.mountCollections`, validationErrors, moduleId, containerKeys),
   };
 }
 
@@ -906,7 +1361,8 @@ function validateStorageDirectories(
   value: unknown,
   pathToDirectories: string,
   validationErrors: InstallPlanValidationError[],
-  moduleId?: string
+  moduleId: string | undefined,
+  containerKeys: Set<string>
 ): NormalizedModuleStorageDirectoryMetadata[] {
   if (value === undefined) {
     return [];
@@ -924,7 +1380,7 @@ function validateStorageDirectories(
 
   const directories: NormalizedModuleStorageDirectoryMetadata[] = [];
   const seenKeys = new Set<string>();
-  const containerPaths: Array<{ path: string; sourcePath: string }> = [];
+  const containerPaths = new Map<string, Array<{ path: string; sourcePath: string }>>();
 
   value.forEach((item, index) => {
     const itemPath = `${pathToDirectories}[${index}]`;
@@ -939,16 +1395,15 @@ function validateStorageDirectories(
       return;
     }
 
-    rejectUnknownFields(item, itemPath, ['key', 'label', 'description', 'containerPath', 'purpose', 'required', 'writable', 'mount'], validationErrors, moduleId);
+    rejectUnknownFields(item, itemPath, ['key', 'label', 'description', 'purpose', 'required', 'mount', 'targets'], validationErrors, moduleId);
 
     const key = readRequiredString(item, 'key', itemPath, validationErrors, moduleId);
     const label = readOptionalString(item, 'label', itemPath, validationErrors, moduleId);
     const description = readOptionalString(item, 'description', itemPath, validationErrors, moduleId);
-    const containerPath = readRequiredString(item, 'containerPath', itemPath, validationErrors, moduleId);
     const purpose = readOptionalString(item, 'purpose', itemPath, validationErrors, moduleId);
     const required = readRequiredBoolean(item, 'required', itemPath, validationErrors, moduleId);
-    const writable = readRequiredBoolean(item, 'writable', itemPath, validationErrors, moduleId);
     const mount = validateStorageDirectoryMount(item.mount, `${itemPath}.mount`, key, validationErrors, moduleId);
+    const targets = validateStorageTargets(item.targets, `${itemPath}.targets`, containerKeys, validationErrors, moduleId);
 
     if (key && seenKeys.has(key)) {
       validationErrors.push({
@@ -962,43 +1417,115 @@ function validateStorageDirectories(
       seenKeys.add(key);
     }
 
-    if (containerPath && !isSafeAbsoluteUnixPath(containerPath)) {
-      validationErrors.push({
-        code: 'container_path_invalid',
-        message: 'storage.directories[].containerPath must be a safe absolute Unix path.',
-        path: `${itemPath}.containerPath`,
-        node: moduleId,
-      });
-    }
-
-    if (containerPath && isSafeAbsoluteUnixPath(containerPath)) {
-      const overlapping = containerPaths.find(existing => pathsOverlap(existing.path, containerPath));
+    for (const [targetIndex, target] of targets.entries()) {
+      const targetPaths = containerPaths.get(target.container) ?? [];
+      const overlapping = targetPaths.find(existing => pathsOverlap(existing.path, target.containerPath));
       if (overlapping) {
         validationErrors.push({
           code: 'container_path_overlap',
-          message: `Storage container path "${containerPath}" overlaps with "${overlapping.path}".`,
-          path: `${itemPath}.containerPath`,
+          message: `Storage container path "${target.containerPath}" overlaps with "${overlapping.path}" in container "${target.container}".`,
+          path: `${itemPath}.targets[${targetIndex}].containerPath`,
           node: moduleId,
         });
       }
-      containerPaths.push({ path: containerPath, sourcePath: `${itemPath}.containerPath` });
+      targetPaths.push({ path: target.containerPath, sourcePath: `${itemPath}.targets[${targetIndex}].containerPath` });
+      containerPaths.set(target.container, targetPaths);
     }
 
-    if (key && containerPath && isSafeAbsoluteUnixPath(containerPath) && required !== undefined && writable !== undefined && mount) {
+    if (key && required !== undefined && mount && targets.length > 0) {
       directories.push({
         key,
         ...(label ? { label } : {}),
         ...(description ? { description } : {}),
-        containerPath,
         ...(purpose ? { purpose } : {}),
         required,
-        writable,
         mount,
+        targets,
       });
     }
   });
 
   return directories;
+}
+
+function validateStorageTargets(
+  value: unknown,
+  pathToTargets: string,
+  containerKeys: Set<string>,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+) {
+  if (!Array.isArray(value) || value.length === 0) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'storage targets must be a non-empty array.',
+      path: pathToTargets,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  const targets: NormalizedModuleStorageDirectoryMetadata['targets'] = [];
+  const seen = new Set<string>();
+
+  value.forEach((item, index) => {
+    const itemPath = `${pathToTargets}[${index}]`;
+
+    if (!isPlainObject(item)) {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'storage targets[] item must be an object.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    rejectUnknownFields(item, itemPath, ['container', 'containerPath', 'writable'], validationErrors, moduleId);
+    const container = readRequiredString(item, 'container', itemPath, validationErrors, moduleId);
+    const containerPath = readRequiredString(item, 'containerPath', itemPath, validationErrors, moduleId);
+    const writable = readRequiredBoolean(item, 'writable', itemPath, validationErrors, moduleId);
+
+    if (container && !containerKeys.has(container)) {
+      validationErrors.push({
+        code: 'storage_target_container_missing',
+        message: `Storage target references unknown container "${container}".`,
+        path: `${itemPath}.container`,
+        node: moduleId,
+      });
+    }
+
+    if (containerPath && !isSafeAbsoluteUnixPath(containerPath)) {
+      validationErrors.push({
+        code: 'container_path_invalid',
+        message: 'storage targets[].containerPath must be a safe absolute Unix path.',
+        path: `${itemPath}.containerPath`,
+        node: moduleId,
+      });
+    }
+
+    if (container && containerKeys.has(container) && containerPath && isSafeAbsoluteUnixPath(containerPath) && writable !== undefined) {
+      const targetKey = `${container}:${containerPath}`;
+      if (seen.has(targetKey)) {
+        validationErrors.push({
+          code: 'storage_target_duplicate',
+          message: `Storage target "${containerPath}" is declared more than once for container "${container}".`,
+          path: itemPath,
+          node: moduleId,
+        });
+        return;
+      }
+
+      seen.add(targetKey);
+      targets.push({
+        container,
+        containerPath,
+        writable,
+      });
+    }
+  });
+
+  return targets;
 }
 
 function validateStorageDirectoryMount(
@@ -1056,8 +1583,9 @@ function validateStorageMountCollections(
   value: unknown,
   pathToCollections: string,
   validationErrors: InstallPlanValidationError[],
-  moduleId?: string
-): ModuleStorageMountCollectionMetadata[] {
+  moduleId: string | undefined,
+  containerKeys: Set<string>
+): NormalizedModuleStorageMountCollectionMetadata[] {
   if (value === undefined) {
     return [];
   }
@@ -1072,7 +1600,7 @@ function validateStorageMountCollections(
     return [];
   }
 
-  const collections: ModuleStorageMountCollectionMetadata[] = [];
+  const collections: NormalizedModuleStorageMountCollectionMetadata[] = [];
   const seenKeys = new Set<string>();
 
   value.forEach((item, index) => {
@@ -1091,7 +1619,7 @@ function validateStorageMountCollections(
     rejectUnknownFields(
       item,
       itemPath,
-      ['key', 'label', 'description', 'purpose', 'required', 'minItems', 'maxItems', 'writable', 'containerPathPrefix', 'itemContainerPathTemplate', 'hostPathPolicy'],
+      ['key', 'label', 'description', 'purpose', 'required', 'minItems', 'maxItems', 'hostPathPolicy', 'targets'],
       validationErrors,
       moduleId
     );
@@ -1103,10 +1631,8 @@ function validateStorageMountCollections(
     const required = readRequiredBoolean(item, 'required', itemPath, validationErrors, moduleId);
     const minItems = readOptionalNumber(item, 'minItems', itemPath, validationErrors, moduleId) ?? 0;
     const maxItems = readOptionalNullableNumber(item, 'maxItems', itemPath, validationErrors, moduleId);
-    const writable = readRequiredBoolean(item, 'writable', itemPath, validationErrors, moduleId);
-    const containerPathPrefix = readRequiredString(item, 'containerPathPrefix', itemPath, validationErrors, moduleId);
-    const itemContainerPathTemplate = readRequiredString(item, 'itemContainerPathTemplate', itemPath, validationErrors, moduleId);
     const hostPathPolicy = validateHostPathPolicy(item.hostPathPolicy, `${itemPath}.hostPathPolicy`, validationErrors, moduleId);
+    const targets = validateStorageMountCollectionTargets(item.targets, `${itemPath}.targets`, containerKeys, validationErrors, moduleId);
 
     if (key && seenKeys.has(key)) {
       validationErrors.push({
@@ -1118,48 +1644,6 @@ function validateStorageMountCollections(
     }
     if (key) {
       seenKeys.add(key);
-    }
-
-    if (containerPathPrefix && !isSafeAbsoluteUnixPath(containerPathPrefix)) {
-      validationErrors.push({
-        code: 'container_path_invalid',
-        message: 'storage.mountCollections[].containerPathPrefix must be a safe absolute Unix path.',
-        path: `${itemPath}.containerPathPrefix`,
-        node: moduleId,
-      });
-    }
-
-    if (itemContainerPathTemplate && !isSafeAbsoluteUnixPath(itemContainerPathTemplate.replace('{key}', 'item'))) {
-      validationErrors.push({
-        code: 'container_path_invalid',
-        message: 'storage.mountCollections[].itemContainerPathTemplate must produce a safe absolute Unix path.',
-        path: `${itemPath}.itemContainerPathTemplate`,
-        node: moduleId,
-      });
-    }
-
-    if (itemContainerPathTemplate && !itemContainerPathTemplate.split('/').includes('{key}')) {
-      validationErrors.push({
-        code: 'mount_collection_template_invalid',
-        message: 'storage.mountCollections[].itemContainerPathTemplate must contain {key} as a path segment.',
-        path: `${itemPath}.itemContainerPathTemplate`,
-        node: moduleId,
-      });
-    }
-
-    if (
-      containerPathPrefix &&
-      itemContainerPathTemplate &&
-      isSafeAbsoluteUnixPath(containerPathPrefix) &&
-      isSafeAbsoluteUnixPath(itemContainerPathTemplate.replace('{key}', 'item')) &&
-      !path.posix.normalize(itemContainerPathTemplate.replace('{key}', 'item')).startsWith(`${path.posix.normalize(containerPathPrefix)}/`)
-    ) {
-      validationErrors.push({
-        code: 'mount_collection_template_invalid',
-        message: 'storage.mountCollections[].itemContainerPathTemplate must stay under containerPathPrefix.',
-        path: `${itemPath}.itemContainerPathTemplate`,
-        node: moduleId,
-      });
     }
 
     if (minItems < 0 || !Number.isInteger(minItems)) {
@@ -1183,11 +1667,8 @@ function validateStorageMountCollections(
     if (
       key &&
       required !== undefined &&
-      writable !== undefined &&
-      containerPathPrefix &&
-      itemContainerPathTemplate &&
-      isSafeAbsoluteUnixPath(containerPathPrefix) &&
-      hostPathPolicy
+      hostPathPolicy &&
+      targets.length > 0
     ) {
       collections.push({
         key,
@@ -1197,15 +1678,136 @@ function validateStorageMountCollections(
         required,
         minItems,
         maxItems,
-        writable,
-        containerPathPrefix,
-        itemContainerPathTemplate,
         hostPathPolicy,
+        targets,
       });
     }
   });
 
   return collections;
+}
+
+function validateStorageMountCollectionTargets(
+  value: unknown,
+  pathToTargets: string,
+  containerKeys: Set<string>,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+) {
+  if (!Array.isArray(value) || value.length === 0) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'storage.mountCollections[].targets must be a non-empty array.',
+      path: pathToTargets,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  const targets: NormalizedModuleStorageMountCollectionMetadata['targets'] = [];
+  const seen = new Set<string>();
+
+  value.forEach((item, index) => {
+    const itemPath = `${pathToTargets}[${index}]`;
+
+    if (!isPlainObject(item)) {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'storage.mountCollections[].targets[] item must be an object.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    rejectUnknownFields(item, itemPath, ['container', 'containerPathPrefix', 'itemContainerPathTemplate', 'writable'], validationErrors, moduleId);
+    const container = readRequiredString(item, 'container', itemPath, validationErrors, moduleId);
+    const containerPathPrefix = readRequiredString(item, 'containerPathPrefix', itemPath, validationErrors, moduleId);
+    const itemContainerPathTemplate = readRequiredString(item, 'itemContainerPathTemplate', itemPath, validationErrors, moduleId);
+    const writable = readRequiredBoolean(item, 'writable', itemPath, validationErrors, moduleId);
+
+    if (container && !containerKeys.has(container)) {
+      validationErrors.push({
+        code: 'storage_target_container_missing',
+        message: `Mount collection target references unknown container "${container}".`,
+        path: `${itemPath}.container`,
+        node: moduleId,
+      });
+    }
+
+    if (containerPathPrefix && !isSafeAbsoluteUnixPath(containerPathPrefix)) {
+      validationErrors.push({
+        code: 'container_path_invalid',
+        message: 'storage.mountCollections[].targets[].containerPathPrefix must be a safe absolute Unix path.',
+        path: `${itemPath}.containerPathPrefix`,
+        node: moduleId,
+      });
+    }
+
+    if (itemContainerPathTemplate && !isSafeAbsoluteUnixPath(itemContainerPathTemplate.replace('{key}', 'item'))) {
+      validationErrors.push({
+        code: 'container_path_invalid',
+        message: 'storage.mountCollections[].targets[].itemContainerPathTemplate must produce a safe absolute Unix path.',
+        path: `${itemPath}.itemContainerPathTemplate`,
+        node: moduleId,
+      });
+    }
+
+    if (itemContainerPathTemplate && !itemContainerPathTemplate.split('/').includes('{key}')) {
+      validationErrors.push({
+        code: 'mount_collection_template_invalid',
+        message: 'storage.mountCollections[].targets[].itemContainerPathTemplate must contain {key} as a path segment.',
+        path: `${itemPath}.itemContainerPathTemplate`,
+        node: moduleId,
+      });
+    }
+
+    if (
+      containerPathPrefix &&
+      itemContainerPathTemplate &&
+      isSafeAbsoluteUnixPath(containerPathPrefix) &&
+      isSafeAbsoluteUnixPath(itemContainerPathTemplate.replace('{key}', 'item')) &&
+      !path.posix.normalize(itemContainerPathTemplate.replace('{key}', 'item')).startsWith(`${path.posix.normalize(containerPathPrefix)}/`)
+    ) {
+      validationErrors.push({
+        code: 'mount_collection_template_invalid',
+        message: 'storage.mountCollections[].targets[].itemContainerPathTemplate must stay under containerPathPrefix.',
+        path: `${itemPath}.itemContainerPathTemplate`,
+        node: moduleId,
+      });
+    }
+
+    if (
+      container &&
+      containerKeys.has(container) &&
+      containerPathPrefix &&
+      itemContainerPathTemplate &&
+      isSafeAbsoluteUnixPath(containerPathPrefix) &&
+      isSafeAbsoluteUnixPath(itemContainerPathTemplate.replace('{key}', 'item')) &&
+      writable !== undefined
+    ) {
+      const targetKey = `${container}:${containerPathPrefix}`;
+      if (seen.has(targetKey)) {
+        validationErrors.push({
+          code: 'storage_target_duplicate',
+          message: `Mount collection target "${containerPathPrefix}" is declared more than once for container "${container}".`,
+          path: itemPath,
+          node: moduleId,
+        });
+        return;
+      }
+
+      seen.add(targetKey);
+      targets.push({
+        container,
+        containerPathPrefix,
+        itemContainerPathTemplate,
+        writable,
+      });
+    }
+  });
+
+  return targets;
 }
 
 function validateHostPathPolicy(
@@ -1254,20 +1856,28 @@ function validateHostPathPolicy(
 function validateRuntime(
   value: unknown,
   pathToRuntime: string,
-  validationErrors: InstallPlanValidationError[]
-): NormalizedModuleMetadata['runtime'] | null {
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleContainerMetadata['runtime'] | null {
+  if (value === undefined) {
+    return {
+      ports: [],
+    };
+  }
+
   if (!isPlainObject(value)) {
     validationErrors.push({
-      code: 'metadata_field_required',
-      message: 'runtime must be an object.',
+      code: 'metadata_field_invalid',
+      message: 'containers[].runtime must be an object.',
       path: pathToRuntime,
+      node: moduleId,
     });
     return null;
   }
 
-  rejectUnknownFields(value, pathToRuntime, ['ports', 'healthcheck', 'resources'], validationErrors);
-  const ports = validateRuntimePorts(value.ports, `${pathToRuntime}.ports`, validationErrors);
-  const resources = validateRuntimeResources(value.resources, `${pathToRuntime}.resources`, validationErrors);
+  rejectUnknownFields(value, pathToRuntime, ['ports', 'healthcheck', 'resources'], validationErrors, moduleId);
+  const ports = validateRuntimePorts(value.ports, `${pathToRuntime}.ports`, validationErrors, moduleId);
+  const resources = validateRuntimeResources(value.resources, `${pathToRuntime}.resources`, validationErrors, moduleId);
 
   if (!ports) {
     return null;
@@ -1285,13 +1895,19 @@ function validateRuntime(
 function validateRuntimePorts(
   value: unknown,
   pathToPorts: string,
-  validationErrors: InstallPlanValidationError[]
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
 ): ModuleRuntimePortMetadata[] | null {
+  if (value === undefined) {
+    return [];
+  }
+
   if (!Array.isArray(value)) {
     validationErrors.push({
-      code: 'metadata_field_required',
-      message: 'runtime.ports must be an array.',
+      code: 'metadata_field_invalid',
+      message: 'containers[].runtime.ports must be an array.',
       path: pathToPorts,
+      node: moduleId,
     });
     return null;
   }
@@ -1307,25 +1923,35 @@ function validateRuntimePorts(
         code: 'metadata_field_invalid',
         message: 'runtime.ports[] item must be an object.',
         path: itemPath,
+        node: moduleId,
       });
       return;
     }
 
-    rejectUnknownFields(item, itemPath, ['key', 'containerPort', 'protocol', 'public'], validationErrors);
-    const key = readRequiredString(item, 'key', itemPath, validationErrors);
-    const containerPort = readRequiredNumber(item, 'containerPort', itemPath, validationErrors);
-    const protocol = readRequiredString(item, 'protocol', itemPath, validationErrors);
-    const isPublic = readRequiredBoolean(item, 'public', itemPath, validationErrors);
+    rejectUnknownFields(item, itemPath, ['key', 'containerPort', 'protocol'], validationErrors, moduleId);
+    const key = readRequiredString(item, 'key', itemPath, validationErrors, moduleId);
+    const containerPort = readRequiredNumber(item, 'containerPort', itemPath, validationErrors, moduleId);
+    const protocol = readRequiredString(item, 'protocol', itemPath, validationErrors, moduleId);
 
     if (key && seenKeys.has(key)) {
       validationErrors.push({
         code: 'runtime_port_key_duplicate',
         message: `Runtime port key "${key}" is declared more than once.`,
         path: `${itemPath}.key`,
+        node: moduleId,
       });
     }
     if (key) {
       seenKeys.add(key);
+    }
+
+    if (key && !isSafeContractKey(key)) {
+      validationErrors.push({
+        code: 'runtime_port_key_invalid',
+        message: 'runtime.ports[].key must match ^[a-z][a-z0-9-]{0,62}$.',
+        path: `${itemPath}.key`,
+        node: moduleId,
+      });
     }
 
     if (containerPort !== undefined && (!Number.isInteger(containerPort) || containerPort < 1 || containerPort > 65535)) {
@@ -1333,6 +1959,7 @@ function validateRuntimePorts(
         code: 'runtime_port_invalid',
         message: 'runtime.ports[].containerPort must be an integer between 1 and 65535.',
         path: `${itemPath}.containerPort`,
+        node: moduleId,
       });
     }
 
@@ -1341,15 +1968,15 @@ function validateRuntimePorts(
         code: 'unsupported_port_protocol',
         message: `Runtime port protocol "${protocol}" is not supported by the MVP runtime.`,
         path: `${itemPath}.protocol`,
+        node: moduleId,
       });
     }
 
-    if (key && containerPort !== undefined && protocol === 'http' && isPublic !== undefined) {
+    if (key && isSafeContractKey(key) && containerPort !== undefined && protocol === 'http') {
       ports.push({
         key,
         containerPort,
         protocol,
-        public: isPublic,
       });
     }
   });
@@ -1360,8 +1987,9 @@ function validateRuntimePorts(
 function validateRuntimeResources(
   value: unknown,
   pathToResources: string,
-  validationErrors: InstallPlanValidationError[]
-): NormalizedModuleMetadata['runtime']['resources'] | undefined {
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleContainerMetadata['runtime']['resources'] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -1371,14 +1999,15 @@ function validateRuntimeResources(
       code: 'metadata_field_invalid',
       message: 'runtime.resources must be an object.',
       path: pathToResources,
+      node: moduleId,
     });
     return undefined;
   }
 
-  rejectUnknownFields(value, pathToResources, ['cpus', 'memory'], validationErrors);
-  const cpus = readOptionalNumber(value, 'cpus', pathToResources, validationErrors);
-  const memory = readOptionalString(value, 'memory', pathToResources, validationErrors);
-  const resources: NonNullable<NormalizedModuleMetadata['runtime']['resources']> = {};
+  rejectUnknownFields(value, pathToResources, ['cpus', 'memory'], validationErrors, moduleId);
+  const cpus = readOptionalNumber(value, 'cpus', pathToResources, validationErrors, moduleId);
+  const memory = readOptionalString(value, 'memory', pathToResources, validationErrors, moduleId);
+  const resources: NonNullable<NormalizedModuleContainerMetadata['runtime']['resources']> = {};
 
   if (cpus !== undefined) {
     if (cpus <= 0) {
@@ -1386,6 +2015,7 @@ function validateRuntimeResources(
         code: 'runtime_resources_invalid',
         message: 'runtime.resources.cpus must be greater than zero.',
         path: `${pathToResources}.cpus`,
+        node: moduleId,
       });
     } else {
       resources.cpus = cpus;
@@ -1402,7 +2032,7 @@ function validateRuntimeResources(
 export function validateModuleUiMetadata(
   value: unknown,
   pathToUi: string,
-  runtimePorts: ModuleRuntimePortMetadata[],
+  endpoints: Array<Pick<NormalizedModuleEndpointMetadata, 'key' | 'public'>>,
   validationErrors: InstallPlanValidationError[],
   moduleId?: string
 ): ModuleUiMetadata | undefined {
@@ -1430,7 +2060,7 @@ export function validateModuleUiMetadata(
   const entrypoint = validateModuleUiEntrypoint(
     value.entrypoint,
     `${pathToUi}.entrypoint`,
-    runtimePorts,
+    endpoints,
     validationErrors,
     moduleId
   );
@@ -1474,7 +2104,7 @@ export function validateModuleUiMetadata(
 function validateModuleUiEntrypoint(
   value: unknown,
   pathToEntrypoint: string,
-  runtimePorts: ModuleRuntimePortMetadata[],
+  endpoints: Array<Pick<NormalizedModuleEndpointMetadata, 'key' | 'public'>>,
   validationErrors: InstallPlanValidationError[],
   moduleId?: string
 ): ModuleUiMetadata['entrypoint'] | null {
@@ -1493,18 +2123,18 @@ function validateModuleUiEntrypoint(
   const entryPath = readRequiredString(value, 'path', pathToEntrypoint, validationErrors, moduleId);
 
   if (portKey) {
-    const port = runtimePorts.find(candidate => candidate.key === portKey);
-    if (!port) {
+    const endpoint = endpoints.find(candidate => candidate.key === portKey);
+    if (!endpoint) {
       validationErrors.push({
         code: 'module_ui_port_not_found',
-        message: `ui.entrypoint.portKey "${portKey}" does not reference a runtime port.`,
+        message: `ui.entrypoint.portKey "${portKey}" does not reference an endpoint.`,
         path: `${pathToEntrypoint}.portKey`,
         node: moduleId,
       });
-    } else if (!port.public) {
+    } else if (!endpoint.public) {
       validationErrors.push({
         code: 'module_ui_port_not_public',
-        message: `ui.entrypoint.portKey "${portKey}" must reference a runtime port marked public.`,
+        message: `ui.entrypoint.portKey "${portKey}" must reference an endpoint marked public.`,
         path: `${pathToEntrypoint}.portKey`,
         node: moduleId,
       });
@@ -1849,6 +2479,10 @@ function isEnvironmentVariableName(value: string) {
 
 function isSafeModuleId(value: string) {
   return /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(value);
+}
+
+function isSafeContractKey(value: string) {
+  return /^[a-z][a-z0-9-]{0,62}$/.test(value);
 }
 
 function isSafeRelativeModulePath(value: string) {

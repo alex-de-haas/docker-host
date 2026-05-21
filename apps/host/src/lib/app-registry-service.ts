@@ -263,7 +263,7 @@ function normalizeInstalledModuleUi(
   const ui = validateModuleUiMetadata(
     metadata.ui,
     '$.ui',
-    metadata.runtime?.ports ?? [],
+    metadata.endpoints ?? [],
     validationErrors,
     moduleId
   );
@@ -294,7 +294,7 @@ async function safeReadRuntimeStatus(
     return {
       state: 'unknown',
       containerId: null,
-      containerName: module.containerName || module.id,
+      containerName: module.containers[0]?.containerName ?? module.id,
       startedAt: null,
       finishedAt: null,
       error: error instanceof Error ? error.message : 'Unknown runtime status error',
@@ -303,7 +303,7 @@ async function safeReadRuntimeStatus(
 }
 
 function getRuntimeStatusCacheKey(module: InstalledModuleRecord) {
-  return `${module.id}:${module.containerName || ''}`;
+  return `${module.id}:${module.containers.map(container => container.containerName).join(',')}`;
 }
 
 function buildUnavailableApp({

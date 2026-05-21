@@ -12,7 +12,7 @@ The `/modules` page owns the installed module table and uses module lifecycle ro
 - `POST /api/modules/{moduleId}/stop`
 - `POST /api/modules/{moduleId}/restart`
 
-The `/modules` page displays module metadata, image reference, operation status, Docker runtime state, container identity, timestamps, and any recorded module/runtime error. Rows can expand for details. Lifecycle actions are enabled only for modules in `operationStatus=installed`; failed or removing modules expose recovery actions instead.
+The `/modules` page displays module metadata, service/image references, operation status, aggregate Docker runtime state, per-service runtime state, timestamps, and any recorded module/runtime error. Rows can expand for details. Lifecycle actions are enabled only for modules in `operationStatus=installed`; failed or removing modules expose recovery actions instead.
 
 The dashboard and `/modules` page are admin-only Host management surfaces inside the authenticated shell. Non-admin `host.user` principals use the `/apps` portal instead and do not receive module lifecycle controls or the admin navigation groups.
 

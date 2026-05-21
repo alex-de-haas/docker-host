@@ -397,7 +397,7 @@ test('gateway developer target proxies to local override and keeps Host identity
     await listen(upstream);
     await fs.mkdir(path.join(config.dataRootContainer, 'dev'), { recursive: true });
     await fs.writeFile(path.join(config.dataRootContainer, 'dev', 'module-targets.json'), `${JSON.stringify({
-      schemaVersion: '0.1',
+      schemaVersion: '0.2',
       targets: [{
         id: 'mdev_reports',
         moduleId: 'com.example.reports',
@@ -488,7 +488,7 @@ function gatewayTarget(input: {
       id: `gw_${moduleId.replace(/[^a-z0-9]+/gi, '_')}`,
       moduleId,
       hostname,
-      portKey: 'web',
+      endpointKey: 'web',
       exposurePolicy: input.exposurePolicy,
       ...(input.identityMode ? { identityMode: input.identityMode } : {}),
     },
@@ -584,34 +584,63 @@ async function seedGatewayTargetFiles(
   await fs.mkdir(moduleRoot, { recursive: true });
   await fs.mkdir(config.gatewayRootContainer, { recursive: true });
   await fs.writeFile(config.modulesStorePath, `${JSON.stringify({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: {},
     modules: [{
       id: moduleId,
       metadataUrl: 'https://modules.example.test/reports.json',
       metadataPath,
       operationStatus: options.operationStatus || 'installed',
+      containers: [{
+        key: 'app',
+        containerName: 'mod-com-example-reports-app',
+        networkAlias: 'mod-com-example-reports-app',
+        image: {
+          repository: 'reports-module',
+          tag: 'latest',
+          reference: 'reports-module:latest',
+          pullPolicy: 'ifNotPresent',
+        },
+      }],
     }],
   }, null, 2)}\n`, 'utf-8');
   await fs.writeFile(metadataPath, `${JSON.stringify({
+    schemaVersion: '0.2',
     id: moduleId,
-    runtime: {
-      ports: [{
-        key: 'web',
-        containerPort: 8080,
-        public: true,
-      }],
-    },
+    name: 'Reports',
+    version: '1.0.0',
+    containers: [{
+      key: 'app',
+      image: {
+        repository: 'reports-module',
+        tag: 'latest',
+      },
+      runtime: {
+        ports: [{
+          key: 'http',
+          containerPort: 8080,
+          protocol: 'http',
+        }],
+      },
+    }],
+    endpoints: [{
+      key: 'web',
+      container: 'app',
+      port: 'http',
+      public: true,
+    }],
   }, null, 2)}\n`, 'utf-8');
   await fs.writeFile(config.gatewayExposuresPath, `${JSON.stringify({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     exposures: [{
       id: 'gw_reports',
       moduleId,
       hostname: 'reports.example.test',
-      portKey: 'web',
+      endpointKey: 'web',
       exposurePolicy: 'loginRequired',
       enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     }],
   }, null, 2)}\n`, 'utf-8');
 }

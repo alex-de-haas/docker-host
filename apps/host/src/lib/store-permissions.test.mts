@@ -12,7 +12,7 @@ test('writes sensitive Host stores with owner-only permissions', async () => {
 
   await writeAuthState(createEmptyAuthState(), config);
   await writeModulesStore({
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: {},
     modules: [],
     updatedAt: new Date().toISOString(),

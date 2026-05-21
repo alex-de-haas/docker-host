@@ -4,17 +4,17 @@
 
 Docker Host Manager is a local application for managing Docker containers. The module model extends this from direct container management to logical modules described by JSON metadata files.
 
-A module is a Docker-hosted functional unit. Administrators add a module by providing a direct URL to a JSON metadata file. The Host downloads that JSON file, reads the Docker image reference and module metadata, then prepares local storage and container configuration.
+A module is a Docker-hosted functional unit. Administrators add a module by providing a direct URL to a JSON metadata file. The Host downloads that JSON file, reads module container/image metadata, then prepares local storage and container configuration.
 
 The Host itself is expected to run as a Docker container in production-like usage. A standalone `docker-host` CLI executable bootstraps and manages the Host container lifecycle, while the Web UI remains the primary interface for daily module management.
 
-When one module depends on another service module, the consumer declares which dependency endpoint it needs and which environment variable should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the consumer container. Network aliases are derived from module ids, for example `com.modulis.storage` becomes `mod-com-modulis-storage`. This does not require Docker Compose, although Compose could be one possible implementation detail.
+When one module depends on another service module, the consumer declares which dependency endpoint it needs and which target environment variables should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the requested consumer containers. Network aliases are derived from module ids and container keys, for example `com.modulis.storage` + `api` becomes `mod-com-modulis-storage-api`. This does not require Docker Compose, although Compose could be one possible implementation detail.
 
 ```mermaid
 flowchart LR
   A["Metadata JSON URL"] --> B["Docker Host"]
   B --> C["Module metadata"]
-  C --> D["Docker image"]
+  C --> D["Docker containers/images"]
   C --> E["Dependencies"]
   C --> F["Settings schema"]
   C --> G["Storage mappings"]
@@ -27,6 +27,7 @@ flowchart LR
 - [Host app shell](features/host-app-shell.md) - implemented admin shell foundation, navigation groups, persistent sidebar behavior, and protected page integration.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
+- [Multi-container modules](features/multi-container-modules.md) - module-owned containers, per-container runtime state, endpoint resolution, storage targets, lifecycle behavior, and Web UI service display.
 - [Module developer mode](features/module-developer-mode.md) - local-only module development targets that proxy through the Host gateway without a full install.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
 - [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.
@@ -35,6 +36,6 @@ flowchart LR
 - [Docker Host API](features/host-api.md) - Host backend API endpoint catalog for Web UI and CLI module commands.
 - [Docker Host domain model](features/domain-model.md) - shared vocabulary for installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
-- [Module metadata files](features/module-metadata.md) - detailed contract for installing Docker-hosted modules from JSON metadata URLs.
+- [Module metadata files](features/module-metadata.md) - supported metadata contract for installing Docker-hosted modules from JSON metadata URLs.
 - [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.
 - [Demo Module](features/demo-module.md) - repository-local Next.js module for validating Docker Host module operations.

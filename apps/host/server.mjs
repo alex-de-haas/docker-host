@@ -152,7 +152,7 @@ export async function resolveGatewayRequest(req) {
         id: devTarget.id,
         moduleId: devTarget.moduleId,
         hostname: hostnameValue,
-        portKey: devTarget.portKey,
+        endpointKey: devTarget.portKey,
         exposurePolicy: devTarget.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY,
         identityMode: getExposureIdentityMode(devTarget, devTarget.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY),
       },
@@ -172,7 +172,7 @@ export async function resolveGatewayRequest(req) {
   }
 
   const gateway = await readJsonIfExists(config.gatewayExposuresPath, {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     exposures: [],
   });
   const exposure = Array.isArray(gateway.exposures)
@@ -209,9 +209,10 @@ export async function resolveGatewayRequest(req) {
   }
 
   const metadata = await readModuleMetadata(installedModule, config);
-  const runtimePort = metadata?.runtime?.ports?.find(port => port.key === exposure.portKey);
-  if (!runtimePort) {
-    throw new Error(`Module "${exposure.moduleId}" does not define runtime port "${exposure.portKey}".`);
+  const endpointKey = exposure.endpointKey || exposure.portKey;
+  const endpointTarget = resolveModuleEndpointTarget(metadata, endpointKey);
+  if (!endpointTarget) {
+    throw new Error(`Module "${exposure.moduleId}" does not define endpoint "${endpointKey}".`);
   }
 
   const trustedProxy = await authenticateTrustedProxyRequest(req, config);
@@ -224,11 +225,16 @@ export async function resolveGatewayRequest(req) {
     exposurePolicy: policy,
     assignments: authState.moduleAssignments || [],
   });
-  const networkAlias = getModuleNetworkAlias(exposure.moduleId);
+  const installedContainer = Array.isArray(installedModule.containers)
+    ? installedModule.containers.find(container => container.key === endpointTarget.containerKey)
+    : null;
+  const networkAlias = installedContainer?.networkAlias ||
+    getModuleNetworkAlias(exposure.moduleId, endpointTarget.containerKey);
 
   return {
     exposure: {
       ...exposure,
+      endpointKey,
       exposurePolicy: policy,
       identityMode: getExposureIdentityMode(exposure, policy),
       hostname: hostnameValue,
@@ -236,8 +242,8 @@ export async function resolveGatewayRequest(req) {
     access,
     principal,
     networkAlias,
-    containerPort: runtimePort.containerPort,
-    targetOrigin: `http://${networkAlias}:${runtimePort.containerPort}`,
+    containerPort: endpointTarget.port.containerPort,
+    targetOrigin: `http://${networkAlias}:${endpointTarget.port.containerPort}`,
     requestHost: req.headers.host,
     requestProtocol: getRequestProtocol(req),
     trustedProxyAssertionHeaders: trustedProxy.assertionHeaders,
@@ -561,23 +567,25 @@ function canAccessModule({ principal, moduleId, exposurePolicy, assignments }) {
 
 async function readModulesStore(config) {
   const store = await readJsonIfExists(config.modulesStorePath, {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: {},
     modules: [],
   });
 
   if (Array.isArray(store)) {
     return {
-      schemaVersion: '0.1',
+      schemaVersion: '0.2',
       hostSettings: {},
-      modules: store.filter(isInstalledModuleRecord),
+      modules: store.map(normalizeInstalledModuleRecord).filter(Boolean),
     };
   }
 
   return {
-    schemaVersion: '0.1',
+    schemaVersion: '0.2',
     hostSettings: isObject(store.hostSettings) ? store.hostSettings : {},
-    modules: Array.isArray(store.modules) ? store.modules.filter(isInstalledModuleRecord) : [],
+    modules: Array.isArray(store.modules)
+      ? store.modules.map(normalizeInstalledModuleRecord).filter(Boolean)
+      : [],
   };
 }
 
@@ -638,14 +646,42 @@ function getRuntimeConfig() {
   };
 }
 
-function getModuleNetworkAlias(moduleId) {
+function getModuleNetworkAlias(moduleId, containerKey = 'main') {
   const normalized = moduleId
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-');
 
-  return `mod-${normalized || 'module'}`;
+  return `mod-${normalized || 'module'}-${containerKey}`;
+}
+
+function resolveModuleEndpointTarget(metadata, endpointKey) {
+  if (!isObject(metadata) || !Array.isArray(metadata.endpoints) || !Array.isArray(metadata.containers)) {
+    return null;
+  }
+
+  const endpoint = metadata.endpoints.find(candidate =>
+    candidate &&
+    candidate.key === endpointKey &&
+    typeof candidate.container === 'string' &&
+    typeof candidate.port === 'string'
+  );
+  if (!endpoint) {
+    return null;
+  }
+
+  const container = metadata.containers.find(candidate => candidate?.key === endpoint.container);
+  const port = container?.runtime?.ports?.find(candidate => candidate?.key === endpoint.port);
+  if (!port || typeof port.containerPort !== 'number') {
+    return null;
+  }
+
+  return {
+    containerKey: endpoint.container,
+    endpoint,
+    port,
+  };
 }
 
 async function resolveModuleDevTarget(hostnameValue, config) {
@@ -908,7 +944,7 @@ async function appendGatewayAuditEvent(req, target, allowed = false) {
     details: {
       moduleId: target.exposure.moduleId,
       hostname: target.exposure.hostname,
-      portKey: target.exposure.portKey,
+      endpointKey: target.exposure.endpointKey,
       exposurePolicy: target.exposure.exposurePolicy,
       reason: target.access.reason,
       path: req.url || '/',
@@ -924,8 +960,73 @@ async function appendGatewayAuditEvent(req, target, allowed = false) {
   }
 }
 
+function normalizeInstalledModuleRecord(value) {
+  if (!isInstalledModuleRecord(value)) {
+    return null;
+  }
+
+  const {
+    containerName: legacyContainerName,
+    networkAlias: legacyNetworkAlias,
+    image: legacyImage,
+    containers,
+    ...record
+  } = value;
+
+  return {
+    ...record,
+    containers: Array.isArray(containers)
+      ? containers
+      : [
+          {
+            key: 'main',
+            containerName: typeof legacyContainerName === 'string' && legacyContainerName
+              ? legacyContainerName
+              : getLegacyModuleDockerName(value.id),
+            networkAlias: typeof legacyNetworkAlias === 'string' && legacyNetworkAlias
+              ? legacyNetworkAlias
+              : getLegacyModuleDockerName(value.id),
+            image: normalizeLegacyImage(legacyImage),
+          },
+        ],
+  };
+}
+
 function isInstalledModuleRecord(value) {
-  return isObject(value) && typeof value.id === 'string' && typeof value.metadataUrl === 'string';
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.metadataUrl === 'string';
+}
+
+function normalizeLegacyImage(image) {
+  const source = isObject(image) ? image : {};
+  const repository = typeof source.repository === 'string' && source.repository
+    ? source.repository
+    : 'unknown';
+  const tag = typeof source.tag === 'string' && source.tag ? source.tag : 'latest';
+  const reference = typeof source.reference === 'string' && source.reference
+    ? source.reference
+    : `${repository}:${tag}`;
+  const pullPolicy = typeof source.pullPolicy === 'string' && source.pullPolicy
+    ? source.pullPolicy
+    : undefined;
+
+  return {
+    repository,
+    tag,
+    reference,
+    ...(pullPolicy ? { pullPolicy } : {}),
+  };
+}
+
+function getLegacyModuleDockerName(moduleId) {
+  const normalized = moduleId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
+  return `mod-${normalized || 'module'}`;
 }
 
 function isObject(value) {

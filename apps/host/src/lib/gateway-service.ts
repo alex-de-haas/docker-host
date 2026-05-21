@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_MODULE_EXPOSURE_POLICY, canAccessModule } from './auth-policy.ts';
 import { appendAuthAuditEvent, readAuthStateSnapshot, updateAuthState } from './auth-store.ts';
-import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
+import { getHostRuntimeConfig } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import { getDefaultModuleIdentityMode, isModuleIdentityMode } from './module-identity.mjs';
+import { readModulesStoreSnapshot } from './module-store.ts';
 import {
   readGatewayExposureStateSnapshot,
   updateGatewayExposureState,
@@ -21,7 +22,6 @@ import type {
   InstalledModuleRecord,
   ModuleMetadata,
   ModuleRuntimePortMetadata,
-  ModulesStoreData,
 } from '../types/modules.ts';
 
 export interface GatewayResolvedTarget {
@@ -75,7 +75,7 @@ export async function upsertGatewayExposure(
           ...state.exposures[existingIndex],
           moduleId: normalized.moduleId,
           hostname: normalized.hostname,
-          portKey: normalized.portKey,
+          endpointKey: normalized.endpointKey,
           exposurePolicy: normalized.exposurePolicy,
           identityMode: normalized.identityMode,
           enabled: normalized.enabled,
@@ -85,7 +85,7 @@ export async function upsertGatewayExposure(
           id: normalized.id,
           moduleId: normalized.moduleId,
           hostname: normalized.hostname,
-          portKey: normalized.portKey,
+          endpointKey: normalized.endpointKey,
           exposurePolicy: normalized.exposurePolicy,
           identityMode: normalized.identityMode,
           enabled: normalized.enabled,
@@ -114,7 +114,7 @@ export async function upsertGatewayExposure(
       exposureId: exposure.id,
       moduleId: exposure.moduleId,
       hostname: exposure.hostname,
-      portKey: exposure.portKey,
+      endpointKey: exposure.endpointKey,
       exposurePolicy: exposure.exposurePolicy,
       identityMode: exposure.identityMode,
       enabled: exposure.enabled,
@@ -176,13 +176,18 @@ export async function listGatewayExposureOptions(
     modulesStore.modules.map(async installedModule => {
       const metadata = await readInstalledModuleMetadata(installedModule, config);
       const uiEntrypointPortKey = metadata?.ui?.entrypoint?.portKey;
-      const ports = (metadata?.runtime?.ports ?? []).map(port => ({
-        key: port.key,
-        containerPort: port.containerPort,
-        protocol: port.protocol,
-        public: port.public,
-        isUiEntrypoint: Boolean(uiEntrypointPortKey && port.key === uiEntrypointPortKey),
-      }));
+      const ports = (metadata?.endpoints ?? []).flatMap(endpoint => {
+        const target = metadata ? resolveEndpointTarget(metadata, endpoint.key) : null;
+        return target
+          ? [{
+              key: endpoint.key,
+              containerPort: target.port.containerPort,
+              protocol: target.port.protocol,
+              public: endpoint.public,
+              isUiEntrypoint: Boolean(uiEntrypointPortKey && endpoint.key === uiEntrypointPortKey),
+            }]
+          : [];
+      });
 
       return {
         id: installedModule.id,
@@ -293,11 +298,11 @@ export async function resolveGatewayTarget(
   }
 
   const metadata = await readInstalledModuleMetadata(installedModule, config);
-  const port = metadata?.runtime?.ports?.find(candidate => candidate.key === exposure.portKey);
-  if (!port) {
+  const target = metadata ? resolveEndpointTarget(metadata, exposure.endpointKey) : null;
+  if (!target) {
     throw new GatewayServiceError(
-      'port_not_found',
-      `Module "${exposure.moduleId}" does not define runtime port "${exposure.portKey}".`
+      'endpoint_not_found',
+      `Module "${exposure.moduleId}" does not define endpoint "${exposure.endpointKey}".`
     );
   }
 
@@ -308,14 +313,15 @@ export async function resolveGatewayTarget(
     exposurePolicy: exposure.exposurePolicy,
     assignments: auth.moduleAssignments,
   });
-  const networkAlias = getModuleNetworkAlias(exposure.moduleId);
+  const networkAlias = installedModule.containers.find(container => container.key === target.endpoint.container)?.networkAlias ||
+    getModuleNetworkAlias(exposure.moduleId, target.endpoint.container);
 
   return {
     exposure,
-    targetBaseUrl: `http://${networkAlias}:${port.containerPort}`,
+    targetBaseUrl: `http://${networkAlias}:${target.port.containerPort}`,
     networkAlias,
-    containerPort: port.containerPort,
-    port,
+    containerPort: target.port.containerPort,
+    port: target.port,
     access,
   };
 }
@@ -325,13 +331,14 @@ export async function validateGatewayExposureInput(
   config = getHostRuntimeConfig()
 ): Promise<GatewayExposureInput & {
   id: string;
+  endpointKey: string;
   hostname: string;
   exposurePolicy: GatewayExposureRecord['exposurePolicy'];
   identityMode: GatewayExposureRecord['identityMode'];
   enabled: boolean;
 }> {
   const moduleId = input.moduleId.trim();
-  const portKey = input.portKey.trim();
+  const endpointKey = (input.endpointKey ?? input.portKey ?? '').trim();
   const hostname = normalizeGatewayHostname(input.hostname);
   const exposurePolicy = input.exposurePolicy ?? DEFAULT_MODULE_EXPOSURE_POLICY;
   const identityMode = input.identityMode ?? getDefaultModuleIdentityMode(exposurePolicy);
@@ -341,8 +348,8 @@ export async function validateGatewayExposureInput(
     throw new GatewayServiceError('invalid_module_id', 'Module id is required.');
   }
 
-  if (!portKey) {
-    throw new GatewayServiceError('invalid_port_key', 'Runtime port key is required.');
+  if (!endpointKey) {
+    throw new GatewayServiceError('invalid_endpoint_key', 'Module endpoint key is required.');
   }
 
   if (!isAllowedGatewayHostname(hostname, config)) {
@@ -375,18 +382,18 @@ export async function validateGatewayExposureInput(
   }
 
   const metadata = await readInstalledModuleMetadata(installedModule, config);
-  const port = metadata?.runtime?.ports?.find(candidate => candidate.key === portKey);
-  if (!port) {
+  const target = metadata ? resolveEndpointTarget(metadata, endpointKey) : null;
+  if (!target) {
     throw new GatewayServiceError(
-      'port_not_found',
-      `Module "${moduleId}" does not define runtime port "${portKey}".`
+      'endpoint_not_found',
+      `Module "${moduleId}" does not define endpoint "${endpointKey}".`
     );
   }
 
-  if (!port.public) {
+  if (!target.endpoint.public) {
     throw new GatewayServiceError(
-      'port_not_public',
-      `Runtime port "${portKey}" is not marked as externally exposable.`
+      'endpoint_not_public',
+      `Endpoint "${endpointKey}" is not marked as externally exposable.`
     );
   }
 
@@ -394,11 +401,19 @@ export async function validateGatewayExposureInput(
     id: input.id?.trim() || `gw_${randomUUID()}`,
     moduleId,
     hostname,
-    portKey,
+    endpointKey,
     exposurePolicy,
     identityMode,
     enabled,
   };
+}
+
+function resolveEndpointTarget(metadata: ModuleMetadata, endpointKey: string) {
+  const endpoint = metadata.endpoints?.find(candidate => candidate.key === endpointKey);
+  const container = metadata.containers.find(candidate => candidate.key === endpoint?.container);
+  const port = container?.runtime?.ports?.find(candidate => candidate.key === endpoint?.port);
+
+  return endpoint && container && port ? { endpoint, container, port } : null;
 }
 
 export function normalizeGatewayHostname(hostname: string) {
@@ -438,14 +453,14 @@ export function isAllowedGatewayHostname(hostname: string, config = getHostRunti
   return hostname.endsWith(`.${baseDomain}`) && hostname !== `host.${baseDomain}`;
 }
 
-export function getModuleNetworkAlias(moduleId: string) {
+export function getModuleNetworkAlias(moduleId: string, containerKey = 'main') {
   const normalized = moduleId
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-');
 
-  return `mod-${normalized || 'module'}`;
+  return `mod-${normalized || 'module'}-${containerKey}`;
 }
 
 export function isGatewayServiceError(error: unknown): error is GatewayServiceError {
@@ -476,31 +491,6 @@ async function findInstalledModuleSnapshot(
   return store.modules.find(module => module.id === moduleId) ?? null;
 }
 
-async function readModulesStoreSnapshot(config: HostRuntimeConfig): Promise<ModulesStoreData> {
-  if (!(await pathExists(config.modulesStorePath))) {
-    return {
-      schemaVersion: '0.1',
-      hostSettings: {},
-      modules: [],
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
-  const raw = await fs.readFile(config.modulesStorePath, 'utf-8');
-  const parsed = JSON.parse(raw) as unknown;
-
-  if (!isObject(parsed)) {
-    throw new GatewayServiceError('modules_store_invalid', 'modules.json must contain a JSON object.', 500);
-  }
-
-  return {
-    schemaVersion: '0.1',
-    hostSettings: isObject(parsed.hostSettings) ? parsed.hostSettings : {},
-    modules: Array.isArray(parsed.modules) ? parsed.modules.filter(isInstalledModuleRecord) : [],
-    updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
-  };
-}
-
 async function readInstalledModuleMetadata(
   module: InstalledModuleRecord,
   config: HostRuntimeConfig
@@ -523,14 +513,6 @@ async function readInstalledModuleMetadata(
   }
 }
 
-function isInstalledModuleRecord(value: unknown): value is InstalledModuleRecord {
-  return isObject(value) && typeof value.id === 'string' && typeof value.metadataUrl === 'string';
-}
-
 function isExposurePolicy(value: unknown): value is GatewayExposureRecord['exposurePolicy'] {
   return value === 'public' || value === 'loginRequired' || value === 'assignedUsersOnly';
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

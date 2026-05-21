@@ -32,7 +32,7 @@ flowchart LR
   B --> C["Install plan"]
   C --> D["Installed module registry entry"]
   D --> E["Module directory"]
-  D --> F["Docker container"]
+  D --> F["Docker containers"]
   G["Docker daemon"] --> H["Runtime status"]
   F --> H
   D --> I["Web UI and Host API"]
@@ -46,11 +46,11 @@ Module metadata is the JSON document downloaded from a metadata URL and copied i
 It defines:
 
 - stable module identity: `id`, `name`, `version`;
-- Docker image reference;
+- module-owned containers and Docker image references;
 - dependency declarations;
 - settings schema;
 - storage declarations;
-- runtime ports and resource hints.
+- module endpoints, container ports, and resource hints.
 
 The metadata schema source of truth is [Module metadata files](module-metadata.md).
 
@@ -63,8 +63,7 @@ The installed module record is stored in root-level `modules.json` and includes:
 - `id`;
 - `metadataUrl`;
 - `metadataPath`;
-- `containerName`;
-- `image`;
+- `containers[]` with container names, network aliases, and image references;
 - install/update bookkeeping status;
 - setting values, including write-only secret values;
 - computed storage mappings;
@@ -128,7 +127,7 @@ Initial `modules.json` shape:
 
 ```json
 {
-  "schemaVersion": "0.1",
+  "schemaVersion": "0.2",
   "hostSettings": {},
   "modules": [
     {
@@ -137,13 +136,19 @@ Initial `modules.json` shape:
       "metadataPath": "modules/com.acme.reports/metadata.json",
       "metadataDigest": "sha256:...",
       "planDigest": "sha256:...",
-      "containerName": "mod-com-acme-reports",
-      "image": {
-        "repository": "ghcr.io/acme/reports-module",
-        "tag": "1.0.0",
-        "reference": "ghcr.io/acme/reports-module:1.0.0",
-        "pullPolicy": "ifNotPresent"
-      },
+      "containers": [
+        {
+          "key": "app",
+          "containerName": "mod-com-acme-reports-app",
+          "networkAlias": "mod-com-acme-reports-app",
+          "image": {
+            "repository": "ghcr.io/acme/reports-module",
+            "tag": "1.0.0",
+            "reference": "ghcr.io/acme/reports-module:1.0.0",
+            "pullPolicy": "ifNotPresent"
+          }
+        }
+      ],
       "operationStatus": "installed",
       "settings": {
         "REPORT_RETENTION_DAYS": 30
@@ -151,6 +156,7 @@ Initial `modules.json` shape:
       "storageMappings": {
         "data": {
           "key": "data",
+          "container": "app",
           "containerPath": "/app/data",
           "hostPath": "/Users/example/.docker-host/modules/com.acme.reports/data",
           "required": true,
@@ -164,6 +170,7 @@ Initial `modules.json` shape:
           "key": "main-media",
           "label": "Main media disk",
           "hostPath": "/mnt/media",
+          "container": "app",
           "containerPath": "/storage/libraries/main-media",
           "access": "readWrite",
           "readOnly": false
@@ -173,8 +180,14 @@ Initial `modules.json` shape:
         {
           "id": "com.acme.identity",
           "endpoint": "http",
-          "baseUrlEnv": "IDENTITY_BASE_URL",
-          "resolvedBaseUrl": "http://mod-com-acme-identity:8080"
+          "targets": [
+            {
+              "container": "app",
+              "type": "env",
+              "name": "IDENTITY_BASE_URL"
+            }
+          ],
+          "resolvedBaseUrl": "http://mod-com-acme-identity-app:8080"
         }
       ],
       "installedAt": "2026-05-13T09:00:00Z",
@@ -190,7 +203,7 @@ The Host backend creates an empty store automatically:
 
 ```json
 {
-  "schemaVersion": "0.1",
+  "schemaVersion": "0.2",
   "hostSettings": {},
   "modules": [],
   "updatedAt": "2026-05-13T09:00:00Z"
@@ -217,7 +230,7 @@ The domain model does not include a disabled module state.
 
 ### Docker runtime status
 
-Docker runtime status is read from Docker daemon for each installed module container:
+Docker runtime status is read from Docker daemon for each installed module container. Module summaries also include an aggregate status derived from all module containers.
 
 | Status | Meaning |
 | --- | --- |
@@ -230,7 +243,7 @@ Docker runtime status is read from Docker daemon for each installed module conta
 | `dead` | Docker reports the container as dead. |
 | `unknown` | Host could not determine container state. |
 
-The module API reports Docker container state only. It does not expose module health or readiness status.
+The MVP does not expose module health or readiness status. Future health support may use Docker healthcheck data or another unified model, but the current module API reports only Docker container states and an aggregate module runtime state.
 
 ## Settings
 
@@ -238,7 +251,7 @@ Module settings are declared by metadata and stored as values in `modules.json`.
 
 Rules:
 
-- every setting target is treated as an environment variable;
+- every setting target is treated as an environment variable scoped to one container;
 - setting values are stored as typed JSON values in `modules.json`;
 - Docker environment variables are stringified only when Host creates a module container;
 - secret values are write-only in API responses;
@@ -265,9 +278,9 @@ The Host:
 
 - reads dependency metadata URLs from the consumer metadata;
 - ensures required dependency modules are installed and started;
-- derives Docker network aliases from dependency module ids;
-- computes internal base URLs from dependency runtime ports;
-- injects base URLs into the consumer container through environment variables.
+- derives Docker network aliases from dependency module ids and endpoint container keys;
+- computes internal base URLs from dependency module endpoints;
+- injects base URLs into requested consumer containers through environment variables.
 
 Optional dependencies are not supported. Metadata with `dependencies[].required: false` is rejected as unsupported.
 
@@ -279,13 +292,13 @@ An install plan describes:
 
 - metadata URL and resolved metadata;
 - metadata digest for the root metadata source and plan digest for the canonical normalized plan used to detect changes between review and apply;
-- Docker image to pull;
+- Docker images to pull;
 - module directory and metadata copy target;
 - required storage directories and mappings;
 - settings requiring defaults or administrator input;
 - external mount collection requirements and any administrator-selected external mount mappings;
 - dependency modules that must be installed or started;
-- container name, network aliases, ports, mounts, environment variables, and restart policy.
+- container names, network aliases, endpoints, ports, mounts, environment variables, and restart policy.
 
 `metadataDigest` is the SHA-256 digest of the root metadata JSON bytes downloaded from the submitted metadata URL. `planDigest` is the SHA-256 digest of canonical JSON for the normalized plan, including the dependency tree and computed install decisions, but excluding timestamps and transient runtime/download details. Install apply should compare the reviewed `planDigest`, not rely on durable pending plan state.
 
@@ -315,12 +328,12 @@ com.modulis.storage
 
 Docker names derived by Host must be deterministic:
 
-- module container name: `mod-<normalized-module-id>`;
-- network alias: `mod-<normalized-module-id>`;
+- module container name: `mod-<normalized-module-id>-<container-key>`;
+- network alias: `mod-<normalized-module-id>-<container-key>`;
 - normalized id: lowercase, with characters outside `a-z` and `0-9` replaced by `-`.
 
 Example:
 
 ```text
-com.modulis.storage -> mod-com-modulis-storage
+com.modulis.storage + app -> mod-com-modulis-storage-app
 ```
