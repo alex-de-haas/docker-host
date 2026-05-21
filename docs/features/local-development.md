@@ -52,26 +52,26 @@ In this mode, local metadata test servers can usually be referenced as `http://l
 
 The repository uses npm workspace scripts from the root. `npm run host:dev`, `npm run host:build`, and `npm run host:lint` execute the Host app in `apps/host`.
 
-## Direct host-run development with auto-login
+## Direct host-run development with a demo shell app
 
-Use this mode for fast UI work when the first screen should be the dashboard:
-
-```bash
-npm run host:dev:auth-admin
-```
-
-Use this mode when the first shell session should be a non-admin user:
+Use this mode for Host shell work, Apps sidebar work, account switching checks, nested app navigation, or embedded app transport against the demo module from the current repository checkout:
 
 ```bash
-npm run host:dev:auth-user
+npm run host:dev:demo
 ```
 
-This script sets:
+This script starts both local development servers:
 
-- `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the repository-local `.docker-host-dev/` directory;
-- `HOST_DEV_AUTH=auto`, which enables development-only auto-login.
+- Docker Host at `http://localhost:3000`;
+- the repository-local demo module at `http://localhost:3100`.
 
-The user-role script uses `.docker-host-dev-user/` and also sets `HOST_DEV_AUTH_ROLE=user`. Both auto-login scripts are backed by a Node wrapper rather than POSIX inline environment assignments, so the same npm commands work from POSIX shells, PowerShell, and cmd.
+The script sets:
+
+- `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the repository-local `.docker-host-dev-demo/` directory;
+- `HOST_DEV_AUTH=auto`, which enables development-only auto-login;
+- `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, which remembers both development accounts in the browser account menu;
+- `HOST_MODULE_DEV_MODE=enabled`, which enables local developer app targets;
+- `HOST_ENABLE_DEV_FIXTURES=true`, which enables the current-branch demo metadata fixture.
 
 When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only when the Host server observes the client socket as a loopback address such as `127.0.0.1` or `::1`.
 
@@ -85,30 +85,15 @@ The route does not disable authentication. It creates or updates normal local ac
 
 Override these values with `HOST_DEV_ADMIN_EMAIL`, `HOST_DEV_ADMIN_PASSWORD`, and `HOST_DEV_ADMIN_NAME` if a local test needs different credentials. The password still has to satisfy the normal local password policy.
 
-When `HOST_DEV_AUTH_ROLE=user` is set, auto-login also creates or updates a normal local user account and signs in as that user:
+The demo script signs the first browser session in as the administrator account. It still creates and remembers a normal development user for account switching:
 
 - email: `user@docker-host.local`;
 - password: `docker-host-dev-user`;
 - display name: `Dev User`.
 
-Override these values with `HOST_DEV_USER_EMAIL`, `HOST_DEV_USER_PASSWORD`, and `HOST_DEV_USER_NAME`. The administrator account is still seeded so the Host is not left in setup-required mode.
+Override these values with `HOST_DEV_USER_EMAIL`, `HOST_DEV_USER_PASSWORD`, and `HOST_DEV_USER_NAME`. The administrator account is still seeded so the Host is not left in setup-required mode. The development user and administrator emails must be different.
 
-Production runs and direct `npm run host:dev` runs do not enable this behavior. They continue to require a CLI-generated setup token for first administrator setup.
-
-## Direct host-run development with a demo shell app
-
-Use this mode when testing the Host shell, Apps sidebar, nested app navigation, or embedded app transport against the demo module from the current repository checkout:
-
-```bash
-npm run host:dev:demo
-```
-
-This script starts both local development servers:
-
-- Docker Host at `http://localhost:3000`;
-- the repository-local demo module at `http://localhost:3100`.
-
-Before starting the servers, the script seeds a deterministic developer target in `.docker-host-dev-demo/dev/module-targets.json`. The target points at the current checkout's `modules/demo-module` UI and stores the current metadata `ui` snapshot, so `/api/apps` immediately returns a `Dev` app without a manual link step. The script also enables `HOST_DEV_AUTH=auto`, `HOST_MODULE_DEV_MODE=enabled`, and local metadata fixtures for the Host process.
+Before starting the servers, the script seeds a deterministic developer target in `.docker-host-dev-demo/dev/module-targets.json`. The target points at the current checkout's `modules/demo-module` UI and stores the current metadata `ui` snapshot, so `/api/apps` immediately returns a `Dev` app without a manual link step.
 
 The default app is available through the Host shell at:
 

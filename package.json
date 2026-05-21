@@ -17,8 +17,6 @@
     "build": "npm run host:build",
     "lint": "npm run host:lint",
     "host:dev": "npm run dev --workspace @haas/docker-host-app",
-    "host:dev:auth-admin": "node scripts/dev-auth-shell.mjs admin",
-    "host:dev:auth-user": "node scripts/dev-auth-shell.mjs user",
     "host:dev:demo": "node scripts/dev-demo-shell.mjs",
     "host:build": "npm run build --workspace @haas/docker-host-app",
     "host:start": "npm run start --workspace @haas/docker-host-app",

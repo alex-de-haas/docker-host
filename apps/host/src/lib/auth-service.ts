@@ -420,14 +420,7 @@ export async function authenticatePassword(
 }
 
 export function isDevAuthAutoLoginEnabled() {
-  const mode = process.env.HOST_DEV_AUTH?.trim().toLowerCase();
-  const enabled = mode === '1' ||
-    mode === 'true' ||
-    mode === 'enabled' ||
-    mode === 'on' ||
-    mode === 'yes' ||
-    mode === 'auto' ||
-    mode === 'auto-login';
+  const enabled = isEnabledDevFlag(process.env.HOST_DEV_AUTH, ['auto', 'auto-login']);
 
   if (!enabled) {
     return false;
@@ -436,8 +429,23 @@ export function isDevAuthAutoLoginEnabled() {
   return isDevelopmentRuntime();
 }
 
+export function isDevAuthBrowserAccountSeedEnabled() {
+  return isDevAuthAutoLoginEnabled() &&
+    isEnabledDevFlag(process.env.HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS);
+}
+
 export function getDevAuthCredentials() {
   return getDevAccountCredentials(getDevAuthRole());
+}
+
+function isEnabledDevFlag(value: string | undefined, extraValues: string[] = []) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === '1' ||
+    normalized === 'true' ||
+    normalized === 'enabled' ||
+    normalized === 'on' ||
+    normalized === 'yes' ||
+    extraValues.includes(normalized || '');
 }
 
 function getDevAuthRole(): DevAuthRole {
@@ -534,7 +542,42 @@ export async function createDevSession(
     throw new AuthServiceError('dev_auth_disabled', 'Development auto-login is not enabled.');
   }
 
-  return createDevSessionForCredentials(getDevAuthCredentials(), request, config);
+  return createDevSessionForCredentials(getDevAuthCredentials(), request, config, {
+    seedBrowserAccounts: isDevAuthBrowserAccountSeedEnabled(),
+  });
+}
+
+export async function prepareDevBrowserAccountUsers(
+  config?: HostRuntimeConfig
+) {
+  if (!isDevAuthBrowserAccountSeedEnabled()) {
+    throw new AuthServiceError('dev_auth_disabled', 'Development browser account seeding is not enabled.');
+  }
+
+  const accountCredentials = getDevSessionAccountCredentials(getDevAuthCredentials(), true);
+  const passwordHashes = await validateAndHashDevCredentials(accountCredentials);
+  const now = new Date();
+
+  const accountUsers = await updateAuthState(state => {
+    let users = state.users;
+    const nextAccountUsers: AuthUserRecord[] = [];
+
+    for (const account of accountCredentials) {
+      const result = upsertDevAuthUser(users, account, passwordHashes.get(account.email) ?? '', now);
+      users = result.users;
+      nextAccountUsers.push(result.user);
+    }
+
+    return {
+      state: {
+        ...state,
+        users,
+      },
+      result: nextAccountUsers,
+    };
+  }, config);
+
+  return accountUsers.map(toPrincipal);
 }
 
 export async function createDevAdminSession(
@@ -551,42 +594,27 @@ export async function createDevAdminSession(
 async function createDevSessionForCredentials(
   credentials: DevAuthCredentials,
   request?: AuthRequestMeta,
-  config?: HostRuntimeConfig
+  config?: HostRuntimeConfig,
+  options: {
+    seedBrowserAccounts?: boolean;
+  } = {}
 ) {
-  const adminCredentials = getDevAccountCredentials('host.admin');
-  const accountCredentials = credentials.role === 'host.user'
-    ? [adminCredentials, credentials]
-    : [credentials];
-  if (credentials.role === 'host.user' && credentials.email === adminCredentials.email) {
-    throw new AuthServiceError(
-      'dev_auth_account_conflict',
-      'Development user and administrator accounts must use different email addresses.'
-    );
-  }
-
-  for (const account of accountCredentials) {
-    const passwordPolicy = validatePasswordPolicy(account.password);
-    if (!passwordPolicy.valid) {
-      throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
-    }
-  }
-
-  const passwordHashes = new Map<string, string>();
-  for (const account of accountCredentials) {
-    passwordHashes.set(account.email, await hashPassword(account.password));
-  }
+  const accountCredentials = getDevSessionAccountCredentials(credentials, Boolean(options.seedBrowserAccounts));
+  const passwordHashes = await validateAndHashDevCredentials(accountCredentials);
 
   const sessionToken = generateToken('dhs_');
   const now = new Date();
 
-  const { user, session, createdUser } = await updateAuthState(state => {
+  const { user, session, createdUser, accountUsers } = await updateAuthState(state => {
     let users = state.users;
     let sessionUser: AuthUserRecord | null = null;
     let createdSessionUser = false;
+    const nextAccountUsers: AuthUserRecord[] = [];
 
     for (const account of accountCredentials) {
       const result = upsertDevAuthUser(users, account, passwordHashes.get(account.email) ?? '', now);
       users = result.users;
+      nextAccountUsers.push(result.user);
       if (account.email === credentials.email) {
         sessionUser = result.user;
         createdSessionUser = result.createdUser;
@@ -609,6 +637,7 @@ async function createDevSessionForCredentials(
         user: sessionUser,
         session,
         createdUser: createdSessionUser,
+        accountUsers: nextAccountUsers,
       },
     };
   }, config);
@@ -629,7 +658,50 @@ async function createDevSessionForCredentials(
     sessionToken,
     session,
     user: toPrincipal(user),
+    browserAccountUsers: accountUsers.map(toPrincipal),
   };
+}
+
+async function validateAndHashDevCredentials(accountCredentials: DevAuthCredentials[]) {
+  for (const account of accountCredentials) {
+    const passwordPolicy = validatePasswordPolicy(account.password);
+    if (!passwordPolicy.valid) {
+      throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
+    }
+  }
+
+  const passwordHashes = new Map<string, string>();
+  for (const account of accountCredentials) {
+    passwordHashes.set(account.email, await hashPassword(account.password));
+  }
+
+  return passwordHashes;
+}
+
+function getDevSessionAccountCredentials(
+  sessionCredentials: DevAuthCredentials,
+  seedBrowserAccounts: boolean
+) {
+  const adminCredentials = getDevAccountCredentials('host.admin');
+  const userCredentials = getDevAccountCredentials('host.user');
+  const requiresUserAccount = sessionCredentials.role === 'host.user' || seedBrowserAccounts;
+  if (requiresUserAccount && adminCredentials.email === userCredentials.email) {
+    throw new AuthServiceError(
+      'dev_auth_account_conflict',
+      'Development user and administrator accounts must use different email addresses.'
+    );
+  }
+
+  const accountCredentials = requiresUserAccount
+    ? [
+        adminCredentials,
+        userCredentials,
+      ]
+    : [sessionCredentials];
+
+  return accountCredentials.filter((account, index, accounts) =>
+    accounts.findIndex(candidate => candidate.email === account.email) === index
+  );
 }
 
 export async function addUserToBrowserAccountSet(

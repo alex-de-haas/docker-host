@@ -1,13 +1,22 @@
 import { NextResponse } from 'next/server';
 import {
+  assertSecureEnoughForCookies,
+  authExceptionResponse,
   clearAccountSetCookie,
   clearSessionCookie,
   getRequestAccountSetToken,
   getRequestMeta,
   getRequestSessionToken,
   requireHostPrincipal,
+  setAccountSetCookie,
 } from '@/lib/auth-http';
-import { clearBrowserAccountSet, listBrowserAccounts } from '@/lib/auth-service';
+import {
+  addUserToBrowserAccountSet,
+  clearBrowserAccountSet,
+  isDevAuthBrowserAccountSeedEnabled,
+  listBrowserAccounts,
+  prepareDevBrowserAccountUsers,
+} from '@/lib/auth-service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,12 +27,35 @@ export async function GET(request: Request) {
     return auth;
   }
 
+  const initialAccountSetToken = getRequestAccountSetToken(request);
+  let accountSetToken = initialAccountSetToken;
+
+  if (isDevAuthBrowserAccountSeedEnabled()) {
+    try {
+      assertSecureEnoughForCookies(request);
+      const devUsers = await prepareDevBrowserAccountUsers();
+      for (const user of devUsers) {
+        const accountSet = await addUserToBrowserAccountSet({
+          accountSetToken,
+          userId: user.id,
+        }, getRequestMeta(request));
+        accountSetToken = accountSet.accountSetToken;
+      }
+    } catch (error) {
+      return authExceptionResponse(error);
+    }
+  }
+
   const summary = await listBrowserAccounts(
-    getRequestAccountSetToken(request),
+    accountSetToken,
     auth.principal
   );
 
-  return NextResponse.json(summary);
+  const response = NextResponse.json(summary);
+  if (accountSetToken && accountSetToken !== initialAccountSetToken) {
+    setAccountSetCookie(response, request, accountSetToken);
+  }
+  return response;
 }
 
 export async function DELETE(request: Request) {

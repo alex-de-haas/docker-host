@@ -17,9 +17,11 @@ import {
   getAuthStatus,
   hasRecentSessionReauthentication,
   isDevAuthAutoLoginEnabled,
+  isDevAuthBrowserAccountSeedEnabled,
   listAuthSessions,
   listBrowserAccounts,
   listCliTokens,
+  prepareDevBrowserAccountUsers,
   reauthenticateSession,
   recoverHostAdmin,
   removeBrowserAccount,
@@ -130,6 +132,91 @@ test('development auto-login can create a normal user session with a seeded admi
   assert.equal(state.users.some(user => user.role === 'host.admin' && user.displayName === 'Dev Admin'), true);
   assert.equal(state.users.some(user => user.role === 'host.user' && user.displayName === 'Dev User'), true);
   assert.equal(JSON.stringify(state).includes('docker-host-dev-user'), false);
+});
+
+test('development auto-login can seed switchable admin and user browser accounts', async t => {
+  const config = await createTestConfig();
+  const previousDevAuth = process.env.HOST_DEV_AUTH;
+  const previousDevAuthRole = process.env.HOST_DEV_AUTH_ROLE;
+  const previousSeedAccounts = process.env.HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS;
+  const previousRuntimeMode = process.env.HOST_RUNTIME_MODE;
+  t.after(() => {
+    restoreEnv('HOST_DEV_AUTH', previousDevAuth);
+    restoreEnv('HOST_DEV_AUTH_ROLE', previousDevAuthRole);
+    restoreEnv('HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS', previousSeedAccounts);
+    restoreEnv('HOST_RUNTIME_MODE', previousRuntimeMode);
+  });
+
+  process.env.HOST_DEV_AUTH = 'auto';
+  delete process.env.HOST_DEV_AUTH_ROLE;
+  process.env.HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS = 'enabled';
+  process.env.HOST_RUNTIME_MODE = 'development';
+
+  assert.equal(isDevAuthBrowserAccountSeedEnabled(), true);
+  const result = await createDevSession({ userAgent: 'Dev Browser' }, config);
+
+  assert.equal(result.user.email, 'admin@docker-host.local');
+  assert.equal(result.user.role, 'host.admin');
+  assert.equal(result.browserAccountUsers.length, 2);
+  assert.equal(result.browserAccountUsers.some(user => user.role === 'host.admin'), true);
+  assert.equal(result.browserAccountUsers.some(user => user.role === 'host.user'), true);
+
+  let accountSetToken: string | null = null;
+  for (const user of result.browserAccountUsers) {
+    const accountSet = await addUserToBrowserAccountSet({
+      accountSetToken,
+      userId: user.id,
+    }, undefined, config);
+    accountSetToken = accountSet.accountSetToken;
+  }
+
+  const listed = await listBrowserAccounts(accountSetToken, result.user, config);
+  assert.equal(listed.accounts.length, 2);
+  assert.equal(listed.accounts[0]?.email, 'admin@docker-host.local');
+  assert.equal(listed.accounts[0]?.active, true);
+  assert.equal(listed.accounts[1]?.email, 'user@docker-host.local');
+  assert.equal(listed.accounts[1]?.active, false);
+});
+
+test('development browser account seeding repairs an existing admin-only account set', async t => {
+  const config = await createTestConfig();
+  const previousDevAuth = process.env.HOST_DEV_AUTH;
+  const previousDevAuthRole = process.env.HOST_DEV_AUTH_ROLE;
+  const previousSeedAccounts = process.env.HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS;
+  const previousRuntimeMode = process.env.HOST_RUNTIME_MODE;
+  t.after(() => {
+    restoreEnv('HOST_DEV_AUTH', previousDevAuth);
+    restoreEnv('HOST_DEV_AUTH_ROLE', previousDevAuthRole);
+    restoreEnv('HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS', previousSeedAccounts);
+    restoreEnv('HOST_RUNTIME_MODE', previousRuntimeMode);
+  });
+
+  process.env.HOST_DEV_AUTH = 'auto';
+  delete process.env.HOST_DEV_AUTH_ROLE;
+  delete process.env.HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS;
+  process.env.HOST_RUNTIME_MODE = 'development';
+
+  const login = await createDevSession({ userAgent: 'Dev Browser' }, config);
+  let accountSet = await addUserToBrowserAccountSet({
+    accountSetToken: null,
+    userId: login.user.id,
+  }, undefined, config);
+
+  assert.equal((await listBrowserAccounts(accountSet.accountSetToken, login.user, config)).accounts.length, 1);
+
+  process.env.HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS = 'enabled';
+  const devUsers = await prepareDevBrowserAccountUsers(config);
+  for (const user of devUsers) {
+    accountSet = await addUserToBrowserAccountSet({
+      accountSetToken: accountSet.accountSetToken,
+      userId: user.id,
+    }, undefined, config);
+  }
+
+  const listed = await listBrowserAccounts(accountSet.accountSetToken, login.user, config);
+  assert.equal(listed.accounts.length, 2);
+  assert.equal(listed.accounts.some(account => account.email === 'admin@docker-host.local'), true);
+  assert.equal(listed.accounts.some(account => account.email === 'user@docker-host.local'), true);
 });
 
 test('development admin session helper always creates an admin session', async t => {

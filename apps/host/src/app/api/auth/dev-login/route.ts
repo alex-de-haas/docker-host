@@ -39,10 +39,11 @@ export async function GET(request: Request) {
   try {
     assertSecureEnoughForCookies(request);
     const result = await createDevSession(getRequestMeta(request));
-    const accountSet = await addUserToBrowserAccountSet({
-      accountSetToken: getRequestAccountSetToken(request),
-      userId: result.user.id,
-    }, getRequestMeta(request));
+    const accountSet = await addDevBrowserAccountsToAccountSet(
+      getRequestAccountSetToken(request),
+      result.browserAccountUsers,
+      request
+    );
     return createSessionAndAccountSetRedirectResponse(
       request,
       getRedirectTo(request),
@@ -52,6 +53,29 @@ export async function GET(request: Request) {
   } catch (error) {
     return authExceptionResponse(error);
   }
+}
+
+async function addDevBrowserAccountsToAccountSet(
+  initialAccountSetToken: string | null,
+  users: Array<{ id: string }>,
+  request: Request
+) {
+  let accountSetToken = initialAccountSetToken;
+  let accountSet: Awaited<ReturnType<typeof addUserToBrowserAccountSet>> | null = null;
+
+  for (const user of users) {
+    accountSet = await addUserToBrowserAccountSet({
+      accountSetToken,
+      userId: user.id,
+    }, getRequestMeta(request));
+    accountSetToken = accountSet.accountSetToken;
+  }
+
+  if (!accountSet) {
+    throw new Error('Development account set could not be prepared.');
+  }
+
+  return accountSet;
 }
 
 function getRedirectTo(request: Request) {
