@@ -835,7 +835,8 @@ async function startReusableDependency(moduleId: string, config: HostRuntimeConf
   }
 
   try {
-    await ensureModuleContainerStarted(installed);
+    const metadata = await readModuleMetadata(installed, config).catch(() => null);
+    await ensureModuleContainerStarted(installed, metadata);
     return { error: null };
   } catch (error) {
     return {

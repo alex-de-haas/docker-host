@@ -15,6 +15,7 @@ import { loadMetadataGraph } from '@/lib/module-metadata';
 import { createModuleUpdatePlan } from '@/lib/module-update-plan';
 import { withModuleMutationLock } from '@/lib/module-mutation-lock';
 import {
+  readModuleMetadata,
   readModulesStore,
   writeModulesStore,
 } from '@/lib/module-store';
@@ -277,7 +278,8 @@ async function applyValidatedUpdateRequest(
         if (!installedDependency) {
           throw new Error(`Reusable dependency "${dependencyId}" is no longer installed.`);
         }
-        await ensureModuleContainerStarted(installedDependency);
+        const dependencyMetadata = await readModuleMetadata(installedDependency, config).catch(() => null);
+        await ensureModuleContainerStarted(installedDependency, dependencyMetadata);
         reusedDependencyIds.push(dependencyId);
         continue;
       }

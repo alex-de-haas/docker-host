@@ -3,12 +3,13 @@ import { ensureHostDataRoot, getHostRuntimeConfig } from '@/lib/host-runtime';
 import {
   ensureModuleNetwork,
   getDockerDaemonStatus,
-  getModuleRuntimeStatus,
-  restartModuleContainer,
-  startModuleContainer,
-  stopModuleContainer,
+  getModuleRuntimeStatuses,
+  restartModuleContainers,
+  startModuleContainers,
+  stopModuleContainers,
   toModuleOperationError,
 } from '@/lib/module-docker';
+import { buildModuleAggregateRuntimeStatus } from './module-lifecycle.ts';
 import {
   findInstalledModule,
   getModulesStoreStatus,
@@ -107,9 +108,9 @@ export async function startInstalledModule(moduleId: string): Promise<ModuleActi
   return runModuleAction(
     moduleId,
     'module.start',
-    startModuleContainer,
-    'Docker could not start the module container.',
-    'Recreate the module container or reinstall the module when install flows are available.'
+    startModuleContainers,
+    'Docker could not start all module containers.',
+    'Retry the failed install or reinstall the module if a container is missing.'
   );
 }
 
@@ -117,9 +118,9 @@ export async function stopInstalledModule(moduleId: string): Promise<ModuleActio
   return runModuleAction(
     moduleId,
     'module.stop',
-    stopModuleContainer,
-    'Docker could not stop the module container.',
-    'Inspect the module container in Docker, then retry the stop action.'
+    stopModuleContainers,
+    'Docker could not stop all module containers.',
+    'Inspect the module containers in Docker, then retry the stop action.'
   );
 }
 
@@ -127,16 +128,16 @@ export async function restartInstalledModule(moduleId: string): Promise<ModuleAc
   return runModuleAction(
     moduleId,
     'module.restart',
-    restartModuleContainer,
-    'Docker could not restart the module container.',
-    'Inspect the module container logs and recreate it when install flows are available.'
+    restartModuleContainers,
+    'Docker could not restart all module containers.',
+    'Inspect the module container logs and retry the restart action.'
   );
 }
 
 async function runModuleAction(
   moduleId: string,
   operation: string,
-  action: (module: InstalledModuleRecord) => Promise<ModuleRuntimeStatus>,
+  action: (module: InstalledModuleRecord, metadata?: ModuleMetadata | null) => Promise<ModuleRuntimeStatus[]>,
   fallbackMessage: string,
   nextStep: string
 ): Promise<ModuleActionResult> {
@@ -173,12 +174,12 @@ async function runModuleAction(
   }
 
   try {
-    const runtimeStatus = await action(installedModule);
     const metadata = await safeReadModuleMetadata(installedModule, config);
+    const runtimeStatuses = await action(installedModule, metadata);
 
     return {
       success: true,
-      module: toModuleSummary(installedModule, metadata, [runtimeStatus]),
+      module: toModuleSummary(installedModule, metadata, runtimeStatuses),
       error: null,
     };
   } catch (error) {
@@ -195,12 +196,13 @@ async function getPersistentLifecyclePreflightError(
   operation: string,
   config = getHostRuntimeConfig()
 ): Promise<ModuleActionResult['error']> {
-  const runtimeStatus = await getModuleRuntimeStatus(module);
-  if (runtimeStatus.state === 'not_created') {
+  const runtimeStatuses = await getModuleRuntimeStatuses(module);
+  const missingContainers = runtimeStatuses.filter(status => status.state === 'not_created');
+  if (missingContainers.length > 0) {
     return {
       operation,
       httpStatus: 409,
-      message: `Module "${module.id}" is missing Docker container "${runtimeStatus.containerName}".`,
+      message: `Module "${module.id}" is missing Docker container${missingContainers.length === 1 ? '' : 's'} ${missingContainers.map(status => `"${status.containerName}"`).join(', ')}.`,
       nextStep: 'Retry the failed install or remove the module and install it again.',
       occurredAt: new Date().toISOString(),
     };
@@ -271,21 +273,6 @@ async function safeReadModuleMetadata(
   }
 }
 
-async function getModuleRuntimeStatuses(module: InstalledModuleRecord) {
-  if (module.containers.length === 0) {
-    return [await getModuleRuntimeStatus(module)];
-  }
-
-  return Promise.all(
-    module.containers.map(container =>
-      getModuleRuntimeStatus({
-        ...module,
-        containers: [container],
-      })
-    )
-  );
-}
-
 function toModuleSummary(
   module: InstalledModuleRecord,
   metadata: ModuleMetadata | null,
@@ -301,7 +288,7 @@ function toModuleSummary(
     metadataUrl: module.metadataUrl,
     containers,
     operationStatus: module.operationStatus || 'installed',
-    runtimeStatus: buildAggregateRuntimeStatus(runtimeStatuses),
+    runtimeStatus: buildModuleAggregateRuntimeStatus(runtimeStatuses),
     installedAt: module.installedAt,
     updatedAt: module.updatedAt,
     lastOperation: module.lastOperation,
@@ -346,35 +333,6 @@ function buildContainerImage(
     tag,
     reference: metadataImage ? `${repository}:${tag}` : storedImage.reference || `${repository}:${tag}`,
     pullPolicy: metadataImage?.pullPolicy || storedImage.pullPolicy,
-  };
-}
-
-function buildAggregateRuntimeStatus(runtimeStatuses: ModuleRuntimeStatus[]): ModuleSummary['runtimeStatus'] {
-  if (runtimeStatuses.length === 0) {
-    return {
-      state: 'not_created',
-      runningContainers: 0,
-      totalContainers: 0,
-    };
-  }
-
-  const runningContainers = runtimeStatuses.filter(status => status.state === 'running').length;
-  const states = runtimeStatuses.map(status => status.state);
-  const state = states.every(candidate => candidate === 'not_created')
-    ? 'not_created'
-    : states.every(candidate => candidate === 'running')
-      ? 'running'
-      : states.every(candidate => candidate === 'exited' || candidate === 'created' || candidate === 'not_created')
-        ? 'exited'
-        : states.some(candidate => candidate === 'unknown')
-          ? 'unknown'
-          : 'degraded';
-
-  return {
-    state,
-    runningContainers,
-    totalContainers: runtimeStatuses.length,
-    ...(runtimeStatuses.find(status => status.error)?.error ? { error: runtimeStatuses.find(status => status.error)?.error } : {}),
   };
 }
 

@@ -376,7 +376,7 @@ Dashboard должен остаться плотным и module-first.
 
 ### Phase 3 - Docker lifecycle
 
-**Status**: Not Started
+**Status**: Completed
 
 Научить Docker runtime layer работать с набором module containers.
 
@@ -386,6 +386,44 @@ Dashboard должен остаться плотным и module-first.
 - Restart containers как whole-module action.
 - Create containers с container-specific env, mounts, ports, image, resources и alias.
 - Aggregate per-container Docker states в module runtime state.
+
+#### Phase 3 decisions
+
+- Question: Phase 3 должна менять только Docker runtime layer или также install/update apply flows?
+  - Answer: Только Docker runtime layer и module lifecycle API. Install/update/retry/remove остаются в Phase 4.
+  - Recommendation: Подготовить runtime helpers для нескольких containers и использовать их в lifecycle actions, не смешивая это с полным переносом mutation flows.
+
+- Question: Какой runtime status helper нужен?
+  - Answer: Добавить plural helper для всех containers и оставить single-container helper только как compatibility wrapper.
+  - Recommendation: Использовать plural status path в module summaries и lifecycle preflight.
+
+- Question: Как считать aggregate state при частично отсутствующих containers?
+  - Answer: `not_created`, если отсутствуют все containers; `degraded`, если отсутствует только часть containers.
+  - Recommendation: Partial missing containers должны блокировать lifecycle action без попытки auto-create.
+
+- Question: Что делать, если inspect одного container падает не 404?
+  - Answer: Вернуть `unknown` для этого container и продолжить inspect остальных.
+  - Recommendation: Aggregate `unknown` использовать, когда все inspected statuses unknown; смешанные unknown/running/exited состояния считать `degraded`.
+
+- Question: Start должен создавать отсутствующие containers?
+  - Answer: Нет. Start запускает только уже созданные containers.
+  - Recommendation: Missing containers должны идти через retry, cleanup/remove или reinstall flows.
+
+- Question: Как запускать, останавливать и перезапускать containers?
+  - Answer: Start идет в dependency order, stop в reverse dependency order, restart делает whole-module stop затем whole-module start.
+  - Recommendation: Использовать metadata `containers[].dependsOn`; при невозможности построить порядок fallback должен сохранять stored order.
+
+- Question: Если один container не стартовал, продолжать запуск остальных?
+  - Answer: Нет. Lifecycle action должен быть fail-fast.
+  - Recommendation: Вернуть ошибку с container name/key и оставить уже выполненные Docker операции для явной диагностики.
+
+- Question: Какие данные нужны для create container config?
+  - Answer: Installed record плюс уже вычисленные container-specific env, mounts, ports, image, resources и aliases.
+  - Recommendation: Docker runtime layer не должен пересчитывать install/update planning decisions.
+
+- Question: Какие tests нужны для Phase 3?
+  - Answer: Unit tests для dependency ordering и aggregate status; Docker daemon integration остается ручной или mocked на более позднем этапе.
+  - Recommendation: Проверить all missing, partial missing, stopped, unknown и start/stop order как минимальный automated coverage.
 
 ### Phase 4 - Install, update, retry, cleanup, and remove
 
