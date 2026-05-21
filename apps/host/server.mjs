@@ -17,6 +17,7 @@ import {
 } from './src/lib/trusted-proxy.mjs';
 
 const SESSION_COOKIE_NAME = 'docker_host_session';
+const ACCOUNT_SET_COOKIE_NAME = 'docker_host_accounts';
 const INTERNAL_REMOTE_ADDRESS_HEADER = 'x-docker-host-remote-address';
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
 const DEFAULT_MODULE_EXPOSURE_POLICY = 'loginRequired';
@@ -365,7 +366,7 @@ export function buildProxyRequestHeaders(req, target, upgrade, identityToken = n
     }
 
     if (lowerName === 'cookie') {
-      const cookie = stripCookieValue(value, SESSION_COOKIE_NAME);
+      const cookie = stripHostAuthCookies(value);
       if (cookie) {
         headers[name] = cookie;
       }
@@ -421,7 +422,7 @@ export function buildProxyUpgradeHeaderLines(req, target, identityToken = null) 
     }
 
     if (lowerName === 'cookie') {
-      const cookie = stripCookieValue(value, SESSION_COOKIE_NAME);
+      const cookie = stripHostAuthCookies(value);
       if (cookie) {
         lines.push(formatHeaderLine(name, cookie));
       }
@@ -752,6 +753,11 @@ function stripCookieValue(value, cookieName) {
     .filter(part => part && part.split('=')[0] !== cookieName);
 
   return cookies.length > 0 ? cookies.join('; ') : null;
+}
+
+function stripHostAuthCookies(value) {
+  const withoutSession = stripCookieValue(value, SESSION_COOKIE_NAME);
+  return withoutSession ? stripCookieValue(withoutSession, ACCOUNT_SET_COOKIE_NAME) : null;
 }
 
 function stripCookieDomain(value) {

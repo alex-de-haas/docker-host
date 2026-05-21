@@ -4,6 +4,8 @@ import { getHostRuntimeConfig } from './host-runtime.ts';
 import {
   authenticateCliToken,
   authenticateSessionToken,
+  ACCOUNT_SET_ABSOLUTE_TIMEOUT_MS,
+  ACCOUNT_SET_COOKIE_NAME,
   getAuthStatus,
   hasRecentSessionReauthentication,
   isAuthServiceError,
@@ -164,6 +166,14 @@ export async function revokeRequestSession(request: Request) {
   return await revokeSession(sessionToken, getRequestMeta(request));
 }
 
+export function getRequestSessionToken(request: Request) {
+  return getCookieValue(request, SESSION_COOKIE_NAME);
+}
+
+export function getRequestAccountSetToken(request: Request) {
+  return getCookieValue(request, ACCOUNT_SET_COOKIE_NAME);
+}
+
 export function createSessionCookieResponse<TBody>(
   request: Request,
   body: TBody,
@@ -180,6 +190,18 @@ export function createSessionCookieResponse<TBody>(
     secure: isSecureRequest(request),
     ...(domain ? { domain } : {}),
   });
+  return response;
+}
+
+export function createSessionAndAccountSetCookieResponse<TBody>(
+  request: Request,
+  body: TBody,
+  sessionToken: string,
+  accountSetToken: string,
+  status = 200
+) {
+  const response = createSessionCookieResponse(request, body, sessionToken, status);
+  setAccountSetCookie(response, request, accountSetToken);
   return response;
 }
 
@@ -202,6 +224,18 @@ export function createSessionRedirectResponse(
   return response;
 }
 
+export function createSessionAndAccountSetRedirectResponse(
+  request: Request,
+  location: string,
+  sessionToken: string,
+  accountSetToken: string,
+  status = 302
+) {
+  const response = createSessionRedirectResponse(request, location, sessionToken, status);
+  setAccountSetCookie(response, request, accountSetToken);
+  return response;
+}
+
 export function createClearSessionCookieResponse<TBody>(body: TBody, status = 200, request?: Request) {
   const response = NextResponse.json(body, { status });
   const domain = request ? getSessionCookieDomain(request) : null;
@@ -213,6 +247,40 @@ export function createClearSessionCookieResponse<TBody>(body: TBody, status = 20
     ...(domain ? { domain } : {}),
   });
   return response;
+}
+
+export function clearSessionCookie(response: NextResponse, request?: Request) {
+  const domain = request ? getSessionCookieDomain(request) : null;
+  response.cookies.set(SESSION_COOKIE_NAME, '', {
+    httpOnly: true,
+    maxAge: 0,
+    path: '/',
+    sameSite: 'lax',
+    ...(domain ? { domain } : {}),
+  });
+}
+
+export function clearAccountSetCookie(response: NextResponse, request?: Request) {
+  const domain = request ? getSessionCookieDomain(request) : null;
+  response.cookies.set(ACCOUNT_SET_COOKIE_NAME, '', {
+    httpOnly: true,
+    maxAge: 0,
+    path: '/',
+    sameSite: 'lax',
+    ...(domain ? { domain } : {}),
+  });
+}
+
+export function setAccountSetCookie(response: NextResponse, request: Request, accountSetToken: string) {
+  const domain = getSessionCookieDomain(request);
+  response.cookies.set(ACCOUNT_SET_COOKIE_NAME, accountSetToken, {
+    httpOnly: true,
+    maxAge: Math.floor(ACCOUNT_SET_ABSOLUTE_TIMEOUT_MS / 1000),
+    path: '/',
+    sameSite: 'lax',
+    secure: isSecureRequest(request),
+    ...(domain ? { domain } : {}),
+  });
 }
 
 export function assertSecureEnoughForCookies(request: Request) {

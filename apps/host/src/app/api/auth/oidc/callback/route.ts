@@ -1,10 +1,11 @@
 import {
   assertSecureEnoughForCookies,
   authExceptionResponse,
-  createSessionRedirectResponse,
+  createSessionAndAccountSetRedirectResponse,
+  getRequestAccountSetToken,
   getRequestMeta,
 } from '@/lib/auth-http';
-import { AuthServiceError } from '@/lib/auth-service';
+import { addUserToBrowserAccountSet, AuthServiceError } from '@/lib/auth-service';
 import { completeOidcLogin } from '@/lib/oidc-service';
 
 export const dynamic = 'force-dynamic';
@@ -24,8 +25,17 @@ export async function GET(request: Request) {
       code: url.searchParams.get('code') || '',
       requestOrigin: url.origin,
     }, getRequestMeta(request));
+    const accountSet = await addUserToBrowserAccountSet({
+      accountSetToken: getRequestAccountSetToken(request),
+      userId: result.user.id,
+    }, getRequestMeta(request));
 
-    return createSessionRedirectResponse(request, result.redirectTo, result.sessionToken);
+    return createSessionAndAccountSetRedirectResponse(
+      request,
+      result.redirectTo,
+      result.sessionToken,
+      accountSet.accountSetToken
+    );
   } catch (caught) {
     return authExceptionResponse(caught);
   }

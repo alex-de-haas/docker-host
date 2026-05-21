@@ -3,12 +3,14 @@ import {
   assertSecureEnoughForCookies,
   authError,
   authExceptionResponse,
-  createSessionRedirectResponse,
+  createSessionAndAccountSetRedirectResponse,
+  getRequestAccountSetToken,
   getRequestOrigin,
   getRequestMeta,
   isLoopbackRequest,
 } from '@/lib/auth-http';
 import {
+  addUsersToBrowserAccountSet,
   createDevSession,
   isDevAuthAutoLoginEnabled,
 } from '@/lib/auth-service';
@@ -37,7 +39,16 @@ export async function GET(request: Request) {
   try {
     assertSecureEnoughForCookies(request);
     const result = await createDevSession(getRequestMeta(request));
-    return createSessionRedirectResponse(request, getRedirectTo(request), result.sessionToken);
+    const accountSet = await addUsersToBrowserAccountSet({
+      accountSetToken: getRequestAccountSetToken(request),
+      userIds: result.browserAccountUsers.map(user => user.id),
+    }, getRequestMeta(request));
+    return createSessionAndAccountSetRedirectResponse(
+      request,
+      getRedirectTo(request),
+      result.sessionToken,
+      accountSet.accountSetToken
+    );
   } catch (error) {
     return authExceptionResponse(error);
   }

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { NextResponse } from 'next/server';
 import { canAccessModule } from './auth-policy.ts';
-import { SESSION_COOKIE_NAME } from './auth-service.ts';
+import { ACCOUNT_SET_COOKIE_NAME, SESSION_COOKIE_NAME } from './auth-service.ts';
 import { readAuthStateSnapshot } from './auth-store.ts';
 import { listHostApps } from './app-registry-service.ts';
 import { getModuleNetworkAlias } from './gateway-service.ts';
@@ -777,7 +777,7 @@ function buildEmbedRequestHeaders(
     }
 
     if (lowerName === 'cookie') {
-      const cookie = stripCookieValue(value, SESSION_COOKIE_NAME);
+      const cookie = stripHostAuthCookies(value);
       if (cookie) {
         headers.set(name, cookie);
       }
@@ -1002,6 +1002,11 @@ function stripCookieValue(value: string, cookieName: string) {
     .filter(part => part && part.split('=')[0] !== cookieName);
 
   return cookies.length > 0 ? cookies.join('; ') : null;
+}
+
+function stripHostAuthCookies(value: string) {
+  const withoutSession = stripCookieValue(value, SESSION_COOKIE_NAME);
+  return withoutSession ? stripCookieValue(withoutSession, ACCOUNT_SET_COOKIE_NAME) : null;
 }
 
 function appendForwardedFor(request: Request) {

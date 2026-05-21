@@ -7,6 +7,7 @@ import {
   updateAuthState,
 } from './auth-store.ts';
 import type {
+  AuthAccountSetRecord,
   AuthCliTokenRecord,
   AuthSessionRecord,
   AuthState,
@@ -21,14 +22,17 @@ import {
 } from './auth-crypto.ts';
 
 export const SESSION_COOKIE_NAME = 'docker_host_session';
+export const ACCOUNT_SET_COOKIE_NAME = 'docker_host_accounts';
 export const SESSION_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 export const SESSION_ABSOLUTE_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
+export const ACCOUNT_SET_ABSOLUTE_TIMEOUT_MS = SESSION_ABSOLUTE_TIMEOUT_MS;
 export const SETUP_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const RECENT_REAUTH_WINDOW_MS = 10 * 60 * 1000;
 export const SESSION_ACTIVITY_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_REJECTION_AUDIT_THROTTLE_MS = 5 * 60 * 1000;
 
 const SETUP_TOKEN_PREFIX = 'dhstp_';
+const ACCOUNT_SET_TOKEN_PREFIX = 'dhacct_';
 const CLI_TOKEN_PREFIX = 'dhcli_';
 const DEFAULT_DEV_ADMIN_EMAIL = 'admin@docker-host.local';
 const DEFAULT_DEV_ADMIN_DISPLAY_NAME = 'Dev Admin';
@@ -83,6 +87,20 @@ export interface AuthSessionSummary {
   active: boolean;
   current: boolean;
   request?: AuthRequestMeta;
+}
+
+export interface BrowserAccountSummary extends HostPrincipal {
+  authProvider?: string;
+  addedAt: string;
+  lastUsedAt: string;
+  active: boolean;
+}
+
+export interface BrowserAccountSetSummary {
+  accountSetId?: string;
+  expiresAt?: string;
+  activeUser: HostPrincipal | null;
+  accounts: BrowserAccountSummary[];
 }
 
 export interface AuthSessionListOptions {
@@ -402,14 +420,7 @@ export async function authenticatePassword(
 }
 
 export function isDevAuthAutoLoginEnabled() {
-  const mode = process.env.HOST_DEV_AUTH?.trim().toLowerCase();
-  const enabled = mode === '1' ||
-    mode === 'true' ||
-    mode === 'enabled' ||
-    mode === 'on' ||
-    mode === 'yes' ||
-    mode === 'auto' ||
-    mode === 'auto-login';
+  const enabled = isEnabledDevFlag(process.env.HOST_DEV_AUTH, ['auto', 'auto-login']);
 
   if (!enabled) {
     return false;
@@ -418,8 +429,23 @@ export function isDevAuthAutoLoginEnabled() {
   return isDevelopmentRuntime();
 }
 
+export function isDevAuthBrowserAccountSeedEnabled() {
+  return isDevAuthAutoLoginEnabled() &&
+    isEnabledDevFlag(process.env.HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS);
+}
+
 export function getDevAuthCredentials() {
   return getDevAccountCredentials(getDevAuthRole());
+}
+
+function isEnabledDevFlag(value: string | undefined, extraValues: string[] = []) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === '1' ||
+    normalized === 'true' ||
+    normalized === 'enabled' ||
+    normalized === 'on' ||
+    normalized === 'yes' ||
+    extraValues.includes(normalized || '');
 }
 
 function getDevAuthRole(): DevAuthRole {
@@ -516,7 +542,42 @@ export async function createDevSession(
     throw new AuthServiceError('dev_auth_disabled', 'Development auto-login is not enabled.');
   }
 
-  return createDevSessionForCredentials(getDevAuthCredentials(), request, config);
+  return createDevSessionForCredentials(getDevAuthCredentials(), request, config, {
+    seedBrowserAccounts: isDevAuthBrowserAccountSeedEnabled(),
+  });
+}
+
+export async function prepareDevBrowserAccountUsers(
+  config?: HostRuntimeConfig
+) {
+  if (!isDevAuthBrowserAccountSeedEnabled()) {
+    throw new AuthServiceError('dev_auth_disabled', 'Development browser account seeding is not enabled.');
+  }
+
+  const accountCredentials = getDevSessionAccountCredentials(getDevAuthCredentials(), true);
+  const passwordHashes = await validateAndHashDevCredentials(accountCredentials);
+  const now = new Date();
+
+  const accountUsers = await updateAuthState(state => {
+    let users = state.users;
+    const nextAccountUsers: AuthUserRecord[] = [];
+
+    for (const account of accountCredentials) {
+      const result = upsertDevAuthUser(users, account, passwordHashes.get(account.email) ?? '', now);
+      users = result.users;
+      nextAccountUsers.push(result.user);
+    }
+
+    return {
+      state: {
+        ...state,
+        users,
+      },
+      result: nextAccountUsers,
+    };
+  }, config);
+
+  return accountUsers.map(toPrincipal);
 }
 
 export async function createDevAdminSession(
@@ -533,42 +594,27 @@ export async function createDevAdminSession(
 async function createDevSessionForCredentials(
   credentials: DevAuthCredentials,
   request?: AuthRequestMeta,
-  config?: HostRuntimeConfig
+  config?: HostRuntimeConfig,
+  options: {
+    seedBrowserAccounts?: boolean;
+  } = {}
 ) {
-  const adminCredentials = getDevAccountCredentials('host.admin');
-  const accountCredentials = credentials.role === 'host.user'
-    ? [adminCredentials, credentials]
-    : [credentials];
-  if (credentials.role === 'host.user' && credentials.email === adminCredentials.email) {
-    throw new AuthServiceError(
-      'dev_auth_account_conflict',
-      'Development user and administrator accounts must use different email addresses.'
-    );
-  }
-
-  for (const account of accountCredentials) {
-    const passwordPolicy = validatePasswordPolicy(account.password);
-    if (!passwordPolicy.valid) {
-      throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
-    }
-  }
-
-  const passwordHashes = new Map<string, string>();
-  for (const account of accountCredentials) {
-    passwordHashes.set(account.email, await hashPassword(account.password));
-  }
+  const accountCredentials = getDevSessionAccountCredentials(credentials, Boolean(options.seedBrowserAccounts));
+  const passwordHashes = await validateAndHashDevCredentials(accountCredentials);
 
   const sessionToken = generateToken('dhs_');
   const now = new Date();
 
-  const { user, session, createdUser } = await updateAuthState(state => {
+  const { user, session, createdUser, accountUsers } = await updateAuthState(state => {
     let users = state.users;
     let sessionUser: AuthUserRecord | null = null;
     let createdSessionUser = false;
+    const nextAccountUsers: AuthUserRecord[] = [];
 
     for (const account of accountCredentials) {
       const result = upsertDevAuthUser(users, account, passwordHashes.get(account.email) ?? '', now);
       users = result.users;
+      nextAccountUsers.push(result.user);
       if (account.email === credentials.email) {
         sessionUser = result.user;
         createdSessionUser = result.createdUser;
@@ -591,6 +637,7 @@ async function createDevSessionForCredentials(
         user: sessionUser,
         session,
         createdUser: createdSessionUser,
+        accountUsers: nextAccountUsers,
       },
     };
   }, config);
@@ -611,7 +658,468 @@ async function createDevSessionForCredentials(
     sessionToken,
     session,
     user: toPrincipal(user),
+    browserAccountUsers: accountUsers.map(toPrincipal),
   };
+}
+
+async function validateAndHashDevCredentials(accountCredentials: DevAuthCredentials[]) {
+  for (const account of accountCredentials) {
+    const passwordPolicy = validatePasswordPolicy(account.password);
+    if (!passwordPolicy.valid) {
+      throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
+    }
+  }
+
+  const passwordHashes = new Map<string, string>();
+  for (const account of accountCredentials) {
+    passwordHashes.set(account.email, await hashPassword(account.password));
+  }
+
+  return passwordHashes;
+}
+
+function getDevSessionAccountCredentials(
+  sessionCredentials: DevAuthCredentials,
+  seedBrowserAccounts: boolean
+) {
+  const adminCredentials = getDevAccountCredentials('host.admin');
+  const userCredentials = getDevAccountCredentials('host.user');
+  const requiresUserAccount = sessionCredentials.role === 'host.user' || seedBrowserAccounts;
+  if (requiresUserAccount && adminCredentials.email === userCredentials.email) {
+    throw new AuthServiceError(
+      'dev_auth_account_conflict',
+      'Development user and administrator accounts must use different email addresses.'
+    );
+  }
+
+  const accountCredentials = requiresUserAccount
+    ? [
+        adminCredentials,
+        userCredentials,
+      ]
+    : [sessionCredentials];
+
+  return accountCredentials.filter((account, index, accounts) =>
+    accounts.findIndex(candidate => candidate.email === account.email) === index
+  );
+}
+
+export async function addUserToBrowserAccountSet(
+  input: {
+    accountSetToken?: string | null;
+    userId: string;
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const userId = input.userId.trim();
+  const result = await addUsersToBrowserAccountSet({
+    accountSetToken: input.accountSetToken,
+    userIds: [userId],
+  }, request, config);
+
+  return {
+    accountSetToken: result.accountSetToken,
+    accountSetId: result.accountSetId,
+    expiresAt: result.expiresAt,
+    created: result.created,
+    added: result.addedUserIds.includes(userId),
+  };
+}
+
+export async function addUsersToBrowserAccountSet(
+  input: {
+    accountSetToken?: string | null;
+    userIds: string[];
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const normalizedUserIds = input.userIds.map(userId => userId.trim());
+  if (normalizedUserIds.length === 0 || normalizedUserIds.some(userId => userId.length === 0)) {
+    throw new AuthServiceError('invalid_user_id', 'At least one Host user id is required.');
+  }
+  const userIds = Array.from(new Set(normalizedUserIds));
+
+  const now = new Date();
+  const incomingToken = normalizeToken(input.accountSetToken);
+  const newAccountSetToken = generateToken(ACCOUNT_SET_TOKEN_PREFIX);
+  const newAccountSetTokenHash = hashToken(newAccountSetToken);
+  const incomingTokenHash = incomingToken ? hashToken(incomingToken) : null;
+
+  const result = await updateAuthState<{
+    accountSet: AuthAccountSetRecord;
+    accountSetToken: string;
+    created: boolean;
+    addedUserIds: string[];
+  }>(state => {
+    const usersById = new Map(
+      state.users
+        .filter(candidate => !candidate.disabled)
+        .map(candidate => [candidate.id, candidate])
+    );
+    const users = userIds.map(userId => usersById.get(userId));
+    if (users.some(user => !user)) {
+      throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+    }
+
+    const accountSets = pruneExpiredAccountSets(state.accountSets, now);
+    const existingAccountSet = incomingTokenHash
+      ? findActiveAccountSetByTokenHash(accountSets, incomingTokenHash, now)
+      : null;
+    const accountSet = existingAccountSet ?? createAccountSetRecord(newAccountSetTokenHash, now, request);
+    let accountSetUsers = accountSet.users;
+    const addedUserIds: string[] = [];
+    for (const user of users) {
+      if (!user) {
+        continue;
+      }
+      const existingUser = accountSetUsers.find(candidate => candidate.userId === user.id);
+      if (!existingUser) {
+        addedUserIds.push(user.id);
+      }
+      accountSetUsers = upsertAccountSetUser(accountSetUsers, user.id, now);
+    }
+
+    const nextAccountSet: AuthAccountSetRecord = {
+      ...accountSet,
+      users: accountSetUsers,
+      updatedAt: now.toISOString(),
+    };
+
+    return {
+      state: {
+        ...state,
+        accountSets: existingAccountSet
+          ? accountSets.map(candidate => candidate.id === nextAccountSet.id ? nextAccountSet : candidate)
+          : [...accountSets, nextAccountSet],
+      },
+      result: {
+        accountSet: nextAccountSet,
+        accountSetToken: existingAccountSet ? incomingToken ?? newAccountSetToken : newAccountSetToken,
+        created: !existingAccountSet,
+        addedUserIds,
+      },
+    };
+  }, config);
+
+  for (const userId of result.addedUserIds) {
+    await appendAuthAuditEvent({
+      type: 'auth.account_set.account_added',
+      actorUserId: userId,
+      target: {
+        type: 'auth.account_set',
+        id: result.accountSet.id,
+      },
+      success: true,
+      request,
+      details: {
+        created: result.created,
+        expiresAt: result.accountSet.expiresAt,
+      },
+    }, config);
+  }
+
+  return {
+    accountSetToken: result.accountSetToken,
+    accountSetId: result.accountSet.id,
+    expiresAt: result.accountSet.expiresAt,
+    created: result.created,
+    added: result.addedUserIds.length > 0,
+    addedUserIds: result.addedUserIds,
+  };
+}
+
+export async function listBrowserAccounts(
+  accountSetToken: string | null | undefined,
+  activeUser: HostPrincipal | null,
+  config?: HostRuntimeConfig
+): Promise<BrowserAccountSetSummary> {
+  const token = normalizeToken(accountSetToken);
+  if (!token) {
+    return {
+      activeUser,
+      accounts: [],
+    };
+  }
+
+  const state = await readAuthState(config);
+  const now = new Date();
+  const accountSet = findActiveAccountSetByTokenHash(state.accountSets, hashToken(token), now);
+  if (!accountSet) {
+    return {
+      activeUser,
+      accounts: [],
+    };
+  }
+
+  const usersById = new Map(state.users.map(user => [user.id, user]));
+  const accounts = accountSet.users
+    .map(accountUser => summarizeBrowserAccount(accountUser, usersById.get(accountUser.userId), activeUser))
+    .filter((account): account is BrowserAccountSummary => account !== null)
+    .sort(sortBrowserAccounts);
+
+  return {
+    accountSetId: accountSet.id,
+    expiresAt: accountSet.expiresAt,
+    activeUser,
+    accounts,
+  };
+}
+
+export async function switchBrowserAccount(
+  input: {
+    accountSetToken: string | null | undefined;
+    userId: string;
+    actorUserId?: string;
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const token = normalizeToken(input.accountSetToken);
+  if (!token) {
+    throw new AuthServiceError('account_set_required', 'No remembered browser accounts are available.');
+  }
+
+  const now = new Date();
+  const sessionToken = generateToken('dhs_');
+  const tokenHash = hashToken(token);
+  const targetUserId = input.userId.trim();
+  const actorUserId = input.actorUserId?.trim() || undefined;
+
+  const result = await updateAuthState<{
+    accountSet: AuthAccountSetRecord;
+    user: AuthUserRecord;
+    session: AuthSessionRecord;
+  }>(state => {
+    const accountSets = pruneExpiredAccountSets(state.accountSets, now);
+    const accountSet = findActiveAccountSetByTokenHash(accountSets, tokenHash, now);
+    if (!accountSet) {
+      throw new AuthServiceError('account_set_not_found', 'Remembered browser accounts are expired or unavailable.');
+    }
+
+    const accountUser = accountSet.users.find(candidate => candidate.userId === targetUserId);
+    if (!accountUser) {
+      throw new AuthServiceError('account_not_remembered', 'This account is not remembered in the current browser.');
+    }
+
+    const user = state.users.find(candidate => candidate.id === targetUserId && !candidate.disabled);
+    if (!user) {
+      throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+    }
+
+    const session = createSessionRecord(user.id, sessionToken, now, request);
+    const nextAccountSet: AuthAccountSetRecord = {
+      ...accountSet,
+      users: accountSet.users.map(candidate =>
+        candidate.userId === user.id
+          ? { ...candidate, lastUsedAt: now.toISOString() }
+          : candidate
+      ),
+      updatedAt: now.toISOString(),
+    };
+
+    return {
+      state: {
+        ...state,
+        accountSets: accountSets.map(candidate => candidate.id === nextAccountSet.id ? nextAccountSet : candidate),
+        sessions: [...pruneExpiredSessions(state.sessions, now), session],
+      },
+      result: {
+        accountSet: nextAccountSet,
+        user,
+        session,
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.account_set.switched',
+    actorUserId,
+    target: {
+      type: 'auth.account_set',
+      id: result.accountSet.id,
+    },
+    success: true,
+    request,
+    details: {
+      sessionId: result.session.id,
+      switchedToUserId: result.user.id,
+    },
+  }, config);
+
+  return {
+    sessionToken,
+    session: result.session,
+    user: toPrincipal(result.user),
+  };
+}
+
+export async function removeBrowserAccount(
+  input: {
+    accountSetToken: string | null | undefined;
+    userId: string;
+    activeSessionToken?: string | null;
+    actorUserId?: string;
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const token = normalizeToken(input.accountSetToken);
+  if (!token) {
+    throw new AuthServiceError('account_set_required', 'No remembered browser accounts are available.');
+  }
+
+  const now = new Date();
+  const tokenHash = hashToken(token);
+  const targetUserId = input.userId.trim();
+  const activeSessionToken = normalizeToken(input.activeSessionToken);
+  const activeSessionTokenHash = activeSessionToken ? hashToken(activeSessionToken) : null;
+  const actorUserId = input.actorUserId?.trim() || undefined;
+
+  const result = await updateAuthState<{
+    accountSetId: string;
+    removed: boolean;
+    accountSetRevoked: boolean;
+    activeSessionRevoked: boolean;
+  }>(state => {
+    const accountSets = pruneExpiredAccountSets(state.accountSets, now);
+    const accountSet = findActiveAccountSetByTokenHash(accountSets, tokenHash, now);
+    if (!accountSet) {
+      throw new AuthServiceError('account_set_not_found', 'Remembered browser accounts are expired or unavailable.');
+    }
+
+    const removed = accountSet.users.some(candidate => candidate.userId === targetUserId);
+    const remainingUsers = accountSet.users.filter(candidate => candidate.userId !== targetUserId);
+    const accountSetRevoked = removed && remainingUsers.length === 0;
+    const nextAccountSet: AuthAccountSetRecord = accountSetRevoked
+      ? { ...accountSet, users: [], updatedAt: now.toISOString(), revokedAt: now.toISOString() }
+      : { ...accountSet, users: remainingUsers, updatedAt: now.toISOString() };
+    let activeSessionRevoked = false;
+    const sessions = removed && activeSessionTokenHash
+      ? state.sessions.map(session => {
+          if (
+            session.tokenHash === activeSessionTokenHash &&
+            session.userId === targetUserId &&
+            !session.revokedAt
+          ) {
+            activeSessionRevoked = true;
+            return { ...session, revokedAt: now.toISOString() };
+          }
+
+          return session;
+        })
+      : state.sessions;
+
+    return {
+      state: {
+        ...state,
+        accountSets: accountSets.map(candidate => candidate.id === nextAccountSet.id ? nextAccountSet : candidate),
+        sessions,
+      },
+      result: {
+        accountSetId: accountSet.id,
+        removed,
+        accountSetRevoked,
+        activeSessionRevoked,
+      },
+    };
+  }, config);
+
+  if (result.removed) {
+    await appendAuthAuditEvent({
+      type: 'auth.account_set.account_removed',
+      actorUserId,
+      target: {
+        type: 'auth.account_set',
+        id: result.accountSetId,
+      },
+      success: true,
+      request,
+      details: {
+        removedUserId: targetUserId,
+        accountSetRevoked: result.accountSetRevoked,
+        activeSessionRevoked: result.activeSessionRevoked,
+      },
+    }, config);
+  }
+
+  return result;
+}
+
+export async function clearBrowserAccountSet(
+  input: {
+    accountSetToken: string | null | undefined;
+    activeSessionToken?: string | null;
+    actorUserId?: string;
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const token = normalizeToken(input.accountSetToken);
+  const activeSessionToken = normalizeToken(input.activeSessionToken);
+  const now = new Date();
+  const tokenHash = token ? hashToken(token) : null;
+  const activeSessionTokenHash = activeSessionToken ? hashToken(activeSessionToken) : null;
+
+  const result = await updateAuthState<{
+    accountSetId?: string;
+    accountSetRevoked: boolean;
+    activeSessionRevoked: boolean;
+  }>(state => {
+    const accountSets = pruneExpiredAccountSets(state.accountSets, now);
+    const accountSet = tokenHash ? findActiveAccountSetByTokenHash(accountSets, tokenHash, now) : null;
+    let activeSessionRevoked = false;
+    const sessions = activeSessionTokenHash
+      ? state.sessions.map(session => {
+          if (session.tokenHash === activeSessionTokenHash && !session.revokedAt) {
+            activeSessionRevoked = true;
+            return { ...session, revokedAt: now.toISOString() };
+          }
+
+          return session;
+        })
+      : state.sessions;
+
+    return {
+      state: {
+        ...state,
+        accountSets: accountSet
+          ? accountSets.map(candidate =>
+              candidate.id === accountSet.id
+                ? { ...candidate, users: [], updatedAt: now.toISOString(), revokedAt: now.toISOString() }
+                : candidate
+            )
+          : accountSets,
+        sessions,
+      },
+      result: {
+        accountSetId: accountSet?.id,
+        accountSetRevoked: Boolean(accountSet),
+        activeSessionRevoked,
+      },
+    };
+  }, config);
+
+  if (result.accountSetRevoked || result.activeSessionRevoked) {
+    await appendAuthAuditEvent({
+      type: 'auth.account_set.cleared',
+      actorUserId: input.actorUserId,
+      target: result.accountSetId
+        ? {
+            type: 'auth.account_set',
+            id: result.accountSetId,
+          }
+        : undefined,
+      success: true,
+      request,
+      details: {
+        activeSessionRevoked: result.activeSessionRevoked,
+      },
+    }, config);
+  }
+
+  return result;
 }
 
 export async function authenticateSessionToken(
@@ -1245,6 +1753,11 @@ function normalizeEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ? normalized : '';
 }
 
+function normalizeToken(token: string | null | undefined) {
+  const normalized = token?.trim();
+  return normalized || null;
+}
+
 function toPrincipal(user: AuthUserRecord): HostPrincipal {
   return {
     id: user.id,
@@ -1323,6 +1836,91 @@ async function markSessionReauthenticated(
   }, config);
 
   return summarizeSession(session, undefined, now, session.id);
+}
+
+function createAccountSetRecord(
+  tokenHash: string,
+  now: Date,
+  request?: AuthRequestMeta
+): AuthAccountSetRecord {
+  return {
+    id: `acct_${randomUUID()}`,
+    tokenHash,
+    users: [],
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + ACCOUNT_SET_ABSOLUTE_TIMEOUT_MS).toISOString(),
+    request,
+  };
+}
+
+function upsertAccountSetUser(
+  users: AuthAccountSetRecord['users'],
+  userId: string,
+  now: Date
+): AuthAccountSetRecord['users'] {
+  const existingUser = users.find(candidate => candidate.userId === userId);
+  if (!existingUser) {
+    return [
+      ...users,
+      {
+        userId,
+        addedAt: now.toISOString(),
+        lastUsedAt: now.toISOString(),
+      },
+    ];
+  }
+
+  return users.map(candidate =>
+    candidate.userId === userId
+      ? { ...candidate, lastUsedAt: now.toISOString() }
+      : candidate
+  );
+}
+
+function pruneExpiredAccountSets(accountSets: AuthAccountSetRecord[], now: Date) {
+  return accountSets.filter(accountSet => isAccountSetActive(accountSet, now));
+}
+
+function findActiveAccountSetByTokenHash(
+  accountSets: AuthAccountSetRecord[],
+  tokenHash: string,
+  now: Date
+) {
+  return accountSets.find(candidate =>
+    candidate.tokenHash === tokenHash &&
+    isAccountSetActive(candidate, now)
+  ) ?? null;
+}
+
+function isAccountSetActive(accountSet: AuthAccountSetRecord, now: Date) {
+  return !accountSet.revokedAt && !isExpired(accountSet.expiresAt, now);
+}
+
+function summarizeBrowserAccount(
+  accountUser: AuthAccountSetRecord['users'][number],
+  user: AuthUserRecord | undefined,
+  activeUser: HostPrincipal | null
+): BrowserAccountSummary | null {
+  if (!user || user.disabled) {
+    return null;
+  }
+
+  return {
+    ...toPrincipal(user),
+    authProvider: user.authProvider,
+    addedAt: accountUser.addedAt,
+    lastUsedAt: accountUser.lastUsedAt,
+    active: user.id === activeUser?.id,
+  };
+}
+
+function sortBrowserAccounts(left: BrowserAccountSummary, right: BrowserAccountSummary) {
+  if (left.active !== right.active) {
+    return left.active ? -1 : 1;
+  }
+
+  return Date.parse(right.lastUsedAt) - Date.parse(left.lastUsedAt);
 }
 
 function summarizeCliToken(token: AuthCliTokenRecord | null): CliTokenSummary {

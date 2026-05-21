@@ -756,21 +756,27 @@ Lifecycle hardening marks modules `failed` when a lifecycle action discovers a m
 
 ### Authentication
 
-Browser authentication uses Host-owned sessions stored server-side in the auth state. Host session cookies are HttpOnly and are never forwarded to modules by the gateway.
+Browser authentication uses Host-owned sessions stored server-side in the auth state. Host session cookies are HttpOnly and are never forwarded to modules by the gateway. Browser account switching uses a separate HttpOnly account-set cookie with only a server-side token hash stored in auth state.
 
 Implemented browser auth endpoints:
 
 - `POST /api/auth/bootstrap` creates the first local `host.admin` after a valid local setup token.
-- `POST /api/auth/login` authenticates a local password user and creates a Host session.
+- `POST /api/auth/login` authenticates a local password user, creates a Host session, and remembers the account in the current browser account set.
 - `POST /api/auth/logout` revokes the current Host session.
 - `GET /api/auth/status` returns setup and current-session status.
-- `POST /api/auth/recovery` consumes a local setup or recovery token, restores a `host.admin` account, revokes stale sessions for that account, and creates a new browser session.
+- `POST /api/auth/recovery` consumes a local setup or recovery token, restores a `host.admin` account, revokes stale sessions for that account, creates a new browser session, and remembers the account in the current browser account set.
 - `POST /api/auth/reauth` refreshes the current browser session's recent reauthentication timestamp using a local password or recovery token.
+- `GET /api/auth/accounts` returns the active user and remembered account summaries for the current browser.
+- `POST /api/auth/accounts/switch` accepts `{ "userId": "..." }`, validates that the user is remembered and enabled, creates a fresh active Host session, and returns the selected user's default shell path.
+- `DELETE /api/auth/accounts/{userId}` removes one remembered account from the current browser. If it removes the active user, it also revokes the active session and clears the session cookie.
+- `DELETE /api/auth/accounts` revokes the current browser account set and the active session, then clears both browser auth cookies.
 - `GET /api/auth/diagnostics` returns safe OIDC and trusted-proxy diagnostics for Host administrators.
 - `GET /api/auth/oidc/login` starts generic OIDC Authorization Code with PKCE when an OIDC provider is configured.
-- `GET /api/auth/oidc/callback` validates the OIDC callback, exchanges the authorization code, verifies the ID token with provider JWKS, applies explicit role mapping, creates or updates the Host user for the external identity, and creates a normal Host session.
+- `GET /api/auth/oidc/callback` validates the OIDC callback, exchanges the authorization code, verifies the ID token with provider JWKS, applies explicit role mapping, creates or updates the Host user for the external identity, creates a normal Host session, and remembers the account in the current browser account set.
 
 OIDC login denies access when the transaction state is invalid or expired, ID token verification fails, the token has no subject, no role mapping matches, or the mapped Host user is disabled. OIDC provider access tokens, refresh tokens, and ID tokens are not persisted.
+
+Account switching endpoints use the active Host session for authorization and the HttpOnly `docker_host_accounts` cookie to find the browser account set. The account-set cookie is not a module credential and is stripped from gateway and embedded-app proxy traffic.
 
 ### CLI admin tokens
 

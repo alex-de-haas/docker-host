@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { canAccessModule } from './auth-policy.ts';
-import { SESSION_COOKIE_NAME } from './auth-service.ts';
+import { ACCOUNT_SET_COOKIE_NAME, SESSION_COOKIE_NAME } from './auth-service.ts';
 import {
   HostAppEmbedError,
   appEmbedErrorResponse,
@@ -151,7 +151,7 @@ test('embed proxy strips Host-owned headers and injects a scoped identity token'
   const request = new Request('https://host.example.test/api/apps/com.example.reports/embed?path=%2F', {
     headers: {
       authorization: 'Bearer cli-token',
-      cookie: `${SESSION_COOKIE_NAME}=host-session; module_cookie=kept`,
+      cookie: `${SESSION_COOKIE_NAME}=host-session; ${ACCOUNT_SET_COOKIE_NAME}=account-set; module_cookie=kept`,
       'cf-access-jwt-assertion': 'trusted-proxy-assertion',
       forwarded: 'for=10.0.0.1;proto=https;host=evil.example.test',
       'x-forwarded-for': '10.0.0.1',

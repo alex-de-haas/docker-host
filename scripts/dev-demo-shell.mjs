@@ -15,6 +15,8 @@ const metadataUrl = process.env.HOST_DEMO_MODULE_METADATA_URL ||
   `http://localhost:${hostPort}/fixtures/modules/demo-module`;
 const targetBaseUrl = process.env.HOST_DEMO_MODULE_TARGET_URL ||
   `http://127.0.0.1:${demoPort}`;
+const devAdminEmail = process.env.HOST_DEV_ADMIN_EMAIL || 'admin@docker-host.local';
+const devUserEmail = process.env.HOST_DEV_USER_EMAIL || 'user@docker-host.local';
 const npmExecPath = process.env.npm_execpath;
 const npmCommand = npmExecPath
   ? process.execPath
@@ -30,6 +32,7 @@ await seedDemoTarget(target);
 console.log(`Seeded developer app "${target.moduleName}" in ${path.join(dataRoot, 'dev', 'module-targets.json')}`);
 console.log(`Host URL: http://localhost:${hostPort}/apps`);
 console.log(`Demo target: ${targetBaseUrl}`);
+console.log(`Dev accounts: ${devAdminEmail} (admin), ${devUserEmail} (user)`);
 
 if (process.argv.includes('--seed-only')) {
   process.exit(0);
@@ -51,6 +54,7 @@ start('host', ['run', 'host:dev'], {
   HOST_DATA_ROOT_HOST: dataRoot,
   HOST_DATA_ROOT_CONTAINER: dataRoot,
   HOST_DEV_AUTH: 'auto',
+  HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS: 'enabled',
   HOST_INTERNAL_ORIGIN: `http://localhost:${hostPort}`,
   HOST_MODULE_DEV_MODE: 'enabled',
   HOST_ENABLE_DEV_FIXTURES: 'true',
