@@ -1,6 +1,6 @@
 # Docker Host API
 
-Этот документ описывает API surface для Docker Host. В MVP это не executable OpenAPI specification, а human-readable endpoint catalog для согласования backend, Web UI и будущих CLI module commands.
+Этот документ описывает API surface для Docker Host. Это human-readable endpoint catalog для согласования backend, Web UI и CLI module commands.
 
 Host API реализуется внутри full-stack Next.js Host application. Web UI вызывает этот API напрямую. `docker-host` CLI использует этот же API только для module commands; lifecycle самого Host container CLI выполняет через Docker daemon.
 
@@ -9,13 +9,13 @@ Host API реализуется внутри full-stack Next.js Host application
 - Host backend API is the owner of module management logic.
 - Runtime status is read from Docker daemon, not from persistent JSON files.
 - Persistent installed module registry is stored in root-level `modules.json`.
-- The current pre-auth MVP API is local/private-network only. The Auth Gateway feature supersedes this by requiring Host-owned authentication and `host.admin` authorization for Host API functionality.
+- Host API functionality requires Host-owned authentication and `host.admin` authorization unless an endpoint explicitly documents a narrower permission.
 - API responses must not expose raw secret setting values.
-- The API contract remains this Markdown endpoint catalog for the MVP. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
+- The API contract remains this Markdown endpoint catalog. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
 
 ## Implemented API Surface
 
-The current MVP API surface includes:
+The current API surface includes:
 
 - return Host runtime, Docker daemon, module network, and installed module store status;
 - list installed modules;
@@ -26,9 +26,10 @@ The current MVP API surface includes:
 - create and apply reviewed module update plans;
 - retry failed updates separately from failed installs;
 - support local and generic OIDC browser authentication flows;
-- serve scoped module directory responses to modules through an internal service-token API.
+- serve scoped module directory responses to modules through an internal service-token API;
+- return authenticated, principal-filtered shell App registry data through `/api/apps`.
 
-Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, module health checks, and richer external module exposure controls are later API slices.
+Settings editing outside install/update review, storage reconfiguration outside install/update review, module logs, and module health checks are not supported API functionality.
 
 The shared domain vocabulary for this API is defined in [Docker Host domain model](domain-model.md).
 
@@ -85,7 +86,7 @@ Returned by list and lifecycle endpoints.
 
 `operationStatus` is persistent Host bookkeeping from `modules.json`. `containers[].runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state. Top-level `runtimeStatus` is an aggregate derived from the module containers.
 
-The MVP API does not expose module health or readiness. `runtimeStatus` reports only Docker container state. Health checks, including any future Docker healthcheck-based status, are deferred to a later feature.
+The API does not expose module health or readiness. `runtimeStatus` reports only Docker container state.
 
 Allowed `operationStatus` values:
 
@@ -159,7 +160,66 @@ It includes all `ModuleSummary` fields plus:
 }
 ```
 
-Secret setting values are never returned. For non-secret settings, later settings endpoints may return values when needed by the UI.
+Secret setting values are never returned. Non-secret setting values are exposed only through reviewed install/update flows.
+
+### `HostAppEntry`
+
+Returned by `GET /api/apps`.
+
+```json
+{
+  "id": "com.acme.reports",
+  "source": "installed",
+  "moduleId": "com.acme.reports",
+  "displayName": "Reports",
+  "description": "Generates operational reports.",
+  "icon": "boxes",
+  "version": "1.0.0",
+  "status": "available",
+  "statusReason": "available",
+  "accessMode": "allAuthenticated",
+  "operationStatus": "installed",
+  "runtimeState": "running",
+  "entryPath": "/apps/com.acme.reports",
+  "embeddedUrl": "/api/apps/com.acme.reports/embed?path=%2F",
+  "navigation": [
+    {
+      "label": "People",
+      "path": "/people",
+      "entryPath": "/apps/com.acme.reports?path=%2Fpeople",
+      "embeddedUrl": "/api/apps/com.acme.reports/embed?path=%2Fpeople"
+    }
+  ]
+}
+```
+
+Developer app entries use the same shape with `source: "developer"` and `developerTargetId`:
+
+```json
+{
+  "id": "dev:mdev_reports",
+  "source": "developer",
+  "moduleId": "com.acme.reports",
+  "developerTargetId": "mdev_reports",
+  "displayName": "Reports Dev",
+  "version": "1.0.0",
+  "status": "available",
+  "statusReason": "available",
+  "accessMode": "allAuthenticated",
+  "entryPath": "/apps/dev/mdev_reports",
+  "embeddedUrl": "/api/apps/dev/mdev_reports/embed?path=%2F",
+  "navigation": []
+}
+```
+
+`GET /api/apps` intentionally omits raw Docker/container internals. It does not return container ids, container names, Docker network aliases, raw container URLs, public module UI domains, or service/API gateway exposure hostnames.
+
+Allowed `accessMode` values:
+
+- `allAuthenticated`;
+- `assignedUsersOnly`.
+
+No `public` or anonymous shell App mode exists. Separate service/API gateway exposures are not shell Apps.
 
 ### `ModuleActionResult`
 
@@ -246,7 +306,7 @@ This endpoint creates the Host data root, `modules/` directory, `modules.json`, 
 
 ## Endpoints
 
-The endpoints in this section are implemented for the MVP Host API.
+The endpoints in this section are implemented by the Host API.
 
 ### `GET /api/modules`
 
@@ -274,6 +334,70 @@ Response should include, per module:
 - Docker runtime status;
 - timestamps such as installed and last updated, if available;
 - last install/update error summary, if available.
+
+### `GET /api/apps`
+
+Returns app navigation data for the current authenticated Host principal.
+
+This endpoint requires authentication but does not require `host.admin`. Unauthenticated callers receive HTTP `401` and no app discovery data. `host.admin` can see all shell-routable app entries, including unavailable entries with safe diagnostic status. `host.user` can see only available apps that are visible to all authenticated users or explicitly assigned to that user.
+
+The backend reads installed module records from `modules.json`, reads each module's local `metadata.json`, requires explicit `ui` metadata, applies Host-owned module assignments, and reads runtime state for availability. It does not infer shell Apps from gateway exposure records or from `runtime.ports[].public` alone.
+
+When `HOST_MODULE_DEV_MODE=enabled`, the backend also reads enabled developer targets with stored shell app snapshots from `/data/dev/module-targets.json`. These entries are marked as `source: "developer"` and use developer app routes. Disabled developer mode and disabled targets are omitted from `/api/apps`.
+
+Response body:
+
+```json
+{
+  "apps": []
+}
+```
+
+Response entries include:
+
+- app id;
+- source (`installed` or `developer`);
+- module id;
+- developer target id, for developer entries;
+- display name;
+- description, if available;
+- icon key, if declared by module `ui` metadata;
+- version;
+- app status and safe status reason;
+- shell App access mode;
+- module operation status;
+- runtime state without container details;
+- same-origin Host entry path;
+- reserved embedded URL;
+- nested navigation items.
+
+### `GET /api/apps/{moduleId}/embed`
+
+Reserved iframe transport for shell App UI content.
+
+This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. The Host validates that the selected module app is visible to the current principal and available before proxying. The selected module UI path is passed in the `path` query parameter and must be a same-origin absolute path beginning with `/`.
+
+Example:
+
+```text
+/api/apps/com.acme.reports/embed?path=%2Fpeople
+```
+
+The endpoint proxies to the module runtime port declared by `ui.entrypoint`, injects module identity where applicable, strips Host-owned request headers, scopes module cookies to the reserved embed route, and rewrites root-relative HTML/CSS links through the reserved embed URL. Rewriting is limited to HTML tag attributes, style attributes, and style element CSS so inline script contents remain unchanged. It is not a public module UI hostname and `/apps/{moduleId}` is not a direct proxy path.
+
+### `GET /api/apps/dev/{targetId}/embed`
+
+Reserved iframe transport for developer shell App UI content.
+
+This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. It is available only when module developer mode is enabled and the selected developer target is enabled, visible to the current principal, and has a stored shell app snapshot.
+
+Example:
+
+```text
+/api/apps/dev/mdev_reports/embed?path=%2Fpeople
+```
+
+The endpoint proxies to the developer target's local `targetBaseUrl`, preserves the target path prefix, injects module identity according to the developer target identity mode, strips Host-owned request headers, scopes module cookies to the developer embed route, and rewrites root-relative HTML/CSS links through the reserved developer embed URL using the same tag/style-only rewrite rules as installed module embeds. It does not create or read production gateway exposure records.
 
 ### `GET /api/modules/{moduleId}`
 
@@ -322,23 +446,9 @@ Response should include:
 - updated runtime status from Docker daemon;
 - clear Docker error details when restart fails.
 
-## Deferred Diagnostics Endpoints
-
-These endpoints are not implemented in the module API yet, but remain the expected diagnostics surface.
-
-### `GET /api/modules/{moduleId}/logs`
-
-Returns recent logs for one module container.
-
-Recommended query parameters:
-
-- `tail` - number of recent lines;
-- `since` - optional timestamp or duration boundary;
-- `timestamps` - whether Docker log timestamps should be included.
-
 ## Module installation
 
-The module installation API is implemented for the MVP install flow:
+The module installation API:
 
 - `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker container names, network aliases, and endpoints/ports;
 - `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install.
@@ -414,7 +524,7 @@ The install plan request body is intentionally minimal:
 }
 ```
 
-The MVP install flow does not include request flags such as refresh behavior, diagnostics toggles, or conflict-check bypasses.
+The install flow does not include request flags such as refresh behavior, diagnostics toggles, or conflict-check bypasses.
 
 Successful `200` responses should use one top-level `plan` object:
 
@@ -468,7 +578,7 @@ Successful `200` responses should use one top-level `plan` object:
 }
 ```
 
-The `dependencies` array represents the resolved dependency tree. `installOrder` is the topological module id order used for later apply. `normalizedMetadata` contains the normalized root metadata after defaults are applied. `settings` contains prompts, defaults, targets, and secret redaction markers, but never raw secret values.
+The `dependencies` array represents the resolved dependency tree. `installOrder` is the topological module id order used for apply. `normalizedMetadata` contains the normalized root metadata after defaults are applied. `settings` contains prompts, defaults, targets, and secret redaction markers, but never raw secret values.
 
 The implementation returns dependency nodes with their own normalized metadata, Docker container names, network aliases, module paths, install action (`install` or `reuse`), and dependency connection mappings. The top-level `paths` object identifies the root module directory and local `metadata.json` copy paths in both host and Host-container path spaces.
 
@@ -487,7 +597,7 @@ Digest semantics:
 - `planDigest` is the SHA-256 digest of a canonical JSON representation of the normalized install plan. It covers normalized root metadata, dependency metadata tree, dependency install order, image references, computed paths, setting prompts, storage requirements, Docker container names, network aliases, endpoints, and runtime ports. It must exclude timestamps, transient download details, Docker runtime status, read-only Docker conflict observations, and other fields that can change without changing the reviewed plan.
 - `planDigest` is the primary review guard for install apply. The apply endpoint must recompute the plan from the submitted `metadataUrl` and administrator decisions, then reject the request if the recomputed `planDigest` differs from the reviewed `planDigest`.
 
-The MVP should not persist pending install plans as durable state. Apply endpoints should recompute the plan and compare the reviewed `planDigest` before changing files, module state, images, or containers.
+The Host should not persist pending install plans as durable state. Apply endpoints should recompute the plan and compare the reviewed `planDigest` before changing files, module state, images, or containers.
 
 Install plan validation and conflict status boundaries:
 
@@ -551,7 +661,7 @@ The update contract is defined in [Module update flow](module-update.md). The AP
 - `POST /api/modules/{moduleId}/update` - recompute the update plan from refreshed metadata and submitted administrator decisions, compare the reviewed update plan digest, then apply image, container, settings, storage, and dependency changes after confirmation;
 - `POST /api/modules/{moduleId}/update/retry` - retry a failed update attempt using update semantics and the stored failed update context.
 
-The MVP update API does not accept a replacement metadata URL. It updates from the metadata URL stored in the installed module record.
+The update API does not accept a replacement metadata URL. It updates from the metadata URL stored in the installed module record.
 
 `POST /api/modules/{moduleId}/update/plan` has no request body. It returns HTTP `200` with a top-level `plan` object when the refreshed metadata can be reviewed:
 
@@ -638,7 +748,7 @@ The recovery API adds explicit actions for failed installs, failed updates, fail
 
 Cleanup and remove plan requests accept `{ "deleteModuleData": true | false }` so the Web UI can refresh the preview before confirmation. Plans return `canApply`, `containers[]` states, `images[]` references, local `metadata.json`, module directory, module-owned storage directories, external mount mappings, dependents, warnings, and conflicts.
 
-The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. Docker images and external host paths are never deleted by the MVP recovery flows; external mount mappings are only removed from Host state.
+The default is always to preserve module-owned data. Setting `deleteModuleData=true` deletes only module-owned directories under the Host data root. Docker images and external host paths are never deleted by recovery flows; external mount mappings are only removed from Host state.
 
 Installed module removal is blocked when other installed modules depend on the target module. Remove sets `operationStatus=removing` only while the operation is in progress. If removal fails before the registry entry is deleted, the module returns to `installed` with `lastError`.
 
@@ -703,7 +813,7 @@ External ingress readiness APIs track manual provider-neutral publishing state f
 - `POST /api/ingress/exposures/{exposureId}/refresh` reruns Host-side validation and marks the record `validated`, `failed`, or `drifted`.
 - `DELETE /api/ingress/exposures/{exposureId}` unlinks the local readiness record without implying that external DNS, proxy, tunnel, or provider resources were deleted.
 
-These endpoints require `modules.exposure.manage`. They validate only Host-owned prerequisites and stored manual checklist state; provider API automation is intentionally deferred.
+These endpoints require `modules.exposure.manage`. They validate only Host-owned prerequisites and stored manual checklist state; provider API automation is not part of this API.
 
 ### Module identity discovery
 
@@ -751,21 +861,6 @@ Example response:
 }
 ```
 
-### Settings and storage
-
-Future endpoints should support:
-
-- editing module setting values stored in `modules.json`;
-- write-only handling for secret settings;
-- configuring external storage mounts;
-- validating mount behavior through Docker daemon where needed.
-
 ## Documentation status
 
-This document is the Host API contract for the MVP. It should be updated when implementation decisions change.
-
-## Open Questions
-
-No MVP Host API questions remain open for the implemented install, recovery, remove, update, auth, gateway exposure, external ingress readiness, and internal module directory flows.
-
-Later implementation slices may reopen API details for settings writes, storage reconfiguration, module diagnostics, logs streaming, health checks, and provider-specific external ingress automation.
+This document is the Host API contract. It should be updated when implementation decisions change.

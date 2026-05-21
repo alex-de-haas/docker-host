@@ -8,6 +8,7 @@ import type {
   ModuleStorageMountCollectionMetadata,
   ModuleEnvTarget,
   NormalizedModuleContainerMetadata,
+  ModuleUiMetadata,
   NormalizedModuleDependencyMetadata,
   NormalizedModuleEndpointMetadata,
   NormalizedModuleMetadata,
@@ -32,6 +33,9 @@ const SUPPORTED_SETTING_TYPES = new Set<ModuleSettingType>([
   'url',
   'secret',
 ]);
+const MAX_UI_LABEL_LENGTH = 80;
+const MAX_UI_PATH_LENGTH = 512;
+const MAX_UI_ICON_LENGTH = 64;
 
 export interface MetadataGraphDependencyEdge {
   declaration: NormalizedModuleDependencyMetadata;
@@ -415,7 +419,7 @@ export function validateAndNormalizeMetadata(
   rejectUnknownFields(
     value,
     nodePath,
-    ['schemaVersion', 'id', 'name', 'description', 'version', 'containers', 'endpoints', 'connections', 'dependencies', 'settings', 'storage'],
+    ['schemaVersion', 'id', 'name', 'description', 'version', 'containers', 'endpoints', 'connections', 'dependencies', 'settings', 'storage', 'ui'],
     validationErrors
   );
 
@@ -432,6 +436,7 @@ export function validateAndNormalizeMetadata(
   const dependencies = validateDependencies(value.dependencies, `${nodePath}.dependencies`, validationErrors, id, containerKeys);
   const settings = validateSettings(value.settings, `${nodePath}.settings`, validationErrors, containerKeys);
   const storage = validateStorage(value.storage, `${nodePath}.storage`, validationErrors, id, containerKeys);
+  const ui = validateModuleUiMetadata(value.ui, `${nodePath}.ui`, endpoints, validationErrors, id);
 
   if (schemaVersion && schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
     validationErrors.push({
@@ -477,6 +482,7 @@ export function validateAndNormalizeMetadata(
       dependencies,
       settings,
       storage,
+      ...(ui ? { ui } : {}),
     },
     validationErrors,
   };
@@ -2021,6 +2027,223 @@ function validateRuntimeResources(
   }
 
   return Object.keys(resources).length > 0 ? resources : undefined;
+}
+
+export function validateModuleUiMetadata(
+  value: unknown,
+  pathToUi: string,
+  endpoints: Array<Pick<NormalizedModuleEndpointMetadata, 'key' | 'public'>>,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): ModuleUiMetadata | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const initialErrorCount = validationErrors.length;
+  if (!isPlainObject(value)) {
+    validationErrors.push({
+      code: 'metadata_field_invalid',
+      message: 'ui must be an object.',
+      path: pathToUi,
+      node: moduleId,
+    });
+    return undefined;
+  }
+
+  rejectUnknownFields(value, pathToUi, ['category', 'icon', 'entrypoint', 'navigation'], validationErrors, moduleId);
+
+  const hasCategory = Object.prototype.hasOwnProperty.call(value, 'category');
+  const hasIcon = Object.prototype.hasOwnProperty.call(value, 'icon');
+  const category = readOptionalString(value, 'category', pathToUi, validationErrors, moduleId);
+  const icon = readOptionalString(value, 'icon', pathToUi, validationErrors, moduleId);
+  const entrypoint = validateModuleUiEntrypoint(
+    value.entrypoint,
+    `${pathToUi}.entrypoint`,
+    endpoints,
+    validationErrors,
+    moduleId
+  );
+  const navigation = validateModuleUiNavigation(
+    value.navigation,
+    `${pathToUi}.navigation`,
+    validationErrors,
+    moduleId
+  );
+
+  if (hasCategory && category !== 'Apps') {
+    validationErrors.push({
+      code: 'module_ui_category_invalid',
+      message: 'ui.category must be "Apps" when provided.',
+      path: `${pathToUi}.category`,
+      node: moduleId,
+    });
+  }
+
+  if (hasIcon && (!icon || !/^[a-z][a-z0-9-]*$/.test(icon) || icon.length > MAX_UI_ICON_LENGTH)) {
+    validationErrors.push({
+      code: 'module_ui_icon_invalid',
+      message: `ui.icon must be a lowercase icon key up to ${MAX_UI_ICON_LENGTH} characters.`,
+      path: `${pathToUi}.icon`,
+      node: moduleId,
+    });
+  }
+
+  if (validationErrors.length > initialErrorCount || !entrypoint || !navigation) {
+    return undefined;
+  }
+
+  return {
+    ...(category ? { category: 'Apps' as const } : {}),
+    ...(icon ? { icon } : {}),
+    entrypoint,
+    navigation,
+  };
+}
+
+function validateModuleUiEntrypoint(
+  value: unknown,
+  pathToEntrypoint: string,
+  endpoints: Array<Pick<NormalizedModuleEndpointMetadata, 'key' | 'public'>>,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): ModuleUiMetadata['entrypoint'] | null {
+  if (!isPlainObject(value)) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'ui.entrypoint must be an object.',
+      path: pathToEntrypoint,
+      node: moduleId,
+    });
+    return null;
+  }
+
+  rejectUnknownFields(value, pathToEntrypoint, ['portKey', 'path'], validationErrors, moduleId);
+  const portKey = readRequiredString(value, 'portKey', pathToEntrypoint, validationErrors, moduleId);
+  const entryPath = readRequiredString(value, 'path', pathToEntrypoint, validationErrors, moduleId);
+
+  if (portKey) {
+    const endpoint = endpoints.find(candidate => candidate.key === portKey);
+    if (!endpoint) {
+      validationErrors.push({
+        code: 'module_ui_port_not_found',
+        message: `ui.entrypoint.portKey "${portKey}" does not reference an endpoint.`,
+        path: `${pathToEntrypoint}.portKey`,
+        node: moduleId,
+      });
+    } else if (!endpoint.public) {
+      validationErrors.push({
+        code: 'module_ui_port_not_public',
+        message: `ui.entrypoint.portKey "${portKey}" must reference an endpoint marked public.`,
+        path: `${pathToEntrypoint}.portKey`,
+        node: moduleId,
+      });
+    }
+  }
+
+  if (entryPath) {
+    validateModuleUiPath(entryPath, `${pathToEntrypoint}.path`, validationErrors, moduleId);
+  }
+
+  return portKey && entryPath
+    ? {
+        portKey,
+        path: entryPath,
+      }
+    : null;
+}
+
+function validateModuleUiNavigation(
+  value: unknown,
+  pathToNavigation: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): ModuleUiMetadata['navigation'] | null {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'metadata_field_invalid',
+      message: 'ui.navigation must be an array.',
+      path: pathToNavigation,
+      node: moduleId,
+    });
+    return null;
+  }
+
+  const navigation: ModuleUiMetadata['navigation'] = [];
+  const navigationPaths = new Set<string>();
+  value.forEach((item, index) => {
+    const itemPath = `${pathToNavigation}[${index}]`;
+    if (!isPlainObject(item)) {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'ui.navigation[] item must be an object.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    rejectUnknownFields(item, itemPath, ['label', 'path'], validationErrors, moduleId);
+    const label = readRequiredString(item, 'label', itemPath, validationErrors, moduleId);
+    const itemPathValue = readRequiredString(item, 'path', itemPath, validationErrors, moduleId);
+
+    if (label && label.length > MAX_UI_LABEL_LENGTH) {
+      validationErrors.push({
+        code: 'module_ui_label_invalid',
+        message: `ui.navigation[].label must be at most ${MAX_UI_LABEL_LENGTH} characters.`,
+        path: `${itemPath}.label`,
+        node: moduleId,
+      });
+    }
+
+    if (itemPathValue) {
+      validateModuleUiPath(itemPathValue, `${itemPath}.path`, validationErrors, moduleId);
+      if (navigationPaths.has(itemPathValue)) {
+        validationErrors.push({
+          code: 'module_ui_navigation_duplicate_path',
+          message: `ui.navigation[].path "${itemPathValue}" is duplicated.`,
+          path: `${itemPath}.path`,
+          node: moduleId,
+        });
+      }
+      navigationPaths.add(itemPathValue);
+    }
+
+    if (label && itemPathValue) {
+      navigation.push({
+        label,
+        path: itemPathValue,
+      });
+    }
+  });
+
+  return navigation;
+}
+
+function validateModuleUiPath(
+  value: string,
+  pathToField: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+) {
+  if (
+    value.length > MAX_UI_PATH_LENGTH ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    value.includes('\\') ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    validationErrors.push({
+      code: 'module_ui_path_invalid',
+      message: `UI paths must be same-origin absolute paths beginning with "/" and at most ${MAX_UI_PATH_LENGTH} characters.`,
+      path: pathToField,
+      node: moduleId,
+    });
+  }
 }
 
 function rejectUnknownFields(

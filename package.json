@@ -6,11 +6,20 @@
     "apps/host",
     "modules/demo-module"
   ],
+  "overrides": {
+    "next": {
+      ".": "16.2.6",
+      "postcss": "8.5.15"
+    }
+  },
   "scripts": {
     "dev": "npm run host:dev",
     "build": "npm run host:build",
     "lint": "npm run host:lint",
     "host:dev": "npm run dev --workspace @haas/docker-host-app",
+    "host:dev:auth-admin": "node scripts/dev-auth-shell.mjs admin",
+    "host:dev:auth-user": "node scripts/dev-auth-shell.mjs user",
+    "host:dev:demo": "node scripts/dev-demo-shell.mjs",
     "host:build": "npm run build --workspace @haas/docker-host-app",
     "host:start": "npm run start --workspace @haas/docker-host-app",
     "host:lint": "npm run lint --workspace @haas/docker-host-app",
@@ -20,6 +29,7 @@
     "demo-module:start": "npm run start --workspace @haas/docker-host-demo-module",
     "demo-module:lint": "npm run lint --workspace @haas/docker-host-demo-module",
     "demo-module:docker:build": "docker build -f modules/demo-module/Dockerfile -t ghcr.io/alex-de-haas/demo-module:latest .",
+    "demo-module:docker:build:local": "docker build -f modules/demo-module/Dockerfile -t docker-host-demo-module:dev .",
     "cli:build": "dotnet build apps/cli/src/Haas.DockerHost.Cli/Haas.DockerHost.Cli.csproj",
     "cli:test": "dotnet test apps/cli/tests/Haas.DockerHost.Cli.Tests/Haas.DockerHost.Cli.Tests.csproj",
     "ci": "npm run host:lint && npm run host:test && npm run host:build && npm run cli:build && npm run cli:test"

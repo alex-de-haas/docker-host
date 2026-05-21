@@ -184,5 +184,27 @@
         }
       }
     ]
+  },
+  "ui": {
+    "category": "Apps",
+    "icon": "boxes",
+    "entrypoint": {
+      "portKey": "http",
+      "path": "/"
+    },
+    "navigation": [
+      {
+        "label": "Overview",
+        "path": "/"
+      },
+      {
+        "label": "People",
+        "path": "/people"
+      },
+      {
+        "label": "Settings",
+        "path": "/settings"
+      }
+    ]
   }
 }

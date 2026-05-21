@@ -30,12 +30,27 @@ export const SESSION_REJECTION_AUDIT_THROTTLE_MS = 5 * 60 * 1000;
 
 const SETUP_TOKEN_PREFIX = 'dhstp_';
 const CLI_TOKEN_PREFIX = 'dhcli_';
+const DEFAULT_DEV_ADMIN_EMAIL = 'admin@docker-host.local';
+const DEFAULT_DEV_ADMIN_DISPLAY_NAME = 'Dev Admin';
+const DEFAULT_DEV_ADMIN_PASSWORD = 'docker-host-dev-admin';
+const DEFAULT_DEV_USER_EMAIL = 'user@docker-host.local';
+const DEFAULT_DEV_USER_DISPLAY_NAME = 'Dev User';
+const DEFAULT_DEV_USER_PASSWORD = 'docker-host-dev-user';
 const SESSION_REJECTION_AUDIT_CACHE_MAX = 500;
 const rejectedSessionAuditCache = new Map<string, number>();
 
 export interface AuthRequestMeta {
   origin?: string;
   userAgent?: string;
+}
+
+type DevAuthRole = 'host.admin' | 'host.user';
+
+interface DevAuthCredentials {
+  email: string;
+  displayName: string;
+  password: string;
+  role: DevAuthRole;
 }
 
 export interface SessionPrincipal extends HostPrincipal {
@@ -382,6 +397,219 @@ export async function authenticatePassword(
   return {
     sessionToken,
     session: createdSession,
+    user: toPrincipal(user),
+  };
+}
+
+export function isDevAuthAutoLoginEnabled() {
+  const mode = process.env.HOST_DEV_AUTH?.trim().toLowerCase();
+  const enabled = mode === '1' ||
+    mode === 'true' ||
+    mode === 'enabled' ||
+    mode === 'on' ||
+    mode === 'yes' ||
+    mode === 'auto' ||
+    mode === 'auto-login';
+
+  if (!enabled) {
+    return false;
+  }
+
+  return isDevelopmentRuntime();
+}
+
+export function getDevAuthCredentials() {
+  return getDevAccountCredentials(getDevAuthRole());
+}
+
+function getDevAuthRole(): DevAuthRole {
+  const configuredRole = process.env.HOST_DEV_AUTH_ROLE?.trim().toLowerCase();
+  switch (configuredRole) {
+    case undefined:
+    case '':
+    case 'admin':
+    case 'host.admin':
+      return 'host.admin';
+    case 'user':
+    case 'host.user':
+      return 'host.user';
+    default:
+      throw new AuthServiceError(
+        'invalid_dev_auth_role',
+        'HOST_DEV_AUTH_ROLE must be "admin" or "user".'
+      );
+  }
+}
+
+function getDevAccountCredentials(role: DevAuthRole): DevAuthCredentials {
+  if (role === 'host.user') {
+    const configuredEmail = normalizeEmail(process.env.HOST_DEV_USER_EMAIL || '');
+    const configuredPassword = process.env.HOST_DEV_USER_PASSWORD || '';
+    const displayName = process.env.HOST_DEV_USER_NAME?.trim() || DEFAULT_DEV_USER_DISPLAY_NAME;
+
+    return {
+      email: configuredEmail || DEFAULT_DEV_USER_EMAIL,
+      displayName,
+      password: configuredPassword || DEFAULT_DEV_USER_PASSWORD,
+      role,
+    };
+  }
+
+  const configuredEmail = normalizeEmail(process.env.HOST_DEV_ADMIN_EMAIL || '');
+  const configuredPassword = process.env.HOST_DEV_ADMIN_PASSWORD || '';
+  const displayName = process.env.HOST_DEV_ADMIN_NAME?.trim() || DEFAULT_DEV_ADMIN_DISPLAY_NAME;
+
+  return {
+    email: configuredEmail || DEFAULT_DEV_ADMIN_EMAIL,
+    displayName,
+    password: configuredPassword || DEFAULT_DEV_ADMIN_PASSWORD,
+    role,
+  };
+}
+
+function upsertDevAuthUser(
+  users: AuthUserRecord[],
+  credentials: DevAuthCredentials,
+  passwordHash: string,
+  now: Date
+) {
+  const existingUser = users.find(candidate =>
+    candidate.email === credentials.email &&
+    (candidate.authProvider === 'local' || candidate.authProvider === undefined)
+  );
+  const user: AuthUserRecord = existingUser
+    ? {
+        ...existingUser,
+        email: credentials.email,
+        displayName: credentials.displayName,
+        role: credentials.role,
+        authProvider: 'local',
+        passwordHash,
+        disabled: false,
+        updatedAt: now.toISOString(),
+      }
+    : {
+        id: `user_${randomUUID()}`,
+        email: credentials.email,
+        displayName: credentials.displayName,
+        role: credentials.role,
+        authProvider: 'local',
+        passwordHash,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      };
+
+  return {
+    user,
+    createdUser: !existingUser,
+    users: existingUser
+      ? users.map(candidate => candidate.id === user.id ? user : candidate)
+      : [...users, user],
+  };
+}
+
+export async function createDevSession(
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  if (!isDevAuthAutoLoginEnabled()) {
+    throw new AuthServiceError('dev_auth_disabled', 'Development auto-login is not enabled.');
+  }
+
+  return createDevSessionForCredentials(getDevAuthCredentials(), request, config);
+}
+
+export async function createDevAdminSession(
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  if (!isDevAuthAutoLoginEnabled()) {
+    throw new AuthServiceError('dev_auth_disabled', 'Development auto-login is not enabled.');
+  }
+
+  return createDevSessionForCredentials(getDevAccountCredentials('host.admin'), request, config);
+}
+
+async function createDevSessionForCredentials(
+  credentials: DevAuthCredentials,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const adminCredentials = getDevAccountCredentials('host.admin');
+  const accountCredentials = credentials.role === 'host.user'
+    ? [adminCredentials, credentials]
+    : [credentials];
+  if (credentials.role === 'host.user' && credentials.email === adminCredentials.email) {
+    throw new AuthServiceError(
+      'dev_auth_account_conflict',
+      'Development user and administrator accounts must use different email addresses.'
+    );
+  }
+
+  for (const account of accountCredentials) {
+    const passwordPolicy = validatePasswordPolicy(account.password);
+    if (!passwordPolicy.valid) {
+      throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
+    }
+  }
+
+  const passwordHashes = new Map<string, string>();
+  for (const account of accountCredentials) {
+    passwordHashes.set(account.email, await hashPassword(account.password));
+  }
+
+  const sessionToken = generateToken('dhs_');
+  const now = new Date();
+
+  const { user, session, createdUser } = await updateAuthState(state => {
+    let users = state.users;
+    let sessionUser: AuthUserRecord | null = null;
+    let createdSessionUser = false;
+
+    for (const account of accountCredentials) {
+      const result = upsertDevAuthUser(users, account, passwordHashes.get(account.email) ?? '', now);
+      users = result.users;
+      if (account.email === credentials.email) {
+        sessionUser = result.user;
+        createdSessionUser = result.createdUser;
+      }
+    }
+
+    if (!sessionUser) {
+      throw new AuthServiceError('dev_auth_user_missing', 'Development account could not be prepared.');
+    }
+
+    const session = createSessionRecord(sessionUser.id, sessionToken, now, request);
+
+    return {
+      state: {
+        ...state,
+        users,
+        sessions: [...pruneExpiredSessions(state.sessions, now), session],
+      },
+      result: {
+        user: sessionUser,
+        session,
+        createdUser: createdSessionUser,
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.dev_login.succeeded',
+    actorUserId: user.id,
+    success: true,
+    request,
+    details: {
+      sessionId: session.id,
+      createdUser,
+      role: user.role,
+    },
+  }, config);
+
+  return {
+    sessionToken,
+    session,
     user: toPrincipal(user),
   };
 }
@@ -975,6 +1203,15 @@ function isSessionActive(session: AuthSessionRecord, now: Date) {
 
 function isExpired(expiresAt: string, now: Date) {
   return Date.parse(expiresAt) <= now.getTime();
+}
+
+export function isDevelopmentRuntime() {
+  const hostRuntimeMode = process.env.HOST_RUNTIME_MODE?.trim().toLowerCase();
+  if (hostRuntimeMode) {
+    return hostRuntimeMode === 'development';
+  }
+
+  return process.env.NODE_ENV === 'development';
 }
 
 function shouldRefreshSessionActivity(session: AuthSessionRecord, now: Date) {

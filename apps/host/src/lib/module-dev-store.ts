@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
-import type { ModuleDevTargetRecord, ModuleDevTargetState } from '../types/module-dev.ts';
+import type {
+  ModuleDevTargetRecord,
+  ModuleDevTargetShellApp,
+  ModuleDevTargetState,
+} from '../types/module-dev.ts';
 
 const MODULE_DEV_STORE_SCHEMA_VERSION = '0.1' as const;
 
@@ -130,11 +134,14 @@ function normalizeModuleDevTargetRecord(value: unknown): ModuleDevTargetRecord |
     return null;
   }
 
+  const shellApp = normalizeModuleDevTargetShellApp(value.shellApp);
+
   return {
     id: value.id,
     moduleId: value.moduleId,
     moduleName: value.moduleName,
     moduleVersion: value.moduleVersion,
+    ...(typeof value.moduleDescription === 'string' ? { moduleDescription: value.moduleDescription } : {}),
     metadataUrl: value.metadataUrl,
     hostname: value.hostname.toLowerCase(),
     portKey: value.portKey,
@@ -145,8 +152,39 @@ function normalizeModuleDevTargetRecord(value: unknown): ModuleDevTargetRecord |
     exposurePolicy: value.exposurePolicy,
     identityMode: value.identityMode,
     enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+    ...(shellApp ? { shellApp } : {}),
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+  };
+}
+
+function normalizeModuleDevTargetShellApp(value: unknown): ModuleDevTargetShellApp | null {
+  if (!isObject(value) ||
+    typeof value.displayName !== 'string' ||
+    typeof value.entrypointPath !== 'string' ||
+    !Array.isArray(value.navigation)) {
+    return null;
+  }
+
+  const navigation = value.navigation
+    .map(item => {
+      if (!isObject(item) || typeof item.label !== 'string' || typeof item.path !== 'string') {
+        return null;
+      }
+
+      return {
+        label: item.label,
+        path: item.path,
+      };
+    })
+    .filter((item): item is { label: string; path: string } => item !== null);
+
+  return {
+    displayName: value.displayName,
+    ...(typeof value.description === 'string' ? { description: value.description } : {}),
+    ...(typeof value.icon === 'string' ? { icon: value.icon } : {}),
+    entrypointPath: value.entrypointPath,
+    navigation,
   };
 }
 

@@ -4,11 +4,17 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  deleteGatewayExposure,
   GatewayServiceError,
+  listGatewayExposureOptions,
   resolveGatewayTarget,
   upsertGatewayExposure,
 } from './gateway-service.ts';
 import { createEmptyAuthState, writeAuthState } from './auth-store.ts';
+import {
+  readExternalIngressStateSnapshot,
+  writeExternalIngressState,
+} from './external-ingress-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
 test('creates gateway exposure for a public module port and resolves target', async () => {
@@ -136,6 +142,99 @@ test('assignedUsersOnly exposure checks Host module assignments', async () => {
   assert.equal(unassignedTarget?.access.reason, 'assignmentRequired');
 });
 
+test('lists gateway exposure options for installed modules and active users', async () => {
+  const config = await createGatewayTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    portPublic: true,
+    uiEntrypoint: true,
+  });
+  await writeAuthState({
+    ...createEmptyAuthState(),
+    users: [
+      {
+        id: 'user_1',
+        email: 'user@example.test',
+        displayName: 'User One',
+        role: 'host.user',
+        passwordHash: 'unused',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'user_disabled',
+        email: 'disabled@example.test',
+        role: 'host.user',
+        passwordHash: 'unused',
+        disabled: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  }, config);
+
+  const options = await listGatewayExposureOptions(config);
+
+  assert.equal(options.gatewayBaseDomain, 'example.test');
+  assert.deepEqual(options.users.map(user => user.id), ['user_1']);
+  assert.equal(options.modules.length, 1);
+  assert.equal(options.modules[0]?.id, 'com.example.reports');
+  assert.equal(options.modules[0]?.uiEntrypointPortKey, 'web');
+  assert.deepEqual(options.modules[0]?.ports, [
+    {
+      key: 'web',
+      containerPort: 8080,
+      protocol: 'http',
+      public: true,
+      isUiEntrypoint: true,
+    },
+  ]);
+});
+
+test('deleting a gateway exposure removes linked external ingress readiness', async () => {
+  const config = await createGatewayTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    portPublic: true,
+  });
+  const exposure = await upsertGatewayExposure({
+    moduleId: 'com.example.reports',
+    hostname: 'reports.example.test',
+    portKey: 'web',
+  }, 'user_admin', config);
+  const now = new Date().toISOString();
+  await writeExternalIngressState({
+    schemaVersion: '0.1',
+    records: [
+      {
+        id: 'ing_reports',
+        gatewayExposureId: exposure.id,
+        mode: 'manual',
+        status: 'planned',
+        checklist: {},
+        snapshot: {
+          moduleId: exposure.moduleId,
+          hostname: exposure.hostname,
+          portKey: exposure.portKey,
+          exposurePolicy: exposure.exposurePolicy,
+          identityMode: exposure.identityMode,
+          gatewayBaseDomain: config.gatewayBaseDomain,
+          hostPublicOrigin: config.hostPublicOrigin,
+          trustedProxyMode: false,
+        },
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    updatedAt: now,
+  }, config);
+
+  await deleteGatewayExposure(exposure.id, 'user_admin', config);
+
+  const ingress = await readExternalIngressStateSnapshot(config);
+  assert.deepEqual(ingress.records, []);
+});
+
 async function createGatewayTestConfig(): Promise<HostRuntimeConfig> {
   const dataRootContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-host-gateway-'));
   const authRootContainer = path.join(dataRootContainer, 'auth');
@@ -163,6 +262,7 @@ async function writeInstalledModule(
   input: {
     moduleId: string;
     portPublic: boolean;
+    uiEntrypoint?: boolean;
   }
 ) {
   const moduleRoot = path.join(config.modulesRootContainer, input.moduleId);
@@ -215,5 +315,16 @@ async function writeInstalledModule(
       port: 'http',
       public: input.portPublic,
     }],
+    ...(input.uiEntrypoint
+      ? {
+          ui: {
+            entrypoint: {
+              portKey: 'web',
+              path: '/',
+            },
+            navigation: [],
+          },
+        }
+      : {}),
   }, null, 2)}\n`);
 }

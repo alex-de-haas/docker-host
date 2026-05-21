@@ -145,6 +145,7 @@ export interface ModuleMetadata {
     directories?: ModuleStorageDirectoryMetadata[];
     mountCollections?: ModuleStorageMountCollectionMetadata[];
   };
+  ui?: ModuleUiMetadata;
 }
 
 export interface ModuleContainerMetadata {
@@ -242,6 +243,21 @@ export interface ModuleRuntimePortMetadata {
   key: string;
   containerPort: number;
   protocol: string;
+}
+
+export interface ModuleUiNavigationItemMetadata {
+  label: string;
+  path: string;
+}
+
+export interface ModuleUiMetadata {
+  category?: 'Apps';
+  icon?: string;
+  entrypoint: {
+    portKey: string;
+    path: string;
+  };
+  navigation: ModuleUiNavigationItemMetadata[];
 }
 
 export interface ModuleSummary {
@@ -425,6 +441,7 @@ export interface NormalizedModuleMetadata {
     directories: NormalizedModuleStorageDirectoryMetadata[];
     mountCollections: NormalizedModuleStorageMountCollectionMetadata[];
   };
+  ui?: ModuleUiMetadata;
 }
 
 export interface InstallPlanValidationError {

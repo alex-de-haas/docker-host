@@ -69,6 +69,11 @@ test('gateway HTTP proxy injects signed identity and strips Host-owned request h
           Authorization: 'Bearer cli-token',
           Cookie: 'docker_host_session=host-session; module_cookie=kept',
           'Cf-Access-Jwt-Assertion': 'trusted-proxy-assertion',
+          Forwarded: 'for=10.0.0.1;proto=https;host=evil.example.test',
+          'X-Forwarded-For': '10.0.0.1',
+          'X-Forwarded-Host': 'evil.example.test',
+          'X-Forwarded-Proto': 'gopher',
+          'X-Real-Ip': '10.0.0.2',
           'X-Docker-Host-Identity': 'spoofed-token',
           'X-Docker-Host-Other': 'spoofed',
           'X-Custom': 'kept',
@@ -87,6 +92,11 @@ test('gateway HTTP proxy injects signed identity and strips Host-owned request h
       assert.equal(captured.headers.cookie, 'module_cookie=kept');
       assert.equal(captured.headers['x-docker-host-other'], undefined);
       assert.equal(captured.headers['x-custom'], 'kept');
+      assert.equal(captured.headers.forwarded, undefined);
+      assert.equal(captured.headers['x-real-ip'], undefined);
+      assert.equal(captured.headers['x-forwarded-host'], 'reports.example.test');
+      assert.equal(captured.headers['x-forwarded-proto'], 'https');
+      assert.doesNotMatch(String(captured.headers['x-forwarded-for']), /10\.0\.0\.1/);
 
       const identityToken = captured.headers['x-docker-host-identity'];
       assert.equal(typeof identityToken, 'string');
@@ -204,6 +214,11 @@ test('gateway websocket proxy injects signed identity into upgrade handshake', a
           'Cookie: docker_host_session=host-session; module_cookie=kept',
           'X-Repeat: one',
           'X-Repeat: two',
+          'Forwarded: for=10.0.0.1;host=evil.example.test',
+          'X-Forwarded-For: 10.0.0.1',
+          'X-Forwarded-Host: evil.example.test',
+          'X-Forwarded-Proto: gopher',
+          'X-Real-Ip: 10.0.0.2',
           'X-Docker-Host-Identity: spoofed-token',
           '',
           '',
@@ -215,6 +230,11 @@ test('gateway websocket proxy injects signed identity into upgrade handshake', a
 
       assert.doesNotMatch(raw, /spoofed-token/);
       assert.doesNotMatch(raw, /docker_host_session/);
+      assert.doesNotMatch(raw, /evil\.example\.test/);
+      assert.doesNotMatch(raw, /gopher/);
+      assert.doesNotMatch(raw, /^Forwarded:/mi);
+      assert.doesNotMatch(raw, /^X-Real-Ip:/mi);
+      assert.doesNotMatch(raw, /^X-Forwarded-For: 10\.0\.0\.1$/mi);
       assert.match(raw, /^Cookie: module_cookie=kept$/mi);
       assert.equal(raw.match(/^X-Repeat:/gmi)?.length, 2);
       const match = raw.match(/^X-Docker-Host-Identity: (.+)$/mi);

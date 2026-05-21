@@ -10,8 +10,13 @@ import {
   readGatewayExposureStateSnapshot,
   updateGatewayExposureState,
 } from './gateway-store.ts';
+import { updateExternalIngressState } from './external-ingress-store.ts';
 import type { ModuleAccessAssignment } from '../types/auth.ts';
-import type { GatewayExposureInput, GatewayExposureRecord } from '../types/gateway.ts';
+import type {
+  GatewayExposureInput,
+  GatewayExposureOptions,
+  GatewayExposureRecord,
+} from '../types/gateway.ts';
 import type {
   InstalledModuleRecord,
   ModuleMetadata,
@@ -136,6 +141,14 @@ export async function deleteGatewayExposure(
   }, config);
 
   if (deleted) {
+    await updateExternalIngressState(state => ({
+      state: {
+        ...state,
+        records: state.records.filter(record => record.gatewayExposureId !== deleted.id),
+      },
+      result: null,
+    }), config);
+
     await appendAuthAuditEvent({
       type: 'gateway.exposure.deleted',
       actorUserId,
@@ -149,6 +162,62 @@ export async function deleteGatewayExposure(
   }
 
   return deleted;
+}
+
+export async function listGatewayExposureOptions(
+  config = getHostRuntimeConfig()
+): Promise<GatewayExposureOptions> {
+  const [modulesStore, auth] = await Promise.all([
+    readModulesStoreSnapshot(config),
+    readAuthStateSnapshot(config),
+  ]);
+
+  const modules = await Promise.all(
+    modulesStore.modules.map(async installedModule => {
+      const metadata = await readInstalledModuleMetadata(installedModule, config);
+      const uiEntrypointPortKey = metadata?.ui?.entrypoint?.portKey;
+      const ports = (metadata?.endpoints ?? []).flatMap(endpoint => {
+        const target = metadata ? resolveEndpointTarget(metadata, endpoint.key) : null;
+        return target
+          ? [{
+              key: endpoint.key,
+              containerPort: target.port.containerPort,
+              protocol: target.port.protocol,
+              public: endpoint.public,
+              isUiEntrypoint: Boolean(uiEntrypointPortKey && endpoint.key === uiEntrypointPortKey),
+            }]
+          : [];
+      });
+
+      return {
+        id: installedModule.id,
+        name: metadata?.name ?? installedModule.id,
+        ...(metadata?.description ? { description: metadata.description } : {}),
+        ...(installedModule.operationStatus ? { operationStatus: installedModule.operationStatus } : {}),
+        ...(uiEntrypointPortKey ? { uiEntrypointPortKey } : {}),
+        ports,
+      };
+    })
+  );
+
+  return {
+    gatewayBaseDomain: config.gatewayBaseDomain,
+    hostPublicOrigin: config.hostPublicOrigin,
+    modules: modules
+      .filter(module => module.ports.some(port => port.public))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    users: auth.users
+      .filter(user => !user.disabled)
+      .map(user => ({
+        id: user.id,
+        ...(user.displayName ? { displayName: user.displayName } : {}),
+        ...(user.email ? { email: user.email } : {}),
+        role: user.role,
+      }))
+      .sort((left, right) =>
+        (left.displayName ?? left.email ?? left.id).localeCompare(right.displayName ?? right.email ?? right.id)
+      ),
+  };
 }
 
 export async function setGatewayExposureAssignments(

@@ -148,8 +148,8 @@ export function GET(request: Request) {
           label: 'Report libraries',
           description: 'External folders scanned by the reports module.',
           purpose: 'data',
-          required: true,
-          minItems: 1,
+          required: false,
+          minItems: 0,
           maxItems: 3,
           targets: [
             {
@@ -163,6 +163,28 @@ export function GET(request: Request) {
             mode: 'adminSelected',
             allowExternal: true,
           },
+        },
+      ],
+    },
+    ui: {
+      category: 'Apps',
+      icon: 'boxes',
+      entrypoint: {
+        portKey: 'http',
+        path: '/',
+      },
+      navigation: [
+        {
+          label: 'Overview',
+          path: '/',
+        },
+        {
+          label: 'People',
+          path: '/people',
+        },
+        {
+          label: 'Settings',
+          path: '/settings',
         },
       ],
     },
