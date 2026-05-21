@@ -428,6 +428,7 @@ function AppNavigationSection({
   compact: boolean;
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
+  const [collapsedActiveAppIds, setCollapsedActiveAppIds] = useState<Set<string>>(() => new Set());
 
   if (appsState.loading) {
     return (
@@ -465,7 +466,7 @@ function AppNavigationSection({
   return appsState.apps.map(app => {
     const appPathname = app.entryPath.split('?')[0] || app.entryPath;
     const isActive = pathname === appPathname;
-    const expanded = isActive || expandedAppIds.has(app.id);
+    const expanded = expandedAppIds.has(app.id) || (isActive && !collapsedActiveAppIds.has(app.id));
     const Icon = getAppIcon(app.icon);
 
     return (
@@ -522,10 +523,19 @@ function AppNavigationSection({
               onClick={() => {
                 setExpandedAppIds(current => {
                   const next = new Set(current);
-                  if (next.has(app.id)) {
+                  if (expanded) {
                     next.delete(app.id);
                   } else {
                     next.add(app.id);
+                  }
+                  return next;
+                });
+                setCollapsedActiveAppIds(current => {
+                  const next = new Set(current);
+                  if (expanded && isActive) {
+                    next.add(app.id);
+                  } else {
+                    next.delete(app.id);
                   }
                   return next;
                 });

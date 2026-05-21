@@ -128,8 +128,7 @@ internal sealed class HostLifecycle(CommandContext context)
         CancellationToken cancellationToken = default)
         => await context.Console
             .Status()
-            .Spinner(Spinner.Known.BoxBounce)
-            .SpinnerStyle(Style.Parse("green"))
+            .Spinner(Spinner.Known.Default)
             .StartAsync(
                 $"Pulling Host image [grey]{Markup.Escape(image)}[/]...",
                 async _ => await docker.PullImageAsync(image, cancellationToken));
