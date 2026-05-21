@@ -1,3 +1,6 @@
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { NextResponse } from 'next/server';
 import { canAccessModule } from './auth-policy.ts';
 import { SESSION_COOKIE_NAME } from './auth-service.ts';
@@ -50,7 +53,19 @@ const REWRITABLE_CONTENT_TYPES = [
   'text/css',
   'application/xhtml+xml',
 ];
+const STATIC_EMBED_ASSET_PATH_PREFIXES = [
+  '/_next/static/',
+];
 const MAX_EMBED_PATH_LENGTH = 2048;
+const EMBED_ACCESS_TOKEN_PARAM = 'embedToken';
+const EMBED_ACCESS_TOKEN_TTL_MS = 5 * 60 * 1000;
+const EMBED_ACCESS_TOKEN_SECRET_FILE = 'embed-access-secret';
+const STATIC_ASSET_PRINCIPAL: HostPrincipal = {
+  id: 'embed_static_asset',
+  role: 'host.user',
+};
+
+let embedAccessTokenSecretMutex: Promise<void> = Promise.resolve();
 
 export interface HostAppEmbedTarget {
   app: HostAppEntry;
@@ -265,6 +280,145 @@ export async function resolveHostDeveloperAppEmbedTarget(
   };
 }
 
+export async function resolveHostAppStaticAssetEmbedTarget(
+  request: Request,
+  moduleId: string,
+  options: { config?: HostRuntimeConfig } = {}
+): Promise<HostAppEmbedTarget> {
+  const config = options.config ?? getHostRuntimeConfig();
+  const modulePath = normalizeStaticEmbedAssetPath(request);
+  const store = await readModulesStoreSnapshot(config);
+  const installedModule = store.modules.find(candidate => candidate.id === moduleId);
+  if (!installedModule) {
+    throw new HostAppEmbedError('module_not_found', `Module "${moduleId}" is not installed.`, 404);
+  }
+
+  const metadata = await readModuleMetadata(installedModule, config);
+  const ui = metadata?.ui
+    ? validateModuleUiMetadata(metadata.ui, '$.ui', metadata.endpoints ?? [], [], moduleId)
+    : null;
+  if (!metadata || !ui) {
+    throw new HostAppEmbedError('metadata_invalid', `Module "${moduleId}" does not have valid UI metadata.`, 503);
+  }
+
+  const target = resolveUiEndpointTarget(metadata, ui.entrypoint.portKey);
+  if (!target) {
+    throw new HostAppEmbedError('ui_port_missing', `Module "${moduleId}" UI endpoint is missing.`, 503);
+  }
+
+  const networkAlias = installedModule.containers.find(container => container.key === target.container.key)?.networkAlias ??
+    getModuleNetworkAlias(moduleId, target.container.key);
+  const targetOrigin = `http://${networkAlias}:${target.port.containerPort}`;
+
+  return {
+    app: {
+      id: moduleId,
+      source: 'installed',
+      moduleId,
+      displayName: metadata.name || moduleId,
+      ...(metadata.description ? { description: metadata.description } : {}),
+      ...(ui.icon ? { icon: ui.icon } : {}),
+      version: metadata.version || 'unknown',
+      status: 'available',
+      statusReason: 'available',
+      accessMode: 'allAuthenticated',
+      entryPath: `/apps/${encodeURIComponent(moduleId)}`,
+      embeddedUrl: buildEmbedUrl(moduleId, ui.entrypoint.path),
+      navigation: [],
+    },
+    installedModule,
+    port: target.port,
+    config,
+    modulePath,
+    targetOrigin,
+    upstreamUrl: new URL(modulePath, targetOrigin).toString(),
+    requestHost: getRequestHost(request),
+    requestProtocol: getRequestProtocol(request),
+    identityInput: createStaticAssetIdentityInput({
+      id: `shell_${moduleId}`,
+      moduleId,
+      hostname: getRequestHost(request),
+      portKey: ui.entrypoint.portKey,
+      exposurePolicy: 'loginRequired',
+    }),
+  };
+}
+
+export async function resolveHostDeveloperAppStaticAssetEmbedTarget(
+  request: Request,
+  targetId: string,
+  options: { config?: HostRuntimeConfig } = {}
+): Promise<HostAppEmbedTarget> {
+  const config = options.config ?? getHostRuntimeConfig();
+  const modulePath = normalizeStaticEmbedAssetPath(request);
+  const developerTarget = await readEnabledDeveloperTarget(targetId, config);
+  if (!developerTarget?.shellApp) {
+    throw new HostAppEmbedError(
+      'developer_target_not_found',
+      `Developer module app "${targetId}" is not available.`,
+      404
+    );
+  }
+
+  return {
+    app: {
+      id: `dev:${developerTarget.id}`,
+      source: 'developer',
+      moduleId: developerTarget.moduleId,
+      developerTargetId: developerTarget.id,
+      displayName: developerTarget.shellApp.displayName || developerTarget.moduleName || developerTarget.moduleId,
+      ...(developerTarget.shellApp.description || developerTarget.moduleDescription
+        ? { description: developerTarget.shellApp.description || developerTarget.moduleDescription }
+        : {}),
+      ...(developerTarget.shellApp.icon ? { icon: developerTarget.shellApp.icon } : {}),
+      version: developerTarget.moduleVersion || 'unknown',
+      status: 'available',
+      statusReason: 'available',
+      accessMode: developerTarget.exposurePolicy === 'assignedUsersOnly' ? 'assignedUsersOnly' : 'allAuthenticated',
+      entryPath: `/apps/dev/${encodeURIComponent(developerTarget.id)}`,
+      embeddedUrl: buildDeveloperEmbedUrl(developerTarget.id, developerTarget.shellApp.entrypointPath),
+      navigation: [],
+    },
+    config,
+    modulePath,
+    targetOrigin: new URL(developerTarget.targetBaseUrl).origin,
+    targetPathPrefix: developerTarget.targetPathPrefix,
+    upstreamUrl: buildDeveloperUpstreamUrl(developerTarget, modulePath),
+    requestHost: getRequestHost(request),
+    requestProtocol: getRequestProtocol(request),
+    identityInput: createStaticAssetIdentityInput({
+      id: developerTarget.id,
+      moduleId: developerTarget.moduleId,
+      hostname: getRequestHost(request),
+      portKey: developerTarget.portKey,
+      exposurePolicy: developerTarget.exposurePolicy,
+    }),
+  };
+}
+
+export async function authenticateHostAppEmbedTokenRequest(
+  request: Request,
+  expected: { source: 'installed'; moduleId: string } | { source: 'developer'; targetId: string },
+  options: { config?: HostRuntimeConfig } = {}
+): Promise<HostPrincipal | null> {
+  const config = options.config ?? getHostRuntimeConfig();
+  const token = new URL(request.url).searchParams.get(EMBED_ACCESS_TOKEN_PARAM);
+  if (!token) {
+    return null;
+  }
+
+  const payload = await verifyEmbedAccessToken(token, config);
+  if (!payload || payload.source !== expected.source) {
+    return null;
+  }
+
+  if (expected.source === 'installed') {
+    return payload.moduleId === expected.moduleId ? payload.principal : null;
+  }
+
+  return payload.developerTargetId === expected.targetId ? payload.principal : null;
+}
+
 export async function proxyHostAppEmbedRequest(
   request: Request,
   target: HostAppEmbedTarget
@@ -303,11 +457,25 @@ export function normalizeEmbedModulePath(value: string | null) {
   return path;
 }
 
+export function isHostAppEmbedStaticAssetRequest(request: Request) {
+  if (!['GET', 'HEAD'].includes(request.method.toUpperCase())) {
+    return false;
+  }
+
+  try {
+    const modulePath = normalizeEmbedModulePath(new URL(request.url).searchParams.get('path'));
+    return STATIC_EMBED_ASSET_PATH_PREFIXES.some(prefix => modulePath.startsWith(prefix));
+  } catch {
+    return false;
+  }
+}
+
 export function rewriteEmbeddedContent(
   content: string,
-  target: Pick<HostAppEmbedTarget, 'app'>
+  target: Pick<HostAppEmbedTarget, 'app'>,
+  embedAccessToken: string | null = null
 ) {
-  const toEmbedPath = (modulePath: string) => buildAppEmbedUrl(target.app, modulePath);
+  const toEmbedPath = (modulePath: string) => buildAppEmbedUrl(target.app, modulePath, embedAccessToken);
 
   return rewriteHtmlFragment(content, toEmbedPath);
 }
@@ -545,18 +713,28 @@ function rewriteCssUrls(
   ));
 }
 
-export function buildEmbedUrl(moduleId: string, modulePath: string) {
-  return `/api/apps/${encodeURIComponent(moduleId)}/embed?path=${encodeURIComponent(modulePath)}`;
+export function buildEmbedUrl(moduleId: string, modulePath: string, embedAccessToken: string | null = null) {
+  return appendEmbedAccessToken(
+    `/api/apps/${encodeURIComponent(moduleId)}/embed?path=${encodeURIComponent(modulePath)}`,
+    embedAccessToken
+  );
 }
 
-export function buildDeveloperEmbedUrl(targetId: string, modulePath: string) {
-  return `/api/apps/dev/${encodeURIComponent(targetId)}/embed?path=${encodeURIComponent(modulePath)}`;
+export function buildDeveloperEmbedUrl(targetId: string, modulePath: string, embedAccessToken: string | null = null) {
+  return appendEmbedAccessToken(
+    `/api/apps/dev/${encodeURIComponent(targetId)}/embed?path=${encodeURIComponent(modulePath)}`,
+    embedAccessToken
+  );
 }
 
-export function buildAppEmbedUrl(app: Pick<HostAppEntry, 'source' | 'moduleId' | 'developerTargetId'>, modulePath: string) {
+export function buildAppEmbedUrl(
+  app: Pick<HostAppEntry, 'source' | 'moduleId' | 'developerTargetId'>,
+  modulePath: string,
+  embedAccessToken: string | null = null
+) {
   return app.source === 'developer' && app.developerTargetId
-    ? buildDeveloperEmbedUrl(app.developerTargetId, modulePath)
-    : buildEmbedUrl(app.moduleId, modulePath);
+    ? buildDeveloperEmbedUrl(app.developerTargetId, modulePath, embedAccessToken)
+    : buildEmbedUrl(app.moduleId, modulePath, embedAccessToken);
 }
 
 export function appEmbedErrorResponse(error: unknown) {
@@ -636,10 +814,13 @@ async function buildEmbedResponse(
     });
   }
 
-  const headers = buildEmbedResponseHeaders(request, response.headers, target);
+  const embedAccessToken = target.identityInput.access.allowed
+    ? await createEmbedAccessToken(target)
+    : null;
+  const headers = buildEmbedResponseHeaders(request, response.headers, target, embedAccessToken);
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
   if (shouldRewriteContent(contentType)) {
-    const body = rewriteEmbeddedContent(await response.text(), target);
+    const body = rewriteEmbeddedContent(await response.text(), target, embedAccessToken);
     headers.delete('content-length');
     headers.delete('content-encoding');
     return new NextResponse(body, {
@@ -659,7 +840,8 @@ async function buildEmbedResponse(
 function buildEmbedResponseHeaders(
   request: Request,
   responseHeaders: Headers,
-  target: HostAppEmbedTarget
+  target: HostAppEmbedTarget,
+  embedAccessToken: string | null
 ) {
   const headers = new Headers();
   responseHeaders.forEach((value, name) => {
@@ -673,7 +855,7 @@ function buildEmbedResponseHeaders(
     }
 
     if (lowerName === 'location') {
-      headers.set(name, rewriteLocationHeader(value, request, target));
+      headers.set(name, rewriteLocationHeader(value, request, target, embedAccessToken));
       return;
     }
 
@@ -696,7 +878,8 @@ function shouldRewriteContent(contentType: string) {
 function rewriteLocationHeader(
   location: string,
   request: Request,
-  target: HostAppEmbedTarget
+  target: HostAppEmbedTarget,
+  embedAccessToken: string | null
 ) {
   try {
     const parsed = new URL(location, target.targetOrigin);
@@ -706,7 +889,7 @@ function rewriteLocationHeader(
       !/^[a-z][a-z\d+.-]*:/i.test(location)
     ) {
       return new URL(
-        buildAppEmbedUrl(target.app, getModulePathFromUpstreamUrl(parsed, target.targetPathPrefix)),
+        buildAppEmbedUrl(target.app, getModulePathFromUpstreamUrl(parsed, target.targetPathPrefix), embedAccessToken),
         request.url
       ).toString();
     }
@@ -836,6 +1019,205 @@ function getRequestProtocol(request: Request) {
 
 function getExposurePolicy(accessMode: HostAppAccessMode): ModuleExposurePolicy {
   return accessMode === 'assignedUsersOnly' ? 'assignedUsersOnly' : 'loginRequired';
+}
+
+function normalizeStaticEmbedAssetPath(request: Request) {
+  if (!isHostAppEmbedStaticAssetRequest(request)) {
+    throw new HostAppEmbedError(
+      'invalid_embed_static_asset_path',
+      'Embedded module static asset path must target a supported static asset.',
+      400
+    );
+  }
+
+  return normalizeEmbedModulePath(new URL(request.url).searchParams.get('path'));
+}
+
+function createStaticAssetIdentityInput({
+  id,
+  moduleId,
+  hostname,
+  portKey,
+  exposurePolicy,
+}: {
+  id: string;
+  moduleId: string;
+  hostname: string;
+  portKey: string;
+  exposurePolicy: ModuleExposurePolicy;
+}): HostAppEmbedTarget['identityInput'] {
+  return {
+    exposure: {
+      id,
+      moduleId,
+      hostname,
+      portKey,
+      exposurePolicy,
+      identityMode: 'none',
+    },
+    access: {
+      allowed: false,
+      policy: exposurePolicy,
+      reason: 'loginRequired',
+    },
+    principal: STATIC_ASSET_PRINCIPAL,
+  };
+}
+
+interface EmbedAccessTokenPayload {
+  v: 1;
+  exp: number;
+  source: HostAppEntry['source'];
+  moduleId: string;
+  developerTargetId?: string;
+  principal: HostPrincipal;
+}
+
+async function createEmbedAccessToken(target: HostAppEmbedTarget) {
+  const payload: EmbedAccessTokenPayload = {
+    v: 1,
+    exp: Date.now() + EMBED_ACCESS_TOKEN_TTL_MS,
+    source: target.app.source,
+    moduleId: target.app.moduleId,
+    ...(target.app.developerTargetId ? { developerTargetId: target.app.developerTargetId } : {}),
+    principal: sanitizeEmbedAccessTokenPrincipal(target.identityInput.principal),
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');
+  const signature = createHmac('sha256', await getEmbedAccessTokenSecret(target.config))
+    .update(encodedPayload)
+    .digest('base64url');
+
+  return `${encodedPayload}.${signature}`;
+}
+
+async function verifyEmbedAccessToken(
+  token: string,
+  config: HostRuntimeConfig
+): Promise<EmbedAccessTokenPayload | null> {
+  const [encodedPayload, signature, ...extra] = token.split('.');
+  if (!encodedPayload || !signature || extra.length > 0) {
+    return null;
+  }
+
+  const expectedSignature = createHmac('sha256', await getEmbedAccessTokenSecret(config))
+    .update(encodedPayload)
+    .digest('base64url');
+  if (!safeEqual(signature, expectedSignature)) {
+    return null;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf-8')) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (!isEmbedAccessTokenPayload(payload) || payload.exp < Date.now()) {
+    return null;
+  }
+
+  return payload;
+}
+
+async function getEmbedAccessTokenSecret(config: HostRuntimeConfig) {
+  const secretPath = path.join(config.authRootContainer, EMBED_ACCESS_TOKEN_SECRET_FILE);
+  try {
+    const existing = (await fs.readFile(secretPath, 'utf-8')).trim();
+    if (existing) {
+      return existing;
+    }
+  } catch (error) {
+    if (!isNodeFileError(error, 'ENOENT')) {
+      throw error;
+    }
+  }
+
+  const previous = embedAccessTokenSecretMutex;
+  let release: () => void = () => undefined;
+  embedAccessTokenSecretMutex = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  await previous;
+
+  try {
+    try {
+      const existing = (await fs.readFile(secretPath, 'utf-8')).trim();
+      if (existing) {
+        return existing;
+      }
+    } catch (error) {
+      if (!isNodeFileError(error, 'ENOENT')) {
+        throw error;
+      }
+    }
+
+    await fs.mkdir(config.authRootContainer, { recursive: true });
+    const secret = randomBytes(32).toString('base64url');
+    const temporaryPath = `${secretPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+    await fs.writeFile(temporaryPath, `${secret}\n`, {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+    await fs.rename(temporaryPath, secretPath);
+    await fs.chmod(secretPath, 0o600);
+    return secret;
+  } finally {
+    release();
+  }
+}
+
+function appendEmbedAccessToken(url: string, embedAccessToken: string | null) {
+  if (!embedAccessToken) {
+    return url;
+  }
+
+  return `${url}&${EMBED_ACCESS_TOKEN_PARAM}=${encodeURIComponent(embedAccessToken)}`;
+}
+
+function sanitizeEmbedAccessTokenPrincipal(principal: HostPrincipal): HostPrincipal {
+  return {
+    id: principal.id,
+    role: principal.role,
+    ...(principal.email ? { email: principal.email } : {}),
+    ...(principal.displayName ? { displayName: principal.displayName } : {}),
+  };
+}
+
+function isEmbedAccessTokenPayload(value: unknown): value is EmbedAccessTokenPayload {
+  if (!isObject(value) ||
+    value.v !== 1 ||
+    typeof value.exp !== 'number' ||
+    (value.source !== 'installed' && value.source !== 'developer') ||
+    typeof value.moduleId !== 'string' ||
+    !isHostPrincipal(value.principal)) {
+    return false;
+  }
+
+  return value.source === 'installed' ||
+    typeof value.developerTargetId === 'string';
+}
+
+function isHostPrincipal(value: unknown): value is HostPrincipal {
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    (value.role === 'host.admin' || value.role === 'host.user') &&
+    (value.email === undefined || typeof value.email === 'string') &&
+    (value.displayName === undefined || typeof value.displayName === 'string');
+}
+
+function safeEqual(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isNodeFileError(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error && error.code === code;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function readEnabledDeveloperTarget(

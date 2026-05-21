@@ -11,6 +11,7 @@ import {
   appEmbedErrorResponse,
   buildAppEmbedUrl,
   buildEmbedUrl,
+  isHostAppEmbedStaticAssetRequest,
   normalizeEmbedModulePath,
   proxyHostAppEmbedRequest,
   rewriteEmbeddedContent,
@@ -36,6 +37,29 @@ test('rejects unsafe embedded module paths', () => {
       (error: unknown) => error instanceof HostAppEmbedError && error.code === 'invalid_embed_path'
     );
   }
+});
+
+test('recognizes static framework assets embedded from sandboxed module UIs', () => {
+  assert.equal(
+    isHostAppEmbedStaticAssetRequest(
+      new Request('https://host.example.test/api/apps/com.example.reports/embed?path=%2F_next%2Fstatic%2Fapp.css')
+    ),
+    true
+  );
+  assert.equal(
+    isHostAppEmbedStaticAssetRequest(
+      new Request('https://host.example.test/api/apps/com.example.reports/embed?path=%2Fpeople')
+    ),
+    false
+  );
+  assert.equal(
+    isHostAppEmbedStaticAssetRequest(
+      new Request('https://host.example.test/api/apps/com.example.reports/embed?path=%2F_next%2Fstatic%2Fapp.css', {
+        method: 'POST',
+      })
+    ),
+    false
+  );
 });
 
 test('rewrites root-relative module links through reserved embed URLs', () => {

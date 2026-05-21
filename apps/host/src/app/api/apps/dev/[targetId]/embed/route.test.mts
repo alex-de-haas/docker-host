@@ -41,6 +41,177 @@ test('GET /api/apps/dev/[targetId]/embed rejects unauthenticated callers', async
   assert.equal(body.error?.action, 'apps.read');
 });
 
+test('GET /api/apps/dev/[targetId]/embed proxies static assets without Host cookies for sandboxed iframes', async t => {
+  const config = await createRouteTestConfig();
+  setRouteTestEnv(t, config);
+  const upstreamRequests: Array<{ url?: string; identity?: string | string[] }> = [];
+  const upstream = createHttpServer((req, res) => {
+    upstreamRequests.push({
+      url: req.url,
+      identity: req.headers['x-docker-host-identity'],
+    });
+    res.writeHead(200, { 'Content-Type': 'text/css' });
+    res.end('.demo { color: red; }');
+  });
+
+  try {
+    await listen(upstream);
+    const now = new Date().toISOString();
+    await writeModuleDevTargetState({
+      schemaVersion: '0.1',
+      targets: [
+        {
+          id: 'mdev_reports',
+          moduleId: 'com.example.reports',
+          moduleName: 'Reports',
+          moduleVersion: '1.0.0',
+          moduleDescription: 'Reports developer target.',
+          metadataUrl: 'http://127.0.0.1:3000/metadata.json',
+          hostname: 'reports.localhost',
+          portKey: 'web',
+          targetBaseUrl: `http://127.0.0.1:${getPort(upstream)}/dev`,
+          targetPathPrefix: '/dev',
+          containerPort: 3000,
+          protocol: 'http',
+          exposurePolicy: 'loginRequired',
+          identityMode: 'required',
+          enabled: true,
+          shellApp: {
+            displayName: 'Reports Dev',
+            description: 'Reports developer target.',
+            icon: 'boxes',
+            entrypointPath: '/',
+            navigation: [],
+          },
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      updatedAt: now,
+    }, config);
+
+    const response = await GET(
+      new Request('http://localhost:3000/api/apps/dev/mdev_reports/embed?path=%2F_next%2Fstatic%2Fapp.css'),
+      { params: Promise.resolve({ targetId: 'mdev_reports' }) }
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /text\/css/);
+    assert.equal(await response.text(), '.demo { color: red; }');
+    assert.equal(upstreamRequests.length, 1);
+    assert.equal(upstreamRequests[0]?.url, '/dev/_next/static/app.css');
+    assert.equal(upstreamRequests[0]?.identity, undefined);
+  } finally {
+    await closeServer(upstream);
+  }
+});
+
+test('GET /api/apps/dev/[targetId]/embed accepts scoped embed tokens for sandboxed iframe navigation', async t => {
+  const config = await createRouteTestConfig();
+  setRouteTestEnv(t, config);
+  const upstreamRequests: Array<{ url?: string; identity?: string | string[] }> = [];
+  const upstream = createHttpServer((req, res) => {
+    upstreamRequests.push({
+      url: req.url,
+      identity: req.headers['x-docker-host-identity'],
+    });
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<a href="/people">People</a>');
+  });
+
+  try {
+    await listen(upstream);
+    const now = new Date().toISOString();
+    await writeAuthState({
+      ...createEmptyAuthState(),
+      users: [
+        {
+          id: 'user_admin',
+          email: 'admin@example.test',
+          role: 'host.admin',
+          authProvider: 'local',
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'user_regular',
+          email: 'user@example.test',
+          role: 'host.user',
+          authProvider: 'local',
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    }, config);
+    const session = await createSessionForUser('user_regular', 'auth.test.session.created', undefined, config);
+    await writeModuleDevTargetState({
+      schemaVersion: '0.1',
+      targets: [
+        {
+          id: 'mdev_reports',
+          moduleId: 'com.example.reports',
+          moduleName: 'Reports',
+          moduleVersion: '1.0.0',
+          moduleDescription: 'Reports developer target.',
+          metadataUrl: 'http://127.0.0.1:3000/metadata.json',
+          hostname: 'reports.localhost',
+          portKey: 'web',
+          targetBaseUrl: `http://127.0.0.1:${getPort(upstream)}/dev`,
+          targetPathPrefix: '/dev',
+          containerPort: 3000,
+          protocol: 'http',
+          exposurePolicy: 'loginRequired',
+          identityMode: 'required',
+          enabled: true,
+          shellApp: {
+            displayName: 'Reports Dev',
+            description: 'Reports developer target.',
+            icon: 'boxes',
+            entrypointPath: '/',
+            navigation: [
+              {
+                label: 'People',
+                path: '/people',
+              },
+            ],
+          },
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      updatedAt: now,
+    }, config);
+
+    const initialResponse = await GET(
+      new Request('http://localhost:3000/api/apps/dev/mdev_reports/embed?path=%2F', {
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=${session.sessionToken}`,
+        },
+      }),
+      { params: Promise.resolve({ targetId: 'mdev_reports' }) }
+    );
+    const initialBody = await initialResponse.text();
+    const token = /embedToken=([^"&]+)/.exec(initialBody)?.[1];
+    assert.equal(initialResponse.status, 200);
+    assert.equal(typeof token, 'string');
+    assert.match(initialBody, /\/api\/apps\/dev\/mdev_reports\/embed\?path=%2Fpeople&embedToken=/);
+
+    const tokenResponse = await GET(
+      new Request(`http://localhost:3000/api/apps/dev/mdev_reports/embed?path=%2Fpeople&embedToken=${token}`),
+      { params: Promise.resolve({ targetId: 'mdev_reports' }) }
+    );
+
+    assert.equal(tokenResponse.status, 200);
+    assert.match(await tokenResponse.text(), /\/api\/apps\/dev\/mdev_reports\/embed\?path=%2Fpeople&embedToken=/);
+    assert.equal(upstreamRequests.length, 2);
+    assert.equal(upstreamRequests[0]?.url, '/dev/');
+    assert.equal(upstreamRequests[1]?.url, '/dev/people');
+    assert.equal(typeof upstreamRequests[1]?.identity, 'string');
+  } finally {
+    await closeServer(upstream);
+  }
+});
+
 test('GET /api/apps/dev/[targetId]/embed proxies enabled developer targets through the Host shell', async t => {
   const config = await createRouteTestConfig();
   setRouteTestEnv(t, config);

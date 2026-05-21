@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 import {
+  authenticateHostAppEmbedTokenRequest,
   appEmbedErrorResponse,
+  isHostAppEmbedStaticAssetRequest,
   proxyHostAppEmbedRequest,
   resolveHostDeveloperAppEmbedTarget,
+  resolveHostDeveloperAppStaticAssetEmbedTarget,
 } from '@/lib/app-embed-service';
 import { requireHostPrincipal } from '@/lib/auth-http';
 
@@ -55,13 +58,35 @@ async function handleEmbedRequest(
   request: Request,
   { params }: { params: Promise<{ targetId: string }> }
 ) {
+  const { targetId } = await params;
+  if (isHostAppEmbedStaticAssetRequest(request)) {
+    try {
+      const target = await resolveHostDeveloperAppStaticAssetEmbedTarget(request, targetId);
+      return await proxyHostAppEmbedRequest(request, target);
+    } catch (error) {
+      return appEmbedErrorResponse(error);
+    }
+  }
+
+  const tokenPrincipal = await authenticateHostAppEmbedTokenRequest(request, {
+    source: 'developer',
+    targetId,
+  });
+  if (tokenPrincipal) {
+    try {
+      const target = await resolveHostDeveloperAppEmbedTarget(request, tokenPrincipal, targetId);
+      return await proxyHostAppEmbedRequest(request, target);
+    } catch (error) {
+      return appEmbedErrorResponse(error);
+    }
+  }
+
   const auth = await requireHostPrincipal(request, 'apps.read');
   if (auth instanceof NextResponse) {
     return auth;
   }
 
   try {
-    const { targetId } = await params;
     const target = await resolveHostDeveloperAppEmbedTarget(request, auth.principal, targetId);
     return await proxyHostAppEmbedRequest(request, target);
   } catch (error) {

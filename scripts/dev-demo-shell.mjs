@@ -157,9 +157,25 @@ function buildDemoTarget(moduleMetadata) {
     throw new Error('Demo module metadata must define ui.entrypoint.portKey.');
   }
 
-  const port = moduleMetadata.runtime?.ports?.find(candidate => candidate.key === ui.entrypoint.portKey);
+  const endpoint = moduleMetadata.endpoints?.find(candidate => candidate?.key === ui.entrypoint.portKey);
+  if (!endpoint) {
+    throw new Error(`Demo module metadata does not define endpoint "${ui.entrypoint.portKey}".`);
+  }
+
+  if (endpoint.public !== true) {
+    throw new Error(`Demo module endpoint "${endpoint.key}" must be public.`);
+  }
+
+  const container = moduleMetadata.containers?.find(candidate => candidate?.key === endpoint.container);
+  if (!container) {
+    throw new Error(`Demo module endpoint "${endpoint.key}" references unknown container "${endpoint.container}".`);
+  }
+
+  const port = container.runtime?.ports?.find(candidate => candidate.key === endpoint.port);
   if (!port) {
-    throw new Error(`Demo module metadata does not define runtime port "${ui.entrypoint.portKey}".`);
+    throw new Error(
+      `Demo module endpoint "${endpoint.key}" references unknown port "${endpoint.port}" on container "${container.key}".`
+    );
   }
 
   return {
@@ -170,7 +186,7 @@ function buildDemoTarget(moduleMetadata) {
     ...(moduleMetadata.description ? { moduleDescription: moduleMetadata.description } : {}),
     metadataUrl,
     hostname: targetHostname,
-    portKey: ui.entrypoint.portKey,
+    portKey: endpoint.key,
     targetBaseUrl,
     targetPathPrefix: '',
     containerPort: port.containerPort,
