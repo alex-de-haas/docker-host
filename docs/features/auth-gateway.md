@@ -147,7 +147,7 @@ The gateway sanitizes proxied requests:
 
 - strips hop-by-hop headers;
 - strips CLI `Authorization`;
-- strips the Host session cookie before traffic reaches the module;
+- strips Host auth cookies before traffic reaches the module, including the active session cookie and browser account-set cookie;
 - strips inbound `X-Docker-Host-*` headers so clients cannot spoof Host-owned identity headers;
 - strips inbound `Forwarded`, `X-Forwarded-*`, and `X-Real-IP` before setting Host-owned forwarding headers for the module;
 - strips trusted proxy assertion headers before traffic reaches the module;
@@ -157,7 +157,7 @@ The gateway sanitizes proxied requests:
 
 For responses, the gateway preserves relative redirects and rewrites absolute redirects from the internal module target back to the external module hostname. Module `Set-Cookie` headers are passed through with `Domain` stripped so module cookies stay host-only for the module subdomain.
 
-The shell embed transport applies the same security boundary for module browser UIs opened inside the Host shell. Reserved embed routes under `/api/apps/{moduleId}/embed` and `/api/apps/dev/{targetId}/embed` require Host authentication, strip Host session cookies, strip inbound `X-Docker-Host-*`, client-supplied forwarding headers, and trusted-proxy assertion headers, inject Host-signed module identity when required, scope module cookies to the embed route, and return an iframe-friendly fallback when module response headers explicitly block framing.
+The shell embed transport applies the same security boundary for module browser UIs opened inside the Host shell. Reserved embed routes under `/api/apps/{moduleId}/embed` and `/api/apps/dev/{targetId}/embed` require Host authentication, strip Host auth cookies, strip inbound `X-Docker-Host-*`, client-supplied forwarding headers, and trusted-proxy assertion headers, inject Host-signed module identity when required, scope module cookies to the embed route, and return an iframe-friendly fallback when module response headers explicitly block framing.
 
 Embedded module UIs are rendered in an iframe sandbox that intentionally omits `allow-same-origin`. Module HTML is proxied from the Host origin, so granting same-origin privileges would allow module scripts to act against Host Web UI and API state as the signed-in user.
 
@@ -202,9 +202,10 @@ Key local-auth decisions:
 - the first `host.admin` is created through a local CLI-generated setup token;
 - setup tokens are single-use, stored hashed, expire after 15 minutes, and are invalidated after first admin creation;
 - browser sessions use opaque random tokens in HttpOnly cookies with server-side hashed token records;
+- browser account sets use a separate opaque HttpOnly cookie and server-side hashed token records;
 - development auto-login is available only through explicit `HOST_DEV_AUTH=auto` configuration in development runtime and issues a normal local administrator or user session instead of disabling authorization;
 - default browser sessions use a 12-hour idle timeout and a 14-day absolute lifetime;
-- logout revokes the current account session by default;
+- logout revokes the current account session by default; the sidebar account menu also supports current-account and all-accounts logout for remembered browser accounts;
 - multiple browser accounts may be remembered, with one active account per request;
 - all current Host API functionality remains `host.admin` only, including Host status and module listing;
 - pre-auth installations enter setup-required mode while preserving existing modules and data;
@@ -217,6 +218,9 @@ Implemented local-auth surface:
 - `/settings/security` gives Host administrators a tabbed security operations surface for sessions, provider diagnostics, audit review, and audit retention; long session and audit tables scroll inside their tabs, and sensitive auth actions open a contextual reauthentication dialog when needed;
 - `/login` authenticates existing Host users;
 - `/api/auth/bootstrap`, `/api/auth/login`, `/api/auth/logout`, and `/api/auth/status` own browser auth flow;
+- `/api/auth/accounts` lists or clears remembered accounts for the current browser;
+- `/api/auth/accounts/switch` creates a fresh active session for a remembered account;
+- `/api/auth/accounts/{userId}` removes one remembered account from the current browser;
 - `/api/auth/recovery` consumes setup or recovery tokens, resets local administrator credentials, revokes old sessions for that account, and creates a new browser session;
 - `/api/auth/reauth` refreshes a browser session's recent reauthentication timestamp with a password or recovery token;
 - `/api/auth/diagnostics` reports safe OIDC and trusted proxy configuration diagnostics for Host administrators;
@@ -344,6 +348,16 @@ work@example.com     -> host.user
 When a module is opened, the Host session selected for that module determines which `sub`, email, and Host role appear in the module identity token.
 
 Host does not link multiple external identities into a single person.
+
+Browser account switching remembers multiple Host users per browser through a server-side account set. The browser stores only an HttpOnly `docker_host_accounts` token. The Host stores only the token hash in `/data/auth/state.json` under `accountSets`, along with remembered user ids, timestamps, expiry, and revocation state. Raw session tokens and raw account-set tokens are not persisted in auth state.
+
+Successful local login, setup, recovery, development auto-login, and OIDC callback flows add the authenticated Host user to the current browser account set or create a new account set when none exists. Remembered account sets use the same 14-day absolute lifetime as browser sessions in the first implementation.
+
+The sidebar account menu loads remembered users from `/api/auth/accounts`, shows the active account first, and can switch to another remembered user. Switching validates the account-set cookie, verifies that the target user is still enabled and remembered in this browser, then creates a fresh active Host session. Switching does not set `reauthenticatedAt`, so sensitive administrator operations still require the existing recent reauthentication flow.
+
+`Log out current account` removes the active user from the browser account set and revokes the active session. `Log out all accounts` revokes the browser account set and the active session. Disabled users are omitted from switch targets and cannot be activated.
+
+Trusted proxy deployments remain outside the first account-switching scope because the upstream proxy owns browser identity selection.
 
 ## Scoped Module User Directory
 

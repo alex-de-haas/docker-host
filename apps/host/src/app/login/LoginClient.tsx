@@ -12,13 +12,16 @@ interface LoginClientProps {
     id: string;
     label: string;
   };
+  mode?: string;
+  redirectTo?: string;
 }
 
-export function LoginClient({ oidcProvider }: LoginClientProps) {
+export function LoginClient({ oidcProvider, mode, redirectTo }: LoginClientProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const addAccountMode = mode === 'add-account';
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,14 +34,17 @@ export function LoginClient({ oidcProvider }: LoginClientProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      const data = await response.json() as { error?: { message?: string } };
+      const data = await response.json() as {
+        error?: { message?: string };
+        user?: { role?: string };
+      };
 
       if (!response.ok) {
         setError(data.error?.message || 'Unable to sign in.');
         return;
       }
 
-      window.location.href = '/';
+      window.location.href = redirectTo || getDefaultPathForRole(data.user?.role);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to sign in.');
     } finally {
@@ -54,8 +60,12 @@ export function LoginClient({ oidcProvider }: LoginClientProps) {
             <Boxes className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold">Docker Host Manager</h1>
-            <p className="text-sm text-muted-foreground">Sign in to open Host tools and assigned apps</p>
+            <h1 className="text-xl font-semibold">
+              {addAccountMode ? 'Add another user' : 'Docker Host Manager'}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {addAccountMode ? 'Sign in with another Host account' : 'Sign in to open Host tools and assigned apps'}
+            </p>
           </div>
         </div>
 
@@ -66,7 +76,11 @@ export function LoginClient({ oidcProvider }: LoginClientProps) {
               variant="outline"
               className="w-full"
               onClick={() => {
-                window.location.href = '/api/auth/oidc/login';
+                const url = new URL('/api/auth/oidc/login', window.location.origin);
+                if (redirectTo) {
+                  url.searchParams.set('redirectTo', redirectTo);
+                }
+                window.location.href = url.toString();
               }}
             >
               <KeyRound className="h-4 w-4" />
@@ -113,4 +127,8 @@ export function LoginClient({ oidcProvider }: LoginClientProps) {
       </section>
     </main>
   );
+}
+
+function getDefaultPathForRole(role: string | undefined) {
+  return role === 'host.user' ? '/apps' : '/';
 }

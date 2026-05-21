@@ -4,10 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  addUserToBrowserAccountSet,
   authenticateCliToken,
   authenticatePassword,
   authenticateSessionToken,
   bootstrapFirstAdmin,
+  clearBrowserAccountSet,
   createCliTokenForAdmin,
   createDevAdminSession,
   createDevSession,
@@ -16,16 +18,19 @@ import {
   hasRecentSessionReauthentication,
   isDevAuthAutoLoginEnabled,
   listAuthSessions,
+  listBrowserAccounts,
   listCliTokens,
   reauthenticateSession,
   recoverHostAdmin,
+  removeBrowserAccount,
   revokeCliToken,
   revokeSession,
   revokeSessionById,
   rotateCliToken,
+  switchBrowserAccount,
 } from './auth-service.ts';
 import { listAuthAuditEvents } from './auth-audit.ts';
-import { readAuthStateSnapshot } from './auth-store.ts';
+import { readAuthStateSnapshot, writeAuthState } from './auth-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
 test('bootstraps the first admin with a setup token and creates a session', async () => {
@@ -189,6 +194,148 @@ test('authenticates and revokes password sessions', async () => {
   assert.equal(await authenticateSessionToken(login.sessionToken, undefined, config), null);
 });
 
+test('browser account sets remember users and switch with a fresh session', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const admin = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+  const regularUser = await addTestUser(config, {
+    id: 'user_regular',
+    email: 'user@example.test',
+    displayName: 'Regular User',
+    role: 'host.user',
+  });
+
+  const firstAccountSet = await addUserToBrowserAccountSet({
+    accountSetToken: null,
+    userId: admin.user.id,
+  }, { userAgent: 'Test Browser' }, config);
+  const secondAccountSet = await addUserToBrowserAccountSet({
+    accountSetToken: firstAccountSet.accountSetToken,
+    userId: regularUser.id,
+  }, { userAgent: 'Test Browser' }, config);
+
+  assert.equal(secondAccountSet.accountSetToken, firstAccountSet.accountSetToken);
+
+  const listed = await listBrowserAccounts(firstAccountSet.accountSetToken, admin.user, config);
+  assert.equal(listed.accounts.length, 2);
+  assert.equal(listed.accounts[0]?.id, admin.user.id);
+  assert.equal(listed.accounts[0]?.active, true);
+  assert.equal(listed.accounts[1]?.id, regularUser.id);
+
+  const switched = await switchBrowserAccount({
+    accountSetToken: firstAccountSet.accountSetToken,
+    userId: regularUser.id,
+  }, { userAgent: 'Test Browser' }, config);
+
+  assert.equal(switched.user.role, 'host.user');
+  assert.equal((await authenticateSessionToken(switched.sessionToken, undefined, config))?.id, regularUser.id);
+  assert.equal(await hasRecentSessionReauthentication(switched.session.id, config), false);
+
+  const afterSwitch = await listBrowserAccounts(firstAccountSet.accountSetToken, switched.user, config);
+  assert.equal(afterSwitch.accounts[0]?.id, regularUser.id);
+  assert.equal(afterSwitch.accounts[0]?.active, true);
+
+  const audit = await listAuthAuditEvents({ type: 'auth.account_set.switched' }, config);
+  assert.equal(audit.events.length, 1);
+});
+
+test('browser account sets exclude disabled users and refuse switching to them', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const admin = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+  const regularUser = await addTestUser(config, {
+    id: 'user_regular',
+    email: 'user@example.test',
+    displayName: 'Regular User',
+    role: 'host.user',
+  });
+  const accountSet = await addUserToBrowserAccountSet({
+    accountSetToken: null,
+    userId: admin.user.id,
+  }, undefined, config);
+  await addUserToBrowserAccountSet({
+    accountSetToken: accountSet.accountSetToken,
+    userId: regularUser.id,
+  }, undefined, config);
+
+  const state = await readAuthStateSnapshot(config);
+  await writeAuthState({
+    ...state,
+    users: state.users.map(user =>
+      user.id === regularUser.id ? { ...user, disabled: true } : user
+    ),
+  }, config);
+
+  const listed = await listBrowserAccounts(accountSet.accountSetToken, admin.user, config);
+  assert.equal(listed.accounts.some(account => account.id === regularUser.id), false);
+
+  await assert.rejects(
+    switchBrowserAccount({
+      accountSetToken: accountSet.accountSetToken,
+      userId: regularUser.id,
+    }, undefined, config),
+    /disabled or does not exist/
+  );
+});
+
+test('browser account removal and clear revoke active sessions', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const admin = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+  const regularUser = await addTestUser(config, {
+    id: 'user_regular',
+    email: 'user@example.test',
+    displayName: 'Regular User',
+    role: 'host.user',
+  });
+  const accountSet = await addUserToBrowserAccountSet({
+    accountSetToken: null,
+    userId: admin.user.id,
+  }, undefined, config);
+  await addUserToBrowserAccountSet({
+    accountSetToken: accountSet.accountSetToken,
+    userId: regularUser.id,
+  }, undefined, config);
+  const switched = await switchBrowserAccount({
+    accountSetToken: accountSet.accountSetToken,
+    userId: regularUser.id,
+  }, undefined, config);
+
+  const removed = await removeBrowserAccount({
+    accountSetToken: accountSet.accountSetToken,
+    userId: regularUser.id,
+    activeSessionToken: switched.sessionToken,
+  }, undefined, config);
+
+  assert.equal(removed.removed, true);
+  assert.equal(removed.activeSessionRevoked, true);
+  assert.equal(await authenticateSessionToken(switched.sessionToken, undefined, config), null);
+  assert.equal((await listBrowserAccounts(accountSet.accountSetToken, admin.user, config)).accounts.length, 1);
+
+  const cleared = await clearBrowserAccountSet({
+    accountSetToken: accountSet.accountSetToken,
+    activeSessionToken: admin.sessionToken,
+    actorUserId: admin.user.id,
+  }, undefined, config);
+
+  assert.equal(cleared.accountSetRevoked, true);
+  assert.equal(cleared.activeSessionRevoked, true);
+  assert.equal(await authenticateSessionToken(admin.sessionToken, undefined, config), null);
+  assert.equal((await listBrowserAccounts(accountSet.accountSetToken, admin.user, config)).accounts.length, 0);
+});
+
 test('throttles session activity writes for recently seen sessions', async () => {
   const config = await createTestConfig();
   const setup = await createSetupToken('first-admin', config);
@@ -339,6 +486,35 @@ test('creates, rotates, lists, and revokes CLI admin tokens', async () => {
   assert.equal(await revokeCliToken(rotated.tokenId, admin.user.id, config), true);
   assert.equal(await authenticateCliToken(rotated.token, undefined, config), null);
 });
+
+async function addTestUser(
+  config: HostRuntimeConfig,
+  input: {
+    id: string;
+    email: string;
+    displayName: string;
+    role: 'host.admin' | 'host.user';
+  }
+) {
+  const state = await readAuthStateSnapshot(config);
+  const now = new Date().toISOString();
+  const user = {
+    id: input.id,
+    email: input.email,
+    displayName: input.displayName,
+    role: input.role,
+    authProvider: 'local' as const,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await writeAuthState({
+    ...state,
+    users: [...state.users, user],
+  }, config);
+
+  return user;
+}
 
 async function createTestConfig(): Promise<HostRuntimeConfig> {
   const dataRootContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-host-auth-'));

@@ -1,10 +1,11 @@
 import {
   authExceptionResponse,
   assertSecureEnoughForCookies,
-  createSessionCookieResponse,
+  createSessionAndAccountSetCookieResponse,
+  getRequestAccountSetToken,
   getRequestMeta,
 } from '@/lib/auth-http';
-import { recoverHostAdmin } from '@/lib/auth-service';
+import { addUserToBrowserAccountSet, recoverHostAdmin } from '@/lib/auth-service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -25,12 +26,16 @@ export async function POST(request: Request) {
       password: input.password || '',
       displayName: input.displayName,
     }, getRequestMeta(request));
+    const accountSet = await addUserToBrowserAccountSet({
+      accountSetToken: getRequestAccountSetToken(request),
+      userId: result.user.id,
+    }, getRequestMeta(request));
 
-    return createSessionCookieResponse(request, {
+    return createSessionAndAccountSetCookieResponse(request, {
       authenticated: true,
       recovered: true,
       user: result.user,
-    }, result.sessionToken, 201);
+    }, result.sessionToken, accountSet.accountSetToken, 201);
   } catch (error) {
     return authExceptionResponse(error);
   }

@@ -1,10 +1,11 @@
 import {
   assertSecureEnoughForCookies,
   authExceptionResponse,
-  createSessionCookieResponse,
+  createSessionAndAccountSetCookieResponse,
+  getRequestAccountSetToken,
   getRequestMeta,
 } from '@/lib/auth-http';
-import { authenticatePassword } from '@/lib/auth-service';
+import { addUserToBrowserAccountSet, authenticatePassword } from '@/lib/auth-service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -17,11 +18,15 @@ export async function POST(request: Request) {
       email: readString(body, 'email'),
       password: readString(body, 'password'),
     }, getRequestMeta(request));
+    const accountSet = await addUserToBrowserAccountSet({
+      accountSetToken: getRequestAccountSetToken(request),
+      userId: result.user.id,
+    }, getRequestMeta(request));
 
-    return createSessionCookieResponse(request, {
+    return createSessionAndAccountSetCookieResponse(request, {
       user: result.user,
       authenticated: true,
-    }, result.sessionToken);
+    }, result.sessionToken, accountSet.accountSetToken);
   } catch (error) {
     return authExceptionResponse(error);
   }

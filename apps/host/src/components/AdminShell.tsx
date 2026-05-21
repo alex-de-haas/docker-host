@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { createContext, useContext, useState, useSyncExternalStore } from 'react';
+import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import {
   BarChart3,
   Boxes,
+  Check,
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
@@ -24,6 +25,7 @@ import {
   ShieldCheck,
   Settings,
   Users,
+  UserPlus,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -196,6 +198,18 @@ type NavigationSection = {
 
 type AppsState = ReturnType<typeof useHostApps>;
 
+type BrowserAccountSummary = HostPrincipal & {
+  authProvider?: string;
+  addedAt: string;
+  lastUsedAt: string;
+  active: boolean;
+};
+
+type BrowserAccountsResponse = {
+  activeUser: HostPrincipal | null;
+  accounts: BrowserAccountSummary[];
+};
+
 const navigationSections: NavigationSection[] = [
   {
     title: 'Host',
@@ -274,9 +288,88 @@ function AdminSidebar({
   const accountLabel = user.displayName || user.email || user.id;
   const accountDescription = user.email && user.email !== accountLabel ? user.email : user.role;
   const accountAvatarStyle = getAccountAvatarStyle(accountLabel);
+  const [accounts, setAccounts] = useState<BrowserAccountSummary[]>([]);
+  const [accountActionUserId, setAccountActionUserId] = useState<string | null>(null);
+  const search = searchParams.toString();
+  const currentPath = `${pathname}${search ? `?${search}` : ''}`;
 
-  async function handleLogout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAccounts() {
+      try {
+        const response = await fetch('/api/auth/accounts', { cache: 'no-store' });
+        if (!response.ok) {
+          return;
+        }
+        const data = await response.json() as BrowserAccountsResponse;
+        if (!cancelled) {
+          setAccounts(data.accounts);
+        }
+      } catch {
+        if (!cancelled) {
+          setAccounts([]);
+        }
+      }
+    }
+
+    void loadAccounts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user.id]);
+
+  const accountMenuItems = accounts.length > 0
+    ? accounts
+    : [{
+        ...user,
+        authProvider: undefined,
+        addedAt: '',
+        lastUsedAt: '',
+        active: true,
+      }];
+
+  async function handleSwitchAccount(userId: string) {
+    if (userId === user.id) {
+      return;
+    }
+
+    setAccountActionUserId(userId);
+    try {
+      const response = await fetch('/api/auth/accounts/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+      const data = await response.json() as { redirectTo?: string };
+      if (response.ok) {
+        window.location.href = data.redirectTo || '/';
+      }
+    } finally {
+      setAccountActionUserId(null);
+    }
+  }
+
+  function handleAddAccount() {
+    const url = new URL('/login', window.location.origin);
+    url.searchParams.set('mode', 'add-account');
+    url.searchParams.set('redirectTo', currentPath);
+    window.location.href = url.toString();
+  }
+
+  async function handleLogoutCurrent() {
+    const response = await fetch(`/api/auth/accounts/${encodeURIComponent(user.id)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    }
+    window.location.href = '/login';
+  }
+
+  async function handleLogoutAll() {
+    await fetch('/api/auth/accounts', { method: 'DELETE' });
     window.location.href = '/login';
   }
 
@@ -391,7 +484,7 @@ function AdminSidebar({
               )}
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent side="right" align="end" className="w-64">
+          <DropdownMenuContent side="right" align="end" className="w-72">
             <DropdownMenuLabel className="space-y-1">
               <span className="block truncate text-sm">{accountLabel}</span>
               {user.email && user.email !== accountLabel && (
@@ -400,15 +493,62 @@ function AdminSidebar({
               <Badge variant="outline">{user.role}</Badge>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            {accountMenuItems.map(account => {
+              const label = account.displayName || account.email || account.id;
+              const description = account.email && account.email !== label ? account.email : account.role;
+              return (
+                <DropdownMenuItem
+                  key={account.id}
+                  disabled={account.active || accountActionUserId === account.id}
+                  onSelect={event => {
+                    event.preventDefault();
+                    void handleSwitchAccount(account.id);
+                  }}
+                >
+                  <span
+                    className="flex size-8 shrink-0 items-center justify-center rounded-md text-xs font-semibold"
+                    style={getAccountAvatarStyle(label)}
+                  >
+                    {getAccountInitials(account)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{label}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{description}</span>
+                  </span>
+                  {account.active && <Check className="h-4 w-4" />}
+                </DropdownMenuItem>
+              );
+            })}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={event => {
+                event.preventDefault();
+                handleAddAccount();
+              }}
+            >
+              <UserPlus className="h-4 w-4" />
+              Add another user
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
               onSelect={event => {
                 event.preventDefault();
-                void handleLogout();
+                void handleLogoutCurrent();
               }}
             >
               <LogOut className="h-4 w-4" />
-              Log out
+              Log out current account
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={event => {
+                event.preventDefault();
+                void handleLogoutAll();
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+              Log out all accounts
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

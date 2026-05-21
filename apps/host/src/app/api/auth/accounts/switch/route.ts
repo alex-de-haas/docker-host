@@ -1,34 +1,37 @@
+import { NextResponse } from 'next/server';
 import {
   assertSecureEnoughForCookies,
   authExceptionResponse,
-  createSessionAndAccountSetCookieResponse,
+  createSessionCookieResponse,
   getRequestAccountSetToken,
   getRequestMeta,
+  requireHostPrincipal,
 } from '@/lib/auth-http';
-import { addUserToBrowserAccountSet, bootstrapFirstAdmin } from '@/lib/auth-service';
+import { switchBrowserAccount } from '@/lib/auth-service';
+import { getDefaultHostShellPath } from '@/lib/auth-policy';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
+  const auth = await requireHostPrincipal(request, 'apps.read');
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   try {
     assertSecureEnoughForCookies(request);
     const body = await readJson(request);
-    const result = await bootstrapFirstAdmin({
-      setupToken: readString(body, 'setupToken'),
-      email: readString(body, 'email'),
-      password: readString(body, 'password'),
-      displayName: readOptionalString(body, 'displayName'),
-    }, getRequestMeta(request));
-    const accountSet = await addUserToBrowserAccountSet({
+    const result = await switchBrowserAccount({
       accountSetToken: getRequestAccountSetToken(request),
-      userId: result.user.id,
+      userId: readString(body, 'userId'),
     }, getRequestMeta(request));
 
-    return createSessionAndAccountSetCookieResponse(request, {
+    return createSessionCookieResponse(request, {
+      authenticated: true,
       user: result.user,
-      setupComplete: true,
-    }, result.sessionToken, accountSet.accountSetToken, 201);
+      redirectTo: getDefaultHostShellPath(result.user),
+    }, result.sessionToken);
   } catch (error) {
     return authExceptionResponse(error);
   }
@@ -44,10 +47,6 @@ async function readJson(request: Request) {
 
 function readString(value: unknown, key: string) {
   return isObject(value) && typeof value[key] === 'string' ? value[key] : '';
-}
-
-function readOptionalString(value: unknown, key: string) {
-  return isObject(value) && typeof value[key] === 'string' ? value[key] : undefined;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

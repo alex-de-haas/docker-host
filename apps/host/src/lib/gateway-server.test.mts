@@ -67,7 +67,7 @@ test('gateway HTTP proxy injects signed identity and strips Host-owned request h
         headers: {
           Host: 'reports.example.test',
           Authorization: 'Bearer cli-token',
-          Cookie: 'docker_host_session=host-session; module_cookie=kept',
+          Cookie: 'docker_host_session=host-session; docker_host_accounts=account-set; module_cookie=kept',
           'Cf-Access-Jwt-Assertion': 'trusted-proxy-assertion',
           Forwarded: 'for=10.0.0.1;proto=https;host=evil.example.test',
           'X-Forwarded-For': '10.0.0.1',
@@ -211,7 +211,7 @@ test('gateway websocket proxy injects signed identity into upgrade handshake', a
           'Upgrade: websocket',
           'Sec-WebSocket-Version: 13',
           'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
-          'Cookie: docker_host_session=host-session; module_cookie=kept',
+          'Cookie: docker_host_session=host-session; docker_host_accounts=account-set; module_cookie=kept',
           'X-Repeat: one',
           'X-Repeat: two',
           'Forwarded: for=10.0.0.1;host=evil.example.test',

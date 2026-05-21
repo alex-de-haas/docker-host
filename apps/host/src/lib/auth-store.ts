@@ -37,6 +37,26 @@ export interface AuthSessionRecord {
   };
 }
 
+export interface AuthAccountSetUserRecord {
+  userId: string;
+  addedAt: string;
+  lastUsedAt: string;
+}
+
+export interface AuthAccountSetRecord {
+  id: string;
+  tokenHash: string;
+  users: AuthAccountSetUserRecord[];
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+  request?: {
+    origin?: string;
+    userAgent?: string;
+  };
+}
+
 export interface AuthSetupTokenRecord {
   id: string;
   tokenHash: string;
@@ -150,6 +170,7 @@ export interface AuthState {
   schemaVersion: string;
   users: AuthUserRecord[];
   sessions: AuthSessionRecord[];
+  accountSets: AuthAccountSetRecord[];
   setupTokens: AuthSetupTokenRecord[];
   cliTokens: AuthCliTokenRecord[];
   moduleServiceTokens: AuthModuleServiceTokenRecord[];
@@ -257,6 +278,7 @@ export function createEmptyAuthState(): AuthState {
     schemaVersion: AUTH_STORE_SCHEMA_VERSION,
     users: [],
     sessions: [],
+    accountSets: [],
     setupTokens: [],
     cliTokens: [],
     moduleServiceTokens: [],
@@ -372,6 +394,9 @@ function normalizeAuthState(parsed: unknown): AuthState {
     schemaVersion: AUTH_STORE_SCHEMA_VERSION,
     users: Array.isArray(parsed.users) ? parsed.users.filter(isAuthUserRecord) : [],
     sessions: Array.isArray(parsed.sessions) ? parsed.sessions.filter(isAuthSessionRecord) : [],
+    accountSets: Array.isArray(parsed.accountSets)
+      ? parsed.accountSets.filter(isAuthAccountSetRecord)
+      : [],
     setupTokens: Array.isArray(parsed.setupTokens)
       ? parsed.setupTokens.filter(isAuthSetupTokenRecord)
       : [],
@@ -427,6 +452,26 @@ function isAuthSessionRecord(value: unknown): value is AuthSessionRecord {
     typeof value.idleExpiresAt === 'string' &&
     typeof value.absoluteExpiresAt === 'string' &&
     (value.reauthenticatedAt === undefined || typeof value.reauthenticatedAt === 'string') &&
+    (value.request === undefined || isAuthRequestMeta(value.request));
+}
+
+function isAuthAccountSetUserRecord(value: unknown): value is AuthAccountSetUserRecord {
+  return isObject(value) &&
+    typeof value.userId === 'string' &&
+    typeof value.addedAt === 'string' &&
+    typeof value.lastUsedAt === 'string';
+}
+
+function isAuthAccountSetRecord(value: unknown): value is AuthAccountSetRecord {
+  return isObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.tokenHash === 'string' &&
+    Array.isArray(value.users) &&
+    value.users.every(isAuthAccountSetUserRecord) &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string' &&
+    typeof value.expiresAt === 'string' &&
+    (value.revokedAt === undefined || typeof value.revokedAt === 'string') &&
     (value.request === undefined || isAuthRequestMeta(value.request));
 }
 
