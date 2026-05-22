@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { Boxes, KeyRound, LoaderCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +32,7 @@ interface InvitationAcceptResponse {
 }
 
 export function InviteSetupClient({ initialSetupToken = '' }: { initialSetupToken?: string }) {
+  const router = useRouter();
   const [setupToken, setSetupToken] = useState(initialSetupToken);
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
   const [displayName, setDisplayName] = useState('');
@@ -99,7 +101,7 @@ export function InviteSetupClient({ initialSetupToken = '' }: { initialSetupToke
         return;
       }
 
-      window.location.href = data?.redirectTo || '/apps';
+      router.push(data?.redirectTo || '/apps');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to accept invitation.');
     } finally {

@@ -150,7 +150,10 @@ export function UserManagementClient() {
       user.role.toLowerCase().includes(query)
     );
   }, [search, users]);
-  const pendingInvitations = invitations.filter(invitation => invitation.status === 'pending');
+  const pendingInvitations = useMemo(
+    () => invitations.filter(invitation => invitation.status === 'pending'),
+    [invitations]
+  );
 
   useEffect(() => {
     void loadState();
@@ -810,7 +813,10 @@ function formatDateTime(value: string | undefined) {
     return value;
   }
 
-  return date.toLocaleString();
+  return date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 }
 
 async function readJson<T>(response: Response): Promise<T | null> {

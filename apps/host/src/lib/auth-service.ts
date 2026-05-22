@@ -2461,8 +2461,9 @@ function summarizeHostUser(user: AuthUserRecord, state: AuthState, now: Date): H
   );
   const lastSeenAt = state.sessions
     .filter(session => session.userId === user.id)
-    .map(session => session.lastSeenAt)
-    .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+    .reduce<string | undefined>((latest, session) => {
+      return !latest || session.lastSeenAt > latest ? session.lastSeenAt : latest;
+    }, undefined);
 
   return {
     ...toPrincipal(user),
