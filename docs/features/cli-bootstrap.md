@@ -55,6 +55,8 @@ docker-host auth token rotate [token-id] [--label <label>]
 
 `auth token import` stores an existing raw CLI admin token locally under `~/.docker-host/config/auth.json`, or under `DOCKER_HOST_HOME/config/auth.json` when that test/development override is set. The token file is restricted to the current user on Unix-like platforms. `DOCKER_HOST_CLI_TOKEN` can override the stored token for automation without writing local credential material.
 
+Administrators can generate the first raw CLI token from Docker Host Web UI under Settings -> Security -> CLI access. The Web UI shows the raw token and an import command once; after that, the Host keeps only the hashed token record.
+
 `auth token list`, `create`, `revoke`, and `rotate` call the Host API with the locally stored token as `Authorization: Bearer`. `create` and `rotate` store the returned raw token locally and do not print it back to the terminal.
 
 ## Launch configuration

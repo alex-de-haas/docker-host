@@ -189,6 +189,7 @@ The operational CLI token lifecycle includes:
 - CLI token records remain user-scoped. A token only works while its owning Host user is enabled and remains `host.admin`.
 - The CLI stores the active token in `~/.docker-host/config/auth.json` with restrictive file permissions on Unix-like platforms.
 - `DOCKER_HOST_CLI_TOKEN` can provide an ephemeral token override for automation.
+- The Security settings page can generate a one-time visible CLI token for the current administrator and show the matching `docker-host auth token import` command.
 - Host API-backed CLI commands send the token as `Authorization: Bearer`.
 - CLI token create, revoke, rotate, session revocation, and audit purge operations require recent browser reauthentication when called with a browser session.
 
