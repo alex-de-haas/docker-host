@@ -362,6 +362,18 @@ The sidebar account menu loads remembered users from `/api/auth/accounts`, shows
 
 Gateway and embedded-app proxying strip the active session cookie and the account-set cookie before forwarding traffic to modules. Trusted proxy deployments do not use local browser account switching because the upstream proxy owns browser identity selection.
 
+## User Management
+
+Detailed User Management behavior is documented in [User Management](user-management.md).
+
+Host administrators can manage users from `/settings/users`. The page lists Host users, creates local invitation links, revokes pending invitations, changes local user roles, disables users, and replaces module assignments.
+
+Invitations are one-time setup-token style links for local-password users. The raw token is returned only once and only its hash is stored in `/data/auth/state.json`. Invitation tokens carry the invited role, email, optional display name, expiry, creator user id, and initial module assignments. The recipient accepts the invitation at `/setup/invite?setupToken=...`.
+
+User deletion is soft-disable. Disabling a user revokes active sessions, removes remembered browser account entries, revokes CLI tokens, and removes module assignments. Docker Host prevents disabling or demoting the last active administrator and blocks self-disable from User Management.
+
+OIDC and trusted-proxy users can be disabled and assigned to modules after they are provisioned, but their roles remain provider-managed because the next external-provider login can recalculate the stored role from provider mappings.
+
 ## Scoped Module User Directory
 
 Modules may need a list of users to assign internal permissions. They should not receive the full Host user directory by default.

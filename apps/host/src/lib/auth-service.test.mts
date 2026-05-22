@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   addUserToBrowserAccountSet,
   addUsersToBrowserAccountSet,
+  acceptUserInvitation,
   authenticateCliToken,
   authenticatePassword,
   authenticateSessionToken,
@@ -15,7 +16,10 @@ import {
   createCliTokenForAdmin,
   createDevAdminSession,
   createDevSession,
+  createSessionForUser,
   createSetupToken,
+  createUserInvitation,
+  disableHostUser,
   getAuthStatus,
   hasRecentSessionReauthentication,
   isDevAuthAutoLoginEnabled,
@@ -23,15 +27,21 @@ import {
   listAuthSessions,
   listBrowserAccounts,
   listCliTokens,
+  listHostUsers,
+  listUserInvitations,
   prepareDevBrowserAccountUsers,
+  previewUserInvitation,
   reauthenticateSession,
   recoverHostAdmin,
   removeBrowserAccount,
+  replaceHostUserModuleAssignments,
+  revokeUserInvitation,
   revokeCliToken,
   revokeSession,
   revokeSessionById,
   rotateCliToken,
   switchBrowserAccount,
+  updateHostUser,
 } from './auth-service.ts';
 import { listAuthAuditEvents } from './auth-audit.ts';
 import { readAuthStateSnapshot, writeAuthState } from './auth-store.ts';
@@ -622,6 +632,168 @@ test('creates, rotates, lists, and revokes CLI admin tokens', async () => {
 
   assert.equal(await revokeCliToken(rotated.tokenId, admin.user.id, config), true);
   assert.equal(await authenticateCliToken(rotated.token, undefined, config), null);
+});
+
+test('creates and accepts a role-scoped user invitation with assignments', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const admin = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+
+  const created = await createUserInvitation({
+    email: 'Invited@Example.Test',
+    displayName: 'Invited User',
+    role: 'host.user',
+    assignedModuleIds: ['com.example.reports', 'com.example.reports', 'com.example.media'],
+  }, admin.user.id, undefined, config);
+
+  assert.equal(created.invitation.email, 'invited@example.test');
+  assert.equal(created.invitation.role, 'host.user');
+  assert.deepEqual(created.invitation.assignedModuleIds, ['com.example.media', 'com.example.reports']);
+
+  const stateAfterCreate = await readAuthStateSnapshot(config);
+  assert.equal(JSON.stringify(stateAfterCreate).includes(created.token), false);
+
+  const preview = await previewUserInvitation(created.token, config);
+  assert.equal(preview.email, 'invited@example.test');
+  assert.equal(preview.role, 'host.user');
+
+  const accepted = await acceptUserInvitation({
+    setupToken: created.token,
+    email: 'invited@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+
+  assert.equal(accepted.user.email, 'invited@example.test');
+  assert.equal(accepted.user.role, 'host.user');
+  assert.equal((await authenticateSessionToken(accepted.sessionToken, undefined, config))?.id, accepted.user.id);
+
+  const stateAfterAccept = await readAuthStateSnapshot(config);
+  assert.equal(stateAfterAccept.setupTokens.find(token => token.id === created.invitation.id)?.usedAt !== undefined, true);
+  assert.deepEqual(
+    stateAfterAccept.moduleAssignments
+      .filter(assignment => assignment.userId === accepted.user.id)
+      .map(assignment => assignment.moduleId)
+      .sort(),
+    ['com.example.media', 'com.example.reports']
+  );
+
+  const users = await listHostUsers(config);
+  assert.deepEqual(
+    users.find(user => user.id === accepted.user.id)?.assignedModuleIds,
+    ['com.example.media', 'com.example.reports']
+  );
+
+  const invitations = await listUserInvitations(config);
+  assert.equal(invitations.find(invitation => invitation.id === created.invitation.id)?.status, 'used');
+
+  await assert.rejects(
+    acceptUserInvitation({
+      setupToken: created.token,
+      email: 'invited@example.test',
+      password: 'correct horse battery staple',
+    }, undefined, config),
+    (error: unknown) => error instanceof AuthServiceError && error.code === 'invalid_invitation_token'
+  );
+});
+
+test('user management blocks duplicate active invitations and supports revocation', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const admin = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+
+  const created = await createUserInvitation({
+    email: 'user@example.test',
+    role: 'host.user',
+  }, admin.user.id, undefined, config);
+
+  await assert.rejects(
+    createUserInvitation({
+      email: 'user@example.test',
+      role: 'host.user',
+    }, admin.user.id, undefined, config),
+    (error: unknown) => error instanceof AuthServiceError && error.code === 'invitation_exists'
+  );
+
+  assert.equal(await previewUserInvitation(created.token, config).then(() => true), true);
+  assert.equal(await revokeUserInvitation(created.invitation.id, admin.user.id, undefined, config), true);
+
+  await assert.rejects(
+    previewUserInvitation(created.token, config),
+    (error: unknown) => error instanceof AuthServiceError && error.code === 'invalid_invitation_token'
+  );
+});
+
+test('role changes and disable operations preserve at least one admin and clean access state', async () => {
+  const config = await createTestConfig();
+  const setup = await createSetupToken('first-admin', config);
+  const admin = await bootstrapFirstAdmin({
+    setupToken: setup.token,
+    email: 'admin@example.test',
+    password: 'correct horse battery staple',
+  }, undefined, config);
+
+  await assert.rejects(
+    updateHostUser({
+      userId: admin.user.id,
+      role: 'host.user',
+    }, admin.user.id, undefined, config),
+    (error: unknown) => error instanceof AuthServiceError && error.code === 'last_admin'
+  );
+
+  await assert.rejects(
+    disableHostUser(admin.user.id, 'another_admin', undefined, config),
+    (error: unknown) => error instanceof AuthServiceError && error.code === 'last_admin'
+  );
+
+  const secondAdmin = await addTestUser(config, {
+    id: 'user_second_admin',
+    email: 'second@example.test',
+    displayName: 'Second Admin',
+    role: 'host.admin',
+  });
+  const secondAdminSession = await createSessionForUser(secondAdmin.id, 'auth.test.session.created', undefined, config);
+  const secondAdminToken = await createCliTokenForAdmin(secondAdmin.id, 'Second Admin CLI', config);
+  const accountSet = await addUsersToBrowserAccountSet({
+    accountSetToken: null,
+    userIds: [admin.user.id, secondAdmin.id],
+  }, undefined, config);
+  await replaceHostUserModuleAssignments(
+    secondAdmin.id,
+    ['com.example.reports'],
+    admin.user.id,
+    undefined,
+    config
+  );
+
+  const demoted = await updateHostUser({
+    userId: secondAdmin.id,
+    role: 'host.user',
+  }, admin.user.id, undefined, config);
+  assert.equal(demoted.role, 'host.user');
+  assert.equal(await authenticateSessionToken(secondAdminSession.sessionToken, undefined, config), null);
+  assert.equal(await authenticateCliToken(secondAdminToken.token, undefined, config), null);
+
+  const regularSession = await createSessionForUser(secondAdmin.id, 'auth.test.session.created', undefined, config);
+  await disableHostUser(secondAdmin.id, admin.user.id, undefined, config);
+  assert.equal(await authenticateSessionToken(regularSession.sessionToken, undefined, config), null);
+
+  const state = await readAuthStateSnapshot(config);
+  assert.equal(state.users.find(user => user.id === secondAdmin.id)?.disabled, true);
+  assert.equal(state.moduleAssignments.some(assignment => assignment.userId === secondAdmin.id), false);
+  assert.equal(
+    (await listBrowserAccounts(accountSet.accountSetToken, admin.user, config))
+      .accounts
+      .some(account => account.id === secondAdmin.id),
+    false
+  );
 });
 
 async function addTestUser(
