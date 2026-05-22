@@ -1,8 +1,8 @@
 # Docker Host API
 
-Этот документ описывает API surface для Docker Host. Это human-readable endpoint catalog для согласования backend, Web UI и CLI module commands.
+This document describes the Docker Host API surface. It is the human-readable endpoint catalog used to coordinate the backend, Web UI, and CLI module commands.
 
-Host API реализуется внутри full-stack Next.js Host application. Web UI вызывает этот API напрямую. `docker-host` CLI использует этот же API только для module commands; lifecycle самого Host container CLI выполняет через Docker daemon.
+The Host API is implemented inside the full-stack Next.js Host application. The Web UI calls this API directly. The `docker-host` CLI uses the same API only for module commands; CLI lifecycle commands for the Host container itself run through Docker daemon.
 
 ## Principles
 

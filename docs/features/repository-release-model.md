@@ -1,21 +1,21 @@
 # Repository and release model
 
-Этот документ фиксирует решение хранить Docker Host, Web UI, backend API и `docker-host` CLI в одном repository, но собирать и публиковать их как независимые release artifacts.
+This document records the decision to keep Docker Host, the Web UI, the backend API, and the `docker-host` CLI in one repository while building and publishing them as independent release artifacts.
 
-## Решение
+## Decision
 
-Docker Host должен использовать monorepo:
+Docker Host uses a monorepo:
 
-- Host Web UI и backend API остаются частью одного Host application;
-- Host Docker image публикуется как отдельный container artifact;
+- the Host Web UI and backend API remain part of one Host application;
+- the Host Docker image is published as a separate container artifact;
 - repository-local demo modules can publish their own container artifacts;
-- `docker-host` CLI публикуется как отдельный standalone executable artifact;
-- общий API-контракт между Host backend API, Web UI и CLI описывается в документации repository;
-- GitHub Actions разделяются по artifact type и запускаются только для затронутых частей.
+- the `docker-host` CLI is published as a separate standalone executable artifact;
+- the shared API contract between the Host backend API, Web UI, and CLI is documented in this repository;
+- GitHub Actions are split by artifact type and run only for affected areas.
 
-Такой подход сохраняет синхронизацию между CLI и Host API, но не заставляет пересобирать Host image при каждом изменении CLI.
+This approach keeps the CLI and Host API synchronized without rebuilding the Host image for every CLI-only change.
 
-## Предлагаемая структура
+## Proposed structure
 
 ```text
 apps/
@@ -47,7 +47,7 @@ docs/
 
 Repository physically follows this skeleton: the Host app lives in `apps/host`, the CLI lives in `apps/cli`, repository-local modules live in `modules`, and the Host API contract is documented in `docs/features/host-api.md`.
 
-Host API contract между Web UI, Host backend API и CLI определен в `docs/features/host-api.md`. Отдельный package contract, generated OpenAPI artifact и generated clients не входят в repository contract.
+The Host API contract between the Web UI, Host backend API, and CLI is defined in `docs/features/host-api.md`. A separate contracts package, generated OpenAPI artifact, and generated clients are not part of the repository contract.
 
 ## Component boundaries
 
@@ -64,17 +64,17 @@ flowchart LR
   A --> H["CLI release artifacts"]
 ```
 
-Host backend API остается единственным владельцем module management logic. Web UI вызывает этот API напрямую. CLI вызывает этот же API для module commands и работает напрямую с Docker daemon только для lifecycle самого Host container: install, start, stop, restart, update, status и logs.
+The Host backend API remains the only owner of module-management logic. The Web UI calls this API directly. The CLI calls the same API for module commands and works directly with Docker daemon only for the Host container lifecycle: install, start, stop, restart, update, status, and logs.
 
 ## GitHub Actions model
 
-Сборки должны быть независимыми:
+Builds must be independent:
 
-- `ci.yml` - общие проверки на pull request и push;
-- `host-image.yml` - build/push Host Docker image;
-- `demo-module-image.yml` - build/push Demo Module Docker image to GitHub Container Registry;
-- `cli-release.yml` - build/publish standalone CLI artifacts;
-- опционально `docs.yml` - проверки документации.
+- `ci.yml` - shared checks on pull requests and pushes;
+- `host-image.yml` - build and push the Host Docker image;
+- `demo-module-image.yml` - build and push the Demo Module Docker image to GitHub Container Registry;
+- `cli-release.yml` - build and publish standalone CLI artifacts;
+- optional `docs.yml` - documentation checks.
 
 Recommended path filters:
 
@@ -104,7 +104,7 @@ Docs-only changes:
   README.md
 ```
 
-Если изменился только CLI, Host image не должен публиковаться. Если изменился только Host UI без изменения API-контракта, CLI artifacts не должны публиковаться. Если изменился `docs/features/host-api.md`, CI должен проверить и Host, и CLI.
+If only the CLI changes, the Host image should not be published. If only the Host UI changes without changing the API contract, CLI artifacts should not be published. If `docs/features/host-api.md` changes, CI should validate both Host and CLI.
 
 Common CI runs Host lint, Host unit tests, Host production build, CLI build, and the CLI xUnit test suite. The root `npm run ci` script mirrors that sequence for local validation.
 
@@ -183,7 +183,7 @@ This manual checklist is the release gate for published artifacts.
 
 ## Versioning
 
-CLI и Host image могут иметь независимые версии:
+The CLI and Host image can have independent versions:
 
 ```text
 host-v0.3.0
@@ -192,22 +192,22 @@ cli-v0.2.1
 
 During early development, `cli-dev` is the main CLI distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions.
 
-При изменении API-контракта нужно явно проверить совместимость:
+When the API contract changes, compatibility must be checked explicitly:
 
-- старый CLI с новым Host API;
-- новый CLI со старым Host API, если поддерживается upgrade path;
-- version negotiation или понятная ошибка, если версии несовместимы.
+- old CLI with the new Host API;
+- new CLI with the old Host API, if that upgrade path is supported;
+- version negotiation or a clear error when versions are incompatible.
 
-Для базового этапа достаточно, чтобы CLI отправлял свой version и ожидаемую contract version в запросах к Host API, а Host возвращал понятную ошибку при несовместимости.
+For the initial stage, it is enough for the CLI to send its own version and expected contract version in Host API requests, while the Host returns a clear error on incompatibility.
 
 ## Why not separate repositories
 
 Separate repositories are not part of the current architecture because they create more problems than value:
 
-- сложнее менять API-контракт атомарно;
-- сложнее гарантировать совместимость CLI и Host API;
-- сложнее делать pull request, который одновременно меняет backend endpoint и CLI command;
-- сложнее синхронизировать release notes и install script;
-- выше риск, что CLI начнет дублировать business logic Host backend.
+- changing the API contract atomically is harder;
+- guaranteeing CLI and Host API compatibility is harder;
+- making one pull request that changes both a backend endpoint and a CLI command is harder;
+- keeping release notes and the install script synchronized is harder;
+- the risk that the CLI starts duplicating Host backend business logic is higher.
 
-Monorepo лучше соответствует текущей архитектуре: один продукт, несколько independently built artifacts.
+The monorepo better matches the current architecture: one product with several independently built artifacts.

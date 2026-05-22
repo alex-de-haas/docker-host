@@ -39,9 +39,15 @@ Administrators can:
 
 External-provider users from OIDC or trusted-proxy login can be listed, disabled, and assigned to modules, but their roles are provider-managed.
 
+User Management does not add a separate permissions store. It reuses the Host auth state in `/data/auth/state.json`: users are `AuthUserRecord` entries, invitations are setup-token records with `purpose: "invite"`, and app/module access is stored in `AuthState.moduleAssignments`.
+
+`host.users.manage` is the authorization action for the feature. In the current two-role model, `host.admin` satisfies this action; it is not a separate RBAC role.
+
 ## Invitation Flow
 
 Invitations are local-password users only in the current implementation.
+
+An invitation requires an email address. Docker Host rejects invitation creation when an enabled or disabled user already has that email, or when another active invitation for the same email is still pending. The administrator can provide an optional display name, target role, initial module assignments, and an expiry of 15 minutes, 24 hours, or 7 days. The 24-hour option is the default. Docker Host does not send email in this version; the administrator copies and delivers the generated URL.
 
 The administrator generates a URL like:
 
@@ -60,6 +66,10 @@ The recipient opens the URL, confirms the token, sets a password, and creates th
 
 The raw setup token is returned only once to the administrator and is never stored in auth state.
 
+Docker Host does not create users directly from User Management in this version. New local-password users are invite-first so the recipient sets their own password. Password-reset invites can reuse the same token mechanics later, but they are not part of this feature.
+
+Invitations do not pre-provision OIDC or trusted-proxy identities. External users are created or updated when they authenticate through their provider, then administrators can disable them or assign app access after first login.
+
 ## Safety Rules
 
 User deletion is implemented as soft-disable. Disabled users remain in auth history but cannot authenticate.
@@ -75,6 +85,10 @@ Docker Host prevents disabling or demoting the last active administrator. Admini
 
 Changing a local user's role revokes that user's active sessions. When a user is changed away from `host.admin`, their CLI tokens are revoked because CLI tokens are admin-only credentials.
 
+Provider-managed roles are read-only in User Management. OIDC and trusted-proxy login can overwrite stored roles from provider mappings, so external role changes belong to the provider configuration instead of this page.
+
+Every user, invitation, role, disable, and assignment mutation appends an auth audit event with actor, target, result, and relevant mutation details.
+
 ## App Access
 
 User Management uses the existing module assignment model.
@@ -85,6 +99,8 @@ For ordinary users, an installed app is visible when:
 - the app has assignments and the current user is assigned.
 
 Administrators can see all Host apps. Module directory responses still include only explicitly assigned, enabled users.
+
+Invitation assignments are stored on the invitation and applied only when the invite is accepted, because the target user id does not exist before acceptance.
 
 ## API Summary
 
@@ -101,3 +117,5 @@ The UI uses the Host auth API:
 - `PUT /api/auth/users/{userId}/assignments` replaces module assignments for the user.
 
 All administrator mutation endpoints require `host.users.manage`, same-origin CSRF checks for browser sessions, and recent reauthentication.
+
+Common business errors include duplicate email, active invitation already exists, invalid or expired invitation token, weak password, provider-managed role, last active administrator protection, self-disable protection, and disabled or missing user.

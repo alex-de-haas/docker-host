@@ -1,12 +1,12 @@
 # CLI module commands
 
-Этот документ описывает `docker-host modules ...` commands как terminal-first интерфейс поверх существующего Host backend API.
+This document describes `docker-host modules ...` commands as a terminal-first interface on top of the existing Host backend API.
 
 ## Description
 
-CLI module commands нужны для headless, server-side и scripted сценариев, где администратор не хочет или не может пользоваться Web UI. Это не отдельный runtime управления модулями. `docker-host` CLI должен оставаться тонким клиентом к Host API: он получает планы, показывает их в терминале, собирает administrator input и отправляет подтвержденные requests.
+CLI module commands support headless, server-side, and scripted scenarios where an administrator does not want to or cannot use the Web UI. They are not a separate module-management runtime. The `docker-host` CLI must remain a thin Host API client: it receives plans, renders them in the terminal, collects administrator input, and submits confirmed requests.
 
-Бизнес-логика установки, обновления, dependency resolution, Docker conflict checks, storage mappings, secret handling, module state, retry и cleanup остаются в Host backend.
+The business logic for installation, update, dependency resolution, Docker conflict checks, storage mappings, secret handling, module state, retry, and cleanup remains in the Host backend.
 
 ```mermaid
 flowchart LR
