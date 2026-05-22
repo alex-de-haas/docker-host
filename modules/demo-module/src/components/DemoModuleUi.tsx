@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { StorageInspection } from "@/lib/demo-config";
-import type { DemoPerson } from "@/lib/demo-data";
+import type { ModuleDirectoryUser } from "@/lib/host-auth";
 
 export type DetailItem = {
   label: string;
@@ -203,22 +203,24 @@ export function StateBadge({
   );
 }
 
-export function PeopleList({ people }: { people: DemoPerson[] }) {
+export function PeopleList({ users }: { users: ModuleDirectoryUser[] }) {
   return (
     <div className="grid gap-1">
-      {people.map(person => (
+      {users.map(user => (
         <div
           className="flex min-h-14 items-center justify-between gap-3 border-b py-3 last:border-b-0"
-          key={person.id}
+          key={user.id}
         >
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{person.name}</div>
+            <div className="truncate text-sm font-medium">
+              {user.displayName || user.email || user.id}
+            </div>
             <div className="truncate text-sm text-muted-foreground">
-              {person.role}
+              {user.email || user.id}
             </div>
           </div>
-          <StateBadge tone={personStatusTone(person.status)}>
-            {person.status}
+          <StateBadge tone={user.hostRole === "host.admin" ? "success" : "neutral"}>
+            {formatHostRole(user.hostRole)}
           </StateBadge>
         </div>
       ))}
@@ -261,10 +263,13 @@ export function StorageGrid({ storage }: { storage: StorageInspection[] }) {
   );
 }
 
-function personStatusTone(status: DemoPerson["status"]): StateTone {
-  if (status === "active") {
-    return "success";
+function formatHostRole(role: string) {
+  switch (role) {
+    case "host.admin":
+      return "Host admin";
+    case "host.user":
+      return "Host user";
+    default:
+      return role;
   }
-
-  return status === "invited" ? "warning" : "danger";
 }

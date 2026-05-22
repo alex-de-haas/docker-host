@@ -16,7 +16,7 @@ public sealed class ModulesCommandTests
         var setting = new InstallPlanSettingPrompt
         {
             ModuleId = "com.haas.demo-module",
-            Key = "DEMO_PEOPLE_JSON",
+            Key = "SAMPLE_JSON",
             Type = "string",
             Required = false,
             Default = defaultJson.RootElement.Clone(),

@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
-import { getDemoPeople } from "@/lib/demo-data";
+import { getModuleDirectorySnapshot } from "@/lib/host-auth";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-export function GET() {
+export async function GET() {
+  const directory = await getModuleDirectorySnapshot();
+
   return NextResponse.json({
-    people: getDemoPeople(),
+    people: directory.users,
+    directory,
+  }, {
+    headers: {
+      "Cache-Control": "no-store",
+    },
   });
 }

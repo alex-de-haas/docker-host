@@ -194,7 +194,7 @@ async function getModuleIdentitySnapshot(headersList: HeaderReader): Promise<Mod
   }
 }
 
-async function getModuleDirectorySnapshot(): Promise<ModuleDirectorySnapshot> {
+export async function getModuleDirectorySnapshot(): Promise<ModuleDirectorySnapshot> {
   const config = getDemoConfig();
   const endpoint = buildDirectoryEndpoint(config.host.internalOrigin, config.host.moduleId);
   const serviceToken = process.env.DOCKER_HOST_MODULE_SERVICE_TOKEN;

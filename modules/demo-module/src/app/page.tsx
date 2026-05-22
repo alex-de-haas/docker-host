@@ -33,7 +33,6 @@ import {
   StatusLabel,
 } from "@/components/ui/status";
 import { getDemoConfig, inspectStorage, moduleStartedAt } from "@/lib/demo-config";
-import { getDemoPeople } from "@/lib/demo-data";
 import { getDemoAuthSnapshot } from "@/lib/host-auth";
 import type { ModuleDirectoryStatus, ModuleIdentityStatus } from "@/lib/host-auth";
 
@@ -41,7 +40,6 @@ export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const config = getDemoConfig();
-  const people = getDemoPeople();
   const storage = await inspectStorage();
   const auth = await getDemoAuthSnapshot(await headers());
 
@@ -70,8 +68,8 @@ export default async function Home() {
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
             <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-              A compact module that exposes runtime config, storage probes, sample
-              people data, and health endpoints for Docker Host development.
+              A compact module that exposes runtime config, storage probes, assigned
+              Host directory data, and health endpoints for Docker Host development.
             </p>
           </CardContent>
         </Card>
@@ -131,7 +129,13 @@ export default async function Home() {
         </SectionCard>
 
         <SectionCard title="People" action={<JsonButton href="/api/people" />}>
-          <PeopleList people={people} />
+          {auth.directory.users.length > 0 ? (
+            <PeopleList users={auth.directory.users} />
+          ) : (
+            <p className="text-sm leading-6 text-muted-foreground">
+              {auth.directory.error?.message || "No assigned Host users were returned."}
+            </p>
+          )}
         </SectionCard>
       </section>
 
@@ -196,24 +200,7 @@ export default async function Home() {
               ]}
             />
             {auth.directory.users.length > 0 ? (
-              <div className="grid gap-1">
-                {auth.directory.users.map(user => (
-                  <div
-                    className="flex min-h-14 items-center justify-between gap-3 border-b py-3 last:border-b-0"
-                    key={user.id}
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">
-                        {user.displayName || user.email || user.id}
-                      </div>
-                      <div className="truncate text-sm text-muted-foreground">
-                        {user.email || user.id}
-                      </div>
-                    </div>
-                    <StateBadge tone="success">{user.hostRole}</StateBadge>
-                  </div>
-                ))}
-              </div>
+              <PeopleList users={auth.directory.users} />
             ) : (
               <p className="text-sm leading-6 text-muted-foreground">
                 {auth.directory.error?.message || "No assigned Host users were returned."}

@@ -105,19 +105,6 @@
           "name": "DEMO_PUBLIC_URL"
         }
       ]
-    },
-    {
-      "key": "DEMO_PEOPLE_JSON",
-      "type": "string",
-      "required": false,
-      "default": "[{\"id\":\"ada\",\"name\":\"Ada Lovelace\",\"role\":\"Module admin\",\"status\":\"active\"},{\"id\":\"grace\",\"name\":\"Grace Hopper\",\"role\":\"Runtime tester\",\"status\":\"active\"},{\"id\":\"katherine\",\"name\":\"Katherine Johnson\",\"role\":\"Release reviewer\",\"status\":\"invited\"}]",
-      "targets": [
-        {
-          "container": "app",
-          "type": "env",
-          "name": "DEMO_PEOPLE_JSON"
-        }
-      ]
     }
   ],
   "storage": {

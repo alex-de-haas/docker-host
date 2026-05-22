@@ -11,6 +11,7 @@ Demo Module is a small Next.js application used to validate Docker Host module o
 - provider-neutral external ingress readiness checks;
 - shell app discovery metadata with stable overview, people, and settings routes;
 - scoped module directory access through the module service token;
+- assigned Host user rendering from the scoped module directory;
 - module-owned permission mapping from Host identity claims;
 - health-check and inspection endpoints for Host features.
 
@@ -63,7 +64,7 @@ Useful endpoints:
 - `/settings` - stable runtime settings page for shell app navigation;
 - `/api/health` - health and storage probe;
 - `/api/config` - sanitized runtime config;
-- `/api/people` - sample people payload;
+- `/api/people` - assigned Host users from the scoped module directory;
 - `/api/auth/identity` - Host identity, gateway header, module directory, and module-owned permission diagnostics.
 
 ## Auth gateway testing

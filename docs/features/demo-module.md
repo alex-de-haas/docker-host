@@ -4,7 +4,7 @@
 
 Demo Module is a repository-local Docker Host module under `modules/demo-module`. It is a small Next.js application that gives Docker Host a stable target for validating module operations during development.
 
-The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, sample people data, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The UI uses the same Tailwind v4, shadcn `new-york` component style, semantic theme tokens, and lucide icon library as the Host app so embedded module screens keep the Host visual language. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
+The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, assigned Host user data from the scoped module directory, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The UI uses the same Tailwind v4, shadcn `new-york` component style, semantic theme tokens, and lucide icon library as the Host app so embedded module screens keep the Host visual language. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
 
 ```mermaid
 flowchart LR
@@ -36,7 +36,7 @@ flowchart LR
 - `modules/demo-module/src/components/ui/*` - local shadcn UI primitives mirrored from the Host app where needed.
 - `modules/demo-module/src/app/api/health/route.ts` - health and writable-storage probe.
 - `modules/demo-module/src/app/api/config/route.ts` - sanitized runtime configuration.
-- `modules/demo-module/src/app/api/people/route.ts` - sample people payload.
+- `modules/demo-module/src/app/api/people/route.ts` - assigned Host users from the scoped module directory.
 - `modules/demo-module/src/app/api/auth/identity/route.ts` - Host gateway identity, request-header, module directory, and module-owned permission diagnostics.
 - `modules/demo-module/src/lib/host-auth.ts` - module-side validation of the Host-issued `X-Docker-Host-Identity` JWT and scoped directory lookup.
 
@@ -118,6 +118,7 @@ The module currently validates these Host flows:
 - container start, stop, restart, remove, and update paths;
 - health-check metadata and the module's own `/api/health` endpoint;
 - shell app discovery through `ui.entrypoint` and nested navigation for `/`, `/people`, and `/settings`;
+- assigned Host user rendering on `/people` and `/api/people` through the scoped module directory;
 - gateway exposure policies through the presence or absence of a Host identity token;
 - module identity token validation through Host discovery and JWKS endpoints;
 - module-scoped directory reads through `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN`;
