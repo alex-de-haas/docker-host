@@ -7,7 +7,7 @@ import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostRole } from '../types/auth.ts';
 import type { ModuleAccessAssignment } from '../types/auth.ts';
 
-export const AUTH_STORE_SCHEMA_VERSION = '0.1';
+export const AUTH_STORE_SCHEMA_VERSION = '0.2';
 
 export interface AuthUserRecord {
   id: string;
@@ -63,7 +63,13 @@ export interface AuthSetupTokenRecord {
   createdAt: string;
   expiresAt: string;
   usedAt?: string;
-  purpose: 'first-admin' | 'recovery';
+  revokedAt?: string;
+  purpose: 'first-admin' | 'recovery' | 'invite';
+  role?: HostRole;
+  email?: string;
+  displayName?: string;
+  assignedModuleIds?: string[];
+  createdByUserId?: string;
 }
 
 export interface AuthCliTokenRecord {
@@ -481,7 +487,23 @@ function isAuthSetupTokenRecord(value: unknown): value is AuthSetupTokenRecord {
     typeof value.tokenHash === 'string' &&
     typeof value.createdAt === 'string' &&
     typeof value.expiresAt === 'string' &&
-    (value.purpose === 'first-admin' || value.purpose === 'recovery');
+    (value.usedAt === undefined || typeof value.usedAt === 'string') &&
+    (value.revokedAt === undefined || typeof value.revokedAt === 'string') &&
+    (
+      value.purpose === 'first-admin' ||
+      value.purpose === 'recovery' ||
+      (
+        value.purpose === 'invite' &&
+        (value.role === 'host.admin' || value.role === 'host.user') &&
+        typeof value.email === 'string' &&
+        (typeof value.displayName === 'string' || value.displayName === undefined) &&
+        (
+          value.assignedModuleIds === undefined ||
+          (Array.isArray(value.assignedModuleIds) && value.assignedModuleIds.every(item => typeof item === 'string'))
+        ) &&
+        (typeof value.createdByUserId === 'string' || value.createdByUserId === undefined)
+      )
+    );
 }
 
 function isAuthCliTokenRecord(value: unknown): value is AuthCliTokenRecord {

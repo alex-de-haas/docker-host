@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { HostPrincipal } from '../types/auth.ts';
+import type { HostPrincipal, HostRole } from '../types/auth.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import {
   appendAuthAuditEvent,
@@ -10,6 +10,7 @@ import type {
   AuthAccountSetRecord,
   AuthCliTokenRecord,
   AuthSessionRecord,
+  AuthSetupTokenRecord,
   AuthState,
   AuthUserRecord,
 } from './auth-store.ts';
@@ -27,6 +28,9 @@ export const SESSION_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 export const SESSION_ABSOLUTE_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 export const ACCOUNT_SET_ABSOLUTE_TIMEOUT_MS = SESSION_ABSOLUTE_TIMEOUT_MS;
 export const SETUP_TOKEN_TTL_MS = 15 * 60 * 1000;
+export const USER_INVITE_DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+export const USER_INVITE_MIN_TTL_MS = SETUP_TOKEN_TTL_MS;
+export const USER_INVITE_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const RECENT_REAUTH_WINDOW_MS = 10 * 60 * 1000;
 export const SESSION_ACTIVITY_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_REJECTION_AUDIT_THROTTLE_MS = 5 * 60 * 1000;
@@ -109,6 +113,39 @@ export interface AuthSessionListOptions {
   currentSessionId?: string;
 }
 
+export interface HostUserSummary extends HostPrincipal {
+  authProvider?: AuthUserRecord['authProvider'];
+  disabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  activeSessionCount: number;
+  activeCliTokenCount: number;
+  assignedModuleIds: string[];
+  lastSeenAt?: string;
+}
+
+export interface UserInvitationSummary {
+  id: string;
+  email: string;
+  displayName?: string;
+  role: HostRole;
+  assignedModuleIds: string[];
+  createdByUserId?: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string;
+  revokedAt?: string;
+  status: 'pending' | 'expired' | 'used' | 'revoked';
+}
+
+export interface UserInvitationPreview {
+  email: string;
+  displayName?: string;
+  role: HostRole;
+  assignedModuleIds: string[];
+  expiresAt: string;
+}
+
 export async function getAuthStatus(config?: HostRuntimeConfig) {
   const state = await readAuthState(config);
   const activeUsers = state.users.filter(user => !user.disabled);
@@ -120,6 +157,524 @@ export async function getAuthStatus(config?: HostRuntimeConfig) {
     userCount: activeUsers.length,
     adminExists,
   };
+}
+
+export async function listHostUsers(config?: HostRuntimeConfig): Promise<HostUserSummary[]> {
+  const state = await readAuthState(config);
+  const now = new Date();
+  return state.users
+    .map(user => summarizeHostUser(user, state, now))
+    .sort(compareHostUsers);
+}
+
+export async function listUserInvitations(config?: HostRuntimeConfig): Promise<UserInvitationSummary[]> {
+  const state = await readAuthState(config);
+  const now = new Date();
+  return state.setupTokens
+    .filter(isInvitationToken)
+    .map(token => summarizeInvitation(token, now))
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+export async function createUserInvitation(
+  input: {
+    email: string;
+    displayName?: string;
+    role: unknown;
+    assignedModuleIds?: string[];
+    ttlMs?: number;
+  },
+  actorUserId: string,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const email = normalizeEmail(input.email);
+  if (!email) {
+    throw new AuthServiceError('invalid_email', 'Enter a valid email address.');
+  }
+
+  const role = input.role;
+  if (!isHostRole(role)) {
+    throw new AuthServiceError('invalid_role', 'Host role must be host.admin or host.user.');
+  }
+
+  const ttlMs = normalizeInviteTtl(input.ttlMs);
+  const token = generateToken(SETUP_TOKEN_PREFIX);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
+  const assignedModuleIds = normalizeAssignedModuleIds(input.assignedModuleIds ?? []);
+
+  const invitation = await updateAuthState<AuthSetupTokenRecord>(state => {
+    if (state.users.some(user => user.email === email)) {
+      throw new AuthServiceError('email_exists', 'A Host user with this email already exists.');
+    }
+
+    const activeInvite = state.setupTokens.find(candidate =>
+      candidate.purpose === 'invite' &&
+      candidate.email === email &&
+      !candidate.usedAt &&
+      !candidate.revokedAt &&
+      !isExpired(candidate.expiresAt, now)
+    );
+    if (activeInvite) {
+      throw new AuthServiceError('invitation_exists', 'An active invitation for this email already exists.');
+    }
+
+    const nextInvitation: AuthSetupTokenRecord = {
+      id: `invite_${randomUUID()}`,
+      tokenHash: hashToken(token),
+      createdAt: now.toISOString(),
+      expiresAt,
+      purpose: 'invite',
+      role,
+      email,
+      displayName: input.displayName?.trim() || undefined,
+      assignedModuleIds,
+      createdByUserId: actorUserId,
+    };
+
+    return {
+      state: {
+        ...state,
+        setupTokens: [...state.setupTokens, nextInvitation],
+      },
+      result: nextInvitation,
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.invitation.created',
+    actorUserId,
+    target: {
+      type: 'auth.invitation',
+      id: invitation.id,
+    },
+    success: true,
+    request,
+    details: {
+      email,
+      role: input.role,
+      expiresAt,
+      assignedModuleIds,
+    },
+  }, config);
+
+  return {
+    invitation: summarizeInvitation(invitation, now),
+    token,
+  };
+}
+
+export async function revokeUserInvitation(
+  invitationId: string,
+  actorUserId: string,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const normalizedInvitationId = invitationId.trim();
+  const now = new Date();
+
+  const revokedInvitation = await updateAuthState<AuthSetupTokenRecord | null>(state => {
+    const invitation = state.setupTokens.find(candidate =>
+      candidate.id === normalizedInvitationId &&
+      candidate.purpose === 'invite' &&
+      !candidate.usedAt &&
+      !candidate.revokedAt
+    );
+    const revoked: AuthSetupTokenRecord | null = invitation
+      ? { ...invitation, revokedAt: now.toISOString() }
+      : null;
+
+    return {
+      state: revoked
+        ? {
+            ...state,
+            setupTokens: state.setupTokens.map(candidate =>
+              candidate.id === revoked.id ? revoked : candidate
+            ),
+          }
+        : state,
+      result: revoked,
+    };
+  }, config);
+
+  if (revokedInvitation) {
+    await appendAuthAuditEvent({
+      type: 'auth.invitation.revoked',
+      actorUserId,
+      target: {
+        type: 'auth.invitation',
+        id: revokedInvitation.id,
+      },
+      success: true,
+      request,
+      details: {
+        email: revokedInvitation.email,
+        role: revokedInvitation.role,
+      },
+    }, config);
+  }
+
+  return Boolean(revokedInvitation);
+}
+
+export async function previewUserInvitation(
+  setupToken: string,
+  config?: HostRuntimeConfig
+): Promise<UserInvitationPreview> {
+  const tokenHash = hashToken(setupToken);
+  const state = await readAuthState(config);
+  const invitation = findValidInvitationToken(state, tokenHash, new Date());
+  if (!invitation || !invitation.email || !invitation.role) {
+    throw new AuthServiceError('invalid_invitation_token', 'The invitation token is invalid or expired.');
+  }
+
+  return {
+    email: invitation.email,
+    displayName: invitation.displayName,
+    role: invitation.role,
+    assignedModuleIds: invitation.assignedModuleIds ?? [],
+    expiresAt: invitation.expiresAt,
+  };
+}
+
+export async function acceptUserInvitation(
+  input: {
+    setupToken: string;
+    email?: string;
+    displayName?: string;
+    password: string;
+  },
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const setupToken = normalizeToken(input.setupToken);
+  if (!setupToken) {
+    throw new AuthServiceError('invalid_invitation_token', 'The invitation token is invalid or expired.');
+  }
+
+  const now = new Date();
+  const invitationTokenHash = hashToken(setupToken);
+  const state = await readAuthState(config);
+  const existingInvitation = findValidInvitationToken(state, invitationTokenHash, now);
+  if (!existingInvitation || !existingInvitation.email || !existingInvitation.role) {
+    throw new AuthServiceError('invalid_invitation_token', 'The invitation token is invalid or expired.');
+  }
+
+  const passwordPolicy = validatePasswordPolicy(input.password);
+  if (!passwordPolicy.valid) {
+    throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
+  }
+
+  const passwordHash = await hashPassword(input.password);
+  const sessionToken = generateToken('dhs_');
+
+  const { user, session, invitation } = await updateAuthState<{
+    user: AuthUserRecord;
+    session: AuthSessionRecord;
+    invitation: AuthSetupTokenRecord;
+  }>(state => {
+    const invitation = findValidInvitationToken(state, invitationTokenHash, now);
+    if (!invitation || !invitation.email || !invitation.role) {
+      throw new AuthServiceError('invalid_invitation_token', 'The invitation token is invalid or expired.');
+    }
+
+    const email = normalizeEmail(input.email || invitation.email);
+    if (!email || email !== invitation.email) {
+      throw new AuthServiceError('invalid_email', 'Enter the email address from the invitation.');
+    }
+
+    if (state.users.some(candidate => candidate.email === email)) {
+      throw new AuthServiceError('email_exists', 'A Host user with this email already exists.');
+    }
+
+    const user: AuthUserRecord = {
+      id: `user_${randomUUID()}`,
+      email,
+      displayName: input.displayName?.trim() || invitation.displayName,
+      role: invitation.role,
+      authProvider: 'local',
+      passwordHash,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    const session = createSessionRecord(user.id, sessionToken, now, request);
+    const assignedModuleIds = normalizeAssignedModuleIds(invitation.assignedModuleIds ?? []);
+    const usedInvitation = {
+      ...invitation,
+      usedAt: now.toISOString(),
+    };
+
+    return {
+      state: {
+        ...state,
+        users: [...state.users, user],
+        sessions: [...pruneExpiredSessions(state.sessions, now), session],
+        setupTokens: state.setupTokens.map(candidate =>
+          candidate.id === invitation.id ? usedInvitation : candidate
+        ),
+        moduleAssignments: [
+          ...state.moduleAssignments,
+          ...assignedModuleIds.map(moduleId => ({
+            moduleId,
+            userId: user.id,
+          })),
+        ],
+      },
+      result: {
+        user,
+        session,
+        invitation: usedInvitation,
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.invitation.accepted',
+    actorUserId: user.id,
+    target: {
+      type: 'auth.invitation',
+      id: invitation.id,
+    },
+    success: true,
+    request,
+    details: {
+      createdByUserId: invitation.createdByUserId,
+      role: user.role,
+      assignedModuleIds: invitation.assignedModuleIds ?? [],
+      sessionId: session.id,
+    },
+  }, config);
+
+  return {
+    sessionToken,
+    session,
+    user: toPrincipal(user),
+  };
+}
+
+export async function updateHostUser(
+  input: {
+    userId: string;
+    displayName?: string | null;
+    role?: HostRole;
+  },
+  actorUserId: string,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const normalizedUserId = input.userId.trim();
+  const now = new Date();
+
+  const result = await updateAuthState<{
+    user: AuthUserRecord;
+    previousRole: HostRole;
+    roleChanged: boolean;
+    revokedSessionCount: number;
+    revokedCliTokenCount: number;
+  }>(state => {
+    const user = state.users.find(candidate => candidate.id === normalizedUserId);
+    if (!user || user.disabled) {
+      throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+    }
+
+    const nextRole = input.role ?? user.role;
+    if (!isHostRole(nextRole)) {
+      throw new AuthServiceError('invalid_role', 'Host role must be host.admin or host.user.');
+    }
+
+    if (nextRole !== user.role && user.authProvider && user.authProvider !== 'local') {
+      throw new AuthServiceError(
+        'provider_managed_role',
+        'This user role is managed by the external authentication provider.'
+      );
+    }
+
+    if (user.role === 'host.admin' && nextRole !== 'host.admin' && countActiveAdmins(state.users) <= 1) {
+      throw new AuthServiceError('last_admin', 'At least one active Host administrator must remain.');
+    }
+
+    const updatedUser: AuthUserRecord = {
+      ...user,
+      displayName: input.displayName === null
+        ? undefined
+        : input.displayName === undefined
+          ? user.displayName
+          : input.displayName.trim() || undefined,
+      role: nextRole,
+      updatedAt: now.toISOString(),
+    };
+    const roleChanged = updatedUser.role !== user.role;
+    const sessionRevocation = roleChanged
+      ? revokeUserSessionsInState(state.sessions, user.id, now)
+      : { sessions: state.sessions, count: 0 };
+    const cliTokenRevocation = roleChanged && updatedUser.role !== 'host.admin'
+      ? revokeUserCliTokensInState(state.cliTokens, user.id, now)
+      : { cliTokens: state.cliTokens, count: 0 };
+
+    return {
+      state: {
+        ...state,
+        users: state.users.map(candidate => candidate.id === user.id ? updatedUser : candidate),
+        sessions: sessionRevocation.sessions,
+        cliTokens: cliTokenRevocation.cliTokens,
+      },
+      result: {
+        user: updatedUser,
+        previousRole: user.role,
+        roleChanged,
+        revokedSessionCount: sessionRevocation.count,
+        revokedCliTokenCount: cliTokenRevocation.count,
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.user.updated',
+    actorUserId,
+    target: {
+      type: 'auth.user',
+      id: result.user.id,
+    },
+    success: true,
+    request,
+    details: {
+      previousRole: result.previousRole,
+      role: result.user.role,
+      roleChanged: result.roleChanged,
+      revokedSessionCount: result.revokedSessionCount,
+      revokedCliTokenCount: result.revokedCliTokenCount,
+    },
+  }, config);
+
+  return result.user;
+}
+
+export async function disableHostUser(
+  userId: string,
+  actorUserId: string,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const normalizedUserId = userId.trim();
+  if (normalizedUserId === actorUserId) {
+    throw new AuthServiceError('self_disable_forbidden', 'Administrators cannot disable their own account.');
+  }
+
+  const now = new Date();
+  const result = await updateAuthState<{
+    user: AuthUserRecord;
+    revokedSessionCount: number;
+    revokedCliTokenCount: number;
+    removedAssignmentCount: number;
+    removedAccountSetCount: number;
+  }>(state => {
+    const user = state.users.find(candidate => candidate.id === normalizedUserId);
+    if (!user || user.disabled) {
+      throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+    }
+
+    if (user.role === 'host.admin' && countActiveAdmins(state.users) <= 1) {
+      throw new AuthServiceError('last_admin', 'At least one active Host administrator must remain.');
+    }
+
+    const disabledUser: AuthUserRecord = {
+      ...user,
+      disabled: true,
+      updatedAt: now.toISOString(),
+    };
+    const sessionRevocation = revokeUserSessionsInState(state.sessions, user.id, now);
+    const cliTokenRevocation = revokeUserCliTokensInState(state.cliTokens, user.id, now);
+    const accountSetRemoval = removeUserFromAccountSetsInState(state.accountSets, user.id, now);
+    const nextModuleAssignments = state.moduleAssignments.filter(assignment => assignment.userId !== user.id);
+
+    return {
+      state: {
+        ...state,
+        users: state.users.map(candidate => candidate.id === user.id ? disabledUser : candidate),
+        sessions: sessionRevocation.sessions,
+        cliTokens: cliTokenRevocation.cliTokens,
+        accountSets: accountSetRemoval.accountSets,
+        moduleAssignments: nextModuleAssignments,
+      },
+      result: {
+        user: disabledUser,
+        revokedSessionCount: sessionRevocation.count,
+        revokedCliTokenCount: cliTokenRevocation.count,
+        removedAssignmentCount: state.moduleAssignments.length - nextModuleAssignments.length,
+        removedAccountSetCount: accountSetRemoval.count,
+      },
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.user.disabled',
+    actorUserId,
+    target: {
+      type: 'auth.user',
+      id: result.user.id,
+    },
+    success: true,
+    request,
+    details: {
+      revokedSessionCount: result.revokedSessionCount,
+      revokedCliTokenCount: result.revokedCliTokenCount,
+      removedAssignmentCount: result.removedAssignmentCount,
+      removedAccountSetCount: result.removedAccountSetCount,
+    },
+  }, config);
+
+  return result.user;
+}
+
+export async function replaceHostUserModuleAssignments(
+  userId: string,
+  assignedModuleIds: string[],
+  actorUserId: string,
+  request?: AuthRequestMeta,
+  config?: HostRuntimeConfig
+) {
+  const normalizedUserId = userId.trim();
+  const normalizedModuleIds = normalizeAssignedModuleIds(assignedModuleIds);
+
+  const assignments = await updateAuthState(state => {
+    const user = state.users.find(candidate => candidate.id === normalizedUserId && !candidate.disabled);
+    if (!user) {
+      throw new AuthServiceError('user_not_found', 'The Host user is disabled or does not exist.');
+    }
+
+    const nextAssignments = [
+      ...state.moduleAssignments.filter(assignment => assignment.userId !== user.id),
+      ...normalizedModuleIds.map(moduleId => ({
+        moduleId,
+        userId: user.id,
+      })),
+    ];
+
+    return {
+      state: {
+        ...state,
+        moduleAssignments: nextAssignments,
+      },
+      result: nextAssignments.filter(assignment => assignment.userId === user.id),
+    };
+  }, config);
+
+  await appendAuthAuditEvent({
+    type: 'auth.user.assignments.updated',
+    actorUserId,
+    target: {
+      type: 'auth.user',
+      id: normalizedUserId,
+    },
+    success: true,
+    request,
+    details: {
+      assignedModuleIds: assignments.map(assignment => assignment.moduleId).sort(),
+    },
+  }, config);
+
+  return assignments;
 }
 
 export async function createSetupToken(
@@ -1895,6 +2450,186 @@ function findActiveAccountSetByTokenHash(
 
 function isAccountSetActive(accountSet: AuthAccountSetRecord, now: Date) {
   return !accountSet.revokedAt && !isExpired(accountSet.expiresAt, now);
+}
+
+function summarizeHostUser(user: AuthUserRecord, state: AuthState, now: Date): HostUserSummary {
+  const activeSessions = state.sessions.filter(session =>
+    session.userId === user.id &&
+    isSessionActive(session, now)
+  );
+  const activeCliTokens = state.cliTokens.filter(token =>
+    token.userId === user.id &&
+    !token.revokedAt
+  );
+  const assignedModuleIds = normalizeAssignedModuleIds(
+    state.moduleAssignments
+      .filter(assignment => assignment.userId === user.id)
+      .map(assignment => assignment.moduleId)
+  );
+  const lastSeenAt = state.sessions
+    .filter(session => session.userId === user.id)
+    .reduce<string | undefined>((latest, session) => {
+      return !latest || session.lastSeenAt > latest ? session.lastSeenAt : latest;
+    }, undefined);
+
+  return {
+    ...toPrincipal(user),
+    authProvider: user.authProvider,
+    disabled: Boolean(user.disabled),
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    activeSessionCount: activeSessions.length,
+    activeCliTokenCount: activeCliTokens.length,
+    assignedModuleIds,
+    lastSeenAt,
+  };
+}
+
+function compareHostUsers(left: HostUserSummary, right: HostUserSummary) {
+  if (left.disabled !== right.disabled) {
+    return left.disabled ? 1 : -1;
+  }
+
+  if (left.role !== right.role) {
+    return left.role === 'host.admin' ? -1 : 1;
+  }
+
+  return getUserSortLabel(left).localeCompare(getUserSortLabel(right));
+}
+
+function getUserSortLabel(user: HostPrincipal) {
+  return user.displayName ?? user.email ?? user.id;
+}
+
+function summarizeInvitation(invitation: AuthSetupTokenRecord, now: Date): UserInvitationSummary {
+  if (!invitation.email || !invitation.role) {
+    throw new AuthServiceError('invalid_invitation', 'Invitation record is incomplete.');
+  }
+
+  return {
+    id: invitation.id,
+    email: invitation.email,
+    displayName: invitation.displayName,
+    role: invitation.role,
+    assignedModuleIds: normalizeAssignedModuleIds(invitation.assignedModuleIds ?? []),
+    createdByUserId: invitation.createdByUserId,
+    createdAt: invitation.createdAt,
+    expiresAt: invitation.expiresAt,
+    usedAt: invitation.usedAt,
+    revokedAt: invitation.revokedAt,
+    status: getInvitationStatus(invitation, now),
+  };
+}
+
+function getInvitationStatus(invitation: AuthSetupTokenRecord, now: Date): UserInvitationSummary['status'] {
+  if (invitation.revokedAt) {
+    return 'revoked';
+  }
+
+  if (invitation.usedAt) {
+    return 'used';
+  }
+
+  return isExpired(invitation.expiresAt, now) ? 'expired' : 'pending';
+}
+
+function isInvitationToken(token: AuthSetupTokenRecord): token is AuthSetupTokenRecord & {
+  purpose: 'invite';
+  email: string;
+  role: HostRole;
+} {
+  return token.purpose === 'invite' &&
+    typeof token.email === 'string' &&
+    isHostRole(token.role);
+}
+
+function findValidInvitationToken(state: AuthState, tokenHash: string, now: Date) {
+  return state.setupTokens.find(candidate =>
+    candidate.purpose === 'invite' &&
+    !candidate.usedAt &&
+    !candidate.revokedAt &&
+    !isExpired(candidate.expiresAt, now) &&
+    candidate.tokenHash === tokenHash
+  );
+}
+
+function normalizeInviteTtl(ttlMs: number | undefined) {
+  if (ttlMs === undefined || !Number.isFinite(ttlMs)) {
+    return USER_INVITE_DEFAULT_TTL_MS;
+  }
+
+  return Math.min(USER_INVITE_MAX_TTL_MS, Math.max(USER_INVITE_MIN_TTL_MS, Math.floor(ttlMs)));
+}
+
+function normalizeAssignedModuleIds(moduleIds: string[]) {
+  return Array.from(new Set(
+    moduleIds
+      .map(moduleId => moduleId.trim())
+      .filter(Boolean)
+  )).sort();
+}
+
+function isHostRole(role: unknown): role is HostRole {
+  return role === 'host.admin' || role === 'host.user';
+}
+
+function countActiveAdmins(users: AuthUserRecord[]) {
+  return users.filter(user => user.role === 'host.admin' && !user.disabled).length;
+}
+
+function revokeUserSessionsInState(sessions: AuthSessionRecord[], userId: string, now: Date) {
+  let count = 0;
+  return {
+    sessions: sessions.map(session => {
+      if (session.userId === userId && isSessionActive(session, now)) {
+        count += 1;
+        return { ...session, revokedAt: now.toISOString() };
+      }
+
+      return session;
+    }),
+    count,
+  };
+}
+
+function revokeUserCliTokensInState(cliTokens: AuthCliTokenRecord[], userId: string, now: Date) {
+  let count = 0;
+  return {
+    cliTokens: cliTokens.map(token => {
+      if (token.userId === userId && !token.revokedAt) {
+        count += 1;
+        return { ...token, revokedAt: now.toISOString() };
+      }
+
+      return token;
+    }),
+    count,
+  };
+}
+
+function removeUserFromAccountSetsInState(
+  accountSets: AuthAccountSetRecord[],
+  userId: string,
+  now: Date
+) {
+  let count = 0;
+  return {
+    accountSets: accountSets.map(accountSet => {
+      const nextUsers = accountSet.users.filter(user => user.userId !== userId);
+      if (nextUsers.length === accountSet.users.length) {
+        return accountSet;
+      }
+
+      count += 1;
+      return {
+        ...accountSet,
+        users: nextUsers,
+        updatedAt: now.toISOString(),
+        ...(nextUsers.length === 0 && !accountSet.revokedAt ? { revokedAt: now.toISOString() } : {}),
+      };
+    }),
+    count,
+  };
 }
 
 function summarizeBrowserAccount(

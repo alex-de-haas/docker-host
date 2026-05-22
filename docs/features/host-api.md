@@ -773,6 +773,8 @@ Implemented browser auth endpoints:
 - `GET /api/auth/diagnostics` returns safe OIDC and trusted-proxy diagnostics for Host administrators.
 - `GET /api/auth/oidc/login` starts generic OIDC Authorization Code with PKCE when an OIDC provider is configured.
 - `GET /api/auth/oidc/callback` validates the OIDC callback, exchanges the authorization code, verifies the ID token with provider JWKS, applies explicit role mapping, creates or updates the Host user for the external identity, creates a normal Host session, and remembers the account in the current browser account set.
+- `GET /api/auth/invitations/accept?setupToken=...` returns a safe local invitation preview containing the invited email, role, display name, assigned module ids, and expiry.
+- `POST /api/auth/invitations/accept` consumes a valid local invitation token, creates a local password user, applies initial module assignments, creates a Host session, and remembers the account in the current browser account set.
 
 OIDC login denies access when the transaction state is invalid or expired, ID token verification fails, the token has no subject, no role mapping matches, or the mapped Host user is disabled. OIDC provider access tokens, refresh tokens, and ID tokens are not persisted.
 
@@ -799,6 +801,24 @@ Session and audit APIs support the `/settings/security` operations surface:
 - `DELETE /api/auth/audit` applies retention-based purge and appends a final `auth.audit.purged` summary event.
 
 Session revocation and audit purge require `host.auth.configure`; mutating browser-session requests also require recent reauthentication. Responses never expose raw session cookies, token hashes, bearer tokens, setup tokens, recovery tokens, provider assertions, or provider tokens.
+
+### User management
+
+User Management APIs support the `/settings/users` operations surface:
+
+- `GET /api/auth/users` returns Host user summaries, invitation summaries, assignable installed modules, and supported invite expiry options.
+- `GET /api/auth/invitations` returns invitation summaries.
+- `POST /api/auth/invitations` creates a local user invitation. Request body: `{ "email": "user@example.test", "displayName": "User", "role": "host.user", "ttlMs": 86400000, "assignedModuleIds": ["com.example.reports"] }`. The response includes the raw setup token and setup URL once.
+- `DELETE /api/auth/invitations/{inviteId}` revokes a pending invitation.
+- `PATCH /api/auth/users/{userId}` updates local user fields such as display name or role.
+- `DELETE /api/auth/users/{userId}` soft-disables the user.
+- `PUT /api/auth/users/{userId}/assignments` replaces the user's module assignment list.
+
+All administrator user-management endpoints require `host.users.manage`. Mutating browser-session requests also require recent reauthentication and the same-origin CSRF check. CLI Bearer-token requests can call the same administrator APIs without CSRF checks.
+
+Invitation tokens are setup-token style credentials with hash-only storage. Local invitations require email, are single-use, and can expire after 15 minutes, 24 hours, or 7 days. Accepting an invitation creates a local password user; it does not pre-provision OIDC or trusted-proxy identities.
+
+User deletion is implemented as soft-disable. Disabling a user revokes active sessions, removes the user from remembered browser account sets, revokes CLI tokens, and removes module assignments. Docker Host prevents disabling or demoting the last active administrator.
 
 ### Gateway exposure and ingress readiness
 

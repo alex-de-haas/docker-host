@@ -274,6 +274,12 @@ const navigationSections: NavigationSection[] = [
         icon: ShieldCheck,
         isActive: pathname => pathname === '/settings/security',
       },
+      {
+        label: 'User Management',
+        href: '/settings/users',
+        icon: Users,
+        isActive: pathname => pathname === '/settings/users',
+      },
     ],
   },
 ];
