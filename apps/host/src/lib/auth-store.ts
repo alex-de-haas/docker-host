@@ -495,7 +495,7 @@ function isAuthSetupTokenRecord(value: unknown): value is AuthSetupTokenRecord {
       (
         value.purpose === 'invite' &&
         (value.role === 'host.admin' || value.role === 'host.user') &&
-        (typeof value.email === 'string' || value.email === undefined) &&
+        typeof value.email === 'string' &&
         (typeof value.displayName === 'string' || value.displayName === undefined) &&
         (
           value.assignedModuleIds === undefined ||

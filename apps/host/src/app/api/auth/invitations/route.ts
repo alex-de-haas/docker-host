@@ -10,7 +10,6 @@ import {
   isAuthServiceError,
   listUserInvitations,
 } from '@/lib/auth-service';
-import type { HostRole } from '@/types/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -83,9 +82,8 @@ function readStringArray(value: unknown, key: string) {
     : [];
 }
 
-function readRole(value: unknown, key: string): HostRole {
-  const role = readString(value, key);
-  return role === 'host.admin' ? 'host.admin' : 'host.user';
+function readRole(value: unknown, key: string) {
+  return isObject(value) ? value[key] : undefined;
 }
 
 function invitationErrorResponse(error: unknown) {

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Boxes, KeyRound, LoaderCircle } from 'lucide-react';
+import { Boxes, KeyRound, LoaderCircle, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -148,13 +148,20 @@ export function InviteSetupClient({ initialSetupToken = '' }: { initialSetupToke
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="invite-email">Email</Label>
-              <Input
-                id="invite-email"
-                type="email"
-                value={preview?.email || ''}
-                readOnly
-                disabled={!preview}
-              />
+              <div className="relative">
+                <Input
+                  id="invite-email"
+                  type="email"
+                  value={preview?.email || ''}
+                  readOnly
+                  disabled
+                  className="cursor-not-allowed border-dashed bg-muted/70 pr-9 text-muted-foreground shadow-none disabled:opacity-100"
+                />
+                <Lock
+                  aria-hidden="true"
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="invite-display-name">Display name</Label>

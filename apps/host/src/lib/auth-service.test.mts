@@ -722,6 +722,14 @@ test('user management blocks duplicate active invitations and supports revocatio
     (error: unknown) => error instanceof AuthServiceError && error.code === 'invitation_exists'
   );
 
+  await assert.rejects(
+    createUserInvitation({
+      email: 'other@example.test',
+      role: 'not-a-role',
+    }, admin.user.id, undefined, config),
+    (error: unknown) => error instanceof AuthServiceError && error.code === 'invalid_role'
+  );
+
   assert.equal(await previewUserInvitation(created.token, config).then(() => true), true);
   assert.equal(await revokeUserInvitation(created.invitation.id, admin.user.id, undefined, config), true);
 
@@ -729,6 +737,43 @@ test('user management blocks duplicate active invitations and supports revocatio
     previewUserInvitation(created.token, config),
     (error: unknown) => error instanceof AuthServiceError && error.code === 'invalid_invitation_token'
   );
+});
+
+test('invitation acceptance rejects invalid tokens before password validation', async () => {
+  const config = await createTestConfig();
+
+  await assert.rejects(
+    acceptUserInvitation({
+      setupToken: 'dhstp_invalid',
+      email: 'invited@example.test',
+      password: 'short',
+    }, undefined, config),
+    (error: unknown) => error instanceof AuthServiceError && error.code === 'invalid_invitation_token'
+  );
+});
+
+test('auth state drops invite tokens without email', async () => {
+  const config = await createTestConfig();
+  const emptyState = await readAuthStateSnapshot(config);
+  const now = new Date().toISOString();
+
+  await fs.mkdir(config.authRootContainer, { recursive: true });
+  await fs.writeFile(config.authStatePath, `${JSON.stringify({
+    ...emptyState,
+    setupTokens: [
+      {
+        id: 'invite_missing_email',
+        tokenHash: 'hash',
+        createdAt: now,
+        expiresAt: now,
+        purpose: 'invite',
+        role: 'host.user',
+      },
+    ],
+  })}\n`, 'utf-8');
+
+  const state = await readAuthStateSnapshot(config);
+  assert.equal(state.setupTokens.length, 0);
 });
 
 test('role changes and disable operations preserve at least one admin and clean access state', async () => {

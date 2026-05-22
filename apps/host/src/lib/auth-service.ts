@@ -180,7 +180,7 @@ export async function createUserInvitation(
   input: {
     email: string;
     displayName?: string;
-    role: HostRole;
+    role: unknown;
     assignedModuleIds?: string[];
     ttlMs?: number;
   },
@@ -193,7 +193,8 @@ export async function createUserInvitation(
     throw new AuthServiceError('invalid_email', 'Enter a valid email address.');
   }
 
-  if (!isHostRole(input.role)) {
+  const role = input.role;
+  if (!isHostRole(role)) {
     throw new AuthServiceError('invalid_role', 'Host role must be host.admin or host.user.');
   }
 
@@ -225,7 +226,7 @@ export async function createUserInvitation(
       createdAt: now.toISOString(),
       expiresAt,
       purpose: 'invite',
-      role: input.role,
+      role,
       email,
       displayName: input.displayName?.trim() || undefined,
       assignedModuleIds,
@@ -352,6 +353,14 @@ export async function acceptUserInvitation(
     throw new AuthServiceError('invalid_invitation_token', 'The invitation token is invalid or expired.');
   }
 
+  const now = new Date();
+  const invitationTokenHash = hashToken(setupToken);
+  const state = await readAuthState(config);
+  const existingInvitation = findValidInvitationToken(state, invitationTokenHash, now);
+  if (!existingInvitation || !existingInvitation.email || !existingInvitation.role) {
+    throw new AuthServiceError('invalid_invitation_token', 'The invitation token is invalid or expired.');
+  }
+
   const passwordPolicy = validatePasswordPolicy(input.password);
   if (!passwordPolicy.valid) {
     throw new AuthServiceError('weak_password', passwordPolicy.errors.join(' '));
@@ -359,8 +368,6 @@ export async function acceptUserInvitation(
 
   const passwordHash = await hashPassword(input.password);
   const sessionToken = generateToken('dhs_');
-  const now = new Date();
-  const invitationTokenHash = hashToken(setupToken);
 
   const { user, session, invitation } = await updateAuthState<{
     user: AuthUserRecord;
