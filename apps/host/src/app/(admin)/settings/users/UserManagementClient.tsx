@@ -136,6 +136,7 @@ export function UserManagementClient() {
   const [accessModuleIds, setAccessModuleIds] = useState<string[]>([]);
 
   const accessUser = users.find(user => user.id === accessUserId) ?? null;
+  const inviteAssignedModuleIds = inviteRole === 'host.user' ? inviteModuleIds : [];
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) {
@@ -238,7 +239,7 @@ export function UserManagementClient() {
             displayName: inviteDisplayName || undefined,
             role: inviteRole,
             ttlMs: inviteTtlMs,
-            assignedModuleIds: inviteModuleIds,
+            assignedModuleIds: inviteAssignedModuleIds,
           }),
         });
       case 'role':
@@ -386,20 +387,22 @@ export function UserManagementClient() {
                     <RoleBadge role={user.role} disabled={user.disabled} />
                   </TableCell>
                   <TableCell>{formatProvider(user.authProvider)}</TableCell>
-                  <TableCell>{formatAccessCount(user.assignedModuleIds.length)}</TableCell>
+                  <TableCell>{formatAccessCount(user.role, user.assignedModuleIds.length)}</TableCell>
                   <TableCell>{user.activeSessionCount}</TableCell>
                   <TableCell>{formatDateTime(user.lastSeenAt)}</TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openAccessDialog(user)}
-                        disabled={user.disabled || modules.length === 0}
-                      >
-                        <UserCog className="h-4 w-4" />
-                        Access
-                      </Button>
+                      {user.role === 'host.user' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openAccessDialog(user)}
+                          disabled={user.disabled || modules.length === 0}
+                        >
+                          <UserCog className="h-4 w-4" />
+                          Access
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
@@ -462,7 +465,7 @@ export function UserManagementClient() {
                     <div className="text-xs text-muted-foreground">{invitation.email}</div>
                   </TableCell>
                   <TableCell><RoleBadge role={invitation.role} /></TableCell>
-                  <TableCell>{formatAccessCount(invitation.assignedModuleIds.length)}</TableCell>
+                  <TableCell>{formatAccessCount(invitation.role, invitation.assignedModuleIds.length)}</TableCell>
                   <TableCell>{formatDateTime(invitation.expiresAt)}</TableCell>
                   <TableCell>
                     <div className="flex justify-end">
@@ -525,7 +528,13 @@ export function UserManagementClient() {
                   id="invite-role"
                   className="h-9 w-full rounded-md border bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
                   value={inviteRole}
-                  onChange={event => setInviteRole(event.target.value === 'host.admin' ? 'host.admin' : 'host.user')}
+                  onChange={event => {
+                    const role = event.target.value === 'host.admin' ? 'host.admin' : 'host.user';
+                    setInviteRole(role);
+                    if (role === 'host.admin') {
+                      setInviteModuleIds([]);
+                    }
+                  }}
                 >
                   <option value="host.user">Host user</option>
                   <option value="host.admin">Host administrator</option>
@@ -545,11 +554,13 @@ export function UserManagementClient() {
                 </select>
               </div>
             </div>
-            <ModulePicker
-              modules={modules}
-              selectedModuleIds={inviteModuleIds}
-              onToggle={(moduleId, selected) => toggleModuleSelection(moduleId, selected, 'invite')}
-            />
+            {inviteRole === 'host.user' && (
+              <ModulePicker
+                modules={modules}
+                selectedModuleIds={inviteModuleIds}
+                onToggle={(moduleId, selected) => toggleModuleSelection(moduleId, selected, 'invite')}
+              />
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setInviteOpen(false)}>
                 Cancel
@@ -781,7 +792,11 @@ function formatProvider(provider: HostUserSummary['authProvider']) {
   }
 }
 
-function formatAccessCount(count: number) {
+function formatAccessCount(role: HostRole, count: number) {
+  if (role === 'host.admin') {
+    return 'All apps';
+  }
+
   return count === 0 ? 'All authenticated' : `${count} assigned`;
 }
 
