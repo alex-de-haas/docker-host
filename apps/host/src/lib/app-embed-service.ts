@@ -61,6 +61,15 @@ const EMBED_ACCESS_TOKEN_PARAM = 'embedToken';
 const EMBED_ACCESS_TOKEN_TTL_MS = 5 * 60 * 1000;
 const EMBED_ACCESS_TOKEN_SECRET_FILE = 'embed-access-secret';
 const EMBED_RUNTIME_SCRIPT_ID = '__docker-host-embed-runtime';
+const SANDBOXED_EMBED_ORIGIN = 'null';
+const SANDBOXED_EMBED_ALLOWED_METHODS = 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS';
+const SANDBOXED_EMBED_DEFAULT_ALLOWED_HEADERS = [
+  'content-type',
+  'rsc',
+  'next-router-state-tree',
+  'next-router-prefetch',
+  'next-url',
+].join(', ');
 const STATIC_ASSET_PRINCIPAL: HostPrincipal = {
   id: 'embed_static_asset',
   role: 'host.user',
@@ -516,6 +525,44 @@ export async function proxyHostAppEmbedRequest(
   });
 
   return await buildEmbedResponse(request, response, target);
+}
+
+export function hostAppEmbedCorsPreflightResponse(request: Request, allowed: boolean) {
+  const headers = new Headers({
+    'cache-control': 'no-store',
+  });
+  if (allowed) {
+    applySandboxedEmbedCorsHeaders(request, headers);
+  }
+
+  return new NextResponse(null, {
+    status: 204,
+    headers,
+  });
+}
+
+export function withHostAppEmbedCorsHeaders<T extends Response>(request: Request, response: T): T {
+  applySandboxedEmbedCorsHeaders(request, response.headers);
+  return response;
+}
+
+function applySandboxedEmbedCorsHeaders(request: Request, headers: Headers) {
+  if (request.headers.get('origin') !== SANDBOXED_EMBED_ORIGIN) {
+    return;
+  }
+
+  headers.set('access-control-allow-origin', SANDBOXED_EMBED_ORIGIN);
+  headers.set('access-control-allow-credentials', 'true');
+  headers.set('access-control-allow-methods', SANDBOXED_EMBED_ALLOWED_METHODS);
+  headers.set(
+    'access-control-allow-headers',
+    request.headers.get('access-control-request-headers') ||
+      SANDBOXED_EMBED_DEFAULT_ALLOWED_HEADERS
+  );
+  headers.set('access-control-max-age', '600');
+  appendVaryHeader(headers, 'Origin');
+  appendVaryHeader(headers, 'Access-Control-Request-Method');
+  appendVaryHeader(headers, 'Access-Control-Request-Headers');
 }
 
 export function normalizeEmbedModulePath(value: string | null) {
@@ -1115,6 +1162,19 @@ function stripHostAuthCookies(value: string) {
 
 function appendForwardedFor(request: Request) {
   return request.headers.get('x-docker-host-remote-address')?.split(',')[0]?.trim() ?? '';
+}
+
+function appendVaryHeader(headers: Headers, value: string) {
+  const current = headers.get('vary');
+  if (!current) {
+    headers.set('vary', value);
+    return;
+  }
+
+  const existing = current.split(',').map(part => part.trim().toLowerCase());
+  if (!existing.includes(value.toLowerCase())) {
+    headers.set('vary', `${current}, ${value}`);
+  }
 }
 
 function getRequestHost(request: Request) {

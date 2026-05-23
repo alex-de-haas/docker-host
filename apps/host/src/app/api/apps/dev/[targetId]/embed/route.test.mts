@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import { GET } from './route.ts';
+import { GET, OPTIONS } from './route.ts';
 import { createSessionForUser, SESSION_COOKIE_NAME } from '../../../../../../lib/auth-service.ts';
 import { createEmptyAuthState, writeAuthState } from '../../../../../../lib/auth-store.ts';
 import { writeModuleDevTargetState } from '../../../../../../lib/module-dev-store.ts';
@@ -196,12 +196,49 @@ test('GET /api/apps/dev/[targetId]/embed accepts scoped embed tokens for sandbox
     assert.equal(typeof token, 'string');
     assert.match(initialBody, /\/api\/apps\/dev\/mdev_reports\/embed\/people\?embedToken=/);
 
+    const preflightResponse = await OPTIONS(
+      new Request(`http://localhost:3000/api/apps/dev/mdev_reports/embed/api/settings?embedToken=${token}`, {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'null',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type, x-nextjs-data',
+        },
+      }),
+      { params: Promise.resolve({ targetId: 'mdev_reports' }) }
+    );
+    assert.equal(preflightResponse.status, 204);
+    assert.equal(preflightResponse.headers.get('access-control-allow-origin'), 'null');
+    assert.equal(preflightResponse.headers.get('access-control-allow-credentials'), 'true');
+    assert.match(preflightResponse.headers.get('access-control-allow-methods') ?? '', /POST/);
+    assert.equal(preflightResponse.headers.get('access-control-allow-headers'), 'content-type, x-nextjs-data');
+
+    const rejectedPreflightResponse = await OPTIONS(
+      new Request('http://localhost:3000/api/apps/dev/mdev_reports/embed/api/settings', {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'null',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type',
+        },
+      }),
+      { params: Promise.resolve({ targetId: 'mdev_reports' }) }
+    );
+    assert.equal(rejectedPreflightResponse.status, 204);
+    assert.equal(rejectedPreflightResponse.headers.get('access-control-allow-origin'), null);
+
     const tokenResponse = await GET(
-      new Request(`http://localhost:3000/api/apps/dev/mdev_reports/embed/people?embedToken=${token}`),
+      new Request(`http://localhost:3000/api/apps/dev/mdev_reports/embed/people?embedToken=${token}`, {
+        headers: {
+          origin: 'null',
+        },
+      }),
       { params: Promise.resolve({ targetId: 'mdev_reports' }) }
     );
 
     assert.equal(tokenResponse.status, 200);
+    assert.equal(tokenResponse.headers.get('access-control-allow-origin'), 'null');
+    assert.equal(tokenResponse.headers.get('access-control-allow-credentials'), 'true');
     assert.match(await tokenResponse.text(), /\/api\/apps\/dev\/mdev_reports\/embed\/people\?embedToken=/);
     assert.equal(upstreamRequests.length, 2);
     assert.equal(upstreamRequests[0]?.url, '/dev/');

@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import {
   authenticateHostAppEmbedTokenRequest,
   appEmbedErrorResponse,
+  hostAppEmbedCorsPreflightResponse,
   isHostAppEmbedStaticAssetRequest,
   proxyHostAppEmbedRequest,
   resolveHostDeveloperAppEmbedTarget,
   resolveHostDeveloperAppStaticAssetEmbedTarget,
+  withHostAppEmbedCorsHeaders,
 } from '@/lib/app-embed-service';
 import { requireHostPrincipal } from '@/lib/auth-http';
 
@@ -54,6 +56,18 @@ export async function DELETE(
   return await handleEmbedRequest(request, context);
 }
 
+export async function OPTIONS(
+  request: Request,
+  context: { params: Promise<{ targetId: string }> }
+) {
+  const { targetId } = await context.params;
+  const tokenPrincipal = await authenticateHostAppEmbedTokenRequest(request, {
+    source: 'developer',
+    targetId,
+  });
+  return hostAppEmbedCorsPreflightResponse(request, Boolean(tokenPrincipal));
+}
+
 export async function handleDeveloperEmbedRequest(
   request: Request,
   { params }: { params: Promise<{ targetId: string }> }
@@ -62,9 +76,9 @@ export async function handleDeveloperEmbedRequest(
   if (isHostAppEmbedStaticAssetRequest(request)) {
     try {
       const target = await resolveHostDeveloperAppStaticAssetEmbedTarget(request, targetId);
-      return await proxyHostAppEmbedRequest(request, target);
+      return withHostAppEmbedCorsHeaders(request, await proxyHostAppEmbedRequest(request, target));
     } catch (error) {
-      return appEmbedErrorResponse(error);
+      return withHostAppEmbedCorsHeaders(request, appEmbedErrorResponse(error));
     }
   }
 
@@ -75,9 +89,9 @@ export async function handleDeveloperEmbedRequest(
   if (tokenPrincipal) {
     try {
       const target = await resolveHostDeveloperAppEmbedTarget(request, tokenPrincipal, targetId);
-      return await proxyHostAppEmbedRequest(request, target);
+      return withHostAppEmbedCorsHeaders(request, await proxyHostAppEmbedRequest(request, target));
     } catch (error) {
-      return appEmbedErrorResponse(error);
+      return withHostAppEmbedCorsHeaders(request, appEmbedErrorResponse(error));
     }
   }
 

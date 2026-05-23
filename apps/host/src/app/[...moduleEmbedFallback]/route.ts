@@ -7,6 +7,7 @@ import {
   proxyHostAppEmbedRequest,
   resolveHostAppEmbedTarget,
   resolveHostDeveloperAppEmbedTarget,
+  withHostAppEmbedCorsHeaders,
 } from '@/lib/app-embed-service';
 import { requireHostPrincipal } from '@/lib/auth-http';
 
@@ -48,9 +49,9 @@ async function handleRootRelativeEmbedRequest(request: Request) {
       const target = embedReference.source === 'developer'
         ? await resolveHostDeveloperAppEmbedTarget(request, tokenPrincipal, embedReference.targetId, { modulePath })
         : await resolveHostAppEmbedTarget(request, tokenPrincipal, embedReference.moduleId, { modulePath });
-      return await proxyHostAppEmbedRequest(request, target);
+      return withHostAppEmbedCorsHeaders(request, await proxyHostAppEmbedRequest(request, target));
     } catch (error) {
-      return appEmbedErrorResponse(error);
+      return withHostAppEmbedCorsHeaders(request, appEmbedErrorResponse(error));
     }
   }
 
