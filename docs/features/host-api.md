@@ -181,13 +181,13 @@ Returned by `GET /api/apps`.
   "operationStatus": "installed",
   "runtimeState": "running",
   "entryPath": "/apps/com.acme.reports",
-  "embeddedUrl": "/api/apps/com.acme.reports/embed?path=%2F",
+  "embeddedUrl": "/api/apps/com.acme.reports/embed/",
   "navigation": [
     {
       "label": "People",
       "path": "/people",
       "entryPath": "/apps/com.acme.reports?path=%2Fpeople",
-      "embeddedUrl": "/api/apps/com.acme.reports/embed?path=%2Fpeople"
+      "embeddedUrl": "/api/apps/com.acme.reports/embed/people"
     }
   ]
 }
@@ -207,7 +207,7 @@ Developer app entries use the same shape with `source: "developer"` and `develop
   "statusReason": "available",
   "accessMode": "allAuthenticated",
   "entryPath": "/apps/dev/mdev_reports",
-  "embeddedUrl": "/api/apps/dev/mdev_reports/embed?path=%2F",
+  "embeddedUrl": "/api/apps/dev/mdev_reports/embed/",
   "navigation": []
 }
 ```
@@ -375,15 +375,16 @@ Response entries include:
 
 Reserved iframe transport for shell App UI content.
 
-This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. The Host validates that the selected module app is visible to the current principal and available before proxying. The selected module UI path is passed in the `path` query parameter and must be a same-origin absolute path beginning with `/`.
+This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. The Host validates that the selected module app is visible to the current principal and available before proxying. The selected module UI path is carried after `/embed` as a path-shaped URL so framework runtimes can inspect the real resource pathname. The legacy `path` query parameter remains supported for compatibility and must contain a same-origin absolute path beginning with `/`.
 
 Example:
 
 ```text
-/api/apps/com.acme.reports/embed?path=%2Fpeople
+/api/apps/com.acme.reports/embed/people
+/api/apps/com.acme.reports/embed/_next/static/chunks/app.js
 ```
 
-The endpoint proxies to the module runtime port declared by `ui.entrypoint`, injects module identity where applicable, strips Host-owned request headers, scopes module cookies to the reserved embed route, and rewrites root-relative HTML/CSS links through the reserved embed URL. Rewriting is limited to HTML tag attributes, style attributes, and style element CSS so inline script contents remain unchanged. It is not a public module UI hostname and `/apps/{moduleId}` is not a direct proxy path.
+The endpoint proxies to the module runtime port declared by `ui.entrypoint`, injects module identity where applicable, strips Host-owned request headers, scopes module cookies to the reserved embed route, and rewrites root-relative HTML/CSS links through the reserved embed URL. Rewritten JavaScript and CSS asset URLs keep `/_next/` and file extensions visible in the URL pathname for Next.js and Turbopack runtime checks. Host also injects a small iframe-local fetch/XMLHttpRequest rewrite shim so root-relative module fetches, including App Router `_rsc` requests, continue through the embed proxy instead of the Host shell. Inline module script contents are otherwise preserved. It is not a public module UI hostname and `/apps/{moduleId}` is not a direct proxy path.
 
 ### `GET /api/apps/dev/{targetId}/embed`
 
@@ -394,10 +395,10 @@ This endpoint requires Host authentication through the same `apps.read` authoriz
 Example:
 
 ```text
-/api/apps/dev/mdev_reports/embed?path=%2Fpeople
+/api/apps/dev/mdev_reports/embed/people
 ```
 
-The endpoint proxies to the developer target's local `targetBaseUrl`, preserves the target path prefix, injects module identity according to the developer target identity mode, strips Host-owned request headers, scopes module cookies to the developer embed route, and rewrites root-relative HTML/CSS links through the reserved developer embed URL using the same tag/style-only rewrite rules as installed module embeds. It does not create or read production gateway exposure records.
+The endpoint proxies to the developer target's local `targetBaseUrl`, preserves the target path prefix, injects module identity according to the developer target identity mode, strips Host-owned request headers, scopes module cookies to the developer embed route, and applies the same path-shaped URL rewriting and iframe-local fetch/XMLHttpRequest shim as installed module embeds. It does not create or read production gateway exposure records.
 
 ### `GET /api/modules/{moduleId}`
 

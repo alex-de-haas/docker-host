@@ -198,10 +198,15 @@ function getEmbeddedUrl(
   }
 
   if (app.source === 'developer' && app.developerTargetId) {
-    return `/api/apps/dev/${encodeURIComponent(app.developerTargetId)}/embed?path=${encodeURIComponent(selectedPath)}`;
+    return buildClientEmbedUrl(`/api/apps/dev/${encodeURIComponent(app.developerTargetId)}/embed`, selectedPath);
   }
 
-  return `/api/apps/${encodeURIComponent(app.moduleId)}/embed?path=${encodeURIComponent(selectedPath)}`;
+  return buildClientEmbedUrl(`/api/apps/${encodeURIComponent(app.moduleId)}/embed`, selectedPath);
+}
+
+function buildClientEmbedUrl(embedBasePath: string, modulePath: string) {
+  const parsed = new URL(modulePath, 'http://docker-host-embed.local');
+  return `${embedBasePath}${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 function normalizeSelectedPath(path: string | null) {

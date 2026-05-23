@@ -54,7 +54,7 @@ export async function DELETE(
   return await handleEmbedRequest(request, context);
 }
 
-async function handleEmbedRequest(
+export async function handleDeveloperEmbedRequest(
   request: Request,
   { params }: { params: Promise<{ targetId: string }> }
 ) {
@@ -92,4 +92,11 @@ async function handleEmbedRequest(
   } catch (error) {
     return appEmbedErrorResponse(error);
   }
+}
+
+async function handleEmbedRequest(
+  request: Request,
+  context: { params: Promise<{ targetId: string }> }
+) {
+  return await handleDeveloperEmbedRequest(request, context);
 }

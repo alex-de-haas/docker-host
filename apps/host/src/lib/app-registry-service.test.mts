@@ -48,13 +48,13 @@ test('returns available shell apps to authenticated Host users', async () => {
   assert.equal(apps[0].status, 'available');
   assert.equal(apps[0].icon, 'boxes');
   assert.equal(apps[0].entryPath, '/apps/com.example.reports');
-  assert.equal(apps[0].embeddedUrl, '/api/apps/com.example.reports/embed?path=%2F');
+  assert.equal(apps[0].embeddedUrl, '/api/apps/com.example.reports/embed/');
   assert.deepEqual(apps[0].navigation, [
     {
       label: 'People',
       path: '/people',
       entryPath: '/apps/com.example.reports?path=%2Fpeople',
-      embeddedUrl: '/api/apps/com.example.reports/embed?path=%2Fpeople',
+      embeddedUrl: '/api/apps/com.example.reports/embed/people',
     },
   ]);
 });
@@ -289,13 +289,13 @@ test('includes enabled developer targets when module developer mode is active', 
   assert.equal(apps[0].displayName, 'Reports Dev');
   assert.equal(apps[0].status, 'available');
   assert.equal(apps[0].entryPath, '/apps/dev/mdev_reports');
-  assert.equal(apps[0].embeddedUrl, '/api/apps/dev/mdev_reports/embed?path=%2F');
+  assert.equal(apps[0].embeddedUrl, '/api/apps/dev/mdev_reports/embed/');
   assert.deepEqual(apps[0].navigation, [
     {
       label: 'People',
       path: '/people',
       entryPath: '/apps/dev/mdev_reports?path=%2Fpeople',
-      embeddedUrl: '/api/apps/dev/mdev_reports/embed?path=%2Fpeople',
+      embeddedUrl: '/api/apps/dev/mdev_reports/embed/people',
     },
   ]);
 });

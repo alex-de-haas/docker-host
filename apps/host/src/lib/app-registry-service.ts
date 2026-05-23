@@ -436,7 +436,7 @@ function buildAppEntryPath(moduleId: string, modulePath: string) {
 }
 
 function buildEmbeddedUrl(moduleId: string, modulePath: string) {
-  return `/api/apps/${encodeURIComponent(moduleId)}/embed?path=${encodeURIComponent(modulePath)}`;
+  return buildPathShapedEmbedUrl(`/api/apps/${encodeURIComponent(moduleId)}/embed`, modulePath);
 }
 
 function getDeveloperAppId(targetId: string) {
@@ -451,7 +451,7 @@ function buildDeveloperAppEntryPath(targetId: string, modulePath: string) {
 }
 
 function buildDeveloperEmbeddedUrl(targetId: string, modulePath: string) {
-  return `/api/apps/dev/${encodeURIComponent(targetId)}/embed?path=${encodeURIComponent(modulePath)}`;
+  return buildPathShapedEmbedUrl(`/api/apps/dev/${encodeURIComponent(targetId)}/embed`, modulePath);
 }
 
 function compareHostApps(left: HostAppEntry, right: HostAppEntry) {
@@ -461,4 +461,9 @@ function compareHostApps(left: HostAppEntry, right: HostAppEntry) {
   }
 
   return left.id.localeCompare(right.id);
+}
+
+function buildPathShapedEmbedUrl(embedBasePath: string, modulePath: string) {
+  const parsed = new URL(modulePath, 'http://docker-host-embed.local');
+  return `${embedBasePath}${parsed.pathname}${parsed.search}${parsed.hash}`;
 }

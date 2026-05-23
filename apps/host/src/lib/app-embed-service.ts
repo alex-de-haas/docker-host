@@ -60,6 +60,7 @@ const MAX_EMBED_PATH_LENGTH = 2048;
 const EMBED_ACCESS_TOKEN_PARAM = 'embedToken';
 const EMBED_ACCESS_TOKEN_TTL_MS = 5 * 60 * 1000;
 const EMBED_ACCESS_TOKEN_SECRET_FILE = 'embed-access-secret';
+const EMBED_RUNTIME_SCRIPT_ID = '__docker-host-embed-runtime';
 const STATIC_ASSET_PRINCIPAL: HostPrincipal = {
   id: 'embed_static_asset',
   role: 'host.user',
@@ -108,10 +109,12 @@ export async function resolveHostAppEmbedTarget(
   request: Request,
   principal: HostPrincipal,
   moduleId: string,
-  options: ListHostAppsOptions & { config?: HostRuntimeConfig } = {}
+  options: ListHostAppsOptions & { config?: HostRuntimeConfig; modulePath?: string } = {}
 ): Promise<HostAppEmbedTarget> {
   const config = options.config ?? getHostRuntimeConfig();
-  const modulePath = normalizeEmbedModulePath(new URL(request.url).searchParams.get('path'));
+  const modulePath = options.modulePath
+    ? normalizeEmbedModulePath(options.modulePath)
+    : getInstalledEmbedModulePathFromRequest(request, moduleId);
   const apps = await listHostApps(principal, {
     ...options,
     config,
@@ -208,10 +211,12 @@ export async function resolveHostDeveloperAppEmbedTarget(
   request: Request,
   principal: HostPrincipal,
   targetId: string,
-  options: ListHostAppsOptions & { config?: HostRuntimeConfig } = {}
+  options: ListHostAppsOptions & { config?: HostRuntimeConfig; modulePath?: string } = {}
 ): Promise<HostAppEmbedTarget> {
   const config = options.config ?? getHostRuntimeConfig();
-  const modulePath = normalizeEmbedModulePath(new URL(request.url).searchParams.get('path'));
+  const modulePath = options.modulePath
+    ? normalizeEmbedModulePath(options.modulePath)
+    : getDeveloperEmbedModulePathFromRequest(request, targetId);
   const apps = await listHostApps(principal, {
     ...options,
     config,
@@ -419,6 +424,81 @@ export async function authenticateHostAppEmbedTokenRequest(
   return payload.developerTargetId === expected.targetId ? payload.principal : null;
 }
 
+export function getInstalledEmbedModulePathFromRequest(request: Request, moduleId: string) {
+  return getEmbedModulePathFromRequest(
+    request,
+    `/api/apps/${encodeURIComponent(moduleId)}/embed`
+  );
+}
+
+export function getDeveloperEmbedModulePathFromRequest(request: Request, targetId: string) {
+  return getEmbedModulePathFromRequest(
+    request,
+    `/api/apps/dev/${encodeURIComponent(targetId)}/embed`
+  );
+}
+
+export function getEmbedModulePathFromRequest(request: Request, embedBasePath: string) {
+  const url = new URL(request.url);
+  const normalizedBasePath = embedBasePath.replace(/\/+$/, '');
+  const pathname = url.pathname;
+  const legacyPath = url.searchParams.get('path');
+  if (
+    legacyPath !== null &&
+    (pathname === normalizedBasePath || pathname === `${normalizedBasePath}/`)
+  ) {
+    return normalizeEmbedModulePath(legacyPath);
+  }
+
+  const embeddedPathname = pathname === normalizedBasePath || pathname === `${normalizedBasePath}/`
+    ? '/'
+    : pathname.startsWith(`${normalizedBasePath}/`)
+      ? pathname.slice(normalizedBasePath.length)
+      : '/';
+  const modulePath = appendModuleSearch(embeddedPathname, url.searchParams);
+  return normalizeEmbedModulePath(modulePath);
+}
+
+export function getRootRelativeModulePathFromRequest(request: Request) {
+  const url = new URL(request.url);
+  return normalizeEmbedModulePath(appendModuleSearch(url.pathname || '/', url.searchParams));
+}
+
+export function parseHostAppEmbedReferer(request: Request) {
+  const referer = request.headers.get('referer');
+  if (!referer) {
+    return null;
+  }
+
+  try {
+    const requestUrl = new URL(request.url);
+    const refererUrl = new URL(referer, requestUrl);
+    if (refererUrl.origin !== requestUrl.origin) {
+      return null;
+    }
+
+    const developerMatch = /^\/api\/apps\/dev\/([^/]+)\/embed(?:\/|$)/.exec(refererUrl.pathname);
+    if (developerMatch?.[1]) {
+      return {
+        source: 'developer' as const,
+        targetId: decodeURIComponent(developerMatch[1]),
+      };
+    }
+
+    const installedMatch = /^\/api\/apps\/([^/]+)\/embed(?:\/|$)/.exec(refererUrl.pathname);
+    if (installedMatch?.[1] && installedMatch[1] !== 'dev') {
+      return {
+        source: 'installed' as const,
+        moduleId: decodeURIComponent(installedMatch[1]),
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 export async function proxyHostAppEmbedRequest(
   request: Request,
   target: HostAppEmbedTarget
@@ -440,11 +520,22 @@ export async function proxyHostAppEmbedRequest(
 
 export function normalizeEmbedModulePath(value: string | null) {
   const path = value || '/';
+  let decodedPath = path;
+  try {
+    decodedPath = decodeURIComponent(path);
+  } catch {
+    throw new HostAppEmbedError(
+      'invalid_embed_path',
+      'Embedded module UI path must be a same-origin absolute path.',
+      400
+    );
+  }
+
   if (
     !path.startsWith('/') ||
     path.startsWith('//') ||
-    path.includes('\\') ||
-    /[\u0000-\u001f\u007f]/.test(path) ||
+    decodedPath.includes('\\') ||
+    /[\u0000-\u001f\u007f]/.test(decodedPath) ||
     path.length > MAX_EMBED_PATH_LENGTH
   ) {
     throw new HostAppEmbedError(
@@ -463,7 +554,7 @@ export function isHostAppEmbedStaticAssetRequest(request: Request) {
   }
 
   try {
-    const modulePath = normalizeEmbedModulePath(new URL(request.url).searchParams.get('path'));
+    const modulePath = getEmbedModulePathFromRequest(request, getEmbedBasePathFromRequest(request));
     return STATIC_EMBED_ASSET_PATH_PREFIXES.some(prefix => modulePath.startsWith(prefix));
   } catch {
     return false;
@@ -476,8 +567,17 @@ export function rewriteEmbeddedContent(
   embedAccessToken: string | null = null
 ) {
   const toEmbedPath = (modulePath: string) => buildAppEmbedUrl(target.app, modulePath, embedAccessToken);
+  const rewritten = rewriteHtmlFragment(content, toEmbedPath);
+  return injectEmbedRuntimeScript(rewritten, target.app, embedAccessToken);
+}
 
-  return rewriteHtmlFragment(content, toEmbedPath);
+function rewriteEmbeddedCssContent(
+  content: string,
+  target: Pick<HostAppEmbedTarget, 'app'>,
+  embedAccessToken: string | null = null
+) {
+  const toEmbedPath = (modulePath: string) => buildAppEmbedUrl(target.app, modulePath, embedAccessToken);
+  return rewriteCssUrls(content, toEmbedPath);
 }
 
 function rewriteHtmlFragment(
@@ -714,15 +814,17 @@ function rewriteCssUrls(
 }
 
 export function buildEmbedUrl(moduleId: string, modulePath: string, embedAccessToken: string | null = null) {
-  return appendEmbedAccessToken(
-    `/api/apps/${encodeURIComponent(moduleId)}/embed?path=${encodeURIComponent(modulePath)}`,
+  return buildPathShapedEmbedUrl(
+    `/api/apps/${encodeURIComponent(moduleId)}/embed`,
+    modulePath,
     embedAccessToken
   );
 }
 
 export function buildDeveloperEmbedUrl(targetId: string, modulePath: string, embedAccessToken: string | null = null) {
-  return appendEmbedAccessToken(
-    `/api/apps/dev/${encodeURIComponent(targetId)}/embed?path=${encodeURIComponent(modulePath)}`,
+  return buildPathShapedEmbedUrl(
+    `/api/apps/dev/${encodeURIComponent(targetId)}/embed`,
+    modulePath,
     embedAccessToken
   );
 }
@@ -820,7 +922,9 @@ async function buildEmbedResponse(
   const headers = buildEmbedResponseHeaders(request, response.headers, target, embedAccessToken);
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
   if (shouldRewriteContent(contentType)) {
-    const body = rewriteEmbeddedContent(await response.text(), target, embedAccessToken);
+    const body = contentType.includes('text/css')
+      ? rewriteEmbeddedCssContent(await response.text(), target, embedAccessToken)
+      : rewriteEmbeddedContent(await response.text(), target, embedAccessToken);
     headers.delete('content-length');
     headers.delete('content-encoding');
     return new NextResponse(body, {
@@ -1035,7 +1139,7 @@ function normalizeStaticEmbedAssetPath(request: Request) {
     );
   }
 
-  return normalizeEmbedModulePath(new URL(request.url).searchParams.get('path'));
+  return getEmbedModulePathFromRequest(request, getEmbedBasePathFromRequest(request));
 }
 
 function createStaticAssetIdentityInput({
@@ -1172,14 +1276,6 @@ async function getEmbedAccessTokenSecret(config: HostRuntimeConfig) {
   }
 }
 
-function appendEmbedAccessToken(url: string, embedAccessToken: string | null) {
-  if (!embedAccessToken) {
-    return url;
-  }
-
-  return `${url}&${EMBED_ACCESS_TOKEN_PARAM}=${encodeURIComponent(embedAccessToken)}`;
-}
-
 function sanitizeEmbedAccessTokenPrincipal(principal: HostPrincipal): HostPrincipal {
   return {
     id: principal.id,
@@ -1242,6 +1338,123 @@ function buildDeveloperUpstreamUrl(target: ModuleDevTargetRecord, modulePath: st
   const pathPrefix = target.targetPathPrefix || '';
   const normalizedModulePath = modulePath.startsWith('/') ? modulePath : `/${modulePath}`;
   return new URL(`${pathPrefix}${normalizedModulePath}`, base.origin).toString();
+}
+
+function buildPathShapedEmbedUrl(
+  embedBasePath: string,
+  modulePath: string,
+  embedAccessToken: string | null
+) {
+  const parsed = new URL(normalizeEmbedModulePath(modulePath), 'http://docker-host-embed.local');
+  const searchParams = new URLSearchParams(parsed.search);
+  if (embedAccessToken) {
+    searchParams.set(EMBED_ACCESS_TOKEN_PARAM, embedAccessToken);
+  }
+
+  const search = searchParams.toString();
+  return `${embedBasePath}${parsed.pathname}${search ? `?${search}` : ''}${parsed.hash}`;
+}
+
+function appendModuleSearch(pathname: string, searchParams: URLSearchParams) {
+  const forwardedSearchParams = new URLSearchParams(searchParams);
+  forwardedSearchParams.delete(EMBED_ACCESS_TOKEN_PARAM);
+  const search = forwardedSearchParams.toString();
+  return `${pathname || '/'}${search ? `?${search}` : ''}`;
+}
+
+function getEmbedBasePathFromRequest(request: Request) {
+  const pathname = new URL(request.url).pathname;
+  const developerMatch = /^(\/api\/apps\/dev\/[^/]+\/embed)(?:\/|$)/.exec(pathname);
+  if (developerMatch?.[1]) {
+    return developerMatch[1];
+  }
+
+  const installedMatch = /^(\/api\/apps\/[^/]+\/embed)(?:\/|$)/.exec(pathname);
+  if (installedMatch?.[1]) {
+    return installedMatch[1];
+  }
+
+  throw new HostAppEmbedError(
+    'invalid_embed_path',
+    'Embedded module UI path must use a reserved Host embed route.',
+    400
+  );
+}
+
+function injectEmbedRuntimeScript(
+  content: string,
+  app: Pick<HostAppEntry, 'source' | 'moduleId' | 'developerTargetId'>,
+  embedAccessToken: string | null
+) {
+  if (!/<html[\s>]/i.test(content) || content.includes(`id="${EMBED_RUNTIME_SCRIPT_ID}"`)) {
+    return content;
+  }
+
+  const script = renderEmbedRuntimeScript(app, embedAccessToken);
+  const headStart = /<head\b[^>]*>/i.exec(content);
+  if (headStart?.index !== undefined) {
+    const insertAt = headStart.index + headStart[0].length;
+    return `${content.slice(0, insertAt)}${script}${content.slice(insertAt)}`;
+  }
+
+  return `${script}${content}`;
+}
+
+function renderEmbedRuntimeScript(
+  app: Pick<HostAppEntry, 'source' | 'moduleId' | 'developerTargetId'>,
+  embedAccessToken: string | null
+) {
+  const embedBasePath = app.source === 'developer' && app.developerTargetId
+    ? `/api/apps/dev/${encodeURIComponent(app.developerTargetId)}/embed`
+    : `/api/apps/${encodeURIComponent(app.moduleId)}/embed`;
+  const token = embedAccessToken ?? '';
+
+  return `<script id="${EMBED_RUNTIME_SCRIPT_ID}">(() => {
+  const embedBasePath = ${JSON.stringify(embedBasePath)};
+  const embedToken = ${JSON.stringify(token)};
+  const tokenParam = ${JSON.stringify(EMBED_ACCESS_TOKEN_PARAM)};
+  const shouldRewrite = value => {
+    try {
+      const url = new URL(value, window.location.href);
+      return url.origin === window.location.origin &&
+        url.pathname.startsWith('/') &&
+        !url.pathname.startsWith(embedBasePath + '/') &&
+        url.pathname !== embedBasePath;
+    } catch {
+      return false;
+    }
+  };
+  const toEmbedUrl = value => {
+    if (!shouldRewrite(value)) {
+      return value;
+    }
+    const url = new URL(value, window.location.href);
+    const next = new URL(embedBasePath + url.pathname, window.location.origin);
+    url.searchParams.forEach((paramValue, paramName) => next.searchParams.append(paramName, paramValue));
+    if (embedToken) {
+      next.searchParams.set(tokenParam, embedToken);
+    }
+    next.hash = url.hash;
+    return next.pathname + next.search + next.hash;
+  };
+  const nativeFetch = window.fetch;
+  if (typeof nativeFetch === 'function') {
+    window.fetch = (input, init) => {
+      if (input instanceof Request) {
+        const rewritten = toEmbedUrl(input.url);
+        return nativeFetch.call(window, rewritten === input.url ? input : new Request(rewritten, input), init);
+      }
+      return nativeFetch.call(window, typeof input === 'string' || input instanceof URL ? toEmbedUrl(String(input)) : input, init);
+    };
+  }
+  const NativeXMLHttpRequest = window.XMLHttpRequest;
+  if (NativeXMLHttpRequest?.prototype?.open) {
+    const nativeOpen = NativeXMLHttpRequest.prototype.open;
+    NativeXMLHttpRequest.prototype.open = function(method, url, ...rest) {
+      return nativeOpen.call(this, method, typeof url === 'string' || url instanceof URL ? toEmbedUrl(String(url)) : url, ...rest);
+    };
+  }
+})();</script>`;
 }
 
 function getModulePathFromUpstreamUrl(url: URL, targetPathPrefix: string | undefined) {

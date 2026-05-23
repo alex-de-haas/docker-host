@@ -91,7 +91,7 @@ test('GET /api/apps/dev/[targetId]/embed proxies static assets without Host cook
     }, config);
 
     const response = await GET(
-      new Request('http://localhost:3000/api/apps/dev/mdev_reports/embed?path=%2F_next%2Fstatic%2Fapp.css'),
+      new Request('http://localhost:3000/api/apps/dev/mdev_reports/embed/_next/static/app.css'),
       { params: Promise.resolve({ targetId: 'mdev_reports' }) }
     );
 
@@ -194,15 +194,15 @@ test('GET /api/apps/dev/[targetId]/embed accepts scoped embed tokens for sandbox
     const token = /embedToken=([^"&]+)/.exec(initialBody)?.[1];
     assert.equal(initialResponse.status, 200);
     assert.equal(typeof token, 'string');
-    assert.match(initialBody, /\/api\/apps\/dev\/mdev_reports\/embed\?path=%2Fpeople&embedToken=/);
+    assert.match(initialBody, /\/api\/apps\/dev\/mdev_reports\/embed\/people\?embedToken=/);
 
     const tokenResponse = await GET(
-      new Request(`http://localhost:3000/api/apps/dev/mdev_reports/embed?path=%2Fpeople&embedToken=${token}`),
+      new Request(`http://localhost:3000/api/apps/dev/mdev_reports/embed/people?embedToken=${token}`),
       { params: Promise.resolve({ targetId: 'mdev_reports' }) }
     );
 
     assert.equal(tokenResponse.status, 200);
-    assert.match(await tokenResponse.text(), /\/api\/apps\/dev\/mdev_reports\/embed\?path=%2Fpeople&embedToken=/);
+    assert.match(await tokenResponse.text(), /\/api\/apps\/dev\/mdev_reports\/embed\/people\?embedToken=/);
     assert.equal(upstreamRequests.length, 2);
     assert.equal(upstreamRequests[0]?.url, '/dev/');
     assert.equal(upstreamRequests[1]?.url, '/dev/people');
@@ -289,7 +289,7 @@ test('GET /api/apps/dev/[targetId]/embed proxies enabled developer targets throu
     }, config);
 
     const response = await GET(
-      new Request('http://localhost:3000/api/apps/dev/mdev_reports/embed?path=%2Fpeople%3Fteam%3Dops', {
+      new Request('http://localhost:3000/api/apps/dev/mdev_reports/embed/people?team=ops', {
         headers: {
           cookie: `${SESSION_COOKIE_NAME}=${session.sessionToken}`,
         },
