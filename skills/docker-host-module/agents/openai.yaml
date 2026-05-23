@@ -1,0 +1,4 @@
+interface:
+  display_name: "Docker Host Module"
+  short_description: "Build Docker Host modules"
+  default_prompt: "Use $docker-host-module to wrap an app as a Docker Host module."

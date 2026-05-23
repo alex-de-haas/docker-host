@@ -27,6 +27,34 @@ Install the repository demo module:
 docker-host modules install https://raw.githubusercontent.com/alex-de-haas/docker-host/main/modules/demo-module/metadata.json
 ```
 
+## Install Docker Host Module Skill
+
+Install the global Codex skill used to wrap applications from other repositories as Docker Host modules by asking Codex:
+
+```text
+Use $skill-installer to install the skill from alex-de-haas/docker-host at skills/docker-host-module.
+```
+
+The built-in Codex skill installer installs into `$CODEX_HOME/skills` and is the preferred first-install path inside the Codex app.
+
+For repeatable command-line updates, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-docker-host-module-skill.sh | sh
+```
+
+Run the same command again to update the installed skill after Docker Host module contracts change. This is useful because the built-in installer does not overwrite an existing skill directory. Restart Codex after installing or updating, then invoke it explicitly from another repository with:
+
+```text
+Use $docker-host-module to wrap this app as a Docker Host module.
+```
+
+From a local checkout, install the current working copy of the skill with:
+
+```bash
+sh scripts/install-docker-host-module-skill.sh --source-dir skills/docker-host-module
+```
+
 To remove the Host container, Host-managed Docker resources, launch configuration, and local Host state while keeping the `docker-host` CLI executable:
 
 ```bash
