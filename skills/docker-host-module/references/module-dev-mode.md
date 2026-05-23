@@ -98,6 +98,8 @@ The generic installed-CLI harness is `docker-host dev`. It reads a module-local 
 
 Do not invent a parallel token or mock-auth mechanism when the harness or low-level developer target APIs can exercise the real Host gateway.
 
+The harness is a Host API-backed workflow. The Host must already be set up, and the local CLI must have a Host admin token from `docker-host auth token import` or `DOCKER_HOST_CLI_TOKEN`. The harness calls Host-owned APIs; it does not write auth state, assignments, directory policy, or developer target JSON directly.
+
 Example `.docker-host/dev.json`:
 
 ```json
@@ -173,3 +175,4 @@ docker-host dev reset --manifest .docker-host/dev.json
 - Developer app ids use `dev:{targetId}`.
 - Disabled targets and all targets under disabled developer mode are hidden from `/api/apps`.
 - Developer targets are checked before production gateway exposures while developer mode is enabled.
+- Developer mode does not install module containers, create module storage, prove Dockerfile behavior, or create production gateway exposure/external ingress records.

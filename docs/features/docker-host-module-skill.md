@@ -11,6 +11,7 @@ The skill helps agents:
 - add shell app UI metadata;
 - integrate Host gateway identity and scoped user directory access;
 - implement module-owned roles;
+- distinguish module metadata from Host-owned service/API exposure and external ingress readiness;
 - validate modules with the local developer-mode workflow before falling back to slower image rebuilds.
 
 The skill is intentionally not a copy of the full documentation. `SKILL.md` is a short workflow guide, while `references/` contains focused topic documents that agents load only when needed.
@@ -36,9 +37,9 @@ flowchart LR
 
 - `skills/docker-host-module/SKILL.md` - trigger metadata and core workflow.
 - `skills/docker-host-module/agents/openai.yaml` - UI-facing skill metadata.
-- `skills/docker-host-module/references/module-metadata.md` - compact metadata schema and lifecycle guide.
-- `skills/docker-host-module/references/module-auth-and-users.md` - Host roles, gateway policies, identity tokens, scoped directory, and module-owned roles.
-- `skills/docker-host-module/references/module-dev-mode.md` - local developer target workflow and `.docker-host/dev.json` manifest example.
+- `skills/docker-host-module/references/module-metadata.md` - compact metadata schema, hard validation constraints, install/update behavior, and unsupported metadata assumptions.
+- `skills/docker-host-module/references/module-auth-and-users.md` - Host roles, gateway policies, identity modes, identity tokens, scoped directory, external providers, external ingress readiness, and module-owned roles.
+- `skills/docker-host-module/references/module-dev-mode.md` - local developer target workflow, Host API-backed `.docker-host/dev.json` harness behavior, and developer-mode boundaries.
 - `skills/docker-host-module/references/demo-module-patterns.md` - practical patterns from `modules/demo-module`.
 - `skills/docker-host-module/references/module-implementation-checklist.md` - final implementation and validation checklist.
 - `skills/docker-host-module/assets/module-template/metadata.json` - minimal valid metadata skeleton.
@@ -103,6 +104,7 @@ Keep the skill aligned with the source documentation:
 - update `references/module-auth-and-users.md` when `docs/features/auth-gateway.md` or `docs/features/user-management.md` changes;
 - update `references/module-dev-mode.md` when `docs/features/module-developer-mode.md` or `docs/features/module-development-harness.md` changes;
 - update `references/demo-module-patterns.md` when `modules/demo-module` changes in a way agents should copy.
+- update `references/module-implementation-checklist.md` when module validation, gateway publishing, or security review expectations change.
 
 Run the skill validator after changes:
 

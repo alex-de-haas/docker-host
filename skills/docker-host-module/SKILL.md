@@ -21,7 +21,7 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 ## Reference Map
 
 - Read `references/module-metadata.md` when authoring or reviewing `metadata.json`, storage, settings, dependencies, endpoints, or install/update behavior.
-- Read `references/module-auth-and-users.md` when working with gateway exposure, shell apps, Host roles, `X-Docker-Host-Identity`, scoped user directory APIs, or module-owned roles.
+- Read `references/module-auth-and-users.md` when working with gateway exposure, shell apps, Host roles, `X-Docker-Host-Identity`, scoped user directory APIs, module-owned roles, external providers, or external ingress readiness.
 - Read `references/module-dev-mode.md` when linking a local module dev server through the Host gateway or authoring `.docker-host/dev.json`.
 - Read `references/demo-module-patterns.md` when copying repo-local examples from `modules/demo-module`.
 - Read `references/module-implementation-checklist.md` before finishing a module implementation or review.
@@ -36,6 +36,7 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 4. Add `ui` metadata only when the app should appear inside the authenticated Host shell. Do not model browser UI access as a public service/API subdomain.
 5. If the app needs the current Host user, validate the signed `X-Docker-Host-Identity` token against Host JWKS. Do not trust unsigned identity headers or Host cookies.
 6. If the app needs a user list for internal role assignment, use the scoped module directory model and store module roles by stable Host user id.
+7. Keep operator publishing details such as DNS, TLS, tunnels, reverse proxies, and external ingress readiness out of module metadata.
 
 ### Build a New Module
 
@@ -69,6 +70,7 @@ Use focused validation based on what changed:
 - Metadata parser or lifecycle behavior: run targeted Host tests, commonly `npm run host:test`.
 - Module app changes: run the module's lint/build commands, for example `npm run demo-module:lint` and `npm run demo-module:build` for the demo module.
 - Shell app, embedded transport, identity behavior, or scoped directory behavior: use `npm run host:dev:demo` or a linked developer target for the fast integrated loop.
+- Service/API gateway exposure or external ingress readiness: validate through the Host gateway and ingress UI/API, not by adding module metadata fields.
 - Production-like container behavior: build the Host image and module image locally, then install metadata through Docker Host.
 
 Do not claim module security or identity work is complete without checking Host-issued token validation, cookie/header stripping assumptions, and module audience validation.
