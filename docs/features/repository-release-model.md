@@ -124,6 +124,8 @@ Immutable Host versions are created from `host-v*` git tags. The Host image work
 
 The Host image should be published as a multi-platform Linux image for `linux/amd64` and `linux/arm64`, so Docker Desktop users on Apple Silicon and standard x64 Linux hosts can pull the same image reference without local emulation setup.
 
+Pull requests also build both target platforms so arm64 regressions are caught before merge. Because GitHub-hosted Ubuntu runners are amd64, the arm64 build runs through QEMU and is expected to be slower than the native amd64 build. The Host and Demo Module image workflows use separate GitHub Actions Buildx cache scopes and `mode=min` cache export so their caches do not overwrite each other and cache upload does not dominate the build.
+
 Demo Module image artifact:
 
 ```text

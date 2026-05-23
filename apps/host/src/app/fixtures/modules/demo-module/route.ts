@@ -1,6 +1,5 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { NextResponse } from 'next/server';
+import demoModuleMetadata from '../../../../../../../modules/demo-module/metadata.json';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -13,13 +12,7 @@ export async function GET() {
     return NextResponse.json({ error: 'Fixture metadata is disabled.' }, { status: 404 });
   }
 
-  const metadata = await readCurrentDemoMetadata();
-  if (!metadata) {
-    return NextResponse.json(
-      { error: 'Current demo module metadata could not be found.' },
-      { status: 500 }
-    );
-  }
+  const metadata = demoModuleMetadata as Record<string, unknown>;
 
   return NextResponse.json({
     ...metadata,
@@ -30,27 +23,6 @@ export async function GET() {
       pullPolicy: 'ifNotPresent',
     },
   });
-}
-
-async function readCurrentDemoMetadata() {
-  for (const candidatePath of getDemoMetadataPaths()) {
-    try {
-      return JSON.parse(await fs.readFile(candidatePath, 'utf-8')) as Record<string, unknown>;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error;
-      }
-    }
-  }
-
-  return null;
-}
-
-function getDemoMetadataPaths() {
-  return [
-    path.resolve(process.cwd(), 'modules/demo-module/metadata.json'),
-    path.resolve(process.cwd(), '../../modules/demo-module/metadata.json'),
-  ];
 }
 
 function readRecord(value: unknown) {
