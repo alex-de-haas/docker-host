@@ -34,7 +34,7 @@ export interface StorageInspection {
 }
 
 const defaultModuleId = "com.haas.demo-module";
-const defaultModuleVersion = "0.2.0";
+const defaultModuleVersion = "0.2.1";
 
 export function getDemoConfig(): DemoConfig {
   const moduleId = process.env.DOCKER_HOST_MODULE_ID || process.env.MODULE_ID || defaultModuleId;

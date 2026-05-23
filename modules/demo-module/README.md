@@ -9,10 +9,10 @@ Demo Module is a small Next.js application used to validate Docker Host module o
 - optional external mount collections under `/mnt/sources/{key}`;
 - Host gateway identity token propagation and validation;
 - provider-neutral external ingress readiness checks;
-- shell app discovery metadata with stable overview, people, and settings routes;
+- shell app discovery metadata with stable overview, people, roles, and settings routes;
 - scoped module directory access through the module service token;
 - assigned Host user rendering from the scoped module directory;
-- module-owned permission mapping from Host identity claims;
+- module-owned role assignment and permission mapping from Host identity claims;
 - health-check and inspection endpoints for Host features.
 
 The module UI uses the same Tailwind v4, shadcn `new-york` primitives, semantic theme tokens, and lucide icon library as the Host app. This keeps the standalone demo routes and embedded Host app surface visually consistent.
@@ -61,10 +61,12 @@ Useful endpoints:
 
 - `/` - demo dashboard;
 - `/people` - stable people page for shell app navigation;
+- `/roles` - module-owned role assignment page;
 - `/settings` - stable runtime settings page for shell app navigation;
 - `/api/health` - health and storage probe;
 - `/api/config` - sanitized runtime config;
 - `/api/people` - assigned Host users from the scoped module directory;
+- `/api/roles` - assigned Host users with effective module roles;
 - `/api/auth/identity` - Host identity, gateway header, module directory, and module-owned permission diagnostics.
 
 ## Auth gateway testing

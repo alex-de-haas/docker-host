@@ -2,8 +2,8 @@
   "schemaVersion": "0.2",
   "id": "com.haas.demo-module",
   "name": "Demo Module",
-  "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, gateway authorization, identity propagation, and module directory flows.",
-  "version": "0.2.0",
+  "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, gateway authorization, identity propagation, module directory, and module-owned role flows.",
+  "version": "0.2.1",
   "containers": [
     {
       "key": "app",
@@ -187,6 +187,10 @@
       {
         "label": "People",
         "path": "/people"
+      },
+      {
+        "label": "Roles",
+        "path": "/roles"
       },
       {
         "label": "Settings",

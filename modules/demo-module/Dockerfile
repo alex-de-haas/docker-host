@@ -18,7 +18,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV MODULE_ID=com.haas.demo-module
-ENV MODULE_VERSION=0.2.0
+ENV MODULE_VERSION=0.2.1
 
 COPY --from=builder /repo/modules/demo-module/.next/standalone ./
 COPY --from=builder /repo/modules/demo-module/.next/static ./modules/demo-module/.next/static

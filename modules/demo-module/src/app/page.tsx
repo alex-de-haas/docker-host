@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/status";
 import { getDemoConfig, inspectStorage, moduleStartedAt } from "@/lib/demo-config";
 import { getDemoAuthSnapshot } from "@/lib/host-auth";
+import { roleSourceLabel } from "@/lib/module-roles";
 import type { ModuleDirectoryStatus, ModuleIdentityStatus } from "@/lib/host-auth";
 
 export const dynamic = "force-dynamic";
@@ -216,11 +217,16 @@ export default async function Home() {
       >
         <SectionCard
           title="Module permissions"
-          action={<StateBadge tone="success">{auth.modulePermissions.role}</StateBadge>}
+          action={<StateBadge tone="success">{auth.modulePermissions.roleLabel}</StateBadge>}
         >
           <DetailList
             items={[
               { label: "Principal", value: auth.modulePermissions.principal },
+              { label: "Role source", value: roleSourceLabel(auth.modulePermissions.source) },
+              {
+                label: "Can manage roles",
+                value: auth.modulePermissions.canManageRoles ? "Yes" : "No",
+              },
               { label: "Permissions", value: auth.modulePermissions.permissions.join(", ") },
             ]}
           />

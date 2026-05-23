@@ -1,6 +1,11 @@
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 import type { JWTPayload } from "jose";
 import { getDemoConfig } from "@/lib/demo-config";
+import {
+  readDemoModuleRoleAssignments,
+  resolveDemoModulePermissions,
+  type DemoModulePermissionSnapshot,
+} from "@/lib/module-roles";
 
 const identityHeaderName = "x-docker-host-identity";
 const hostSessionCookieName = "docker_host_session";
@@ -9,7 +14,7 @@ const directoryTimeoutMs = 1_500;
 const identityTimeoutMs = 1_500;
 const defaultIssuer = "docker-host";
 
-type HeaderReader = {
+export type HeaderReader = {
   get(name: string): string | null;
 };
 
@@ -96,12 +101,6 @@ export interface ModuleDirectoryUser {
   hostRole: string;
 }
 
-export interface DemoModulePermissionSnapshot {
-  principal: string;
-  role: "anonymous" | "viewer" | "operator" | "admin";
-  permissions: string[];
-}
-
 interface ModuleIdentityDiscovery {
   issuer?: unknown;
   jwks_uri?: unknown;
@@ -112,9 +111,10 @@ interface ModuleIdentityDiscovery {
 const remoteJwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<DemoAuthSnapshot> {
-  const [identity, directory] = await Promise.all([
+  const [identity, directory, roleAssignments] = await Promise.all([
     getModuleIdentitySnapshot(headersList),
     getModuleDirectorySnapshot(),
+    readDemoModuleRoleAssignments(),
   ]);
 
   return {
@@ -122,7 +122,7 @@ export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<De
     gateway: getGatewayRequestSnapshot(headersList),
     identity,
     directory,
-    modulePermissions: deriveDemoModulePermissions(identity),
+    modulePermissions: resolveDemoModulePermissions(identity, roleAssignments),
   };
 }
 
@@ -284,50 +284,6 @@ function getGatewayRequestSnapshot(headersList: HeaderReader): GatewayRequestSna
     dockerHostHeaders: headerNames
       .filter(name => name.toLowerCase().startsWith("x-docker-host-"))
       .sort(),
-  };
-}
-
-function deriveDemoModulePermissions(identity: ModuleIdentitySnapshot): DemoModulePermissionSnapshot {
-  if (identity.status !== "verified" || !identity.claims) {
-    return {
-      principal: "anonymous",
-      role: "anonymous",
-      permissions: ["demo.health.read", "demo.config.read"],
-    };
-  }
-
-  const claims = identity.claims;
-  if (claims.hostRole === "host.admin" || claims.moduleAccess === "hostAdmin") {
-    return {
-      principal: claims.subject,
-      role: "admin",
-      permissions: [
-        "demo.health.read",
-        "demo.config.read",
-        "demo.people.read",
-        "demo.directory.read",
-        "demo.settings.preview",
-      ],
-    };
-  }
-
-  if (claims.moduleAccess === "assigned") {
-    return {
-      principal: claims.subject,
-      role: "operator",
-      permissions: [
-        "demo.health.read",
-        "demo.config.read",
-        "demo.people.read",
-        "demo.directory.read",
-      ],
-    };
-  }
-
-  return {
-    principal: claims.subject,
-    role: "viewer",
-    permissions: ["demo.health.read", "demo.config.read", "demo.people.read"],
   };
 }
 

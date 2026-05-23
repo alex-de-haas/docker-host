@@ -21,7 +21,7 @@ export type DetailItem = {
 };
 
 export type StateTone = "neutral" | "success" | "warning" | "danger";
-export type DemoRoute = "overview" | "people" | "settings";
+export type DemoRoute = "overview" | "people" | "roles" | "settings";
 
 const demoNavigationItems: Array<{
   id: DemoRoute;
@@ -30,6 +30,7 @@ const demoNavigationItems: Array<{
 }> = [
   { id: "overview", label: "Overview", href: "/" },
   { id: "people", label: "People", href: "/people" },
+  { id: "roles", label: "Roles", href: "/roles" },
   { id: "settings", label: "Settings", href: "/settings" },
 ];
 

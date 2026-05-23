@@ -4,7 +4,7 @@
 
 Demo Module is a repository-local Docker Host module under `modules/demo-module`. It is a small Next.js application that gives Docker Host a stable target for validating module operations during development.
 
-The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, assigned Host user data from the scoped module directory, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The UI uses the same Tailwind v4, shadcn `new-york` component style, semantic theme tokens, and lucide icon library as the Host app so embedded module screens keep the Host visual language. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
+The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, assigned Host user data from the scoped module directory, module-owned role assignments, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The UI uses the same Tailwind v4, shadcn `new-york` component style, semantic theme tokens, and lucide icon library as the Host app so embedded module screens keep the Host visual language. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
 
 ```mermaid
 flowchart LR
@@ -13,13 +13,16 @@ flowchart LR
   C --> D["Next.js demo app"]
   D --> M["/"]
   D --> N["/people"]
+  D --> R["/roles"]
   D --> O["/settings"]
   D --> E["/api/health"]
   D --> F["/api/config"]
   D --> G["/api/people"]
+  D --> P["/api/roles"]
   D --> J["/api/auth/identity"]
   J --> K["Host JWKS discovery"]
   J --> L["Scoped module directory"]
+  P --> Q["module-roles.json"]
   B --> H["/app/data and /app/logs mounts"]
   B --> I["optional /mnt/sources/{key} mounts"]
 ```
@@ -30,6 +33,7 @@ flowchart LR
 - `modules/demo-module/Dockerfile` - production image build for the demo module.
 - `modules/demo-module/src/app/page.tsx` - demo dashboard.
 - `modules/demo-module/src/app/people/page.tsx` - stable people page for shell app navigation.
+- `modules/demo-module/src/app/roles/page.tsx` - module-owned role assignment test page.
 - `modules/demo-module/src/app/settings/page.tsx` - stable settings page for shell app navigation.
 - `modules/demo-module/src/app/globals.css` - Tailwind v4 theme tokens aligned with `apps/host/src/app/globals.css`.
 - `modules/demo-module/src/components/DemoModuleUi.tsx` - shared dashboard layout, metric, detail, people, and storage UI composition.
@@ -37,8 +41,11 @@ flowchart LR
 - `modules/demo-module/src/app/api/health/route.ts` - health and writable-storage probe.
 - `modules/demo-module/src/app/api/config/route.ts` - sanitized runtime configuration.
 - `modules/demo-module/src/app/api/people/route.ts` - assigned Host users from the scoped module directory.
+- `modules/demo-module/src/app/api/roles/route.ts` - assigned Host users with effective module roles.
+- `modules/demo-module/src/app/api/roles/[userId]/route.ts` - module-owned role assignment mutation.
 - `modules/demo-module/src/app/api/auth/identity/route.ts` - Host gateway identity, request-header, module directory, and module-owned permission diagnostics.
 - `modules/demo-module/src/lib/host-auth.ts` - module-side validation of the Host-issued `X-Docker-Host-Identity` JWT and scoped directory lookup.
+- `modules/demo-module/src/lib/module-roles.ts` - module-owned JSON role store and effective permission mapping.
 
 ## Local Development
 
@@ -117,11 +124,12 @@ The module currently validates these Host flows:
 - optional external mount collection input;
 - container start, stop, restart, remove, and update paths;
 - health-check metadata and the module's own `/api/health` endpoint;
-- shell app discovery through `ui.entrypoint` and nested navigation for `/`, `/people`, and `/settings`;
+- shell app discovery through `ui.entrypoint` and nested navigation for `/`, `/people`, `/roles`, and `/settings`;
 - assigned Host user rendering on `/people` and `/api/people` through the scoped module directory;
+- module-owned role assignment on `/roles` and `/api/roles` using stable Host user ids;
 - gateway exposure policies through the presence or absence of a Host identity token;
 - module identity token validation through Host discovery and JWKS endpoints;
 - module-scoped directory reads through `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN`;
-- module-owned permission mapping from Host identity claims;
+- module-owned permission mapping from Host identity claims and explicit role assignments;
 - gateway request sanitization, including stripped Host session cookies and visible `X-Docker-Host-*` headers;
 - authorization diagnostics through `/api/auth/identity`.
