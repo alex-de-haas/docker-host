@@ -38,7 +38,7 @@ flowchart LR
 - `skills/docker-host-module/agents/openai.yaml` - UI-facing skill metadata.
 - `skills/docker-host-module/references/module-metadata.md` - compact metadata schema and lifecycle guide.
 - `skills/docker-host-module/references/module-auth-and-users.md` - Host roles, gateway policies, identity tokens, scoped directory, and module-owned roles.
-- `skills/docker-host-module/references/module-dev-mode.md` - local developer target workflow.
+- `skills/docker-host-module/references/module-dev-mode.md` - local developer target workflow and `.docker-host/dev.json` manifest example.
 - `skills/docker-host-module/references/demo-module-patterns.md` - practical patterns from `modules/demo-module`.
 - `skills/docker-host-module/references/module-implementation-checklist.md` - final implementation and validation checklist.
 - `skills/docker-host-module/assets/module-template/metadata.json` - minimal valid metadata skeleton.
@@ -101,7 +101,7 @@ Keep the skill aligned with the source documentation:
 
 - update `references/module-metadata.md` when `docs/features/module-metadata.md` changes;
 - update `references/module-auth-and-users.md` when `docs/features/auth-gateway.md` or `docs/features/user-management.md` changes;
-- update `references/module-dev-mode.md` when `docs/features/module-developer-mode.md` changes;
+- update `references/module-dev-mode.md` when `docs/features/module-developer-mode.md` or `docs/features/module-development-harness.md` changes;
 - update `references/demo-module-patterns.md` when `modules/demo-module` changes in a way agents should copy.
 
 Run the skill validator after changes:

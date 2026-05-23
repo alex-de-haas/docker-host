@@ -30,11 +30,18 @@ It performs these steps:
 - enables `HOST_MODULE_DEV_MODE=enabled` in launch configuration when needed;
 - starts Docker Host, or recreates it when the dev-mode launch setting changed;
 - links or updates a deterministic developer target through `/api/modules/dev/targets/{targetId}`;
-- seeds development users through Host user invitation APIs when they do not already exist;
+- reuses existing development users, updates their display name or role when needed, or creates missing users through Host invitation APIs;
+- revokes an existing pending invitation for a manifest email before creating and accepting a fresh invitation, which keeps `dev up` idempotent after interrupted runs;
 - applies manifest user assignments through Host user assignment APIs;
 - applies module directory policy through the Host directory policy API;
 - prints the Host shell app URL, gateway URL, and development account credentials;
 - starts the local module command in the foreground unless `--prepare-only` is passed.
+
+Use `--prepare-only` when another terminal or process manager should own the module dev server:
+
+```bash
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json --prepare-only
+```
 
 `docker-host dev status` reports Host readiness, developer mode, target link state, target URL reachability, app registry visibility, and identity mode:
 
@@ -98,15 +105,16 @@ Supported fields:
 - `metadataUrl`: absolute HTTP(S) metadata URL. Use this when metadata is already served somewhere the Host container can reach.
 - `metadataFile`: local metadata JSON path, resolved relative to the manifest file. When this is used, the CLI temporarily serves the file and passes a `metadataFileHost` URL to the Host API.
 - `metadataFileHost`: hostname the Host container should use to reach the temporary metadata server. The default is `host.docker.internal`, which matches Docker Desktop.
-- `moduleCommand`: shell command started in the foreground by `dev up`.
+- `moduleCommand`: shell command started in the foreground by `dev up`. Required unless `--prepare-only` is passed.
 - `workingDirectory`: command working directory, resolved relative to the manifest file.
-- `target.id`: stable developer target id. If omitted, the CLI derives one from `target.hostname`.
+- `target.id`: stable developer target id. If omitted, the CLI derives `mdev_{sanitized-hostname}` from `target.hostname`.
 - `target.hostname`: local gateway hostname, such as `demo.localhost`.
 - `target.portKey`: public endpoint key from module metadata.
 - `target.targetBaseUrl`: URL the Host container should proxy to. For Docker Desktop this is usually `http://host.docker.internal:<port>`.
 - `target.policy`: `public`, `loginRequired`, or `assignedUsersOnly`.
 - `target.identity`: `none`, `optional`, or `required`.
-- `users`: development Host users to ensure and assign.
+- `users`: development Host users to ensure. Existing active users are reused; pending invitations with the same email are revoked before creating a fresh development user.
+- `users[].assigned`: when true, the manifest module id is added to the user's assignments. When false or omitted, that module assignment is removed if present.
 - `users[].password`: optional local development password. When omitted, `host.admin` uses `docker-host-dev-admin` and `host.user` uses `docker-host-dev-user`.
 - `directoryPolicy.includeEmail`: whether scoped module directory responses may include email addresses.
 - `environment`: additional environment variables for the local module process. The CLI also injects `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, `MODULE_ID`, and `MODULE_VERSION`.

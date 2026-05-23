@@ -90,12 +90,77 @@ The generic installed-CLI harness is `docker-host dev`. It reads a module-local 
 - run the module's local dev command;
 - ensure Docker Host developer mode is enabled;
 - seed development users, assignments, and module directory policy through Host-owned APIs;
+- revoke conflicting pending invitations before creating missing development users;
 - link or update the developer target;
 - print the Host shell app URL;
 - report Host readiness, target reachability, app registry visibility, and identity mode;
 - reset only harness-owned developer state.
 
 Do not invent a parallel token or mock-auth mechanism when the harness or low-level developer target APIs can exercise the real Host gateway.
+
+Example `.docker-host/dev.json`:
+
+```json
+{
+  "metadataFile": "../metadata.json",
+  "metadataFileHost": "host.docker.internal",
+  "moduleCommand": "npm run dev",
+  "workingDirectory": "..",
+  "target": {
+    "id": "mdev_local_demo_module",
+    "hostname": "demo.localhost",
+    "portKey": "http",
+    "targetBaseUrl": "http://host.docker.internal:3100",
+    "policy": "assignedUsersOnly",
+    "identity": "required"
+  },
+  "users": [
+    {
+      "email": "admin@docker-host.local",
+      "displayName": "Development Admin",
+      "role": "host.admin"
+    },
+    {
+      "email": "user@docker-host.local",
+      "displayName": "Development User",
+      "role": "host.user",
+      "assigned": true
+    }
+  ],
+  "directoryPolicy": {
+    "includeEmail": true
+  },
+  "environment": {
+    "PORT": "3100",
+    "DEMO_PUBLIC_URL": "http://localhost:3100"
+  }
+}
+```
+
+Manifest notes:
+
+- Use `metadataFile` for repo-local metadata, or `metadataUrl` when the metadata is already served from an absolute URL.
+- `metadataFileHost` defaults to `host.docker.internal`; set it when the Host container must reach the temporary metadata server through a different host name.
+- `moduleCommand` is required unless `docker-host dev up` is run with `--prepare-only`.
+- `target.id` is optional; when omitted, the CLI derives `mdev_{sanitized-hostname}` from `target.hostname`.
+- `target.portKey` must match a public endpoint key in module metadata.
+- `target.targetBaseUrl` is the URL the Host container proxies to; Docker Desktop usually needs `host.docker.internal`, while direct host probes may rewrite that to loopback.
+- `target.policy` supports `public`, `loginRequired`, and `assignedUsersOnly`.
+- `target.identity` supports `none`, `optional`, and `required`.
+- Existing active users are reused and updated; pending invitations with the same email are revoked before the CLI creates a fresh invitation.
+- `users[].assigned` adds the manifest module id to that user's assignments when true and removes it when false or omitted.
+- `users[].password` is optional. Defaults are `docker-host-dev-admin` for `host.admin` and `docker-host-dev-user` for `host.user`.
+- `directoryPolicy.includeEmail` controls whether scoped module directory responses include email addresses.
+- `environment` is merged into the local module process. The CLI also injects `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, `MODULE_ID`, and `MODULE_VERSION`.
+
+Run the harness:
+
+```bash
+docker-host dev up --manifest .docker-host/dev.json
+docker-host dev up --manifest .docker-host/dev.json --prepare-only
+docker-host dev status --manifest .docker-host/dev.json
+docker-host dev reset --manifest .docker-host/dev.json
+```
 
 ## Rules
 

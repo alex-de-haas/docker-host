@@ -22,7 +22,7 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 
 - Read `references/module-metadata.md` when authoring or reviewing `metadata.json`, storage, settings, dependencies, endpoints, or install/update behavior.
 - Read `references/module-auth-and-users.md` when working with gateway exposure, shell apps, Host roles, `X-Docker-Host-Identity`, scoped user directory APIs, or module-owned roles.
-- Read `references/module-dev-mode.md` when linking a local module dev server through the Host gateway.
+- Read `references/module-dev-mode.md` when linking a local module dev server through the Host gateway or authoring `.docker-host/dev.json`.
 - Read `references/demo-module-patterns.md` when copying repo-local examples from `modules/demo-module`.
 - Read `references/module-implementation-checklist.md` before finishing a module implementation or review.
 
