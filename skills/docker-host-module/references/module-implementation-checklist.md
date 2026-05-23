@@ -38,7 +38,8 @@ Use this checklist before finishing a Docker Host module task.
 - For metadata-only work, run targeted metadata/parser tests when available.
 - For Host behavior changes, run `npm run host:test`.
 - For module app changes, run that module's lint and build scripts.
-- For shell app integration, run `npm run host:dev:demo` or link a developer target.
+- For shell app integration, identity, assigned-user behavior, scoped directory reads, redirects, WebSockets, or SSE, run `npm run host:dev:demo` or link a developer target.
+- Integrated developer-target validation uses Host-seeded users and assignments; it does not rely on hand-written module identity tokens.
 - For managed lifecycle behavior, build the module image locally and install metadata through Docker Host.
 
 ## Documentation

@@ -11,9 +11,11 @@ The skill helps agents:
 - add shell app UI metadata;
 - integrate Host gateway identity and scoped user directory access;
 - implement module-owned roles;
-- validate modules with the local developer-mode workflow.
+- validate modules with the local developer-mode workflow before falling back to slower image rebuilds.
 
 The skill is intentionally not a copy of the full documentation. `SKILL.md` is a short workflow guide, while `references/` contains focused topic documents that agents load only when needed.
+
+For Host-facing module behavior, the skill points agents at the integrated developer target loop: run the module app locally, route it through Docker Host, seed Host-owned development users and assignments, and let the gateway issue the normal signed module identity token. Directly injecting fake module identity headers is not considered a valid Host integration check.
 
 ```mermaid
 flowchart LR

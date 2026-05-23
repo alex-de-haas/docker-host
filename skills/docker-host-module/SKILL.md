@@ -15,7 +15,8 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 2. In this repository, treat `docs/features/*.md`, `apps/host/src/lib/module-metadata.ts`, and `modules/demo-module` as source of truth. Use the bundled references here as a compact guide, then check repo source when implementation details matter.
 3. Prefer existing module and Host patterns over inventing a new contract. The metadata schema is strict and unknown fields are rejected for `schemaVersion: "0.2"`.
 4. Keep Host authorization and module authorization separate. Docker Host decides whether a Host user reaches the module; the module owns its internal roles and permissions.
-5. Validate with the narrowest useful checks for the change, and include documentation updates when the module contract or user-visible workflow changes.
+5. For Host integration work, prefer the integrated developer target loop before rebuilding module images. Seed Host users and assignments, then let the Host gateway issue the normal signed module identity token.
+6. Validate with the narrowest useful checks for the change, and include documentation updates when the module contract or user-visible workflow changes.
 
 ## Reference Map
 
@@ -43,6 +44,17 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 3. If the new module is part of the monorepo, add its workspace entry and package scripts intentionally. Avoid changing existing demo-module behavior unless the user asked for shared pattern updates.
 4. Start from `assets/module-template/metadata.json` for a minimal metadata skeleton, then replace ids, image references, settings, storage, UI, and navigation.
 
+### Validate Host Integration
+
+1. Choose the fastest loop that proves the behavior:
+   - standalone module dev for module-owned UI and business logic;
+   - integrated developer target for shell apps, gateway policy, Host sessions, identity, scoped directory access, redirects, WebSockets, and SSE;
+   - production-like local image install for Dockerfile, storage, lifecycle, install/update, and container runtime behavior.
+2. For this repository's demo module, use `npm run host:dev:demo`. It starts Host and the module locally, enables module developer mode, seeds development accounts, and registers the demo developer target.
+3. For an external or non-demo module, start Docker Host with `HOST_MODULE_DEV_MODE=enabled`, run the module dev server locally, then link it with `docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>`.
+4. Do not hand-inject fake `X-Docker-Host-Identity` tokens to claim Host integration is working. Use Host-owned development users and assignments so Docker Host signs the token and serves the scoped directory through its normal APIs.
+5. If a requested workflow needs one-command local orchestration, follow the planned development-harness contract summarized in `references/module-dev-mode.md` and make sure the implementation seeds users/assignments through Host-owned APIs rather than direct state edits.
+
 ### Update an Existing Module
 
 1. Preserve the module `id` unless intentionally creating a different module. Docker Host treats one installed module instance per id.
@@ -56,7 +68,7 @@ Use focused validation based on what changed:
 
 - Metadata parser or lifecycle behavior: run targeted Host tests, commonly `npm run host:test`.
 - Module app changes: run the module's lint/build commands, for example `npm run demo-module:lint` and `npm run demo-module:build` for the demo module.
-- Shell app, embedded transport, or identity behavior: use `npm run host:dev:demo` for the fast integrated loop.
+- Shell app, embedded transport, identity behavior, or scoped directory behavior: use `npm run host:dev:demo` or a linked developer target for the fast integrated loop.
 - Production-like container behavior: build the Host image and module image locally, then install metadata through Docker Host.
 
 Do not claim module security or identity work is complete without checking Host-issued token validation, cookie/header stripping assumptions, and module audience validation.
