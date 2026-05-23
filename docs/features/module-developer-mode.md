@@ -32,7 +32,7 @@ Use three development loops with clear ownership:
 
 Do not inject fake module identity tokens into requests when validating Host integration. Seed Host development users and module assignments instead, then reach the module through the Host gateway or app shell so the module receives the same signed identity contract it receives in production-like runs.
 
-The future generic harness for this workflow is tracked in [Module Development Harness](../planning/module-development-harness.md). Until that lands, use `npm run host:dev:demo` for the repository demo module or the lower-level `docker-host modules dev link` commands for external modules.
+The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `docker-host dev up` for reusable manifest-driven local module development, `npm run host:dev:demo` for the repository's host-side demo loop, or the lower-level `docker-host modules dev link` commands when only target registration is needed.
 
 ## Decisions
 
@@ -131,7 +131,7 @@ docker-host modules dev unlink <target-id>
 --disabled
 ```
 
-The CLI commands intentionally manage developer targets only. User seeding, assignment seeding, local module process startup, and reset behavior are planned as part of the future development harness rather than hidden inside `modules dev link`.
+The `modules dev` commands intentionally manage developer targets only. User seeding, assignment seeding, local module process startup, status checks, and reset behavior live in the top-level `docker-host dev` harness.
 
 ## Gateway Rules
 

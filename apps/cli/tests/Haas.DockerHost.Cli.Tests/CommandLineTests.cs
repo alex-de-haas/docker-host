@@ -51,6 +51,14 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public async Task RunAsync_DevHelpCommand_RoutesToDevCommand()
+    {
+        var exitCode = await CommandLine.RunAsync(["dev", "--help"]);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
     public async Task RunAsync_ModulesUnknownCommand_ReturnsUsageError()
     {
         var exitCode = await CommandLine.RunAsync(["modules", "unknown"]);

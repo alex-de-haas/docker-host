@@ -50,10 +50,10 @@ Use this skill to implement Docker Host modules in the shape expected by this re
    - standalone module dev for module-owned UI and business logic;
    - integrated developer target for shell apps, gateway policy, Host sessions, identity, scoped directory access, redirects, WebSockets, and SSE;
    - production-like local image install for Dockerfile, storage, lifecycle, install/update, and container runtime behavior.
-2. For this repository's demo module, use `npm run host:dev:demo`. It starts Host and the module locally, enables module developer mode, seeds development accounts, and registers the demo developer target.
-3. For an external or non-demo module, start Docker Host with `HOST_MODULE_DEV_MODE=enabled`, run the module dev server locally, then link it with `docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>`.
-4. Do not hand-inject fake `X-Docker-Host-Identity` tokens to claim Host integration is working. Use Host-owned development users and assignments so Docker Host signs the token and serves the scoped directory through its normal APIs.
-5. If a requested workflow needs one-command local orchestration, follow the planned development-harness contract summarized in `references/module-dev-mode.md` and make sure the implementation seeds users/assignments through Host-owned APIs rather than direct state edits.
+2. For manifest-driven local orchestration, use `docker-host dev up --manifest <path>`. It enables module developer mode, starts Docker Host, seeds development accounts and assignments through Host-owned APIs, links the developer target, and starts the local module command.
+3. For this repository's host-side demo loop, use `npm run host:dev:demo`. It starts Host and the module locally, enables module developer mode, seeds development accounts, and registers the demo developer target.
+4. For low-level target-only work, start Docker Host with `HOST_MODULE_DEV_MODE=enabled`, run the module dev server locally, then link it with `docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>`.
+5. Do not hand-inject fake `X-Docker-Host-Identity` tokens to claim Host integration is working. Use Host-owned development users and assignments so Docker Host signs the token and serves the scoped directory through its normal APIs.
 
 ### Update an Existing Module
 

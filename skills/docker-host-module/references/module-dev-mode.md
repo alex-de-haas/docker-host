@@ -81,20 +81,21 @@ Optional flags:
 --disabled
 ```
 
-For assigned-user testing, make sure the Host has development users and module assignments before using `--policy assignedUsersOnly`. The current low-level CLI target commands do not seed users or assignments; use the repository demo script for the demo module, or configure users through the Host UI/API for external modules.
+For assigned-user testing, make sure the Host has development users and module assignments before using `--policy assignedUsersOnly`. The low-level `modules dev` target commands do not seed users or assignments; use `docker-host dev up --manifest <path>` when a manifest is available, use the repository demo script for the host-side demo loop, or configure users through the Host UI/API for external modules.
 
-## Future Harness
+## Installed CLI Harness
 
-A generic installed-CLI harness is planned in the Docker Host repository documentation. The target shape is a manifest-driven workflow that can:
+The generic installed-CLI harness is `docker-host dev`. It reads a module-local `.docker-host/dev.json` manifest and can:
 
 - run the module's local dev command;
 - ensure Docker Host developer mode is enabled;
 - seed development users, assignments, and module directory policy through Host-owned APIs;
 - link or update the developer target;
 - print the Host shell app URL;
+- report Host readiness, target reachability, app registry visibility, and identity mode;
 - reset only harness-owned developer state.
 
-Until that exists, agents should compose the current primitives instead of inventing a parallel token or mock-auth mechanism.
+Do not invent a parallel token or mock-auth mechanism when the harness or low-level developer target APIs can exercise the real Host gateway.
 
 ## Rules
 

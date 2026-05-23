@@ -219,7 +219,7 @@ docker-host config set HOST_MODULE_DEV_MODE enabled
 docker-host restart
 ```
 
-Then link a target:
+Then link a target directly:
 
 ```bash
 docker-host modules dev link \
@@ -229,9 +229,15 @@ docker-host modules dev link \
   http://127.0.0.1:3100
 ```
 
-Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They are active only while `HOST_MODULE_DEV_MODE=enabled`; they do not modify installed module records, module metadata, or production gateway exposure records.
+For the reusable installed-CLI workflow, prefer the manifest-driven harness:
 
-The current commands are intentionally low-level. The planned higher-level flow is tracked in [Module Development Harness](../planning/module-development-harness.md) and will add a manifest-driven `docker-host dev up` style workflow for local module commands, development users, assignments, directory policy, target linking, and reset behavior.
+```bash
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev status --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev reset --manifest modules/demo-module/.docker-host/dev.json
+```
+
+Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They are active only while `HOST_MODULE_DEV_MODE=enabled`; they do not modify installed module records, module metadata, or production gateway exposure records. The harness manages targets, development users, assignments, directory policy, local process startup, status checks, and reset behavior through Host-owned APIs.
 
 See [Module developer mode](module-developer-mode.md) for API, CLI, and gateway details.
 
