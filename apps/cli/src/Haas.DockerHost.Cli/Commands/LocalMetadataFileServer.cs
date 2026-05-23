@@ -10,18 +10,27 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
     private readonly TcpListener listener;
     private readonly CancellationTokenSource cancellation = new();
     private readonly Task acceptLoop;
+    private readonly Action<Exception>? onClientError;
 
-    private LocalMetadataFileServer(string metadataFilePath, TcpListener listener, string publicUrl)
+    private LocalMetadataFileServer(
+        string metadataFilePath,
+        TcpListener listener,
+        string publicUrl,
+        Action<Exception>? onClientError)
     {
         this.metadataFilePath = metadataFilePath;
         this.listener = listener;
+        this.onClientError = onClientError;
         PublicUrl = publicUrl;
         acceptLoop = AcceptLoopAsync();
     }
 
     public string PublicUrl { get; }
 
-    public static LocalMetadataFileServer Start(string metadataFilePath, string publicHost)
+    public static LocalMetadataFileServer Start(
+        string metadataFilePath,
+        string publicHost,
+        Action<Exception>? onClientError = null)
     {
         if (!File.Exists(metadataFilePath))
         {
@@ -33,7 +42,7 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var host = string.IsNullOrWhiteSpace(publicHost) ? "host.docker.internal" : publicHost.Trim();
         var publicUrl = $"http://{host}:{port}/metadata.json";
-        return new LocalMetadataFileServer(metadataFilePath, listener, publicUrl);
+        return new LocalMetadataFileServer(metadataFilePath, listener, publicUrl, onClientError);
     }
 
     public async ValueTask DisposeAsync()
@@ -73,7 +82,23 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
                 break;
             }
 
-            _ = Task.Run(async () => await HandleClientAsync(client).ConfigureAwait(false), cancellation.Token);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await HandleClientAsync(client).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+                {
+                }
+                catch (ObjectDisposedException) when (cancellation.IsCancellationRequested)
+                {
+                }
+                catch (Exception ex)
+                {
+                    ReportClientError(ex);
+                }
+            });
         }
     }
 
@@ -84,6 +109,11 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
 
         var buffer = new byte[4096];
         var read = await stream.ReadAsync(buffer, cancellation.Token).ConfigureAwait(false);
+        if (read == 0)
+        {
+            return;
+        }
+
         var requestLine = Encoding.ASCII.GetString(buffer, 0, read).Split("\r\n", StringSplitOptions.None)[0];
         var path = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries).ElementAtOrDefault(1) ?? "/";
 
@@ -95,6 +125,17 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
 
         var bytes = await File.ReadAllBytesAsync(metadataFilePath, cancellation.Token).ConfigureAwait(false);
         await WriteResponseAsync(stream, "200 OK", "application/json", bytes).ConfigureAwait(false);
+    }
+
+    private void ReportClientError(Exception ex)
+    {
+        try
+        {
+            onClientError?.Invoke(ex);
+        }
+        catch
+        {
+        }
     }
 
     private static async Task WriteResponseAsync(Stream stream, string status, string contentType, byte[] body)

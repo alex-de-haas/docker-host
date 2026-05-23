@@ -505,32 +505,45 @@ internal sealed class DevCommand(CommandContext context)
         context.Console.MarkupLine($"[green]Starting module command:[/] {Markup.Escape(manifest.ModuleCommand!)}");
         context.Console.MarkupLine($"[grey]Working directory:[/] {Markup.Escape(startInfo.WorkingDirectory)}");
 
-        using var process = Process.Start(startInfo);
+        Process? process;
+        try
+        {
+            process = Process.Start(startInfo);
+        }
+        catch (Exception ex)
+        {
+            context.Console.MarkupLine($"[red]Unable to start module command:[/] {Markup.Escape(ex.Message)}");
+            return 1;
+        }
+
         if (process is null)
         {
             context.Console.MarkupLine("[red]Unable to start module command.[/]");
             return 1;
         }
 
-        ConsoleCancelEventHandler? handler = null;
-        handler = (_, eventArgs) =>
+        using (process)
         {
-            eventArgs.Cancel = true;
-            if (!process.HasExited)
+            ConsoleCancelEventHandler? handler = null;
+            handler = (_, eventArgs) =>
             {
-                process.Kill(entireProcessTree: true);
-            }
-        };
+                eventArgs.Cancel = true;
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            };
 
-        Console.CancelKeyPress += handler;
-        try
-        {
-            await process.WaitForExitAsync();
-            return process.ExitCode;
-        }
-        finally
-        {
-            Console.CancelKeyPress -= handler;
+            Console.CancelKeyPress += handler;
+            try
+            {
+                await process.WaitForExitAsync();
+                return process.ExitCode;
+            }
+            finally
+            {
+                Console.CancelKeyPress -= handler;
+            }
         }
     }
 
@@ -587,7 +600,7 @@ internal sealed class DevCommand(CommandContext context)
 
         try
         {
-            using var response = await http.GetAsync(targetBaseUrl);
+            using var response = await http.GetAsync(BuildTargetProbeUrl(targetBaseUrl));
             return response.StatusCode != HttpStatusCode.NotFound &&
                 (int)response.StatusCode < 500;
         }
@@ -595,6 +608,21 @@ internal sealed class DevCommand(CommandContext context)
         {
             return false;
         }
+    }
+
+    internal static string BuildTargetProbeUrl(string targetBaseUrl)
+    {
+        if (!Uri.TryCreate(targetBaseUrl, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Host, "host.docker.internal", StringComparison.OrdinalIgnoreCase))
+        {
+            return targetBaseUrl;
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Host = IPAddress.Loopback.ToString(),
+        };
+        return builder.Uri.ToString();
     }
 
     private LocalMetadataFileServer? StartMetadataServerIfNeeded(DevManifest manifest)
@@ -606,7 +634,10 @@ internal sealed class DevCommand(CommandContext context)
 
         var metadataFile = manifest.ResolveMetadataFile()
             ?? throw new CommandUsageException("Dev manifest metadataFile is required when metadataUrl is not set.", Usage);
-        var server = LocalMetadataFileServer.Start(metadataFile, manifest.MetadataFileHost ?? "host.docker.internal");
+        var server = LocalMetadataFileServer.Start(
+            metadataFile,
+            manifest.MetadataFileHost ?? "host.docker.internal",
+            ex => context.Console.MarkupLine($"[yellow]Metadata file server warning:[/] {Markup.Escape(ex.Message)}"));
         context.Console.MarkupLine($"[grey]Serving metadata file for Host fetch:[/] {Markup.Escape(server.PublicUrl)}");
         return server;
     }
