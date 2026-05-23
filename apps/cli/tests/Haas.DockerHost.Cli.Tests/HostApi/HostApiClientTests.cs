@@ -85,6 +85,26 @@ public sealed class HostApiClientTests
         Assert.Equal(HttpStatusCode.OK, exception.StatusCode);
     }
 
+    [Fact]
+    public async Task RevokeUserInvitationAsync_SendsExpectedRequest()
+    {
+        var handler = new CapturingHandler(
+            HttpStatusCode.OK,
+            """
+            {
+              "revoked": true
+            }
+            """);
+        using var client = CreateClient(handler);
+
+        var response = await client.RevokeUserInvitationAsync("invite/one");
+
+        Assert.True(response.IsSuccess);
+        Assert.True(response.Body?.Revoked);
+        Assert.Equal(HttpMethod.Delete, handler.Request?.Method);
+        Assert.Equal("/api/auth/invitations/invite%2Fone", handler.Request?.RequestUri?.AbsolutePath);
+    }
+
     private static HostApiClient CreateClient(HttpMessageHandler handler)
         => new(new HttpClient(handler)
         {

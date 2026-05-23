@@ -120,6 +120,7 @@ internal sealed class DevCommand(CommandContext context)
         settings.Validate(context.Environment);
 
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
+        await docker.EnsureLinuxEngineAsync();
         var container = await docker.InspectContainerAsync(settings.HostContainerName);
         if (container is null)
         {
@@ -191,6 +192,7 @@ internal sealed class DevCommand(CommandContext context)
         settings.Validate(context.Environment);
 
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
+        await docker.EnsureLinuxEngineAsync();
         var container = await docker.InspectContainerAsync(settings.HostContainerName);
         if (container is null || container.State?.Running != true)
         {
@@ -326,14 +328,27 @@ internal sealed class DevCommand(CommandContext context)
         }
 
         var users = usersResponse.Body.Users.ToList();
+        var pendingInvitations = usersResponse.Body.Invitations
+            .Where(invitation => string.Equals(invitation.Status, "pending", StringComparison.Ordinal))
+            .ToList();
+
         foreach (var manifestUser in manifest.Users)
         {
+            var email = manifestUser.Email.Trim();
             var user = users.FirstOrDefault(candidate =>
                 !candidate.Disabled &&
-                string.Equals(candidate.Email, manifestUser.Email.Trim(), StringComparison.OrdinalIgnoreCase));
+                string.Equals(candidate.Email, email, StringComparison.OrdinalIgnoreCase));
 
             if (user is null)
             {
+                var pendingInvitation = pendingInvitations.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Email, email, StringComparison.OrdinalIgnoreCase));
+                if (pendingInvitation is not null)
+                {
+                    await RevokeExistingInvitationAsync(hostApi, pendingInvitation);
+                    pendingInvitations.Remove(pendingInvitation);
+                }
+
                 user = await CreateDevUserAsync(hostApi, manifest, manifestUser, moduleId);
                 users.Add(user);
                 context.Console.MarkupLine($"[green]Created development user:[/] {Markup.Escape(manifestUser.Email)}");
@@ -360,6 +375,21 @@ internal sealed class DevCommand(CommandContext context)
                 }
             }
         }
+    }
+
+    private async Task RevokeExistingInvitationAsync(HostApiClient hostApi, UserInvitationSummary invitation)
+    {
+        var response = await hostApi.RevokeUserInvitationAsync(invitation.Id);
+        if (!response.IsSuccess)
+        {
+            throw new HostApiException(
+                "revoke Host user invitation",
+                "Unable to revoke an existing development user invitation.",
+                response.StatusCode,
+                response.RawBody);
+        }
+
+        context.Console.MarkupLine($"[grey]Revoked existing development invitation:[/] {Markup.Escape(invitation.Email)}");
     }
 
     private async Task<HostUserSummary> CreateDevUserAsync(

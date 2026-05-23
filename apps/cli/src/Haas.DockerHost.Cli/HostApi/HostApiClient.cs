@@ -111,6 +111,15 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
             request,
             cancellationToken);
 
+    public Task<HostApiResponse<UserInvitationRevokeResponse>> RevokeUserInvitationAsync(
+        string invitationId,
+        CancellationToken cancellationToken = default)
+        => SendAsync<UserInvitationRevokeResponse>(
+            "revoke Host user invitation",
+            HttpMethod.Delete,
+            $"api/auth/invitations/{Uri.EscapeDataString(invitationId)}",
+            cancellationToken: cancellationToken);
+
     public Task<HostApiResponse<HostUserUpdateResponse>> UpdateHostUserAsync(
         string userId,
         HostUserUpdateRequest request,

@@ -203,6 +203,11 @@ internal sealed class UserInvitationAcceptResponse
     public string RedirectTo { get; init; } = "";
 }
 
+internal sealed class UserInvitationRevokeResponse
+{
+    public bool Revoked { get; init; }
+}
+
 internal sealed class HostUserUpdateRequest
 {
     public string? DisplayName { get; init; }
