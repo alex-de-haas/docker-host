@@ -24,6 +24,7 @@ export interface HostRuntimeConfig {
   ingressStatePath?: string;
   gatewayBaseDomain: string | null;
   hostPublicOrigin: string | null;
+  hostBindAddress?: string | null;
   hostInternalOrigin: string;
   dockerSocketPath: string;
   moduleNetwork: string;
@@ -75,6 +76,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     ingressStatePath: path.join(ingressRootContainer, 'external-ingress.json'),
     gatewayBaseDomain: normalizeOptionalRuntimeValue(process.env.HOST_GATEWAY_BASE_DOMAIN),
     hostPublicOrigin: normalizeOptionalRuntimeValue(process.env.HOST_PUBLIC_ORIGIN),
+    hostBindAddress: normalizeOptionalRuntimeValue(process.env.HOST_BIND_ADDRESS),
     hostInternalOrigin: normalizeOptionalRuntimeValue(process.env.HOST_INTERNAL_ORIGIN) ?? DEFAULT_HOST_INTERNAL_ORIGIN,
     dockerSocketPath,
     moduleNetwork,

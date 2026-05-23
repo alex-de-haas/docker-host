@@ -269,6 +269,8 @@ Gateway-related launch settings:
 - `HOST_GATEWAY_BASE_DOMAIN` is the parent domain for module subdomains, for example `example.com`.
 - `HOST_INTERNAL_ORIGIN` defaults inside the Host container to `http://docker-host:3000`. The CLI injects that value and attaches the Host container to the shared module network with the stable `docker-host` alias so module containers can fetch Host-published metadata such as JWKS.
 
+The CLI passes `HOST_BIND_ADDRESS` into the Host container as runtime metadata. Browser authentication uses it to distinguish loopback-only Docker port publishing from externally bound HTTP: local `http://localhost:<port>` sessions can receive non-`Secure` cookies when the Host is bound to `127.0.0.1`, while externally bound non-HTTPS origins are rejected before cookies are issued.
+
 `docker-host config` must be a typed interface to known Host launch settings, not an arbitrary editor for `launch.env`.
 
 Config command syntax:

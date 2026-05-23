@@ -59,7 +59,13 @@ test('loopback checks ignore spoofed forwarded host values', t => {
   assert.equal(isLoopbackRequest(request), false);
 });
 
-test('loopback checks use the server-observed remote address when available', () => {
+test('loopback checks use the server-observed remote address when available', t => {
+  const previousBindAddress = process.env.HOST_BIND_ADDRESS;
+  delete process.env.HOST_BIND_ADDRESS;
+  t.after(() => {
+    restoreEnvValue('HOST_BIND_ADDRESS', previousBindAddress);
+  });
+
   const spoofedHostRequest = new Request('http://localhost:3000/api/auth/dev-login', {
     headers: {
       host: 'localhost:3000',
@@ -77,6 +83,51 @@ test('loopback checks use the server-observed remote address when available', ()
   });
 
   assert.equal(isLoopbackRequest(localSocketRequest), true);
+});
+
+test('loopback checks allow localhost through a Docker bridge when the Host port is bound to loopback', t => {
+  const previousPublicOrigin = process.env.HOST_PUBLIC_ORIGIN;
+  const previousBindAddress = process.env.HOST_BIND_ADDRESS;
+  delete process.env.HOST_PUBLIC_ORIGIN;
+  process.env.HOST_BIND_ADDRESS = '127.0.0.1';
+  t.after(() => {
+    restoreEnvValue('HOST_PUBLIC_ORIGIN', previousPublicOrigin);
+    restoreEnvValue('HOST_BIND_ADDRESS', previousBindAddress);
+  });
+
+  const request = new Request('http://docker-host:3000/api/auth/login', {
+    headers: {
+      host: 'localhost:3000',
+      'x-docker-host-remote-address': '172.17.0.1',
+    },
+  });
+
+  assert.equal(isLoopbackRequest(request), true);
+  assert.doesNotThrow(() => assertSecureEnoughForCookies(request));
+});
+
+test('loopback checks reject Docker bridge HTTP cookies when the Host port is externally bound', t => {
+  const previousPublicOrigin = process.env.HOST_PUBLIC_ORIGIN;
+  const previousBindAddress = process.env.HOST_BIND_ADDRESS;
+  delete process.env.HOST_PUBLIC_ORIGIN;
+  process.env.HOST_BIND_ADDRESS = '0.0.0.0';
+  t.after(() => {
+    restoreEnvValue('HOST_PUBLIC_ORIGIN', previousPublicOrigin);
+    restoreEnvValue('HOST_BIND_ADDRESS', previousBindAddress);
+  });
+
+  const request = new Request('http://localhost:3000/api/auth/login', {
+    headers: {
+      host: 'localhost:3000',
+      'x-docker-host-remote-address': '172.17.0.1',
+    },
+  });
+
+  assert.equal(isLoopbackRequest(request), false);
+  assert.throws(
+    () => assertSecureEnoughForCookies(request),
+    /Non-loopback Host authentication requires HTTPS/
+  );
 });
 
 test('secure request checks normalize forwarded proto chains', () => {

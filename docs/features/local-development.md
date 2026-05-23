@@ -128,15 +128,18 @@ Use this mode when the change needs to be validated in the same shape as the rel
 ```bash
 docker build -f apps/host/Dockerfile -t docker-host:dev .
 
-docker run --rm --name docker-host-dev -p 3000:3000 \
+docker run --rm --name docker-host-dev -p 127.0.0.1:3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$HOME/.docker-host-dev:/data" \
   -e HOST_DATA_ROOT_HOST="$HOME/.docker-host-dev" \
   -e HOST_DATA_ROOT_CONTAINER=/data \
+  -e HOST_BIND_ADDRESS=127.0.0.1 \
   docker-host:dev
 ```
 
 Use a dedicated development data root such as `~/.docker-host-dev` to avoid mixing test module state with a real local installation.
+
+The loopback bind and `HOST_BIND_ADDRESS=127.0.0.1` are intentional. Docker port forwarding can make the Host container observe browser traffic as coming from a Docker bridge address instead of `127.0.0.1`; the bind setting tells the Host that `http://localhost:<port>` is still local-only, so it may issue non-`Secure` development cookies over HTTP. If the port is bound to `0.0.0.0` or the Host is reachable from another machine, browser authentication must use HTTPS through `HOST_PUBLIC_ORIGIN`.
 
 In this mode, the Host backend runs inside the Host container. A metadata server or helper service running on the developer machine should be referenced from inside the container as:
 

@@ -420,10 +420,11 @@ function isSecureRequest(request: Request) {
 export function isLoopbackRequest(request: Request) {
   const remoteAddress = getFirstHeaderValue(request.headers.get('x-docker-host-remote-address'));
   if (remoteAddress) {
-    return isLoopbackAddress(remoteAddress);
+    return isLoopbackAddress(remoteAddress) ||
+      isLocalOnlyDockerPortRequest(request);
   }
 
-  return isLoopbackHostname(new URL(request.url).hostname);
+  return isLoopbackRequestHostname(request);
 }
 
 export function getRequestOrigin(request: Request) {
@@ -474,6 +475,21 @@ function isLoopbackHostname(hostname: string) {
   return unbracketed === 'localhost' ||
     unbracketed.endsWith('.localhost') ||
     isLoopbackAddress(unbracketed);
+}
+
+function isLocalOnlyDockerPortRequest(request: Request) {
+  const bindAddress = getHostRuntimeConfig().hostBindAddress;
+  return typeof bindAddress === 'string' &&
+    isLoopbackAddress(bindAddress) &&
+    isLoopbackRequestHostname(request);
+}
+
+function isLoopbackRequestHostname(request: Request) {
+  try {
+    return isLoopbackHostname(new URL(getRequestOrigin(request)).hostname);
+  } catch {
+    return false;
+  }
 }
 
 function isLoopbackAddress(value: string) {
