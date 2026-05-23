@@ -31,6 +31,7 @@ flowchart LR
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Multi-container modules](features/multi-container-modules.md) - module-owned containers, per-container runtime state, endpoint resolution, storage targets, lifecycle behavior, and Web UI service display.
 - [Module developer mode](features/module-developer-mode.md) - local-only module development targets that proxy through the Host gateway without a full install.
+- [Module Development Harness](features/module-development-harness.md) - installed-CLI workflow for running local module dev servers through Docker Host with development users, assignments, directory policy, status checks, and reset behavior.
 - [Docker Host Module Skill](features/docker-host-module-skill.md) - repository-shipped Codex skill for agents that wrap apps as modules or build new Docker Host modules.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
 - [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.

@@ -98,6 +98,14 @@ The server connects to Docker using:
 2. `DOCKER_HOST`, if set
 3. `/var/run/docker.sock`, by default
 
+For the installed-CLI module development harness, import a CLI admin token first, then run:
+
+```bash
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
+```
+
+Use `docker-host dev status --manifest modules/demo-module/.docker-host/dev.json` to verify Host readiness, target reachability, app registry visibility, and identity mode. Use `docker-host dev reset --manifest modules/demo-module/.docker-host/dev.json` to remove the manifest target and assignments.
+
 Examples:
 
 ```bash

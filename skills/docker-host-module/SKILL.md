@@ -15,13 +15,14 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 2. In this repository, treat `docs/features/*.md`, `apps/host/src/lib/module-metadata.ts`, and `modules/demo-module` as source of truth. Use the bundled references here as a compact guide, then check repo source when implementation details matter.
 3. Prefer existing module and Host patterns over inventing a new contract. The metadata schema is strict and unknown fields are rejected for `schemaVersion: "0.2"`.
 4. Keep Host authorization and module authorization separate. Docker Host decides whether a Host user reaches the module; the module owns its internal roles and permissions.
-5. Validate with the narrowest useful checks for the change, and include documentation updates when the module contract or user-visible workflow changes.
+5. For Host integration work, prefer the integrated developer target loop before rebuilding module images. Seed Host users and assignments, then let the Host gateway issue the normal signed module identity token.
+6. Validate with the narrowest useful checks for the change, and include documentation updates when the module contract or user-visible workflow changes.
 
 ## Reference Map
 
 - Read `references/module-metadata.md` when authoring or reviewing `metadata.json`, storage, settings, dependencies, endpoints, or install/update behavior.
-- Read `references/module-auth-and-users.md` when working with gateway exposure, shell apps, Host roles, `X-Docker-Host-Identity`, scoped user directory APIs, or module-owned roles.
-- Read `references/module-dev-mode.md` when linking a local module dev server through the Host gateway.
+- Read `references/module-auth-and-users.md` when working with gateway exposure, shell apps, Host roles, `X-Docker-Host-Identity`, scoped user directory APIs, module-owned roles, external providers, or external ingress readiness.
+- Read `references/module-dev-mode.md` when linking a local module dev server through the Host gateway or authoring `.docker-host/dev.json`.
 - Read `references/demo-module-patterns.md` when copying repo-local examples from `modules/demo-module`.
 - Read `references/module-implementation-checklist.md` before finishing a module implementation or review.
 
@@ -35,6 +36,7 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 4. Add `ui` metadata only when the app should appear inside the authenticated Host shell. Do not model browser UI access as a public service/API subdomain.
 5. If the app needs the current Host user, validate the signed `X-Docker-Host-Identity` token against Host JWKS. Do not trust unsigned identity headers or Host cookies.
 6. If the app needs a user list for internal role assignment, use the scoped module directory model and store module roles by stable Host user id.
+7. Keep operator publishing details such as DNS, TLS, tunnels, reverse proxies, and external ingress readiness out of module metadata.
 
 ### Build a New Module
 
@@ -42,6 +44,17 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 2. In this repo, use `modules/demo-module` as the canonical local example. Keep module UI styling compatible with the Host shell when embedding browser screens.
 3. If the new module is part of the monorepo, add its workspace entry and package scripts intentionally. Avoid changing existing demo-module behavior unless the user asked for shared pattern updates.
 4. Start from `assets/module-template/metadata.json` for a minimal metadata skeleton, then replace ids, image references, settings, storage, UI, and navigation.
+
+### Validate Host Integration
+
+1. Choose the fastest loop that proves the behavior:
+   - standalone module dev for module-owned UI and business logic;
+   - integrated developer target for shell apps, gateway policy, Host sessions, identity, scoped directory access, redirects, WebSockets, and SSE;
+   - production-like local image install for Dockerfile, storage, lifecycle, install/update, and container runtime behavior.
+2. For manifest-driven local orchestration, use `docker-host dev up --manifest <path>`. It enables module developer mode, starts Docker Host, seeds development accounts and assignments through Host-owned APIs, links the developer target, and starts the local module command.
+3. For this repository's host-side demo loop, use `npm run host:dev:demo`. It starts Host and the module locally, enables module developer mode, seeds development accounts, and registers the demo developer target.
+4. For low-level target-only work, start Docker Host with `HOST_MODULE_DEV_MODE=enabled`, run the module dev server locally, then link it with `docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>`.
+5. Do not hand-inject fake `X-Docker-Host-Identity` tokens to claim Host integration is working. Use Host-owned development users and assignments so Docker Host signs the token and serves the scoped directory through its normal APIs.
 
 ### Update an Existing Module
 
@@ -56,7 +69,8 @@ Use focused validation based on what changed:
 
 - Metadata parser or lifecycle behavior: run targeted Host tests, commonly `npm run host:test`.
 - Module app changes: run the module's lint/build commands, for example `npm run demo-module:lint` and `npm run demo-module:build` for the demo module.
-- Shell app, embedded transport, or identity behavior: use `npm run host:dev:demo` for the fast integrated loop.
+- Shell app, embedded transport, identity behavior, or scoped directory behavior: use `npm run host:dev:demo` or a linked developer target for the fast integrated loop.
+- Service/API gateway exposure or external ingress readiness: validate through the Host gateway and ingress UI/API, not by adding module metadata fields.
 - Production-like container behavior: build the Host image and module image locally, then install metadata through Docker Host.
 
 Do not claim module security or identity work is complete without checking Host-issued token validation, cookie/header stripping assumptions, and module audience validation.

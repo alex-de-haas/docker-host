@@ -78,6 +78,8 @@ internal sealed class ModuleDevTargetResponse
 
 internal sealed class ModuleDevTargetRequest
 {
+    public string? Id { get; init; }
+
     public string MetadataUrl { get; init; } = "";
 
     public string Hostname { get; init; } = "";
@@ -120,6 +122,156 @@ internal sealed class ModuleDevTargetSummary
     public string CreatedAt { get; init; } = "";
 
     public string UpdatedAt { get; init; } = "";
+}
+
+internal sealed class HostUsersResponse
+{
+    public IReadOnlyList<HostUserSummary> Users { get; init; } = [];
+
+    public IReadOnlyList<UserInvitationSummary> Invitations { get; init; } = [];
+}
+
+internal sealed class HostUserSummary
+{
+    public string Id { get; init; } = "";
+
+    public string Role { get; init; } = "";
+
+    public string? Email { get; init; }
+
+    public string? DisplayName { get; init; }
+
+    public bool Disabled { get; init; }
+
+    public string CreatedAt { get; init; } = "";
+
+    public string UpdatedAt { get; init; } = "";
+
+    public IReadOnlyList<string> AssignedModuleIds { get; init; } = [];
+}
+
+internal sealed class UserInvitationSummary
+{
+    public string Id { get; init; } = "";
+
+    public string Email { get; init; } = "";
+
+    public string? DisplayName { get; init; }
+
+    public string Role { get; init; } = "";
+
+    public IReadOnlyList<string> AssignedModuleIds { get; init; } = [];
+
+    public string Status { get; init; } = "";
+}
+
+internal sealed class UserInvitationCreateRequest
+{
+    public string Email { get; init; } = "";
+
+    public string? DisplayName { get; init; }
+
+    public string Role { get; init; } = "";
+
+    public IReadOnlyList<string> AssignedModuleIds { get; init; } = [];
+}
+
+internal sealed class UserInvitationCreateResponse
+{
+    public UserInvitationSummary? Invitation { get; init; }
+
+    public string Token { get; init; } = "";
+
+    public string SetupUrl { get; init; } = "";
+}
+
+internal sealed class UserInvitationAcceptRequest
+{
+    public string SetupToken { get; init; } = "";
+
+    public string? Email { get; init; }
+
+    public string? DisplayName { get; init; }
+
+    public string Password { get; init; } = "";
+}
+
+internal sealed class UserInvitationAcceptResponse
+{
+    public HostUserSummary? User { get; init; }
+
+    public string RedirectTo { get; init; } = "";
+}
+
+internal sealed class UserInvitationRevokeResponse
+{
+    public bool Revoked { get; init; }
+}
+
+internal sealed class HostUserUpdateRequest
+{
+    public string? DisplayName { get; init; }
+
+    public string? Role { get; init; }
+}
+
+internal sealed class HostUserUpdateResponse
+{
+    public HostUserSummary? User { get; init; }
+}
+
+internal sealed class HostUserAssignmentsRequest
+{
+    public IReadOnlyList<string> AssignedModuleIds { get; init; } = [];
+}
+
+internal sealed class HostUserAssignmentsResponse
+{
+    public IReadOnlyList<ModuleAccessAssignment> Assignments { get; init; } = [];
+}
+
+internal sealed class ModuleAccessAssignment
+{
+    public string ModuleId { get; init; } = "";
+
+    public string UserId { get; init; } = "";
+}
+
+internal sealed class ModuleDirectoryPolicyRequest
+{
+    public bool IncludeEmail { get; init; }
+}
+
+internal sealed class ModuleDirectoryPolicyResponse
+{
+    public ModuleDirectoryPolicySummary? Policy { get; init; }
+}
+
+internal sealed class ModuleDirectoryPolicySummary
+{
+    public string ModuleId { get; init; } = "";
+
+    public bool IncludeEmail { get; init; }
+
+    public string UpdatedAt { get; init; } = "";
+}
+
+internal sealed class HostAppsResponse
+{
+    public IReadOnlyList<HostAppSummary> Apps { get; init; } = [];
+}
+
+internal sealed class HostAppSummary
+{
+    public string Id { get; init; } = "";
+
+    public string Source { get; init; } = "";
+
+    public string? DeveloperTargetId { get; init; }
+
+    public string ModuleId { get; init; } = "";
+
+    public string DisplayName { get; init; } = "";
 }
 
 internal sealed class ModuleSummary

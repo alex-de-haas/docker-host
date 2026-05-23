@@ -22,6 +22,18 @@ auth -> real Host principal and module-scoped JWT
 
 Integrated mode is intended for testing gateway behavior that standalone mode cannot prove: exposure policy, Host sessions, trusted proxy principals, module-scoped identity tokens, header stripping, redirects, WebSockets, SSE, and Host-owned access assignment.
 
+## Recommended Workflow
+
+Use three development loops with clear ownership:
+
+- Standalone module development is for module-owned UI, business logic, and local mocks. The module can run without Docker Host, but this mode does not prove Host gateway behavior.
+- Integrated developer target development is the default loop for shell apps, authenticated module pages, scoped user directory access, redirects, WebSockets, SSE, and Host identity propagation. The module app runs locally, while Docker Host performs real authentication, authorization, route rewriting, and `X-Docker-Host-Identity` signing.
+- Production-like local image testing is for Dockerfile changes, storage mounts, install/update plans, lifecycle actions, runtime resources, and container networking. It should be explicit because it is slower and intentionally exercises managed Docker behavior.
+
+Do not inject fake module identity tokens into requests when validating Host integration. Seed Host development users and module assignments instead, then reach the module through the Host gateway or app shell so the module receives the same signed identity contract it receives in production-like runs.
+
+The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `docker-host dev up` for reusable manifest-driven local module development, `npm run host:dev:demo` for the repository's host-side demo loop, or the lower-level `docker-host modules dev link` commands when only target registration is needed.
+
 ## Decisions
 
 | Topic | Options considered | Decision |
@@ -118,6 +130,8 @@ docker-host modules dev unlink <target-id>
 --identity none|optional|required
 --disabled
 ```
+
+The `modules dev` commands intentionally manage developer targets only. User seeding, assignment seeding, local module process startup, status checks, and reset behavior live in the top-level `docker-host dev` harness.
 
 ## Gateway Rules
 

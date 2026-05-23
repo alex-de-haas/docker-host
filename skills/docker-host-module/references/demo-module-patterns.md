@@ -40,4 +40,6 @@ npm run host:dev:demo
 npm run demo-module:docker:build:local
 ```
 
-Use `npm run host:dev:demo` for shell app and identity feedback. Use the local Docker image path when testing managed install, start, stop, restart, update, and storage behavior.
+Use `npm run host:dev:demo` for shell app, Host identity, assigned-user, and scoped directory feedback. It seeds the development administrator and user accounts and links the demo module as a developer target, so the module receives normal Host-issued identity instead of a mock token.
+
+Use the local Docker image path when testing managed install, start, stop, restart, update, and storage behavior.

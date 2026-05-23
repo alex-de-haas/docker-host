@@ -68,6 +68,17 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
             request,
             cancellationToken);
 
+    public Task<HostApiResponse<ModuleDevTargetResponse>> UpdateModuleDevTargetAsync(
+        string targetId,
+        ModuleDevTargetRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<ModuleDevTargetResponse>(
+            "update module developer target",
+            HttpMethod.Put,
+            $"api/modules/dev/targets/{Uri.EscapeDataString(targetId)}",
+            request,
+            cancellationToken);
+
     public Task<HostApiResponse<ModuleDevTargetResponse>> DeleteModuleDevTargetAsync(
         string targetId,
         CancellationToken cancellationToken = default)
@@ -76,6 +87,74 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
             HttpMethod.Delete,
             $"api/modules/dev/targets/{Uri.EscapeDataString(targetId)}",
             cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<HostUsersResponse>> ListHostUsersAsync(CancellationToken cancellationToken = default)
+        => SendAsync<HostUsersResponse>("list Host users", HttpMethod.Get, "api/auth/users", cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<UserInvitationCreateResponse>> CreateUserInvitationAsync(
+        UserInvitationCreateRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<UserInvitationCreateResponse>(
+            "create Host user invitation",
+            HttpMethod.Post,
+            "api/auth/invitations",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<UserInvitationAcceptResponse>> AcceptUserInvitationAsync(
+        UserInvitationAcceptRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<UserInvitationAcceptResponse>(
+            "accept Host user invitation",
+            HttpMethod.Post,
+            "api/auth/invitations/accept",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<UserInvitationRevokeResponse>> RevokeUserInvitationAsync(
+        string invitationId,
+        CancellationToken cancellationToken = default)
+        => SendAsync<UserInvitationRevokeResponse>(
+            "revoke Host user invitation",
+            HttpMethod.Delete,
+            $"api/auth/invitations/{Uri.EscapeDataString(invitationId)}",
+            cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<HostUserUpdateResponse>> UpdateHostUserAsync(
+        string userId,
+        HostUserUpdateRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<HostUserUpdateResponse>(
+            "update Host user",
+            HttpMethod.Patch,
+            $"api/auth/users/{Uri.EscapeDataString(userId)}",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<HostUserAssignmentsResponse>> ReplaceHostUserAssignmentsAsync(
+        string userId,
+        HostUserAssignmentsRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<HostUserAssignmentsResponse>(
+            "replace Host user module assignments",
+            HttpMethod.Put,
+            $"api/auth/users/{Uri.EscapeDataString(userId)}/assignments",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<ModuleDirectoryPolicyResponse>> SetModuleDirectoryPolicyAsync(
+        string moduleId,
+        ModuleDirectoryPolicyRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<ModuleDirectoryPolicyResponse>(
+            "set module directory policy",
+            HttpMethod.Put,
+            $"api/modules/{Uri.EscapeDataString(moduleId)}/directory/policy",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<HostAppsResponse>> ListAppsAsync(CancellationToken cancellationToken = default)
+        => SendAsync<HostAppsResponse>("list Host apps", HttpMethod.Get, "api/apps", cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<ModuleActionResult>> RunModuleActionAsync(
         string moduleId,

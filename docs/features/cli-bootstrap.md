@@ -18,6 +18,7 @@ docker-host logs
 docker-host open
 docker-host config
 docker-host modules
+docker-host dev
 docker-host auth
 ```
 
@@ -34,6 +35,16 @@ docker-host config reset <KEY>
 Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port number. `HOST_DOCKER_ENDPOINT` is limited to the supported local Docker Engine endpoint for the current platform.
 
 `docker-host modules` is the Host API-backed module command group. It covers module list, install/add, start, stop, restart, and update commands. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
+
+`docker-host dev` is the Host API-backed module development harness:
+
+```text
+docker-host dev up [--manifest <path>] [--prepare-only]
+docker-host dev status [--manifest <path>]
+docker-host dev reset [--manifest <path>]
+```
+
+It reads a module-local manifest, enables module developer mode, starts or recreates Docker Host when needed, links a deterministic developer target, seeds development users and assignments through Host-owned APIs, applies module directory policy, and starts the local module command in the foreground. The detailed workflow is documented in [Module Development Harness](module-development-harness.md).
 
 `docker-host auth` contains local authentication recovery and bootstrap commands:
 
@@ -81,10 +92,14 @@ HOST_CONTAINER_NAME=docker-host
 HOST_DATA_ROOT_HOST=$HOME/.docker-host
 HOST_DATA_ROOT_CONTAINER=/data
 HOST_UI_PORT=auto
+HOST_BIND_ADDRESS=127.0.0.1
+HOST_PUBLIC_ORIGIN=
+HOST_GATEWAY_BASE_DOMAIN=
 HOST_RESTART_POLICY=unless-stopped
 HOST_DOCKER_ENDPOINT=unix:///var/run/docker.sock
 HOST_DOCKER_SOCKET=/var/run/docker.sock
 HOST_MODULE_NETWORK=docker-host-modules
+HOST_MODULE_DEV_MODE=disabled
 ```
 
 On native Windows, the Docker endpoint default is:
