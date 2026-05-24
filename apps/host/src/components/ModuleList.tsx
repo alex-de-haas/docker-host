@@ -291,9 +291,7 @@ export function ModuleList({
                   <TableCell>
                     <Badge variant="outline">{formatServiceCount(module.containers.length)}</Badge>
                   </TableCell>
-                  <TableCell>
-                    <ModuleImageTags module={module} />
-                  </TableCell>
+                  <TableCell />
                   <TableCell>
                     <Status status={aggregateRuntimeStatusMap[module.runtimeStatus.state]} title={`${module.runtimeStatus.runningContainers}/${module.runtimeStatus.totalContainers} running`}>
                       <StatusIndicator />
@@ -618,22 +616,6 @@ function EmptyModuleState() {
   );
 }
 
-function ModuleImageTags({ module }: { module: ModuleSummary }) {
-  const tags = getModuleImageTags(module);
-
-  if (tags.length === 0) {
-    return <span className="text-muted-foreground">-</span>;
-  }
-
-  return (
-    <div className="flex max-w-[220px] flex-wrap gap-1">
-      {tags.map(tag => (
-        <ImageTagBadge key={tag} tag={tag} />
-      ))}
-    </div>
-  );
-}
-
 function ImageTagBadge({ tag }: { tag?: string }) {
   if (!tag) {
     return <span className="text-muted-foreground">-</span>;
@@ -826,16 +808,6 @@ function formatDate(value?: string | null) {
 
 function formatServiceCount(count: number) {
   return `${count} service${count === 1 ? '' : 's'}`;
-}
-
-function getModuleImageTags(module: ModuleSummary) {
-  return Array.from(
-    new Set(
-      module.containers
-        .map(container => container.image.tag)
-        .filter((tag): tag is string => Boolean(tag))
-    )
-  );
 }
 
 function formatContainerId(containerId: string | null) {
