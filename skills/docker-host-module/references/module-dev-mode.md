@@ -88,7 +88,8 @@ For assigned-user testing, make sure the Host has development users and module a
 The generic installed-CLI harness is `docker-host dev`. It reads a module-local `.docker-host/dev.json` manifest and can:
 
 - run the module's local dev command;
-- ensure Docker Host developer mode is enabled;
+- ensure Docker Host developer mode is enabled for Docker-container and local-process Host runs;
+- start the configured Host container, start a local Host process, or connect to an already running Host API origin;
 - seed development users, assignments, and module directory policy through Host-owned APIs;
 - revoke conflicting pending invitations before creating missing development users;
 - link or update the developer target;
@@ -105,14 +106,13 @@ Example `.docker-host/dev.json`:
 ```json
 {
   "metadataFile": "../metadata.json",
-  "metadataFileHost": "host.docker.internal",
   "moduleCommand": "npm run dev",
   "workingDirectory": "..",
   "target": {
     "id": "mdev_local_demo_module",
     "hostname": "demo.localhost",
     "portKey": "http",
-    "targetBaseUrl": "http://host.docker.internal:3100",
+    "localPort": 3100,
     "policy": "assignedUsersOnly",
     "identity": "required"
   },
@@ -141,12 +141,16 @@ Example `.docker-host/dev.json`:
 
 Manifest notes:
 
+- `host.mode` is optional and defaults to `docker-container`. It also supports `local-process` and `external`.
+- `host.origin` is the Host API origin, for example `http://localhost:3000`. `host.port` is shorthand for `http://localhost:<port>`.
+- `host.command`, `host.workingDirectory`, and `host.environment` are used only by `local-process` mode. The CLI injects `HOST_MODULE_DEV_MODE=enabled`, `HOST_INTERNAL_ORIGIN`, and a matching `PORT` when needed.
 - Use `metadataFile` for repo-local metadata, or `metadataUrl` when the metadata is already served from an absolute URL.
-- `metadataFileHost` defaults to `host.docker.internal`; set it when the Host container must reach the temporary metadata server through a different host name.
+- `metadataFileHost` defaults to `host.docker.internal` for Docker-container Host runs and `127.0.0.1` for local/external Host runs.
 - `moduleCommand` is required unless `docker-host dev up` is run with `--prepare-only`.
 - `target.id` is optional; when omitted, the CLI derives `mdev_{sanitized-hostname}` from `target.hostname`.
 - `target.portKey` must match a public endpoint key in module metadata.
-- `target.targetBaseUrl` is the URL the Host container proxies to; Docker Desktop usually needs `host.docker.internal`, while direct host probes may rewrite that to loopback.
+- `target.targetBaseUrl` is the explicit URL the Host process proxies to; Docker-container mode on Docker Desktop usually needs `host.docker.internal`, while direct host probes may rewrite that to loopback.
+- `target.localPort` is a shorthand for a module dev server on the developer machine. It expands to `http://host.docker.internal:<port>` for `docker-container` mode and `http://127.0.0.1:<port>` for `local-process` or `external` mode.
 - `target.policy` supports `public`, `loginRequired`, and `assignedUsersOnly`.
 - `target.identity` supports `none`, `optional`, and `required`.
 - Existing active users are reused and updated; pending invitations with the same email are revoked before the CLI creates a fresh invitation.
@@ -162,6 +166,31 @@ docker-host dev up --manifest .docker-host/dev.json
 docker-host dev up --manifest .docker-host/dev.json --prepare-only
 docker-host dev status --manifest .docker-host/dev.json
 docker-host dev reset --manifest .docker-host/dev.json
+docker-host dev up --manifest .docker-host/dev.json --host-url http://localhost:3000
+```
+
+Use `--host-url` when the Host is already running locally in another terminal or debugger. It skips Docker container lifecycle and connects directly to that Host API origin.
+
+Host mode examples:
+
+```json
+{
+  "host": {
+    "mode": "local-process",
+    "origin": "http://localhost:3000",
+    "command": "npm run host:dev",
+    "workingDirectory": "../../.."
+  }
+}
+```
+
+```json
+{
+  "host": {
+    "mode": "external",
+    "origin": "http://localhost:3000"
+  }
+}
 ```
 
 ## Rules

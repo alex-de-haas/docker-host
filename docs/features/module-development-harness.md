@@ -37,10 +37,20 @@ It performs these steps:
 - prints the Host shell app URL, gateway URL, and development account credentials;
 - starts the local module command in the foreground unless `--prepare-only` is passed.
 
+The harness can either manage the released Host container, start a local Host process from source, or connect to an already running Host API. This lets module work and Host development use the same dev target, user seeding, assignment, and gateway validation flow.
+
 Use `--prepare-only` when another terminal or process manager should own the module dev server:
 
 ```bash
 docker-host dev up --manifest modules/demo-module/.docker-host/dev.json --prepare-only
+```
+
+Use `--host-url` to connect to an already running Host without inspecting or starting the configured Host container:
+
+```bash
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
+docker-host dev status --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
+docker-host dev reset --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
 ```
 
 `docker-host dev status` reports Host readiness, developer mode, target link state, target URL reachability, app registry visibility, and identity mode:
@@ -66,14 +76,13 @@ A manifest is module-local JSON. The demo module manifest lives at `modules/demo
 ```json
 {
   "metadataFile": "../metadata.json",
-  "metadataFileHost": "host.docker.internal",
   "moduleCommand": "npm run dev",
   "workingDirectory": "..",
   "target": {
     "id": "mdev_local_demo_module",
     "hostname": "demo.localhost",
     "portKey": "http",
-    "targetBaseUrl": "http://host.docker.internal:3100",
+    "localPort": 3100,
     "policy": "assignedUsersOnly",
     "identity": "required"
   },
@@ -102,15 +111,22 @@ A manifest is module-local JSON. The demo module manifest lives at `modules/demo
 
 Supported fields:
 
+- `host.mode`: optional Host connection mode. Supported values are `docker-container`, `local-process`, and `external`. The default is `docker-container`, preserving the installed CLI behavior.
+- `host.origin`: absolute Host API origin, for example `http://localhost:3000`. Required for `external` unless `host.port` is set.
+- `host.port`: shorthand for `http://localhost:<port>`. For `local-process`, the default is `3000` when neither `host.origin` nor `host.port` is set.
+- `host.command`: shell command used when `host.mode` is `local-process`, for example `npm run host:dev`.
+- `host.workingDirectory`: working directory for `host.command`, resolved relative to the manifest file.
+- `host.environment`: environment variables for `host.command`. The CLI also injects `HOST_MODULE_DEV_MODE=enabled`, `HOST_INTERNAL_ORIGIN`, and `PORT` when the origin has an explicit port and `PORT` is not already set.
 - `metadataUrl`: absolute HTTP(S) metadata URL. Use this when metadata is already served somewhere the Host container can reach.
 - `metadataFile`: local metadata JSON path, resolved relative to the manifest file. When this is used, the CLI temporarily serves the file and passes a `metadataFileHost` URL to the Host API.
-- `metadataFileHost`: hostname the Host container should use to reach the temporary metadata server. The default is `host.docker.internal`, which matches Docker Desktop.
+- `metadataFileHost`: hostname the Host should use to reach the temporary metadata server. The default is `host.docker.internal` for `docker-container` and `127.0.0.1` for `local-process` or `external`.
 - `moduleCommand`: shell command started in the foreground by `dev up`. Required unless `--prepare-only` is passed.
 - `workingDirectory`: command working directory, resolved relative to the manifest file.
 - `target.id`: stable developer target id. If omitted, the CLI derives `mdev_{sanitized-hostname}` from `target.hostname`.
 - `target.hostname`: local gateway hostname, such as `demo.localhost`.
 - `target.portKey`: public endpoint key from module metadata.
-- `target.targetBaseUrl`: URL the Host container should proxy to. For Docker Desktop this is usually `http://host.docker.internal:<port>`.
+- `target.targetBaseUrl`: explicit URL the Host process should proxy to. For Docker-container mode on Docker Desktop this is usually `http://host.docker.internal:<port>`.
+- `target.localPort`: shorthand for a module dev server running on the developer machine. In `docker-container` mode the CLI expands it to `http://host.docker.internal:<port>`; in `local-process` and `external` modes it expands to `http://127.0.0.1:<port>`.
 - `target.policy`: `public`, `loginRequired`, or `assignedUsersOnly`.
 - `target.identity`: `none`, `optional`, or `required`.
 - `users`: development Host users to ensure. Existing active users are reused; pending invitations with the same email are revoked before creating a fresh development user.
@@ -118,6 +134,39 @@ Supported fields:
 - `users[].password`: optional local development password. When omitted, `host.admin` uses `docker-host-dev-admin` and `host.user` uses `docker-host-dev-user`.
 - `directoryPolicy.includeEmail`: whether scoped module directory responses may include email addresses.
 - `environment`: additional environment variables for the local module process. The CLI also injects `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, `MODULE_ID`, and `MODULE_VERSION`.
+
+## Host Modes
+
+`docker-container` mode is the production-like installed CLI loop. The CLI reads launch settings, enables `HOST_MODULE_DEV_MODE`, starts or recreates the Host container when needed, discovers the mapped Host UI port from Docker, and reads the admin token for that Host origin.
+
+`local-process` mode is for changing the Host itself. The CLI starts `host.command` as a child process, waits for the configured Host origin to answer the Host API, then links module developer targets through that local Host. The Host process is stopped when the foreground module command exits or the dev harness is interrupted.
+
+Example:
+
+```json
+{
+  "host": {
+    "mode": "local-process",
+    "origin": "http://localhost:3000",
+    "command": "npm run host:dev",
+    "workingDirectory": "../../..",
+    "environment": {
+      "HOST_DATA_ROOT_HOST": ".docker-host/local-host",
+      "HOST_DATA_ROOT_CONTAINER": ".docker-host/local-host",
+      "HOST_DEV_AUTH": "auto",
+      "HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS": "enabled"
+    }
+  }
+}
+```
+
+`external` mode is for a Host that is already running. The CLI does not start, stop, inspect, or read logs from the Host process. It only connects to `host.origin` or `--host-url` and uses the Host APIs. This is the right mode when the developer wants to run `npm run host:dev` in a separate terminal or debugger.
+
+The important distinction is network perspective:
+
+- in `docker-container` mode, a module dev server on the developer machine must usually be reached by the Host as `host.docker.internal`;
+- in `local-process` mode, the Host process runs on the developer machine, so module dev servers can be reached as `127.0.0.1`;
+- in `external` mode, `target.localPort` assumes the Host also runs on the developer machine. Use explicit `target.targetBaseUrl` when connecting to a Host on another machine or VM.
 
 ## Boundaries
 

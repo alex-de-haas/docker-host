@@ -239,7 +239,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
                 operation,
                 "Unable to reach the Docker Host API.",
                 responseBody: ex.Message,
-                nextStep: "Run 'docker-host status' and confirm that the Host container is running.",
+                nextStep: "Run 'docker-host status' for a container-managed Host, or confirm that the configured Host URL points to a running Host API.",
                 innerException: ex);
         }
 
