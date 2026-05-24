@@ -280,9 +280,8 @@ internal sealed class DevCommand(CommandContext context)
         }
 
         var process = StartHostProcess(manifest, origin);
-        var hostApi = CreateHostApiClient(origin);
+        using var hostApi = CreateHostApiClient(origin);
         var ready = await WaitForLocalHostReadyAsync(hostApi, process);
-        hostApi.Dispose();
         if (!ready)
         {
             KillProcessTree(process);
