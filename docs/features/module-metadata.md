@@ -41,9 +41,9 @@ The metadata file describes:
 - **Module-owned storage** - a storage directory that physically lives inside the module directory.
 - **External storage mount** - a host path selected by the administrator outside the module directory.
 - **Mount collection** - a metadata declaration that lets the administrator add a dynamic number of external storage mounts of one type.
-- **Runtime endpoint** - a named module endpoint through which other modules or the gateway can receive an internal base URL.
-- **Shell UI entrypoint** - the metadata contract for browser UI that opens only inside the Host shell on the root domain.
-- **Service/API exposure** - a separate Host-owned gateway record for an endpoint that can be published on a dedicated subdomain for external clients. This record does not make the module browser UI public.
+- **Runtime endpoint** - a named module endpoint through which other modules, the Host shell, or the gateway can receive a base URL.
+- **Shell UI entrypoint** - the metadata contract for browser UI that opens inside the Host shell iframe from a module-owned origin.
+- **Service/API exposure** - a separate Host-owned gateway record for an endpoint that can be published on a dedicated hostname for external clients. This record does not control shell App discovery.
 
 ## Metadata URL
 
@@ -85,11 +85,11 @@ A branch URL is convenient for development, but it is less predictable: the JSON
 5. The Host prepares the module directory: `<host-data-root>/modules/<module-id>/`.
 6. The Host computes volume mappings for directories from `storage.directories`.
 7. If metadata declares `storage.mountCollections`, the Host lets the administrator add external storage mounts.
-8. The Host shows the administrator the final install plan: module, containers/images, dependencies, settings, module directory, storage mappings, external storage mounts, endpoints, and potential conflicts.
+8. The Host shows the administrator the final install plan: module, containers/images, dependencies, settings, module directory, storage mappings, external storage mounts, endpoints, Host-assigned published ports, optional public origins, and potential conflicts.
 9. After confirmation, the Host saves the metadata file in the module directory, downloads images, and creates dependency containers.
 10. The Host computes internal base URLs for dependency modules and passes them to the consumer container through environment variables.
 11. The Host starts the containers for the module being installed.
-12. The Host stores the installed module source: metadata URL, container image references, computed storage mappings, resolved dependency URLs, and external storage mounts.
+12. The Host stores the installed module source: metadata URL, container image references, computed storage mappings, resolved dependency URLs, published Host port bindings, selected public origins, and external storage mounts.
 
 The Host must keep a local copy of the metadata file used for installation or the latest module update.
 
@@ -535,11 +535,11 @@ For `schemaVersion: "0.2"`, metadata validation is strict: unknown fields are re
 | `label` | string | yes | Sidebar label, at most 80 characters. |
 | `path` | string | yes | Same-origin absolute module UI path beginning with `/`. Navigation paths must be unique within one `ui.navigation` array. |
 
-The `ui` contract never requests a public module UI hostname. The Host app registry remains authenticated and returns same-origin Host shell paths only. Modules without `ui` metadata can still be installed, but they do not appear as shell Apps.
+The `ui` contract never requests a public module UI hostname. Public origins are administrator-selected install-time values, not module metadata. Modules without `ui` metadata can still be installed, but they do not appear as shell Apps.
 
 Invalid `ui` metadata is rejected during install or update planning. Missing `ui` metadata is valid and means the module does not appear as a shell App. The Host does not infer shell Apps from gateway exposure records, public runtime ports, service/API endpoint hostnames, or runtime route probing.
 
-The Host app registry and embed transport treat `ui` metadata as shell state, not a networking shortcut. `/api/apps` returns only same-origin shell and embed URLs, and the reserved embed route preserves Host authentication, module identity token injection, Host-owned header stripping, and module cookie scoping.
+The Host app registry treats `ui` metadata as shell state, not a networking shortcut. `/api/apps` returns Host shell paths plus direct module iframe URLs and origins. Host authentication and app access checks stay on the registry and identity-token endpoints; module HTML, assets, cookies, and application requests stay on the module origin.
 
 ## Field notes
 
@@ -1094,13 +1094,13 @@ Example:
 
 `endpoints[].public: false` means the endpoint is needed only inside the Host-managed Docker network. For module-to-module communication, the Host must use an internal URL, not a published host port.
 
-In the first implementation, the Host must not automatically publish module host ports externally based only on `endpoints[].public`. External publishing for selected modules must be a separate feature with explicit authorization and exposure settings. Auth Gateway owns the actual module exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
+`endpoints[].public: true` means the endpoint is eligible for Host-assigned local port publishing, direct-origin shell UI embedding, and service/API gateway exposure. The metadata still does not pin the Host port or external domain. The install plan assigns the Host port, lets the administrator edit it, and optionally records a public origin. Auth Gateway still owns service/API exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
 
 In the first implementation, the Host does not introduce runtime health checks or readiness probes for modules. Module status is determined through Docker daemon container states: individual container states plus aggregate module status.
 
 For required dependencies, the Host considers a dependency running when Docker successfully starts dependency containers and the Host can compute an internal Docker-network base URL for the requested endpoint. The Host does not wait for an HTTP health endpoint or custom readiness signal in the first stage.
 
-Module browser UI opens through the Host shell, not through a separate public UI subdomain. Shell Apps are discovered only after Host authentication from explicit `ui` metadata plus Host access policy; gateway exposure policy names apply only to separate service/API endpoint publishing.
+Module browser UI opens through the Host shell iframe from a direct module origin. That origin can be an administrator-provided public origin or a Host-generated local fallback origin based on the assigned Host port. Shell Apps are discovered only after Host authentication from explicit `ui` metadata plus Host access policy; gateway exposure policy names apply only to separate service/API endpoint publishing.
 
 The Host-managed Docker network must be one shared user-defined network for all managed modules. The default bridge network is not suitable because it does not provide a reliable enough DNS model for module-to-module names.
 
@@ -1181,7 +1181,7 @@ Minimum validation rules for a metadata file:
 - the Host must not apply a global allow-list for external storage roots;
 - the Host must not check external host paths through the Host UI process filesystem;
 - an external host path is considered valid only after a successful Docker bind mount operation;
-- public endpoints do not publish themselves; explicit gateway exposures must not conflict with already assigned hostnames;
+- public endpoints receive Host-assigned published ports during install planning, but metadata must not contain Host ports or public origins;
 - when `ui` is provided, `ui.entrypoint.portKey` must reference an `endpoints[].key` with `public: true`;
 - when `ui.navigation` is provided, navigation paths must be unique same-origin absolute paths;
 - shell App discovery must come only from explicit `ui` metadata plus Host access policy, not from public endpoints or gateway exposure records;

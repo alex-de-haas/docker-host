@@ -25,6 +25,7 @@ flowchart LR
 ## Documents
 
 - [Host app shell](features/host-app-shell.md) - implemented admin shell foundation, navigation groups, persistent sidebar behavior, and protected page integration.
+- [Direct origin module UI](features/direct-origin-module-ui.md) - module UIs embedded from module-owned origins with Host-assigned ports, optional public origins, and identity token bridging.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
 - [Browser account switching](features/account-switching.md) - browser-scoped remembered Host accounts, sidebar switching, account-set persistence, logout behavior, and cookie hygiene.
 - [User Management](features/user-management.md) - administrator user directory, local invitation links, role changes, soft-disable, and app access assignment.

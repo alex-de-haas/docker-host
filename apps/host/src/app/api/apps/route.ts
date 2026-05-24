@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireHostPrincipal } from '@/lib/auth-http';
+import { getRequestOrigin, requireHostPrincipal } from '@/lib/auth-http';
 import { listHostApps } from '@/lib/app-registry-service';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +12,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    const apps = await listHostApps(auth.principal);
+    const apps = await listHostApps(auth.principal, {
+      requestOrigin: getRequestOrigin(request),
+    });
     return NextResponse.json({ apps });
   } catch (error) {
     console.error('Error listing Host apps:', error);

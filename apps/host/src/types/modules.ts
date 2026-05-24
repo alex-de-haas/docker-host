@@ -93,6 +93,17 @@ export interface InstalledModuleContainerRecord {
   containerName: string;
   networkAlias: string;
   image: ModuleImage;
+  ports?: InstalledModulePortBinding[];
+}
+
+export interface InstalledModulePortBinding {
+  key: string;
+  endpointKey?: string;
+  containerPort: number;
+  hostPort: number;
+  protocol: string;
+  hostPublished: true;
+  publicOrigin?: string;
 }
 
 export interface InstalledModuleRecord {
@@ -507,6 +518,19 @@ export interface InstallPlanDependencyConnection {
   resolvedBaseUrl: string;
 }
 
+export interface InstallPlanEndpointOrigin {
+  moduleId: string;
+  endpoint: string;
+  container: string;
+  portKey: string;
+  containerPort: number;
+  hostPort: number;
+  protocol: string;
+  localOrigin: string;
+  publicOrigin: string | null;
+  requiredForUi: boolean;
+}
+
 export interface InstallPlanContainer {
   moduleId: string;
   key: string;
@@ -514,7 +538,13 @@ export interface InstallPlanContainer {
   networkAlias: string;
   image: InstallPlanImage;
   dependsOn: string[];
-  ports: Array<ModuleRuntimePortMetadata & { hostPublished: false }>;
+  ports: Array<ModuleRuntimePortMetadata & {
+    hostPublished: boolean;
+    hostPort?: number;
+    endpointKey?: string;
+    localOrigin?: string;
+    publicOrigin?: string | null;
+  }>;
   resources?: NormalizedModuleContainerMetadata['runtime']['resources'];
   endpoints: NormalizedModuleEndpointMetadata[];
 }
@@ -559,6 +589,7 @@ export interface InstallPlan {
   };
   runtime: {
     endpoints: NormalizedModuleEndpointMetadata[];
+    endpointOrigins: InstallPlanEndpointOrigin[];
   };
   paths: {
     moduleDirectoryHost: string;
@@ -606,11 +637,19 @@ export interface ModuleInstallExternalMountSelection {
   access: ModuleInstallExternalMountAccess;
 }
 
+export interface ModuleInstallEndpointOriginSelection {
+  moduleId: string;
+  endpoint: string;
+  hostPort?: number;
+  publicOrigin?: string;
+}
+
 export interface ModuleInstallRequest {
   metadataUrl: string;
   planDigest: string;
   settings: ModuleInstallSettingSelection[];
   externalMounts: ModuleInstallExternalMountSelection[];
+  endpointOrigins?: ModuleInstallEndpointOriginSelection[];
 }
 
 export interface ModuleInstallSuccessResponse {
@@ -690,6 +729,7 @@ export interface ModuleUpdatePlan {
   };
   runtime: {
     endpoints: NormalizedModuleEndpointMetadata[];
+    endpointOrigins: InstallPlanEndpointOrigin[];
   };
   paths: {
     moduleDirectoryHost: string;

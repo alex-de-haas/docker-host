@@ -18,6 +18,11 @@ import type {
   NormalizedModuleContainerMetadata,
 } from '@/types/modules';
 
+type ModuleRuntimePortBindingInput = ModuleRuntimePortMetadata & {
+  hostPublished?: boolean;
+  hostPort?: number;
+};
+
 export interface DockerDaemonStatus {
   connected: boolean;
   endpoint: string;
@@ -66,7 +71,7 @@ export interface CreateModuleContainerInput {
   imageReference: string;
   env: Record<string, string>;
   mounts: ModuleContainerMount[];
-  ports: ModuleRuntimePortMetadata[];
+  ports: ModuleRuntimePortBindingInput[];
   resources?: NormalizedModuleContainerMetadata['runtime']['resources'];
 }
 
@@ -575,6 +580,14 @@ function buildModuleContainerCreateOptions(
   const exposedPorts = Object.fromEntries(
     config.ports.map(port => [`${port.containerPort}/${toDockerPortProtocol(port.protocol)}`, {}])
   );
+  const portBindings = Object.fromEntries(
+    config.ports
+      .filter(port => port.hostPublished && port.hostPort)
+      .map(port => [
+        `${port.containerPort}/${toDockerPortProtocol(port.protocol)}`,
+        [{ HostPort: String(port.hostPort) }],
+      ])
+  );
   const resources = buildResourceHostConfig(config.resources);
 
   return {
@@ -585,6 +598,7 @@ function buildModuleContainerCreateOptions(
     HostConfig: {
       NetworkMode: config.networkName,
       RestartPolicy: { Name: 'unless-stopped' },
+      PortBindings: Object.keys(portBindings).length > 0 ? portBindings : undefined,
       Mounts: config.mounts.map(mount => ({
         Type: 'bind',
         Source: mount.hostPath,

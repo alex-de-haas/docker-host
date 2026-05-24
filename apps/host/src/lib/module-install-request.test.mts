@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   buildModuleInstallRequest,
   computeExternalMountContainerPath,
+  getEndpointHostPortFieldName,
+  getEndpointOriginFieldName,
   getSettingFieldName,
   isSafeExternalMountKey,
   redactModuleInstallRequest,
@@ -83,6 +85,24 @@ test('install request coerces settings and redacts secret preview', () => {
     },
   ]);
   assert.equal(redacted.settings[2].value, '<redacted>');
+});
+
+test('install request includes editable endpoint host port and optional public origin', () => {
+  const formData = new FormData();
+  const origin = planFixture.runtime.endpointOrigins[0];
+  formData.set(getEndpointHostPortFieldName(origin), '3201');
+  formData.set(getEndpointOriginFieldName(origin), 'https://reports.example.com');
+
+  const request = buildModuleInstallRequest(planFixture, formData, []);
+
+  assert.deepEqual(request.endpointOrigins, [
+    {
+      moduleId: 'com.example.reports',
+      endpoint: 'web',
+      hostPort: 3201,
+      publicOrigin: 'https://reports.example.com',
+    },
+  ]);
 });
 
 test('container path is empty until mount key is safe', () => {
@@ -178,6 +198,20 @@ const planFixture: InstallPlan = {
   },
   runtime: {
     endpoints: [],
+    endpointOrigins: [
+      {
+        moduleId: 'com.example.reports',
+        endpoint: 'web',
+        container: 'app',
+        portKey: 'http',
+        containerPort: 3000,
+        hostPort: 3100,
+        protocol: 'http',
+        localOrigin: 'http://localhost:3100',
+        publicOrigin: null,
+        requiredForUi: true,
+      },
+    ],
   },
   paths: {
     moduleDirectoryHost: '/Users/example/.docker-host/modules/com.example.reports',

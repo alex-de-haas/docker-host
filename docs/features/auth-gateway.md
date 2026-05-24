@@ -155,11 +155,11 @@ The gateway sanitizes proxied requests:
 - adds `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For`;
 - preserves the external module `Host` header for applications that generate root-relative or same-origin URLs.
 
-For responses, the gateway preserves relative redirects and rewrites absolute redirects from the internal module target back to the external module hostname. Module `Set-Cookie` headers are passed through with `Domain` stripped so module cookies stay host-only for the module subdomain.
+For responses, the gateway preserves relative redirects and rewrites absolute redirects from the internal module target back to the external module hostname. Module `Set-Cookie` headers are passed through with `Domain` stripped so module cookies stay host-only for the module origin.
 
-The shell embed transport applies the same security boundary for module browser UIs opened inside the Host shell. Reserved embed routes under `/api/apps/{moduleId}/embed` and `/api/apps/dev/{targetId}/embed` require Host authentication, strip Host auth cookies, strip inbound `X-Docker-Host-*`, client-supplied forwarding headers, and trusted-proxy assertion headers, inject Host-signed module identity when required, scope module cookies to the embed route, and return an iframe-friendly fallback when module response headers explicitly block framing.
+Shell iframe identity uses a separate direct-origin bridge. `/api/apps/{moduleId}/identity-token` and `/api/apps/dev/{targetId}/identity-token` require Host authentication, validate current app access, and issue short-lived Host-signed module identity tokens. The Host shell sends those tokens to the iframe with `postMessage`. The module UI then decides whether to use the token directly or exchange it for a module-origin session cookie.
 
-Embedded module UIs are rendered in an iframe sandbox that intentionally omits `allow-same-origin`. Module HTML is proxied from the Host origin, so granting same-origin privileges would allow module scripts to act against Host Web UI and API state as the signed-in user.
+Embedded module UIs are rendered in an iframe sandbox with `allow-same-origin` because each module UI runs on its own origin rather than the Host origin. Host cookies are not available to that origin, and Host APIs still require Host authentication and authorization.
 
 ## Host Roles
 
@@ -168,13 +168,13 @@ Initial Host roles are intentionally small:
 | Role | Meaning |
 | --- | --- |
 | `host.admin` | Can manage Host configuration, auth settings, users, module install/update/remove, exposure, and recovery. |
-| `host.user` | Can load the Host shell as an Apps portal and access module subdomains allowed by exposure policy and assignment state. It cannot call Host management API functionality, including module listing or Host status views. |
+| `host.user` | Can load the Host shell as an Apps portal and access module origins allowed by app access policy or gateway exposure policy. It cannot call Host management API functionality, including module listing or Host status views. |
 
 Host role is included in module identity so modules can make bootstrap or admin UX decisions when appropriate. A module may decide to treat `host.admin` as an internal module administrator, but module-specific permissions still belong to the module.
 
 `host.admin` is allowed through the Host gateway for module bootstrap and configuration. This does not force the module to grant internal administrator rights automatically; the module may grant, map, or ignore the Host role according to its own permission model.
 
-`host.user` shell access is intentionally narrow. The user can call the app registry and embedded app transport paths needed by `/apps`, but module install/update/remove/lifecycle, gateway exposure management, external ingress management, security settings, user management, and Host status APIs remain `host.admin` only.
+`host.user` shell access is intentionally narrow. The user can call the app registry and shell app identity-token endpoints needed by `/apps`, but module install/update/remove/lifecycle, gateway exposure management, external ingress management, security settings, user management, and Host status APIs remain `host.admin` only.
 
 ## CLI Access
 
@@ -282,9 +282,9 @@ Token decisions:
 - Public keys are published as JWKS at `/.well-known/docker-host/jwks.json`.
 - Discovery metadata is published at `/.well-known/docker-host/module-identity.json`.
 - The discovery `jwks_uri` uses `HOST_INTERNAL_ORIGIN`, defaulting to `http://docker-host:3000`, so module containers can validate tokens from inside the Docker network.
-- Tokens use a 5-minute lifetime and are minted for each authenticated proxied HTTP request or WebSocket/SSE/long-poll setup request.
+- Tokens use a 5-minute lifetime and are minted for each authenticated gateway HTTP request, WebSocket/SSE/long-poll setup request, or shell iframe identity bootstrap.
 - Host strips inbound `X-Docker-Host-*` request headers before adding its own identity header.
-- Shell embed traffic uses the same Host-signed identity token contract as gateway traffic. Installed app embeds use the installed module id as `aud`; developer app embeds preserve the developer target's `moduleId` as `aud`.
+- Shell iframe identity uses the same Host-signed identity token contract as gateway traffic. Installed app iframes use the installed module id as `aud`; developer app iframes preserve the developer target's `moduleId` as `aud`.
 
 Example claims:
 
@@ -360,7 +360,7 @@ The sidebar account menu loads remembered users from `/api/auth/accounts`, shows
 
 `Log out current account` removes the active user from the browser account set and revokes the active session. `Log out all accounts` revokes the browser account set and the active session. Disabled users are omitted from switch targets and cannot be activated.
 
-Gateway and embedded-app proxying strip the active session cookie and the account-set cookie before forwarding traffic to modules. Trusted proxy deployments do not use local browser account switching because the upstream proxy owns browser identity selection.
+Gateway proxying strips the active session cookie and the account-set cookie before forwarding traffic to modules. Direct-origin shell iframe traffic is not proxied by Host and cannot receive Host cookies for the module origin. Trusted proxy deployments do not use local browser account switching because the upstream proxy owns browser identity selection.
 
 ## User Management
 
@@ -485,9 +485,9 @@ When trusted proxy mode is active:
 - CLI Bearer tokens remain available for local administrative automation;
 - role mapping is default-deny when no configured claim mapping grants `host.admin` or `host.user`;
 - disabled mapped Host users are denied;
-- trusted proxy assertion headers are stripped before module traffic is proxied.
+- trusted proxy assertion headers are stripped before gateway module traffic is proxied.
 
-Trusted proxy users are stored as Host users with `authProvider: "trusted-proxy"` and an external identity keyed by provider id, issuer, and subject. Modules still receive the normal Host-signed `X-Docker-Host-Identity` token; provider-specific trusted proxy headers are never the module-facing identity contract.
+Trusted proxy users are stored as Host users with `authProvider: "trusted-proxy"` and an external identity keyed by provider id, issuer, and subject. Modules still receive normal Host-signed module identity tokens through gateway headers or the direct-origin shell identity bridge; provider-specific trusted proxy headers are never the module-facing identity contract.
 
 ## Developer Mode
 

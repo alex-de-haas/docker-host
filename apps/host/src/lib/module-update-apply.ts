@@ -797,6 +797,17 @@ function buildInstalledModuleRecord(
         reference: container.image.reference,
         pullPolicy: container.image.pullPolicy,
       },
+      ports: container.ports
+        .filter(port => port.hostPublished && port.hostPort)
+        .map(port => ({
+          key: port.key,
+          ...(port.endpointKey ? { endpointKey: port.endpointKey } : {}),
+          containerPort: port.containerPort,
+          hostPort: port.hostPort as number,
+          protocol: port.protocol,
+          hostPublished: true as const,
+          ...(port.publicOrigin ? { publicOrigin: port.publicOrigin } : {}),
+        })),
     })),
     operationStatus: existing?.operationStatus || 'installing',
     settings: context.settings,

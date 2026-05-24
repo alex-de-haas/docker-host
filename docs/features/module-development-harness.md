@@ -1,6 +1,6 @@
 # Module Development Harness
 
-The module development harness is the installed-CLI workflow for running a local module dev server through Docker Host. It keeps Docker Host responsible for gateway authentication, module assignment checks, `X-Docker-Host-Identity` signing, shell embedding, and scoped module directory behavior while the module application runs from the developer machine.
+The module development harness is the installed-CLI workflow for running a local module dev server through Docker Host. It keeps Docker Host responsible for gateway authentication, module assignment checks, Host-signed module identity tokens, direct-origin shell embedding, and scoped module directory behavior while the module application runs from the developer machine.
 
 ```mermaid
 flowchart LR
@@ -174,7 +174,7 @@ The harness does not install module containers, create Docker volumes, or prove 
 
 Use the harness for:
 
-- shell embedding;
+- direct-origin shell embedding;
 - authenticated module pages;
 - Host-signed identity token validation;
 - assigned-user behavior;

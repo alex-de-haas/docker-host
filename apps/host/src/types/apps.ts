@@ -38,6 +38,8 @@ export interface HostAppEntry {
   runtimeState?: ModuleRuntimeState;
   entryPath: string;
   embeddedUrl: string;
+  origin: string | null;
+  identityTokenUrl: string | null;
   navigation: HostAppNavigationItem[];
 }
 

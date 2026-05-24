@@ -36,10 +36,11 @@ Embedded app behavior:
 - the Apps sidebar is populated from `/api/apps`;
 - app entries can show nested navigation from `ui.navigation`;
 - `/apps/{moduleId}` opens a Host-owned app page without proxying that path to module containers;
-- the Host app page embeds module UIs in an iframe using path-shaped URLs under `/api/apps/{moduleId}/embed/...`;
+- the Host app page embeds module UIs in an iframe using the direct module origin returned by `/api/apps`;
 - the shell keeps Host-owned app navigation in the sidebar and shows app status/developer markers next to app entries;
 - module UIs own their in-page headers, page actions, and internal navigation;
-- the embed route requires Host authentication, validates the selected shell App, proxies only the reserved embed path, injects module identity, strips Host-owned headers, and rewrites root-relative module links and assets through the reserved embed URL.
+- Host authentication and app access checks happen before app registry data and identity tokens are issued;
+- module identity for shell iframe traffic is delivered through a short-lived identity token endpoint and a `postMessage` bridge.
 
 Gateway exposure behavior:
 
@@ -68,8 +69,8 @@ Developer app behavior:
 - developer app entries are hidden when developer mode is disabled or the individual target is disabled;
 - developer targets remain local-only state and do not create production gateway exposure records;
 - developer app ids are qualified as `dev:{targetId}` while module identity still uses the target's `moduleId`;
-- developer apps open through `/apps/dev/{targetId}` and the same-origin embed transport `/api/apps/dev/{targetId}/embed`;
-- developer embed transport uses the target's local URL and path prefix while preserving Host authentication, module identity token behavior, Host-owned header stripping, and scoped module cookies;
+- developer apps open through `/apps/dev/{targetId}` and embed the direct target origin derived from `targetBaseUrl`;
+- developer app identity uses `/api/apps/dev/{targetId}/identity-token` and the same `postMessage` bridge as installed apps;
 - the Apps sidebar and Apps portal mark developer entries with a compact `Dev` badge or marker.
 
 ## Navigation
@@ -146,13 +147,13 @@ Shell App access modes are Host-owned:
 - `assignedUsersOnly` - assigned Host users and `host.admin` can discover the app;
 - no `public` or anonymous shell App mode exists.
 
-The response intentionally returns same-origin Host paths, such as `/apps/{moduleId}` and reserved embedded URLs under `/api/apps/{moduleId}/embed`. It does not return Docker network aliases, container names, container ids, raw container URLs, public module UI domains, or service/API gateway exposure hostnames.
+The response intentionally returns Host shell paths, such as `/apps/{moduleId}`, plus direct module iframe URLs and origins. It does not return Docker network aliases, container names, container ids, Docker network URLs, or service/API gateway exposure hostnames.
 
 Modules appear in the app registry only when local metadata includes an explicit `ui` contract. `runtime.ports[].public` is still only a capability hint and does not create an app entry by itself.
 
 The app registry keeps shell discovery responsive by avoiding Docker runtime reads for modules whose install/update operation state already makes them unavailable, and by reusing runtime status results for a short in-process TTL. The cache only affects `/api/apps` discovery; dedicated module management APIs still read fresh runtime details for lifecycle workflows.
 
-When module developer mode is enabled, `/api/apps` also reads enabled developer targets from local developer target state. A developer target appears as a shell App only when the target stores a valid shell app metadata snapshot. The response marks these entries with `source: "developer"` and `developerTargetId`, uses `/apps/dev/{targetId}` for shell navigation, and uses `/api/apps/dev/{targetId}/embed` for iframe transport.
+When module developer mode is enabled, `/api/apps` also reads enabled developer targets from local developer target state. A developer target appears as a shell App only when the target stores a valid shell app metadata snapshot. The response marks these entries with `source: "developer"` and `developerTargetId`, uses `/apps/dev/{targetId}` for shell navigation, and uses the direct developer target origin for iframe transport.
 
 Developer target visibility reuses the target exposure policy after Host authentication. `public` and `loginRequired` targets are visible to authenticated Host users. `assignedUsersOnly` targets use existing module access assignments. Anonymous shell App discovery is still not supported.
 
@@ -160,17 +161,17 @@ Developer target visibility reuses the target exposure policy after Host authent
 
 `/apps/{moduleId}` is shell state. It renders the Host shell around the selected module UI and uses the optional `path` query parameter to select nested module navigation, for example `/apps/com.acme.reports?path=%2Fpeople`.
 
-The iframe uses the reserved embedded transport URL returned by `/api/apps`, for example `/api/apps/{moduleId}/embed/` or `/api/apps/{moduleId}/embed/people`. This endpoint requires Host authentication and validates the current principal against the app registry before proxying to a module. The legacy `/api/apps/{moduleId}/embed?path=...` shape remains accepted for compatibility. The iframe is sandboxed and uses Host theme-aware background styling. It does not publish module UIs as standalone public hostnames and does not turn `/apps/{moduleId}` into a direct module proxy.
+The iframe uses the direct `embeddedUrl` returned by `/api/apps`, for example `https://reports.example.com/` or `http://localhost:3210/people`. The Host validates the current principal before returning app registry entries and before issuing identity tokens, but it does not proxy module HTML or rewrite module assets. The iframe is sandboxed and uses Host theme-aware background styling. `/apps/{moduleId}` remains shell state and does not become a direct module proxy.
 
-The embed transport rewrites root-relative links and assets in HTML/CSS responses back through the reserved embed URL so module pages can load common assets while remaining inside the Host shell. Rewritten JavaScript and CSS assets keep the real framework path in the URL pathname, such as `/api/apps/{moduleId}/embed/_next/static/chunks/app.js`, so Next.js and Turbopack runtime detection can still read `document.currentScript.src`. Host injects a small iframe-local fetch/XMLHttpRequest rewrite shim so root-relative module fetches, including App Router `_rsc` requests, are sent through the embed proxy instead of the Host shell. Inline module script contents are otherwise preserved as-is. If a module response explicitly blocks framing with headers such as `X-Frame-Options: DENY` or `Content-Security-Policy: frame-ancestors 'none'`, the embed route returns a concise fallback page explaining that the module UI must support Host shell embedding.
+The Host shell delivers module identity through `/api/apps/{moduleId}/identity-token` and a `postMessage` bridge. The iframe can post `docker-host:ready` or `docker-host:request-identity`; the Host shell verifies the iframe origin, requests a short-lived module identity token, and posts `docker-host:identity` back to the module origin.
 
-Sandboxed iframe fetches have the opaque browser origin `null`. The embed route allows that origin only for sandboxed module transport and exposes a scoped embed token response header so the iframe rewrite shim can refresh its bearer token while the module remains open. Valid token-based embed responses also include the sandbox CORS headers when an upstream proxy strips the inbound `Origin` header before the request reaches Host.
+Module UIs must serve their own routes, assets, cookies, and API calls from their own origin. The Host does not rewrite root-relative URLs, Next.js assets, App Router `_rsc` requests, or response headers. If a module blocks framing with `X-Frame-Options` or `Content-Security-Policy: frame-ancestors`, the browser blocks the iframe according to the module's own response policy.
 
-Developer embed transport follows the same same-origin pattern under `/api/apps/dev/{targetId}/embed`. It resolves the local target URL and path prefix from developer target state, forwards through the Host shell, applies module access rules, injects module identity according to the target identity mode, strips Host-owned headers, and scopes module cookies to the developer embed route.
+Developer app transport follows the same direct-origin pattern. It resolves the local target origin and path prefix from developer target state, applies Host app access rules before app discovery, and issues identity through `/api/apps/dev/{targetId}/identity-token`.
 
 ## Module UI Metadata
 
-The `ui` contract is shell-only. It describes how the Host lists and embeds a module UI; it does not publish a module UI hostname and does not create a service/API gateway exposure.
+The `ui` contract is shell-only. It describes how the Host lists and embeds a module UI; it does not create DNS, TLS, tunnel, reverse proxy, or service/API gateway exposure records. The actual iframe origin comes from the install-time public origin or Host-assigned local fallback port.
 
 Supported fields:
 

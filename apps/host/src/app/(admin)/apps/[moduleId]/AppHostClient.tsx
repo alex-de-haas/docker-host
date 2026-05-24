@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
@@ -12,6 +12,7 @@ import type { HostAppEntry, HostAppNavigationItem } from '@/types/apps';
 
 export function AppHostClient({ appId }: { appId: string }) {
   const searchParams = useSearchParams();
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
   const selectedPath = normalizeSelectedPath(searchParams.get('path'));
   const appsState = useHostApps();
   const [frameWarning, setFrameWarning] = useState<string | null>(null);
@@ -27,6 +28,52 @@ export function AppHostClient({ appId }: { appId: string }) {
   const embeddedUrl = app
     ? getEmbeddedUrl(app, selectedNavigation, selectedPath)
     : null;
+  const sendIdentityToken = useCallback(async () => {
+    if (!app?.identityTokenUrl || !app.origin || !frameRef.current?.contentWindow) {
+      return;
+    }
+
+    try {
+      const response = await fetch(app.identityTokenUrl, {
+        method: 'POST',
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        console.error(`Failed to fetch identity token for app ${app.id}: ${response.status}`);
+        return;
+      }
+
+      const payload = await response.json();
+      frameRef.current.contentWindow.postMessage({
+        type: 'docker-host:identity',
+        ...payload,
+      }, app.origin);
+    } catch (error) {
+      console.error(`Error sending identity token for app ${app.id}:`, error);
+      // Token delivery is best-effort; the module can request it again through postMessage.
+    }
+  }, [app]);
+
+  useEffect(() => {
+    if (!app?.origin) {
+      return undefined;
+    }
+
+    function handleMessage(event: MessageEvent) {
+      if (
+        event.source !== frameRef.current?.contentWindow ||
+        event.origin !== app?.origin ||
+        !isIdentityRequestMessage(event.data)
+      ) {
+        return;
+      }
+
+      void sendIdentityToken();
+    }
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [app?.origin, sendIdentityToken]);
 
   return (
     <AdminShell contentClassName="flex h-full max-w-none flex-col p-0 sm:px-0 lg:px-0">
@@ -34,8 +81,10 @@ export function AppHostClient({ appId }: { appId: string }) {
         appsState,
         app,
         embeddedUrl,
+        frameRef,
         frameWarning,
         setFrameWarning,
+        sendIdentityToken,
       })}
     </AdminShell>
   );
@@ -45,14 +94,18 @@ function renderAppHostContent({
   appsState,
   app,
   embeddedUrl,
+  frameRef,
   frameWarning,
   setFrameWarning,
+  sendIdentityToken,
 }: {
   appsState: ReturnType<typeof useHostApps>;
   app: HostAppEntry | null;
   embeddedUrl: string | null;
+  frameRef: RefObject<HTMLIFrameElement | null>;
   frameWarning: string | null;
   setFrameWarning: (message: string | null) => void;
+  sendIdentityToken: () => Promise<void>;
 }) {
   if (appsState.loading) {
     return (
@@ -137,18 +190,20 @@ function renderAppHostContent({
           </Button>
         </div>
       )}
-      {/* Module HTML is proxied under the Host origin; same-origin sandboxing would let module scripts reach Host APIs as the user. */}
+      {/* Module UI runs on its own origin; Host integration is limited to the postMessage identity bridge. */}
       <iframe
+        ref={frameRef}
         key={embeddedUrl}
         src={embeddedUrl}
         title={`${app.displayName} module UI`}
-        sandbox="allow-forms allow-popups allow-scripts"
+        sandbox="allow-clipboard-write allow-downloads allow-forms allow-popups allow-same-origin allow-scripts"
         className="min-h-0 flex-1 border-0 bg-background"
         onError={() => {
           setFrameWarning('The module UI could not be embedded. Open it through the Host shell after the module supports iframe embedding.');
         }}
         onLoad={() => {
           setFrameWarning(null);
+          void sendIdentityToken();
         }}
       />
     </section>
@@ -198,15 +253,14 @@ function getEmbeddedUrl(
   }
 
   if (app.source === 'developer' && app.developerTargetId) {
-    return buildClientEmbedUrl(`/api/apps/dev/${encodeURIComponent(app.developerTargetId)}/embed`, selectedPath);
+    return app.origin ? buildDirectClientUrl(app.origin, selectedPath) : null;
   }
 
-  return buildClientEmbedUrl(`/api/apps/${encodeURIComponent(app.moduleId)}/embed`, selectedPath);
+  return app.origin ? buildDirectClientUrl(app.origin, selectedPath) : null;
 }
 
-function buildClientEmbedUrl(embedBasePath: string, modulePath: string) {
-  const parsed = new URL(modulePath, 'http://docker-host-embed.local');
-  return `${embedBasePath}${parsed.pathname}${parsed.search}${parsed.hash}`;
+function buildDirectClientUrl(origin: string, modulePath: string) {
+  return new URL(modulePath, origin.endsWith('/') ? origin : `${origin}/`).toString();
 }
 
 function normalizeSelectedPath(path: string | null) {
@@ -217,6 +271,18 @@ function normalizeSelectedPath(path: string | null) {
   return path;
 }
 
+function isIdentityRequestMessage(value: unknown) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    'type' in value &&
+    (
+      (value as { type?: unknown }).type === 'docker-host:ready' ||
+      (value as { type?: unknown }).type === 'docker-host:request-identity'
+    )
+  );
+}
+
 function formatAppStatusReason(reason: HostAppEntry['statusReason']) {
   switch (reason) {
     case 'metadataMissing':
@@ -224,7 +290,7 @@ function formatAppStatusReason(reason: HostAppEntry['statusReason']) {
     case 'metadataInvalid':
       return 'App metadata is invalid.';
     case 'uiPortMissing':
-      return 'App UI port is missing.';
+      return 'App UI needs a published Host port. Open the module update review or reinstall the module.';
     case 'uiPortNotPublic':
       return 'App UI port is not marked public.';
     case 'moduleOperationUnavailable':

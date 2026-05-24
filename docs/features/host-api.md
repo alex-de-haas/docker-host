@@ -181,13 +181,15 @@ Returned by `GET /api/apps`.
   "operationStatus": "installed",
   "runtimeState": "running",
   "entryPath": "/apps/com.acme.reports",
-  "embeddedUrl": "/api/apps/com.acme.reports/embed/",
+  "embeddedUrl": "https://reports.example.com/",
+  "origin": "https://reports.example.com",
+  "identityTokenUrl": "/api/apps/com.acme.reports/identity-token",
   "navigation": [
     {
       "label": "People",
       "path": "/people",
       "entryPath": "/apps/com.acme.reports?path=%2Fpeople",
-      "embeddedUrl": "/api/apps/com.acme.reports/embed/people"
+      "embeddedUrl": "https://reports.example.com/people"
     }
   ]
 }
@@ -207,12 +209,14 @@ Developer app entries use the same shape with `source: "developer"` and `develop
   "statusReason": "available",
   "accessMode": "allAuthenticated",
   "entryPath": "/apps/dev/mdev_reports",
-  "embeddedUrl": "/api/apps/dev/mdev_reports/embed/",
+  "embeddedUrl": "http://localhost:3100/",
+  "origin": "http://localhost:3100",
+  "identityTokenUrl": "/api/apps/dev/mdev_reports/identity-token",
   "navigation": []
 }
 ```
 
-`GET /api/apps` intentionally omits raw Docker/container internals. It does not return container ids, container names, Docker network aliases, raw container URLs, public module UI domains, or service/API gateway exposure hostnames.
+`GET /api/apps` intentionally omits raw Docker/container internals. It does not return container ids, container names, Docker network aliases, Docker network URLs, or service/API gateway exposure hostnames. It does return direct browser iframe URLs and origins for visible shell Apps.
 
 Allowed `accessMode` values:
 
@@ -368,37 +372,52 @@ Response entries include:
 - module operation status;
 - runtime state without container details;
 - same-origin Host entry path;
-- reserved embedded URL;
+- direct iframe URL;
+- iframe origin;
+- identity token URL;
 - nested navigation items.
 
-### `GET /api/apps/{moduleId}/embed`
+### `POST /api/apps/{moduleId}/identity-token`
 
-Reserved iframe transport for shell App UI content.
+Issues a short-lived Host-signed module identity token for an installed shell App iframe.
 
-This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. The Host validates that the selected module app is visible to the current principal and available before proxying. The selected module UI path is carried after `/embed` as a path-shaped URL so framework runtimes can inspect the real resource pathname. The legacy `path` query parameter remains supported for compatibility and must contain a same-origin absolute path beginning with `/`.
+This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. The Host validates that the selected module app is visible to the current principal and available, then signs a module identity token scoped to the selected module and iframe origin.
 
-Example:
+Response:
 
-```text
-/api/apps/com.acme.reports/embed/people
-/api/apps/com.acme.reports/embed/_next/static/chunks/app.js
+```json
+{
+  "token": "<jwt>",
+  "tokenType": "DockerHostModuleIdentity",
+  "moduleId": "com.acme.reports",
+  "origin": "https://reports.example.com",
+  "hostOrigin": "https://host.example.com",
+  "expiresInSeconds": 300
+}
 ```
 
-The endpoint proxies to the module runtime port declared by `ui.entrypoint`, injects module identity where applicable, strips Host-owned request headers, scopes module cookies to the reserved embed route, and rewrites root-relative HTML/CSS links through the reserved embed URL. Rewritten JavaScript and CSS asset URLs keep `/_next/` and file extensions visible in the URL pathname for Next.js and Turbopack runtime checks. Host also injects a small iframe-local fetch/XMLHttpRequest rewrite shim so root-relative module fetches, including App Router `_rsc` requests, continue through the embed proxy instead of the Host shell. Inline module script contents are otherwise preserved. It is not a public module UI hostname and `/apps/{moduleId}` is not a direct proxy path.
+The response is `Cache-Control: no-store`. The Host shell delivers the token to the iframe with `postMessage`; the module can use it directly or exchange it for a module-origin session cookie.
 
-### `GET /api/apps/dev/{targetId}/embed`
+### `POST /api/apps/dev/{targetId}/identity-token`
 
-Reserved iframe transport for developer shell App UI content.
+Issues a short-lived Host-signed module identity token for a developer shell App iframe.
 
 This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. It is available only when module developer mode is enabled and the selected developer target is enabled, visible to the current principal, and has a stored shell app snapshot.
 
-Example:
+Response shape matches the installed module identity token endpoint:
 
-```text
-/api/apps/dev/mdev_reports/embed/people
+```json
+{
+  "token": "<jwt>",
+  "tokenType": "DockerHostModuleIdentity",
+  "moduleId": "com.acme.reports",
+  "origin": "http://localhost:3100",
+  "hostOrigin": "http://localhost:3000",
+  "expiresInSeconds": 300
+}
 ```
 
-The endpoint proxies to the developer target's local `targetBaseUrl`, preserves the target path prefix, injects module identity according to the developer target identity mode, strips Host-owned request headers, scopes module cookies to the developer embed route, and applies the same path-shaped URL rewriting and iframe-local fetch/XMLHttpRequest shim as installed module embeds. It does not create or read production gateway exposure records.
+The endpoint does not create or read production gateway exposure records.
 
 ### `GET /api/modules/{moduleId}`
 
@@ -779,7 +798,7 @@ Implemented browser auth endpoints:
 
 OIDC login denies access when the transaction state is invalid or expired, ID token verification fails, the token has no subject, no role mapping matches, or the mapped Host user is disabled. OIDC provider access tokens, refresh tokens, and ID tokens are not persisted.
 
-Account switching endpoints use the active Host session for authorization and the HttpOnly `docker_host_accounts` cookie to find the browser account set. The account-set cookie is not a module credential and is stripped from gateway and embedded-app proxy traffic.
+Account switching endpoints use the active Host session for authorization and the HttpOnly `docker_host_accounts` cookie to find the browser account set. The account-set cookie is not a module credential and is stripped from gateway traffic. Direct-origin shell iframe traffic cannot receive Host cookies for its module origin.
 
 ### CLI admin tokens
 

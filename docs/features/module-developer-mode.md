@@ -27,7 +27,7 @@ Integrated mode is intended for testing gateway behavior that standalone mode ca
 Use three development loops with clear ownership:
 
 - Standalone module development is for module-owned UI, business logic, and local mocks. The module can run without Docker Host, but this mode does not prove Host gateway behavior.
-- Integrated developer target development is the default loop for shell apps, authenticated module pages, scoped user directory access, redirects, WebSockets, SSE, and Host identity propagation. The module app runs locally, while Docker Host performs real authentication, authorization, route rewriting, and `X-Docker-Host-Identity` signing.
+- Integrated developer target development is the default loop for shell apps, authenticated module pages, scoped user directory access, redirects, WebSockets, SSE, and Host identity propagation. The module app runs locally, while Docker Host performs real authentication, authorization, direct-origin shell identity bridging, and gateway `X-Docker-Host-Identity` signing.
 - Production-like local image testing is for Dockerfile changes, storage mounts, install/update plans, lifecycle actions, runtime resources, and container networking. It should be explicit because it is slower and intentionally exercises managed Docker behavior.
 
 Do not inject fake module identity tokens into requests when validating Host integration. Seed Host development users and module assignments instead, then reach the module through the Host gateway or app shell so the module receives the same signed identity contract it receives in production-like runs.
@@ -95,7 +95,8 @@ Developer app behavior:
 - `/api/apps` returns developer entries with `source: "developer"` and `developerTargetId`;
 - app ids use `dev:{targetId}` to avoid collisions with installed module ids;
 - shell pages use `/apps/dev/{targetId}`;
-- embedded transport uses `/api/apps/dev/{targetId}/embed`;
+- iframe transport uses the direct origin derived from `targetBaseUrl`;
+- identity tokens are issued by `/api/apps/dev/{targetId}/identity-token` and delivered through the Host shell `postMessage` bridge;
 - the Apps sidebar, Apps portal, and app topbar show a compact `Dev` badge;
 - disabled targets and all targets under disabled developer mode are hidden from `/api/apps`.
 

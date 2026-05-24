@@ -26,6 +26,7 @@ import type {
 export interface ListHostAppsOptions {
   config?: HostRuntimeConfig;
   runtimeStatusReader?: RuntimeStatusReader;
+  requestOrigin?: string;
 }
 
 type RuntimeStatusReader = (module: InstalledModuleRecord) => Promise<ModuleRuntimeStatus>;
@@ -109,7 +110,7 @@ export async function listHostApps(
   const installedCandidates = runtimeStatusReader
     ? await Promise.all(
         modulesStore.modules.map(module =>
-          buildModuleAppCandidate(module, authState.moduleAssignments, runtimeStatusReader, config)
+          buildModuleAppCandidate(module, authState.moduleAssignments, runtimeStatusReader, config, options.requestOrigin)
         )
       )
     : [];
@@ -138,7 +139,8 @@ async function buildModuleAppCandidate(
   module: InstalledModuleRecord,
   assignments: ModuleAccessAssignment[],
   runtimeStatusReader: RuntimeStatusReader,
-  config: HostRuntimeConfig
+  config: HostRuntimeConfig,
+  requestOrigin: string | undefined
 ): Promise<ModuleAppCandidate> {
   const metadataResult = await safeReadInstalledMetadata(module, config);
   if (!metadataResult.metadata) {
@@ -175,6 +177,21 @@ async function buildModuleAppCandidate(
 
   const operationStatus = module.operationStatus || 'installed';
   const accessMode = getShellAccessMode(module.id, assignments);
+  const route = uiResult.ui
+    ? resolveInstalledUiRoute(module, metadataResult.metadata, uiResult.ui, requestOrigin)
+    : null;
+  if (!route && uiResult.ui) {
+    return {
+      app: buildUnavailableApp({
+        module,
+        metadata: metadataResult.metadata,
+        reason: 'uiPortMissing',
+        accessMode,
+      }),
+      visibleToUsers: false,
+    };
+  }
+
   if (operationStatus !== 'installed') {
     return {
       app: {
@@ -190,8 +207,10 @@ async function buildModuleAppCandidate(
         accessMode,
         operationStatus,
         entryPath: buildAppEntryPath(module.id, uiResult.ui.entrypoint.path),
-        embeddedUrl: buildEmbeddedUrl(module.id, uiResult.ui.entrypoint.path),
-        navigation: buildNavigation(module.id, uiResult.ui.navigation),
+        embeddedUrl: route?.embeddedUrl ?? '',
+        origin: route?.origin ?? null,
+        identityTokenUrl: buildIdentityTokenUrl(module.id),
+        navigation: route ? buildNavigation(module.id, uiResult.ui.navigation, route.origin) : [],
       },
       visibleToUsers: false,
     };
@@ -215,8 +234,10 @@ async function buildModuleAppCandidate(
       operationStatus,
       runtimeState: runtimeStatus.state,
       entryPath: buildAppEntryPath(module.id, uiResult.ui.entrypoint.path),
-      embeddedUrl: buildEmbeddedUrl(module.id, uiResult.ui.entrypoint.path),
-      navigation: buildNavigation(module.id, uiResult.ui.navigation),
+      embeddedUrl: route?.embeddedUrl ?? '',
+      origin: route?.origin ?? null,
+      identityTokenUrl: buildIdentityTokenUrl(module.id),
+      navigation: route ? buildNavigation(module.id, uiResult.ui.navigation, route.origin) : [],
     },
     visibleToUsers: available,
   };
@@ -330,7 +351,9 @@ function buildUnavailableApp({
     accessMode,
     operationStatus,
     entryPath: buildAppEntryPath(module.id, '/'),
-    embeddedUrl: buildEmbeddedUrl(module.id, '/'),
+    embeddedUrl: '',
+    origin: null,
+    identityTokenUrl: null,
     navigation: [],
   };
 }
@@ -361,8 +384,10 @@ function buildDeveloperAppCandidate(target: ModuleDevTargetRecord): ModuleAppCan
       statusReason: 'available',
       accessMode,
       entryPath: buildDeveloperAppEntryPath(target.id, target.shellApp.entrypointPath),
-      embeddedUrl: buildDeveloperEmbeddedUrl(target.id, target.shellApp.entrypointPath),
-      navigation: buildDeveloperNavigation(target.id, target.shellApp.navigation),
+      embeddedUrl: buildDirectUrl(resolveDeveloperOrigin(target), buildDeveloperModulePath(target, target.shellApp.entrypointPath)),
+      origin: resolveDeveloperOrigin(target),
+      identityTokenUrl: buildDeveloperIdentityTokenUrl(target.id),
+      navigation: buildDeveloperNavigation(target.id, target.shellApp.navigation, target),
     },
     visibleToUsers: true,
   };
@@ -406,25 +431,28 @@ function shouldReturnApp(
 
 function buildNavigation(
   moduleId: string,
-  navigation: ModuleUiMetadata['navigation']
+  navigation: ModuleUiMetadata['navigation'],
+  origin: string
 ): HostAppNavigationItem[] {
   return navigation.map(item => ({
     label: item.label,
     path: item.path,
     entryPath: buildAppEntryPath(moduleId, item.path),
-    embeddedUrl: buildEmbeddedUrl(moduleId, item.path),
+    embeddedUrl: buildDirectUrl(origin, item.path),
   }));
 }
 
 function buildDeveloperNavigation(
   targetId: string,
-  navigation: NonNullable<ModuleDevTargetRecord['shellApp']>['navigation']
+  navigation: NonNullable<ModuleDevTargetRecord['shellApp']>['navigation'],
+  target: ModuleDevTargetRecord
 ): HostAppNavigationItem[] {
+  const origin = resolveDeveloperOrigin(target);
   return navigation.map(item => ({
     label: item.label,
     path: item.path,
     entryPath: buildDeveloperAppEntryPath(targetId, item.path),
-    embeddedUrl: buildDeveloperEmbeddedUrl(targetId, item.path),
+    embeddedUrl: buildDirectUrl(origin, buildDeveloperModulePath(target, item.path)),
   }));
 }
 
@@ -433,10 +461,6 @@ function buildAppEntryPath(moduleId: string, modulePath: string) {
   return modulePath === '/'
     ? `/apps/${moduleSegment}`
     : `/apps/${moduleSegment}?path=${encodeURIComponent(modulePath)}`;
-}
-
-function buildEmbeddedUrl(moduleId: string, modulePath: string) {
-  return buildPathShapedEmbedUrl(`/api/apps/${encodeURIComponent(moduleId)}/embed`, modulePath);
 }
 
 function getDeveloperAppId(targetId: string) {
@@ -450,10 +474,6 @@ function buildDeveloperAppEntryPath(targetId: string, modulePath: string) {
     : `/apps/dev/${targetSegment}?path=${encodeURIComponent(modulePath)}`;
 }
 
-function buildDeveloperEmbeddedUrl(targetId: string, modulePath: string) {
-  return buildPathShapedEmbedUrl(`/api/apps/dev/${encodeURIComponent(targetId)}/embed`, modulePath);
-}
-
 function compareHostApps(left: HostAppEntry, right: HostAppEntry) {
   const nameComparison = left.displayName.localeCompare(right.displayName);
   if (nameComparison !== 0) {
@@ -463,7 +483,75 @@ function compareHostApps(left: HostAppEntry, right: HostAppEntry) {
   return left.id.localeCompare(right.id);
 }
 
-function buildPathShapedEmbedUrl(embedBasePath: string, modulePath: string) {
-  const parsed = new URL(modulePath, 'http://docker-host-embed.local');
-  return `${embedBasePath}${parsed.pathname}${parsed.search}${parsed.hash}`;
+function resolveInstalledUiRoute(
+  module: InstalledModuleRecord,
+  metadata: ModuleMetadata,
+  ui: ModuleUiMetadata,
+  requestOrigin: string | undefined
+) {
+  const endpoint = metadata.endpoints?.find(candidate => candidate.key === ui.entrypoint.portKey);
+  const container = module.containers.find(candidate => candidate.key === endpoint?.container);
+  const port = container?.ports?.find(candidate =>
+    candidate.endpointKey === endpoint?.key ||
+    candidate.key === endpoint?.port
+  );
+  if (!endpoint || !port?.hostPort) {
+    return null;
+  }
+
+  const origin = port.publicOrigin || buildLocalOrigin(requestOrigin, port.hostPort);
+  return {
+    origin,
+    embeddedUrl: buildDirectUrl(origin, ui.entrypoint.path),
+  };
+}
+
+function buildLocalOrigin(requestOrigin: string | undefined, hostPort: number) {
+  try {
+    const parsed = new URL(requestOrigin || 'http://localhost');
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return `http://localhost:${hostPort}`;
+    }
+
+    parsed.port = String(hostPort);
+    parsed.pathname = '/';
+    parsed.search = '';
+    parsed.hash = '';
+    parsed.username = '';
+    parsed.password = '';
+    return parsed.origin;
+  } catch {
+    return `http://localhost:${hostPort}`;
+  }
+}
+
+function buildDirectUrl(origin: string, modulePath: string) {
+  const parsed = new URL(modulePath, withTrailingSlash(origin));
+  return parsed.toString();
+}
+
+function withTrailingSlash(origin: string) {
+  return origin.endsWith('/') ? origin : `${origin}/`;
+}
+
+function buildIdentityTokenUrl(moduleId: string) {
+  return `/api/apps/${encodeURIComponent(moduleId)}/identity-token`;
+}
+
+function buildDeveloperIdentityTokenUrl(targetId: string) {
+  return `/api/apps/dev/${encodeURIComponent(targetId)}/identity-token`;
+}
+
+function resolveDeveloperOrigin(target: ModuleDevTargetRecord) {
+  return new URL(target.targetBaseUrl).origin;
+}
+
+function buildDeveloperModulePath(target: ModuleDevTargetRecord, modulePath: string) {
+  const prefix = target.targetPathPrefix.replace(/\/+$/, '');
+  if (!prefix) {
+    return modulePath;
+  }
+
+  const parsed = new URL(modulePath, 'http://docker-host-dev.local');
+  return `${prefix}${parsed.pathname}${parsed.search}${parsed.hash}`;
 }

@@ -100,13 +100,13 @@ Account switching is exposed through browser-authenticated Host API endpoints:
 
 Mutating account endpoints require an authenticated browser session and the existing Host same-origin protections.
 
-## Gateway And Embed Hygiene
+## Gateway And Shell App Hygiene
 
 The active Host session cookie remains the only browser credential used by gateway authorization. The account-set cookie is a browser account-selection credential and is not forwarded to modules.
 
 After switching accounts, gateway and shell App access is recalculated from the new active Host session. `host.admin` remains allowed through assigned-only module access for bootstrap and configuration. `host.user` follows `loginRequired` and assignment rules.
 
-Gateway and embedded-app proxying strip:
+Gateway proxying strips:
 
 - `docker_host_session`;
 - `docker_host_accounts`;
@@ -114,7 +114,7 @@ Gateway and embedded-app proxying strip:
 - client-supplied forwarding headers;
 - trusted proxy assertion headers.
 
-Modules receive Host identity only through Host-signed module identity tokens when the gateway or embed policy requires identity propagation.
+Shell Apps run in direct-origin iframes, so Host cookies are not forwarded to the module origin. Modules receive Host identity only through Host-signed module identity tokens: gateway traffic can receive the token as `X-Docker-Host-Identity`, while shell iframe traffic receives it through the Host `postMessage` identity bridge.
 
 ## Audit Events
 
