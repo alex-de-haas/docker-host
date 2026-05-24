@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
@@ -66,6 +67,48 @@ public sealed class DevCommandTests : IDisposable
         Assert.Equal(
             ["/version", "/containers/docker-host/json"],
             transport.Requests.Select(request => request.PathAndQuery).Take(2));
+    }
+
+    [Fact]
+    public async Task StatusAsync_WithHostUrl_DoesNotInspectDockerContainer()
+    {
+        using var hostApi = FakeHostApiServer.Start();
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+
+        var exitCode = await new DevCommand(context).ExecuteAsync(["status", "--manifest", WriteManifest(), "--host-url", hostApi.BaseUrl]);
+
+        Assert.Equal(1, exitCode);
+        Assert.Empty(transport.Requests);
+        Assert.Contains(hostApi.Requests, request => request.Path == "/api/host/status");
+    }
+
+    [Fact]
+    public async Task ResetAsync_WithHostUrl_DoesNotInspectDockerContainer()
+    {
+        using var hostApi = FakeHostApiServer.Start();
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+
+        var exitCode = await new DevCommand(context).ExecuteAsync(["reset", "--manifest", WriteManifest(), "--host-url", hostApi.BaseUrl]);
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(transport.Requests);
+        Assert.Contains(hostApi.Requests, request => request.Path == "/api/modules/dev/targets");
+    }
+
+    [Theory]
+    [InlineData("status")]
+    [InlineData("reset")]
+    public async Task ExecuteAsync_InvalidHostUrl_ThrowsUsageException(string command)
+    {
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+
+        await Assert.ThrowsAsync<CommandUsageException>(
+            () => new DevCommand(context).ExecuteAsync([command, "--manifest", WriteManifest(), "--host-url", "ftp://example.test"]));
+
+        Assert.Empty(transport.Requests);
     }
 
     public void Dispose()
@@ -162,6 +205,84 @@ public sealed class DevCommandTests : IDisposable
                 body,
                 bytes,
                 new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+        }
+    }
+
+    private sealed class FakeHostApiServer : IDisposable
+    {
+        private readonly HttpListener listener;
+        private readonly Task requestLoop;
+
+        private FakeHostApiServer(HttpListener listener, int port)
+        {
+            this.listener = listener;
+            BaseUrl = $"http://127.0.0.1:{port}/";
+            requestLoop = Task.Run(ProcessRequestsAsync);
+        }
+
+        public string BaseUrl { get; }
+
+        public List<(string Method, string Path)> Requests { get; } = [];
+
+        public static FakeHostApiServer Start()
+        {
+            var port = GetAvailablePort();
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            listener.Start();
+            return new FakeHostApiServer(listener, port);
+        }
+
+        public void Dispose()
+        {
+            listener.Close();
+            requestLoop.Wait(TimeSpan.FromSeconds(2));
+        }
+
+        private async Task ProcessRequestsAsync()
+        {
+            while (listener.IsListening)
+            {
+                HttpListenerContext requestContext;
+                try
+                {
+                    requestContext = await listener.GetContextAsync();
+                }
+                catch (HttpListenerException)
+                {
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+
+                var path = requestContext.Request.Url?.AbsolutePath ?? "";
+                Requests.Add((requestContext.Request.HttpMethod, path));
+
+                var body = path switch
+                {
+                    "/api/host/status" => "{}",
+                    "/api/modules/dev/targets" => """{"developerModeEnabled":true,"targets":[]}""",
+                    "/api/apps" => """{"apps":[]}""",
+                    _ => """{"message":"not found"}""",
+                };
+                requestContext.Response.StatusCode = path is "/api/host/status" or "/api/modules/dev/targets" or "/api/apps"
+                    ? (int)HttpStatusCode.OK
+                    : (int)HttpStatusCode.NotFound;
+                requestContext.Response.ContentType = "application/json";
+                var bytes = Encoding.UTF8.GetBytes(body);
+                requestContext.Response.ContentLength64 = bytes.Length;
+                await requestContext.Response.OutputStream.WriteAsync(bytes);
+                requestContext.Response.Close();
+            }
+        }
+
+        private static int GetAvailablePort()
+        {
+            using var socket = new TcpListener(IPAddress.Loopback, 0);
+            socket.Start();
+            return ((IPEndPoint)socket.LocalEndpoint).Port;
         }
     }
 }
