@@ -26,8 +26,10 @@ import { Label } from '@/components/ui/label';
 import {
   buildModuleInstallRequest,
   computeExternalMountContainerPath,
+  getEndpointHostPortFieldName,
   createExternalMountDraft,
   createExternalMountDrafts,
+  getEndpointOriginFieldName,
   getSettingFieldName,
   redactModuleInstallRequest,
   validateExternalMountDrafts,
@@ -371,11 +373,12 @@ function PlanReview({
         <ReviewSection title="Runtime" icon={<HardDrive className="h-4 w-4" />}>
           <div className="space-y-4">
             <TableLike
-              columns={['Service', 'Port key', 'Port', 'Protocol']}
+              columns={['Service', 'Port key', 'Container port', 'Host port', 'Protocol']}
               rows={plan.docker.containers.flatMap(container => container.ports.map(port => [
                 container.key,
                 port.key,
                 String(port.containerPort),
+                port.hostPublished && port.hostPort ? String(port.hostPort) : '-',
                 port.protocol,
               ]))}
               empty="No runtime ports"
@@ -390,6 +393,7 @@ function PlanReview({
               ])}
               empty="No endpoints"
             />
+            <EndpointOriginInputs plan={plan} />
           </div>
         </ReviewSection>
 
@@ -448,6 +452,54 @@ function SettingsInputs({ settings }: { settings: InstallPlanSettingPrompt[] }) 
           </p>
         </div>
       ))}
+    </div>
+  );
+}
+
+function EndpointOriginInputs({ plan }: { plan: InstallPlan }) {
+  if (plan.runtime.endpointOrigins.length === 0) {
+    return <EmptyLine>No browser-facing endpoint origins</EmptyLine>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium">Browser origins</h3>
+      {plan.runtime.endpointOrigins.map(origin => {
+        const id = getEndpointOriginFieldName(origin);
+
+        return (
+          <div key={`${origin.moduleId}:${origin.endpoint}`} className="space-y-2 rounded-md border p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">{origin.endpoint}</span>
+              <Badge variant="outline">{origin.requiredForUi ? 'app UI' : 'public endpoint'}</Badge>
+              <Badge variant="secondary">{origin.hostPort}</Badge>
+            </div>
+            <Label htmlFor={id}>Public origin</Label>
+            <Input
+              id={id}
+              name={id}
+              type="url"
+              placeholder="https://module.example.com"
+              defaultValue={origin.publicOrigin ?? ''}
+            />
+            <div className="space-y-2">
+              <Label htmlFor={getEndpointHostPortFieldName(origin)}>Host port</Label>
+              <Input
+                id={getEndpointHostPortFieldName(origin)}
+                name={getEndpointHostPortFieldName(origin)}
+                type="number"
+                min={1}
+                max={65535}
+                defaultValue={origin.hostPort}
+                required
+              />
+            </div>
+            <p className="break-all text-xs text-muted-foreground">
+              Default local fallback: {origin.localOrigin}
+            </p>
+          </div>
+        );
+      })}
     </div>
   );
 }

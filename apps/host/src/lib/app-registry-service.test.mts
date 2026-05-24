@@ -48,13 +48,15 @@ test('returns available shell apps to authenticated Host users', async () => {
   assert.equal(apps[0].status, 'available');
   assert.equal(apps[0].icon, 'boxes');
   assert.equal(apps[0].entryPath, '/apps/com.example.reports');
-  assert.equal(apps[0].embeddedUrl, '/api/apps/com.example.reports/embed/');
+  assert.equal(apps[0].embeddedUrl, 'http://localhost:3101/');
+  assert.equal(apps[0].origin, 'http://localhost:3101');
+  assert.equal(apps[0].identityTokenUrl, '/api/apps/com.example.reports/identity-token');
   assert.deepEqual(apps[0].navigation, [
     {
       label: 'People',
       path: '/people',
       entryPath: '/apps/com.example.reports?path=%2Fpeople',
-      embeddedUrl: '/api/apps/com.example.reports/embed/people',
+      embeddedUrl: 'http://localhost:3101/people',
     },
   ]);
 });
@@ -289,13 +291,15 @@ test('includes enabled developer targets when module developer mode is active', 
   assert.equal(apps[0].displayName, 'Reports Dev');
   assert.equal(apps[0].status, 'available');
   assert.equal(apps[0].entryPath, '/apps/dev/mdev_reports');
-  assert.equal(apps[0].embeddedUrl, '/api/apps/dev/mdev_reports/embed/');
+  assert.equal(apps[0].embeddedUrl, 'http://127.0.0.1:3001/dev/');
+  assert.equal(apps[0].origin, 'http://127.0.0.1:3001');
+  assert.equal(apps[0].identityTokenUrl, '/api/apps/dev/mdev_reports/identity-token');
   assert.deepEqual(apps[0].navigation, [
     {
       label: 'People',
       path: '/people',
       entryPath: '/apps/dev/mdev_reports?path=%2Fpeople',
-      embeddedUrl: '/api/apps/dev/mdev_reports/embed/people',
+      embeddedUrl: 'http://127.0.0.1:3001/dev/people',
     },
   ]);
 });
@@ -441,6 +445,16 @@ async function writeInstalledModule(
             reference: 'ghcr.io/example/module:latest',
             pullPolicy: 'ifNotPresent',
           },
+          ports: [
+            {
+              key: 'http',
+              endpointKey: 'web',
+              containerPort: 3000,
+              hostPort: 3101,
+              protocol: 'http',
+              hostPublished: true,
+            },
+          ],
         },
       ],
     },

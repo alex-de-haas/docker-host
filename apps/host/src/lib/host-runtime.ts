@@ -6,6 +6,8 @@ const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
 const DEFAULT_DOCKER_SOCKET = '/var/run/docker.sock';
 const DEFAULT_MODULE_NETWORK = 'docker-host-modules';
 const DEFAULT_HOST_INTERNAL_ORIGIN = 'http://docker-host:3000';
+const DEFAULT_MODULE_HOST_PORT_START = 3100;
+const DEFAULT_MODULE_HOST_PORT_END = 3999;
 
 export interface HostRuntimeConfig {
   dataRootHost: string;
@@ -28,6 +30,10 @@ export interface HostRuntimeConfig {
   hostInternalOrigin: string;
   dockerSocketPath: string;
   moduleNetwork: string;
+  moduleHostPortRange?: {
+    start: number;
+    end: number;
+  };
 }
 
 export interface HostDataRootStatus {
@@ -80,6 +86,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     hostInternalOrigin: normalizeOptionalRuntimeValue(process.env.HOST_INTERNAL_ORIGIN) ?? DEFAULT_HOST_INTERNAL_ORIGIN,
     dockerSocketPath,
     moduleNetwork,
+    moduleHostPortRange: parseModuleHostPortRange(process.env.HOST_MODULE_PORT_RANGE),
   };
 }
 
@@ -147,4 +154,33 @@ function isEnabledRuntimeFlag(value: string | undefined) {
     normalized === 'enabled' ||
     normalized === 'on' ||
     normalized === 'yes';
+}
+
+function parseModuleHostPortRange(value: string | undefined) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return {
+      start: DEFAULT_MODULE_HOST_PORT_START,
+      end: DEFAULT_MODULE_HOST_PORT_END,
+    };
+  }
+
+  const match = /^(\d{1,5})\s*-\s*(\d{1,5})$/.exec(normalized);
+  const start = match ? Number(match[1]) : Number.NaN;
+  const end = match ? Number(match[2]) : Number.NaN;
+
+  if (
+    Number.isInteger(start) &&
+    Number.isInteger(end) &&
+    start >= 1 &&
+    end <= 65535 &&
+    start <= end
+  ) {
+    return { start, end };
+  }
+
+  return {
+    start: DEFAULT_MODULE_HOST_PORT_START,
+    end: DEFAULT_MODULE_HOST_PORT_END,
+  };
 }

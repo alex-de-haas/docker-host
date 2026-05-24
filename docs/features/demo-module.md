@@ -4,7 +4,7 @@
 
 Demo Module is a repository-local Docker Host module under `modules/demo-module`. It is a small Next.js application that gives Docker Host a stable target for validating module operations during development.
 
-The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, assigned Host user data from the scoped module directory, module-owned role assignments, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The UI uses the same Tailwind v4, shadcn `new-york` component style, semantic theme tokens, and lucide icon library as the Host app so embedded module screens keep the Host visual language. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
+The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, assigned Host user data from the scoped module directory, module-owned role assignments, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, direct-origin shell identity bootstrap, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The UI uses the same Tailwind v4, shadcn `new-york` component style, semantic theme tokens, and lucide icon library as the Host app so embedded module screens keep the Host visual language. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
 
 ```mermaid
 flowchart LR
@@ -43,8 +43,10 @@ flowchart LR
 - `modules/demo-module/src/app/api/people/route.ts` - assigned Host users from the scoped module directory.
 - `modules/demo-module/src/app/api/roles/route.ts` - assigned Host users with effective module roles.
 - `modules/demo-module/src/app/api/roles/[userId]/route.ts` - module-owned role assignment mutation.
-- `modules/demo-module/src/app/api/auth/identity/route.ts` - Host gateway identity, request-header, module directory, and module-owned permission diagnostics.
-- `modules/demo-module/src/lib/host-auth.ts` - module-side validation of the Host-issued `X-Docker-Host-Identity` JWT and scoped directory lookup.
+- `modules/demo-module/src/app/api/auth/identity/route.ts` - Host gateway or shell identity, request-header, module directory, and module-owned permission diagnostics.
+- `modules/demo-module/src/app/api/auth/bootstrap/route.ts` - direct-origin shell iframe bootstrap endpoint that stores a Host-issued module identity token in a module-origin cookie.
+- `modules/demo-module/src/components/HostIdentityBridge.tsx` - client-side `postMessage` bridge that requests identity from the Host shell and bootstraps the module session.
+- `modules/demo-module/src/lib/host-auth.ts` - module-side validation of Host-issued module identity JWTs from `X-Docker-Host-Identity` or the module identity cookie, plus scoped directory lookup.
 - `modules/demo-module/src/lib/module-roles.ts` - module-owned JSON role store and effective permission mapping.
 
 ## Local Development
@@ -76,7 +78,7 @@ docker-host start
 docker-host open
 ```
 
-Then install the fixture metadata from `/modules/install` using `http://localhost:3000/fixtures/modules/demo-module`. This mode is slower, but it exercises the same installed-module lifecycle path used by production-like runs: install plan, install apply, module container creation, start/stop/restart, runtime status, storage mounts, shell app discovery, embedded navigation, and Host identity propagation.
+Then install the fixture metadata from `/modules/install` using `http://localhost:3000/fixtures/modules/demo-module`. This mode is slower, but it exercises the same installed-module lifecycle path used by production-like runs: install plan, install apply, module container creation, start/stop/restart, runtime status, storage mounts, shell app discovery, direct iframe navigation, and Host identity propagation.
 
 ## Docker Image
 
@@ -128,6 +130,7 @@ The module currently validates these Host flows:
 - assigned Host user rendering on `/people` and `/api/people` through the scoped module directory;
 - module-owned role assignment on `/roles` and `/api/roles` using stable Host user ids;
 - gateway exposure policies through the presence or absence of a Host identity token;
+- direct-origin shell identity bootstrap through the Host `postMessage` bridge and `/api/auth/bootstrap`;
 - module identity token validation through Host discovery and JWKS endpoints;
 - module-scoped directory reads through `DOCKER_HOST_INTERNAL_ORIGIN`, `DOCKER_HOST_MODULE_ID`, and `DOCKER_HOST_MODULE_SERVICE_TOKEN`;
 - module-owned permission mapping from Host identity claims and explicit role assignments;

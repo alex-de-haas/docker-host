@@ -58,7 +58,7 @@ When the Host runs directly on the developer machine, module dev server upstream
 
 ## Direct host-run development with a demo shell app
 
-Use this mode for Host shell work, Apps sidebar work, account switching checks, nested app navigation, or embedded app transport against the demo module from the current repository checkout:
+Use this mode for Host shell work, Apps sidebar work, account switching checks, nested app navigation, or direct-origin iframe transport against the demo module from the current repository checkout:
 
 ```bash
 npm run host:dev:demo
@@ -105,7 +105,7 @@ The default app is available through the Host shell at:
 http://localhost:3000/apps/dev/mdev_local_demo_module
 ```
 
-Use this path for quick smoke tests. It validates shell navigation, app registry output, iframe embedding, route rewriting, and Host identity token injection against current branch code. It does not create a managed Docker container or exercise module install/lifecycle operations.
+Use this path for quick smoke tests. It validates shell navigation, app registry output, direct iframe embedding, and Host identity token bridging against current branch code. It does not create a managed Docker container or exercise module install/lifecycle operations.
 
 ## Native Windows CLI development
 

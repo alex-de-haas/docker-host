@@ -18,6 +18,7 @@ import type {
   InstallPlanContainer,
   InstallPlanDependencyConnection,
   InstallPlanDependencyNode,
+  InstallPlanEndpointOrigin,
   InstallPlanErrorEnvelope,
   InstallPlanImage,
   InstallPlanMountCollection,
@@ -29,6 +30,10 @@ import type {
   ModulesStoreData,
   NormalizedModuleMetadata,
 } from '@/types/modules';
+
+interface PublishedPortAllocator {
+  allocate: () => number;
+}
 
 export type InstallPlanResult =
   | {
@@ -142,9 +147,10 @@ function buildPlan(
 
     return node;
   });
+  const portAllocator = createPublishedPortAllocator(store, config);
   const dependencies = orderedNodes
     .filter(node => node.id !== graph.rootId)
-    .map(node => buildDependencyNode(graph, node.id, store, config));
+    .map(node => buildDependencyNode(graph, node.id, store, config, portAllocator));
   const images = orderedNodes.flatMap(node => buildImages(node.id, node.metadata));
   const administratorInputModuleIds = new Set([
     graph.rootId,
@@ -163,7 +169,8 @@ function buildPlan(
     buildMountCollections(node.id, node.metadata)
   );
   const rootPaths = buildModulePaths(root.id, config);
-  const rootContainers = buildPlanContainers(root.id, root.metadata);
+  const rootContainers = buildPlanContainers(root.id, root.metadata, portAllocator);
+  const endpointOrigins = buildPlanEndpointOrigins(root.id, root.metadata, rootContainers);
 
   const planWithoutDigest: Omit<InstallPlan, 'planDigest'> = {
     metadataUrl: root.metadataUrl,
@@ -185,6 +192,7 @@ function buildPlan(
     },
     runtime: {
       endpoints: root.metadata.endpoints,
+      endpointOrigins,
     },
     paths: rootPaths,
     docker: {
@@ -207,7 +215,8 @@ function buildDependencyNode(
   graph: MetadataGraph,
   moduleId: string,
   store: ModulesStoreData,
-  config: HostRuntimeConfig
+  config: HostRuntimeConfig,
+  portAllocator?: PublishedPortAllocator
 ): InstallPlanDependencyNode {
   const node = graph.nodes.get(moduleId);
   if (!node) {
@@ -225,7 +234,9 @@ function buildDependencyNode(
     requiredBy: [...new Set(node.requiredBy)].sort(),
     normalizedMetadata: node.metadata,
     installAction: existingModule ? 'reuse' : 'install',
-    containers: buildPlanContainers(node.id, node.metadata),
+    containers: existingModule
+      ? buildExistingPlanContainers(node.id, node.metadata, existingModule)
+      : buildPlanContainers(node.id, node.metadata, portAllocator),
     paths: buildModulePaths(node.id, config),
     connections: buildDependencyConnections(graph, node.id),
   };
@@ -317,7 +328,8 @@ export function buildImages(moduleId: string, metadata: NormalizedModuleMetadata
 
 export function buildPlanContainers(
   moduleId: string,
-  metadata: NormalizedModuleMetadata
+  metadata: NormalizedModuleMetadata,
+  portAllocator?: PublishedPortAllocator
 ): InstallPlanContainer[] {
   return metadata.containers.map(container => {
     const image: InstallPlanImage = {
@@ -329,6 +341,12 @@ export function buildPlanContainers(
       pullPolicy: container.image.pullPolicy,
     };
 
+    const endpointsByPortKey = new Map(
+      metadata.endpoints
+        .filter(endpoint => endpoint.container === container.key && endpoint.public)
+        .map(endpoint => [endpoint.port, endpoint])
+    );
+
     return {
       moduleId,
       key: container.key,
@@ -336,13 +354,92 @@ export function buildPlanContainers(
       networkAlias: getModuleNetworkAlias(moduleId, container.key),
       image,
       dependsOn: container.dependsOn,
-      ports: container.runtime.ports.map(port => ({
-        ...port,
-        hostPublished: false,
-      })),
+      ports: container.runtime.ports.map(port => {
+        const endpoint = endpointsByPortKey.get(port.key);
+        if (!endpoint) {
+          return {
+            ...port,
+            hostPublished: false,
+          };
+        }
+
+        const hostPort = portAllocator?.allocate() ?? 0;
+        return {
+          ...port,
+          hostPublished: true,
+          hostPort,
+          endpointKey: endpoint.key,
+          localOrigin: buildLocalEndpointOrigin(hostPort),
+          publicOrigin: null,
+        };
+      }),
       ...(container.runtime.resources ? { resources: container.runtime.resources } : {}),
       endpoints: metadata.endpoints.filter(endpoint => endpoint.container === container.key),
     };
+  });
+}
+
+function buildExistingPlanContainers(
+  moduleId: string,
+  metadata: NormalizedModuleMetadata,
+  installed: InstalledModuleRecord
+): InstallPlanContainer[] {
+  const installedContainers = new Map(installed.containers.map(container => [container.key, container]));
+  return buildPlanContainers(moduleId, metadata).map(container => {
+    const installedContainer = installedContainers.get(container.key);
+    const installedPorts = new Map((installedContainer?.ports ?? []).map(port => [port.key, port]));
+
+    return {
+      ...container,
+      containerName: installedContainer?.containerName ?? container.containerName,
+      networkAlias: installedContainer?.networkAlias ?? container.networkAlias,
+      ports: container.ports.map(port => {
+        const installedPort = installedPorts.get(port.key);
+        if (!installedPort) {
+          return port;
+        }
+
+        return {
+          ...port,
+          hostPublished: true,
+          hostPort: installedPort.hostPort,
+          endpointKey: installedPort.endpointKey,
+          localOrigin: buildLocalEndpointOrigin(installedPort.hostPort),
+          publicOrigin: installedPort.publicOrigin ?? null,
+        };
+      }),
+    };
+  });
+}
+
+function buildPlanEndpointOrigins(
+  moduleId: string,
+  metadata: NormalizedModuleMetadata,
+  containers: InstallPlanContainer[]
+): InstallPlanEndpointOrigin[] {
+  return metadata.endpoints.flatMap(endpoint => {
+    if (!endpoint.public) {
+      return [];
+    }
+
+    const container = containers.find(candidate => candidate.key === endpoint.container);
+    const port = container?.ports.find(candidate => candidate.key === endpoint.port && candidate.hostPublished);
+    if (!container || !port?.hostPort || !port.localOrigin) {
+      return [];
+    }
+
+    return [{
+      moduleId,
+      endpoint: endpoint.key,
+      container: endpoint.container,
+      portKey: endpoint.port,
+      containerPort: port.containerPort,
+      hostPort: port.hostPort,
+      protocol: port.protocol,
+      localOrigin: port.localOrigin,
+      publicOrigin: port.publicOrigin ?? null,
+      requiredForUi: metadata.ui?.entrypoint.portKey === endpoint.key,
+    }];
   });
 }
 
@@ -413,12 +510,51 @@ export function buildModulePaths(moduleId: string, config: HostRuntimeConfig) {
   };
 }
 
+function createPublishedPortAllocator(
+  store: ModulesStoreData,
+  config: HostRuntimeConfig
+): PublishedPortAllocator {
+  const range = config.moduleHostPortRange ?? { start: 3100, end: 3999 };
+  const reserved = new Set<number>();
+
+  for (const installedModule of store.modules) {
+    for (const container of installedModule.containers) {
+      for (const port of container.ports ?? []) {
+        reserved.add(port.hostPort);
+      }
+    }
+  }
+
+  let nextPort = range.start;
+  return {
+    allocate() {
+      while (nextPort <= range.end && reserved.has(nextPort)) {
+        nextPort += 1;
+      }
+
+      if (nextPort > range.end) {
+        throw new Error(`No free module host ports are available in ${range.start}-${range.end}.`);
+      }
+
+      const allocated = nextPort;
+      reserved.add(allocated);
+      nextPort += 1;
+      return allocated;
+    },
+  };
+}
+
+function buildLocalEndpointOrigin(hostPort: number) {
+  return `http://localhost:${hostPort}`;
+}
+
 function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
   const conflicts: InstallPlanConflict[] = [];
   const existingById = new Map(store.modules.map(module => [module.id, module]));
   const plannedModuleIds = new Set(plan.installOrder);
   const plannedContainerNames = new Map<string, string>();
   const plannedNetworkAliases = new Map<string, string>();
+  const plannedHostPorts = new Map<number, { moduleId: string; container: string; portKey: string }>();
   const plannedStoragePaths = new Map<string, InstallPlanStorageDirectory>();
 
   const rootExisting = existingById.get(plan.module.id);
@@ -472,6 +608,32 @@ function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
         });
       }
       plannedNetworkAliases.set(nodeAlias, nodeId);
+    }
+
+    for (const port of target.ports) {
+      if (!port.hostPublished || !port.hostPort) {
+        continue;
+      }
+
+      const existingPort = plannedHostPorts.get(port.hostPort);
+      if (existingPort) {
+        conflicts.push({
+          code: 'host_port_conflict',
+          message: `Host port "${port.hostPort}" is assigned more than once in the install plan.`,
+          resourceType: 'host_port',
+          resourceId: String(port.hostPort),
+          path: '$.docker.containers',
+          node: nodeId,
+          existingValue: `${existingPort.moduleId}:${existingPort.container}:${existingPort.portKey}`,
+          proposedValue: `${nodeId}:${target.key}:${port.key}`,
+        });
+      }
+
+      plannedHostPorts.set(port.hostPort, {
+        moduleId: nodeId,
+        container: target.key,
+        portKey: port.key,
+      });
     }
   }
 
@@ -528,6 +690,26 @@ function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
           node: plannedAliasOwner,
           existingValue: installedModule.id,
           proposedValue: plannedAliasOwner,
+        });
+      }
+    }
+
+    for (const installedContainer of installedModule.containers) {
+      for (const installedPort of installedContainer.ports ?? []) {
+        const plannedPortOwner = plannedHostPorts.get(installedPort.hostPort);
+        if (!plannedPortOwner) {
+          continue;
+        }
+
+        conflicts.push({
+          code: 'host_port_conflict',
+          message: `Host port "${installedPort.hostPort}" conflicts with installed module "${installedModule.id}".`,
+          resourceType: 'host_port',
+          resourceId: String(installedPort.hostPort),
+          path: '$.docker.containers',
+          node: plannedPortOwner.moduleId,
+          existingValue: installedModule.id,
+          proposedValue: `${plannedPortOwner.moduleId}:${plannedPortOwner.container}:${plannedPortOwner.portKey}`,
         });
       }
     }

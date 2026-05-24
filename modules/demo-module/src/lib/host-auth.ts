@@ -8,6 +8,7 @@ import {
 } from "@/lib/module-roles";
 
 const identityHeaderName = "x-docker-host-identity";
+export const moduleIdentityCookieName = "docker_host_module_identity";
 const hostSessionCookieName = "docker_host_session";
 const discoveryPath = "/.well-known/docker-host/module-identity.json";
 const directoryTimeoutMs = 1_500;
@@ -128,7 +129,7 @@ export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<De
 
 async function getModuleIdentitySnapshot(headersList: HeaderReader): Promise<ModuleIdentitySnapshot> {
   const config = getDemoConfig();
-  const token = headersList.get(identityHeaderName);
+  const token = headersList.get(identityHeaderName) ?? readCookie(headersList.get("cookie"), moduleIdentityCookieName);
   const baseSnapshot = {
     tokenPresent: Boolean(token),
     headerName: "X-Docker-Host-Identity",
@@ -510,6 +511,21 @@ function readString(value: unknown) {
 
 function readNumber(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readCookie(cookieHeader: string | null, name: string) {
+  if (!cookieHeader) {
+    return null;
+  }
+
+  for (const part of cookieHeader.split(";")) {
+    const [rawName, ...rawValue] = part.trim().split("=");
+    if (rawName === name) {
+      return decodeURIComponent(rawValue.join("="));
+    }
+  }
+
+  return null;
 }
 
 function secondsToIso(value: number | undefined) {

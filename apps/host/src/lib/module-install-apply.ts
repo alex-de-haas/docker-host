@@ -62,6 +62,12 @@ type InstallApplyResult =
 interface InstallDecisions {
   settingsByModule: Map<string, Record<string, InstalledSettingValue>>;
   externalMountsByModule: Map<string, InstalledExternalMountMapping[]>;
+  endpointOriginsByModule: Map<string, Map<string, EndpointOriginDecision>>;
+}
+
+interface EndpointOriginDecision {
+  hostPort: number;
+  publicOrigin: string | null;
 }
 
 interface InstallNodeContext {
@@ -78,6 +84,7 @@ interface InstallNodeContext {
   settings: Record<string, InstalledSettingValue>;
   externalMounts: InstalledExternalMountMapping[];
   resolvedDependencies: ResolvedDependency[];
+  resolvedEndpointOrigins: Map<string, EndpointOriginDecision>;
 }
 
 export async function applyModuleInstallRequest(body: unknown): Promise<InstallApplyResult> {
@@ -304,6 +311,7 @@ function parseInstallRequest(body: unknown): {
   const planDigest = readString(body, 'planDigest', '$.planDigest', validationErrors);
   const settings = readSettingSelections(body.settings, validationErrors);
   const externalMounts = readExternalMountSelections(body.externalMounts, validationErrors);
+  const endpointOrigins = readEndpointOriginSelections(body.endpointOrigins, validationErrors);
 
   if (validationErrors.length > 0 || !metadataUrl || !planDigest) {
     return { request: null, validationErrors };
@@ -315,6 +323,7 @@ function parseInstallRequest(body: unknown): {
       planDigest,
       settings,
       externalMounts,
+      endpointOrigins,
     },
     validationErrors,
   };
@@ -432,6 +441,58 @@ function readExternalMountSelections(
   });
 }
 
+function readEndpointOriginSelections(
+  value: unknown,
+  validationErrors: InstallPlanValidationError[]
+) {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'install_request_invalid',
+      message: 'endpointOrigins must be an array.',
+      path: '$.endpointOrigins',
+    });
+    return [];
+  }
+
+  return value.flatMap((item, index) => {
+    const itemPath = `$.endpointOrigins[${index}]`;
+    if (!isObject(item)) {
+      validationErrors.push({
+        code: 'install_request_invalid',
+        message: 'endpointOrigins[] item must be an object.',
+        path: itemPath,
+      });
+      return [];
+    }
+
+    const moduleId = readString(item, 'moduleId', `${itemPath}.moduleId`, validationErrors);
+    const endpoint = readString(item, 'endpoint', `${itemPath}.endpoint`, validationErrors);
+    const publicOrigin = typeof item.publicOrigin === 'string' ? item.publicOrigin.trim() : undefined;
+    const hostPort = item.hostPort;
+    if (hostPort !== undefined && typeof hostPort !== 'number') {
+      validationErrors.push({
+        code: 'install_request_invalid',
+        message: 'endpointOrigins[].hostPort must be a number.',
+        path: `${itemPath}.hostPort`,
+      });
+    }
+    if (!moduleId || !endpoint) {
+      return [];
+    }
+
+    return [{
+      moduleId,
+      endpoint,
+      ...(typeof hostPort === 'number' ? { hostPort } : {}),
+      ...(publicOrigin ? { publicOrigin } : {}),
+    }];
+  });
+}
+
 function validateInstallDecisions(
   plan: InstallPlan,
   request: ModuleInstallRequest,
@@ -443,18 +504,190 @@ function validateInstallDecisions(
 } {
   const settingValidation = validateSettingSelections(plan, request.settings);
   const externalMountValidation = validateExternalMountSelections(plan, request.externalMounts, store);
+  const endpointOriginValidation = validateEndpointOriginSelections(plan, request.endpointOrigins ?? [], store);
 
   return {
     decisions: {
       settingsByModule: settingValidation.settingsByModule,
       externalMountsByModule: externalMountValidation.externalMountsByModule,
+      endpointOriginsByModule: endpointOriginValidation.endpointOriginsByModule,
     },
     validationErrors: [
       ...settingValidation.validationErrors,
       ...externalMountValidation.validationErrors,
+      ...endpointOriginValidation.validationErrors,
     ],
     conflicts: externalMountValidation.conflicts,
   };
+}
+
+function validateEndpointOriginSelections(
+  plan: InstallPlan,
+  selections: NonNullable<ModuleInstallRequest['endpointOrigins']>,
+  store: ModulesStoreData
+): {
+  endpointOriginsByModule: Map<string, Map<string, EndpointOriginDecision>>;
+  validationErrors: InstallPlanValidationError[];
+} {
+  const validationErrors: InstallPlanValidationError[] = [];
+  const plannedOrigins = new Map(
+    plan.runtime.endpointOrigins.map(origin => [settingKey(origin.moduleId, origin.endpoint), origin])
+  );
+  const selected = new Map<string, EndpointOriginDecision>();
+
+  for (const selection of selections) {
+    const key = settingKey(selection.moduleId, selection.endpoint);
+    const plannedOrigin = plannedOrigins.get(key);
+    if (!plannedOrigin) {
+      validationErrors.push({
+        code: 'install_endpoint_origin_unknown',
+        message: `Endpoint "${selection.endpoint}" is not a public endpoint in the reviewed plan for module "${selection.moduleId}".`,
+        path: '$.endpointOrigins',
+        node: selection.moduleId,
+      });
+      continue;
+    }
+
+    if (selected.has(key)) {
+      validationErrors.push({
+        code: 'install_endpoint_origin_duplicate',
+        message: `Endpoint origin for "${selection.endpoint}" is submitted more than once for module "${selection.moduleId}".`,
+        path: '$.endpointOrigins',
+        node: selection.moduleId,
+      });
+      continue;
+    }
+
+    const hostPort = selection.hostPort ?? plannedOrigin.hostPort;
+    if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) {
+      validationErrors.push({
+        code: 'install_endpoint_host_port_invalid',
+        message: 'Endpoint hostPort must be an integer between 1 and 65535.',
+        path: '$.endpointOrigins',
+        node: selection.moduleId,
+      });
+      continue;
+    }
+
+    const normalized = selection.publicOrigin
+      ? normalizePublicOrigin(selection.publicOrigin)
+      : null;
+    if (selection.publicOrigin && !normalized) {
+      validationErrors.push({
+        code: 'install_endpoint_origin_invalid',
+        message: 'Endpoint publicOrigin must be an http or https origin without a path, query, or fragment.',
+        path: '$.endpointOrigins',
+        node: selection.moduleId,
+      });
+      continue;
+    }
+
+    selected.set(key, {
+      hostPort,
+      publicOrigin: normalized,
+    });
+  }
+
+  const endpointOriginsByModule = new Map<string, Map<string, EndpointOriginDecision>>();
+  const selectedHostPorts = new Map<number, string>();
+  const reservedPlanHostPorts = collectReservedPlanHostPorts(plan);
+  const reservedInstalledHostPorts = collectReservedInstalledHostPorts(plan, store);
+
+  for (const origin of plan.runtime.endpointOrigins) {
+    const key = settingKey(origin.moduleId, origin.endpoint);
+    const decision = selected.get(key) ?? {
+      hostPort: origin.hostPort,
+      publicOrigin: origin.publicOrigin ?? null,
+    };
+    const existingSelected = selectedHostPorts.get(decision.hostPort);
+    if (existingSelected) {
+      validationErrors.push({
+        code: 'install_endpoint_host_port_duplicate',
+        message: `Host port "${decision.hostPort}" is selected more than once by "${existingSelected}" and "${key}".`,
+        path: '$.endpointOrigins',
+        node: origin.moduleId,
+      });
+    }
+    selectedHostPorts.set(decision.hostPort, key);
+
+    const reservedPlanOwner = reservedPlanHostPorts.get(decision.hostPort);
+    if (reservedPlanOwner && reservedPlanOwner !== key) {
+      validationErrors.push({
+        code: 'install_endpoint_host_port_conflict',
+        message: `Host port "${decision.hostPort}" conflicts with planned endpoint "${reservedPlanOwner}".`,
+        path: '$.endpointOrigins',
+        node: origin.moduleId,
+      });
+    }
+
+    const reservedInstalledOwner = reservedInstalledHostPorts.get(decision.hostPort);
+    if (reservedInstalledOwner) {
+      validationErrors.push({
+        code: 'install_endpoint_host_port_conflict',
+        message: `Host port "${decision.hostPort}" conflicts with installed module "${reservedInstalledOwner}".`,
+        path: '$.endpointOrigins',
+        node: origin.moduleId,
+      });
+    }
+
+    const moduleOrigins = endpointOriginsByModule.get(origin.moduleId) ?? new Map<string, EndpointOriginDecision>();
+    moduleOrigins.set(origin.endpoint, decision);
+    endpointOriginsByModule.set(origin.moduleId, moduleOrigins);
+  }
+
+  return {
+    endpointOriginsByModule,
+    validationErrors,
+  };
+}
+
+function collectReservedPlanHostPorts(plan: InstallPlan) {
+  const endpointOriginKeys = new Set(
+    plan.runtime.endpointOrigins.map(origin => settingKey(origin.moduleId, origin.endpoint))
+  );
+  const reserved = new Map<number, string>();
+  const containersByModule = [
+    ...plan.docker.containers,
+    ...plan.dependencies.flatMap(dependency => dependency.containers),
+  ];
+
+  for (const container of containersByModule) {
+    for (const port of container.ports) {
+      if (!port.hostPublished || !port.hostPort) {
+        continue;
+      }
+
+      const owner = port.endpointKey
+        ? settingKey(container.moduleId, port.endpointKey)
+        : `${container.moduleId}:${container.key}:${port.key}`;
+      if (endpointOriginKeys.has(owner)) {
+        continue;
+      }
+
+      reserved.set(port.hostPort, owner);
+    }
+  }
+
+  return reserved;
+}
+
+function collectReservedInstalledHostPorts(plan: InstallPlan, store: ModulesStoreData) {
+  const plannedModuleIds = new Set(plan.installOrder);
+  const reserved = new Map<number, string>();
+
+  for (const installedModule of store.modules) {
+    if (plannedModuleIds.has(installedModule.id)) {
+      continue;
+    }
+
+    for (const container of installedModule.containers) {
+      for (const port of container.ports ?? []) {
+        reserved.set(port.hostPort, installedModule.id);
+      }
+    }
+  }
+
+  return reserved;
 }
 
 function validateSettingSelections(
@@ -891,6 +1124,7 @@ function buildInstallNodeContext(
   const metadata = moduleId === plan.module.id ? plan.normalizedMetadata : dependency?.normalizedMetadata;
   const paths = moduleId === plan.module.id ? plan.paths : dependency?.paths;
   const containers = moduleId === plan.module.id ? plan.docker.containers : dependency?.containers;
+  const resolvedEndpointOrigins = decisions.endpointOriginsByModule.get(moduleId) ?? new Map();
 
   if (!metadata || !paths || !containers || containers.length === 0) {
     throw new Error(`Install plan node details are missing for module "${moduleId}".`);
@@ -905,12 +1139,39 @@ function buildInstallNodeContext(
       moduleDirectoryContainer: paths.moduleDirectoryContainer,
       metadataPathContainer: paths.metadataPathContainer,
     },
-    containers,
+    containers: applyEndpointOriginDecisions(containers, resolvedEndpointOrigins),
     storageDirectories: plan.storage.directories.filter(directory => directory.moduleId === moduleId),
     settings: decisions.settingsByModule.get(moduleId) ?? {},
     externalMounts: decisions.externalMountsByModule.get(moduleId) ?? [],
     resolvedDependencies: getResolvedDependenciesForConsumer(plan, moduleId),
+    resolvedEndpointOrigins,
   };
+}
+
+function applyEndpointOriginDecisions(
+  containers: InstallPlanContainer[],
+  decisions: Map<string, EndpointOriginDecision>
+): InstallPlanContainer[] {
+  if (decisions.size === 0) {
+    return containers;
+  }
+
+  return containers.map(container => ({
+    ...container,
+    ports: container.ports.map(port => {
+      const decision = port.endpointKey ? decisions.get(port.endpointKey) : null;
+      if (!decision) {
+        return port;
+      }
+
+      return {
+        ...port,
+        hostPort: decision.hostPort,
+        localOrigin: buildLocalEndpointOrigin(decision.hostPort),
+        publicOrigin: decision.publicOrigin,
+      };
+    }),
+  }));
 }
 
 async function persistInstallingState(
@@ -948,6 +1209,17 @@ function buildInstalledModuleRecord(
         reference: container.image.reference,
         pullPolicy: container.image.pullPolicy,
       },
+      ports: container.ports
+        .filter(port => port.hostPublished && port.hostPort)
+        .map(port => ({
+          key: port.key,
+          ...(port.endpointKey ? { endpointKey: port.endpointKey } : {}),
+          containerPort: port.containerPort,
+          hostPort: port.hostPort as number,
+          protocol: port.protocol,
+          hostPublished: true as const,
+          ...resolveInstalledPublicOrigin(context, port),
+        })),
     })),
     operationStatus: existing?.operationStatus || 'installing',
     settings: context.settings,
@@ -1016,6 +1288,22 @@ function buildContainerEnvironment(
   }
 
   return env;
+}
+
+function resolveInstalledPublicOrigin(
+  context: InstallNodeContext,
+  port: InstallPlanContainer['ports'][number]
+) {
+  if (!port.endpointKey) {
+    return {};
+  }
+
+  const publicOrigin = context
+    .resolvedEndpointOrigins
+    ?.get(port.endpointKey)
+    ?.publicOrigin;
+
+  return publicOrigin ? { publicOrigin } : {};
 }
 
 function buildContainerMounts(context: InstallNodeContext, containerKey: string) {
@@ -1285,6 +1573,32 @@ function settingKey(moduleId: string, key: string) {
 
 function normalizeHostPath(value: string) {
   return path.resolve(value);
+}
+
+function buildLocalEndpointOrigin(hostPort: number) {
+  return `http://localhost:${hostPort}`;
+}
+
+function normalizePublicOrigin(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+
+    if (
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash ||
+      !parsed.hostname
+    ) {
+      return null;
+    }
+
+    return parsed.origin;
+  } catch {
+    return null;
+  }
 }
 
 function isSafeExternalMountKey(value: string) {

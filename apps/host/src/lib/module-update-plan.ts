@@ -874,6 +874,7 @@ function buildEnvironmentConflictPlan({
     },
     runtime: {
       endpoints: rootMetadata.endpoints,
+      endpointOrigins: [],
     },
     paths,
     docker: {

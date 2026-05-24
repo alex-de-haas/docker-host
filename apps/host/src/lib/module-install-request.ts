@@ -4,6 +4,7 @@ import type {
   InstallPlanSettingPrompt,
   ModuleInstallExternalMountAccess,
   ModuleInstallExternalMountSelection,
+  ModuleInstallEndpointOriginSelection,
   ModuleInstallRequest,
   ModuleInstallSettingSelection,
   ModuleInstallSettingValue,
@@ -45,6 +46,7 @@ export function buildModuleInstallRequest(
     planDigest: plan.planDigest,
     settings: collectSettingSelections(plan.settings, formData),
     externalMounts,
+    endpointOrigins: collectEndpointOriginSelections(plan, formData),
   };
 }
 
@@ -239,6 +241,46 @@ function collectSettingSelections(
   }
 
   return selections;
+}
+
+export function getEndpointOriginFieldName(origin: Pick<ModuleInstallEndpointOriginSelection, 'moduleId' | 'endpoint'>) {
+  return `endpointOrigin:${origin.moduleId}:${origin.endpoint}`;
+}
+
+export function getEndpointHostPortFieldName(origin: Pick<ModuleInstallEndpointOriginSelection, 'moduleId' | 'endpoint'>) {
+  return `endpointHostPort:${origin.moduleId}:${origin.endpoint}`;
+}
+
+function collectEndpointOriginSelections(
+  plan: Pick<InstallPlan, 'runtime'>,
+  formData: FormData
+): ModuleInstallEndpointOriginSelection[] {
+  return plan.runtime.endpointOrigins.flatMap(origin => {
+    const publicOriginValue = formData.get(getEndpointOriginFieldName(origin));
+    const hostPortValue = formData.get(getEndpointHostPortFieldName(origin));
+    if (publicOriginValue === null && hostPortValue === null) {
+      return [];
+    }
+
+    const publicOrigin = publicOriginValue === null ? '' : String(publicOriginValue).trim();
+    const hostPort = hostPortValue === null
+      ? origin.hostPort
+      : Number(String(hostPortValue).trim());
+    const selection: ModuleInstallEndpointOriginSelection = {
+      moduleId: origin.moduleId,
+      endpoint: origin.endpoint,
+      hostPort,
+    };
+
+    if (!publicOrigin) {
+      return [selection];
+    }
+
+    return [{
+      ...selection,
+      publicOrigin,
+    }];
+  });
 }
 
 function coerceSettingValue(
