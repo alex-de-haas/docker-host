@@ -83,7 +83,7 @@ internal sealed class ModulesCommand(CommandContext context)
             .AddColumn("Version")
             .AddColumn("Operation")
             .AddColumn("Runtime")
-            .AddColumn("Image")
+            .AddColumn("Image tag")
             .AddColumn("Updated")
             .AddColumn("Error");
 
@@ -94,7 +94,7 @@ internal sealed class ModulesCommand(CommandContext context)
                 Markup.Escape(module.Version),
                 Markup.Escape(module.OperationStatus),
                 Markup.Escape(module.RuntimeStatus?.State ?? "unknown"),
-                Markup.Escape(module.Image?.Reference ?? ""),
+                Markup.Escape(FormatModuleImageTags(module)),
                 Markup.Escape(module.UpdatedAt ?? module.InstalledAt ?? ""),
                 Markup.Escape(module.LastError?.Message ?? ""));
         }
@@ -1186,6 +1186,49 @@ internal sealed class ModulesCommand(CommandContext context)
         => string.IsNullOrWhiteSpace(module.Name)
             ? module.Id
             : $"{module.Name} ({module.Id})";
+
+    internal static string FormatModuleImageTags(ModuleSummary module)
+    {
+        var tags = module.Containers.Count > 0
+            ? module.Containers
+                .Select(container => FormatImageTag(container.Image))
+                .Where(tag => !string.IsNullOrWhiteSpace(tag))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : new[] { FormatImageTag(module.Image) };
+
+        return string.Join(", ", tags.Where(tag => !string.IsNullOrWhiteSpace(tag)));
+    }
+
+    private static string FormatImageTag(ModuleImage? image)
+    {
+        if (image is null)
+        {
+            return "";
+        }
+
+        if (!string.IsNullOrWhiteSpace(image.Tag))
+        {
+            return image.Tag;
+        }
+
+        return TryReadTagFromImageReference(image.Reference);
+    }
+
+    private static string TryReadTagFromImageReference(string reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference) || reference.Contains('@', StringComparison.Ordinal))
+        {
+            return "";
+        }
+
+        var slashIndex = reference.LastIndexOf('/');
+        var colonIndex = reference.LastIndexOf(':');
+
+        return colonIndex > slashIndex && colonIndex < reference.Length - 1
+            ? reference[(colonIndex + 1)..]
+            : "";
+    }
 
     private static bool TryFormatJsonValue(JsonElement? element, out string value)
     {

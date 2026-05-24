@@ -243,6 +243,7 @@ export function ModuleList({
               <TableHead className="w-12" />
               <TableHead className="min-w-[220px]">Module</TableHead>
               <TableHead className="min-w-[180px]">Services</TableHead>
+              <TableHead className="min-w-[140px]">Image tag</TableHead>
               <TableHead>Runtime</TableHead>
               <TableHead>Uptime</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -289,6 +290,9 @@ export function ModuleList({
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{formatServiceCount(module.containers.length)}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <ModuleImageTags module={module} />
                   </TableCell>
                   <TableCell>
                     <Status status={aggregateRuntimeStatusMap[module.runtimeStatus.state]} title={`${module.runtimeStatus.runningContainers}/${module.runtimeStatus.totalContainers} running`}>
@@ -392,7 +396,7 @@ export function ModuleList({
                 </TableRow>
                 {isExpanded && module.containers.length === 0 && (
                   <TableRow className="bg-muted/20 hover:bg-muted/20">
-                    <TableCell colSpan={6} className="py-4 text-sm text-muted-foreground">
+                    <TableCell colSpan={7} className="py-4 text-sm text-muted-foreground">
                       No services are registered for this module.
                     </TableCell>
                   </TableRow>
@@ -415,6 +419,9 @@ export function ModuleList({
                           {formatContainerId(container.runtimeStatus.containerId)}
                         </span>
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <ImageTagBadge tag={container.image.tag} />
                     </TableCell>
                     <TableCell>
                       <Status
@@ -611,6 +618,34 @@ function EmptyModuleState() {
   );
 }
 
+function ModuleImageTags({ module }: { module: ModuleSummary }) {
+  const tags = getModuleImageTags(module);
+
+  if (tags.length === 0) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  return (
+    <div className="flex max-w-[220px] flex-wrap gap-1">
+      {tags.map(tag => (
+        <ImageTagBadge key={tag} tag={tag} />
+      ))}
+    </div>
+  );
+}
+
+function ImageTagBadge({ tag }: { tag?: string }) {
+  if (!tag) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  return (
+    <Badge variant="secondary" className="max-w-[180px] truncate font-mono text-xs" title={tag}>
+      {tag}
+    </Badge>
+  );
+}
+
 function ModuleOperationBadge({ module }: { module: ModuleSummary }) {
   if (module.operationStatus === 'installed') {
     return null;
@@ -791,6 +826,16 @@ function formatDate(value?: string | null) {
 
 function formatServiceCount(count: number) {
   return `${count} service${count === 1 ? '' : 's'}`;
+}
+
+function getModuleImageTags(module: ModuleSummary) {
+  return Array.from(
+    new Set(
+      module.containers
+        .map(container => container.image.tag)
+        .filter((tag): tag is string => Boolean(tag))
+    )
+  );
 }
 
 function formatContainerId(containerId: string | null) {

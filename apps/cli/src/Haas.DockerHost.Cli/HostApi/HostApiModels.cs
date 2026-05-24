@@ -286,6 +286,8 @@ internal sealed class ModuleSummary
 
     public string MetadataUrl { get; init; } = "";
 
+    public IReadOnlyList<ModuleContainerSummary> Containers { get; init; } = [];
+
     public ModuleImage? Image { get; init; }
 
     public string OperationStatus { get; init; } = "";
@@ -297,6 +299,13 @@ internal sealed class ModuleSummary
     public string? UpdatedAt { get; init; }
 
     public ModuleOperationError? LastError { get; init; }
+}
+
+internal sealed class ModuleContainerSummary
+{
+    public string Key { get; init; } = "";
+
+    public ModuleImage? Image { get; init; }
 }
 
 internal sealed class ModuleImage

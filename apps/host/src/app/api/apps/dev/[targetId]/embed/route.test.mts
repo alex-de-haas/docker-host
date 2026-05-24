@@ -213,6 +213,19 @@ test('GET /api/apps/dev/[targetId]/embed accepts scoped embed tokens for sandbox
     assert.match(preflightResponse.headers.get('access-control-allow-methods') ?? '', /POST/);
     assert.equal(preflightResponse.headers.get('access-control-allow-headers'), 'content-type, x-nextjs-data');
 
+    const strippedOriginPreflightResponse = await OPTIONS(
+      new Request(`http://localhost:3000/api/apps/dev/mdev_reports/embed/api/settings?embedToken=${token}`, {
+        method: 'OPTIONS',
+        headers: {
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type',
+        },
+      }),
+      { params: Promise.resolve({ targetId: 'mdev_reports' }) }
+    );
+    assert.equal(strippedOriginPreflightResponse.status, 204);
+    assert.equal(strippedOriginPreflightResponse.headers.get('access-control-allow-origin'), 'null');
+
     const rejectedPreflightResponse = await OPTIONS(
       new Request('http://localhost:3000/api/apps/dev/mdev_reports/embed/api/settings', {
         method: 'OPTIONS',
@@ -239,11 +252,23 @@ test('GET /api/apps/dev/[targetId]/embed accepts scoped embed tokens for sandbox
     assert.equal(tokenResponse.status, 200);
     assert.equal(tokenResponse.headers.get('access-control-allow-origin'), 'null');
     assert.equal(tokenResponse.headers.get('access-control-allow-credentials'), 'true');
+    assert.equal(typeof tokenResponse.headers.get('x-docker-host-embed-token'), 'string');
+    assert.match(tokenResponse.headers.get('access-control-expose-headers') ?? '', /x-docker-host-embed-token/);
     assert.match(await tokenResponse.text(), /\/api\/apps\/dev\/mdev_reports\/embed\/people\?embedToken=/);
-    assert.equal(upstreamRequests.length, 2);
+
+    const strippedOriginTokenResponse = await GET(
+      new Request(`http://localhost:3000/api/apps/dev/mdev_reports/embed/settings?embedToken=${token}`),
+      { params: Promise.resolve({ targetId: 'mdev_reports' }) }
+    );
+
+    assert.equal(strippedOriginTokenResponse.status, 200);
+    assert.equal(strippedOriginTokenResponse.headers.get('access-control-allow-origin'), 'null');
+    assert.equal(upstreamRequests.length, 3);
     assert.equal(upstreamRequests[0]?.url, '/dev/');
     assert.equal(upstreamRequests[1]?.url, '/dev/people');
+    assert.equal(upstreamRequests[2]?.url, '/dev/settings');
     assert.equal(typeof upstreamRequests[1]?.identity, 'string');
+    assert.equal(typeof upstreamRequests[2]?.identity, 'string');
   } finally {
     await closeServer(upstream);
   }

@@ -166,6 +166,33 @@ test('builds reserved embed URLs for developer apps', () => {
   );
 });
 
+test('injected fetch shim refreshes embed tokens from proxied responses', async () => {
+  const html = rewriteEmbeddedContent(
+    '<html><head></head><body></body></html>',
+    {
+      app: {
+        id: 'com.example.reports',
+        source: 'installed',
+        moduleId: 'com.example.reports',
+        displayName: 'Reports',
+        version: '1.0.0',
+        status: 'available',
+        statusReason: 'available',
+        accessMode: 'allAuthenticated',
+        entryPath: '/apps/com.example.reports',
+        embeddedUrl: buildEmbedUrl('com.example.reports', '/'),
+        navigation: [],
+      },
+    },
+    'initial-token'
+  );
+
+  assert.deepEqual(await executeInjectedFetchRewriteWithTokenRefresh(html), [
+    '/api/apps/com.example.reports/embed/release-planner?_rsc=first&embedToken=initial-token',
+    '/api/apps/com.example.reports/embed/settings?_rsc=second&embedToken=refreshed-token',
+  ]);
+});
+
 test('proxies a minimal Next Turbopack-shaped fixture with path-shaped assets and RSC', async t => {
   const config = await createEmbedTestConfig();
   const target = createInstalledEmbedTarget(config);
@@ -554,5 +581,37 @@ async function executeInjectedFetchRewrite(html: string, input: string) {
     Response,
   });
   await window.fetch(input);
+  return fetchCalls;
+}
+
+async function executeInjectedFetchRewriteWithTokenRefresh(html: string) {
+  const script = /<script id="__docker-host-embed-runtime">([\s\S]*?)<\/script>/.exec(html)?.[1];
+  assert.equal(typeof script, 'string');
+
+  const fetchCalls: string[] = [];
+  const window = {
+    location: {
+      href: 'https://host.example.test/api/apps/com.example.reports/embed/',
+      origin: 'https://host.example.test',
+    },
+    fetch: async (fetchInput: RequestInfo | URL) => {
+      fetchCalls.push(fetchInput instanceof Request ? fetchInput.url : String(fetchInput));
+      return new Response('ok', {
+        headers: {
+          'x-docker-host-embed-token': 'refreshed-token',
+        },
+      });
+    },
+    XMLHttpRequest: undefined,
+  };
+
+  runInNewContext(script!, {
+    window,
+    URL,
+    Request,
+    Response,
+  });
+  await window.fetch('/release-planner?_rsc=first');
+  await window.fetch('/settings?_rsc=second');
   return fetchCalls;
 }

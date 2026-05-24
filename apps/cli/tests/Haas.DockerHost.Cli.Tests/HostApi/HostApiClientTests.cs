@@ -52,9 +52,16 @@ public sealed class HostApiClientTests
                   "name": "Reports",
                   "version": "1.0.0",
                   "operationStatus": "installed",
-                  "image": {
-                    "reference": "ghcr.io/acme/reports:1.0.0"
-                  },
+                  "containers": [
+                    {
+                      "key": "web",
+                      "image": {
+                        "repository": "ghcr.io/acme/reports",
+                        "tag": "1.0.0",
+                        "reference": "ghcr.io/acme/reports:1.0.0"
+                      }
+                    }
+                  ],
                   "runtimeStatus": {
                     "state": "running",
                     "containerName": "mod-com-acme-reports"
@@ -70,7 +77,10 @@ public sealed class HostApiClientTests
         var module = Assert.Single(response.Body?.Modules ?? []);
         Assert.Equal("com.acme.reports", module.Id);
         Assert.Equal("running", module.RuntimeStatus?.State);
-        Assert.Equal("ghcr.io/acme/reports:1.0.0", module.Image?.Reference);
+        var container = Assert.Single(module.Containers);
+        Assert.Equal("web", container.Key);
+        Assert.Equal("1.0.0", container.Image?.Tag);
+        Assert.Equal("ghcr.io/acme/reports:1.0.0", container.Image?.Reference);
     }
 
     [Fact]

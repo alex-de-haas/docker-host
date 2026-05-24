@@ -58,8 +58,9 @@ const STATIC_EMBED_ASSET_PATH_PREFIXES = [
 ];
 const MAX_EMBED_PATH_LENGTH = 2048;
 const EMBED_ACCESS_TOKEN_PARAM = 'embedToken';
-const EMBED_ACCESS_TOKEN_TTL_MS = 5 * 60 * 1000;
+const EMBED_ACCESS_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 const EMBED_ACCESS_TOKEN_SECRET_FILE = 'embed-access-secret';
+const EMBED_ACCESS_TOKEN_RESPONSE_HEADER = 'x-docker-host-embed-token';
 const EMBED_RUNTIME_SCRIPT_ID = '__docker-host-embed-runtime';
 const SANDBOXED_EMBED_ORIGIN = 'null';
 const SANDBOXED_EMBED_ALLOWED_METHODS = 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS';
@@ -547,7 +548,10 @@ export function withHostAppEmbedCorsHeaders<T extends Response>(request: Request
 }
 
 function applySandboxedEmbedCorsHeaders(request: Request, headers: Headers) {
-  if (request.headers.get('origin') !== SANDBOXED_EMBED_ORIGIN) {
+  if (
+    request.headers.get('origin') !== SANDBOXED_EMBED_ORIGIN &&
+    !new URL(request.url).searchParams.has(EMBED_ACCESS_TOKEN_PARAM)
+  ) {
     return;
   }
 
@@ -559,6 +563,7 @@ function applySandboxedEmbedCorsHeaders(request: Request, headers: Headers) {
     request.headers.get('access-control-request-headers') ||
       SANDBOXED_EMBED_DEFAULT_ALLOWED_HEADERS
   );
+  appendCsvHeader(headers, 'Access-Control-Expose-Headers', EMBED_ACCESS_TOKEN_RESPONSE_HEADER);
   headers.set('access-control-max-age', '600');
   appendVaryHeader(headers, 'Origin');
   appendVaryHeader(headers, 'Access-Control-Request-Method');
@@ -1019,6 +1024,9 @@ function buildEmbedResponseHeaders(
   });
 
   headers.set('cache-control', 'no-store');
+  if (embedAccessToken) {
+    headers.set(EMBED_ACCESS_TOKEN_RESPONSE_HEADER, embedAccessToken);
+  }
   return headers;
 }
 
@@ -1174,6 +1182,19 @@ function appendVaryHeader(headers: Headers, value: string) {
   const existing = current.split(',').map(part => part.trim().toLowerCase());
   if (!existing.includes(value.toLowerCase())) {
     headers.set('vary', `${current}, ${value}`);
+  }
+}
+
+function appendCsvHeader(headers: Headers, name: string, value: string) {
+  const current = headers.get(name);
+  if (!current) {
+    headers.set(name, value);
+    return;
+  }
+
+  const existing = current.split(',').map(part => part.trim().toLowerCase());
+  if (!existing.includes(value.toLowerCase())) {
+    headers.set(name, `${current}, ${value}`);
   }
 }
 
@@ -1471,8 +1492,9 @@ function renderEmbedRuntimeScript(
 
   return `<script id="${EMBED_RUNTIME_SCRIPT_ID}">(() => {
   const embedBasePath = ${JSON.stringify(embedBasePath)};
-  const embedToken = ${JSON.stringify(token)};
+  let embedToken = ${JSON.stringify(token)};
   const tokenParam = ${JSON.stringify(EMBED_ACCESS_TOKEN_PARAM)};
+  const tokenHeader = ${JSON.stringify(EMBED_ACCESS_TOKEN_RESPONSE_HEADER)};
   const shouldRewrite = value => {
     try {
       const url = new URL(value, window.location.href);
@@ -1497,14 +1519,26 @@ function renderEmbedRuntimeScript(
     next.hash = url.hash;
     return next.pathname + next.search + next.hash;
   };
+  const refreshEmbedToken = response => {
+    try {
+      const nextToken = response?.headers?.get?.(tokenHeader);
+      if (nextToken) {
+        embedToken = nextToken;
+      }
+    } catch {
+    }
+    return response;
+  };
   const nativeFetch = window.fetch;
   if (typeof nativeFetch === 'function') {
     window.fetch = (input, init) => {
       if (input instanceof Request) {
         const rewritten = toEmbedUrl(input.url);
-        return nativeFetch.call(window, rewritten === input.url ? input : new Request(rewritten, input), init);
+        return nativeFetch.call(window, rewritten === input.url ? input : new Request(rewritten, input), init)
+          .then(refreshEmbedToken);
       }
-      return nativeFetch.call(window, typeof input === 'string' || input instanceof URL ? toEmbedUrl(String(input)) : input, init);
+      return nativeFetch.call(window, typeof input === 'string' || input instanceof URL ? toEmbedUrl(String(input)) : input, init)
+        .then(refreshEmbedToken);
     };
   }
   const NativeXMLHttpRequest = window.XMLHttpRequest;
