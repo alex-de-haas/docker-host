@@ -284,7 +284,13 @@ internal sealed class DevCommand(CommandContext context)
         var ready = await WaitForLocalHostReadyAsync(hostApi, process);
         if (!ready)
         {
-            KillProcessTree(process);
+            context.Console.MarkupLine("[yellow]The local Host process was started, but the CLI could not confirm readiness.[/]");
+            context.Console.MarkupLine($"[yellow]The Host may still be running at {Markup.Escape(origin.ToString().TrimEnd('/'))}.[/]");
+            context.Console.WriteLine("If the Host is up but the CLI token is missing or invalid, import a token with:");
+            context.Console.WriteLine($"  docker-host auth token import --host {origin.ToString().TrimEnd('/')}");
+            context.Console.WriteLine("Or set DOCKER_HOST_CLI_TOKEN before retrying.");
+            context.Console.WriteLine("You can also open the Host UI to create or import a token, then run the command again.");
+
             process.Dispose();
             return null;
         }
