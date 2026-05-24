@@ -39,6 +39,7 @@ export function AppHostClient({ appId }: { appId: string }) {
         cache: 'no-store',
       });
       if (!response.ok) {
+        console.error(`Failed to fetch identity token for app ${app.id}: ${response.status}`);
         return;
       }
 
@@ -47,7 +48,8 @@ export function AppHostClient({ appId }: { appId: string }) {
         type: 'docker-host:identity',
         ...payload,
       }, app.origin);
-    } catch {
+    } catch (error) {
+      console.error(`Error sending identity token for app ${app.id}:`, error);
       // Token delivery is best-effort; the module can request it again through postMessage.
     }
   }, [app]);

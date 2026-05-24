@@ -13,6 +13,10 @@ export function HostIdentityBridge() {
     }
 
     const referrerOrigin = getReferrerOrigin();
+    if (!referrerOrigin) {
+      return undefined;
+    }
+
     let bootstrapped = false;
 
     async function handleMessage(event: MessageEvent) {
@@ -30,7 +34,7 @@ export function HostIdentityBridge() {
       if (
         typeof token !== "string" ||
         (typeof hostOrigin === "string" && hostOrigin !== event.origin) ||
-        (referrerOrigin && event.origin !== referrerOrigin)
+        event.origin !== referrerOrigin
       ) {
         return;
       }
@@ -57,7 +61,7 @@ export function HostIdentityBridge() {
     }
 
     window.addEventListener("message", handleMessage);
-    window.parent.postMessage(readyMessage, referrerOrigin || "*");
+    window.parent.postMessage(readyMessage, referrerOrigin);
 
     return () => {
       window.removeEventListener("message", handleMessage);
