@@ -11,9 +11,9 @@ internal sealed class DevCommand(CommandContext context)
 {
     public const string Usage = """
         Usage:
-          docker-host dev up [--manifest <path>] [--prepare-only]
-          docker-host dev status [--manifest <path>]
-          docker-host dev reset [--manifest <path>]
+          docker-host dev up [--manifest <path>] [--host-url <url>] [--prepare-only]
+          docker-host dev status [--manifest <path>] [--host-url <url>]
+          docker-host dev reset [--manifest <path>] [--host-url <url>]
 
         Default manifest path: .docker-host/dev.json
         """;
@@ -46,47 +46,48 @@ internal sealed class DevCommand(CommandContext context)
             throw new CommandUsageException("dev up requires moduleCommand in the manifest unless --prepare-only is set.", Usage);
         }
 
-        var settings = await EnsureDevModeConfiguredAsync();
-        var container = await new HostLifecycle(context).StartAsync(settings.SettingsForStart, recreate: settings.RestartRequired);
-        if (container is null)
+        var host = await PrepareHostAsync(manifest, options);
+        if (host is null)
         {
             return 1;
         }
 
-        var hostUrl = HostLifecycle.TryGetHostUrl(container, settings.SettingsForStart)
-            ?? throw new ConfigurationException("Unable to determine the Host URL after start.");
-        using var hostApi = CreateHostApiClient(container, settings.SettingsForStart);
-        if (!await EnsureHostReadyAsync(hostApi))
+        await using (host)
         {
-            return 1;
+            using var hostApi = CreateHostApiClient(host.Origin);
+            if (!await EnsureHostReadyAsync(hostApi))
+            {
+                return 1;
+            }
+
+            var targetResponse = await LinkDevTargetAsync(hostApi, manifest, targetId, host.Mode);
+
+            if (!targetResponse.IsSuccess || targetResponse.Body?.Target is null)
+            {
+                return RenderApiFailure("Failed to link module developer target.", targetResponse.StatusCode, targetResponse.RawBody);
+            }
+
+            var target = targetResponse.Body.Target;
+            await SeedUsersAsync(hostApi, manifest, target.ModuleId);
+            await ApplyDirectoryPolicyAsync(hostApi, manifest, target.ModuleId);
+
+            RenderUpSummary(host.Origin.ToString().TrimEnd('/'), target, manifest, host.Mode);
+            if (options.PrepareOnly)
+            {
+                return 0;
+            }
+
+            return await RunModuleCommandAsync(manifest, host.Origin.ToString().TrimEnd('/'), target, host.Process);
         }
-
-        var targetResponse = await LinkDevTargetAsync(hostApi, manifest, targetId);
-
-        if (!targetResponse.IsSuccess || targetResponse.Body?.Target is null)
-        {
-            return RenderApiFailure("Failed to link module developer target.", targetResponse.StatusCode, targetResponse.RawBody);
-        }
-
-        var target = targetResponse.Body.Target;
-        await SeedUsersAsync(hostApi, manifest, target.ModuleId);
-        await ApplyDirectoryPolicyAsync(hostApi, manifest, target.ModuleId);
-
-        RenderUpSummary(hostUrl, target, manifest);
-        if (options.PrepareOnly)
-        {
-            return 0;
-        }
-
-        return await RunModuleCommandAsync(manifest, hostUrl, target);
     }
 
     private async Task<HostApiResponse<ModuleDevTargetResponse>> LinkDevTargetAsync(
         HostApiClient hostApi,
         DevManifest manifest,
-        string targetId)
+        string targetId,
+        DevHostMode hostMode)
     {
-        var metadataServer = StartMetadataServerIfNeeded(manifest);
+        var metadataServer = StartMetadataServerIfNeeded(manifest, hostMode);
         try
         {
             var metadataUrl = metadataServer?.PublicUrl ?? manifest.MetadataUrl?.Trim() ?? "";
@@ -96,7 +97,7 @@ internal sealed class DevCommand(CommandContext context)
                 MetadataUrl = metadataUrl,
                 Hostname = manifest.Target.Hostname,
                 PortKey = manifest.Target.PortKey,
-                TargetBaseUrl = manifest.Target.TargetBaseUrl,
+                TargetBaseUrl = manifest.GetTargetBaseUrl(hostMode),
                 ExposurePolicy = manifest.Target.Policy,
                 IdentityMode = manifest.Target.Identity,
                 Enabled = true,
@@ -116,26 +117,28 @@ internal sealed class DevCommand(CommandContext context)
         var options = ParseOptions(args, allowPrepareOnly: false);
         var manifest = DevManifest.Load(options.ManifestPath);
         var targetId = manifest.GetTargetId();
-        var settings = context.SettingsStore.Load();
-        settings.Validate(context.Environment);
-
-        using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-        await docker.EnsureLinuxEngineAsync();
-        var container = await docker.InspectContainerAsync(settings.HostContainerName);
-        if (container is null)
+        var host = await ResolveRunningHostAsync(manifest, options);
+        if (host is null)
         {
-            context.Console.MarkupLine("[red]Host container does not exist.[/]");
             return 1;
         }
 
-        if (container.State?.Running != true)
+        using var hostApi = CreateHostApiClient(host.Origin);
+        var hostReady = await IsHostReadyAsync(hostApi);
+        if (!hostReady)
         {
-            context.Console.MarkupLine("[red]Host container is not running.[/]");
+            var hostTable = new Table()
+                .RoundedBorder()
+                .AddColumn("Check")
+                .AddColumn("Status")
+                .AddColumn("Detail");
+            hostTable.AddRow("Host mode", "[green]configured[/]", Markup.Escape(FormatHostMode(host.Mode)));
+            hostTable.AddRow("Host origin", "[green]configured[/]", Markup.Escape(host.Origin.ToString().TrimEnd('/')));
+            hostTable.AddRow("Host API", "[red]not ready[/]", "");
+            context.Console.Write(hostTable);
             return 1;
         }
 
-        using var hostApi = CreateHostApiClient(container, settings);
-        var hostReady = (await hostApi.GetHostStatusAsync()).IsSuccess;
         var targetsResponse = await hostApi.ListModuleDevTargetsAsync();
         if (!targetsResponse.IsSuccess || targetsResponse.Body is null)
         {
@@ -143,7 +146,8 @@ internal sealed class DevCommand(CommandContext context)
         }
 
         var target = targetsResponse.Body.Targets.FirstOrDefault(candidate => candidate.Id == targetId);
-        var targetReachable = await ProbeTargetAsync(manifest.Target.TargetBaseUrl);
+        var targetBaseUrl = manifest.GetTargetBaseUrl(host.Mode);
+        var targetReachable = await ProbeTargetAsync(targetBaseUrl);
         HostAppSummary? app = null;
         var appsResponse = await hostApi.ListAppsAsync();
         if (appsResponse.IsSuccess && appsResponse.Body is not null)
@@ -157,6 +161,8 @@ internal sealed class DevCommand(CommandContext context)
             .AddColumn("Status")
             .AddColumn("Detail");
 
+        table.AddRow("Host mode", "[green]configured[/]", Markup.Escape(FormatHostMode(host.Mode)));
+        table.AddRow("Host origin", "[green]configured[/]", Markup.Escape(host.Origin.ToString().TrimEnd('/')));
         table.AddRow("Host API", hostReady ? "[green]ready[/]" : "[red]not ready[/]", "");
         table.AddRow(
             "Developer mode",
@@ -169,7 +175,7 @@ internal sealed class DevCommand(CommandContext context)
         table.AddRow(
             "Target URL",
             targetReachable ? "[green]reachable[/]" : "[red]unreachable[/]",
-            Markup.Escape(manifest.Target.TargetBaseUrl));
+            Markup.Escape(targetBaseUrl));
         table.AddRow(
             "App registry",
             app is not null ? "[green]visible[/]" : "[yellow]not visible[/]",
@@ -188,20 +194,13 @@ internal sealed class DevCommand(CommandContext context)
         var options = ParseOptions(args, allowPrepareOnly: false);
         var manifest = DevManifest.Load(options.ManifestPath);
         var targetId = manifest.GetTargetId();
-        var settings = context.SettingsStore.Load();
-        settings.Validate(context.Environment);
-
-        using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-        await docker.EnsureLinuxEngineAsync();
-        var container = await docker.InspectContainerAsync(settings.HostContainerName);
-        if (container is null || container.State?.Running != true)
+        var host = await ResolveRunningHostAsync(manifest, options);
+        if (host is null)
         {
-            context.Console.MarkupLine("[red]Host container is not running.[/]");
-            context.Console.WriteLine("Run docker-host dev up first, or start Docker Host before reset.");
             return 1;
         }
 
-        using var hostApi = CreateHostApiClient(container, settings);
+        using var hostApi = CreateHostApiClient(host.Origin);
         var targetsResponse = await hostApi.ListModuleDevTargetsAsync();
         if (!targetsResponse.IsSuccess || targetsResponse.Body is null)
         {
@@ -249,6 +248,182 @@ internal sealed class DevCommand(CommandContext context)
         return 0;
     }
 
+    private async Task<DevHostSession?> PrepareHostAsync(DevManifest manifest, DevCommandOptions options)
+    {
+        var mode = GetEffectiveHostMode(manifest, options);
+        if (mode == DevHostMode.DockerContainer)
+        {
+            var settings = await EnsureDevModeConfiguredAsync();
+            var container = await new HostLifecycle(context).StartAsync(settings.SettingsForStart, recreate: settings.RestartRequired);
+            if (container is null)
+            {
+                return null;
+            }
+
+            var hostUrl = HostLifecycle.TryGetHostUrl(container, settings.SettingsForStart)
+                ?? throw new ConfigurationException("Unable to determine the Host URL after start.");
+            return new DevHostSession(new Uri(hostUrl), mode);
+        }
+
+        var origin = GetConfiguredHostOrigin(manifest, options, mode);
+        if (mode == DevHostMode.External)
+        {
+            context.Console.MarkupLine($"[green]Using external Host:[/] {Markup.Escape(origin.ToString().TrimEnd('/'))}");
+            return new DevHostSession(origin, mode);
+        }
+
+        if (string.IsNullOrWhiteSpace(manifest.Host.Command))
+        {
+            throw new CommandUsageException(
+                "dev up requires host.command when host.mode is local-process. Use host.mode external with host.origin when the Host is already running.",
+                Usage);
+        }
+
+        var process = StartHostProcess(manifest, origin);
+        var hostApi = CreateHostApiClient(origin);
+        var ready = await WaitForLocalHostReadyAsync(hostApi, process);
+        hostApi.Dispose();
+        if (!ready)
+        {
+            KillProcessTree(process);
+            process.Dispose();
+            return null;
+        }
+
+        return new DevHostSession(origin, mode, process);
+    }
+
+    private async Task<DevHostSession?> ResolveRunningHostAsync(DevManifest manifest, DevCommandOptions options)
+    {
+        var mode = GetEffectiveHostMode(manifest, options);
+        if (mode != DevHostMode.DockerContainer)
+        {
+            return new DevHostSession(GetConfiguredHostOrigin(manifest, options, mode), mode);
+        }
+
+        var settings = context.SettingsStore.Load();
+        settings.Validate(context.Environment);
+
+        using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
+        await docker.EnsureLinuxEngineAsync();
+        var container = await docker.InspectContainerAsync(settings.HostContainerName);
+        if (container is null)
+        {
+            context.Console.MarkupLine("[red]Host container does not exist.[/]");
+            return null;
+        }
+
+        if (container.State?.Running != true)
+        {
+            context.Console.MarkupLine("[red]Host container is not running.[/]");
+            context.Console.WriteLine("Run docker-host dev up first, or start Docker Host before running this command.");
+            return null;
+        }
+
+        var hostUrl = HostLifecycle.TryGetHostUrl(container, settings)
+            ?? throw new ConfigurationException("Unable to determine the Host API URL from Docker container metadata.");
+        return new DevHostSession(new Uri(hostUrl), mode);
+    }
+
+    private static DevHostMode GetEffectiveHostMode(DevManifest manifest, DevCommandOptions options)
+        => options.HostOrigin is null ? manifest.GetHostMode() : DevHostMode.External;
+
+    private static Uri GetConfiguredHostOrigin(DevManifest manifest, DevCommandOptions options, DevHostMode mode)
+    {
+        if (options.HostOrigin is not null)
+        {
+            return options.HostOrigin;
+        }
+
+        return manifest.GetHostOrigin(mode)
+            ?? throw new CommandUsageException(
+                "A Host origin is required. Set host.origin, host.port, or pass --host-url <url>.",
+                Usage);
+    }
+
+    private Process StartHostProcess(DevManifest manifest, Uri origin)
+    {
+        var workingDirectory = manifest.ResolveHostWorkingDirectory() ?? manifest.ManifestDirectory;
+        var startInfo = CreateShellStartInfo(manifest.Host.Command!, workingDirectory);
+        foreach (var (key, value) in BuildHostEnvironment(manifest, origin))
+        {
+            startInfo.Environment[key] = value;
+        }
+
+        context.Console.MarkupLine($"[green]Starting Host command:[/] {Markup.Escape(manifest.Host.Command!)}");
+        context.Console.MarkupLine($"[grey]Host origin:[/] {Markup.Escape(origin.ToString().TrimEnd('/'))}");
+        context.Console.MarkupLine($"[grey]Host working directory:[/] {Markup.Escape(workingDirectory)}");
+
+        try
+        {
+            return Process.Start(startInfo)
+                ?? throw new ConfigurationException("Unable to start Host command.");
+        }
+        catch (Exception ex) when (ex is not ConfigurationException)
+        {
+            throw new ConfigurationException($"Unable to start Host command: {ex.Message}");
+        }
+    }
+
+    private IReadOnlyDictionary<string, string> BuildHostEnvironment(DevManifest manifest, Uri origin)
+    {
+        var values = new Dictionary<string, string>(manifest.Host.Environment, StringComparer.Ordinal)
+        {
+            ["HOST_MODULE_DEV_MODE"] = "enabled",
+            ["HOST_INTERNAL_ORIGIN"] = origin.ToString().TrimEnd('/'),
+        };
+
+        if (!values.ContainsKey("PORT") && origin.Port > 0 && !origin.IsDefaultPort)
+        {
+            values["PORT"] = origin.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return values;
+    }
+
+    private async Task<bool> WaitForLocalHostReadyAsync(HostApiClient hostApi, Process process)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(60);
+        HostApiException? lastError = null;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (process.HasExited)
+            {
+                context.Console.MarkupLine($"[red]Local Host command exited before the Host API became ready.[/] Exit code: {process.ExitCode}");
+                return false;
+            }
+
+            try
+            {
+                var response = await hostApi.GetHostStatusAsync();
+                if (response.IsSuccess)
+                {
+                    return true;
+                }
+
+                if ((int)response.StatusCode < 500)
+                {
+                    RenderApiFailure("Docker Host is reachable but not ready for CLI dev operations.", response.StatusCode, response.RawBody);
+                    return false;
+                }
+            }
+            catch (HostApiException ex)
+            {
+                lastError = ex;
+            }
+
+            await Task.Delay(500);
+        }
+
+        context.Console.MarkupLine("[red]Timed out waiting for the local Host API.[/]");
+        if (lastError is not null && !string.IsNullOrWhiteSpace(lastError.ResponseBody))
+        {
+            context.Console.MarkupLine($"[grey]Last error:[/] {Markup.Escape(lastError.ResponseBody)}");
+        }
+
+        return false;
+    }
+
     private async Task<(LaunchSettings SettingsForStart, bool RestartRequired)> EnsureDevModeConfiguredAsync()
     {
         var settings = context.SettingsStore.EnsureInstalled();
@@ -283,35 +458,51 @@ internal sealed class DevCommand(CommandContext context)
             : settings.WithValue(LaunchSettingDefinitions.HostUiPort, currentPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
-    private HostApiClient CreateHostApiClient(DockerContainerInspect container, LaunchSettings settings)
+    private HostApiClient CreateHostApiClient(Uri hostOrigin)
     {
-        var url = HostLifecycle.TryGetHostUrl(container, settings);
-        if (url is null)
-        {
-            throw new ConfigurationException("Unable to determine the Host API URL from Docker container metadata.");
-        }
-
-        var baseUri = new Uri(url);
         var tokenStore = new HostAuthTokenStore(context.Environment);
-        var token = tokenStore.GetTokenForHost(baseUri);
-        return context.HostApiFactory.Create(baseUri, token);
+        var token = tokenStore.GetTokenForHost(hostOrigin);
+        return context.HostApiFactory.Create(hostOrigin, token);
     }
 
     private async Task<bool> EnsureHostReadyAsync(HostApiClient hostApi)
     {
-        var response = await hostApi.GetHostStatusAsync();
-        if (response.IsSuccess)
+        try
         {
-            return true;
-        }
+            var response = await hostApi.GetHostStatusAsync();
+            if (response.IsSuccess)
+            {
+                return true;
+            }
 
-        context.Console.MarkupLine("[red]Docker Host is not ready.[/]");
-        if (!string.IsNullOrWhiteSpace(response.RawBody))
+            context.Console.MarkupLine("[red]Docker Host is not ready.[/]");
+            if (!string.IsNullOrWhiteSpace(response.RawBody))
+            {
+                context.Console.WriteLine(response.RawBody);
+            }
+        }
+        catch (HostApiException ex)
         {
-            context.Console.WriteLine(response.RawBody);
+            context.Console.MarkupLine("[red]Docker Host is not reachable.[/]");
+            if (!string.IsNullOrWhiteSpace(ex.ResponseBody))
+            {
+                context.Console.WriteLine(ex.ResponseBody);
+            }
         }
 
         return false;
+    }
+
+    private static async Task<bool> IsHostReadyAsync(HostApiClient hostApi)
+    {
+        try
+        {
+            return (await hostApi.GetHostStatusAsync()).IsSuccess;
+        }
+        catch (HostApiException)
+        {
+            return false;
+        }
     }
 
     private async Task SeedUsersAsync(HostApiClient hostApi, DevManifest manifest, string moduleId)
@@ -507,26 +698,13 @@ internal sealed class DevCommand(CommandContext context)
         }
     }
 
-    private async Task<int> RunModuleCommandAsync(DevManifest manifest, string hostUrl, ModuleDevTargetSummary target)
+    private async Task<int> RunModuleCommandAsync(
+        DevManifest manifest,
+        string hostUrl,
+        ModuleDevTargetSummary target,
+        Process? ownedHostProcess)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = context.Environment.IsWindows ? "cmd.exe" : "/bin/sh",
-            WorkingDirectory = manifest.ResolveWorkingDirectory(),
-            UseShellExecute = false,
-        };
-
-        if (context.Environment.IsWindows)
-        {
-            startInfo.ArgumentList.Add("/c");
-            startInfo.ArgumentList.Add(manifest.ModuleCommand!);
-        }
-        else
-        {
-            startInfo.ArgumentList.Add("-lc");
-            startInfo.ArgumentList.Add(manifest.ModuleCommand!);
-        }
-
+        var startInfo = CreateShellStartInfo(manifest.ModuleCommand!, manifest.ResolveWorkingDirectory());
         foreach (var (key, value) in BuildModuleEnvironment(manifest, hostUrl, target))
         {
             startInfo.Environment[key] = value;
@@ -562,12 +740,27 @@ internal sealed class DevCommand(CommandContext context)
                 {
                     process.Kill(entireProcessTree: true);
                 }
+
+                KillProcessTree(ownedHostProcess);
             };
 
             Console.CancelKeyPress += handler;
             try
             {
-                await process.WaitForExitAsync();
+                var moduleExit = process.WaitForExitAsync();
+                var hostExit = ownedHostProcess is null
+                    ? Task.Delay(Timeout.InfiniteTimeSpan)
+                    : ownedHostProcess.WaitForExitAsync();
+                var completed = await Task.WhenAny(moduleExit, hostExit);
+                if (completed == hostExit && ownedHostProcess is not null)
+                {
+                    context.Console.MarkupLine($"[red]Local Host command exited.[/] Exit code: {ownedHostProcess.ExitCode}");
+                    KillProcessTree(process);
+                    await moduleExit;
+                    return ownedHostProcess.ExitCode == 0 ? 1 : ownedHostProcess.ExitCode;
+                }
+
+                KillProcessTree(ownedHostProcess);
                 return process.ExitCode;
             }
             finally
@@ -575,6 +768,29 @@ internal sealed class DevCommand(CommandContext context)
                 Console.CancelKeyPress -= handler;
             }
         }
+    }
+
+    private ProcessStartInfo CreateShellStartInfo(string command, string workingDirectory)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = context.Environment.IsWindows ? "cmd.exe" : "/bin/sh",
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+        };
+
+        if (context.Environment.IsWindows)
+        {
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add(command);
+        }
+        else
+        {
+            startInfo.ArgumentList.Add("-lc");
+            startInfo.ArgumentList.Add(command);
+        }
+
+        return startInfo;
     }
 
     private IReadOnlyDictionary<string, string> BuildModuleEnvironment(
@@ -593,9 +809,10 @@ internal sealed class DevCommand(CommandContext context)
         return values;
     }
 
-    private void RenderUpSummary(string hostUrl, ModuleDevTargetSummary target, DevManifest manifest)
+    private void RenderUpSummary(string hostUrl, ModuleDevTargetSummary target, DevManifest manifest, DevHostMode hostMode)
     {
         context.Console.MarkupLine("[green]Dev harness prepared.[/]");
+        context.Console.MarkupLine($"Host mode: [grey]{Markup.Escape(FormatHostMode(hostMode))}[/]");
         context.Console.MarkupLine($"Host shell app: [link]{Markup.Escape($"{hostUrl.TrimEnd('/')}/apps/dev/{Uri.EscapeDataString(target.Id)}")}[/]");
         context.Console.MarkupLine($"Gateway URL: [link]{Markup.Escape(BuildGatewayUrl(hostUrl, target.Hostname))}[/]");
         if (manifest.Users.Count > 0)
@@ -619,6 +836,31 @@ internal sealed class DevCommand(CommandContext context)
             Fragment = "",
         };
         return builder.Uri.GetLeftPart(UriPartial.Authority);
+    }
+
+    private static string FormatHostMode(DevHostMode mode)
+        => mode switch
+        {
+            DevHostMode.DockerContainer => "docker-container",
+            DevHostMode.LocalProcess => "local-process",
+            DevHostMode.External => "external",
+            _ => mode.ToString(),
+        };
+
+    private static void KillProcessTree(Process? process)
+    {
+        if (process is null || process.HasExited)
+        {
+            return;
+        }
+
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+        }
     }
 
     private async Task<bool> ProbeTargetAsync(string targetBaseUrl)
@@ -655,7 +897,7 @@ internal sealed class DevCommand(CommandContext context)
         return builder.Uri.ToString();
     }
 
-    private LocalMetadataFileServer? StartMetadataServerIfNeeded(DevManifest manifest)
+    private LocalMetadataFileServer? StartMetadataServerIfNeeded(DevManifest manifest, DevHostMode hostMode)
     {
         if (!string.IsNullOrWhiteSpace(manifest.MetadataUrl))
         {
@@ -664,9 +906,11 @@ internal sealed class DevCommand(CommandContext context)
 
         var metadataFile = manifest.ResolveMetadataFile()
             ?? throw new CommandUsageException("Dev manifest metadataFile is required when metadataUrl is not set.", Usage);
+        var metadataFileHost = manifest.MetadataFileHost ??
+            (hostMode == DevHostMode.DockerContainer ? "host.docker.internal" : IPAddress.Loopback.ToString());
         var server = LocalMetadataFileServer.Start(
             metadataFile,
-            manifest.MetadataFileHost ?? "host.docker.internal",
+            metadataFileHost,
             ex => context.Console.MarkupLine($"[yellow]Metadata file server warning:[/] {Markup.Escape(ex.Message)}"));
         context.Console.MarkupLine($"[grey]Serving metadata file for Host fetch:[/] {Markup.Escape(server.PublicUrl)}");
         return server;
@@ -676,6 +920,7 @@ internal sealed class DevCommand(CommandContext context)
     {
         var manifestPath = Path.Combine(Directory.GetCurrentDirectory(), ".docker-host", "dev.json");
         var prepareOnly = false;
+        Uri? hostOrigin = null;
 
         for (var index = 0; index < args.Length; index++)
         {
@@ -691,6 +936,15 @@ internal sealed class DevCommand(CommandContext context)
 
                     manifestPath = args[++index];
                     break;
+                case "--host-url":
+                case "--host-origin":
+                    if (index + 1 >= args.Length)
+                    {
+                        throw new CommandUsageException($"{arg} requires a URL.", Usage);
+                    }
+
+                    hostOrigin = ParseHostOriginOverride(args[++index]);
+                    break;
                 case "--prepare-only":
                     if (!allowPrepareOnly)
                     {
@@ -704,7 +958,18 @@ internal sealed class DevCommand(CommandContext context)
             }
         }
 
-        return new DevCommandOptions(Path.GetFullPath(manifestPath), prepareOnly);
+        return new DevCommandOptions(Path.GetFullPath(manifestPath), prepareOnly, hostOrigin);
+    }
+
+    private static Uri ParseHostOriginOverride(string value)
+    {
+        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new CommandUsageException("--host-url must be an absolute HTTP(S) URL.", Usage);
+        }
+
+        return new Uri(uri.GetLeftPart(UriPartial.Authority));
     }
 
     private int RenderApiFailure(string message, HttpStatusCode statusCode, string rawBody)
@@ -720,4 +985,38 @@ internal sealed class DevCommand(CommandContext context)
     }
 }
 
-internal sealed record DevCommandOptions(string ManifestPath, bool PrepareOnly);
+internal sealed record DevCommandOptions(string ManifestPath, bool PrepareOnly, Uri? HostOrigin);
+
+internal sealed class DevHostSession(Uri origin, DevHostMode mode, Process? process = null) : IAsyncDisposable
+{
+    public Uri Origin { get; } = origin;
+
+    public DevHostMode Mode { get; } = mode;
+
+    public Process? Process { get; } = process;
+
+    public ValueTask DisposeAsync()
+    {
+        if (Process is null)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        try
+        {
+            if (!Process.HasExited)
+            {
+                Process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+        }
+        finally
+        {
+            Process.Dispose();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+}

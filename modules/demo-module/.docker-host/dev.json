@@ -1,13 +1,12 @@
 {
   "metadataFile": "../metadata.json",
-  "metadataFileHost": "host.docker.internal",
   "moduleCommand": "npm run dev",
   "workingDirectory": "..",
   "target": {
     "id": "mdev_local_demo_module",
     "hostname": "demo.localhost",
     "portKey": "http",
-    "targetBaseUrl": "http://host.docker.internal:3100",
+    "localPort": 3100,
     "policy": "assignedUsersOnly",
     "identity": "required"
   },

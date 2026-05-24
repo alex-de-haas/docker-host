@@ -34,6 +34,8 @@ Do not inject fake module identity tokens into requests when validating Host int
 
 The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `docker-host dev up` for reusable manifest-driven local module development, `npm run host:dev:demo` for the repository's host-side demo loop, or the lower-level `docker-host modules dev link` commands when only target registration is needed.
 
+For Host development, the harness can connect to a local Host process instead of the installed Host container. Set `host.mode` to `local-process` to let the CLI start `npm run host:dev`, or set `host.mode` to `external` / pass `--host-url http://localhost:3000` when the Host is already running in a debugger or another terminal. In those modes the Host API origin is explicit, while `target.localPort` is expanded from the Host process perspective.
+
 ## Decisions
 
 | Topic | Options considered | Decision |
@@ -132,6 +134,15 @@ docker-host modules dev unlink <target-id>
 ```
 
 The `modules dev` commands intentionally manage developer targets only. User seeding, assignment seeding, local module process startup, status checks, and reset behavior live in the top-level `docker-host dev` harness.
+
+The top-level harness accepts a Host API override:
+
+```bash
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
+docker-host dev status --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
+```
+
+`--host-url` makes the command connect to that Host origin and skips Docker container lifecycle and inspect operations.
 
 ## Gateway Rules
 
