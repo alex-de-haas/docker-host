@@ -366,7 +366,7 @@ internal sealed class DevCommand(CommandContext context)
         }
         catch (Exception ex) when (ex is not ConfigurationException)
         {
-            throw new ConfigurationException($"Unable to start Host command: {ex.Message}");
+            throw new ConfigurationException($"Unable to start Host command: {ex.Message}", ex);
         }
     }
 
