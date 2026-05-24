@@ -509,7 +509,10 @@ function resolveInstalledUiRoute(
 function buildLocalOrigin(requestOrigin: string | undefined, hostPort: number) {
   try {
     const parsed = new URL(requestOrigin || 'http://localhost');
-    parsed.protocol = 'http:';
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return `http://localhost:${hostPort}`;
+    }
+
     parsed.port = String(hostPort);
     parsed.pathname = '/';
     parsed.search = '';

@@ -7,24 +7,32 @@ on:
     paths:
       - "apps/host/**"
       - "apps/cli/**"
+      - "modules/demo-module/**"
       - "docs/features/host-api.md"
       - "scripts/install.sh"
       - "package.json"
       - "package-lock.json"
       - "global.json"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/host-image.yml"
+      - ".github/workflows/demo-module-image.yml"
+      - ".github/workflows/cli-release.yml"
   push:
     branches:
       - main
     paths:
       - "apps/host/**"
       - "apps/cli/**"
+      - "modules/demo-module/**"
       - "docs/features/host-api.md"
       - "scripts/install.sh"
       - "package.json"
       - "package-lock.json"
       - "global.json"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/host-image.yml"
+      - ".github/workflows/demo-module-image.yml"
+      - ".github/workflows/cli-release.yml"
 
 jobs:
   host:
@@ -44,13 +52,38 @@ jobs:
         run: npm ci
 
       - name: Lint Host
+        if: github.event_name == 'push'
         run: npm run host:lint
 
       - name: Test Host
+        if: github.event_name == 'push'
         run: npm run host:test
 
       - name: Build Host
         run: npm run host:build
+
+  demo-module:
+    name: Demo Module
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Lint Demo Module
+        if: github.event_name == 'push'
+        run: npm run demo-module:lint
+
+      - name: Build Demo Module
+        run: npm run demo-module:build
 
   cli:
     name: CLI
@@ -65,10 +98,12 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Validate installer syntax
+        if: github.event_name == 'push'
         run: sh -n scripts/install.sh
 
       - name: Build CLI
         run: npm run cli:build
 
       - name: Test CLI
+        if: github.event_name == 'push'
         run: npm run cli:test

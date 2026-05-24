@@ -143,6 +143,7 @@ const planFixture: ModuleUpdatePlan = {
   },
   runtime: {
     endpoints: [],
+    endpointOrigins: [],
   },
   paths: {
     moduleDirectoryHost: '/Users/example/.docker-host/modules/com.example.reports',

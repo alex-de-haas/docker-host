@@ -729,6 +729,7 @@ export interface ModuleUpdatePlan {
   };
   runtime: {
     endpoints: NormalizedModuleEndpointMetadata[];
+    endpointOrigins: InstallPlanEndpointOrigin[];
   };
   paths: {
     moduleDirectoryHost: string;

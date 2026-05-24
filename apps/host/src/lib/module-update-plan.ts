@@ -11,7 +11,9 @@ import {
 import {
   buildDependencyConnections,
   buildImages,
+  buildLocalEndpointOrigin,
   buildPlanContainers,
+  buildPlanEndpointOrigins,
   buildInstallOrder,
   buildModulePaths,
   buildMountCollections,
@@ -19,7 +21,9 @@ import {
   buildStorageDirectories,
   canonicalJson,
   collectEnvironmentTargetConflicts,
+  createPublishedPortAllocator,
 } from '@/lib/module-install-plan';
+import type { PublishedPortAllocator } from '@/lib/module-install-plan';
 import {
   loadMetadataGraph,
   getModuleMetadataMajor,
@@ -205,9 +209,10 @@ function buildUpdatePlan({
   }
 
   const installOrder = buildInstallOrder(graph);
+  const portAllocator = createPublishedPortAllocator(store, config);
   const dependencies = installOrder
     .filter(moduleId => moduleId !== root.id)
-    .map(moduleId => buildUpdateDependencyNode(graph, moduleId, store, config));
+    .map(moduleId => buildUpdateDependencyNode(graph, moduleId, store, config, portAllocator));
   const images = installOrder.flatMap(moduleId => {
     const node = graph.nodes.get(moduleId);
     if (!node) {
@@ -220,6 +225,8 @@ function buildUpdatePlan({
   const storageDirectories = buildUpdateStorageDirectories(root.metadata, installedModule, dependencies, config);
   const externalMountPlan = buildUpdateExternalMountPlan(root.metadata, installedModule, dependencies);
   const paths = buildModulePaths(root.id, config);
+  const rootContainers = buildUpdateRootContainers(root.metadata, installedModule, portAllocator);
+  const endpointOrigins = buildPlanEndpointOrigins(root.id, root.metadata, rootContainers);
   const changes = buildUpdateChanges({
     currentMetadata,
     proposedMetadata: root.metadata,
@@ -259,11 +266,12 @@ function buildUpdatePlan({
     },
     runtime: {
       endpoints: root.metadata.endpoints,
+      endpointOrigins,
     },
     paths,
     docker: {
       networkName: config.moduleNetwork,
-      containers: buildUpdateRootContainers(root.metadata, installedModule),
+      containers: rootContainers,
       replacementRequired: replacementReasons.length > 0,
       replacementReasons,
     },
@@ -286,7 +294,8 @@ function buildUpdateDependencyNode(
   graph: MetadataGraph,
   moduleId: string,
   store: ModulesStoreData,
-  config: HostRuntimeConfig
+  config: HostRuntimeConfig,
+  portAllocator: PublishedPortAllocator
 ): InstallPlanDependencyNode {
   const node = graph.nodes.get(moduleId);
   if (!node) {
@@ -330,7 +339,7 @@ function buildUpdateDependencyNode(
           resources: node.metadata.containers.find(candidate => candidate.key === container.key)?.runtime.resources,
           endpoints: node.metadata.endpoints.filter(endpoint => endpoint.container === container.key),
         }))
-      : buildPlanContainers(node.id, node.metadata),
+      : buildPlanContainers(node.id, node.metadata, portAllocator),
     paths: buildModulePaths(node.id, config),
     connections: buildDependencyConnections(graph, node.id),
   };
@@ -338,21 +347,74 @@ function buildUpdateDependencyNode(
 
 function buildUpdateRootContainers(
   metadata: NormalizedModuleMetadata,
-  installedModule: InstalledModuleRecord
+  installedModule: InstalledModuleRecord,
+  portAllocator?: PublishedPortAllocator
 ) {
   const installedByKey = new Map(installedModule.containers.map(container => [container.key, container]));
 
   return buildPlanContainers(metadata.id, metadata).map(container => {
     const installed = installedByKey.get(container.key);
+    const installedPorts = new Map((installed?.ports ?? []).map(port => [port.key, port]));
 
     return installed
       ? {
           ...container,
           containerName: installed.containerName,
           networkAlias: installed.networkAlias,
+          ports: container.ports.map(port => {
+            const installedPort = installedPorts.get(port.key);
+            if (!installedPort) {
+              if (!port.hostPublished || !portAllocator) {
+                return port;
+              }
+
+              const hostPort = portAllocator.allocate();
+              return {
+                ...port,
+                hostPort,
+                localOrigin: buildLocalEndpointOrigin(hostPort),
+                publicOrigin: port.publicOrigin ?? null,
+              };
+            }
+
+            return {
+              ...port,
+              hostPublished: true,
+              hostPort: installedPort.hostPort,
+              endpointKey: installedPort.endpointKey ?? port.endpointKey,
+              localOrigin: buildLocalEndpointOrigin(installedPort.hostPort),
+              publicOrigin: installedPort.publicOrigin ?? null,
+            };
+          }),
         }
-      : container;
+      : assignPublishedPortBindings(container, portAllocator);
   });
+}
+
+function assignPublishedPortBindings(
+  container: ReturnType<typeof buildPlanContainers>[number],
+  portAllocator?: PublishedPortAllocator
+) {
+  if (!portAllocator) {
+    return container;
+  }
+
+  return {
+    ...container,
+    ports: container.ports.map(port => {
+      if (!port.hostPublished) {
+        return port;
+      }
+
+      const hostPort = portAllocator.allocate();
+      return {
+        ...port,
+        hostPort,
+        localOrigin: buildLocalEndpointOrigin(hostPort),
+        publicOrigin: port.publicOrigin ?? null,
+      };
+    }),
+  };
 }
 
 function buildUpdateSettingPrompts(
@@ -705,7 +767,31 @@ function buildReplacementReasons(
     reasons.add('containers');
   }
 
+  if (hasMissingPublishedEndpointBinding(proposedMetadata, installedModule)) {
+    reasons.add('endpointOrigins');
+  }
+
   return [...reasons].sort();
+}
+
+function hasMissingPublishedEndpointBinding(
+  metadata: NormalizedModuleMetadata,
+  installedModule: InstalledModuleRecord
+) {
+  const installedContainers = new Map(installedModule.containers.map(container => [container.key, container]));
+
+  return metadata.endpoints.some(endpoint => {
+    if (!endpoint.public) {
+      return false;
+    }
+
+    const installedContainer = installedContainers.get(endpoint.container);
+    const installedPort = installedContainer?.ports?.find(port =>
+      port.endpointKey === endpoint.key ||
+      port.key === endpoint.port
+    );
+    return !installedPort?.hostPort;
+  });
 }
 
 function buildWarnings(

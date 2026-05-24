@@ -106,7 +106,9 @@ Docs-only changes:
 
 If only the CLI changes, the Host image should not be published. If only the Host UI changes without changing the API contract, CLI artifacts should not be published. If `docs/features/host-api.md` changes, CI should validate both Host and CLI.
 
-Common CI runs Host lint, Host unit tests, Host production build, CLI build, and the CLI xUnit test suite. The root `npm run ci` script mirrors that sequence for local validation.
+Full CI runs Host lint, Host unit tests, Host production build, Demo Module lint, Demo Module production build, installer syntax validation, CLI build, and the CLI xUnit test suite. The root `npm run ci` script mirrors the Host and CLI validation sequence for local validation.
+
+Pull request CI is intentionally lighter than default-branch CI. Pull requests run build-only checks for the Host app, Demo Module, and CLI so reviewers get a fast signal that the changed code compiles without publishing artifacts or running release-grade image builds. Pushes to `main` run the full validation path: Host lint, Host tests, Host build, Demo Module lint, Demo Module build, installer syntax validation, CLI build, and CLI tests.
 
 ## Release artifacts
 
@@ -124,7 +126,7 @@ Immutable Host versions are created from `host-v*` git tags. The Host image work
 
 The Host image should be published as a multi-platform Linux image for `linux/amd64` and `linux/arm64`, so Docker Desktop users on Apple Silicon and standard x64 Linux hosts can pull the same image reference without local emulation setup.
 
-Pull requests also build both target platforms so arm64 regressions are caught before merge. Because GitHub-hosted Ubuntu runners are amd64, the arm64 build runs through QEMU and is expected to be slower than the native amd64 build. The Host and Demo Module image workflows use separate GitHub Actions Buildx cache scopes and `mode=min` cache export so their caches do not overwrite each other and cache upload does not dominate the build.
+The Host image workflow runs only for pushes to `main` and `host-v*` tags. Pull requests do not run the Docker Buildx/QEMU image build; the lightweight CI build is the pull request compile gate. The Host and Demo Module image workflows use separate GitHub Actions Buildx cache scopes and `mode=min` cache export so their caches do not overwrite each other and cache upload does not dominate the build.
 
 Demo Module image artifact:
 
@@ -133,7 +135,7 @@ ghcr.io/alex-de-haas/demo-module:latest
 ghcr.io/alex-de-haas/demo-module:sha-<commit>
 ```
 
-The Demo Module image is published to GitHub Container Registry from `demo-module-image.yml`. The workflow builds pull requests without pushing, then publishes rolling `latest` and traceable SHA tags on the default branch. It uses the built-in `GITHUB_TOKEN` with `packages: write`, so no extra registry secrets are required.
+The Demo Module image is published to GitHub Container Registry from `demo-module-image.yml`. The workflow publishes rolling `latest` and traceable SHA tags on the default branch. Pull requests use the shared lightweight CI build instead of running a Docker image build. The workflow uses the built-in `GITHUB_TOKEN` with `packages: write`, so no extra registry secrets are required.
 
 CLI release artifacts:
 

@@ -31,7 +31,7 @@ import type {
   NormalizedModuleMetadata,
 } from '@/types/modules';
 
-interface PublishedPortAllocator {
+export interface PublishedPortAllocator {
   allocate: () => number;
 }
 
@@ -412,7 +412,7 @@ function buildExistingPlanContainers(
   });
 }
 
-function buildPlanEndpointOrigins(
+export function buildPlanEndpointOrigins(
   moduleId: string,
   metadata: NormalizedModuleMetadata,
   containers: InstallPlanContainer[]
@@ -510,7 +510,7 @@ export function buildModulePaths(moduleId: string, config: HostRuntimeConfig) {
   };
 }
 
-function createPublishedPortAllocator(
+export function createPublishedPortAllocator(
   store: ModulesStoreData,
   config: HostRuntimeConfig
 ): PublishedPortAllocator {
@@ -544,7 +544,7 @@ function createPublishedPortAllocator(
   };
 }
 
-function buildLocalEndpointOrigin(hostPort: number) {
+export function buildLocalEndpointOrigin(hostPort: number) {
   return `http://localhost:${hostPort}`;
 }
 

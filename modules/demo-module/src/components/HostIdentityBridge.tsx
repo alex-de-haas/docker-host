@@ -32,6 +32,7 @@ export function HostIdentityBridge() {
       const token = (data as { token?: unknown }).token;
       const hostOrigin = (data as { hostOrigin?: unknown }).hostOrigin;
       if (
+        event.source !== window.parent ||
         typeof token !== "string" ||
         (typeof hostOrigin === "string" && hostOrigin !== event.origin) ||
         event.origin !== referrerOrigin

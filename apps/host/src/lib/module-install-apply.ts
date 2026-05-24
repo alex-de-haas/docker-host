@@ -1579,10 +1579,14 @@ function buildLocalEndpointOrigin(hostPort: number) {
   return `http://localhost:${hostPort}`;
 }
 
-function normalizePublicOrigin(value: string) {
+export function normalizePublicOrigin(value: string) {
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+
+    if (parsed.username || parsed.password) {
       return null;
     }
 

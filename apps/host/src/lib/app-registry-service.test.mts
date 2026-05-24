@@ -61,6 +61,25 @@ test('returns available shell apps to authenticated Host users', async () => {
   ]);
 });
 
+test('preserves request protocol for local fallback shell app origins', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    withUi: true,
+  });
+
+  const apps = await listHostApps(assignedUser, {
+    config,
+    runtimeStatusReader: runtimeStatus('running'),
+    requestOrigin: 'https://host.example.test',
+  });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].embeddedUrl, 'https://host.example.test:3101/');
+  assert.equal(apps[0].origin, 'https://host.example.test:3101');
+});
+
 test('filters assigned shell apps for host users but keeps them visible to admins', async () => {
   const config = await createAppRegistryTestConfig();
   await writeInstalledModule(config, {
@@ -96,6 +115,37 @@ test('filters assigned shell apps for host users but keeps them visible to admin
   assert.equal(unassignedApps.length, 0);
   assert.equal(adminApps.length, 1);
   assert.equal(adminApps[0].accessMode, 'assignedUsersOnly');
+});
+
+test('hides shell apps without published UI port from users and reports upgrade path to admins', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    withUi: true,
+    withPortBindings: false,
+  });
+
+  let runtimeStatusReads = 0;
+  const runtimeStatusReader = async (): Promise<ModuleRuntimeStatus> => {
+    runtimeStatusReads += 1;
+    return {
+      state: 'running',
+      containerId: 'container_1',
+      containerName: 'mod-test',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+    };
+  };
+
+  const userApps = await listHostApps(assignedUser, { config, runtimeStatusReader });
+  const adminApps = await listHostApps(admin, { config, runtimeStatusReader });
+
+  assert.equal(userApps.length, 0);
+  assert.equal(adminApps.length, 1);
+  assert.equal(adminApps[0].status, 'unavailable');
+  assert.equal(adminApps[0].statusReason, 'uiPortMissing');
+  assert.equal(runtimeStatusReads, 0);
 });
 
 test('hides unavailable apps from host users and returns safe diagnostics to admins', async () => {
@@ -425,6 +475,7 @@ async function writeInstalledModule(
     withUi: boolean;
     ui?: unknown;
     operationStatus?: 'installed' | 'installing' | 'updating' | 'failed' | 'removing';
+    withPortBindings?: boolean;
   }
 ) {
   const moduleRoot = path.join(config.modulesRootContainer, input.moduleId);
@@ -445,16 +496,20 @@ async function writeInstalledModule(
             reference: 'ghcr.io/example/module:latest',
             pullPolicy: 'ifNotPresent',
           },
-          ports: [
-            {
-              key: 'http',
-              endpointKey: 'web',
-              containerPort: 3000,
-              hostPort: 3101,
-              protocol: 'http',
-              hostPublished: true,
-            },
-          ],
+          ...(input.withPortBindings === false
+            ? {}
+            : {
+                ports: [
+                  {
+                    key: 'http',
+                    endpointKey: 'web',
+                    containerPort: 3000,
+                    hostPort: 3101,
+                    protocol: 'http',
+                    hostPublished: true,
+                  },
+                ],
+              }),
         },
       ],
     },
