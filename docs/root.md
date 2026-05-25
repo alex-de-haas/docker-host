@@ -44,3 +44,7 @@ flowchart LR
 - [Module metadata files](features/module-metadata.md) - supported metadata contract for installing Docker-hosted modules from JSON metadata URLs.
 - [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.
 - [Demo Module](features/demo-module.md) - repository-local Next.js module for validating Docker Host module operations.
+
+## Planning
+
+- [CLI Trusted Control and Dev Metadata](planning/cli-trusted-control-and-dev-metadata.md) - planned CLI no-auth local control channel, Host-owned module lifecycle, and repository-local `metadata.dev.json` workflow.
