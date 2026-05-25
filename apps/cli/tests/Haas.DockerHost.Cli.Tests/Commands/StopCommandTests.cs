@@ -122,7 +122,7 @@ public sealed class StopCommandTests : IDisposable
             environment,
             new LaunchSettingsStore(environment),
             new FakeDockerEngineClientFactory(transport),
-            new HostApiClientFactory());
+            new HostControlClientFactory());
     }
 
     private static IAnsiConsole CreateConsole()

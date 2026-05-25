@@ -17,7 +17,7 @@ import type {
   NormalizedModuleStorageDirectoryMetadata,
 } from '@/types/modules';
 
-const SUPPORTED_SCHEMA_VERSION = '0.2';
+const SUPPORTED_SCHEMA_VERSIONS = new Set(['0.2', '0.3']);
 const MAX_METADATA_BYTES = 1024 * 1024;
 const METADATA_FETCH_TIMEOUT_MS = 10_000;
 const MAX_DEPENDENCY_NODES = 32;
@@ -419,7 +419,7 @@ export function validateAndNormalizeMetadata(
   rejectUnknownFields(
     value,
     nodePath,
-    ['schemaVersion', 'id', 'name', 'description', 'version', 'containers', 'endpoints', 'connections', 'dependencies', 'settings', 'storage', 'ui'],
+    ['schemaVersion', 'id', 'name', 'description', 'version', 'containers', 'services', 'endpoints', 'connections', 'dependencies', 'settings', 'storage', 'ui'],
     validationErrors
   );
 
@@ -428,7 +428,9 @@ export function validateAndNormalizeMetadata(
   const name = readRequiredString(value, 'name', nodePath, validationErrors);
   const description = readOptionalString(value, 'description', nodePath, validationErrors);
   const version = readRequiredString(value, 'version', nodePath, validationErrors);
-  const containers = validateContainers(value.containers, `${nodePath}.containers`, validationErrors, id);
+  const containers = schemaVersion === '0.3' && value.services !== undefined
+    ? validateServices(value.services, `${nodePath}.services`, validationErrors, id)
+    : validateContainers(value.containers, `${nodePath}.containers`, validationErrors, id);
   const containerKeys = new Set(containers.map(container => container.key));
   const endpoints = validateEndpoints(value.endpoints, `${nodePath}.endpoints`, containers, validationErrors, id);
   const endpointKeys = new Set(endpoints.map(endpoint => endpoint.key));
@@ -438,7 +440,7 @@ export function validateAndNormalizeMetadata(
   const storage = validateStorage(value.storage, `${nodePath}.storage`, validationErrors, id, containerKeys);
   const ui = validateModuleUiMetadata(value.ui, `${nodePath}.ui`, endpoints, validationErrors, id);
 
-  if (schemaVersion && schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
+  if (schemaVersion && !SUPPORTED_SCHEMA_VERSIONS.has(schemaVersion)) {
     validationErrors.push({
       code: 'unsupported_schema_version',
       message: `Unsupported metadata schemaVersion "${schemaVersion}".`,
@@ -471,12 +473,13 @@ export function validateAndNormalizeMetadata(
 
   return {
     metadata: {
-      schemaVersion: SUPPORTED_SCHEMA_VERSION,
+      schemaVersion: schemaVersion as '0.2' | '0.3',
       id,
       name,
       ...(description ? { description } : {}),
       version,
       containers,
+      services: containers,
       endpoints,
       connections,
       dependencies,
@@ -561,6 +564,9 @@ function validateContainers(
       containers.push({
         key,
         dependsOn,
+        source: {
+          type: 'image',
+        },
         image,
         runtime,
       });
@@ -569,6 +575,153 @@ function validateContainers(
 
   validateContainerDependencyGraph(containers, pathToContainers, validationErrors, moduleId);
   return containers;
+}
+
+function validateServices(
+  value: unknown,
+  pathToServices: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleContainerMetadata[] {
+  if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'services must be a non-empty array.',
+      path: pathToServices,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  if (value.length === 0) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'services must include at least one service.',
+      path: pathToServices,
+      node: moduleId,
+    });
+    return [];
+  }
+
+  const services: NormalizedModuleContainerMetadata[] = [];
+  const seenKeys = new Set<string>();
+
+  value.forEach((item, index) => {
+    const itemPath = `${pathToServices}[${index}]`;
+    if (!isPlainObject(item)) {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'services[] item must be an object.',
+        path: itemPath,
+        node: moduleId,
+      });
+      return;
+    }
+
+    rejectUnknownFields(item, itemPath, ['key', 'dependsOn', 'source', 'runtime', 'healthCheck'], validationErrors, moduleId);
+    const key = readRequiredString(item, 'key', itemPath, validationErrors, moduleId);
+    const source = validateServiceSource(item.source, `${itemPath}.source`, validationErrors, moduleId);
+    const dependsOn = validateContainerDependsOn(item.dependsOn, `${itemPath}.dependsOn`, validationErrors, moduleId);
+    const runtime = validateRuntime(item.runtime, `${itemPath}.runtime`, validationErrors, moduleId);
+    const healthCheck = validateHealthCheck(item.healthCheck, `${itemPath}.healthCheck`, validationErrors, moduleId);
+
+    if (key && seenKeys.has(key)) {
+      validationErrors.push({
+        code: 'service_key_duplicate',
+        message: `Service key "${key}" is declared more than once.`,
+        path: `${itemPath}.key`,
+        node: moduleId,
+      });
+    }
+    if (key) {
+      seenKeys.add(key);
+    }
+
+    if (key && !isSafeContractKey(key)) {
+      validationErrors.push({
+        code: 'service_key_invalid',
+        message: 'services[].key must match ^[a-z][a-z0-9-]{0,62}$.',
+        path: `${itemPath}.key`,
+        node: moduleId,
+      });
+    }
+
+    if (key && isSafeContractKey(key) && source && runtime) {
+      services.push({
+        key,
+        dependsOn,
+        source: source.source,
+        image: source.image,
+        runtime,
+        ...(healthCheck ? { healthCheck } : {}),
+      });
+    }
+  });
+
+  validateContainerDependencyGraph(services, pathToServices, validationErrors, moduleId);
+  return services;
+}
+
+function validateServiceSource(
+  value: unknown,
+  pathToSource: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): { source: NormalizedModuleContainerMetadata['source']; image: NormalizedModuleContainerMetadata['image'] } | null {
+  if (!isPlainObject(value)) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'services[].source must be an object.',
+      path: pathToSource,
+      node: moduleId,
+    });
+    return null;
+  }
+
+  const type = readRequiredString(value, 'type', pathToSource, validationErrors, moduleId);
+  if (type === 'image') {
+    rejectUnknownFields(value, pathToSource, ['type', 'image'], validationErrors, moduleId);
+    const image = validateImage(value.image, `${pathToSource}.image`, validationErrors, moduleId);
+    return image ? {
+      source: { type: 'image' },
+      image,
+    } : null;
+  }
+
+  if (type === 'process') {
+    rejectUnknownFields(value, pathToSource, ['type', 'command', 'workingDirectory', 'environment'], validationErrors, moduleId);
+    const command = readRequiredString(value, 'command', pathToSource, validationErrors, moduleId);
+    const workingDirectory = readOptionalString(value, 'workingDirectory', pathToSource, validationErrors, moduleId);
+    const environment = validateStringMap(value.environment, `${pathToSource}.environment`, validationErrors, moduleId);
+    if (!command) {
+      return null;
+    }
+
+    return {
+      source: {
+        type: 'process',
+        command,
+        ...(workingDirectory ? { workingDirectory } : {}),
+        ...(environment ? { environment } : {}),
+      },
+      image: {
+        repository: '__process__',
+        tag: 'dev',
+        pullPolicy: 'manual',
+      },
+    };
+  }
+
+  if (type) {
+    validationErrors.push({
+      code: 'service_source_type_unsupported',
+      message: `services[].source.type "${type}" is not supported.`,
+      path: `${pathToSource}.type`,
+      node: moduleId,
+    });
+  }
+
+  return null;
 }
 
 function validateContainerDependsOn(
@@ -776,9 +929,9 @@ function validateEndpoints(
       return;
     }
 
-    rejectUnknownFields(item, itemPath, ['key', 'container', 'port', 'public'], validationErrors, moduleId);
+    rejectUnknownFields(item, itemPath, ['key', 'container', 'service', 'port', 'public'], validationErrors, moduleId);
     const key = readRequiredString(item, 'key', itemPath, validationErrors, moduleId);
-    const containerKey = readRequiredString(item, 'container', itemPath, validationErrors, moduleId);
+    const containerKey = readEndpointServiceKey(item, itemPath, validationErrors, moduleId);
     const portKey = readRequiredString(item, 'port', itemPath, validationErrors, moduleId);
     const isPublic = readRequiredBoolean(item, 'public', itemPath, validationErrors, moduleId);
 
@@ -827,6 +980,7 @@ function validateEndpoints(
       endpoints.push({
         key,
         container: container.key,
+        service: container.key,
         port: port.key,
         public: isPublic,
       });
@@ -834,6 +988,36 @@ function validateEndpoints(
   });
 
   return endpoints;
+}
+
+function readEndpointServiceKey(
+  value: Record<string, unknown>,
+  itemPath: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+) {
+  const service = readOptionalString(value, 'service', itemPath, validationErrors, moduleId);
+  const container = readOptionalString(value, 'container', itemPath, validationErrors, moduleId);
+  if (service && container && service !== container) {
+    validationErrors.push({
+      code: 'endpoint_target_conflict',
+      message: 'endpoints[] must not declare different service and container targets.',
+      path: itemPath,
+      node: moduleId,
+    });
+  }
+
+  const target = service || container;
+  if (!target) {
+    validationErrors.push({
+      code: 'metadata_field_required',
+      message: 'endpoints[].service is required.',
+      path: `${itemPath}.service`,
+      node: moduleId,
+    });
+  }
+
+  return target;
 }
 
 function validateConnections(
@@ -1853,6 +2037,140 @@ function validateHostPathPolicy(
     : null;
 }
 
+function validateHealthCheck(
+  value: unknown,
+  pathToHealthCheck: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+): NormalizedModuleContainerMetadata['healthCheck'] | null {
+  if (value === undefined) {
+    return null;
+  }
+
+  if (!isPlainObject(value)) {
+    validationErrors.push({
+      code: 'metadata_field_invalid',
+      message: 'services[].healthCheck must be an object.',
+      path: pathToHealthCheck,
+      node: moduleId,
+    });
+    return null;
+  }
+
+  rejectUnknownFields(value, pathToHealthCheck, ['type', 'path', 'intervalSeconds', 'timeoutSeconds', 'successStatus'], validationErrors, moduleId);
+  const type = readRequiredString(value, 'type', pathToHealthCheck, validationErrors, moduleId);
+  const checkPath = readRequiredString(value, 'path', pathToHealthCheck, validationErrors, moduleId);
+  const intervalSeconds = readOptionalNumber(value, 'intervalSeconds', pathToHealthCheck, validationErrors, moduleId);
+  const timeoutSeconds = readOptionalNumber(value, 'timeoutSeconds', pathToHealthCheck, validationErrors, moduleId);
+  const successStatus = validateSuccessStatus(value.successStatus, `${pathToHealthCheck}.successStatus`, validationErrors, moduleId);
+
+  if (type && type !== 'http') {
+    validationErrors.push({
+      code: 'health_check_type_unsupported',
+      message: `healthCheck.type "${type}" is not supported.`,
+      path: `${pathToHealthCheck}.type`,
+      node: moduleId,
+    });
+  }
+
+  if (checkPath && !checkPath.startsWith('/')) {
+    validationErrors.push({
+      code: 'health_check_path_invalid',
+      message: 'healthCheck.path must start with "/".',
+      path: `${pathToHealthCheck}.path`,
+      node: moduleId,
+    });
+  }
+
+  if (type !== 'http' || !checkPath || !checkPath.startsWith('/')) {
+    return null;
+  }
+
+  return {
+    type: 'http',
+    path: checkPath,
+    ...(intervalSeconds !== undefined ? { intervalSeconds } : {}),
+    ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
+    ...(successStatus ? { successStatus } : {}),
+  };
+}
+
+function validateSuccessStatus(
+  value: unknown,
+  pathToSuccessStatus: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'metadata_field_invalid',
+      message: 'healthCheck.successStatus must be an array.',
+      path: pathToSuccessStatus,
+      node: moduleId,
+    });
+    return undefined;
+  }
+
+  const statuses: number[] = [];
+  value.forEach((item, index) => {
+    if (!Number.isInteger(item) || item < 100 || item > 599) {
+      validationErrors.push({
+        code: 'health_check_status_invalid',
+        message: 'healthCheck.successStatus[] must be an HTTP status code.',
+        path: `${pathToSuccessStatus}[${index}]`,
+        node: moduleId,
+      });
+      return;
+    }
+
+    statuses.push(item);
+  });
+
+  return statuses.length > 0 ? [...new Set(statuses)] : undefined;
+}
+
+function validateStringMap(
+  value: unknown,
+  pathToMap: string,
+  validationErrors: InstallPlanValidationError[],
+  moduleId?: string
+) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isPlainObject(value)) {
+    validationErrors.push({
+      code: 'metadata_field_invalid',
+      message: 'environment must be an object.',
+      path: pathToMap,
+      node: moduleId,
+    });
+    return undefined;
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== 'string') {
+      validationErrors.push({
+        code: 'metadata_field_invalid',
+        message: 'environment values must be strings.',
+        path: `${pathToMap}.${key}`,
+        node: moduleId,
+      });
+      continue;
+    }
+
+    result[key] = item;
+  }
+
+  return result;
+}
+
 function validateRuntime(
   value: unknown,
   pathToRuntime: string,
@@ -1928,9 +2246,10 @@ function validateRuntimePorts(
       return;
     }
 
-    rejectUnknownFields(item, itemPath, ['key', 'containerPort', 'protocol'], validationErrors, moduleId);
+    rejectUnknownFields(item, itemPath, ['key', 'containerPort', 'localPort', 'protocol'], validationErrors, moduleId);
     const key = readRequiredString(item, 'key', itemPath, validationErrors, moduleId);
     const containerPort = readRequiredNumber(item, 'containerPort', itemPath, validationErrors, moduleId);
+    const localPort = readOptionalNumber(item, 'localPort', itemPath, validationErrors, moduleId);
     const protocol = readRequiredString(item, 'protocol', itemPath, validationErrors, moduleId);
 
     if (key && seenKeys.has(key)) {
@@ -1963,6 +2282,15 @@ function validateRuntimePorts(
       });
     }
 
+    if (localPort !== undefined && (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535)) {
+      validationErrors.push({
+        code: 'runtime_port_invalid',
+        message: 'runtime.ports[].localPort must be an integer between 1 and 65535.',
+        path: `${itemPath}.localPort`,
+        node: moduleId,
+      });
+    }
+
     if (protocol && protocol !== 'http') {
       validationErrors.push({
         code: 'unsupported_port_protocol',
@@ -1976,6 +2304,7 @@ function validateRuntimePorts(
       ports.push({
         key,
         containerPort,
+        ...(localPort !== undefined ? { localPort } : {}),
         protocol,
       });
     }
@@ -2259,7 +2588,7 @@ function rejectUnknownFields(
     if (!allowed.has(key)) {
       validationErrors.push({
         code: 'unknown_field',
-        message: `Unknown field "${key}" is not supported by metadata schemaVersion "${SUPPORTED_SCHEMA_VERSION}".`,
+        message: `Unknown field "${key}" is not supported by this metadata schema version.`,
         path: `${pathToObject}.${key}`,
         node,
       });

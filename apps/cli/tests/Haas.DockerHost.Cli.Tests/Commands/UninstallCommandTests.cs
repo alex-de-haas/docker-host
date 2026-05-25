@@ -247,7 +247,7 @@ public sealed class UninstallCommandTests : IDisposable
             environment,
             new LaunchSettingsStore(environment),
             new FakeDockerEngineClientFactory(transport),
-            new HostApiClientFactory());
+            new HostControlClientFactory());
     }
 
     private static IAnsiConsole CreateConsole()

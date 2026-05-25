@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { canUseHostApi } from './auth-policy.ts';
 import { getHostRuntimeConfig } from './host-runtime.ts';
 import {
-  authenticateCliToken,
   authenticateSessionToken,
   ACCOUNT_SET_ABSOLUTE_TIMEOUT_MS,
   ACCOUNT_SET_COOKIE_NAME,
@@ -20,7 +19,7 @@ import type { HostApiAction, HostPrincipal } from '../types/auth.ts';
 
 export interface AuthenticatedRequest {
   principal: HostPrincipal;
-  source: 'session' | 'cli-token' | 'trusted-proxy';
+  source: 'session' | 'trusted-proxy';
 }
 
 export async function requireHostPrincipal(
@@ -44,7 +43,7 @@ export async function requireHostPrincipal(
     });
   }
 
-  if (auth.source !== 'cli-token' && isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
+  if (isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
     await appendDeniedHostApiAudit(action, 'csrf_rejected', auth.principal, request);
     return authError('csrf_rejected', 'State-changing requests must come from the same origin.', 403, {
       action,
@@ -88,7 +87,7 @@ export async function requireHostAdmin(
     });
   }
 
-  if (auth.source !== 'cli-token' && isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
+  if (isMutatingMethod(request.method) && !passesSameOriginCheck(request)) {
     await appendDeniedHostApiAudit(action, 'csrf_rejected', auth.principal, request);
     return authError('csrf_rejected', 'State-changing requests must come from the same origin.', 403, {
       action,
@@ -126,18 +125,9 @@ export async function requireRecentReauthentication(
 
 export async function authenticateRequest(request: Request): Promise<{
   principal: HostPrincipal | null;
-  source: 'session' | 'cli-token' | 'trusted-proxy';
+  source: 'session' | 'trusted-proxy';
 }> {
   const meta = getRequestMeta(request);
-  const bearerToken = getBearerToken(request);
-  const cliPrincipal = await authenticateCliToken(bearerToken, meta);
-  if (cliPrincipal) {
-    return {
-      principal: cliPrincipal,
-      source: 'cli-token',
-    };
-  }
-
   const trustedProxy = await authenticateTrustedProxyRequest(request, getHostRuntimeConfig());
   if (trustedProxy.principal) {
     return {
@@ -334,15 +324,6 @@ export function getRequestMeta(request: Request): AuthRequestMeta {
     origin: request.headers.get('origin') ?? undefined,
     userAgent: request.headers.get('user-agent') ?? undefined,
   };
-}
-
-function getBearerToken(request: Request) {
-  const authorization = request.headers.get('authorization');
-  if (!authorization?.startsWith('Bearer ')) {
-    return null;
-  }
-
-  return authorization.slice('Bearer '.length).trim() || null;
 }
 
 async function appendDeniedHostApiAudit(

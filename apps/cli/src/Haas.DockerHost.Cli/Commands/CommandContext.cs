@@ -10,4 +10,4 @@ internal sealed record CommandContext(
     DockerHostEnvironment Environment,
     LaunchSettingsStore SettingsStore,
     DockerEngineClientFactory DockerFactory,
-    HostApiClientFactory HostApiFactory);
+    HostControlClientFactory ControlFactory);

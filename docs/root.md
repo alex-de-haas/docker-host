@@ -37,14 +37,11 @@ flowchart LR
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
 - [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.
 - [CLI bootstrap](features/cli-bootstrap.md) - `docker-host` command surface, launch configuration, and direct Docker Engine lifecycle integration.
-- [CLI module commands](features/cli-module-commands.md) - terminal module management commands using the Host backend API.
-- [Docker Host API](features/host-api.md) - Host backend API endpoint catalog for Web UI and CLI module commands.
+- [CLI trusted control and dev metadata](features/cli-trusted-control-and-dev-metadata.md) - local no-token CLI control channel, Host-owned module lifecycle, and repository-local `metadata.dev.json` workflow.
+- [CLI module commands](features/cli-module-commands.md) - terminal module management commands using the Host local control channel.
+- [Docker Host API](features/host-api.md) - Host backend API endpoint catalog for Web UI routes and local control routes.
 - [Docker Host domain model](features/domain-model.md) - shared vocabulary for installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
 - [Module metadata files](features/module-metadata.md) - supported metadata contract for installing Docker-hosted modules from JSON metadata URLs.
 - [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.
 - [Demo Module](features/demo-module.md) - repository-local Next.js module for validating Docker Host module operations.
-
-## Planning
-
-- [CLI Trusted Control and Dev Metadata](planning/cli-trusted-control-and-dev-metadata.md) - planned CLI no-auth local control channel, Host-owned module lifecycle, and repository-local `metadata.dev.json` workflow.

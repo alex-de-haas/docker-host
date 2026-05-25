@@ -34,41 +34,31 @@ docker-host config reset <KEY>
 
 Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port number. `HOST_DOCKER_ENDPOINT` is limited to the supported local Docker Engine endpoint for the current platform.
 
-`docker-host modules` is the Host API-backed module command group. It covers module list, install/add, start, stop, restart, and update commands. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
+`docker-host modules` is the trusted-control-backed module command group. It covers module list, install/add, start, stop, restart, update, remove, and low-level developer target commands. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
 
-`docker-host dev` is the Host API-backed module development harness:
+`docker-host dev` is the trusted-control-backed module development harness:
 
 ```text
-docker-host dev up [--manifest <path>] [--prepare-only]
-docker-host dev status [--manifest <path>]
-docker-host dev reset [--manifest <path>]
+docker-host dev up [--manifest <path>] [--host-url <url>] [--prepare-only]
+docker-host dev status [--manifest <path>] [--host-url <url>]
+docker-host dev reset [--manifest <path>] [--host-url <url>]
+docker-host dev clean <module-id-or-dev-metadata> [--host-url <url>] [--yes]
 ```
 
-It reads a module-local manifest, enables module developer mode, starts or recreates Docker Host when needed, links a deterministic developer target, seeds development users and assignments through Host-owned APIs, applies module directory policy, and starts the local module command in the foreground. The detailed workflow is documented in [Module Development Harness](module-development-harness.md).
+It reads `metadata.dev.json` by default, starts or connects to Docker Host when needed, links a deterministic developer target through local control, seeds development users and assignments through Host-owned services, applies module directory policy, and starts the local module command in the foreground. The detailed workflow is documented in [Module Development Harness](module-development-harness.md).
 
 `docker-host auth` contains local authentication recovery and bootstrap commands:
 
 ```text
 docker-host auth setup-token
 docker-host auth recovery-token
-docker-host auth token import <token> [--host <url>] [--token-id <id>] [--label <label>]
-docker-host auth token status
-docker-host auth token logout
-docker-host auth token list
-docker-host auth token create [--label <label>] [--user-id <id>]
-docker-host auth token revoke <token-id>
-docker-host auth token rotate [token-id] [--label <label>]
 ```
 
 `auth setup-token` creates a one-time first-admin setup token in the Host auth JSON store under `HOST_DATA_ROOT_HOST/auth/state.json`. It stores only the token hash and prints the raw token for local use in `/setup`.
 
 `auth recovery-token` creates a one-time recovery token through local machine access and writes only the token hash to `HOST_DATA_ROOT_HOST/auth/state.json`. The command also records a sanitized audit event in `HOST_DATA_ROOT_HOST/auth/audit.ndjson`.
 
-`auth token import` stores an existing raw CLI admin token locally under `~/.docker-host/config/auth.json`, or under `DOCKER_HOST_HOME/config/auth.json` when that test/development override is set. The token file is restricted to the current user on Unix-like platforms. `DOCKER_HOST_CLI_TOKEN` can override the stored token for automation without writing local credential material.
-
-Administrators can generate the first raw CLI token from Docker Host Web UI under Settings -> Security -> CLI access. The Web UI shows the raw token and an import command once; after that, the Host keeps only the hashed token record.
-
-`auth token list`, `create`, `revoke`, and `rotate` call the Host API with the locally stored token as `Authorization: Bearer`. `create` and `rotate` store the returned raw token locally and do not print it back to the terminal.
+CLI module and dev commands do not use Host user credentials or bearer tokens. They read `<HOST_DATA_ROOT_HOST>/run/control.json` and call the Host's local `/control/v1` channel with the discovered control contract version and per-start control secret.
 
 ## Launch configuration
 
@@ -78,10 +68,10 @@ The CLI persists launch settings in:
 ~/.docker-host/config/launch.env
 ```
 
-The CLI persists its active Host API token in:
+The Host writes trusted control discovery for the local CLI in:
 
 ```text
-~/.docker-host/config/auth.json
+<HOST_DATA_ROOT_HOST>/run/control.json
 ```
 
 Default values:
@@ -99,7 +89,6 @@ HOST_RESTART_POLICY=unless-stopped
 HOST_DOCKER_ENDPOINT=unix:///var/run/docker.sock
 HOST_DOCKER_SOCKET=/var/run/docker.sock
 HOST_MODULE_NETWORK=docker-host-modules
-HOST_MODULE_DEV_MODE=disabled
 ```
 
 On native Windows, the Docker endpoint default is:
@@ -145,7 +134,7 @@ The high-level adapter owns Docker Engine paths, request payloads, response pars
 - selects a free loopback host port when `HOST_UI_PORT=auto`;
 - creates and starts the Host container with Docker socket, data root, env vars, restart policy, and module network.
 
-`docker-host stop` reads the installed module registry from `HOST_DATA_ROOT_HOST`, stops every known Host-managed module container through Docker Engine, and then stops the Host container. This keeps the command useful as a recovery path even when the Host API is unavailable or no local CLI token has been imported. If the module registry cannot be read, the CLI warns that module containers may require manual cleanup and still stops the Host container.
+`docker-host stop` reads the installed module registry from `HOST_DATA_ROOT_HOST`, stops every known Host-managed module container through Docker Engine, and then stops the Host container. This keeps the command useful as a recovery path even when the Host API or local control channel is unavailable. If the module registry cannot be read, the CLI warns that module containers may require manual cleanup and still stops the Host container.
 
 `docker-host restart` recreates the Host container with the current launch settings while preserving `HOST_DATA_ROOT_HOST`.
 

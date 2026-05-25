@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       error: {
         code: 'reauth_not_supported',
         message: 'This authentication source does not support browser reauthentication.',
-        nextStep: 'Use a local CLI token or a browser session.',
+        nextStep: 'Use a browser session.',
       },
     }, { status: 400 });
   }

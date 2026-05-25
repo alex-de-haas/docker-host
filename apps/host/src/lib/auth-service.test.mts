@@ -7,13 +7,11 @@ import {
   addUserToBrowserAccountSet,
   addUsersToBrowserAccountSet,
   acceptUserInvitation,
-  authenticateCliToken,
   authenticatePassword,
   authenticateSessionToken,
   AuthServiceError,
   bootstrapFirstAdmin,
   clearBrowserAccountSet,
-  createCliTokenForAdmin,
   createDevAdminSession,
   createDevSession,
   createSessionForUser,
@@ -26,7 +24,6 @@ import {
   isDevAuthBrowserAccountSeedEnabled,
   listAuthSessions,
   listBrowserAccounts,
-  listCliTokens,
   listHostUsers,
   listUserInvitations,
   prepareDevBrowserAccountUsers,
@@ -36,10 +33,8 @@ import {
   removeBrowserAccount,
   replaceHostUserModuleAssignments,
   revokeUserInvitation,
-  revokeCliToken,
   revokeSession,
   revokeSessionById,
-  rotateCliToken,
   switchBrowserAccount,
   updateHostUser,
 } from './auth-service.ts';
@@ -604,36 +599,6 @@ test('reauthenticates a session with password and consumes recovery token fallba
   assert.equal(state.setupTokens.find(token => token.id === recovery.tokenId)?.usedAt !== undefined, true);
 });
 
-test('creates, rotates, lists, and revokes CLI admin tokens', async () => {
-  const config = await createTestConfig();
-  const setup = await createSetupToken('first-admin', config);
-  const admin = await bootstrapFirstAdmin({
-    setupToken: setup.token,
-    email: 'admin@example.test',
-    password: 'correct horse battery staple',
-  }, undefined, config);
-
-  const created = await createCliTokenForAdmin(admin.user.id, 'Laptop CLI', config);
-  assert.equal(created.cliToken.label, 'Laptop CLI');
-  assert.equal((await authenticateCliToken(created.token, undefined, config))?.id, admin.user.id);
-
-  const storedAfterCreate = await readAuthStateSnapshot(config);
-  assert.equal(JSON.stringify(storedAfterCreate).includes(created.token), false);
-  assert.equal((await listCliTokens(config)).length, 1);
-
-  const rotated = await rotateCliToken(created.tokenId, admin.user.id, 'Rotated CLI', config);
-  assert.equal(rotated.cliToken.label, 'Rotated CLI');
-  assert.equal(await authenticateCliToken(created.token, undefined, config), null);
-  assert.equal((await authenticateCliToken(rotated.token, undefined, config))?.id, admin.user.id);
-
-  const listedAfterRotate = await listCliTokens(config);
-  assert.equal(listedAfterRotate.length, 2);
-  assert.equal(listedAfterRotate.find(token => token.id === created.tokenId)?.revokedAt !== undefined, true);
-
-  assert.equal(await revokeCliToken(rotated.tokenId, admin.user.id, config), true);
-  assert.equal(await authenticateCliToken(rotated.token, undefined, config), null);
-});
-
 test('creates and accepts a role-scoped user invitation with assignments', async () => {
   const config = await createTestConfig();
   const setup = await createSetupToken('first-admin', config);
@@ -805,7 +770,6 @@ test('role changes and disable operations preserve at least one admin and clean 
     role: 'host.admin',
   });
   const secondAdminSession = await createSessionForUser(secondAdmin.id, 'auth.test.session.created', undefined, config);
-  const secondAdminToken = await createCliTokenForAdmin(secondAdmin.id, 'Second Admin CLI', config);
   const accountSet = await addUsersToBrowserAccountSet({
     accountSetToken: null,
     userIds: [admin.user.id, secondAdmin.id],
@@ -824,7 +788,6 @@ test('role changes and disable operations preserve at least one admin and clean 
   }, admin.user.id, undefined, config);
   assert.equal(demoted.role, 'host.user');
   assert.equal(await authenticateSessionToken(secondAdminSession.sessionToken, undefined, config), null);
-  assert.equal(await authenticateCliToken(secondAdminToken.token, undefined, config), null);
 
   const regularSession = await createSessionForUser(secondAdmin.id, 'auth.test.session.created', undefined, config);
   await disableHostUser(secondAdmin.id, admin.user.id, undefined, config);

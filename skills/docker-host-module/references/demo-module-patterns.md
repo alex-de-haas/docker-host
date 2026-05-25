@@ -42,6 +42,6 @@ npm run demo-module:docker:build:local
 
 Use `npm run host:dev:demo` for shell app, Host identity, assigned-user, and scoped directory feedback. It seeds the development administrator and user accounts and links the demo module as a developer target, so the module receives normal Host-issued identity instead of a mock token.
 
-The demo module's `.docker-host/dev.json` uses `target.localPort` so the same manifest works when Docker Host runs as the installed container or as a local Host process from source.
+The demo module's `metadata.dev.json` uses a schema `0.3` process service with `runtime.ports[].localPort`, so `docker-host dev` can run the checked-out app through the Host gateway without installing a container.
 
 Use the local Docker image path when testing managed install, start, stop, restart, update, and storage behavior.

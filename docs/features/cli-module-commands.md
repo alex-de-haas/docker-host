@@ -1,17 +1,17 @@
 # CLI module commands
 
-This document describes `docker-host modules ...` commands as a terminal-first interface on top of the existing Host backend API.
+This document describes `docker-host modules ...` commands as a terminal-first interface on top of the Host local control channel.
 
 ## Description
 
-CLI module commands support headless, server-side, and scripted scenarios where an administrator does not want to or cannot use the Web UI. They are not a separate module-management runtime. The `docker-host` CLI must remain a thin Host API client: it receives plans, renders them in the terminal, collects administrator input, and submits confirmed requests.
+CLI module commands support headless, server-side, and scripted scenarios where an administrator does not want to or cannot use the Web UI. They are not a separate module-management runtime. The `docker-host` CLI remains a thin local control client: it receives plans, renders them in the terminal, collects administrator input, and submits confirmed requests.
 
 The business logic for installation, update, dependency resolution, Docker conflict checks, storage mappings, secret handling, module state, retry, and cleanup remains in the Host backend.
 
 ```mermaid
 flowchart LR
   A["docker-host modules ..."] --> B["Resolve running Host URL"]
-  B --> C["Host backend API"]
+  B --> C["Host /control/v1"]
   C --> D["Module service"]
   D --> E["Docker daemon"]
   D --> F["modules.json and module directories"]
@@ -21,7 +21,7 @@ flowchart LR
 ## Goals
 
 - Allow common module operations without opening the Web UI.
-- Reuse the exact same Host API and module-management logic as the Web UI.
+- Reuse the same Host module-management logic as the Web UI.
 - Keep CLI output readable for administrators and useful in CI logs.
 - Support interactive review for install and update plans.
 - Keep direct Docker Engine access limited to Host container lifecycle and Host URL discovery.
@@ -35,6 +35,7 @@ flowchart LR
 - CLI must not expose raw secret values in normal output, errors, diagnostics, or JSON previews.
 - CLI module commands do not replace Host recovery commands for the Host container itself.
 - Remote Host management, authentication setup, TLS, SSH, and multi-user authorization are not part of CLI module commands.
+- CLI bearer tokens and Host user sessions are not part of module command authentication.
 
 ## Command surface
 
@@ -47,6 +48,7 @@ docker-host modules start <module-id>
 docker-host modules stop <module-id>
 docker-host modules restart <module-id>
 docker-host modules update <module-id>
+docker-host modules remove <module-id> [--delete-data]
 ```
 
 `install` is the preferred verb because it matches the backend install flow. `add` may be kept as a user-friendly alias because earlier launch documentation used `docker-host modules add <metadata-url>`:
@@ -60,12 +62,12 @@ docker-host modules add <metadata-url>
 Every module command should:
 
 1. Load `launch.env` through the existing launch settings store.
-2. Inspect the Host container through Docker Engine only to resolve the local Host API URL, using the same model as `docker-host open`.
+2. Inspect the Host container through Docker Engine only to resolve the local Host URL, using the same model as `docker-host open`.
 3. Exit with a clear message if the Host container is missing or stopped, suggesting `docker-host start`.
-4. Use the Host backend API for module operations.
+4. Read `<HOST_DATA_ROOT_HOST>/run/control.json` and use `/control/v1` for module operations.
 5. Preserve Host API error boundaries and diagnostics.
 
-The CLI may call `GET /api/host/status` before commands that mutate module state. `list` can skip the preflight and rely on `GET /api/modules` when a faster read-only path is preferred.
+The CLI may call `GET /control/v1/host/status` before commands that mutate module state. `list` can skip the preflight and rely on `GET /control/v1/modules` when a faster read-only path is preferred.
 
 ## `modules list`
 
@@ -76,7 +78,7 @@ docker-host modules list
 `list` calls:
 
 ```text
-GET /api/modules
+GET /control/v1/modules
 ```
 
 CLI output should use a compact table with:
@@ -105,17 +107,17 @@ docker-host modules add <metadata-url>
 
 ```mermaid
 flowchart LR
-  A["metadata URL"] --> B["POST /api/modules/install/plan"]
+  A["metadata URL"] --> B["POST /control/v1/modules/install/plan"]
   B --> C["Terminal install plan review"]
   C --> D["Collect settings and mounts"]
-  D --> E["POST /api/modules/install"]
+  D --> E["POST /control/v1/modules/install"]
   E --> F["Installed module"]
 ```
 
 ### Interactive install flow
 
-1. CLI calls `GET /api/host/status` and fails before planning if Host runtime or Docker daemon dependencies are unavailable.
-2. CLI calls `POST /api/modules/install/plan` with:
+1. CLI calls `GET /control/v1/host/status` and fails before planning if Host runtime or Docker daemon dependencies are unavailable.
+2. CLI calls `POST /control/v1/modules/install/plan` with:
 
 ```json
 {
@@ -139,7 +141,7 @@ flowchart LR
 5. CLI prompts for setting values declared in `plan.settings`.
 6. CLI prompts for required external mount collection items and allows optional items to be skipped.
 7. CLI shows a redacted request preview and asks for final confirmation.
-8. CLI calls `POST /api/modules/install` with the reviewed `planDigest`, setting values, and external mount selections.
+8. CLI calls `POST /control/v1/modules/install` with the reviewed `planDigest`, setting values, and external mount selections.
 9. CLI prints installed and reused module ids, root module status, and next actions.
 
 ### Setting prompts
@@ -202,7 +204,7 @@ docker-host modules start <module-id>
 `start` calls:
 
 ```text
-POST /api/modules/{moduleId}/start
+POST /control/v1/modules/{moduleId}/start
 ```
 
 CLI should print the updated runtime state on success. On failure, it should print the backend `ModuleOperationError`, including Docker status and next step when available.
@@ -218,7 +220,7 @@ docker-host modules stop <module-id>
 `stop` calls:
 
 ```text
-POST /api/modules/{moduleId}/stop
+POST /control/v1/modules/{moduleId}/stop
 ```
 
 CLI should print the updated runtime state on success. Stop remains a backend lifecycle action so persistent module status and Docker error handling stay consistent with Web UI behavior.
@@ -232,7 +234,7 @@ docker-host modules restart <module-id>
 `restart` calls:
 
 ```text
-POST /api/modules/{moduleId}/restart
+POST /control/v1/modules/{moduleId}/restart
 ```
 
 CLI should print the updated runtime state on success. If restart fails because the module container is missing or the module is not in a runnable operation state, CLI should surface the backend error without attempting local repair.
@@ -247,17 +249,17 @@ docker-host modules update <module-id>
 
 ```mermaid
 flowchart LR
-  A["module id"] --> B["POST /api/modules/{moduleId}/update/plan"]
+  A["module id"] --> B["POST /control/v1/modules/{moduleId}/update/plan"]
   B --> C["Terminal update plan review"]
   C --> D["Collect changed settings and mounts"]
-  D --> E["POST /api/modules/{moduleId}/update"]
+  D --> E["POST /control/v1/modules/{moduleId}/update"]
   E --> F["Updated module"]
 ```
 
 ### Interactive update flow
 
-1. CLI calls `GET /api/host/status` and fails before planning if Host runtime or Docker daemon dependencies are unavailable.
-2. CLI calls `POST /api/modules/{moduleId}/update/plan`.
+1. CLI calls `GET /control/v1/host/status` and fails before planning if Host runtime or Docker daemon dependencies are unavailable.
+2. CLI calls `POST /control/v1/modules/{moduleId}/update/plan`.
 3. CLI renders:
 
 - current and proposed module version;
@@ -273,7 +275,7 @@ flowchart LR
 4. If the plan contains conflicts, CLI does not submit apply. It exits non-zero after printing conflict details.
 5. CLI prompts only for new or changed values required by `plan.settings` and mount collections.
 6. CLI shows a redacted update request preview and asks for final confirmation.
-7. CLI calls `POST /api/modules/{moduleId}/update` with:
+7. CLI calls `POST /control/v1/modules/{moduleId}/update` with:
 
 ```json
 {
@@ -286,7 +288,26 @@ flowchart LR
 
 8. CLI prints updated module id, installed dependency ids, reused dependency ids, and the resulting runtime state.
 
-Failed update retry uses `POST /api/modules/{moduleId}/update/retry`, but retry command behavior should be specified separately when recovery commands are added to the CLI surface.
+Failed update retry remains future CLI scope.
+
+## `modules remove`
+
+```text
+docker-host modules remove <module-id> [--delete-data]
+```
+
+`remove` is a two-step reviewed flow:
+
+```mermaid
+flowchart LR
+  A["module id"] --> B["POST /control/v1/modules/{moduleId}/remove/plan"]
+  B --> C["Terminal remove plan review"]
+  C --> D["Confirm deletion scope"]
+  D --> E["POST /control/v1/modules/{moduleId}/remove"]
+  E --> F["Removed module"]
+```
+
+The plan shows the module, containers, storage mappings, dependency impact, and whether module-owned data will be deleted. By default, remove preserves module data. `--delete-data` requests deletion of module-owned data after confirmation. External mount collection data is never deleted by module removal.
 
 ## Output modes
 
@@ -296,7 +317,7 @@ CLI module commands use interactive human-readable output. Automation flags, JSO
 
 - `install` is the canonical command. `add` is supported as an alias.
 - Module commands do not auto-start the Host container. If Host is stopped, CLI prints `docker-host start` as the next step.
-- Install and update call `GET /api/host/status` before requesting a plan.
+- Install, update, and remove call `GET /control/v1/host/status` before requesting a plan.
 - Module commands are interactive-first.
 - Interactive install and update always ask for final confirmation before apply.
 - Settings are collected through typed prompts. Optional empty values are omitted.
@@ -305,7 +326,7 @@ CLI module commands use interactive human-readable output. Automation flags, JSO
 - CLI performs safe external mount item key pre-validation, while Host backend remains authoritative.
 - Install and update conflicts block apply; CLI must not ask the backend to apply a conflicted plan.
 - Initial exit code mapping is `0` for success, `1` for runtime/API failure, `2` for usage/input errors, and `130` for cancelled operations.
-- Module API requests include CLI version and expected Host API contract version headers.
+- Module control requests include CLI version and expected control contract version headers.
 - `Haas.DockerHost.Cli.HostApi` owns HTTP details; command classes own argument parsing and terminal UX.
 
 ## Error handling
@@ -321,18 +342,19 @@ When an API response includes `validationErrors[]`, `conflicts[]`, or `ModuleOpe
 
 If the Host URL cannot be resolved from the container, CLI should suggest `docker-host status` and `docker-host start`.
 
-## Version compatibility
+## Trusted Control Compatibility
 
 CLI module commands should send:
 
 - CLI version;
-- expected Host API contract version.
+- expected control contract version;
+- the per-start local control secret read from `<HOST_DATA_ROOT_HOST>/run/control.json`.
 
 The Host should return a clear incompatibility error when the running Host image does not support the requested CLI module command contract. This is especially important because CLI artifacts and Host images are released independently.
 
 ## Implementation notes
 
-The CLI implementation should add a Host API client layer separate from the Docker Engine adapter. The Docker adapter remains only for Host container lifecycle and Host URL discovery.
+The CLI implementation has a Host control client layer separate from the Docker Engine adapter. The Docker adapter remains only for Host container lifecycle and Host URL discovery.
 
 Suggested CLI namespaces:
 
@@ -341,7 +363,7 @@ Haas.DockerHost.Cli.HostApi
 Haas.DockerHost.Cli.Commands.Modules
 ```
 
-The Host API client should own:
+The Host control client should own:
 
 - URL construction;
 - JSON serialization and deserialization;

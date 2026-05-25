@@ -52,7 +52,7 @@ In this mode, local metadata test servers can usually be referenced as `http://l
 
 The repository uses npm workspace scripts from the root. `npm run host:dev`, `npm run host:build`, and `npm run host:lint` execute the Host app in `apps/host`.
 
-The installed CLI dev harness can now target this direct host-run process instead of the Host container. Use `host.mode: "local-process"` in `.docker-host/dev.json` when the CLI should start `npm run host:dev`, or pass `--host-url http://localhost:3000` when the Host is already running in another terminal or attached debugger.
+The installed CLI dev harness can target this direct host-run process instead of the Host container. Use `--host-url http://localhost:3000` when the Host is already running in another terminal or attached debugger.
 
 When the Host runs directly on the developer machine, module dev server upstreams should usually be `http://127.0.0.1:<port>`. The manifest shorthand `target.localPort` expands to that address in local-process and external modes, and to `http://host.docker.internal:<port>` when the Host runs in a Docker container.
 
@@ -74,7 +74,6 @@ The script sets:
 - `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the repository-local `.docker-host-dev-demo/` directory;
 - `HOST_DEV_AUTH=auto`, which enables development-only auto-login;
 - `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, which remembers both development accounts in the browser account menu;
-- `HOST_MODULE_DEV_MODE=enabled`, which enables local developer app targets;
 - `HOST_ENABLE_DEV_FIXTURES=true`, which enables the current-branch demo metadata fixture.
 
 When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only when the Host server observes the client socket as a loopback address such as `127.0.0.1` or `::1`.
@@ -216,14 +215,7 @@ For faster module UI/runtime iteration, Docker Host also supports local-only mod
 
 Use this as the default module integration loop when the change touches shell embedding, authenticated pages, Host identity tokens, scoped directory reads, assigned-user behavior, redirects, WebSockets, or SSE. Run the module app locally, link it as a developer target, and let Docker Host issue the normal gateway identity instead of injecting hand-written tokens into the module.
 
-Enable it through launch configuration:
-
-```bash
-docker-host config set HOST_MODULE_DEV_MODE enabled
-docker-host restart
-```
-
-Then link a target directly:
+Link a target directly:
 
 ```bash
 docker-host modules dev link \
@@ -236,20 +228,20 @@ docker-host modules dev link \
 For the reusable installed-CLI workflow, prefer the manifest-driven harness:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
-docker-host dev status --manifest modules/demo-module/.docker-host/dev.json
-docker-host dev reset --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev up --manifest modules/demo-module/metadata.dev.json
+docker-host dev status --manifest modules/demo-module/metadata.dev.json
+docker-host dev reset --manifest modules/demo-module/metadata.dev.json
 ```
 
 When iterating on Host source code, run the same harness against a local Host origin:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
+docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
 ```
 
-This skips Docker lifecycle operations and uses the running Host API for dev target registration, user seeding, assignments, and directory policy.
+This skips Docker lifecycle operations and uses the running Host's local control channel for dev target registration, user seeding, assignments, and directory policy.
 
-Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They are active only while `HOST_MODULE_DEV_MODE=enabled`; they do not modify installed module records, module metadata, or production gateway exposure records. The harness manages targets, development users, assignments, directory policy, local process startup, status checks, and reset behavior through Host-owned APIs.
+Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They do not modify installed module records, module metadata, or production gateway exposure records. The harness manages targets, development users, assignments, directory policy, local process startup, status checks, reset behavior, and development data cleanup through Host-owned control routes.
 
 See [Module developer mode](module-developer-mode.md) for API, CLI, and gateway details.
 

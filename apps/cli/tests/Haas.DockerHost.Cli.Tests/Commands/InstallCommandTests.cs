@@ -32,7 +32,7 @@ public sealed class InstallCommandTests : IDisposable
             environment,
             new LaunchSettingsStore(environment),
             new FakeDockerEngineClientFactory(transport),
-            new HostApiClientFactory());
+            new HostControlClientFactory());
 
         var exitCode = await new InstallCommand(context).ExecuteAsync([]);
 
@@ -55,7 +55,7 @@ public sealed class InstallCommandTests : IDisposable
             environment,
             new LaunchSettingsStore(environment),
             new FakeDockerEngineClientFactory(transport),
-            new HostApiClientFactory());
+            new HostControlClientFactory());
 
         var exitCode = await new InstallCommand(context).ExecuteAsync([]);
 

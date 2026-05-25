@@ -28,8 +28,8 @@ public static class CommandLine
         var environment = DockerHostEnvironment.Current();
         var settingsStore = new LaunchSettingsStore(environment);
         var dockerFactory = new DockerEngineClientFactory();
-        var hostApiFactory = new HostApiClientFactory();
-        var commandContext = new CommandContext(console, environment, settingsStore, dockerFactory, hostApiFactory);
+        var controlFactory = new HostControlClientFactory();
+        var commandContext = new CommandContext(console, environment, settingsStore, dockerFactory, controlFactory);
 
         try
         {

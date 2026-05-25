@@ -30,6 +30,7 @@ flowchart LR
 ## Files
 
 - `modules/demo-module/metadata.json` - Docker Host metadata used for install and update tests.
+- `modules/demo-module/metadata.dev.json` - repository-local development metadata used by `docker-host dev`.
 - `modules/demo-module/Dockerfile` - production image build for the demo module.
 - `modules/demo-module/src/app/page.tsx` - demo dashboard.
 - `modules/demo-module/src/app/people/page.tsx` - stable people page for shell app navigation.
@@ -65,7 +66,13 @@ Run the Host shell with this current checkout's demo module already linked as a 
 npm run host:dev:demo
 ```
 
-This starts Docker Host with auto-login and module developer mode enabled, signs in as the development administrator by default, remembers the normal development user for account switching, starts the demo module dev server, and seeds `.docker-host-dev-demo/dev/module-targets.json` so the app appears in the Apps sidebar immediately.
+This starts Docker Host with auto-login, signs in as the development administrator by default, remembers the normal development user for account switching, starts the demo module dev server, and seeds `.docker-host-dev-demo/dev/module-targets.json` so the app appears in the Apps sidebar immediately.
+
+Run the installed CLI harness against the dev metadata:
+
+```bash
+docker-host dev up --manifest modules/demo-module/metadata.dev.json
+```
 
 Run Docker Host from a built Host image and install the built demo module image as a real managed module:
 

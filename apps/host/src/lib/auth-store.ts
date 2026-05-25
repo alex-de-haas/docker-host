@@ -72,17 +72,6 @@ export interface AuthSetupTokenRecord {
   createdByUserId?: string;
 }
 
-export interface AuthCliTokenRecord {
-  id: string;
-  userId: string;
-  tokenHash: string;
-  label: string;
-  createdAt: string;
-  lastUsedAt?: string;
-  revokedAt?: string;
-  scope: 'host.admin.cli';
-}
-
 export interface AuthModuleServiceTokenRecord {
   id: string;
   moduleId: string;
@@ -178,7 +167,6 @@ export interface AuthState {
   sessions: AuthSessionRecord[];
   accountSets: AuthAccountSetRecord[];
   setupTokens: AuthSetupTokenRecord[];
-  cliTokens: AuthCliTokenRecord[];
   moduleServiceTokens: AuthModuleServiceTokenRecord[];
   moduleDirectoryPolicies: AuthModuleDirectoryPolicyRecord[];
   externalIdentities: AuthExternalIdentityRecord[];
@@ -286,7 +274,6 @@ export function createEmptyAuthState(): AuthState {
     sessions: [],
     accountSets: [],
     setupTokens: [],
-    cliTokens: [],
     moduleServiceTokens: [],
     moduleDirectoryPolicies: [],
     externalIdentities: [],
@@ -406,7 +393,6 @@ function normalizeAuthState(parsed: unknown): AuthState {
     setupTokens: Array.isArray(parsed.setupTokens)
       ? parsed.setupTokens.filter(isAuthSetupTokenRecord)
       : [],
-    cliTokens: Array.isArray(parsed.cliTokens) ? parsed.cliTokens.filter(isAuthCliTokenRecord) : [],
     moduleServiceTokens: Array.isArray(parsed.moduleServiceTokens)
       ? parsed.moduleServiceTokens.filter(isAuthModuleServiceTokenRecord)
       : [],
@@ -504,16 +490,6 @@ function isAuthSetupTokenRecord(value: unknown): value is AuthSetupTokenRecord {
         (typeof value.createdByUserId === 'string' || value.createdByUserId === undefined)
       )
     );
-}
-
-function isAuthCliTokenRecord(value: unknown): value is AuthCliTokenRecord {
-  return isObject(value) &&
-    typeof value.id === 'string' &&
-    typeof value.userId === 'string' &&
-    typeof value.tokenHash === 'string' &&
-    typeof value.label === 'string' &&
-    typeof value.createdAt === 'string' &&
-    value.scope === 'host.admin.cli';
 }
 
 function isAuthModuleServiceTokenRecord(value: unknown): value is AuthModuleServiceTokenRecord {

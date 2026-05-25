@@ -4,12 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   CheckCircle2,
-  Copy,
-  KeyRound,
   LoaderCircle,
   RefreshCw,
   ShieldCheck,
-  Terminal,
   Trash2,
   XCircle,
 } from 'lucide-react';
@@ -83,33 +80,11 @@ interface ApiErrorResponse {
   };
 }
 
-interface CliTokenSummary {
-  id: string;
-  userId: string;
-  label: string;
-  createdAt: string;
-  lastUsedAt?: string;
-  revokedAt?: string;
-  scope: 'host.admin.cli';
-}
-
-interface CliTokenCreateResponse extends ApiErrorResponse {
-  cliToken?: CliTokenSummary;
-  token?: string;
-}
-
-interface CreatedCliToken {
-  id: string;
-  label: string;
-  token: string;
-}
-
 type SecuritySettingsTab = 'sessions' | 'diagnostics' | 'audit';
 
 type ReauthDialogState =
   | { action: 'revoke-session'; sessionId: string }
-  | { action: 'purge-audit' }
-  | { action: 'create-cli-token' };
+  | { action: 'purge-audit' };
 
 export function SecuritySettingsClient() {
   const [activeTab, setActiveTab] = useState<SecuritySettingsTab>('sessions');
@@ -125,15 +100,10 @@ export function SecuritySettingsClient() {
   const [reauthError, setReauthError] = useState<string | null>(null);
   const [reauthPassword, setReauthPassword] = useState('');
   const [recoveryToken, setRecoveryToken] = useState('');
-  const [createdCliToken, setCreatedCliToken] = useState<CreatedCliToken | null>(null);
-  const [copiedCliTokenField, setCopiedCliTokenField] = useState<'token' | 'command' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const diagnosticCount = diagnostics.oidc.length + diagnostics.trustedProxy.length;
-  const cliImportCommand = createdCliToken
-    ? `docker-host auth token import '${createdCliToken.token}'`
-    : '';
   const tabs = useMemo(() => ([
     { id: 'sessions' as const, label: 'Sessions', count: sessions.length },
     { id: 'diagnostics' as const, label: 'Diagnostics', count: diagnosticCount },
@@ -207,68 +177,14 @@ export function SecuritySettingsClient() {
 
       if (action.action === 'revoke-session') {
         await revokeSession(action.sessionId, false);
-      } else if (action.action === 'purge-audit') {
-        await purgeAudit(false);
-      } else {
-        await createCliToken(false);
+        return;
       }
+
+      await purgeAudit(false);
     } catch (caught) {
       setReauthError(caught instanceof Error ? caught.message : 'Unable to reauthenticate.');
     } finally {
       setPendingAction(null);
-    }
-  }
-
-  async function createCliToken(allowReauthPrompt = true) {
-    setPendingAction('create-cli-token');
-    setError(null);
-    setMessage(null);
-    setCopiedCliTokenField(null);
-
-    try {
-      const response = await fetch('/api/auth/cli-tokens', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: 'Docker Host Web UI' }),
-      });
-      const data = await response.json() as CliTokenCreateResponse;
-
-      if (!response.ok) {
-        if (allowReauthPrompt && data.error?.code === 'reauth_required') {
-          setReauthDialog({ action: 'create-cli-token' });
-          setReauthError(null);
-          return;
-        }
-
-        setError(data.error?.nextStep || data.error?.message || 'Unable to generate CLI token.');
-        return;
-      }
-
-      if (!data.cliToken || !data.token) {
-        setError('Docker Host did not return a CLI token.');
-        return;
-      }
-
-      setCreatedCliToken({
-        id: data.cliToken.id,
-        label: data.cliToken.label,
-        token: data.token,
-      });
-      await loadSecurityState();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to generate CLI token.');
-    } finally {
-      setPendingAction(null);
-    }
-  }
-
-  async function copyCliTokenValue(field: 'token' | 'command', value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedCliTokenField(field);
-      window.setTimeout(() => setCopiedCliTokenField(null), 1600);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to copy to clipboard.');
     }
   }
 
@@ -361,16 +277,8 @@ export function SecuritySettingsClient() {
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle>CLI access</CardTitle>
-              <CardDescription>Generate a token for the current administrator and import it into docker-host.</CardDescription>
+              <CardDescription>The local docker-host CLI uses the trusted control channel published under the Host data root. Browser-generated CLI tokens are no longer used.</CardDescription>
             </div>
-            <Button
-              type="button"
-              onClick={() => void createCliToken()}
-              disabled={pendingAction === 'create-cli-token' || pendingAction === 'reauth'}
-            >
-              {pendingAction === 'create-cli-token' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-              Generate CLI token
-            </Button>
           </CardHeader>
         </Card>
 
@@ -608,81 +516,6 @@ export function SecuritySettingsClient() {
                 </Button>
               </DialogFooter>
             </form>
-          </DialogContent>
-        </Dialog>
-        <Dialog
-          open={Boolean(createdCliToken)}
-          onOpenChange={open => {
-            if (!open) {
-              setCreatedCliToken(null);
-              setCopiedCliTokenField(null);
-            }
-          }}
-        >
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>CLI token generated</DialogTitle>
-              <DialogDescription>
-                This token is visible only once. Import it before closing this dialog.
-              </DialogDescription>
-            </DialogHeader>
-            {createdCliToken && (
-              <div className="space-y-4">
-                <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
-                  <div className="font-medium">{createdCliToken.label}</div>
-                  <div className="font-mono text-xs text-muted-foreground">{createdCliToken.id}</div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="cli-token-value">Token</Label>
-                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
-                    <Input
-                      id="cli-token-value"
-                      readOnly
-                      value={createdCliToken.token}
-                      className="font-mono text-xs"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => void copyCliTokenValue('token', createdCliToken.token)}
-                    >
-                      {copiedCliTokenField === 'token' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                      {copiedCliTokenField === 'token' ? 'Copied' : 'Copy'}
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="cli-token-command">Import command</Label>
-                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
-                    <Input
-                      id="cli-token-command"
-                      readOnly
-                      value={cliImportCommand}
-                      className="font-mono text-xs"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => void copyCliTokenValue('command', cliImportCommand)}
-                    >
-                      {copiedCliTokenField === 'command' ? <CheckCircle2 className="h-4 w-4" /> : <Terminal className="h-4 w-4" />}
-                      {copiedCliTokenField === 'command' ? 'Copied' : 'Copy'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )}
-            <DialogFooter>
-              <Button
-                type="button"
-                onClick={() => {
-                  setCreatedCliToken(null);
-                  setCopiedCliTokenField(null);
-                }}
-              >
-                Done
-              </Button>
-            </DialogFooter>
           </DialogContent>
         </Dialog>
     </AdminShell>

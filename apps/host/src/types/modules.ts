@@ -148,6 +148,7 @@ export interface ModuleMetadata {
   description?: string;
   version: string;
   containers: ModuleContainerMetadata[];
+  services?: ModuleServiceMetadata[];
   endpoints?: ModuleEndpointMetadata[];
   connections?: ModuleConnectionMetadata[];
   dependencies?: ModuleDependencyMetadata[];
@@ -157,6 +158,42 @@ export interface ModuleMetadata {
     mountCollections?: ModuleStorageMountCollectionMetadata[];
   };
   ui?: ModuleUiMetadata;
+}
+
+export interface ModuleServiceMetadata {
+  key: string;
+  dependsOn?: string[];
+  source: ModuleServiceSourceMetadata;
+  runtime?: {
+    ports?: ModuleRuntimePortMetadata[];
+    healthcheck?: unknown;
+    resources?: Record<string, unknown>;
+  };
+  healthCheck?: ModuleHealthCheckMetadata;
+}
+
+export type ModuleServiceSourceMetadata =
+  | {
+      type: 'image';
+      image: {
+        repository: string;
+        tag: string;
+        pullPolicy?: ModuleImage['pullPolicy'];
+      };
+    }
+  | {
+      type: 'process';
+      command: string;
+      workingDirectory?: string;
+      environment?: Record<string, string>;
+    };
+
+export interface ModuleHealthCheckMetadata {
+  type: 'http';
+  path: string;
+  intervalSeconds?: number;
+  timeoutSeconds?: number;
+  successStatus?: number[];
 }
 
 export interface ModuleContainerMetadata {
@@ -176,7 +213,8 @@ export interface ModuleContainerMetadata {
 
 export interface ModuleEndpointMetadata {
   key: string;
-  container: string;
+  container?: string;
+  service?: string;
   port: string;
   public: boolean;
 }
@@ -253,6 +291,7 @@ export interface ModuleStorageMountCollectionTarget {
 export interface ModuleRuntimePortMetadata {
   key: string;
   containerPort: number;
+  localPort?: number;
   protocol: string;
 }
 
@@ -406,6 +445,12 @@ export interface NormalizedModuleStorageMountCollectionMetadata
 }
 
 export interface NormalizedModuleContainerMetadata extends ModuleContainerMetadata {
+  source: {
+    type: 'image' | 'process';
+    command?: string;
+    workingDirectory?: string;
+    environment?: Record<string, string>;
+  };
   image: {
     repository: string;
     tag: string;
@@ -423,9 +468,12 @@ export interface NormalizedModuleContainerMetadata extends ModuleContainerMetada
       memory?: string;
     };
   };
+  healthCheck?: ModuleHealthCheckMetadata;
 }
 
 export interface NormalizedModuleEndpointMetadata extends ModuleEndpointMetadata {
+  container: string;
+  service: string;
   public: boolean;
 }
 
@@ -438,12 +486,13 @@ export interface NormalizedModuleConnectionMetadata extends ModuleConnectionMeta
 }
 
 export interface NormalizedModuleMetadata {
-  schemaVersion: '0.2';
+  schemaVersion: '0.2' | '0.3';
   id: string;
   name: string;
   description?: string;
   version: string;
   containers: NormalizedModuleContainerMetadata[];
+  services: NormalizedModuleContainerMetadata[];
   endpoints: NormalizedModuleEndpointMetadata[];
   connections: NormalizedModuleConnectionMetadata[];
   dependencies: NormalizedModuleDependencyMetadata[];

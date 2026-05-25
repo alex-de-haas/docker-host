@@ -23,6 +23,7 @@ The module metadata lives at:
 
 ```text
 modules/demo-module/metadata.json
+modules/demo-module/metadata.dev.json
 ```
 
 For Docker Host testing, install the module from the raw metadata URL in this repository. The metadata declares one `app` container using the GitHub Container Registry image reference:
@@ -56,6 +57,18 @@ npm run demo-module:dev
 ```
 
 The development server listens on `http://localhost:3100`.
+
+To run it through Docker Host with real gateway identity, app shell embedding, development users, assignments, and scoped directory behavior, use the repository-local dev metadata:
+
+```bash
+docker-host dev up --manifest modules/demo-module/metadata.dev.json
+```
+
+When running from inside `modules/demo-module`, the default works because the CLI discovers `metadata.dev.json` in the current directory:
+
+```bash
+docker-host dev up
+```
 
 Useful endpoints:
 

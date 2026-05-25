@@ -56,7 +56,6 @@ start('host', ['run', 'host:dev'], {
   HOST_DEV_AUTH: 'auto',
   HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS: 'enabled',
   HOST_INTERNAL_ORIGIN: `http://localhost:${hostPort}`,
-  HOST_MODULE_DEV_MODE: 'enabled',
   HOST_ENABLE_DEV_FIXTURES: 'true',
   PORT: hostPort,
 });
@@ -103,7 +102,7 @@ function stopChildren(signal, exitCode = 0) {
 }
 
 async function readDemoMetadata() {
-  const metadataPath = path.join(repoRoot, 'modules/demo-module/metadata.json');
+  const metadataPath = path.join(repoRoot, 'modules/demo-module/metadata.dev.json');
   return JSON.parse(await fs.readFile(metadataPath, 'utf-8'));
 }
 
@@ -170,15 +169,17 @@ function buildDemoTarget(moduleMetadata) {
     throw new Error(`Demo module endpoint "${endpoint.key}" must be public.`);
   }
 
-  const container = moduleMetadata.containers?.find(candidate => candidate?.key === endpoint.container);
-  if (!container) {
-    throw new Error(`Demo module endpoint "${endpoint.key}" references unknown container "${endpoint.container}".`);
+  const serviceKey = endpoint.service || endpoint.container;
+  const service = moduleMetadata.services?.find(candidate => candidate?.key === serviceKey) ||
+    moduleMetadata.containers?.find(candidate => candidate?.key === serviceKey);
+  if (!service) {
+    throw new Error(`Demo module endpoint "${endpoint.key}" references unknown service "${serviceKey}".`);
   }
 
-  const port = container.runtime?.ports?.find(candidate => candidate.key === endpoint.port);
+  const port = service.runtime?.ports?.find(candidate => candidate.key === endpoint.port);
   if (!port) {
     throw new Error(
-      `Demo module endpoint "${endpoint.key}" references unknown port "${endpoint.port}" on container "${container.key}".`
+      `Demo module endpoint "${endpoint.key}" references unknown port "${endpoint.port}" on service "${service.key}".`
     );
   }
 

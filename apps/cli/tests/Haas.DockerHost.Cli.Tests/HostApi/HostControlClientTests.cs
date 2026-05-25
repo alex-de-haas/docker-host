@@ -5,10 +5,10 @@ using Haas.DockerHost.Cli.HostApi;
 
 namespace Haas.DockerHost.Cli.Tests.HostApi;
 
-public sealed class HostApiClientTests
+public sealed class HostControlClientTests
 {
     [Fact]
-    public async Task CreateInstallPlanAsync_SendsExpectedRequest()
+    public async Task CreateInstallPlanAsync_SendsExpectedControlRequest()
     {
         var handler = new CapturingHandler(
             HttpStatusCode.OK,
@@ -33,10 +33,12 @@ public sealed class HostApiClientTests
         Assert.True(response.IsSuccess);
         Assert.NotNull(response.Body?.Plan);
         Assert.Equal(HttpMethod.Post, handler.Request?.Method);
-        Assert.Equal("/api/modules/install/plan", handler.Request?.RequestUri?.AbsolutePath);
+        Assert.Equal("/control/v1/modules/install/plan", handler.Request?.RequestUri?.AbsolutePath);
         Assert.Contains("\"metadataUrl\":\"https://modules.example/reports.json\"", handler.Body);
         Assert.Equal(CommandLine.Version, handler.Request?.Headers.GetValues("X-Docker-Host-Cli-Version").Single());
-        Assert.Equal(HostApiClient.ContractVersion, handler.Request?.Headers.GetValues("X-Docker-Host-Api-Contract-Version").Single());
+        Assert.Equal(HostControlClient.ContractVersion, handler.Request?.Headers.GetValues("X-Docker-Host-Control-Contract-Version").Single());
+        Assert.Equal("test-secret", handler.Request?.Headers.GetValues("X-Docker-Host-Control-Secret").Single());
+        Assert.False(handler.Request?.Headers.Contains("Authorization"));
     }
 
     [Fact]
@@ -96,7 +98,7 @@ public sealed class HostApiClientTests
     }
 
     [Fact]
-    public async Task RevokeUserInvitationAsync_SendsExpectedRequest()
+    public async Task RevokeUserInvitationAsync_SendsExpectedControlRequest()
     {
         var handler = new CapturingHandler(
             HttpStatusCode.OK,
@@ -112,14 +114,14 @@ public sealed class HostApiClientTests
         Assert.True(response.IsSuccess);
         Assert.True(response.Body?.Revoked);
         Assert.Equal(HttpMethod.Delete, handler.Request?.Method);
-        Assert.Equal("/api/auth/invitations/invite%2Fone", handler.Request?.RequestUri?.AbsolutePath);
+        Assert.Equal("/control/v1/auth/invitations/invite%2Fone", handler.Request?.RequestUri?.AbsolutePath);
     }
 
-    private static HostApiClient CreateClient(HttpMessageHandler handler)
+    private static HostControlClient CreateClient(HttpMessageHandler handler)
         => new(new HttpClient(handler)
         {
-            BaseAddress = new Uri("http://localhost:3000/"),
-        });
+            BaseAddress = new Uri("http://localhost:3000/control/v1/"),
+        }, "test-secret");
 
     private sealed class CapturingHandler(HttpStatusCode statusCode, string responseBody) : HttpMessageHandler
     {

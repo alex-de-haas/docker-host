@@ -5,6 +5,55 @@ namespace Haas.DockerHost.Cli.Tests.Commands;
 public sealed class DevManifestTests
 {
     [Fact]
+    public void Load_MetadataDevJson_MapsProcessServiceToDevManifest()
+    {
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+        var manifestPath = Path.Combine(root, "metadata.dev.json");
+        File.WriteAllText(manifestPath, """
+            {
+              "schemaVersion": "0.3",
+              "id": "com.example.reports",
+              "name": "Reports",
+              "version": "1.0.0",
+              "services": [
+                {
+                  "key": "app",
+                  "source": {
+                    "type": "process",
+                    "command": "npm run dev",
+                    "workingDirectory": ".",
+                    "environment": { "EXAMPLE": "true" }
+                  },
+                  "runtime": {
+                    "ports": [
+                      { "key": "http", "containerPort": 3000, "localPort": 3100, "protocol": "http" }
+                    ]
+                  }
+                }
+              ],
+              "endpoints": [
+                { "key": "http", "service": "app", "port": "http", "public": true }
+              ],
+              "ui": {
+                "entrypoint": { "portKey": "http", "path": "/" },
+                "navigation": []
+              }
+            }
+            """);
+
+        var manifest = DevManifest.Load(root);
+
+        Assert.Equal(manifestPath, manifest.ResolveMetadataFile());
+        Assert.Equal("npm run dev", manifest.ModuleCommand);
+        Assert.Equal(root, manifest.ResolveWorkingDirectory());
+        Assert.Equal("com-example-reports.localhost", manifest.Target.Hostname);
+        Assert.Equal("http", manifest.Target.PortKey);
+        Assert.Equal("http://host.docker.internal:3100", manifest.GetTargetBaseUrl(DevHostMode.DockerContainer));
+        Assert.Equal("3100", manifest.Environment["PORT"]);
+        Assert.Equal("true", manifest.Environment["EXAMPLE"]);
+    }
+
+    [Fact]
     public void Load_MetadataFileManifest_ResolvesRelativePathsAndDefaults()
     {
         var root = Directory.CreateTempSubdirectory("docker-host-dev-manifest-").FullName;

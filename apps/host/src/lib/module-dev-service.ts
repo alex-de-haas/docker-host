@@ -12,17 +12,17 @@ import {
 } from './module-dev-store.ts';
 import { isAllowedGatewayHostname, normalizeGatewayHostname } from './gateway-service.ts';
 import type { InstallPlanValidationError } from '../types/modules.ts';
-import type { ModuleMetadata } from '../types/modules.ts';
+import type { NormalizedModuleMetadata } from '../types/modules.ts';
 import type {
   ModuleDevTargetInput,
   ModuleDevTargetRecord,
   ModuleDevTargetShellApp,
 } from '../types/module-dev.ts';
 
-export async function listModuleDevTargets(config = getHostRuntimeConfig()) {
+export async function listModuleDevTargets(config = getHostRuntimeConfig(), trustedControl = false) {
   const state = await readModuleDevTargetStateSnapshot(config);
   return {
-    developerModeEnabled: config.moduleDevModeEnabled === true,
+    developerModeEnabled: trustedControl || config.moduleDevModeEnabled === true,
     targets: state.targets,
   };
 }
@@ -30,9 +30,10 @@ export async function listModuleDevTargets(config = getHostRuntimeConfig()) {
 export async function upsertModuleDevTarget(
   input: ModuleDevTargetInput & { id?: string },
   actorUserId?: string,
-  config = getHostRuntimeConfig()
+  config = getHostRuntimeConfig(),
+  trustedControl = false
 ) {
-  assertModuleDevModeEnabled(config);
+  assertModuleDevModeEnabled(config, trustedControl);
   const normalized = await validateModuleDevTargetInput(input, config);
   const now = new Date().toISOString();
 
@@ -97,9 +98,10 @@ export async function upsertModuleDevTarget(
 export async function deleteModuleDevTarget(
   targetId: string,
   actorUserId?: string,
-  config = getHostRuntimeConfig()
+  config = getHostRuntimeConfig(),
+  trustedControl = false
 ) {
-  assertModuleDevModeEnabled(config);
+  assertModuleDevModeEnabled(config, trustedControl);
   const deleted = await updateModuleDevTargetState(state => {
     const target = state.targets.find(candidate => candidate.id === targetId) ?? null;
     return {
@@ -248,8 +250,8 @@ export class ModuleDevServiceError extends Error {
   }
 }
 
-function assertModuleDevModeEnabled(config: HostRuntimeConfig) {
-  if (config.moduleDevModeEnabled === true) {
+function assertModuleDevModeEnabled(config: HostRuntimeConfig, trustedControl = false) {
+  if (trustedControl || config.moduleDevModeEnabled === true) {
     return;
   }
 
@@ -348,7 +350,7 @@ function isExposurePolicy(value: unknown) {
 }
 
 function buildModuleDevTargetShellApp(
-  metadata: ModuleMetadata,
+  metadata: NormalizedModuleMetadata,
   portKey: string
 ): ModuleDevTargetShellApp | null {
   if (!metadata.ui || metadata.ui.entrypoint.portKey !== portKey) {

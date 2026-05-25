@@ -73,6 +73,7 @@ public sealed class DevCommandTests : IDisposable
     public async Task StatusAsync_WithHostUrl_DoesNotInspectDockerContainer()
     {
         using var hostApi = FakeHostApiServer.Start();
+        WriteControlDiscovery();
         var transport = new FakeDockerTransport();
         var context = CreateContext(transport);
 
@@ -80,13 +81,14 @@ public sealed class DevCommandTests : IDisposable
 
         Assert.Equal(1, exitCode);
         Assert.Empty(transport.Requests);
-        Assert.Contains(hostApi.Requests, request => request.Path == "/api/host/status");
+        Assert.Contains(hostApi.Requests, request => request.Path == "/control/v1/host/status");
     }
 
     [Fact]
     public async Task ResetAsync_WithHostUrl_DoesNotInspectDockerContainer()
     {
         using var hostApi = FakeHostApiServer.Start();
+        WriteControlDiscovery();
         var transport = new FakeDockerTransport();
         var context = CreateContext(transport);
 
@@ -94,7 +96,7 @@ public sealed class DevCommandTests : IDisposable
 
         Assert.Equal(0, exitCode);
         Assert.Empty(transport.Requests);
-        Assert.Contains(hostApi.Requests, request => request.Path == "/api/modules/dev/targets");
+        Assert.Contains(hostApi.Requests, request => request.Path == "/control/v1/modules/dev/targets");
     }
 
     [Theory]
@@ -139,7 +141,7 @@ public sealed class DevCommandTests : IDisposable
             environment,
             new LaunchSettingsStore(environment),
             new FakeDockerEngineClientFactory(transport),
-            new HostApiClientFactory());
+            new HostControlClientFactory());
     }
 
     private string WriteManifest()
@@ -159,6 +161,22 @@ public sealed class DevCommandTests : IDisposable
             }
             """);
         return manifestPath;
+    }
+
+    private void WriteControlDiscovery()
+    {
+        var runDirectory = Path.Combine(rootDirectory, "run");
+        Directory.CreateDirectory(runDirectory);
+        File.WriteAllText(
+            Path.Combine(runDirectory, "control.json"),
+            """
+            {
+              "schemaVersion": "0.1",
+              "controlContractVersion": "0.1",
+              "endpoint": { "url": "http://127.0.0.1/control/v1" },
+              "secret": "test-control-secret"
+            }
+            """);
     }
 
     private sealed class FakeDockerEngineClientFactory(IDockerEngineTransport transport) : DockerEngineClientFactory
@@ -262,12 +280,12 @@ public sealed class DevCommandTests : IDisposable
 
                 var body = path switch
                 {
-                    "/api/host/status" => "{}",
-                    "/api/modules/dev/targets" => """{"developerModeEnabled":true,"targets":[]}""",
-                    "/api/apps" => """{"apps":[]}""",
+                    "/control/v1/host/status" => "{}",
+                    "/control/v1/modules/dev/targets" => """{"developerModeEnabled":true,"targets":[]}""",
+                    "/control/v1/apps" => """{"apps":[]}""",
                     _ => """{"message":"not found"}""",
                 };
-                requestContext.Response.StatusCode = path is "/api/host/status" or "/api/modules/dev/targets" or "/api/apps"
+                requestContext.Response.StatusCode = path is "/control/v1/host/status" or "/control/v1/modules/dev/targets" or "/control/v1/apps"
                     ? (int)HttpStatusCode.OK
                     : (int)HttpStatusCode.NotFound;
                 requestContext.Response.ContentType = "application/json";

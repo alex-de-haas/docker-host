@@ -117,6 +117,62 @@ test('rejects empty optional shell UI category and icon values', () => {
   );
 });
 
+test('accepts schema 0.3 service metadata with process source and health check', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: '0.3',
+    id: 'com.example.dev-reports',
+    name: 'Example Dev Reports',
+    version: '1.0.0',
+    services: [
+      {
+        key: 'app',
+        source: {
+          type: 'process',
+          command: 'npm run dev',
+          workingDirectory: '.',
+          environment: {
+            NODE_ENV: 'development',
+          },
+        },
+        runtime: {
+          ports: [
+            {
+              key: 'http',
+              containerPort: 3000,
+              localPort: 3100,
+              protocol: 'http',
+            },
+          ],
+        },
+        healthCheck: {
+          type: 'http',
+          path: '/api/health',
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          successStatus: [200, 204, 200],
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'web',
+        service: 'app',
+        port: 'http',
+        public: true,
+      },
+    ],
+  }, '$');
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.metadata?.schemaVersion, '0.3');
+  assert.equal(result.metadata?.services[0]?.source.type, 'process');
+  assert.equal(result.metadata?.services[0]?.source.command, 'npm run dev');
+  assert.equal(result.metadata?.services[0]?.runtime.ports[0]?.localPort, 3100);
+  assert.deepEqual(result.metadata?.services[0]?.healthCheck?.successStatus, [200, 204]);
+  assert.equal(result.metadata?.endpoints[0]?.container, 'app');
+  assert.equal(result.metadata?.endpoints[0]?.service, 'app');
+});
+
 function createMetadata(input: {
   id?: string;
   name?: string;

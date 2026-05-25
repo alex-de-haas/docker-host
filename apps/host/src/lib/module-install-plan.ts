@@ -76,6 +76,24 @@ export async function createInstallPlanWithGraph(
     };
   }
 
+  const unsupportedServices = collectUnsupportedInstallServices(graphResult.graph);
+  if (unsupportedServices.length > 0) {
+    return {
+      graph: graphResult.graph,
+      result: {
+        status: 422,
+        body: {
+          error: {
+            code: 'install_plan_validation_failed',
+            message: 'Production module install currently supports image services only.',
+            validationErrors: unsupportedServices,
+            conflicts: [],
+          },
+        },
+      },
+    };
+  }
+
   const config = getHostRuntimeConfig();
   const store = await readModulesStoreSnapshot(config);
   const plan = buildPlan(graphResult.graph, store, config);
@@ -126,6 +144,24 @@ export async function createInstallPlanWithGraph(
       body: { plan },
     },
   };
+}
+
+function collectUnsupportedInstallServices(graph: MetadataGraph): InstallPlanValidationError[] {
+  const validationErrors: InstallPlanValidationError[] = [];
+  for (const node of graph.nodes.values()) {
+    node.metadata.containers.forEach((service, index) => {
+      if (service.source.type !== 'image') {
+        validationErrors.push({
+          code: 'service_source_unsupported_for_install',
+          message: 'Production install supports services with source.type "image" only.',
+          path: `$.services[${index}].source.type`,
+          node: node.id,
+        });
+      }
+    });
+  }
+
+  return validationErrors;
 }
 
 function buildPlan(
