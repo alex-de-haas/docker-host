@@ -9,7 +9,7 @@ import { writeModuleDevTargetState } from './module-dev-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostPrincipal } from '../types/auth.ts';
 import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
-import type { ModuleRuntimeState, ModuleRuntimeStatus } from '../types/modules.ts';
+import type { InstalledModuleRecord, ModuleRuntimeState, ModuleRuntimeStatus } from '../types/modules.ts';
 
 const admin: HostPrincipal = {
   id: 'user_admin',
@@ -172,6 +172,28 @@ test('hides unavailable apps from host users and returns safe diagnostics to adm
   assert.equal(adminApps[0].statusReason, 'moduleOperationUnavailable');
   assert.equal(adminApps[0].operationStatus, 'updating');
   assert.equal(runtimeStatusReads, 0);
+});
+
+test('includes failed operation context for admin app menu recovery actions', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    withUi: true,
+    operationStatus: 'failed',
+    lastOperation: 'update',
+  });
+
+  const adminApps = await listHostApps(admin, {
+    config,
+    runtimeStatusReader: runtimeStatus('running'),
+  });
+
+  assert.equal(adminApps.length, 1);
+  assert.equal(adminApps[0].status, 'unavailable');
+  assert.equal(adminApps[0].statusReason, 'moduleOperationUnavailable');
+  assert.equal(adminApps[0].operationStatus, 'failed');
+  assert.equal(adminApps[0].lastOperation, 'update');
 });
 
 test('hides stopped shell apps from host users and does not expose raw runtime internals', async () => {
@@ -475,6 +497,7 @@ async function writeInstalledModule(
     withUi: boolean;
     ui?: unknown;
     operationStatus?: 'installed' | 'installing' | 'updating' | 'failed' | 'removing';
+    lastOperation?: InstalledModuleRecord['lastOperation'];
     withPortBindings?: boolean;
   }
 ) {
@@ -485,6 +508,7 @@ async function writeInstalledModule(
       id: input.moduleId,
       metadataUrl: 'https://modules.example.test/module.json',
       operationStatus: input.operationStatus || 'installed',
+      lastOperation: input.lastOperation,
       containers: [
         {
           key: 'app',
@@ -572,6 +596,7 @@ async function writeModulesStore(
     id: string;
     metadataUrl: string;
     operationStatus?: 'installed' | 'installing' | 'updating' | 'failed' | 'removing';
+    lastOperation?: InstalledModuleRecord['lastOperation'];
     containers?: unknown[];
   }>
 ) {

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { toast } from 'sonner';
 import {
   BarChart3,
   Boxes,
@@ -16,11 +17,16 @@ import {
   CircleAlert,
   Gauge,
   Globe2,
+  Hammer,
   LayoutGrid,
+  LoaderCircle,
   LogOut,
+  OctagonX,
   PackagePlus,
   PanelsTopLeft,
+  Play,
   RefreshCw,
+  RotateCcw,
   ScrollText,
   ShieldCheck,
   Settings,
@@ -42,6 +48,7 @@ import { useHostApps } from '@/hooks/useHostApps';
 import { cn } from '@/lib/utils';
 import type { HostPrincipal } from '@/types/auth';
 import type { HostAppEntry } from '@/types/apps';
+import type { ModuleActionResult, ModuleOperationError } from '@/types/modules';
 
 interface AdminShellContextValue {
   user: HostPrincipal;
@@ -197,6 +204,15 @@ type NavigationSection = {
 };
 
 type AppsState = ReturnType<typeof useHostApps>;
+
+type AppMenuLifecycleAction = 'start' | 'restart' | 'retry' | 'update-retry';
+
+interface AppMenuActionConfig {
+  action: AppMenuLifecycleAction;
+  label: string;
+  title: string;
+  icon: LucideIcon;
+}
 
 type BrowserAccountSummary = HostPrincipal & {
   authProvider?: string;
@@ -614,6 +630,41 @@ function AppNavigationSection({
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
   const [collapsedActiveAppIds, setCollapsedActiveAppIds] = useState<Set<string>>(() => new Set());
+  const [pendingAppAction, setPendingAppAction] = useState<{
+    appId: string;
+    action: AppMenuLifecycleAction;
+  } | null>(null);
+
+  async function handleAppMenuAction(app: HostAppEntry, action: AppMenuLifecycleAction) {
+    if (app.source !== 'installed' || pendingAppAction) {
+      return;
+    }
+
+    setPendingAppAction({ appId: app.id, action });
+
+    try {
+      const response = await fetch(
+        `/api/modules/${encodeURIComponent(app.moduleId)}/${getAppMenuActionPath(action)}`,
+        { method: 'POST' }
+      );
+      const result = await readJsonResponse<ModuleActionResult>(response);
+      if (!response.ok || !result?.success) {
+        throw new Error(formatAppMenuActionError(
+          result?.error ?? null,
+          `Failed to ${formatAppMenuActionVerb(action)} module.`
+        ));
+      }
+
+      await appsState.refetch();
+      toast.success(formatAppMenuSuccessMessage(action, app.displayName));
+    } catch (error) {
+      toast.error(formatAppMenuFailureMessage(action, app.displayName), {
+        description: error instanceof Error ? error.message : 'Module action failed.',
+      });
+    } finally {
+      setPendingAppAction(null);
+    }
+  }
 
   if (appsState.loading) {
     return (
@@ -648,34 +699,35 @@ function AppNavigationSection({
     );
   }
 
-  return appsState.apps.map(app => {
-    const appPathname = app.entryPath.split('?')[0] || app.entryPath;
-    const isActive = pathname === appPathname;
-    const expanded = expandedAppIds.has(app.id) || (isActive && !collapsedActiveAppIds.has(app.id));
-    const Icon = getAppIcon(app.icon);
-
-    return (
-      <div key={app.id} className="space-y-1">
-        <div className="flex items-center gap-1">
-          <Link
-            href={app.entryPath}
-            className={cn(
-              'relative flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md text-sm transition-colors',
-              compact ? 'justify-center px-0' : 'px-2',
-              isActive
-                ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
-                : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-              app.status !== 'available' && 'text-muted-foreground opacity-70'
-            )}
-            aria-disabled={app.status !== 'available'}
-            title={app.status === 'available' ? app.displayName : formatAppStatusReason(app.statusReason)}
-            onClick={event => {
-              if (app.status !== 'available') {
-                event.preventDefault();
-                return;
-              }
-            }}
-          >
+  return (
+    <>
+      {appsState.apps.map(app => {
+        const appPathname = app.entryPath.split('?')[0] || app.entryPath;
+        const canNavigate = app.status === 'available';
+        const isActive = canNavigate && pathname === appPathname;
+        const expanded = canNavigate && (
+          expandedAppIds.has(app.id) || (isActive && !collapsedActiveAppIds.has(app.id))
+        );
+        const Icon = getAppNavigationIcon(app);
+        const action = getAppMenuAction(app);
+        const pending = pendingAppAction?.appId === app.id && pendingAppAction.action === action?.action;
+        const ActionIcon = action?.icon;
+        const itemClassName = cn(
+          'relative flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md text-sm transition-colors',
+          compact ? 'justify-center px-0' : 'px-2',
+          canNavigate
+            ? (
+                isActive
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                  : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+              )
+            : 'cursor-not-allowed text-muted-foreground opacity-70'
+        );
+        const itemTitle = canNavigate
+          ? app.displayName
+          : `${app.displayName}: ${formatAppStatusReason(app.statusReason)}`;
+        const itemContent = (
+          <>
             <Icon className="h-4 w-4 shrink-0" />
             {!compact && (
               <>
@@ -688,7 +740,7 @@ function AppNavigationSection({
                     Dev
                   </Badge>
                 )}
-                {app.status !== 'available' && (
+                {!canNavigate && (
                   <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
                 )}
               </>
@@ -696,70 +748,114 @@ function AppNavigationSection({
             {compact && (
               <AppCompactMarkers app={app} />
             )}
-          </Link>
-          {!compact && app.navigation.length > 0 && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="size-8 shrink-0"
-              aria-label={expanded ? `Collapse ${app.displayName} navigation` : `Expand ${app.displayName} navigation`}
-              aria-expanded={expanded}
-              onClick={() => {
-                setExpandedAppIds(current => {
-                  const next = new Set(current);
-                  if (expanded) {
-                    next.delete(app.id);
-                  } else {
-                    next.add(app.id);
-                  }
-                  return next;
-                });
-                setCollapsedActiveAppIds(current => {
-                  const next = new Set(current);
-                  if (expanded && isActive) {
-                    next.add(app.id);
-                  } else {
-                    next.delete(app.id);
-                  }
-                  return next;
-                });
-              }}
-            >
-              <ChevronRight
-                className={cn(
-                  'h-4 w-4 transition-transform',
-                  expanded && 'rotate-90'
-                )}
-              />
-            </Button>
-          )}
-        </div>
-        {!compact && expanded && app.navigation.length > 0 && (
-          <div className="ml-6 space-y-1 border-l border-sidebar-border pl-2">
-            {app.navigation.map(item => {
-              const childActive = isActive && selectedAppPath === item.path;
-              return (
+          </>
+        );
+
+        return (
+          <div key={app.id} className="space-y-1">
+            <div className="flex items-center gap-1">
+              {canNavigate ? (
                 <Link
-                  key={`${app.id}:${item.path}`}
-                  href={item.entryPath}
-                  className={cn(
-                    'flex min-h-8 items-center gap-2 rounded-md px-2 text-xs transition-colors',
-                    childActive
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
-                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-                  )}
+                  href={app.entryPath}
+                  className={itemClassName}
+                  title={itemTitle}
                 >
-                  <Circle className="h-2 w-2 shrink-0 fill-current" />
-                  <span className="min-w-0 truncate">{item.label}</span>
+                  {itemContent}
                 </Link>
-              );
-            })}
+              ) : (
+                <div
+                  className={itemClassName}
+                  aria-disabled="true"
+                  title={itemTitle}
+                >
+                  {itemContent}
+                </div>
+              )}
+              {action && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-8 shrink-0"
+                  aria-label={`${action.label} ${app.displayName}`}
+                  title={action.title}
+                  disabled={Boolean(pendingAppAction)}
+                  onClick={() => void handleAppMenuAction(app, action.action)}
+                >
+                  {pending ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : ActionIcon ? (
+                    <ActionIcon className="h-4 w-4" />
+                  ) : (
+                    null
+                  )}
+                </Button>
+              )}
+              {!compact && canNavigate && app.navigation.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-8 shrink-0"
+                  aria-label={expanded ? `Collapse ${app.displayName} navigation` : `Expand ${app.displayName} navigation`}
+                  aria-expanded={expanded}
+                  onClick={() => {
+                    setExpandedAppIds(current => {
+                      const next = new Set(current);
+                      if (expanded) {
+                        next.delete(app.id);
+                      } else {
+                        next.add(app.id);
+                      }
+                      return next;
+                    });
+                    setCollapsedActiveAppIds(current => {
+                      const next = new Set(current);
+                      if (expanded && isActive) {
+                        next.add(app.id);
+                      } else {
+                        next.delete(app.id);
+                      }
+                      return next;
+                    });
+                  }}
+                >
+                  <ChevronRight
+                    className={cn(
+                      'h-4 w-4 transition-transform',
+                      expanded && 'rotate-90'
+                    )}
+                  />
+                </Button>
+              )}
+            </div>
+            {!compact && canNavigate && expanded && app.navigation.length > 0 && (
+              <div className="ml-6 space-y-1 border-l border-sidebar-border pl-2">
+                {app.navigation.map(item => {
+                  const childActive = isActive && selectedAppPath === item.path;
+                  return (
+                    <Link
+                      key={`${app.id}:${item.path}`}
+                      href={item.entryPath}
+                      className={cn(
+                        'flex min-h-8 items-center gap-2 rounded-md px-2 text-xs transition-colors',
+                        childActive
+                          ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                          : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                      )}
+                    >
+                      <Circle className="h-2 w-2 shrink-0 fill-current" />
+                      <span className="min-w-0 truncate">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    );
-  });
+        );
+      })}
+    </>
+  );
 }
 
 function NavigationPlaceholder({
@@ -843,6 +939,126 @@ function AppCompactMarkers({ app }: { app: HostAppEntry }) {
       )}
     </span>
   );
+}
+
+function getAppMenuAction(app: HostAppEntry): AppMenuActionConfig | null {
+  if (app.source !== 'installed' || app.status === 'available') {
+    return null;
+  }
+
+  if (app.operationStatus === 'failed') {
+    if (app.lastOperation === 'update') {
+      return {
+        action: 'update-retry',
+        label: 'Retry update',
+        title: 'Retry failed module update',
+        icon: RefreshCw,
+      };
+    }
+
+    return {
+      action: 'retry',
+      label: 'Retry install',
+      title: 'Retry failed module install',
+      icon: RefreshCw,
+    };
+  }
+
+  if (app.operationStatus && app.operationStatus !== 'installed') {
+    return null;
+  }
+
+  if (app.statusReason !== 'runtimeUnavailable') {
+    return null;
+  }
+
+  switch (app.runtimeState) {
+    case 'created':
+    case 'exited':
+      return {
+        action: 'start',
+        label: 'Start',
+        title: 'Start stopped module',
+        icon: Play,
+      };
+    case 'dead':
+    case 'paused':
+    case 'restarting':
+    case 'unknown':
+      return {
+        action: 'restart',
+        label: 'Restart',
+        title: 'Restart module runtime',
+        icon: RotateCcw,
+      };
+    default:
+      return null;
+  }
+}
+
+function getAppNavigationIcon(app: HostAppEntry): LucideIcon {
+  if (app.source === 'developer') {
+    return Hammer;
+  }
+
+  if (app.operationStatus === 'failed') {
+    return OctagonX;
+  }
+
+  return getAppIcon(app.icon);
+}
+
+function getAppMenuActionPath(action: AppMenuLifecycleAction) {
+  return action === 'update-retry' ? 'update/retry' : action;
+}
+
+function formatAppMenuActionVerb(action: AppMenuLifecycleAction) {
+  switch (action) {
+    case 'update-retry':
+      return 'retry update for';
+    case 'retry':
+      return 'retry install for';
+    default:
+      return action;
+  }
+}
+
+function formatAppMenuSuccessMessage(action: AppMenuLifecycleAction, displayName: string) {
+  switch (action) {
+    case 'start':
+      return `${displayName} started.`;
+    case 'restart':
+      return `${displayName} restarted.`;
+    case 'retry':
+      return `${displayName} install retry started.`;
+    case 'update-retry':
+      return `${displayName} update retry started.`;
+  }
+}
+
+function formatAppMenuFailureMessage(action: AppMenuLifecycleAction, displayName: string) {
+  switch (action) {
+    case 'start':
+      return `Could not start ${displayName}.`;
+    case 'restart':
+      return `Could not restart ${displayName}.`;
+    case 'retry':
+      return `Could not retry ${displayName} install.`;
+    case 'update-retry':
+      return `Could not retry ${displayName} update.`;
+  }
+}
+
+function formatAppMenuActionError(error: ModuleOperationError | null, fallback: string) {
+  if (!error) {
+    return fallback;
+  }
+
+  return [
+    error.message,
+    error.dockerMessage,
+    error.nextStep,
+  ].filter(Boolean).join(' ') || fallback;
 }
 
 function getAccountInitials(user: HostPrincipal) {

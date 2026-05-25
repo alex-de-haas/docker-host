@@ -1,4 +1,4 @@
-import type { ModuleOperationStatus, ModuleRuntimeState } from './modules';
+import type { InstalledModuleRecord, ModuleOperationStatus, ModuleRuntimeState } from './modules';
 
 export type HostAppAccessMode = 'allAuthenticated' | 'assignedUsersOnly';
 
@@ -35,6 +35,7 @@ export interface HostAppEntry {
   statusReason: HostAppStatusReason;
   accessMode: HostAppAccessMode;
   operationStatus?: ModuleOperationStatus;
+  lastOperation?: InstalledModuleRecord['lastOperation'];
   runtimeState?: ModuleRuntimeState;
   entryPath: string;
   embeddedUrl: string;
