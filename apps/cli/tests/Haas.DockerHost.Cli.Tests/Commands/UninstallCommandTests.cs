@@ -126,6 +126,55 @@ public sealed class UninstallCommandTests : IDisposable
             });
     }
 
+    [Fact]
+    public void LoadFromDataRoot_ModulesJsonContainsMultiContainerModule_ReturnsAllContainers()
+    {
+        Directory.CreateDirectory(rootDirectory);
+        File.WriteAllText(
+            Path.Combine(rootDirectory, "modules.json"),
+            """
+            {
+              "modules": [
+                {
+                  "id": "com.acme.reports",
+                  "containers": [
+                    {
+                      "key": "web",
+                      "containerName": "mod-com-acme-reports-web",
+                      "image": {
+                        "reference": "ghcr.io/acme/reports-web:1.0.0"
+                      }
+                    },
+                    {
+                      "key": "worker",
+                      "containerName": "mod-com-acme-reports-worker",
+                      "image": {
+                        "repository": "ghcr.io/acme/reports-worker",
+                        "tag": "1.0.0"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var result = ModuleCleanupRecord.LoadFromDataRoot(rootDirectory);
+
+        Assert.Null(result.Error);
+        var module = Assert.Single(result.Modules);
+        Assert.Equal("com.acme.reports", module.Id);
+        Assert.Equal(
+            ["mod-com-acme-reports-web", "mod-com-acme-reports-worker"],
+            module.Containers.Select(container => container.ContainerName));
+        Assert.Equal(
+            ["ghcr.io/acme/reports-web:1.0.0", "ghcr.io/acme/reports-worker:1.0.0"],
+            module.ImageReferences);
+        Assert.Equal(
+            ["mod-com-acme-reports-worker", "mod-com-acme-reports-web"],
+            module.GetContainersInStopOrder().Select(container => container.ContainerName));
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);

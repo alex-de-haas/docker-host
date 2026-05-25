@@ -91,15 +91,36 @@ internal sealed class HostLifecycle(CommandContext context)
     public async Task StopAsync(LaunchSettings settings, CancellationToken cancellationToken = default)
     {
         settings.Validate(context.Environment);
+        var dataRoot = settings.ResolveHostDataRoot(context.Environment);
+        var moduleLoadResult = ModuleCleanupRecord.LoadFromDataRoot(dataRoot);
+
+        if (moduleLoadResult.Error is not null)
+        {
+            context.Console.MarkupLine($"[yellow]Could not read installed module registry:[/] {Markup.Escape(moduleLoadResult.Error)}");
+            context.Console.MarkupLine("[yellow]Module containers may need manual stop after the Host container stops.[/]");
+        }
+
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-        var container = await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
-        if (container is null)
+
+        foreach (var module in moduleLoadResult.Modules)
+        {
+            foreach (var moduleContainer in module.GetContainersInStopOrder())
+            {
+                await CommandStatus.RunAsync(
+                    context,
+                    $"Stopping module container [grey]{Markup.Escape(moduleContainer.ContainerName)}[/]...",
+                    async () => await docker.StopContainerAsync(moduleContainer.ContainerName, cancellationToken));
+            }
+        }
+
+        var hostContainer = await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
+        if (hostContainer is null)
         {
             context.Console.MarkupLine("[yellow]Host container does not exist.[/]");
             return;
         }
 
-        if (container.State?.Running != true)
+        if (hostContainer.State?.Running != true)
         {
             context.Console.MarkupLine("[yellow]Host container is already stopped.[/]");
             return;
