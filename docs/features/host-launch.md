@@ -14,7 +14,7 @@ Production-like Host launch is container-first:
 - the CLI can perform module operations, but only through the same Host backend API as the Web UI;
 - module installation and update business logic lives in the Host backend and is not duplicated in the CLI.
 
-The standalone `docker-host` CLI is the reliable recovery path for Host container lifecycle operations: install, start, stop, restart, update, status, logs, open, and configuration. The module-management runtime works through the Host backend after the Host container is running.
+The standalone `docker-host` CLI is the reliable recovery path for Host container lifecycle operations: install, start, stop, restart, update, status, logs, open, and configuration. The module-management runtime works through the Host backend after the Host container is running, except for recovery flows that must work when the Host API is unavailable.
 
 ## Components
 
@@ -85,13 +85,13 @@ docker-host config
 docker-host auth
 ```
 
-Lifecycle commands work directly through the Docker daemon because the Host API may not be running yet or may be broken.
+Lifecycle commands work directly through the Docker daemon because the Host API may not be running yet or may be broken. `docker-host stop` also reads the Host data-root module registry and stops known module containers before stopping the Host container.
 
 Auth bootstrap and recovery commands also remain local-first. `docker-host auth setup-token` writes a one-time setup token hash into the Host data root so the first administrator can be created through `/setup` without relying on a pre-existing Host API session.
 
 `docker-host uninstall` preserves the CLI executable itself but removes Host-managed runtime and local state: the Host container, known module containers, Host/module images when Docker allows it, the shared module network when it is no longer in use, launch configuration, and Host state under the data root. After that, `docker-host install` must recreate launch configuration and the baseline directory structure.
 
-Lifecycle commands talk to Docker daemon directly through the Docker Engine API. The CLI must not invoke an installed Docker CLI executable for Host lifecycle operations.
+Lifecycle commands talk to Docker daemon directly through the Docker Engine API. The CLI must not invoke an installed Docker CLI executable for Host lifecycle operations. Direct module-container stop/remove behavior is limited to top-level recovery commands such as `stop` and `uninstall`; normal module lifecycle actions still go through the Host backend API.
 
 Docker Engine communication must be isolated in an adapter layer so CLI commands do not know specific HTTP endpoint paths, request bodies, or transport details.
 

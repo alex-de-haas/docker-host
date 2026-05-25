@@ -197,7 +197,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
 
     public async Task StopContainerAsync(string containerName, CancellationToken cancellationToken = default)
     {
-        var response = await transport.SendAsync("stop Host container", HttpMethod.Post, $"/containers/{EncodePathSegment(containerName)}/stop?t=10", cancellationToken: cancellationToken);
+        var response = await transport.SendAsync("stop Docker container", HttpMethod.Post, $"/containers/{EncodePathSegment(containerName)}/stop?t=10", cancellationToken: cancellationToken);
         if (response.StatusCode is HttpStatusCode.NotModified or HttpStatusCode.NotFound)
         {
             return;

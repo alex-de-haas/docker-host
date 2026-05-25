@@ -1,6 +1,5 @@
 namespace Haas.DockerHost.Cli.Commands;
 
-using System.Text.Json;
 using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.Docker;
 using Spectre.Console;
@@ -32,10 +31,10 @@ internal sealed class UninstallCommand(CommandContext context)
 
         foreach (var module in moduleLoadResult.Modules)
         {
-            await CommandStatus.RunAsync(
-                context,
-                $"Removing module container [grey]{Markup.Escape(module.ContainerName)}[/]...",
-                async () => await docker.RemoveContainerAsync(module.ContainerName));
+            foreach (var container in module.Containers)
+            {
+                await TryRemoveModuleContainerAsync(docker, container.ContainerName);
+            }
         }
 
         await CommandStatus.RunAsync(
@@ -86,6 +85,25 @@ internal sealed class UninstallCommand(CommandContext context)
         }
     }
 
+    private async Task TryRemoveModuleContainerAsync(DockerEngineClient docker, string containerName)
+    {
+        try
+        {
+            await CommandStatus.RunAsync(
+                context,
+                $"Removing module container [grey]{Markup.Escape(containerName)}[/]...",
+                async () => await docker.RemoveContainerAsync(containerName));
+        }
+        catch (DockerEngineException ex)
+        {
+            context.Console.MarkupLine($"[yellow]Could not remove module container {Markup.Escape(containerName)}:[/] {Markup.Escape(ex.Message)}");
+            if (!string.IsNullOrWhiteSpace(ex.DockerMessage))
+            {
+                context.Console.MarkupLine($"[grey]Docker message:[/] {Markup.Escape(ex.DockerMessage)}");
+            }
+        }
+    }
+
     private async Task TryRemoveImageAsync(DockerEngineClient docker, string image)
     {
         try
@@ -116,123 +134,13 @@ internal sealed class UninstallCommand(CommandContext context)
 
         foreach (var module in modules)
         {
-            if (!string.IsNullOrWhiteSpace(module.ImageReference))
+            foreach (var image in module.ImageReferences)
             {
-                images.Add(module.ImageReference);
+                images.Add(image);
             }
         }
 
         return images;
-    }
-}
-
-internal sealed record ModuleCleanupLoadResult(IReadOnlyList<ModuleCleanupRecord> Modules, string? Error);
-
-internal sealed record ModuleCleanupRecord(string Id, string ContainerName, string? ImageReference)
-{
-    public static ModuleCleanupLoadResult LoadFromDataRoot(string dataRoot)
-    {
-        var modulesStorePath = Path.Combine(dataRoot, "modules.json");
-        if (!File.Exists(modulesStorePath))
-        {
-            return new ModuleCleanupLoadResult([], null);
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(modulesStorePath));
-            if (!document.RootElement.TryGetProperty("modules", out var modulesElement) ||
-                modulesElement.ValueKind != JsonValueKind.Array)
-            {
-                return new ModuleCleanupLoadResult([], null);
-            }
-
-            var modules = new List<ModuleCleanupRecord>();
-            foreach (var moduleElement in modulesElement.EnumerateArray())
-            {
-                var record = TryRead(moduleElement);
-                if (record is not null)
-                {
-                    modules.Add(record);
-                }
-            }
-
-            return new ModuleCleanupLoadResult(modules, null);
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
-        {
-            return new ModuleCleanupLoadResult([], ex.Message);
-        }
-    }
-
-    private static ModuleCleanupRecord? TryRead(JsonElement element)
-    {
-        if (element.ValueKind != JsonValueKind.Object ||
-            !TryGetString(element, "id", out var id))
-        {
-            return null;
-        }
-
-        var containerName = TryGetString(element, "containerName", out var storedContainerName)
-            ? storedContainerName
-            : BuildModuleDockerName(id);
-
-        return new ModuleCleanupRecord(id, containerName, TryReadImageReference(element));
-    }
-
-    private static string? TryReadImageReference(JsonElement element)
-    {
-        if (!element.TryGetProperty("image", out var imageElement) ||
-            imageElement.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        if (TryGetString(imageElement, "reference", out var reference))
-        {
-            return reference;
-        }
-
-        if (!TryGetString(imageElement, "repository", out var repository))
-        {
-            return null;
-        }
-
-        return TryGetString(imageElement, "tag", out var tag)
-            ? $"{repository}:{tag}"
-            : null;
-    }
-
-    private static bool TryGetString(JsonElement element, string propertyName, out string value)
-    {
-        value = string.Empty;
-        if (!element.TryGetProperty(propertyName, out var property) ||
-            property.ValueKind != JsonValueKind.String)
-        {
-            return false;
-        }
-
-        var candidate = property.GetString();
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            return false;
-        }
-
-        value = candidate;
-        return true;
-    }
-
-    private static string BuildModuleDockerName(string moduleId)
-    {
-        var normalized = string.Join(
-            '-',
-            moduleId
-                .ToLowerInvariant()
-                .Split(
-                    moduleId.Where(character => !char.IsAsciiLetterOrDigit(character)).Distinct().ToArray(),
-                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-
-        return $"mod-{(string.IsNullOrWhiteSpace(normalized) ? "module" : normalized)}";
     }
 }
 
