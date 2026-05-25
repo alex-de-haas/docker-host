@@ -1,6 +1,12 @@
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using Haas.DockerHost.Cli;
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
+using Haas.DockerHost.Cli.Docker;
+using Haas.DockerHost.Cli.HostApi;
+using Spectre.Console;
 
 namespace Haas.DockerHost.Cli.Tests.Commands;
 
@@ -175,6 +181,54 @@ public sealed class UninstallCommandTests : IDisposable
             module.GetContainersInStopOrder().Select(container => container.ContainerName));
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ModuleContainerRemoveFails_ContinuesRemovingHostContainer()
+    {
+        Directory.CreateDirectory(rootDirectory);
+        File.WriteAllText(
+            Path.Combine(rootDirectory, "modules.json"),
+            """
+            {
+              "modules": [
+                {
+                  "id": "com.acme.reports",
+                  "containers": [
+                    {
+                      "key": "web",
+                      "containerName": "mod-com-acme-reports-web"
+                    },
+                    {
+                      "key": "worker",
+                      "containerName": "mod-com-acme-reports-worker"
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+        var transport = new FakeDockerTransport(["/containers/mod-com-acme-reports-web?force=true&v=false"]);
+        var context = CreateContext(transport);
+
+        var exitCode = await new UninstallCommand(context).ExecuteAsync([]);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains(
+            transport.Requests.Select(request => request.PathAndQuery),
+            path => path == "/containers/docker-host?force=true&v=false");
+        Assert.Equal(
+            [
+                "/version",
+                "/containers/mod-com-acme-reports-web?force=true&v=false",
+                "/containers/mod-com-acme-reports-worker?force=true&v=false",
+                "/containers/docker-host?force=true&v=false",
+            ],
+            transport.Requests
+                .Where(request =>
+                    request.PathAndQuery == "/version" ||
+                    request.PathAndQuery.StartsWith("/containers/", StringComparison.Ordinal))
+                .Select(request => request.PathAndQuery));
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);
@@ -182,6 +236,86 @@ public sealed class UninstallCommandTests : IDisposable
         if (Directory.Exists(rootDirectory))
         {
             Directory.Delete(rootDirectory, recursive: true);
+        }
+    }
+
+    private static CommandContext CreateContext(FakeDockerTransport transport)
+    {
+        var environment = DockerHostEnvironment.Current();
+        return new CommandContext(
+            CreateConsole(),
+            environment,
+            new LaunchSettingsStore(environment),
+            new FakeDockerEngineClientFactory(transport),
+            new HostApiClientFactory());
+    }
+
+    private static IAnsiConsole CreateConsole()
+    {
+        var output = new StringWriter();
+        return AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Out = new AnsiConsoleOutput(output),
+            Interactive = InteractionSupport.No,
+        });
+    }
+
+    private sealed class FakeDockerEngineClientFactory(IDockerEngineTransport transport) : DockerEngineClientFactory
+    {
+        public override DockerEngineClient Create(string endpoint) => new(transport);
+    }
+
+    private sealed class FakeDockerTransport(IReadOnlyCollection<string>? failedRemovePaths = null) : IDockerEngineTransport
+    {
+        public List<(HttpMethod Method, string PathAndQuery)> Requests { get; } = [];
+
+        public Task<DockerEngineResponse> SendAsync(
+            string operation,
+            HttpMethod method,
+            string pathAndQuery,
+            object? body = null,
+            CancellationToken cancellationToken = default)
+        {
+            Requests.Add((method, pathAndQuery));
+
+            if (method == HttpMethod.Get && pathAndQuery == "/version")
+            {
+                return Task.FromResult(Response(
+                    operation,
+                    HttpStatusCode.OK,
+                    """
+                    {
+                      "OSType": "linux"
+                    }
+                    """));
+            }
+
+            if (method == HttpMethod.Delete)
+            {
+                if (failedRemovePaths?.Contains(pathAndQuery) == true)
+                {
+                    return Task.FromResult(Response(operation, HttpStatusCode.InternalServerError, """{"message":"remove failed"}"""));
+                }
+
+                return Task.FromResult(Response(operation, HttpStatusCode.NoContent, ""));
+            }
+
+            return Task.FromResult(Response(operation, HttpStatusCode.NotFound, """{"message":"not found"}"""));
+        }
+
+        public void Dispose()
+        {
+        }
+
+        private static DockerEngineResponse Response(string operation, HttpStatusCode statusCode, string body)
+        {
+            var bytes = Encoding.UTF8.GetBytes(body);
+            return new DockerEngineResponse(
+                operation,
+                statusCode,
+                body,
+                bytes,
+                new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
         }
     }
 }

@@ -106,10 +106,7 @@ internal sealed class HostLifecycle(CommandContext context)
         {
             foreach (var moduleContainer in module.GetContainersInStopOrder())
             {
-                await CommandStatus.RunAsync(
-                    context,
-                    $"Stopping module container [grey]{Markup.Escape(moduleContainer.ContainerName)}[/]...",
-                    async () => await docker.StopContainerAsync(moduleContainer.ContainerName, cancellationToken));
+                await TryStopModuleContainerAsync(docker, moduleContainer.ContainerName, cancellationToken);
             }
         }
 
@@ -194,6 +191,28 @@ internal sealed class HostLifecycle(CommandContext context)
 
     private static bool IsSingleComponentImageReference(string image)
         => !image.Contains('/', StringComparison.Ordinal);
+
+    private async Task TryStopModuleContainerAsync(
+        DockerEngineClient docker,
+        string containerName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await CommandStatus.RunAsync(
+                context,
+                $"Stopping module container [grey]{Markup.Escape(containerName)}[/]...",
+                async () => await docker.StopContainerAsync(containerName, cancellationToken));
+        }
+        catch (DockerEngineException ex)
+        {
+            context.Console.MarkupLine($"[yellow]Could not stop module container {Markup.Escape(containerName)}:[/] {Markup.Escape(ex.Message)}");
+            if (!string.IsNullOrWhiteSpace(ex.DockerMessage))
+            {
+                context.Console.MarkupLine($"[grey]Docker message:[/] {Markup.Escape(ex.DockerMessage)}");
+            }
+        }
+    }
 
     private static string BuildUrl(int port) => $"http://localhost:{port}";
 }

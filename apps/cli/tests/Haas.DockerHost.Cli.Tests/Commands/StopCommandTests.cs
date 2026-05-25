@@ -63,6 +63,47 @@ public sealed class StopCommandTests : IDisposable
             transport.Requests.Select(request => request.PathAndQuery));
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ModuleContainerStopFails_ContinuesStoppingHostContainer()
+    {
+        Directory.CreateDirectory(rootDirectory);
+        File.WriteAllText(
+            Path.Combine(rootDirectory, "modules.json"),
+            """
+            {
+              "modules": [
+                {
+                  "id": "com.acme.reports",
+                  "containers": [
+                    {
+                      "key": "web",
+                      "containerName": "mod-com-acme-reports-web"
+                    },
+                    {
+                      "key": "worker",
+                      "containerName": "mod-com-acme-reports-worker"
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+        var transport = new FakeDockerTransport(["/containers/mod-com-acme-reports-worker/stop?t=10"]);
+        var context = CreateContext(transport);
+
+        var exitCode = await new StopCommand(context).ExecuteAsync([]);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(
+            [
+                "/containers/mod-com-acme-reports-worker/stop?t=10",
+                "/containers/mod-com-acme-reports-web/stop?t=10",
+                "/containers/docker-host/json",
+                "/containers/docker-host/stop?t=10",
+            ],
+            transport.Requests.Select(request => request.PathAndQuery));
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);
@@ -99,7 +140,7 @@ public sealed class StopCommandTests : IDisposable
         public override DockerEngineClient Create(string endpoint) => new(transport);
     }
 
-    private sealed class FakeDockerTransport : IDockerEngineTransport
+    private sealed class FakeDockerTransport(IReadOnlyCollection<string>? failedStopPaths = null) : IDockerEngineTransport
     {
         public List<(HttpMethod Method, string PathAndQuery)> Requests { get; } = [];
 
@@ -138,6 +179,11 @@ public sealed class StopCommandTests : IDisposable
 
             if (method == HttpMethod.Post && pathAndQuery.EndsWith("/stop?t=10", StringComparison.Ordinal))
             {
+                if (failedStopPaths?.Contains(pathAndQuery) == true)
+                {
+                    return Task.FromResult(Response(operation, HttpStatusCode.InternalServerError, """{"message":"stop failed"}"""));
+                }
+
                 return Task.FromResult(Response(operation, HttpStatusCode.NoContent, ""));
             }
 
