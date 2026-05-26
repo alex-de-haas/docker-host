@@ -87,10 +87,12 @@ user, and the repository demo app:
 npm run host:dev:demo
 ```
 
-This uses `.docker-host-dev-demo/` in the repository as the Host data root,
-starts the demo module dev server, enables development-only auto-login, signs in
-as `host.admin` by default, and remembers a normal `host.user` account in the
-same browser account menu. Production setup-token behavior is unchanged.
+This wraps the local `docker-host` CLI project and runs `docker-host dev up`
+against `modules/demo-module/.docker-host/dev.json`. The script uses
+`.docker-host-dev-demo/` as an isolated `DOCKER_HOST_HOME`, configures the Host
+dev repository path to the current checkout, starts Docker Host on
+`http://localhost:3000`, and starts the demo module on
+`http://localhost:3100`.
 
 The server connects to Docker using:
 
@@ -98,7 +100,7 @@ The server connects to Docker using:
 2. `DOCKER_HOST`, if set
 3. `/var/run/docker.sock`, by default
 
-For the installed-CLI module development harness, import a CLI admin token first, then run:
+For the installed-CLI module development harness, run:
 
 ```bash
 docker-host dev up --manifest modules/demo-module/.docker-host/dev.json

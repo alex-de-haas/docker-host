@@ -355,7 +355,7 @@ External storage mounts can live outside `modules/<module-id>/`. In that case, o
 
 This document is the source of truth for the module metadata schema: the `Metadata example`, `Schema outline`, field notes, and validation rules below together describe the supported contract.
 
-Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes only `schemaVersion: "0.2"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from install/update planning. A separate shared contracts package or generated schema artifact is not required for the metadata MVP; this document remains the source of truth for the supported metadata contract.
+Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes `schemaVersion: "0.2"` and `schemaVersion: "0.3"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from install/update planning and local developer target registration. A separate shared contracts package or generated schema artifact is not required for the metadata MVP; this document remains the source of truth for the supported metadata contract.
 
 ## Schema outline
 
@@ -363,12 +363,13 @@ Top-level metadata object:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `schemaVersion` | string | yes | Version of the metadata file schema supported by Host. Current supported value: `0.2`. |
+| `schemaVersion` | string | yes | Version of the metadata file schema supported by Host. Current supported values: `0.2` and `0.3`. |
 | `id` | string | yes | Stable unique module id, recommended reverse-DNS format. |
 | `name` | string | yes | Human-readable module name. |
 | `description` | string | no | Short module description for UI display. |
 | `version` | string | yes | Module contract version. Host uses the major part for dependency compatibility in the first implementation. |
-| `containers` | array | yes | Runtime services owned by this module. At least one container is required. |
+| `containers` | array | yes for `0.2`; compatibility alias for `0.3` | Docker image runtime services owned by this module. At least one container is required for schema `0.2`. |
+| `services` | array | yes for canonical `0.3` | Runtime services owned by this module. `services[]` supports `source.type: "image"` and `source.type: "process"`. |
 | `endpoints` | array | no | Stable module endpoints used by gateway exposure and dependency resolution. Default: empty array. |
 | `connections` | array | no | Internal module endpoint URLs injected from one container into other containers. Default: empty array. |
 | `dependencies` | array | no | Dependency metadata URLs and connection mappings. Default: empty array. |
@@ -407,14 +408,48 @@ Top-level metadata object:
 | --- | --- | --- | --- |
 | `key` | string | yes | Stable port key, unique inside the container. |
 | `containerPort` | number | yes | Container port number. |
+| `localPort` | number | no | Developer-machine port used by `metadata.dev.json` process services. |
 | `protocol` | string | yes | First implementation target: `http`. |
+
+`services[]` item for `schemaVersion: "0.3"`:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | string | yes | Stable lowercase service key, unique inside the module. |
+| `dependsOn` | array | no | Service keys that must start before this service. Default: empty array. |
+| `source` | object | yes | Service source. Supported types are `image` and `process`. |
+| `runtime` | object | no | Ports and resource hints. |
+| `healthCheck` | object | no | Host-visible readiness metadata. Currently supports HTTP checks. |
+
+`services[].source` forms:
+
+```json
+{ "type": "image", "image": { "repository": "ghcr.io/acme/reports", "tag": "latest", "pullPolicy": "always" } }
+```
+
+```json
+{ "type": "process", "command": "npm run dev", "workingDirectory": ".", "environment": { "PORT": "3100" } }
+```
+
+Production install and update currently reject non-image services. Process services are for local development metadata consumed by `docker-host dev`.
+
+`services[].healthCheck` object:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `type` | string | yes | Current supported value: `http`. |
+| `path` | string | yes | Same-service absolute path beginning with `/`. |
+| `intervalSeconds` | number | no | Suggested check interval. |
+| `timeoutSeconds` | number | no | Suggested check timeout. |
+| `successStatus` | array | no | HTTP status codes treated as success. |
 
 `endpoints[]` item:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `key` | string | yes | Stable module endpoint key, unique inside the module. |
-| `container` | string | yes | Container key that owns the target port. |
+| `container` | string | yes for `0.2` | Container key that owns the target port. |
+| `service` | string | yes for canonical `0.3` | Service key that owns the target port. Normalized internally to `container` for compatibility. |
 | `port` | string | yes | Port key inside the selected container. |
 | `public` | boolean | yes | Whether this endpoint is suitable for Host gateway exposure. This is a capability hint, not an authorization policy. |
 
@@ -510,7 +545,7 @@ Mount collection target object:
 | `itemContainerPathTemplate` | string | yes | Template for item paths. Must contain a safe `{key}` segment. |
 | `writable` | boolean | yes | Whether selected items are writable in this container. |
 
-For `schemaVersion: "0.2"`, metadata validation is strict: unknown fields are rejected at every object level. The MVP does not reserve or accept extension namespaces such as `x-*`. Future extensions must use a new schema version or a separately documented namespace. The only reserved field accepted by the MVP schema is `containers[].runtime.healthcheck`, and the MVP runtime must ignore it.
+For supported schema versions, metadata validation is strict: unknown fields are rejected at every object level. The MVP does not reserve or accept extension namespaces such as `x-*`. Future extensions must use a new schema version or a separately documented namespace. Schema `0.2` accepts `containers[].runtime.healthcheck` as reserved metadata that the MVP runtime ignores. Schema `0.3` uses service-level `healthCheck` for Host-visible readiness metadata.
 
 `ui` object:
 
@@ -525,7 +560,7 @@ For `schemaVersion: "0.2"`, metadata validation is strict: unknown fields are re
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `portKey` | string | yes | Must reference an `endpoints[].key` marked `public: true`. The name is kept for compatibility with the initial shell UI work, but the value is the metadata endpoint key in schema `0.2`. |
+| `portKey` | string | yes | Must reference an `endpoints[].key` marked `public: true`. The name is kept for compatibility with the initial shell UI work; the value is the module endpoint key for both `containers` and `services` metadata. |
 | `path` | string | yes | Same-origin absolute path beginning with `/`, such as `/` or `/dashboard`. Direct URLs and protocol-relative paths are rejected. |
 
 `ui.navigation[]` item:
@@ -556,9 +591,11 @@ The Host must use `id` for:
 
 `id` comes from the metadata file, not from the URL. The same module can be available through different URLs, but the Host must treat it as the same module when `id` matches.
 
-### `containers`
+### `containers` and `services`
 
-`containers[]` describes Docker containers that together form one logical module. In the user interface they can be displayed as services inside a module row/detail view, but manifests and backend contracts use the term `containers`.
+`containers[]` describes Docker image services for schema `0.2`. In the user interface they can be displayed as services inside a module row/detail view, but existing installed-state contracts still use the term `containers`.
+
+`services[]` is the canonical runtime field for schema `0.3`. It keeps the same stable keys and runtime model while adding explicit service sources. The Host normalizes both shapes internally so older code can still read `containers`, but new development metadata should use `services`.
 
 `containers[].key` must be a stable lowercase identifier, for example `app`, `api`, `worker`, or `db`. The Host uses the key for Docker names/aliases, target references, storage mappings, and per-container runtime status. The key is part of the contract: changing it is a runtime-affecting update.
 
@@ -577,6 +614,8 @@ If `containers[].image.tag` is `latest`, the metadata URL can remain unchanged w
 If `pullPolicy` is omitted, the default must be `ifNotPresent`. For CI-style modules using a `latest` tag, the metadata author can specify `always`.
 
 `containers[].dependsOn` defines startup order only inside the current module. It is not a dependency boundary between modules and not a version solver. Cycles in `dependsOn` are rejected by validation.
+
+`services[].source.type: "image"` is the production-like source and maps to Docker image behavior. `services[].source.type: "process"` is for repository-local development. The CLI launches the process, while the Host owns gateway registration, app registry visibility, identity token behavior, assignments, and directory policy.
 
 ### Versioning and compatibility
 
@@ -1047,17 +1086,17 @@ In this model, the Host does not mount one module's storage directly into anothe
 
 ### `runtime` and `endpoints`
 
-`containers[].runtime` describes the minimum launch parameters for a specific container:
+`containers[].runtime` and `services[].runtime` describe the minimum launch parameters for a specific runtime service:
 
 - named container ports;
 - CPU and memory hints;
-- reserved healthcheck metadata, ignored by the first implementation.
+- reserved schema `0.2` healthcheck metadata or schema `0.3` service-level `healthCheck` metadata.
 
-Containers may omit `runtime` or declare no ports. This is valid for workers, schedulers, sidecars, and other services that do not expose network endpoints.
+Containers and services may omit `runtime` or declare no ports. This is valid for workers, schedulers, sidecars, and other services that do not expose network endpoints.
 
-The install/update runtime applies resource hints when creating Docker containers. `containers[].runtime.resources.cpus` maps to Docker `NanoCpus`. `containers[].runtime.resources.memory` supports plain byte counts and `k`, `m`, or `g` suffixes, for example `512m` or `1g`.
+The install/update runtime applies resource hints when creating Docker containers. `containers[].runtime.resources.cpus` and image-backed `services[].runtime.resources.cpus` map to Docker `NanoCpus`. `memory` supports plain byte counts and `k`, `m`, or `g` suffixes, for example `512m` or `1g`.
 
-`endpoints[]` is the stable module-level contract for dependency resolution and gateway exposure. Each endpoint references one `containers[].runtime.ports[]` item through `endpoint.container` and `endpoint.port`.
+`endpoints[]` is the stable module-level contract for dependency resolution and gateway exposure. In schema `0.2`, each endpoint references one `containers[].runtime.ports[]` item through `endpoint.container` and `endpoint.port`. In canonical schema `0.3`, it references one `services[].runtime.ports[]` item through `endpoint.service` and `endpoint.port`.
 
 Example:
 
@@ -1096,9 +1135,9 @@ Example:
 
 `endpoints[].public: true` means the endpoint is eligible for Host-assigned local port publishing, direct-origin shell UI embedding, and service/API gateway exposure. The metadata still does not pin the Host port or external domain. The install plan assigns the Host port, lets the administrator edit it, and optionally records a public origin. Auth Gateway still owns service/API exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
 
-In the first implementation, the Host does not introduce runtime health checks or readiness probes for modules. Module status is determined through Docker daemon container states: individual container states plus aggregate module status.
+For installed image-backed modules, Docker daemon container state remains the baseline module status. Schema `0.3` `healthCheck` metadata is available as a readiness refinement and as the Host-visible signal for process-backed developer services.
 
-For required dependencies, the Host considers a dependency running when Docker successfully starts dependency containers and the Host can compute an internal Docker-network base URL for the requested endpoint. The Host does not wait for an HTTP health endpoint or custom readiness signal in the first stage.
+For required dependencies, the Host considers a dependency running when Docker successfully starts dependency containers and the Host can compute an internal Docker-network base URL for the requested endpoint. Health checks can refine readiness where supported, but dependency URL resolution remains based on declared endpoints.
 
 Module browser UI opens through the Host shell iframe from a direct module origin. That origin can be an administrator-provided public origin or a Host-generated local fallback origin based on the assigned Host port. Shell Apps are discovered only after Host authentication from explicit `ui` metadata plus Host access policy; gateway exposure policy names apply only to separate service/API endpoint publishing.
 
@@ -1133,19 +1172,29 @@ The Host must not know how these files are organized beyond the specific URL. Fo
 
 Minimum validation rules for a metadata file:
 
-- JSON must match the supported `schemaVersion`;
-- unknown fields must be rejected at every object level for `schemaVersion: "0.2"`;
+- JSON must match a supported `schemaVersion`: `0.2` or `0.3`;
+- unknown fields must be rejected at every object level;
 - extension namespaces such as `x-*` are not accepted in the MVP metadata schema;
-- `id`, `name`, `version`, and `containers[]` are required;
+- `id`, `name`, and `version` are required;
+- schema `0.2` requires `containers[]`;
+- schema `0.3` uses canonical `services[]` and temporarily accepts `containers[]` as a compatibility alias;
 - `containers[].key` must be unique inside module metadata and match a safe lowercase identifier;
 - `containers[].dependsOn` must reference only containers in the current module and must not form cycles;
 - `containers[].image.repository` and `containers[].image.tag` are required;
 - `containers[].image.pullPolicy`, when provided, must be `ifNotPresent`, `always`, or `manual`;
+- `services[].key` must be unique inside module metadata and match a safe lowercase identifier;
+- `services[].source.type` must be `image` or `process`;
+- production install/update rejects `process` services;
+- `services[].source.environment`, when provided, must be a string map;
+- `services[].healthCheck.type`, when provided, must be `http`;
+- `services[].healthCheck.path` must begin with `/`;
+- `services[].healthCheck.successStatus[]` values must be HTTP status codes;
 - `containers[].runtime.ports[].key` must be unique inside one container;
 - `containers[].runtime.ports[].containerPort` must be a valid container port;
+- `runtime.ports[].localPort`, when provided, must be a valid TCP port;
 - `endpoints[].key` must be unique inside one metadata file;
-- `endpoints[].container` must reference an existing `containers[].key`;
-- `endpoints[].port` must reference an existing `containers[].runtime.ports[].key` inside the selected container;
+- `endpoints[].container` or `endpoints[].service` must reference an existing runtime service key;
+- `endpoints[].port` must reference an existing runtime port key inside the selected runtime service;
 - `connections[].source.key` must reference an existing `endpoints[].key`;
 - `connections[].targets[]` must reference existing `containers[].key` values and valid environment variable names;
 - `version` must have a readable major part; the recommended format is `MAJOR.MINOR.PATCH`;

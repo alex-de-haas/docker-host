@@ -18,6 +18,7 @@ internal sealed class ModulesCommand(CommandContext context)
           docker-host modules stop <module-id>
           docker-host modules restart <module-id>
           docker-host modules update <module-id>
+          docker-host modules remove <module-id> [--delete-data]
           docker-host modules dev list
           docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
           docker-host modules dev unlink <target-id>
@@ -45,6 +46,7 @@ internal sealed class ModulesCommand(CommandContext context)
             "stop" => await RunLifecycleActionAsync("stop", args[1..]),
             "restart" => await RunLifecycleActionAsync("restart", args[1..]),
             "update" => await UpdateAsync(args[1..]),
+            "remove" => await RemoveAsync(args[1..]),
             "dev" => await ExecuteDevAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown modules command '{args[0]}'.", Usage),
         };
@@ -57,7 +59,7 @@ internal sealed class ModulesCommand(CommandContext context)
             throw new CommandUsageException("modules list does not accept arguments.", "Usage: docker-host modules list");
         }
 
-        using var hostApi = await CreateHostApiClientAsync();
+        using var hostApi = await CreateHostControlClientAsync();
         if (hostApi is null)
         {
             return 1;
@@ -112,7 +114,7 @@ internal sealed class ModulesCommand(CommandContext context)
                 "Usage: docker-host modules install <metadata-url>");
         }
 
-        using var hostApi = await CreateHostApiClientAsync();
+        using var hostApi = await CreateHostControlClientAsync();
         if (hostApi is null)
         {
             return 1;
@@ -206,7 +208,7 @@ internal sealed class ModulesCommand(CommandContext context)
                 $"Usage: docker-host modules {action} <module-id>");
         }
 
-        using var hostApi = await CreateHostApiClientAsync();
+        using var hostApi = await CreateHostControlClientAsync();
         if (hostApi is null)
         {
             return 1;
@@ -254,7 +256,7 @@ internal sealed class ModulesCommand(CommandContext context)
                 "Usage: docker-host modules update <module-id>");
         }
 
-        using var hostApi = await CreateHostApiClientAsync();
+        using var hostApi = await CreateHostControlClientAsync();
         if (hostApi is null)
         {
             return 1;
@@ -345,6 +347,86 @@ internal sealed class ModulesCommand(CommandContext context)
         return 0;
     }
 
+    private async Task<int> RemoveAsync(string[] args)
+    {
+        var parsed = ParseArguments(args);
+        if (parsed.Positionals.Count != 1)
+        {
+            throw new CommandUsageException(
+                "modules remove requires exactly one module id.",
+                "Usage: docker-host modules remove <module-id> [--delete-data]");
+        }
+
+        using var hostApi = await CreateHostControlClientAsync();
+        if (hostApi is null)
+        {
+            return 1;
+        }
+
+        if (!await EnsureHostReadyAsync(hostApi))
+        {
+            return 1;
+        }
+
+        var moduleId = parsed.Positionals[0];
+        var deleteData = parsed.Flags.Contains("delete-data");
+        var planResponse = await hostApi.CreateRemovePlanAsync(moduleId, new ModuleRemovePlanRequest
+        {
+            DeleteModuleData = deleteData,
+        });
+        var planBody = planResponse.Body;
+        if (planBody?.Plan is not null)
+        {
+            RenderRemovePlan(planBody.Plan);
+        }
+
+        if (!planResponse.IsSuccess || planBody?.Error is not null)
+        {
+            return RenderPlanFailure(
+                planBody?.Error,
+                "Failed to create module remove plan.",
+                planResponse.StatusCode,
+                planResponse.RawBody);
+        }
+
+        var plan = planBody?.Plan;
+        if (plan is null)
+        {
+            return RenderApiFailure("Remove plan response did not include a plan.", planResponse.StatusCode, planResponse.RawBody);
+        }
+
+        if (!plan.CanApply || plan.Conflicts.Count > 0)
+        {
+            RenderConflicts(plan.Conflicts);
+            context.Console.MarkupLine("[red]Remove is blocked by conflicts.[/]");
+            return 1;
+        }
+
+        if (!Confirm(deleteData ? "Remove this module and delete its module-owned data?" : "Remove this module?"))
+        {
+            context.Console.MarkupLine("[yellow]Remove cancelled.[/]");
+            return 130;
+        }
+
+        var applyResponse = await CommandStatus.RunAsync(
+            context,
+            $"Removing module [grey]{Markup.Escape(moduleId)}[/]...",
+            async () => await hostApi.ApplyRemoveAsync(moduleId, new ModuleRemoveRequest
+            {
+                Confirmed = true,
+                DeleteModuleData = deleteData,
+            }));
+        var body = applyResponse.Body;
+        if (!applyResponse.IsSuccess || body?.Success != true)
+        {
+            RenderModuleOperationError(body?.Error, "Failed to remove module.", applyResponse.StatusCode, applyResponse.RawBody);
+            return 1;
+        }
+
+        context.Console.MarkupLine("[green]Module remove completed.[/]");
+        return 0;
+    }
+
     private async Task<int> ExecuteDevAsync(string[] args)
     {
         const string devUsage = """
@@ -376,7 +458,7 @@ internal sealed class ModulesCommand(CommandContext context)
             throw new CommandUsageException("modules dev list does not accept arguments.", "Usage: docker-host modules dev list");
         }
 
-        using var hostApi = await CreateHostApiClientAsync();
+        using var hostApi = await CreateHostControlClientAsync();
         if (hostApi is null)
         {
             return 1;
@@ -402,7 +484,7 @@ internal sealed class ModulesCommand(CommandContext context)
                 "Usage: docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]");
         }
 
-        using var hostApi = await CreateHostApiClientAsync();
+        using var hostApi = await CreateHostControlClientAsync();
         if (hostApi is null)
         {
             return 1;
@@ -436,7 +518,7 @@ internal sealed class ModulesCommand(CommandContext context)
             throw new CommandUsageException("modules dev unlink requires exactly one target id.", "Usage: docker-host modules dev unlink <target-id>");
         }
 
-        using var hostApi = await CreateHostApiClientAsync();
+        using var hostApi = await CreateHostControlClientAsync();
         if (hostApi is null)
         {
             return 1;
@@ -453,7 +535,7 @@ internal sealed class ModulesCommand(CommandContext context)
         return 0;
     }
 
-    private async Task<HostApiClient?> CreateHostApiClientAsync()
+    private async Task<HostControlClient?> CreateHostControlClientAsync()
     {
         var settings = context.SettingsStore.Load();
         settings.Validate(context.Environment);
@@ -482,12 +564,30 @@ internal sealed class ModulesCommand(CommandContext context)
             return null;
         }
 
-        var baseUri = new Uri(url);
-        var token = new HostAuthTokenStore(context.Environment).GetTokenForHost(baseUri);
-        return context.HostApiFactory.Create(baseUri, token);
+        try
+        {
+            var discovery = HostControlDiscovery.Load(settings.ResolveHostDataRoot(context.Environment));
+            var endpoint = new Uri(new Uri(url), "/control/v1/");
+            return context.ControlFactory.Create(endpoint, discovery.Secret);
+        }
+        catch (HostApiException ex)
+        {
+            context.Console.MarkupLine("[red]Trusted local control channel is not available.[/]");
+            if (!string.IsNullOrWhiteSpace(ex.Message))
+            {
+                context.Console.WriteLine(ex.Message);
+            }
+
+            if (!string.IsNullOrWhiteSpace(ex.NextStep))
+            {
+                context.Console.WriteLine(ex.NextStep);
+            }
+
+            return null;
+        }
     }
 
-    private async Task<bool> EnsureHostReadyAsync(HostApiClient hostApi)
+    private async Task<bool> EnsureHostReadyAsync(HostControlClient hostApi)
     {
         var response = await hostApi.GetHostStatusAsync();
         if (response.IsSuccess)
@@ -507,12 +607,12 @@ internal sealed class ModulesCommand(CommandContext context)
     private void RenderDevTargets(ModuleDevTargetListResponse response)
     {
         context.Console.MarkupLine(response.DeveloperModeEnabled
-            ? "[green]Module developer mode is enabled.[/]"
-            : "[yellow]Module developer mode is disabled.[/]");
+            ? "[green]Local developer target management is available.[/]"
+            : "[yellow]Local developer target management is unavailable.[/]");
 
         if (!response.DeveloperModeEnabled)
         {
-            context.Console.WriteLine("Enable it with: docker-host config set HOST_MODULE_DEV_MODE enabled && docker-host restart");
+            context.Console.WriteLine("Developer target management is available through the local control channel.");
         }
 
         if (response.Targets.Count == 0)
@@ -612,6 +712,45 @@ internal sealed class ModulesCommand(CommandContext context)
         RenderImages(plan.Images);
         RenderStorage(plan.Storage);
         RenderSettings(plan.Settings);
+        RenderConflicts(plan.Conflicts);
+    }
+
+    private void RenderRemovePlan(ModuleRemovePlan plan)
+    {
+        context.Console.MarkupLine("[bold]Remove plan[/]");
+        var table = new Table()
+            .RoundedBorder()
+            .AddColumn("Property")
+            .AddColumn("Value");
+
+        table.AddRow("Module", Markup.Escape($"{plan.ModuleName} ({plan.ModuleId})"));
+        table.AddRow("Can apply", plan.CanApply ? "yes" : "no");
+        table.AddRow("Delete module data", plan.DeleteModuleData ? "yes" : "no");
+        context.Console.Write(table);
+
+        if (plan.Containers.Count > 0)
+        {
+            var containers = new Table()
+                .RoundedBorder()
+                .Title("Containers")
+                .AddColumn("Key")
+                .AddColumn("Name")
+                .AddColumn("Exists")
+                .AddColumn("Will remove");
+
+            foreach (var container in plan.Containers)
+            {
+                containers.AddRow(
+                    Markup.Escape(container.Key),
+                    Markup.Escape(container.Name),
+                    container.Exists ? "yes" : "no",
+                    container.WillRemove ? "yes" : "no");
+            }
+
+            context.Console.Write(containers);
+        }
+
+        RenderWarnings(plan.Warnings);
         RenderConflicts(plan.Conflicts);
     }
 
@@ -1272,7 +1411,7 @@ internal sealed class ModulesCommand(CommandContext context)
                 continue;
             }
 
-            if (option is "disabled")
+            if (option is "disabled" or "delete-data")
             {
                 flags.Add(option);
                 continue;

@@ -53,7 +53,6 @@ interface HostUserSummary {
   createdAt: string;
   updatedAt: string;
   activeSessionCount: number;
-  activeCliTokenCount: number;
   assignedModuleIds: string[];
   lastSeenAt?: string;
 }

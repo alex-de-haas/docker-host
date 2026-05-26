@@ -376,14 +376,7 @@ test('includes enabled developer targets when module developer mode is active', 
   ]);
 });
 
-test('keeps developer targets out of apps when developer mode or the target is disabled', async () => {
-  const disabledModeConfig = await createAppRegistryTestConfig({ moduleDevModeEnabled: false });
-  await writeModuleDevTargetState({
-    schemaVersion: '0.1',
-    targets: [createDeveloperTarget()],
-    updatedAt: new Date().toISOString(),
-  }, disabledModeConfig);
-
+test('keeps disabled developer targets out of apps without requiring a dev-mode launch flag', async () => {
   const disabledTargetConfig = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
   await writeModuleDevTargetState({
     schemaVersion: '0.1',
@@ -391,7 +384,6 @@ test('keeps developer targets out of apps when developer mode or the target is d
     updatedAt: new Date().toISOString(),
   }, disabledTargetConfig);
 
-  assert.deepEqual(await listHostApps(admin, { config: disabledModeConfig }), []);
   assert.deepEqual(await listHostApps(admin, { config: disabledTargetConfig }), []);
 });
 

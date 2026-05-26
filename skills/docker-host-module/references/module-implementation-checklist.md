@@ -4,10 +4,11 @@ Use this checklist before finishing a Docker Host module task.
 
 ## Metadata
 
-- The module has `schemaVersion: "0.2"`.
+- Production metadata uses `schemaVersion: "0.2"` with `containers[]` or schema `0.3` with image-backed `services[]`.
+- Development metadata uses `metadata.dev.json` with schema `0.3` process services when local process launch is needed.
 - The module id is stable and reverse-DNS-like.
 - Container keys, endpoint keys, setting keys, storage keys, and dependency ids are stable.
-- Every endpoint references an existing container and port key.
+- Every endpoint references an existing container/service and port key.
 - `endpoints[].public` is used only as a gateway capability hint.
 - Dependencies are required, use numeric major versions, and reference direct metadata URLs.
 - Settings declare concrete env targets and do not contain real secret defaults.
@@ -16,7 +17,7 @@ Use this checklist before finishing a Docker Host module task.
 - External mount collection templates contain `{key}` as a path segment and stay below their declared prefix.
 - `ui.entrypoint.portKey` references a public endpoint key.
 - `ui.entrypoint.path` and navigation paths are same-origin absolute paths.
-- Metadata has no unsupported extension fields for schema `0.2`.
+- Metadata has no unsupported extension fields for the selected schema version.
 
 ## Container Runtime
 

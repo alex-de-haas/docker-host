@@ -28,7 +28,7 @@ flowchart LR
 
 Administrators can:
 
-- list Host users with role, provider, disabled state, active sessions, CLI token count, last seen time, and assigned app count;
+- list Host users with role, provider, disabled state, active sessions, last seen time, and assigned app count;
 - invite local `host.user` or `host.admin` accounts;
 - choose invitation expiry from 15 minutes, 24 hours, or 7 days;
 - assign installed modules/apps during invitation creation;
@@ -78,12 +78,11 @@ When a user is disabled, Docker Host:
 
 - revokes active browser sessions;
 - removes the user from remembered browser account sets;
-- revokes CLI tokens;
 - removes module assignments.
 
 Docker Host prevents disabling or demoting the last active administrator. Administrators also cannot disable their own account from User Management.
 
-Changing a local user's role revokes that user's active sessions. When a user is changed away from `host.admin`, their CLI tokens are revoked because CLI tokens are admin-only credentials.
+Changing a local user's role revokes that user's active sessions.
 
 Provider-managed roles are read-only in User Management. OIDC and trusted-proxy login can overwrite stored roles from provider mappings, so external role changes belong to the provider configuration instead of this page.
 

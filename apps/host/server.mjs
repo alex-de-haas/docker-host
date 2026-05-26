@@ -21,6 +21,9 @@ const ACCOUNT_SET_COOKIE_NAME = 'docker_host_accounts';
 const INTERNAL_REMOTE_ADDRESS_HEADER = 'x-docker-host-remote-address';
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
 const DEFAULT_MODULE_EXPOSURE_POLICY = 'loginRequired';
+const CONTROL_CONTRACT_VERSION = '0.1';
+const CONTROL_SECRET_HEADER = 'X-Docker-Host-Control-Secret';
+const CONTROL_CONTRACT_HEADER = 'X-Docker-Host-Control-Contract-Version';
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -50,10 +53,17 @@ const dev = process.argv.includes('--dev')
 process.env.HOST_RUNTIME_MODE = dev ? 'development' : 'production';
 
 let handleNextRequest;
+const controlInstanceId = randomUUID();
+const controlSecret = `dhctl_${randomUUID().replaceAll('-', '')}${randomUUID().replaceAll('-', '')}`;
 
 const server = createServer(async (req, res) => {
   try {
     stampInternalRequestHeaders(req);
+
+    if (isControlRequestPath(req.url)) {
+      await handleNextRequest(req, res);
+      return;
+    }
 
     const gatewayTarget = await resolveGatewayRequest(req);
     if (gatewayTarget) {
@@ -110,6 +120,9 @@ if (isMainModule()) {
   await app.prepare();
 
   server.listen(port, hostname, () => {
+    void writeControlDiscoveryFile().catch(error => {
+      console.error('Unable to write Docker Host control discovery file:', error);
+    });
     console.log(
       `> Docker Host listening at http://${hostname}:${port} as ${dev ? 'development' : 'production'}`
     );
@@ -132,9 +145,7 @@ export async function resolveGatewayRequest(req) {
   }
 
   const config = getRuntimeConfig();
-  const devTarget = config.moduleDevModeEnabled
-    ? await resolveModuleDevTarget(hostnameValue, config)
-    : null;
+  const devTarget = await resolveModuleDevTarget(hostnameValue, config);
   if (devTarget) {
     const authState = await readAuthState(config);
     const trustedProxy = await authenticateTrustedProxyRequest(req, config);
@@ -1033,6 +1044,63 @@ function getLegacyModuleDockerName(moduleId) {
     .replace(/-{2,}/g, '-');
 
   return `mod-${normalized || 'module'}`;
+}
+
+function isControlRequestPath(url) {
+  if (!url) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url, 'http://docker-host.local');
+    return parsed.pathname === '/control/v1' || parsed.pathname.startsWith('/control/v1/');
+  } catch {
+    return false;
+  }
+}
+
+async function writeControlDiscoveryFile() {
+  const config = getRuntimeConfig();
+  const runRoot = path.join(config.dataRootContainer, 'run');
+  const discoveryPath = path.join(runRoot, 'control.json');
+  const temporaryPath = `${discoveryPath}.${process.pid}.${randomUUID()}.tmp`;
+  const endpoint = getControlEndpoint();
+  const discovery = {
+    schemaVersion: '0.1',
+    controlContractVersion: CONTROL_CONTRACT_VERSION,
+    instanceId: controlInstanceId,
+    transport: 'http-loopback',
+    endpoint,
+    headers: {
+      cliVersion: 'X-Docker-Host-Cli-Version',
+      controlContractVersion: CONTROL_CONTRACT_HEADER,
+      controlSecret: CONTROL_SECRET_HEADER,
+    },
+    secret: controlSecret,
+    createdAt: new Date().toISOString(),
+  };
+
+  await fs.mkdir(runRoot, { recursive: true });
+  await fs.writeFile(temporaryPath, `${JSON.stringify(discovery, null, 2)}\n`, {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+  await fs.chmod(temporaryPath, 0o600);
+  await fs.rename(temporaryPath, discoveryPath);
+  await fs.chmod(discoveryPath, 0o600);
+}
+
+function getControlEndpoint() {
+  const publicPort = process.env.HOST_CONTROL_PUBLIC_PORT || process.env.PORT || String(port);
+  const origin = process.env.HOST_CONTROL_ORIGIN?.trim() ||
+    `http://127.0.0.1:${publicPort.trim()}`;
+
+  return {
+    url: `${origin.replace(/\/+$/, '')}/control/v1`,
+    host: '127.0.0.1',
+    port: Number.parseInt(publicPort, 10),
+    basePath: '/control/v1',
+  };
 }
 
 function isObject(value) {

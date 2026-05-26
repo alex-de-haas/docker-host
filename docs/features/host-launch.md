@@ -243,7 +243,6 @@ HOST_RESTART_POLICY=unless-stopped
 HOST_DOCKER_ENDPOINT=unix:///var/run/docker.sock
 HOST_DOCKER_SOCKET=/var/run/docker.sock
 HOST_MODULE_NETWORK=docker-host-modules
-HOST_MODULE_DEV_MODE=disabled
 ```
 
 On native Windows, `docker-host install` should persist a Windows-appropriate default:

@@ -347,7 +347,7 @@ This endpoint requires authentication but does not require `host.admin`. Unauthe
 
 The backend reads installed module records from `modules.json`, reads each module's local `metadata.json`, requires explicit `ui` metadata, applies Host-owned module assignments, and reads runtime state for availability. It does not infer shell Apps from gateway exposure records or from `runtime.ports[].public` alone.
 
-When `HOST_MODULE_DEV_MODE=enabled`, the backend also reads enabled developer targets with stored shell app snapshots from `/data/dev/module-targets.json`. These entries are marked as `source: "developer"` and use developer app routes. Disabled developer mode and disabled targets are omitted from `/api/apps`.
+The backend also reads enabled developer targets with stored shell app snapshots from `/data/dev/module-targets.json`. These entries are marked as `source: "developer"` and use developer app routes. Disabled targets are omitted from `/api/apps`.
 
 Response body:
 
@@ -402,7 +402,7 @@ The response is `Cache-Control: no-store`. The Host shell delivers the token to 
 
 Issues a short-lived Host-signed module identity token for a developer shell App iframe.
 
-This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. It is available only when module developer mode is enabled and the selected developer target is enabled, visible to the current principal, and has a stored shell app snapshot.
+This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. It is available only when the selected developer target is enabled, visible to the current principal, and has a stored shell app snapshot.
 
 Response shape matches the installed module identity token endpoint:
 
@@ -800,16 +800,26 @@ OIDC login denies access when the transaction state is invalid or expired, ID to
 
 Account switching endpoints use the active Host session for authorization and the HttpOnly `docker_host_accounts` cookie to find the browser account set. The account-set cookie is not a module credential and is stripped from gateway traffic. Direct-origin shell iframe traffic cannot receive Host cookies for its module origin.
 
-### CLI admin tokens
+### Local CLI control
 
-CLI admin tokens authenticate local CLI commands to Host API routes as `host.admin` operations. The Host stores only token hashes and returns raw token material only when a token is created or rotated.
+Local CLI module and dev commands authenticate through trusted control discovery, not through browser sessions or CLI bearer tokens. The Host writes `<HOST_DATA_ROOT_HOST>/run/control.json` at startup, and the CLI calls `/control/v1` with the discovered control contract version and per-start control secret.
 
-- `GET /api/auth/cli-tokens` returns CLI token metadata: `id`, `userId`, `label`, `createdAt`, optional `lastUsedAt`, optional `revokedAt`, and `scope`.
-- `POST /api/auth/cli-tokens` creates a CLI token for the current administrator by default. Optional body: `{ "label": "Laptop CLI", "userId": "user_123" }`.
-- `DELETE /api/auth/cli-tokens/{tokenId}` revokes an active CLI token.
-- `POST /api/auth/cli-tokens/{tokenId}/rotate` revokes the selected token and returns a raw replacement token once. Optional body: `{ "label": "Replacement CLI" }`.
+The control channel is not a public Host API surface. It is not proxied by the gateway, does not accept browser cookies, and does not grant remote API access.
 
-All CLI token lifecycle endpoints require `host.auth.configure`. Browser-session requests must pass the Host same-origin CSRF check. CLI Bearer-token requests are not subject to CSRF checks.
+Initial control routes:
+
+- `GET /control/v1/host/status` returns Host readiness for CLI preflight checks.
+- `GET /control/v1/modules` lists installed modules.
+- `POST /control/v1/modules/install/plan` creates an install plan.
+- `POST /control/v1/modules/install` applies a reviewed install plan.
+- `POST /control/v1/modules/{moduleId}/update/plan` creates an update plan.
+- `POST /control/v1/modules/{moduleId}/update` applies a reviewed update plan.
+- `POST /control/v1/modules/{moduleId}/start`, `stop`, and `restart` run module lifecycle actions.
+- `POST /control/v1/modules/{moduleId}/remove/plan` creates a remove plan.
+- `POST /control/v1/modules/{moduleId}/remove` applies a reviewed remove plan.
+- `GET /control/v1/modules/dev/targets`, `PUT /control/v1/modules/dev/targets/{targetId}`, and `DELETE /control/v1/modules/dev/targets/{targetId}` manage local developer targets.
+- `DELETE /control/v1/modules/dev/data/{moduleId}` removes one module's persistent development data.
+- Control auth, user, invitation, assignment, directory policy, and app registry helpers support `docker-host dev`.
 
 ### Sessions and audit
 
@@ -834,11 +844,11 @@ User Management APIs support the `/settings/users` operations surface:
 - `DELETE /api/auth/users/{userId}` soft-disables the user.
 - `PUT /api/auth/users/{userId}/assignments` replaces the user's module assignment list.
 
-All administrator user-management endpoints require `host.users.manage`. Mutating browser-session requests also require recent reauthentication and the same-origin CSRF check. CLI Bearer-token requests can call the same administrator APIs without CSRF checks.
+All administrator user-management endpoints require `host.users.manage`. Mutating browser-session requests also require recent reauthentication and the same-origin CSRF check.
 
 Invitation tokens are setup-token style credentials with hash-only storage. Local invitations require email, are single-use, and can expire after 15 minutes, 24 hours, or 7 days. Accepting an invitation creates a local password user; it does not pre-provision OIDC or trusted-proxy identities.
 
-User deletion is implemented as soft-disable. Disabling a user revokes active sessions, removes the user from remembered browser account sets, revokes CLI tokens, and removes module assignments. Docker Host prevents disabling or demoting the last active administrator.
+User deletion is implemented as soft-disable. Disabling a user revokes active sessions, removes the user from remembered browser account sets, and removes module assignments. Docker Host prevents disabling or demoting the last active administrator.
 
 ### Gateway exposure and ingress readiness
 
@@ -876,7 +886,7 @@ The internal module directory API lets a module list Host users explicitly assig
 - Authorization uses `Authorization: Bearer {module service token}`.
 - The service token is generated by Host, stored only as a server-side hash, and injected into newly created module containers as `DOCKER_HOST_MODULE_SERVICE_TOKEN`.
 - The module id associated with the token must match `{moduleId}` in the route.
-- Browser session cookies and CLI tokens are not accepted for this endpoint.
+- Browser session cookies and local control secrets are not accepted for this endpoint.
 - Email is omitted by default and included only when a module directory policy opts in.
 
 Host administrators can manage the module directory policy and service credentials through admin-only endpoints:

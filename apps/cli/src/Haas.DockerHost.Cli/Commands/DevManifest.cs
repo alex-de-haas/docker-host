@@ -50,18 +50,35 @@ internal sealed record DevManifest
     [JsonIgnore]
     public string ManifestDirectory => Path.GetDirectoryName(ManifestPath) ?? Directory.GetCurrentDirectory();
 
+    [JsonIgnore]
+    public bool HasExplicitHostMode => !string.IsNullOrWhiteSpace(Host.Mode);
+
+    [JsonIgnore]
+    public bool HasHostOriginOverride => !string.IsNullOrWhiteSpace(Host.Origin) || Host.Port is not null;
+
+    [JsonIgnore]
+    public bool HasHostCommand => !string.IsNullOrWhiteSpace(Host.Command);
+
     public static DevManifest Load(string path)
     {
-        var manifestPath = Path.GetFullPath(path);
+        var manifestPath = Path.GetFullPath(Directory.Exists(path) ? Path.Combine(path, "metadata.dev.json") : path);
         if (!File.Exists(manifestPath))
         {
             throw new CommandUsageException($"Dev manifest was not found: {manifestPath}", DevCommand.Usage);
         }
 
+        var raw = File.ReadAllText(manifestPath);
+        if (LooksLikeModuleDevMetadata(raw))
+        {
+            var metadataManifest = FromModuleDevMetadata(raw, manifestPath);
+            metadataManifest.Validate();
+            return metadataManifest;
+        }
+
         DevManifest? manifest;
         try
         {
-            manifest = JsonSerializer.Deserialize<DevManifest>(File.ReadAllText(manifestPath), JsonOptions);
+            manifest = JsonSerializer.Deserialize<DevManifest>(raw, JsonOptions);
         }
         catch (JsonException ex)
         {
@@ -76,6 +93,211 @@ internal sealed record DevManifest
         manifest = manifest with { ManifestPath = manifestPath };
         manifest.Validate();
         return manifest;
+    }
+
+    private static bool LooksLikeModuleDevMetadata(string raw)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(raw, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip,
+            });
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("services", out var services) &&
+                services.ValueKind == JsonValueKind.Array;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static DevManifest FromModuleDevMetadata(string raw, string manifestPath)
+    {
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(raw, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip,
+            });
+        }
+        catch (JsonException ex)
+        {
+            throw new CommandUsageException($"Dev metadata is not valid JSON: {ex.Message}", DevCommand.Usage);
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            var moduleId = ReadRequiredString(root, "id", "Dev metadata id is required.");
+            var endpoint = SelectDevEndpoint(root);
+            var service = FindService(root, endpoint.ServiceKey);
+            var source = service.GetProperty("source");
+            if (!source.TryGetProperty("type", out var sourceType) ||
+                sourceType.ValueKind != JsonValueKind.String ||
+                sourceType.GetString() != "process")
+            {
+                throw new CommandUsageException("metadata.dev.json must select a process service for docker-host dev up.", DevCommand.Usage);
+            }
+
+            var command = ReadRequiredString(source, "command", "Process service source.command is required.");
+            var servicePort = FindServicePort(service, endpoint.PortKey);
+            var localPort = servicePort.TryGetProperty("localPort", out var localPortElement) &&
+                localPortElement.TryGetInt32(out var parsedLocalPort)
+                ? parsedLocalPort
+                : ReadRequiredInt32(servicePort, "containerPort", "Process service port requires containerPort or localPort.");
+
+            var environment = source.TryGetProperty("environment", out var environmentElement) &&
+                environmentElement.ValueKind == JsonValueKind.Object
+                ? environmentElement.EnumerateObject()
+                    .Where(property => property.Value.ValueKind == JsonValueKind.String)
+                    .ToDictionary(property => property.Name, property => property.Value.GetString() ?? "", StringComparer.Ordinal)
+                : new Dictionary<string, string>(StringComparer.Ordinal);
+
+            if (!environment.ContainsKey("PORT"))
+            {
+                environment["PORT"] = localPort.ToString(CultureInfo.InvariantCulture);
+            }
+
+            var targetHostname = $"{SanitizeIdentifier(moduleId).Replace('_', '-')}.localhost";
+            if (targetHostname.Length > 63)
+            {
+                targetHostname = $"{targetHostname[..52].TrimEnd('-')}.localhost";
+            }
+
+            return new DevManifest
+            {
+                MetadataFile = Path.GetFileName(manifestPath),
+                ModuleCommand = command,
+                WorkingDirectory = source.TryGetProperty("workingDirectory", out var workingDirectory) &&
+                    workingDirectory.ValueKind == JsonValueKind.String
+                    ? workingDirectory.GetString()
+                    : ".",
+                Target = new DevManifestTarget
+                {
+                    Hostname = targetHostname,
+                    PortKey = endpoint.EndpointKey,
+                    LocalPort = localPort,
+                },
+                Environment = environment,
+                ManifestPath = manifestPath,
+            };
+        }
+    }
+
+    private static (string EndpointKey, string ServiceKey, string PortKey) SelectDevEndpoint(JsonElement root)
+    {
+        var preferredEndpoint = root.TryGetProperty("ui", out var ui) &&
+            ui.ValueKind == JsonValueKind.Object &&
+            ui.TryGetProperty("entrypoint", out var entrypoint) &&
+            entrypoint.ValueKind == JsonValueKind.Object &&
+            entrypoint.TryGetProperty("portKey", out var uiPortKey) &&
+            uiPortKey.ValueKind == JsonValueKind.String
+            ? uiPortKey.GetString()
+            : null;
+
+        if (!root.TryGetProperty("endpoints", out var endpoints) || endpoints.ValueKind != JsonValueKind.Array)
+        {
+            throw new CommandUsageException("Dev metadata endpoints must include a public endpoint.", DevCommand.Usage);
+        }
+
+        foreach (var endpoint in endpoints.EnumerateArray())
+        {
+            if (endpoint.ValueKind != JsonValueKind.Object ||
+                !endpoint.TryGetProperty("key", out var key) ||
+                key.ValueKind != JsonValueKind.String ||
+                !endpoint.TryGetProperty("port", out var port) ||
+                port.ValueKind != JsonValueKind.String ||
+                !endpoint.TryGetProperty("public", out var isPublic) ||
+                isPublic.ValueKind != JsonValueKind.True) {
+                continue;
+            }
+
+            var endpointKey = key.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(preferredEndpoint) && endpointKey != preferredEndpoint)
+            {
+                continue;
+            }
+
+            var serviceKey = endpoint.TryGetProperty("service", out var service) && service.ValueKind == JsonValueKind.String
+                ? service.GetString()
+                : endpoint.TryGetProperty("container", out var container) && container.ValueKind == JsonValueKind.String
+                    ? container.GetString()
+                    : null;
+            if (!string.IsNullOrWhiteSpace(serviceKey))
+            {
+                return (endpointKey, serviceKey!, port.GetString() ?? "");
+            }
+        }
+
+        throw new CommandUsageException("Dev metadata endpoints must include a public service endpoint.", DevCommand.Usage);
+    }
+
+    private static JsonElement FindService(JsonElement root, string serviceKey)
+    {
+        foreach (var service in root.GetProperty("services").EnumerateArray())
+        {
+            if (service.ValueKind == JsonValueKind.Object &&
+                service.TryGetProperty("key", out var key) &&
+                key.ValueKind == JsonValueKind.String &&
+                key.GetString() == serviceKey)
+            {
+                return service;
+            }
+        }
+
+        throw new CommandUsageException($"Dev metadata service \"{serviceKey}\" was not found.", DevCommand.Usage);
+    }
+
+    private static JsonElement FindServicePort(JsonElement service, string portKey)
+    {
+        if (!service.TryGetProperty("runtime", out var runtime) ||
+            runtime.ValueKind != JsonValueKind.Object ||
+            !runtime.TryGetProperty("ports", out var ports) ||
+            ports.ValueKind != JsonValueKind.Array)
+        {
+            throw new CommandUsageException("Process service runtime.ports must include the selected endpoint port.", DevCommand.Usage);
+        }
+
+        foreach (var port in ports.EnumerateArray())
+        {
+            if (port.ValueKind == JsonValueKind.Object &&
+                port.TryGetProperty("key", out var key) &&
+                key.ValueKind == JsonValueKind.String &&
+                key.GetString() == portKey)
+            {
+                return port;
+            }
+        }
+
+        throw new CommandUsageException($"Process service port \"{portKey}\" was not found.", DevCommand.Usage);
+    }
+
+    private static string ReadRequiredString(JsonElement value, string propertyName, string message)
+    {
+        if (value.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(property.GetString()))
+        {
+            return property.GetString()!.Trim();
+        }
+
+        throw new CommandUsageException(message, DevCommand.Usage);
+    }
+
+    private static int ReadRequiredInt32(JsonElement value, string propertyName, string message)
+    {
+        if (value.TryGetProperty(propertyName, out var property) &&
+            property.TryGetInt32(out var result))
+        {
+            return result;
+        }
+
+        throw new CommandUsageException(message, DevCommand.Usage);
     }
 
     public string ResolveWorkingDirectory()

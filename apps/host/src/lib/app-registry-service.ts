@@ -98,9 +98,7 @@ export async function listHostApps(
   const [modulesStore, authState, developerTargetState] = await Promise.all([
     readModulesStoreSnapshot(config),
     readAuthStateSnapshot(config),
-    config.moduleDevModeEnabled
-      ? readModuleDevTargetStateSnapshot(config)
-      : Promise.resolve(null),
+    readModuleDevTargetStateSnapshot(config),
   ]);
 
   const runtimeStatusReader = modulesStore.modules.length > 0

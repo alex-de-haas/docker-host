@@ -5,8 +5,8 @@ Use this reference when authoring or reviewing Docker Host module metadata. The 
 ## Contract
 
 - A Docker Host module is installed from a direct JSON metadata URL, not from a Git repository URL or image registry alone.
-- The current supported metadata schema is `schemaVersion: "0.2"`.
-- Validation is strict for schema `0.2`; unknown fields are rejected at every object level.
+- The supported metadata schemas are `schemaVersion: "0.2"` and `schemaVersion: "0.3"`.
+- Validation is strict for supported schemas; unknown fields are rejected at every object level.
 - Metadata URLs must be absolute `http` or `https` URLs. Each metadata response is limited to 1 MiB and 10 seconds.
 - The Host downloads dependency metadata recursively, rejects cycles, and limits the graph to the root plus 32 unique dependency nodes.
 - Recommended module ids use reverse-DNS format, for example `com.acme.reports`.
@@ -17,12 +17,13 @@ Use this reference when authoring or reviewing Docker Host module metadata. The 
 
 Top-level fields:
 
-- `schemaVersion`: required string, currently `"0.2"`.
+- `schemaVersion`: required string, currently `"0.2"` or `"0.3"`.
 - `id`: required stable module id.
 - `name`: required human-readable name.
 - `description`: optional display description.
 - `version`: required module contract version. Host currently uses only the major part for dependency compatibility.
-- `containers`: required non-empty array.
+- `containers`: required non-empty array for schema `0.2`; compatibility alias for schema `0.3`.
+- `services`: canonical non-empty runtime service array for schema `0.3`.
 - `endpoints`: optional array, default empty.
 - `connections`: optional array for internal endpoint URL injection between containers in the same module.
 - `dependencies`: optional array of required dependency metadata URLs. Optional dependencies are not supported.
@@ -41,10 +42,25 @@ Container fields:
 - `containers[].runtime.healthcheck`: accepted but ignored by the first implementation unless code has been extended.
 - `containers[].runtime.resources`: CPU and memory hints.
 
+Service fields for schema `0.3`:
+
+- `services[].key`: stable lowercase key, unique inside the module.
+- `services[].dependsOn`: optional startup ordering inside the same module; cycles are rejected.
+- `services[].source.type`: `image` for production-like Docker services, or `process` for local development services launched by the CLI.
+- `services[].source.image`: required when `source.type` is `image`, with the same repository, tag, and pull policy fields as `containers[].image`.
+- `services[].source.command`: required when `source.type` is `process`.
+- `services[].source.workingDirectory`: optional process working directory, resolved from the dev metadata file by the CLI.
+- `services[].source.environment`: optional string map for the local process environment.
+- `services[].runtime.ports[].localPort`: optional developer-machine port used by `docker-host dev`.
+- `services[].healthCheck`: optional HTTP readiness metadata with `type`, `path`, `intervalSeconds`, `timeoutSeconds`, and `successStatus`.
+
+Production install and update currently reject `process` services. Use process services in `metadata.dev.json` for local development.
+
 Endpoint fields:
 
 - `endpoints[].key`: stable module endpoint key.
-- `endpoints[].container`: container key.
+- `endpoints[].container`: container key for schema `0.2`.
+- `endpoints[].service`: service key for canonical schema `0.3`.
 - `endpoints[].port`: port key inside the selected container.
 - `endpoints[].public`: capability hint saying the endpoint is suitable for gateway exposure. It is not an authorization policy.
 
@@ -92,8 +108,9 @@ Keep these constraints in mind when generating metadata:
 - `ui.icon` must be a lowercase icon key up to 64 characters.
 - `ui.entrypoint.path` and `ui.navigation[].path` must be same-origin absolute paths beginning with `/`, not `//`, with no backslashes or control characters.
 - `ui.navigation[].label` is limited to 80 characters, and navigation paths must be unique.
-- `containers[].runtime.healthcheck` is accepted as reserved metadata but is ignored by the current runtime.
-- Extension fields, including `x-*`, are not accepted in schema `0.2`.
+- `containers[].runtime.healthcheck` is accepted as reserved schema `0.2` metadata but is ignored by the current runtime.
+- `services[].healthCheck` is schema `0.3` Host-visible readiness metadata.
+- Extension fields, including `x-*`, are not accepted in supported schemas.
 
 ## Install And Update Behavior
 

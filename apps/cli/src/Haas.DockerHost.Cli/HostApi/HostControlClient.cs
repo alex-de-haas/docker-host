@@ -1,12 +1,11 @@
 namespace Haas.DockerHost.Cli.HostApi;
 
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Haas.DockerHost.Cli;
 
-internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken = null) : IDisposable
+internal sealed class HostControlClient(HttpClient httpClient, string controlSecret) : IDisposable
 {
     public const string ContractVersion = "0.1";
 
@@ -17,46 +16,13 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
     };
 
     public Task<HostApiResponse<HostStatusResponse>> GetHostStatusAsync(CancellationToken cancellationToken = default)
-        => SendAsync<HostStatusResponse>("read Host status", HttpMethod.Get, "api/host/status", cancellationToken: cancellationToken);
-
-    public Task<HostApiResponse<CliTokenListResponse>> ListCliTokensAsync(CancellationToken cancellationToken = default)
-        => SendAsync<CliTokenListResponse>("list CLI tokens", HttpMethod.Get, "api/auth/cli-tokens", cancellationToken: cancellationToken);
-
-    public Task<HostApiResponse<CliTokenCreateResponse>> CreateCliTokenAsync(
-        CliTokenCreateRequest request,
-        CancellationToken cancellationToken = default)
-        => SendAsync<CliTokenCreateResponse>(
-            "create CLI token",
-            HttpMethod.Post,
-            "api/auth/cli-tokens",
-            request,
-            cancellationToken);
-
-    public Task<HostApiResponse<CliTokenCreateResponse>> RotateCliTokenAsync(
-        string tokenId,
-        CliTokenRotateRequest request,
-        CancellationToken cancellationToken = default)
-        => SendAsync<CliTokenCreateResponse>(
-            "rotate CLI token",
-            HttpMethod.Post,
-            $"api/auth/cli-tokens/{Uri.EscapeDataString(tokenId)}/rotate",
-            request,
-            cancellationToken);
-
-    public Task<HostApiResponse<CliTokenRevokeResponse>> RevokeCliTokenAsync(
-        string tokenId,
-        CancellationToken cancellationToken = default)
-        => SendAsync<CliTokenRevokeResponse>(
-            "revoke CLI token",
-            HttpMethod.Delete,
-            $"api/auth/cli-tokens/{Uri.EscapeDataString(tokenId)}",
-            cancellationToken: cancellationToken);
+        => SendAsync<HostStatusResponse>("read Host status", HttpMethod.Get, "host/status", cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<ModuleListResponse>> ListModulesAsync(CancellationToken cancellationToken = default)
-        => SendAsync<ModuleListResponse>("list modules", HttpMethod.Get, "api/modules", cancellationToken: cancellationToken);
+        => SendAsync<ModuleListResponse>("list modules", HttpMethod.Get, "modules", cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<ModuleDevTargetListResponse>> ListModuleDevTargetsAsync(CancellationToken cancellationToken = default)
-        => SendAsync<ModuleDevTargetListResponse>("list module developer targets", HttpMethod.Get, "api/modules/dev/targets", cancellationToken: cancellationToken);
+        => SendAsync<ModuleDevTargetListResponse>("list module developer targets", HttpMethod.Get, "modules/dev/targets", cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<ModuleDevTargetResponse>> CreateModuleDevTargetAsync(
         ModuleDevTargetRequest request,
@@ -64,7 +30,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<ModuleDevTargetResponse>(
             "create module developer target",
             HttpMethod.Post,
-            "api/modules/dev/targets",
+            "modules/dev/targets",
             request,
             cancellationToken);
 
@@ -75,7 +41,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<ModuleDevTargetResponse>(
             "update module developer target",
             HttpMethod.Put,
-            $"api/modules/dev/targets/{Uri.EscapeDataString(targetId)}",
+            $"modules/dev/targets/{Uri.EscapeDataString(targetId)}",
             request,
             cancellationToken);
 
@@ -85,11 +51,20 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<ModuleDevTargetResponse>(
             "delete module developer target",
             HttpMethod.Delete,
-            $"api/modules/dev/targets/{Uri.EscapeDataString(targetId)}",
+            $"modules/dev/targets/{Uri.EscapeDataString(targetId)}",
+            cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<DevDataCleanupResponse>> CleanDevModuleDataAsync(
+        string moduleId,
+        CancellationToken cancellationToken = default)
+        => SendAsync<DevDataCleanupResponse>(
+            "clean development module data",
+            HttpMethod.Delete,
+            $"modules/dev/data/{Uri.EscapeDataString(moduleId)}",
             cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<HostUsersResponse>> ListHostUsersAsync(CancellationToken cancellationToken = default)
-        => SendAsync<HostUsersResponse>("list Host users", HttpMethod.Get, "api/auth/users", cancellationToken: cancellationToken);
+        => SendAsync<HostUsersResponse>("list Host users", HttpMethod.Get, "auth/users", cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<UserInvitationCreateResponse>> CreateUserInvitationAsync(
         UserInvitationCreateRequest request,
@@ -97,7 +72,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<UserInvitationCreateResponse>(
             "create Host user invitation",
             HttpMethod.Post,
-            "api/auth/invitations",
+            "auth/invitations",
             request,
             cancellationToken);
 
@@ -107,7 +82,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<UserInvitationAcceptResponse>(
             "accept Host user invitation",
             HttpMethod.Post,
-            "api/auth/invitations/accept",
+            "auth/invitations/accept",
             request,
             cancellationToken);
 
@@ -117,7 +92,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<UserInvitationRevokeResponse>(
             "revoke Host user invitation",
             HttpMethod.Delete,
-            $"api/auth/invitations/{Uri.EscapeDataString(invitationId)}",
+            $"auth/invitations/{Uri.EscapeDataString(invitationId)}",
             cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<HostUserUpdateResponse>> UpdateHostUserAsync(
@@ -127,7 +102,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<HostUserUpdateResponse>(
             "update Host user",
             HttpMethod.Patch,
-            $"api/auth/users/{Uri.EscapeDataString(userId)}",
+            $"auth/users/{Uri.EscapeDataString(userId)}",
             request,
             cancellationToken);
 
@@ -138,7 +113,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<HostUserAssignmentsResponse>(
             "replace Host user module assignments",
             HttpMethod.Put,
-            $"api/auth/users/{Uri.EscapeDataString(userId)}/assignments",
+            $"auth/users/{Uri.EscapeDataString(userId)}/assignments",
             request,
             cancellationToken);
 
@@ -149,12 +124,12 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<ModuleDirectoryPolicyResponse>(
             "set module directory policy",
             HttpMethod.Put,
-            $"api/modules/{Uri.EscapeDataString(moduleId)}/directory/policy",
+            $"modules/{Uri.EscapeDataString(moduleId)}/directory/policy",
             request,
             cancellationToken);
 
     public Task<HostApiResponse<HostAppsResponse>> ListAppsAsync(CancellationToken cancellationToken = default)
-        => SendAsync<HostAppsResponse>("list Host apps", HttpMethod.Get, "api/apps", cancellationToken: cancellationToken);
+        => SendAsync<HostAppsResponse>("list Host apps", HttpMethod.Get, "apps", cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<ModuleActionResult>> RunModuleActionAsync(
         string moduleId,
@@ -163,7 +138,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<ModuleActionResult>(
             $"{action} module",
             HttpMethod.Post,
-            $"api/modules/{Uri.EscapeDataString(moduleId)}/{action}",
+            $"modules/{Uri.EscapeDataString(moduleId)}/{action}",
             cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<InstallPlanResponse>> CreateInstallPlanAsync(
@@ -172,7 +147,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<InstallPlanResponse>(
             "create module install plan",
             HttpMethod.Post,
-            "api/modules/install/plan",
+            "modules/install/plan",
             new { metadataUrl },
             cancellationToken);
 
@@ -182,7 +157,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<ModuleInstallResponse>(
             "apply module install",
             HttpMethod.Post,
-            "api/modules/install",
+            "modules/install",
             request,
             cancellationToken);
 
@@ -192,7 +167,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<ModuleUpdatePlanResponse>(
             "create module update plan",
             HttpMethod.Post,
-            $"api/modules/{Uri.EscapeDataString(moduleId)}/update/plan",
+            $"modules/{Uri.EscapeDataString(moduleId)}/update/plan",
             cancellationToken: cancellationToken);
 
     public Task<HostApiResponse<ModuleUpdateResponse>> ApplyUpdateAsync(
@@ -202,7 +177,29 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         => SendAsync<ModuleUpdateResponse>(
             "apply module update",
             HttpMethod.Post,
-            $"api/modules/{Uri.EscapeDataString(moduleId)}/update",
+            $"modules/{Uri.EscapeDataString(moduleId)}/update",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<ModuleRemovePlanResponse>> CreateRemovePlanAsync(
+        string moduleId,
+        ModuleRemovePlanRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<ModuleRemovePlanResponse>(
+            "create module remove plan",
+            HttpMethod.Post,
+            $"modules/{Uri.EscapeDataString(moduleId)}/remove/plan",
+            request,
+            cancellationToken);
+
+    public Task<HostApiResponse<ModuleActionResult>> ApplyRemoveAsync(
+        string moduleId,
+        ModuleRemoveRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<ModuleActionResult>(
+            "remove module",
+            HttpMethod.Post,
+            $"modules/{Uri.EscapeDataString(moduleId)}/remove",
             request,
             cancellationToken);
 
@@ -217,11 +214,8 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
     {
         using var request = new HttpRequestMessage(method, path);
         request.Headers.TryAddWithoutValidation("X-Docker-Host-Cli-Version", CommandLine.Version);
-        request.Headers.TryAddWithoutValidation("X-Docker-Host-Api-Contract-Version", ContractVersion);
-        if (!string.IsNullOrWhiteSpace(bearerToken))
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
-        }
+        request.Headers.TryAddWithoutValidation("X-Docker-Host-Control-Contract-Version", ContractVersion);
+        request.Headers.TryAddWithoutValidation("X-Docker-Host-Control-Secret", controlSecret);
 
         if (body is not null)
         {
@@ -237,9 +231,9 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
         {
             throw new HostApiException(
                 operation,
-                "Unable to reach the Docker Host API.",
+                "Unable to reach the Docker Host trusted control channel.",
                 responseBody: ex.Message,
-                nextStep: "Run 'docker-host status' for a container-managed Host, or confirm that the configured Host URL points to a running Host API.",
+                nextStep: "Run 'docker-host start' first, or restart Docker Host so it can publish run/control.json.",
                 innerException: ex);
         }
 
@@ -256,7 +250,7 @@ internal sealed class HostApiClient(HttpClient httpClient, string? bearerToken =
             {
                 throw new HostApiException(
                     operation,
-                    "Docker Host API returned a response that docker-host could not parse.",
+                    "Docker Host control returned a response that docker-host could not parse.",
                     response.StatusCode,
                     rawBody,
                     "Update docker-host and the Host image, then retry.",

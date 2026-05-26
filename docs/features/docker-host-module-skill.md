@@ -41,7 +41,7 @@ flowchart LR
 - `skills/docker-host-module/agents/openai.yaml` - UI-facing skill metadata.
 - `skills/docker-host-module/references/module-metadata.md` - compact metadata schema, hard validation constraints, install/update behavior, and unsupported metadata assumptions.
 - `skills/docker-host-module/references/module-auth-and-users.md` - Host roles, gateway policies, identity modes, identity tokens, scoped directory, external providers, external ingress readiness, and module-owned roles.
-- `skills/docker-host-module/references/module-dev-mode.md` - local developer target workflow, Host API-backed `.docker-host/dev.json` harness behavior, and developer-mode boundaries.
+- `skills/docker-host-module/references/module-dev-mode.md` - local developer target workflow, trusted-control-backed dev manifest behavior, and developer-mode boundaries.
 - `skills/docker-host-module/references/demo-module-patterns.md` - practical patterns from `modules/demo-module`.
 - `skills/docker-host-module/references/module-implementation-checklist.md` - final implementation and validation checklist.
 - `skills/docker-host-module/assets/module-template/metadata.json` - minimal valid metadata skeleton.

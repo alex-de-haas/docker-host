@@ -116,6 +116,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             $"HOST_MODULE_NETWORK={plan.ModuleNetwork}",
             $"HOST_MODULE_DEV_MODE={plan.HostModuleDevMode}",
             $"HOST_BIND_ADDRESS={plan.HostBindAddress}",
+            $"HOST_CONTROL_PUBLIC_PORT={hostPort}",
             "HOST_INTERNAL_ORIGIN=http://docker-host:3000",
             "PORT=3000",
             "HOSTNAME=0.0.0.0",

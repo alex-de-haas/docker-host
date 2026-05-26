@@ -8,7 +8,6 @@ import {
 } from './auth-store.ts';
 import type {
   AuthAccountSetRecord,
-  AuthCliTokenRecord,
   AuthSessionRecord,
   AuthSetupTokenRecord,
   AuthState,
@@ -37,7 +36,6 @@ export const SESSION_REJECTION_AUDIT_THROTTLE_MS = 5 * 60 * 1000;
 
 const SETUP_TOKEN_PREFIX = 'dhstp_';
 const ACCOUNT_SET_TOKEN_PREFIX = 'dhacct_';
-const CLI_TOKEN_PREFIX = 'dhcli_';
 const DEFAULT_DEV_ADMIN_EMAIL = 'admin@docker-host.local';
 const DEFAULT_DEV_ADMIN_DISPLAY_NAME = 'Dev Admin';
 const DEFAULT_DEV_ADMIN_PASSWORD = 'docker-host-dev-admin';
@@ -63,16 +61,6 @@ interface DevAuthCredentials {
 
 export interface SessionPrincipal extends HostPrincipal {
   sessionId: string;
-}
-
-export interface CliTokenSummary {
-  id: string;
-  userId: string;
-  label: string;
-  createdAt: string;
-  lastUsedAt?: string;
-  revokedAt?: string;
-  scope: 'host.admin.cli';
 }
 
 export interface AuthSessionSummary {
@@ -119,7 +107,6 @@ export interface HostUserSummary extends HostPrincipal {
   createdAt: string;
   updatedAt: string;
   activeSessionCount: number;
-  activeCliTokenCount: number;
   assignedModuleIds: string[];
   lastSeenAt?: string;
 }
@@ -471,7 +458,6 @@ export async function updateHostUser(
     previousRole: HostRole;
     roleChanged: boolean;
     revokedSessionCount: number;
-    revokedCliTokenCount: number;
   }>(state => {
     const user = state.users.find(candidate => candidate.id === normalizedUserId);
     if (!user || user.disabled) {
@@ -508,23 +494,18 @@ export async function updateHostUser(
     const sessionRevocation = roleChanged
       ? revokeUserSessionsInState(state.sessions, user.id, now)
       : { sessions: state.sessions, count: 0 };
-    const cliTokenRevocation = roleChanged && updatedUser.role !== 'host.admin'
-      ? revokeUserCliTokensInState(state.cliTokens, user.id, now)
-      : { cliTokens: state.cliTokens, count: 0 };
 
     return {
       state: {
         ...state,
         users: state.users.map(candidate => candidate.id === user.id ? updatedUser : candidate),
         sessions: sessionRevocation.sessions,
-        cliTokens: cliTokenRevocation.cliTokens,
       },
       result: {
         user: updatedUser,
         previousRole: user.role,
         roleChanged,
         revokedSessionCount: sessionRevocation.count,
-        revokedCliTokenCount: cliTokenRevocation.count,
       },
     };
   }, config);
@@ -543,7 +524,6 @@ export async function updateHostUser(
       role: result.user.role,
       roleChanged: result.roleChanged,
       revokedSessionCount: result.revokedSessionCount,
-      revokedCliTokenCount: result.revokedCliTokenCount,
     },
   }, config);
 
@@ -565,7 +545,6 @@ export async function disableHostUser(
   const result = await updateAuthState<{
     user: AuthUserRecord;
     revokedSessionCount: number;
-    revokedCliTokenCount: number;
     removedAssignmentCount: number;
     removedAccountSetCount: number;
   }>(state => {
@@ -584,7 +563,6 @@ export async function disableHostUser(
       updatedAt: now.toISOString(),
     };
     const sessionRevocation = revokeUserSessionsInState(state.sessions, user.id, now);
-    const cliTokenRevocation = revokeUserCliTokensInState(state.cliTokens, user.id, now);
     const accountSetRemoval = removeUserFromAccountSetsInState(state.accountSets, user.id, now);
     const nextModuleAssignments = state.moduleAssignments.filter(assignment => assignment.userId !== user.id);
 
@@ -593,14 +571,12 @@ export async function disableHostUser(
         ...state,
         users: state.users.map(candidate => candidate.id === user.id ? disabledUser : candidate),
         sessions: sessionRevocation.sessions,
-        cliTokens: cliTokenRevocation.cliTokens,
         accountSets: accountSetRemoval.accountSets,
         moduleAssignments: nextModuleAssignments,
       },
       result: {
         user: disabledUser,
         revokedSessionCount: sessionRevocation.count,
-        revokedCliTokenCount: cliTokenRevocation.count,
         removedAssignmentCount: state.moduleAssignments.length - nextModuleAssignments.length,
         removedAccountSetCount: accountSetRemoval.count,
       },
@@ -618,7 +594,6 @@ export async function disableHostUser(
     request,
     details: {
       revokedSessionCount: result.revokedSessionCount,
-      revokedCliTokenCount: result.revokedCliTokenCount,
       removedAssignmentCount: result.removedAssignmentCount,
       removedAccountSetCount: result.removedAccountSetCount,
     },
@@ -1741,57 +1716,6 @@ export async function authenticateSessionToken(
   return principal;
 }
 
-export async function authenticateCliToken(
-  token: string | null | undefined,
-  request?: AuthRequestMeta,
-  config?: HostRuntimeConfig
-): Promise<HostPrincipal | null> {
-  if (!token) {
-    return null;
-  }
-
-  const tokenHash = hashToken(token);
-  const now = new Date();
-  let principal: HostPrincipal | null = null;
-
-  await updateAuthState(state => {
-    const cliToken = state.cliTokens.find(candidate =>
-      !candidate.revokedAt &&
-      candidate.scope === 'host.admin.cli' &&
-      candidate.tokenHash === tokenHash
-    );
-    const user = cliToken
-      ? state.users.find(candidate => candidate.id === cliToken.userId && !candidate.disabled)
-      : null;
-
-    if (cliToken && user && user.role === 'host.admin') {
-      principal = toPrincipal(user);
-    }
-
-    return {
-      state: {
-        ...state,
-        cliTokens: state.cliTokens.map(candidate =>
-          principal && candidate.id === cliToken?.id
-            ? { ...candidate, lastUsedAt: now.toISOString() }
-            : candidate
-        ),
-      },
-      result: null,
-    };
-  }, config);
-
-  if (!principal && request) {
-    await appendAuthAuditEvent({
-      type: 'auth.cli_token.rejected',
-      success: false,
-      request,
-    }, config);
-  }
-
-  return principal;
-}
-
 export async function revokeSession(
   sessionToken: string | null | undefined,
   request?: AuthRequestMeta,
@@ -2000,183 +1924,6 @@ export async function hasRecentSessionReauthentication(
   return Date.parse(session.reauthenticatedAt) >= Date.now() - RECENT_REAUTH_WINDOW_MS;
 }
 
-export async function createCliTokenForAdmin(
-  userId: string,
-  label: string,
-  config?: HostRuntimeConfig
-) {
-  const token = generateToken(CLI_TOKEN_PREFIX);
-  const now = new Date();
-
-  const createdToken = await updateAuthState<AuthCliTokenRecord>(state => {
-    const user = state.users.find(candidate => candidate.id === userId && !candidate.disabled);
-    if (!user || user.role !== 'host.admin') {
-      throw new AuthServiceError('admin_required', 'CLI tokens can only be issued for Host administrators.');
-    }
-
-    const nextToken: AuthCliTokenRecord = {
-      id: `cli_${randomUUID()}`,
-      userId,
-      tokenHash: hashToken(token),
-      label: normalizeCliTokenLabel(label),
-      createdAt: now.toISOString(),
-      scope: 'host.admin.cli',
-    };
-
-    return {
-      state: {
-        ...state,
-        cliTokens: [
-          ...state.cliTokens,
-          nextToken,
-        ],
-      },
-      result: nextToken,
-    };
-  }, config);
-
-  await appendAuthAuditEvent({
-    type: 'auth.cli_token.created',
-    actorUserId: userId,
-    success: true,
-    details: { tokenId: createdToken.id, label: createdToken.label },
-  }, config);
-
-  return {
-    token,
-    tokenId: createdToken.id,
-    cliToken: summarizeCliToken(createdToken),
-  };
-}
-
-export async function listCliTokens(config?: HostRuntimeConfig): Promise<CliTokenSummary[]> {
-  const state = await readAuthState(config);
-  return state.cliTokens.map(summarizeCliToken);
-}
-
-export async function revokeCliToken(
-  tokenId: string,
-  actorUserId: string,
-  config?: HostRuntimeConfig
-) {
-  const normalizedTokenId = tokenId.trim();
-  const now = new Date();
-
-  const revokedToken = await updateAuthState<AuthCliTokenRecord | null>(state => {
-    const existingToken = state.cliTokens.find(candidate =>
-      candidate.id === normalizedTokenId && !candidate.revokedAt
-    );
-    const revoked: AuthCliTokenRecord | null = existingToken
-      ? { ...existingToken, revokedAt: now.toISOString() }
-      : null;
-
-    return {
-      state: {
-        ...state,
-        cliTokens: state.cliTokens.map(candidate =>
-          revoked && candidate.id === revoked.id ? revoked : candidate
-        ),
-      },
-      result: revoked,
-    };
-  }, config);
-
-  if (revokedToken) {
-    await appendAuthAuditEvent({
-      type: 'auth.cli_token.revoked',
-      actorUserId,
-      success: true,
-      details: {
-        tokenId: revokedToken.id,
-        userId: revokedToken.userId,
-        label: revokedToken.label,
-      },
-    }, config);
-  }
-
-  return Boolean(revokedToken);
-}
-
-export async function rotateCliToken(
-  tokenId: string,
-  actorUserId: string,
-  label?: string,
-  config?: HostRuntimeConfig
-) {
-  const normalizedTokenId = tokenId.trim();
-  const token = generateToken(CLI_TOKEN_PREFIX);
-  const now = new Date();
-
-  const rotated = await updateAuthState<{
-    revokedToken: AuthCliTokenRecord;
-    createdToken: AuthCliTokenRecord;
-  }>(state => {
-    const existingToken = state.cliTokens.find(candidate =>
-      candidate.id === normalizedTokenId && !candidate.revokedAt
-    );
-    if (!existingToken) {
-      throw new AuthServiceError('cli_token_not_found', 'CLI token was not found or is already revoked.');
-    }
-
-    const user = state.users.find(candidate =>
-      candidate.id === existingToken.userId &&
-      !candidate.disabled &&
-      candidate.role === 'host.admin'
-    );
-    if (!user) {
-      throw new AuthServiceError('admin_required', 'CLI tokens can only be issued for Host administrators.');
-    }
-
-    const revokedToken: AuthCliTokenRecord = {
-      ...existingToken,
-      revokedAt: now.toISOString(),
-    };
-    const createdToken: AuthCliTokenRecord = {
-      id: `cli_${randomUUID()}`,
-      userId: existingToken.userId,
-      tokenHash: hashToken(token),
-      label: normalizeCliTokenLabel(label ?? existingToken.label),
-      createdAt: now.toISOString(),
-      scope: 'host.admin.cli',
-    };
-
-    return {
-      state: {
-        ...state,
-        cliTokens: [
-          ...state.cliTokens.map(candidate =>
-            candidate.id === revokedToken.id ? revokedToken : candidate
-          ),
-          createdToken,
-        ],
-      },
-      result: {
-        revokedToken,
-        createdToken,
-      },
-    };
-  }, config);
-
-  await appendAuthAuditEvent({
-    type: 'auth.cli_token.rotated',
-    actorUserId,
-    success: true,
-    details: {
-      revokedTokenId: rotated.revokedToken.id,
-      tokenId: rotated.createdToken.id,
-      userId: rotated.createdToken.userId,
-      label: rotated.createdToken.label,
-    },
-  }, config);
-
-  return {
-    token,
-    tokenId: rotated.createdToken.id,
-    revokedTokenId: rotated.revokedToken.id,
-    cliToken: summarizeCliToken(rotated.createdToken),
-  };
-}
-
 export async function createSessionForUser(
   userId: string,
   auditType: string,
@@ -2322,11 +2069,6 @@ function toPrincipal(user: AuthUserRecord): HostPrincipal {
   };
 }
 
-function normalizeCliTokenLabel(label: string) {
-  const normalized = label.trim();
-  return (normalized || 'Docker Host CLI').slice(0, 80);
-}
-
 function findValidRecoveryToken(state: AuthState, tokenHash: string, now: Date) {
   return state.setupTokens.find(candidate =>
     candidate.purpose === 'recovery' &&
@@ -2457,10 +2199,6 @@ function summarizeHostUser(user: AuthUserRecord, state: AuthState, now: Date): H
     session.userId === user.id &&
     isSessionActive(session, now)
   );
-  const activeCliTokens = state.cliTokens.filter(token =>
-    token.userId === user.id &&
-    !token.revokedAt
-  );
   const assignedModuleIds = normalizeAssignedModuleIds(
     state.moduleAssignments
       .filter(assignment => assignment.userId === user.id)
@@ -2479,7 +2217,6 @@ function summarizeHostUser(user: AuthUserRecord, state: AuthState, now: Date): H
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     activeSessionCount: activeSessions.length,
-    activeCliTokenCount: activeCliTokens.length,
     assignedModuleIds,
     lastSeenAt,
   };
@@ -2592,21 +2329,6 @@ function revokeUserSessionsInState(sessions: AuthSessionRecord[], userId: string
   };
 }
 
-function revokeUserCliTokensInState(cliTokens: AuthCliTokenRecord[], userId: string, now: Date) {
-  let count = 0;
-  return {
-    cliTokens: cliTokens.map(token => {
-      if (token.userId === userId && !token.revokedAt) {
-        count += 1;
-        return { ...token, revokedAt: now.toISOString() };
-      }
-
-      return token;
-    }),
-    count,
-  };
-}
-
 function removeUserFromAccountSetsInState(
   accountSets: AuthAccountSetRecord[],
   userId: string,
@@ -2656,22 +2378,6 @@ function sortBrowserAccounts(left: BrowserAccountSummary, right: BrowserAccountS
   }
 
   return Date.parse(right.lastUsedAt) - Date.parse(left.lastUsedAt);
-}
-
-function summarizeCliToken(token: AuthCliTokenRecord | null): CliTokenSummary {
-  if (!token) {
-    throw new AuthServiceError('cli_token_not_created', 'CLI token was not created.');
-  }
-
-  return {
-    id: token.id,
-    userId: token.userId,
-    label: token.label,
-    createdAt: token.createdAt,
-    lastUsedAt: token.lastUsedAt,
-    revokedAt: token.revokedAt,
-    scope: token.scope,
-  };
 }
 
 function summarizeSession(

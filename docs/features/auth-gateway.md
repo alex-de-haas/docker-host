@@ -29,7 +29,7 @@ Docker Host should not depend on a regular managed module for its own authentica
 - Modules may query only a scoped list of users relevant to that module.
 - Multiple real-world accounts are modeled as multiple Host users with account switching.
 - Identity profiles are not part of the current account model.
-- Local authentication stores Host-owned users, sessions, CLI tokens, assignments, and audit state in dedicated versioned JSON files under the Host data root.
+- Local authentication stores Host-owned users, browser sessions, account sets, assignments, invitations, setup/recovery tokens, and audit state in dedicated versioned JSON files under the Host data root.
 - SQLite is not part of the local auth persistence model.
 
 ## Gateway Routing
@@ -178,20 +178,17 @@ Host role is included in module identity so modules can make bootstrap or admin 
 
 ## CLI Access
 
-CLI module commands should act as a local administrator tool. The CLI should authenticate to the Host API using local administrator credentials or a local administrator token created during Host setup. The token or credential material must remain local to the physical machine and must not be exposed to remote callers.
+CLI module commands act as a local administrator tool through the trusted local control channel, not through Host user authentication. The Host writes `<HOST_DATA_ROOT_HOST>/run/control.json` with a per-start local control endpoint, contract version, and channel-binding secret. The CLI reads that owner-only file and calls `/control/v1`.
 
-The accepted local authentication direction is to use a revocable local admin token for CLI access. The Host stores only a server-side hash of the token. The CLI stores the token material under the local Docker Host config area with restrictive file permissions or platform ACLs. Authenticated CLI module commands are treated as `host.admin` operations.
+Control requests do not send `Authorization: Bearer`, browser cookies, account-set cookies, or CSRF headers. The control secret is not a user credential, is not shown in the Web UI, and is not accepted by normal `/api` routes or by the module gateway.
 
-The operational CLI token lifecycle includes:
+Operational CLI auth decisions:
 
-- Host administrators can list, create, rotate, and revoke CLI admin tokens through admin-authenticated Host APIs.
-- Raw CLI token material is returned only once when a token is created or rotated.
-- CLI token records remain user-scoped. A token only works while its owning Host user is enabled and remains `host.admin`.
-- The CLI stores the active token in `~/.docker-host/config/auth.json` with restrictive file permissions on Unix-like platforms.
-- `DOCKER_HOST_CLI_TOKEN` can provide an ephemeral token override for automation.
-- The Security settings page can generate a one-time visible CLI token for the current administrator and show the matching `docker-host auth token import` command.
-- Host API-backed CLI commands send the token as `Authorization: Bearer`.
-- CLI token create, revoke, rotate, session revocation, and audit purge operations require recent browser reauthentication when called with a browser session.
+- `docker-host auth setup-token` remains for first-administrator bootstrap.
+- `docker-host auth recovery-token` remains for local administrator recovery.
+- `docker-host auth token ...` commands are not part of the active CLI surface.
+- The Web UI no longer generates CLI admin tokens.
+- Browser sessions, user roles, OIDC, trusted proxy authentication, and recent browser reauthentication continue to protect normal Host API routes.
 
 ## Local Authentication Decisions
 
@@ -229,20 +226,17 @@ Implemented local-auth surface:
 - `DELETE /api/auth/audit` applies retention-based audit purge and writes a final `auth.audit.purged` event;
 - `/api/auth/sessions` lists active and optionally revoked Host sessions for Host administrators;
 - `/api/auth/sessions/{sessionId}` revokes a Host session by id for Host administrators;
-- `/api/auth/cli-tokens` lists and creates CLI admin tokens for authenticated Host administrators;
-- `/api/auth/cli-tokens/{tokenId}` revokes a CLI admin token;
-- `/api/auth/cli-tokens/{tokenId}/rotate` creates a replacement CLI admin token and revokes the selected old token;
 - `/api/health` is the minimal unauthenticated health endpoint;
 - current Host API routes for Host status, modules, containers, images, install, update, lifecycle, remove, and recovery require `host.admin`;
 - `docker-host auth setup-token` writes a hashed one-time setup token into the Host auth JSON store through local filesystem access;
 - `docker-host auth recovery-token` writes a hashed one-time recovery token into the Host auth JSON store through local filesystem access;
-- `docker-host auth token import/status/logout/list/create/revoke/rotate` manages the local CLI token and the Host-side CLI token lifecycle.
+- local CLI module and dev commands use `/control/v1` through `<HOST_DATA_ROOT_HOST>/run/control.json`.
 
 Audit events are stored as append-only NDJSON under `/data/auth/audit.ndjson`, separate from the main auth state. New events use a stable envelope with event identity, timestamp, type, optional actor, optional target, request metadata, success state, and sanitized details. Raw passwords, bearer tokens, setup tokens, recovery tokens, OIDC tokens, trusted proxy assertions, cookies, and authorization headers must not be written to the audit log.
 
 The audit reader supports cursor pagination plus filters for event type, actor, target, result, and timestamp range. The retention purge keeps events on or after the selected cutoff, reports malformed discarded lines, and appends a purge summary event. The default operational retention used by the Web UI is 90 days.
 
-High-risk auth operations require a recent browser reauthentication window. Browser sessions can refresh this window through `/api/auth/reauth` using the user's local password or a local recovery token. CLI-token and trusted-proxy authenticated requests bypass browser reauthentication because the caller has already presented a privileged non-browser credential or a verified upstream identity.
+High-risk auth operations require a recent browser reauthentication window. Browser sessions can refresh this window through `/api/auth/reauth` using the user's local password or a local recovery token. Trusted-proxy authenticated requests bypass browser reauthentication because the caller has already presented a verified upstream identity.
 
 Session operational controls build on the existing server-side session records in `/data/auth/state.json`. The session APIs expose session ids, owner metadata, timestamps, active/revoked state, and coarse request metadata, but never token hashes or raw session cookies.
 
@@ -278,7 +272,7 @@ Host must not forward its own session cookie to modules. When a gateway request 
 Token decisions:
 
 - JWTs are signed with an asymmetric Host-owned key using `ES256`.
-- Private signing keys live under `/data/auth/module-identity-keys.json`, separate from users, sessions, CLI tokens, and module assignments.
+- Private signing keys live under `/data/auth/module-identity-keys.json`, separate from users, sessions, account sets, invitations, and module assignments.
 - Public keys are published as JWKS at `/.well-known/docker-host/jwks.json`.
 - Discovery metadata is published at `/.well-known/docker-host/module-identity.json`.
 - The discovery `jwks_uri` uses `HOST_INTERNAL_ORIGIN`, defaulting to `http://docker-host:3000`, so module containers can validate tokens from inside the Docker network.
@@ -370,7 +364,7 @@ Host administrators can manage users from `/settings/users`. The page lists Host
 
 Invitations are one-time setup-token style links for local-password users. The raw token is returned only once and only its hash is stored in `/data/auth/state.json`. Invitation tokens carry the invited role, email, optional display name, expiry, creator user id, and initial module assignments. The recipient accepts the invitation at `/setup/invite?setupToken=...`.
 
-User deletion is soft-disable. Disabling a user revokes active sessions, removes remembered browser account entries, revokes CLI tokens, and removes module assignments. Docker Host prevents disabling or demoting the last active administrator and blocks self-disable from User Management.
+User deletion is soft-disable. Disabling a user revokes active sessions, removes remembered browser account entries, and removes module assignments. Docker Host prevents disabling or demoting the last active administrator and blocks self-disable from User Management.
 
 OIDC and trusted-proxy users can be disabled and assigned to modules after they are provisioned, but their roles remain provider-managed because the next external-provider login can recalculate the stored role from provider mappings.
 
@@ -482,7 +476,7 @@ When trusted proxy mode is active:
 
 - protected Host API and gateway requests use the verified trusted proxy principal;
 - browser session fallback is disabled for protected requests so direct-origin access cannot bypass the upstream proxy;
-- CLI Bearer tokens remain available for local administrative automation;
+- local CLI automation uses the trusted control channel instead of trusted-proxy or browser authentication;
 - role mapping is default-deny when no configured claim mapping grants `host.admin` or `host.user`;
 - disabled mapped Host users are denied;
 - trusted proxy assertion headers are stripped before gateway module traffic is proxied.
@@ -517,14 +511,13 @@ Integrated development should be used to verify:
 
 Supported developer mode behavior:
 
-- developer mode is disabled by default and enabled with `HOST_MODULE_DEV_MODE=enabled`;
 - developer target records live in `/data/dev/module-targets.json`;
 - Host validates a metadata URL before linking a developer target;
 - each target maps a hostname and developer-target `portKey` to an HTTP local target URL; this field stores a metadata endpoint key in the developer-mode store;
 - target URLs are limited to localhost, `*.localhost`, `host.docker.internal`, loopback, and private IP ranges;
-- gateway developer targets are checked before production gateway exposures while developer mode is enabled;
+- gateway developer targets are checked before production gateway exposures when the target is enabled;
 - integrated requests use the normal Host access policy and the normal Host-signed `X-Docker-Host-Identity` token;
-- CLI/API management is available through `docker-host modules dev list`, `link`, and `unlink`.
+- CLI management is available through trusted-control-backed `docker-host modules dev list`, `link`, and `unlink`.
 
 More details live in [Module developer mode](module-developer-mode.md).
 

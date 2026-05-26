@@ -1,0 +1,208 @@
+{
+  "schemaVersion": "0.3",
+  "id": "com.haas.demo-module",
+  "name": "Demo Module",
+  "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, gateway authorization, identity propagation, module directory, and module-owned role flows.",
+  "version": "0.2.1",
+  "services": [
+    {
+      "key": "app",
+      "source": {
+        "type": "process",
+        "command": "npm run dev",
+        "workingDirectory": ".",
+        "environment": {
+          "PORT": "3100",
+          "DEMO_PUBLIC_URL": "http://localhost:3100"
+        }
+      },
+      "runtime": {
+        "ports": [
+          {
+            "key": "http",
+            "containerPort": 3000,
+            "localPort": 3100,
+            "protocol": "http"
+          }
+        ],
+        "resources": {
+          "cpus": 0.25,
+          "memory": "256m"
+        }
+      },
+      "healthCheck": {
+        "type": "http",
+        "path": "/api/health",
+        "intervalSeconds": 10,
+        "timeoutSeconds": 2,
+        "successStatus": [200]
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "http",
+      "service": "app",
+      "port": "http",
+      "public": true
+    }
+  ],
+  "settings": [
+    {
+      "key": "DEMO_GREETING",
+      "type": "string",
+      "required": false,
+      "default": "Hello from Docker Host",
+      "targets": [
+        {
+          "container": "app",
+          "type": "env",
+          "name": "DEMO_GREETING"
+        }
+      ]
+    },
+    {
+      "key": "DEMO_RELEASE_CHANNEL",
+      "type": "string",
+      "required": false,
+      "default": "local",
+      "targets": [
+        {
+          "container": "app",
+          "type": "env",
+          "name": "DEMO_RELEASE_CHANNEL"
+        }
+      ]
+    },
+    {
+      "key": "DEMO_REFRESH_SECONDS",
+      "type": "number",
+      "required": false,
+      "default": 30,
+      "targets": [
+        {
+          "container": "app",
+          "type": "env",
+          "name": "DEMO_REFRESH_SECONDS"
+        }
+      ]
+    },
+    {
+      "key": "DEMO_AUTH_PREVIEW",
+      "type": "boolean",
+      "required": false,
+      "default": true,
+      "targets": [
+        {
+          "container": "app",
+          "type": "env",
+          "name": "DEMO_AUTH_PREVIEW"
+        }
+      ]
+    },
+    {
+      "key": "DEMO_PUBLIC_URL",
+      "type": "url",
+      "required": false,
+      "default": "http://localhost:3100",
+      "targets": [
+        {
+          "container": "app",
+          "type": "env",
+          "name": "DEMO_PUBLIC_URL"
+        }
+      ]
+    }
+  ],
+  "storage": {
+    "directories": [
+      {
+        "key": "data",
+        "label": "Data",
+        "description": "Writable demo module state and health-check probe data.",
+        "purpose": "data",
+        "required": true,
+        "targets": [
+          {
+            "container": "app",
+            "containerPath": "/app/data",
+            "writable": true
+          }
+        ],
+        "mount": {
+          "recommended": true,
+          "type": "bind",
+          "modulePath": "data"
+        }
+      },
+      {
+        "key": "logs",
+        "label": "Logs",
+        "description": "Writable demo log output directory.",
+        "purpose": "logs",
+        "required": false,
+        "targets": [
+          {
+            "container": "app",
+            "containerPath": "/app/logs",
+            "writable": true
+          }
+        ],
+        "mount": {
+          "recommended": true,
+          "type": "bind",
+          "modulePath": "logs"
+        }
+      }
+    ],
+    "mountCollections": [
+      {
+        "key": "external-sources",
+        "label": "External sources",
+        "description": "Optional host-selected folders surfaced by the demo UI.",
+        "purpose": "data",
+        "required": false,
+        "minItems": 0,
+        "maxItems": 4,
+        "targets": [
+          {
+            "container": "app",
+            "containerPathPrefix": "/mnt/sources",
+            "itemContainerPathTemplate": "/mnt/sources/{key}",
+            "writable": false
+          }
+        ],
+        "hostPathPolicy": {
+          "mode": "adminSelected",
+          "allowExternal": true
+        }
+      }
+    ]
+  },
+  "ui": {
+    "category": "Apps",
+    "icon": "boxes",
+    "entrypoint": {
+      "portKey": "http",
+      "path": "/"
+    },
+    "navigation": [
+      {
+        "label": "Overview",
+        "path": "/"
+      },
+      {
+        "label": "People",
+        "path": "/people"
+      },
+      {
+        "label": "Roles",
+        "path": "/roles"
+      },
+      {
+        "label": "Settings",
+        "path": "/settings"
+      }
+    ]
+  }
+}

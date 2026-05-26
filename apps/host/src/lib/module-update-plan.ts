@@ -111,6 +111,21 @@ export async function createModuleUpdatePlan(
   }
 
   const graph = graphResult.graph;
+  const unsupportedServices = collectUnsupportedUpdateServices(graph);
+  if (unsupportedServices.length > 0) {
+    return {
+      status: 422,
+      body: {
+        error: {
+          code: 'update_plan_validation_failed',
+          message: 'Production module update currently supports image services only.',
+          validationErrors: unsupportedServices,
+          conflicts: [],
+        },
+      },
+    };
+  }
+
   const root = graph.nodes.get(graph.rootId);
   if (!root) {
     return errorResult(422, 'update_plan_validation_failed', 'Refreshed metadata graph is missing the root node.');
@@ -186,6 +201,24 @@ export async function createModuleUpdatePlan(
     status: 200,
     body: { plan },
   };
+}
+
+function collectUnsupportedUpdateServices(graph: MetadataGraph): InstallPlanValidationError[] {
+  const validationErrors: InstallPlanValidationError[] = [];
+  for (const node of graph.nodes.values()) {
+    node.metadata.containers.forEach((service, index) => {
+      if (service.source.type !== 'image') {
+        validationErrors.push({
+          code: 'service_source_unsupported_for_update',
+          message: 'Production update supports services with source.type "image" only.',
+          path: `$.services[${index}].source.type`,
+          node: node.id,
+        });
+      }
+    });
+  }
+
+  return validationErrors;
 }
 
 function buildUpdatePlan({
