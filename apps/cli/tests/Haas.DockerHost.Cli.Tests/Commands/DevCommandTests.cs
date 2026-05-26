@@ -43,35 +43,44 @@ public sealed class DevCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task StatusAsync_ChecksLinuxEngineBeforeInspectingContainer()
+    public async Task StatusAsync_WithoutConfiguredDevRepository_ThrowsUsageException()
     {
         var transport = new FakeDockerTransport();
         var context = CreateContext(transport);
 
-        var exitCode = await new DevCommand(context).ExecuteAsync(["status", "--manifest", WriteManifest()]);
+        await Assert.ThrowsAsync<CommandUsageException>(
+            () => new DevCommand(context).ExecuteAsync(["status", "--manifest", WriteManifest()]));
 
-        Assert.Equal(1, exitCode);
-        Assert.Equal(
-            ["/version", "/containers/docker-host/json"],
-            transport.Requests.Select(request => request.PathAndQuery).Take(2));
+        Assert.Empty(transport.Requests);
     }
 
     [Fact]
-    public async Task ResetAsync_ChecksLinuxEngineBeforeInspectingContainer()
+    public async Task ResetAsync_WithoutConfiguredDevRepository_ThrowsUsageException()
     {
         var transport = new FakeDockerTransport();
         var context = CreateContext(transport);
 
-        var exitCode = await new DevCommand(context).ExecuteAsync(["reset", "--manifest", WriteManifest()]);
+        await Assert.ThrowsAsync<CommandUsageException>(
+            () => new DevCommand(context).ExecuteAsync(["reset", "--manifest", WriteManifest()]));
 
-        Assert.Equal(1, exitCode);
-        Assert.Equal(
-            ["/version", "/containers/docker-host/json"],
-            transport.Requests.Select(request => request.PathAndQuery).Take(2));
+        Assert.Empty(transport.Requests);
     }
 
     [Fact]
-    public async Task StatusAsync_WithHostUrl_DoesNotInspectDockerContainer()
+    public async Task UpAsync_WithoutConfiguredDevRepository_ThrowsUsageExceptionBeforeReadingMetadata()
+    {
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+        var missingManifestPath = Path.Combine(rootDirectory, "missing", "metadata.dev.json");
+
+        await Assert.ThrowsAsync<CommandUsageException>(
+            () => new DevCommand(context).ExecuteAsync(["up", "--manifest", missingManifestPath]));
+
+        Assert.Empty(transport.Requests);
+    }
+
+    [Fact]
+    public async Task StatusAsync_WithHostUrl_UsesTrustedControlOnly()
     {
         using var hostApi = FakeHostApiServer.Start();
         WriteControlDiscovery();
@@ -86,7 +95,7 @@ public sealed class DevCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task StatusAsync_WithConfiguredHostDevRepository_DoesNotInspectDockerContainer()
+    public async Task StatusAsync_WithConfiguredHostDevRepository_UsesTrustedControlOnly()
     {
         using var hostApi = FakeHostApiServer.Start();
         WriteControlDiscovery();
@@ -105,7 +114,7 @@ public sealed class DevCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ResetAsync_WithHostUrl_DoesNotInspectDockerContainer()
+    public async Task ResetAsync_WithHostUrl_UsesTrustedControlOnly()
     {
         using var hostApi = FakeHostApiServer.Start();
         WriteControlDiscovery();
@@ -166,18 +175,33 @@ public sealed class DevCommandTests : IDisposable
 
     private string WriteManifest()
     {
-        var manifestPath = Path.Combine(rootDirectory, "dev.json");
+        var manifestPath = Path.Combine(rootDirectory, "metadata.dev.json");
         Directory.CreateDirectory(rootDirectory);
         File.WriteAllText(
             manifestPath,
             """
             {
-              "metadataUrl": "http://example.test/module.json",
-              "target": {
-                "hostname": "dev.example.test",
-                "portKey": "3000/tcp",
-                "targetBaseUrl": "http://localhost:3100"
-              }
+              "schemaVersion": "0.3",
+              "id": "com.example.dev",
+              "name": "Dev Module",
+              "version": "1.0.0",
+              "services": [
+                {
+                  "key": "app",
+                  "source": {
+                    "type": "process",
+                    "command": "npm run dev"
+                  },
+                  "runtime": {
+                    "ports": [
+                      { "key": "http", "containerPort": 3000, "localPort": 3100, "protocol": "http" }
+                    ]
+                  }
+                }
+              ],
+              "endpoints": [
+                { "key": "http", "service": "app", "port": "http", "public": true }
+              ]
             }
             """);
         return manifestPath;

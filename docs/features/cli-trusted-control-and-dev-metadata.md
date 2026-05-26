@@ -61,7 +61,7 @@ The first control contract covers:
 - developer target list, upsert, delete, and dev data cleanup;
 - Host-owned development user, invitation, assignment, directory policy, and app registry helpers used by `docker-host dev`.
 
-The CLI still inspects Docker only for Host container lifecycle and Host URL discovery. Module lifecycle requires a running Host. If the Host is stopped, module commands report the problem and point the administrator to `docker-host start`.
+The CLI still inspects Docker only for Host container lifecycle and production module command Host URL discovery. The top-level `docker-host dev` harness does not inspect or start the production Host container; it starts the source-run Host from `HOST_DEV_REPOSITORY_PATH` or connects to an explicit `--host-url`.
 
 ## Dev Metadata
 
@@ -120,7 +120,7 @@ Example:
 }
 ```
 
-`docker-host dev up` accepts an explicit dev manifest path, a module metadata path, a repository directory containing `metadata.dev.json`, or the current directory when it contains `metadata.dev.json`. Legacy implicit `.docker-host/dev.json` discovery is not part of the workflow; repository scripts pass `modules/demo-module/.docker-host/dev.json` explicitly when they need local commands, Host process environment, and development users.
+`docker-host dev up` accepts a module metadata path, a repository directory containing `metadata.dev.json`, or the current directory when it contains `metadata.dev.json`. Repository scripts pass `modules/demo-module/metadata.dev.json` explicitly and provide Host process development environment through the wrapper process when needed.
 
 Development module data persists under `<HOST_DATA_ROOT_HOST>/dev/modules/<module-id>/` between runs. Use:
 

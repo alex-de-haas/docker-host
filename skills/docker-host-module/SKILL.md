@@ -51,10 +51,10 @@ Use this skill to implement Docker Host modules in the shape expected by this re
    - standalone module dev for module-owned UI and business logic;
    - integrated developer target for shell apps, gateway policy, Host sessions, identity, scoped directory access, redirects, WebSockets, and SSE;
    - production-like local image install for Dockerfile, storage, lifecycle, install/update, and container runtime behavior.
-2. For manifest-driven local orchestration, use `docker-host dev up --manifest <path>`. It enables module developer mode, connects to the configured Host mode, seeds development accounts and assignments through Host-owned APIs, links the developer target, and starts the local module command.
-3. For this repository's host-side demo loop, use `npm run host:dev:demo`. It wraps `docker-host dev up --manifest modules/demo-module/.docker-host/dev.json`, starts Host and the module locally, seeds development accounts, and registers the demo developer target.
+2. For metadata-driven local orchestration, use `docker-host dev up --manifest <path-to-metadata.dev.json>`. It starts the development Host from configured `HOST_DEV_REPOSITORY_PATH` or connects to `--host-url`, seeds development accounts and assignments through Host-owned APIs, links the developer target, and starts the local module command.
+3. For this repository's host-side demo loop, use `npm run host:dev:demo`. It wraps `docker-host dev up --manifest modules/demo-module/metadata.dev.json`, starts Host and the module locally, seeds development accounts, and registers the demo developer target.
 4. When changing the Host itself, either set `HOST_DEV_REPOSITORY_PATH`/`HOST_DEV_PORT` in CLI config for `local-process` startup or pass `--host-url http://localhost:<port>` when the Host is already running in another terminal or debugger. The CLI should talk to that Host origin through trusted local control, not assume the Host is a Docker container.
-5. Use `target.localPort` for module dev servers on the developer machine when possible. The CLI expands it to `host.docker.internal` for Docker-container Host runs and to `127.0.0.1` for local/external Host runs.
+5. Use `runtime.ports[].localPort` in `metadata.dev.json` for module dev servers on the developer machine when possible. The top-level dev harness maps it to `127.0.0.1` for the source-run Host.
 6. For low-level target-only work, run the module dev server locally, then link it with `docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>`.
 7. Do not hand-inject fake `X-Docker-Host-Identity` tokens to claim Host integration is working. Use Host-owned development users and assignments so Docker Host signs the token and serves the scoped directory through its normal APIs.
 

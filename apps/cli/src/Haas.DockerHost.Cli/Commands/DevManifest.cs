@@ -3,11 +3,9 @@ namespace Haas.DockerHost.Cli.Commands;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 internal enum DevHostMode
 {
-    DockerContainer,
     LocalProcess,
     External,
 }
@@ -16,25 +14,16 @@ internal sealed record DevManifest
 {
     private const string DefaultAdminPassword = "docker-host-dev-admin";
     private const string DefaultUserPassword = "docker-host-dev-user";
-    private const int DefaultLocalHostPort = 3000;
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonDocumentOptions JsonDocumentOptions = new()
     {
-        ReadCommentHandling = JsonCommentHandling.Skip,
+        CommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
     };
-
-    public string? MetadataUrl { get; init; }
-
-    public string? MetadataFile { get; init; }
-
-    public string? MetadataFileHost { get; init; }
 
     public string? ModuleCommand { get; init; }
 
     public string? WorkingDirectory { get; init; }
-
-    public DevManifestHost Host { get; init; } = new();
 
     public DevManifestTarget Target { get; init; } = new();
 
@@ -43,54 +32,25 @@ internal sealed record DevManifest
     public DevManifestDirectoryPolicy? DirectoryPolicy { get; init; }
 
     public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
-
-    [JsonIgnore]
     public string ManifestPath { get; private init; } = "";
 
-    [JsonIgnore]
     public string ManifestDirectory => Path.GetDirectoryName(ManifestPath) ?? Directory.GetCurrentDirectory();
-
-    [JsonIgnore]
-    public bool HasExplicitHostMode => !string.IsNullOrWhiteSpace(Host.Mode);
-
-    [JsonIgnore]
-    public bool HasHostOriginOverride => !string.IsNullOrWhiteSpace(Host.Origin) || Host.Port is not null;
-
-    [JsonIgnore]
-    public bool HasHostCommand => !string.IsNullOrWhiteSpace(Host.Command);
 
     public static DevManifest Load(string path)
     {
         var manifestPath = Path.GetFullPath(Directory.Exists(path) ? Path.Combine(path, "metadata.dev.json") : path);
         if (!File.Exists(manifestPath))
         {
-            throw new CommandUsageException($"Dev manifest was not found: {manifestPath}", DevCommand.Usage);
+            throw new CommandUsageException($"Dev metadata was not found: {manifestPath}", DevCommand.Usage);
         }
 
         var raw = File.ReadAllText(manifestPath);
-        if (LooksLikeModuleDevMetadata(raw))
+        if (!LooksLikeModuleDevMetadata(raw))
         {
-            var metadataManifest = FromModuleDevMetadata(raw, manifestPath);
-            metadataManifest.Validate();
-            return metadataManifest;
+            throw new CommandUsageException("docker-host dev requires metadata.dev.json with schemaVersion 0.3 process services.", DevCommand.Usage);
         }
 
-        DevManifest? manifest;
-        try
-        {
-            manifest = JsonSerializer.Deserialize<DevManifest>(raw, JsonOptions);
-        }
-        catch (JsonException ex)
-        {
-            throw new CommandUsageException($"Dev manifest is not valid JSON: {ex.Message}", DevCommand.Usage);
-        }
-
-        if (manifest is null)
-        {
-            throw new CommandUsageException("Dev manifest is empty.", DevCommand.Usage);
-        }
-
-        manifest = manifest with { ManifestPath = manifestPath };
+        var manifest = FromModuleDevMetadata(raw, manifestPath);
         manifest.Validate();
         return manifest;
     }
@@ -99,11 +59,7 @@ internal sealed record DevManifest
     {
         try
         {
-            using var document = JsonDocument.Parse(raw, new JsonDocumentOptions
-            {
-                AllowTrailingCommas = true,
-                CommentHandling = JsonCommentHandling.Skip,
-            });
+            using var document = JsonDocument.Parse(raw, JsonDocumentOptions);
             return document.RootElement.ValueKind == JsonValueKind.Object &&
                 document.RootElement.TryGetProperty("services", out var services) &&
                 services.ValueKind == JsonValueKind.Array;
@@ -119,11 +75,7 @@ internal sealed record DevManifest
         JsonDocument document;
         try
         {
-            document = JsonDocument.Parse(raw, new JsonDocumentOptions
-            {
-                AllowTrailingCommas = true,
-                CommentHandling = JsonCommentHandling.Skip,
-            });
+            document = JsonDocument.Parse(raw, JsonDocumentOptions);
         }
         catch (JsonException ex)
         {
@@ -171,7 +123,6 @@ internal sealed record DevManifest
 
             return new DevManifest
             {
-                MetadataFile = Path.GetFileName(manifestPath),
                 ModuleCommand = command,
                 WorkingDirectory = source.TryGetProperty("workingDirectory", out var workingDirectory) &&
                     workingDirectory.ValueKind == JsonValueKind.String
@@ -183,6 +134,24 @@ internal sealed record DevManifest
                     PortKey = endpoint.EndpointKey,
                     LocalPort = localPort,
                 },
+                Users =
+                [
+                    new DevManifestUser
+                    {
+                        Email = "admin@docker-host.local",
+                        DisplayName = "Dev Admin",
+                        Role = "host.admin",
+                        Assigned = true,
+                    },
+                    new DevManifestUser
+                    {
+                        Email = "user@docker-host.local",
+                        DisplayName = "Dev User",
+                        Role = "host.user",
+                        Assigned = true,
+                    },
+                ],
+                DirectoryPolicy = new DevManifestDirectoryPolicy { IncludeEmail = true },
                 Environment = environment,
                 ManifestPath = manifestPath,
             };
@@ -303,37 +272,10 @@ internal sealed record DevManifest
     public string ResolveWorkingDirectory()
         => ResolveOptionalPath(WorkingDirectory) ?? ManifestDirectory;
 
-    public string? ResolveMetadataFile()
-        => ResolveOptionalPath(MetadataFile);
+    public string ResolveMetadataFile()
+        => ManifestPath;
 
-    public string? ResolveHostWorkingDirectory()
-        => ResolveOptionalPath(Host.WorkingDirectory);
-
-    public DevHostMode GetHostMode()
-        => ParseHostMode(Host.Mode);
-
-    public Uri? GetHostOrigin(DevHostMode? mode = null)
-    {
-        var hostMode = mode ?? GetHostMode();
-        if (!string.IsNullOrWhiteSpace(Host.Origin))
-        {
-            return NormalizeOrigin(Host.Origin);
-        }
-
-        if (Host.Port is not null)
-        {
-            return BuildLoopbackOrigin(Host.Port.Value);
-        }
-
-        return hostMode switch
-        {
-            DevHostMode.LocalProcess => BuildLoopbackOrigin(DefaultLocalHostPort),
-            DevHostMode.External => null,
-            _ => null,
-        };
-    }
-
-    public string GetTargetBaseUrl(DevHostMode hostMode)
+    public string GetTargetBaseUrl()
     {
         if (!string.IsNullOrWhiteSpace(Target.TargetBaseUrl))
         {
@@ -343,14 +285,11 @@ internal sealed record DevManifest
         if (Target.LocalPort is null)
         {
             throw new CommandUsageException(
-                "Dev manifest target requires targetBaseUrl or localPort.",
+                "Dev metadata target requires a local port.",
                 DevCommand.Usage);
         }
 
-        var host = hostMode == DevHostMode.DockerContainer
-            ? "host.docker.internal"
-            : IPAddress.Loopback.ToString();
-        return $"http://{host}:{Target.LocalPort.Value.ToString(CultureInfo.InvariantCulture)}";
+        return $"http://{IPAddress.Loopback}:{Target.LocalPort.Value.ToString(CultureInfo.InvariantCulture)}";
     }
 
     public string GetTargetId()
@@ -370,67 +309,41 @@ internal sealed record DevManifest
 
     private void Validate()
     {
-        var hostMode = GetHostMode();
-        if (string.IsNullOrWhiteSpace(MetadataUrl) && string.IsNullOrWhiteSpace(MetadataFile))
-        {
-            throw new CommandUsageException("Dev manifest requires metadataUrl or metadataFile.", DevCommand.Usage);
-        }
-
-        if (!string.IsNullOrWhiteSpace(MetadataUrl) && !Uri.TryCreate(MetadataUrl, UriKind.Absolute, out _))
-        {
-            throw new CommandUsageException("Dev manifest metadataUrl must be an absolute URL.", DevCommand.Usage);
-        }
-
-        if (!string.IsNullOrWhiteSpace(Host.Origin))
-        {
-            _ = NormalizeOrigin(Host.Origin);
-        }
-
-        if (Host.Port is not null && (Host.Port <= 0 || Host.Port > 65535))
-        {
-            throw new CommandUsageException("Dev manifest host.port must be between 1 and 65535.", DevCommand.Usage);
-        }
-
-        if (hostMode == DevHostMode.External && GetHostOrigin(hostMode) is null)
-        {
-            throw new CommandUsageException("Dev manifest host.origin or host.port is required when host.mode is external.", DevCommand.Usage);
-        }
-
         if (string.IsNullOrWhiteSpace(Target.Hostname))
         {
-            throw new CommandUsageException("Dev manifest target.hostname is required.", DevCommand.Usage);
+            throw new CommandUsageException("Dev metadata target hostname is required.", DevCommand.Usage);
         }
 
         if (string.IsNullOrWhiteSpace(Target.PortKey))
         {
-            throw new CommandUsageException("Dev manifest target.portKey is required.", DevCommand.Usage);
+            throw new CommandUsageException("Dev metadata target port key is required.", DevCommand.Usage);
         }
 
         if (string.IsNullOrWhiteSpace(Target.TargetBaseUrl) && Target.LocalPort is null)
         {
-            throw new CommandUsageException("Dev manifest target requires targetBaseUrl or localPort.", DevCommand.Usage);
+            throw new CommandUsageException("Dev metadata target requires a local port.", DevCommand.Usage);
         }
 
         if (!string.IsNullOrWhiteSpace(Target.TargetBaseUrl) &&
             (!Uri.TryCreate(Target.TargetBaseUrl, UriKind.Absolute, out var targetUrl) ||
                 targetUrl.Scheme != Uri.UriSchemeHttp))
         {
-            throw new CommandUsageException("Dev manifest target.targetBaseUrl must be an absolute http URL.", DevCommand.Usage);
+            throw new CommandUsageException("Dev metadata target URL must be an absolute http URL.", DevCommand.Usage);
         }
 
         if (Target.LocalPort is not null && (Target.LocalPort <= 0 || Target.LocalPort > 65535))
         {
-            throw new CommandUsageException("Dev manifest target.localPort must be between 1 and 65535.", DevCommand.Usage);
+            throw new CommandUsageException("Dev metadata target local port must be between 1 and 65535.", DevCommand.Usage);
         }
 
         if (Target.Policy is not null && Target.Policy is not "public" and not "loginRequired" and not "assignedUsersOnly")
         {
-            throw new CommandUsageException("Dev manifest target.policy must be public, loginRequired, or assignedUsersOnly.", DevCommand.Usage);
+            throw new CommandUsageException("Dev metadata target policy must be public, loginRequired, or assignedUsersOnly.", DevCommand.Usage);
         }
 
         if (Target.Identity is not null && Target.Identity is not "none" and not "optional" and not "required")
         {
-            throw new CommandUsageException("Dev manifest target.identity must be none, optional, or required.", DevCommand.Usage);
+            throw new CommandUsageException("Dev metadata target identity must be none, optional, or required.", DevCommand.Usage);
         }
 
         var seenEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -438,17 +351,17 @@ internal sealed record DevManifest
         {
             if (string.IsNullOrWhiteSpace(user.Email))
             {
-                throw new CommandUsageException("Dev manifest users[].email is required.", DevCommand.Usage);
+                throw new CommandUsageException("Dev metadata users[].email is required.", DevCommand.Usage);
             }
 
             if (user.Role is not "host.admin" and not "host.user")
             {
-                throw new CommandUsageException("Dev manifest users[].role must be host.admin or host.user.", DevCommand.Usage);
+                throw new CommandUsageException("Dev metadata users[].role must be host.admin or host.user.", DevCommand.Usage);
             }
 
             if (!seenEmails.Add(user.Email.Trim()))
             {
-                throw new CommandUsageException($"Dev manifest contains duplicate user email: {user.Email}", DevCommand.Usage);
+                throw new CommandUsageException($"Dev metadata contains duplicate user email: {user.Email}", DevCommand.Usage);
             }
         }
     }
@@ -463,37 +376,6 @@ internal sealed record DevManifest
         return Path.GetFullPath(Path.IsPathFullyQualified(value) ? value : Path.Combine(ManifestDirectory, value));
     }
 
-    private static DevHostMode ParseHostMode(string? value)
-    {
-        var normalized = string.IsNullOrWhiteSpace(value)
-            ? "docker-container"
-            : value.Trim().ToLowerInvariant();
-
-        return normalized switch
-        {
-            "docker-container" or "docker" => DevHostMode.DockerContainer,
-            "local-process" or "local" => DevHostMode.LocalProcess,
-            "external" or "connect" => DevHostMode.External,
-            _ => throw new CommandUsageException(
-                "Dev manifest host.mode must be docker-container, local-process, or external.",
-                DevCommand.Usage),
-        };
-    }
-
-    private static Uri NormalizeOrigin(string value)
-    {
-        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-        {
-            throw new CommandUsageException("Dev manifest host.origin must be an absolute HTTP(S) origin.", DevCommand.Usage);
-        }
-
-        return new Uri(uri.GetLeftPart(UriPartial.Authority));
-    }
-
-    private static Uri BuildLoopbackOrigin(int port)
-        => new($"http://localhost:{port.ToString(CultureInfo.InvariantCulture)}");
-
     private static string SanitizeIdentifier(string value)
     {
         var sanitized = new string(value.Trim().ToLowerInvariant()
@@ -503,21 +385,6 @@ internal sealed record DevManifest
 
         return string.IsNullOrWhiteSpace(sanitized) ? "local_module" : sanitized;
     }
-}
-
-internal sealed record DevManifestHost
-{
-    public string? Mode { get; init; }
-
-    public string? Origin { get; init; }
-
-    public int? Port { get; init; }
-
-    public string? Command { get; init; }
-
-    public string? WorkingDirectory { get; init; }
-
-    public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
 internal sealed record DevManifestTarget

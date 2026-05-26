@@ -31,7 +31,6 @@ flowchart LR
 
 - `modules/demo-module/metadata.json` - Docker Host metadata used for install and update tests.
 - `modules/demo-module/metadata.dev.json` - repository-local module metadata served by the dev harness.
-- `modules/demo-module/.docker-host/dev.json` - repository-local harness manifest used by `npm run host:dev:demo`.
 - `modules/demo-module/Dockerfile` - production image build for the demo module.
 - `modules/demo-module/src/app/page.tsx` - demo dashboard.
 - `modules/demo-module/src/app/people/page.tsx` - stable people page for shell app navigation.
@@ -67,15 +66,15 @@ Run the Host shell with this current checkout's demo module already linked as a 
 npm run host:dev:demo
 ```
 
-This uses the local `docker-host` CLI project to run `docker-host dev up --manifest modules/demo-module/.docker-host/dev.json`. The wrapper keeps state in `.docker-host-dev-demo/`, configures the Host dev repository path to the current checkout, starts Docker Host locally on port `3000`, starts the demo module locally on port `3100`, seeds development users, and links the demo developer target through Host trusted control.
+This uses the local `docker-host` CLI project to run `docker-host dev up --manifest modules/demo-module/metadata.dev.json`. The wrapper keeps state in `.docker-host-dev-demo/`, configures the Host dev repository path to the current checkout, enables local development auto-login, starts Docker Host locally on port `3000`, starts the demo module locally on port `3100`, seeds development users, and links the demo developer target through Host trusted control.
 
-Run the installed CLI harness against the demo dev manifest:
+Run the installed CLI harness against the demo dev metadata:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
-`modules/demo-module/metadata.dev.json` remains the module metadata served to Docker Host. `modules/demo-module/.docker-host/dev.json` is the local harness manifest that adds process commands, development users, directory policy, and the `demo.localhost` target.
+`modules/demo-module/metadata.dev.json` is the metadata served to Docker Host and the CLI's local process source. The harness derives the process command, working directory, environment, local port, developer target, development users, assignments, and module directory policy from this metadata-driven workflow.
 
 Run Docker Host from a built Host image and install the built demo module image as a real managed module:
 
