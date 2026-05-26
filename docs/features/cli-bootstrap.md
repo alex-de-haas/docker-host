@@ -32,7 +32,7 @@ docker-host config set <KEY>=<VALUE>
 docker-host config reset <KEY>
 ```
 
-Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port number. `HOST_DOCKER_ENDPOINT` is limited to the supported local Docker Engine endpoint for the current platform.
+Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port number. `HOST_DOCKER_ENDPOINT` is limited to the supported local Docker Engine endpoint for the current platform. `HOST_DEV_REPOSITORY_PATH` and `HOST_DEV_PORT` configure the local Host process used by `docker-host dev up` when a dev manifest does not explicitly choose a Host mode.
 
 `docker-host modules` is the trusted-control-backed module command group. It covers module list, install/add, start, stop, restart, update, remove, and low-level developer target commands. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
 

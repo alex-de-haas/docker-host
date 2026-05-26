@@ -4,7 +4,7 @@ The module development harness is the installed-CLI workflow for running a local
 
 ```mermaid
 flowchart LR
-  A["metadata.dev.json"] --> B["docker-host dev up"]
+  A["Dev manifest or metadata.dev.json"] --> B["docker-host dev up"]
   B --> C["Trusted control discovery"]
   C --> D["Host /control/v1"]
   D --> E["Developer target"]
@@ -19,7 +19,7 @@ flowchart LR
 
 ## Commands
 
-`docker-host dev up` prepares the integrated loop from `metadata.dev.json`:
+`docker-host dev up` prepares the integrated loop from a dev manifest or from `metadata.dev.json`:
 
 ```bash
 docker-host dev up
@@ -143,11 +143,29 @@ The CLI injects process environment values needed by Docker Host modules:
 - `MODULE_ID`;
 - `MODULE_VERSION`.
 
+The repository demo loop uses a separate harness manifest at:
+
+```text
+modules/demo-module/.docker-host/dev.json
+```
+
+That file points `metadataFile` at `../metadata.dev.json` so the Host still validates clean module metadata, while the harness manifest owns local commands, Host process environment, development users, directory policy, and the `demo.localhost` target. This keeps dev-only orchestration fields out of the module metadata contract.
+
 ## Host Modes
 
 `docker-container` mode is the production-like installed CLI loop. The CLI reads launch settings, starts the configured Host container when needed, discovers the mapped Host UI port from Docker, then reads the Host control discovery file from the data root.
 
 `local-process` mode is for changing the Host itself. The CLI starts `host.command` as a child process, waits for the configured Host origin to publish control discovery, then links module developer targets through that local Host. The Host process is stopped when the foreground module command exits or the dev harness is interrupted.
+
+For repository-local Host development, the CLI can infer `local-process` mode from launch settings:
+
+```bash
+docker-host config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
+docker-host config set HOST_DEV_PORT 3000
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
+```
+
+When `HOST_DEV_REPOSITORY_PATH` is set and the manifest does not explicitly choose a host mode, `docker-host dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, and `PORT` into the Host process so trusted control discovery is written where the CLI expects it.
 
 `external` mode is for a Host that is already running. The CLI does not start, stop, inspect, or read logs from the Host process. It connects to `host.origin` or `--host-url` and uses local control for Host-owned operations.
 

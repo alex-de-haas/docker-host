@@ -18,7 +18,7 @@ For this repository's demo module:
 npm run host:dev:demo
 ```
 
-This starts Docker Host at `http://localhost:3000`, the demo module at `http://localhost:3100`, and seeds a developer target visible through the Host Apps shell.
+This uses the local CLI project to run `docker-host dev up --manifest modules/demo-module/.docker-host/dev.json`. It starts Docker Host at `http://localhost:3000`, the demo module at `http://localhost:3100`, seeds development users through Host control, and links a developer target visible through the Host Apps shell.
 
 It also enables development auto-login and browser account seeding. The default accounts are:
 
@@ -29,7 +29,7 @@ Use the account switcher to validate assigned-user behavior. Do not edit module 
 
 ## Installed CLI Harness
 
-The generic installed-CLI harness is `docker-host dev`. It reads a module-local `metadata.dev.json` manifest and can:
+The generic installed-CLI harness is `docker-host dev`. It reads a module-local `metadata.dev.json` file or a richer dev manifest such as `modules/demo-module/.docker-host/dev.json`, and can:
 
 - run the module's local process service;
 - start the configured Host container, start a local Host process, or connect to an already running Host origin;
@@ -100,6 +100,7 @@ docker-host dev up --prepare-only
 docker-host dev status
 docker-host dev reset
 docker-host dev clean metadata.dev.json
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
 docker-host dev up --manifest path/to/metadata.dev.json --host-url http://localhost:3000
 ```
 

@@ -120,7 +120,7 @@ Example:
 }
 ```
 
-`docker-host dev up` accepts an explicit metadata path, a repository directory containing `metadata.dev.json`, or the current directory when it contains `metadata.dev.json`. Legacy implicit `.docker-host/dev.json` discovery is not part of the new workflow.
+`docker-host dev up` accepts an explicit dev manifest path, a module metadata path, a repository directory containing `metadata.dev.json`, or the current directory when it contains `metadata.dev.json`. Legacy implicit `.docker-host/dev.json` discovery is not part of the workflow; repository scripts pass `modules/demo-module/.docker-host/dev.json` explicitly when they need local commands, Host process environment, and development users.
 
 Development module data persists under `<HOST_DATA_ROOT_HOST>/dev/modules/<module-id>/` between runs. Use:
 

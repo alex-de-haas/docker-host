@@ -64,14 +64,20 @@ Use this mode for Host shell work, Apps sidebar work, account switching checks, 
 npm run host:dev:demo
 ```
 
-This script starts both local development servers:
+This script configures an isolated CLI home and then delegates orchestration to `docker-host dev up --manifest modules/demo-module/.docker-host/dev.json`. It starts both local development servers:
 
 - Docker Host at `http://localhost:3000`;
 - the repository-local demo module at `http://localhost:3100`.
 
 The script sets:
 
-- `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the repository-local `.docker-host-dev-demo/` directory;
+- `DOCKER_HOST_HOME` to the repository-local `.docker-host-dev-demo/` directory unless already provided;
+- `HOST_DEV_REPOSITORY_PATH` in the isolated CLI config to the current checkout;
+- `HOST_DEV_PORT` in the isolated CLI config to `3000` unless `HOST_DEV_PORT` or `PORT` is provided.
+
+The demo dev manifest sets the local Host process environment:
+
+- `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the active CLI Host data root;
 - `HOST_DEV_AUTH=auto`, which enables development-only auto-login;
 - `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, which remembers both development accounts in the browser account menu;
 - `HOST_ENABLE_DEV_FIXTURES=true`, which enables the current-branch demo metadata fixture.
@@ -228,15 +234,15 @@ docker-host modules dev link \
 For the reusable installed-CLI workflow, prefer the manifest-driven harness:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json
-docker-host dev status --manifest modules/demo-module/metadata.dev.json
-docker-host dev reset --manifest modules/demo-module/metadata.dev.json
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev status --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev reset --manifest modules/demo-module/.docker-host/dev.json
 ```
 
 When iterating on Host source code, run the same harness against a local Host origin:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
 ```
 
 This skips Docker lifecycle operations and uses the running Host's local control channel for dev target registration, user seeding, assignments, and directory policy.

@@ -10,6 +10,8 @@ using Spectre.Console;
 
 internal sealed class DevCommand(CommandContext context)
 {
+    private const string DefaultHostDevCommand = "npm run host:dev";
+
     public const string Usage = """
         Usage:
           docker-host dev up [--manifest <path>] [--host-url <url>] [--prepare-only]
@@ -308,10 +310,10 @@ internal sealed class DevCommand(CommandContext context)
 
     private async Task<DevHostSession?> PrepareHostAsync(DevManifest manifest, DevCommandOptions options)
     {
-        var mode = GetEffectiveHostMode(manifest, options);
+        var settings = context.SettingsStore.EnsureInstalled();
+        var mode = GetEffectiveHostMode(manifest, options, settings);
         if (mode == DevHostMode.DockerContainer)
         {
-            var settings = context.SettingsStore.EnsureInstalled();
             var container = await new HostLifecycle(context).StartAsync(settings, recreate: false);
             if (container is null)
             {
@@ -323,21 +325,21 @@ internal sealed class DevCommand(CommandContext context)
             return new DevHostSession(new Uri(hostUrl), mode);
         }
 
-        var origin = GetConfiguredHostOrigin(manifest, options, mode);
+        var origin = GetConfiguredHostOrigin(manifest, options, mode, settings);
         if (mode == DevHostMode.External)
         {
             context.Console.MarkupLine($"[green]Using external Host:[/] {Markup.Escape(origin.ToString().TrimEnd('/'))}");
             return new DevHostSession(origin, mode);
         }
 
-        if (string.IsNullOrWhiteSpace(manifest.Host.Command))
+        if (!manifest.HasHostCommand && string.IsNullOrWhiteSpace(settings.ResolveHostDevRepositoryPath(context.Environment)))
         {
             throw new CommandUsageException(
-                "dev up requires host.command when host.mode is local-process. Use host.mode external with host.origin when the Host is already running.",
+                $"dev up requires host.command or {LaunchSettingDefinitions.HostDevRepositoryPath} when host.mode is local-process. Use host.mode external with host.origin when the Host is already running.",
                 Usage);
         }
 
-        var process = StartHostProcess(manifest, origin);
+        var process = StartHostProcess(manifest, origin, settings);
         var ready = await WaitForLocalHostReadyAsync(origin, process);
         if (!ready)
         {
@@ -354,14 +356,13 @@ internal sealed class DevCommand(CommandContext context)
 
     private async Task<DevHostSession?> ResolveRunningHostAsync(DevManifest manifest, DevCommandOptions options)
     {
-        var mode = GetEffectiveHostMode(manifest, options);
-        if (mode != DevHostMode.DockerContainer)
-        {
-            return new DevHostSession(GetConfiguredHostOrigin(manifest, options, mode), mode);
-        }
-
         var settings = context.SettingsStore.Load();
         settings.Validate(context.Environment);
+        var mode = GetEffectiveHostMode(manifest, options, settings);
+        if (mode != DevHostMode.DockerContainer)
+        {
+            return new DevHostSession(GetConfiguredHostOrigin(manifest, options, mode, settings), mode);
+        }
 
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
         await docker.EnsureLinuxEngineAsync();
@@ -384,14 +385,44 @@ internal sealed class DevCommand(CommandContext context)
         return new DevHostSession(new Uri(hostUrl), mode);
     }
 
-    private static DevHostMode GetEffectiveHostMode(DevManifest manifest, DevCommandOptions options)
-        => options.HostOrigin is null ? manifest.GetHostMode() : DevHostMode.External;
+    private DevHostMode GetEffectiveHostMode(DevManifest manifest, DevCommandOptions options, LaunchSettings settings)
+    {
+        if (options.HostOrigin is not null)
+        {
+            return DevHostMode.External;
+        }
 
-    private static Uri GetConfiguredHostOrigin(DevManifest manifest, DevCommandOptions options, DevHostMode mode)
+        if (manifest.HasExplicitHostMode)
+        {
+            return manifest.GetHostMode();
+        }
+
+        if (manifest.HasHostCommand || !string.IsNullOrWhiteSpace(settings.ResolveHostDevRepositoryPath(context.Environment)))
+        {
+            return DevHostMode.LocalProcess;
+        }
+
+        return manifest.GetHostMode();
+    }
+
+    private Uri GetConfiguredHostOrigin(DevManifest manifest, DevCommandOptions options, DevHostMode mode, LaunchSettings settings)
     {
         if (options.HostOrigin is not null)
         {
             return options.HostOrigin;
+        }
+
+        if (manifest.HasHostOriginOverride)
+        {
+            return manifest.GetHostOrigin(mode)
+                ?? throw new CommandUsageException(
+                    "A Host origin is required. Set host.origin, host.port, or pass --host-url <url>.",
+                    Usage);
+        }
+
+        if (mode == DevHostMode.LocalProcess && !string.IsNullOrWhiteSpace(settings.ResolveHostDevRepositoryPath(context.Environment)))
+        {
+            return BuildLoopbackOrigin(settings.GetHostDevPort());
         }
 
         return manifest.GetHostOrigin(mode)
@@ -400,16 +431,23 @@ internal sealed class DevCommand(CommandContext context)
                 Usage);
     }
 
-    private Process StartHostProcess(DevManifest manifest, Uri origin)
+    private Process StartHostProcess(DevManifest manifest, Uri origin, LaunchSettings settings)
     {
-        var workingDirectory = manifest.ResolveHostWorkingDirectory() ?? manifest.ManifestDirectory;
-        var startInfo = CreateShellStartInfo(manifest.Host.Command!, workingDirectory);
-        foreach (var (key, value) in BuildHostEnvironment(manifest, origin))
+        var configuredRepository = settings.ResolveHostDevRepositoryPath(context.Environment);
+        if (!string.IsNullOrWhiteSpace(configuredRepository) && !Directory.Exists(configuredRepository))
+        {
+            throw new ConfigurationException($"{LaunchSettingDefinitions.HostDevRepositoryPath} does not exist: {configuredRepository}");
+        }
+
+        var command = manifest.HasHostCommand ? manifest.Host.Command!.Trim() : DefaultHostDevCommand;
+        var workingDirectory = manifest.ResolveHostWorkingDirectory() ?? configuredRepository ?? manifest.ManifestDirectory;
+        var startInfo = CreateShellStartInfo(command, workingDirectory);
+        foreach (var (key, value) in BuildHostEnvironment(manifest, origin, settings))
         {
             startInfo.Environment[key] = value;
         }
 
-        context.Console.MarkupLine($"[green]Starting Host command:[/] {Markup.Escape(manifest.Host.Command!)}");
+        context.Console.MarkupLine($"[green]Starting Host command:[/] {Markup.Escape(command)}");
         context.Console.MarkupLine($"[grey]Host origin:[/] {Markup.Escape(origin.ToString().TrimEnd('/'))}");
         context.Console.MarkupLine($"[grey]Host working directory:[/] {Markup.Escape(workingDirectory)}");
 
@@ -424,13 +462,21 @@ internal sealed class DevCommand(CommandContext context)
         }
     }
 
-    private IReadOnlyDictionary<string, string> BuildHostEnvironment(DevManifest manifest, Uri origin)
+    private IReadOnlyDictionary<string, string> BuildHostEnvironment(DevManifest manifest, Uri origin, LaunchSettings settings)
     {
+        var dataRoot = settings.ResolveHostDataRoot(context.Environment);
         var values = new Dictionary<string, string>(manifest.Host.Environment, StringComparer.Ordinal)
         {
+            ["HOST_DATA_ROOT_HOST"] = dataRoot,
+            ["HOST_DATA_ROOT_CONTAINER"] = dataRoot,
             ["HOST_INTERNAL_ORIGIN"] = origin.ToString().TrimEnd('/'),
             ["HOST_CONTROL_PUBLIC_PORT"] = origin.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
+
+        if (!values.ContainsKey("HOST_MODULE_DEV_MODE"))
+        {
+            values["HOST_MODULE_DEV_MODE"] = "enabled";
+        }
 
         if (!values.ContainsKey("PORT") && origin.Port > 0 && !origin.IsDefaultPort)
         {
@@ -439,6 +485,9 @@ internal sealed class DevCommand(CommandContext context)
 
         return values;
     }
+
+    private static Uri BuildLoopbackOrigin(int port)
+        => new($"http://localhost:{port.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
 
     private async Task<bool> WaitForLocalHostReadyAsync(Uri origin, Process process)
     {

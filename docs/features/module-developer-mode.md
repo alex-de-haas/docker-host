@@ -123,19 +123,19 @@ docker-host modules dev unlink <target-id>
 
 The `modules dev` commands intentionally manage developer targets only. User seeding, assignment seeding, local module process startup, status checks, reset behavior, and dev data cleanup live in the top-level `docker-host dev` harness.
 
-The top-level harness uses `metadata.dev.json`:
+The top-level harness can use module metadata directly or a richer dev manifest. The repository demo uses `modules/demo-module/.docker-host/dev.json` so local commands and development users stay outside the module metadata contract:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json
-docker-host dev status --manifest modules/demo-module/metadata.dev.json
-docker-host dev reset --manifest modules/demo-module/metadata.dev.json
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev status --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev reset --manifest modules/demo-module/.docker-host/dev.json
 docker-host dev clean modules/demo-module/metadata.dev.json
 ```
 
 `--host-url` makes the command connect to that Host origin and skip Docker container lifecycle and inspect operations:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
+docker-host dev up --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
 ```
 
 ## Gateway Rules

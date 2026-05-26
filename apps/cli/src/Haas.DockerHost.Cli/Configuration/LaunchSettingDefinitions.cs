@@ -17,6 +17,8 @@ internal static class LaunchSettingDefinitions
     public const string HostDockerSocket = "HOST_DOCKER_SOCKET";
     public const string HostModuleNetwork = "HOST_MODULE_NETWORK";
     public const string HostModuleDevMode = "HOST_MODULE_DEV_MODE";
+    public const string HostDevRepositoryPath = "HOST_DEV_REPOSITORY_PATH";
+    public const string HostDevPort = "HOST_DEV_PORT";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
@@ -33,6 +35,8 @@ internal static class LaunchSettingDefinitions
         new(HostDockerSocket, _ => "/var/run/docker.sock", true, ValidateContainerPath),
         new(HostModuleNetwork, _ => "docker-host-modules", true, Required),
         new(HostModuleDevMode, _ => "disabled", true, ValidateEnabledDisabled),
+        new(HostDevRepositoryPath, _ => "", true, ValidateOptionalHostPath),
+        new(HostDevPort, _ => "3000", true, ValidateTcpPort),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);
@@ -83,6 +87,16 @@ internal static class LaunchSettingDefinitions
         return Path.IsPathFullyQualified(resolved) ? null : "Host path must resolve to an absolute path.";
     }
 
+    private static string? ValidateOptionalHostPath(string value, DockerHostEnvironment environment)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return ValidateHostPath(value, environment);
+    }
+
     private static string? ValidateContainerPath(string value, DockerHostEnvironment _)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -106,6 +120,16 @@ internal static class LaunchSettingDefinitions
         }
 
         return port is > 0 and <= 65535 ? null : "Host UI port must be between 1 and 65535.";
+    }
+
+    private static string? ValidateTcpPort(string value, DockerHostEnvironment _)
+    {
+        if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
+        {
+            return "Value must be a TCP port number.";
+        }
+
+        return port is > 0 and <= 65535 ? null : "Value must be between 1 and 65535.";
     }
 
     private static string? ValidateBindAddress(string value, DockerHostEnvironment _)

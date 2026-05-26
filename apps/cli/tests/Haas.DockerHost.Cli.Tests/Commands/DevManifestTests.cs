@@ -122,6 +122,38 @@ public sealed class DevManifestTests
     }
 
     [Fact]
+    public void Load_CustomDevManifest_AllowsHostEnvironmentWithoutExplicitHostMode()
+    {
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-manifest-").FullName;
+        File.WriteAllText(Path.Combine(root, "metadata.dev.json"), "{}");
+        var manifestPath = Path.Combine(root, "dev.json");
+        File.WriteAllText(manifestPath, """
+            {
+              "metadataFile": "metadata.dev.json",
+              "moduleCommand": "npm run dev",
+              "workingDirectory": ".",
+              "host": {
+                "environment": {
+                  "HOST_DEV_AUTH": "auto"
+                }
+              },
+              "target": {
+                "hostname": "demo.localhost",
+                "portKey": "http",
+                "localPort": 3100
+              }
+            }
+            """);
+
+        var manifest = DevManifest.Load(manifestPath);
+
+        Assert.False(manifest.HasExplicitHostMode);
+        Assert.False(manifest.HasHostCommand);
+        Assert.Equal("auto", manifest.Host.Environment["HOST_DEV_AUTH"]);
+        Assert.Equal(DevHostMode.DockerContainer, manifest.GetHostMode());
+    }
+
+    [Fact]
     public void Load_ExternalHostWithoutOrigin_ThrowsUsageError()
     {
         var root = Directory.CreateTempSubdirectory("docker-host-dev-manifest-").FullName;

@@ -1,0 +1,41 @@
+{
+  "metadataFile": "../metadata.dev.json",
+  "moduleCommand": "npm run dev",
+  "workingDirectory": "..",
+  "environment": {
+    "PORT": "3100",
+    "DEMO_PUBLIC_URL": "http://127.0.0.1:3100"
+  },
+  "host": {
+    "environment": {
+      "HOST_DEV_AUTH": "auto",
+      "HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS": "enabled",
+      "HOST_ENABLE_DEV_FIXTURES": "true"
+    }
+  },
+  "target": {
+    "id": "mdev_local_demo_module",
+    "hostname": "demo.localhost",
+    "portKey": "http",
+    "localPort": 3100,
+    "policy": "loginRequired",
+    "identity": "required"
+  },
+  "users": [
+    {
+      "email": "admin@docker-host.local",
+      "displayName": "Docker Host Admin",
+      "role": "host.admin",
+      "assigned": true
+    },
+    {
+      "email": "user@docker-host.local",
+      "displayName": "Docker Host User",
+      "role": "host.user",
+      "assigned": true
+    }
+  ],
+  "directoryPolicy": {
+    "includeEmail": true
+  }
+}

@@ -50,6 +50,15 @@ internal sealed record DevManifest
     [JsonIgnore]
     public string ManifestDirectory => Path.GetDirectoryName(ManifestPath) ?? Directory.GetCurrentDirectory();
 
+    [JsonIgnore]
+    public bool HasExplicitHostMode => !string.IsNullOrWhiteSpace(Host.Mode);
+
+    [JsonIgnore]
+    public bool HasHostOriginOverride => !string.IsNullOrWhiteSpace(Host.Origin) || Host.Port is not null;
+
+    [JsonIgnore]
+    public bool HasHostCommand => !string.IsNullOrWhiteSpace(Host.Command);
+
     public static DevManifest Load(string path)
     {
         var manifestPath = Path.GetFullPath(Directory.Exists(path) ? Path.Combine(path, "metadata.dev.json") : path);

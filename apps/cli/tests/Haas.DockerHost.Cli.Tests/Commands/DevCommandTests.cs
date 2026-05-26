@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
+using System.Globalization;
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.Docker;
@@ -78,6 +79,25 @@ public sealed class DevCommandTests : IDisposable
         var context = CreateContext(transport);
 
         var exitCode = await new DevCommand(context).ExecuteAsync(["status", "--manifest", WriteManifest(), "--host-url", hostApi.BaseUrl]);
+
+        Assert.Equal(1, exitCode);
+        Assert.Empty(transport.Requests);
+        Assert.Contains(hostApi.Requests, request => request.Path == "/control/v1/host/status");
+    }
+
+    [Fact]
+    public async Task StatusAsync_WithConfiguredHostDevRepository_DoesNotInspectDockerContainer()
+    {
+        using var hostApi = FakeHostApiServer.Start();
+        WriteControlDiscovery();
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+        context.SettingsStore.Set(LaunchSettingDefinitions.HostDevRepositoryPath, rootDirectory);
+        context.SettingsStore.Set(
+            LaunchSettingDefinitions.HostDevPort,
+            new Uri(hostApi.BaseUrl).Port.ToString(CultureInfo.InvariantCulture));
+
+        var exitCode = await new DevCommand(context).ExecuteAsync(["status", "--manifest", WriteManifest()]);
 
         Assert.Equal(1, exitCode);
         Assert.Empty(transport.Requests);
@@ -247,6 +267,7 @@ public sealed class DevCommandTests : IDisposable
             var port = GetAvailablePort();
             var listener = new HttpListener();
             listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            listener.Prefixes.Add($"http://localhost:{port}/");
             listener.Start();
             return new FakeHostApiServer(listener, port);
         }
