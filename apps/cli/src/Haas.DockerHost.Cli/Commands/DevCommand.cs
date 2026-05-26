@@ -264,22 +264,25 @@ internal sealed class DevCommand(CommandContext context)
             return 1;
         }
 
-        var moduleId = ResolveDevCleanModuleId(options.Target);
-        if (!options.AssumeYes && !context.Console.Prompt(new ConfirmationPrompt($"Delete stored development data for {moduleId}?") { DefaultValue = false }))
+        await using (host)
         {
-            context.Console.MarkupLine("[yellow]Clean cancelled.[/]");
-            return 130;
-        }
+            var moduleId = ResolveDevCleanModuleId(options.Target);
+            if (!options.AssumeYes && !context.Console.Prompt(new ConfirmationPrompt($"Delete stored development data for {moduleId}?") { DefaultValue = false }))
+            {
+                context.Console.MarkupLine("[yellow]Clean cancelled.[/]");
+                return 130;
+            }
 
-        using var hostApi = CreateHostControlClient(host.Origin);
-        var response = await hostApi.CleanDevModuleDataAsync(moduleId);
-        if (!response.IsSuccess || response.Body?.Removed != true)
-        {
-            return RenderApiFailure("Failed to clean development module data.", response.StatusCode, response.RawBody);
-        }
+            using var hostApi = CreateHostControlClient(host.Origin);
+            var response = await hostApi.CleanDevModuleDataAsync(moduleId);
+            if (!response.IsSuccess || response.Body?.Removed != true)
+            {
+                return RenderApiFailure("Failed to clean development module data.", response.StatusCode, response.RawBody);
+            }
 
-        context.Console.MarkupLine($"[green]Development data removed:[/] {Markup.Escape(response.Body.Path)}");
-        return 0;
+            context.Console.MarkupLine($"[green]Development data removed:[/] {Markup.Escape(response.Body.Path)}");
+            return 0;
+        }
     }
 
     private async Task<DevHostSession?> ResolveRunningDockerHostAsync()

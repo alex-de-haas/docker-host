@@ -43,15 +43,15 @@ export async function requireTrustedControl(request: Request): Promise<NextRespo
 async function readControlSecret() {
   const config = getHostRuntimeConfig();
   const discoveryPath = path.join(config.dataRootContainer, 'run', 'control.json');
-  let parsed: ControlDiscoveryFile;
+  let parsed: ControlDiscoveryFile | null;
   try {
     parsed = JSON.parse(await fs.readFile(discoveryPath, 'utf-8')) as ControlDiscoveryFile;
   } catch {
     return null;
   }
 
-  return parsed.controlContractVersion === CONTROL_CONTRACT_VERSION &&
-    typeof parsed.secret === 'string' &&
+  return parsed?.controlContractVersion === CONTROL_CONTRACT_VERSION &&
+    typeof parsed?.secret === 'string' &&
     parsed.secret.length > 0
     ? parsed.secret
     : null;

@@ -19,7 +19,18 @@ export async function PUT(
 
   try {
     const { moduleId } = await params;
-    const input = await request.json() as { includeEmail?: unknown };
+    let input: { includeEmail?: unknown };
+    try {
+      input = await request.json() as { includeEmail?: unknown };
+    } catch {
+      return NextResponse.json({
+        error: {
+          code: 'invalid_json',
+          message: 'The request body is not valid JSON.',
+        },
+      }, { status: 400 });
+    }
+
     if (typeof input.includeEmail !== 'boolean') {
       return NextResponse.json({
         error: {
