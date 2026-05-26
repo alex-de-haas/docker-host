@@ -66,7 +66,7 @@ User portal behavior:
 Developer app behavior:
 
 - enabled module developer targets can appear in `/api/apps`;
-- developer app entries are hidden when developer mode is disabled or the individual target is disabled;
+- developer app entries are hidden only when the individual target is disabled;
 - developer targets remain local-only state and do not create production gateway exposure records;
 - developer app ids are qualified as `dev:{targetId}` while module identity still uses the target's `moduleId`;
 - developer apps open through `/apps/dev/{targetId}` and embed the direct target origin derived from `targetBaseUrl`;
