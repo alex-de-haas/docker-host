@@ -45,117 +45,125 @@ internal sealed record DevManifest
         }
 
         var raw = File.ReadAllText(manifestPath);
-        if (!LooksLikeModuleDevMetadata(raw))
+        using var document = ParseMetadata(raw);
+        if (!LooksLikeModuleDevMetadata(document.RootElement))
         {
             throw new CommandUsageException("docker-host dev requires metadata.dev.json with schemaVersion 0.3 process services.", DevCommand.Usage);
         }
 
-        var manifest = FromModuleDevMetadata(raw, manifestPath);
+        var manifest = FromModuleDevMetadata(document.RootElement, manifestPath);
         manifest.Validate();
         return manifest;
     }
 
-    private static bool LooksLikeModuleDevMetadata(string raw)
+    private static JsonDocument ParseMetadata(string raw)
     {
         try
         {
-            using var document = JsonDocument.Parse(raw, JsonDocumentOptions);
-            return document.RootElement.ValueKind == JsonValueKind.Object &&
-                document.RootElement.TryGetProperty("services", out var services) &&
-                services.ValueKind == JsonValueKind.Array;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    private static DevManifest FromModuleDevMetadata(string raw, string manifestPath)
-    {
-        JsonDocument document;
-        try
-        {
-            document = JsonDocument.Parse(raw, JsonDocumentOptions);
+            return JsonDocument.Parse(raw, JsonDocumentOptions);
         }
         catch (JsonException ex)
         {
             throw new CommandUsageException($"Dev metadata is not valid JSON: {ex.Message}", DevCommand.Usage);
         }
+    }
 
-        using (document)
+    private static bool LooksLikeModuleDevMetadata(JsonElement root)
+        => root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("schemaVersion", out var schemaVersion) &&
+            schemaVersion.ValueKind == JsonValueKind.String &&
+            schemaVersion.GetString() == "0.3" &&
+            root.TryGetProperty("services", out var services) &&
+            services.ValueKind == JsonValueKind.Array;
+
+    private static DevManifest FromModuleDevMetadata(JsonElement root, string manifestPath)
+    {
+        var moduleId = ReadRequiredString(root, "id", "Dev metadata id is required.");
+        var endpoint = SelectDevEndpoint(root);
+        var service = FindService(root, endpoint.ServiceKey);
+        var source = service.GetProperty("source");
+        if (!source.TryGetProperty("type", out var sourceType) ||
+            sourceType.ValueKind != JsonValueKind.String ||
+            sourceType.GetString() != "process")
         {
-            var root = document.RootElement;
-            var moduleId = ReadRequiredString(root, "id", "Dev metadata id is required.");
-            var endpoint = SelectDevEndpoint(root);
-            var service = FindService(root, endpoint.ServiceKey);
-            var source = service.GetProperty("source");
-            if (!source.TryGetProperty("type", out var sourceType) ||
-                sourceType.ValueKind != JsonValueKind.String ||
-                sourceType.GetString() != "process")
-            {
-                throw new CommandUsageException("metadata.dev.json must select a process service for docker-host dev up.", DevCommand.Usage);
-            }
-
-            var command = ReadRequiredString(source, "command", "Process service source.command is required.");
-            var servicePort = FindServicePort(service, endpoint.PortKey);
-            var localPort = servicePort.TryGetProperty("localPort", out var localPortElement) &&
-                localPortElement.TryGetInt32(out var parsedLocalPort)
-                ? parsedLocalPort
-                : ReadRequiredInt32(servicePort, "containerPort", "Process service port requires containerPort or localPort.");
-
-            var environment = source.TryGetProperty("environment", out var environmentElement) &&
-                environmentElement.ValueKind == JsonValueKind.Object
-                ? environmentElement.EnumerateObject()
-                    .Where(property => property.Value.ValueKind == JsonValueKind.String)
-                    .ToDictionary(property => property.Name, property => property.Value.GetString() ?? "", StringComparer.Ordinal)
-                : new Dictionary<string, string>(StringComparer.Ordinal);
-
-            if (!environment.ContainsKey("PORT"))
-            {
-                environment["PORT"] = localPort.ToString(CultureInfo.InvariantCulture);
-            }
-
-            var targetHostname = $"{SanitizeIdentifier(moduleId).Replace('_', '-')}.localhost";
-            if (targetHostname.Length > 63)
-            {
-                targetHostname = $"{targetHostname[..52].TrimEnd('-')}.localhost";
-            }
-
-            return new DevManifest
-            {
-                ModuleCommand = command,
-                WorkingDirectory = source.TryGetProperty("workingDirectory", out var workingDirectory) &&
-                    workingDirectory.ValueKind == JsonValueKind.String
-                    ? workingDirectory.GetString()
-                    : ".",
-                Target = new DevManifestTarget
-                {
-                    Hostname = targetHostname,
-                    PortKey = endpoint.EndpointKey,
-                    LocalPort = localPort,
-                },
-                Users =
-                [
-                    new DevManifestUser
-                    {
-                        Email = "admin@docker-host.local",
-                        DisplayName = "Dev Admin",
-                        Role = "host.admin",
-                        Assigned = true,
-                    },
-                    new DevManifestUser
-                    {
-                        Email = "user@docker-host.local",
-                        DisplayName = "Dev User",
-                        Role = "host.user",
-                        Assigned = true,
-                    },
-                ],
-                DirectoryPolicy = new DevManifestDirectoryPolicy { IncludeEmail = true },
-                Environment = environment,
-                ManifestPath = manifestPath,
-            };
+            throw new CommandUsageException("metadata.dev.json must select a process service for docker-host dev up.", DevCommand.Usage);
         }
+
+        var command = ReadRequiredString(source, "command", "Process service source.command is required.");
+        var servicePort = FindServicePort(service, endpoint.PortKey);
+        var localPort = servicePort.TryGetProperty("localPort", out var localPortElement) &&
+            localPortElement.TryGetInt32(out var parsedLocalPort)
+            ? parsedLocalPort
+            : ReadRequiredInt32(servicePort, "containerPort", "Process service port requires containerPort or localPort.");
+
+        var environment = source.TryGetProperty("environment", out var environmentElement) &&
+            environmentElement.ValueKind == JsonValueKind.Object
+            ? environmentElement.EnumerateObject()
+                .Where(property => property.Value.ValueKind == JsonValueKind.String)
+                .ToDictionary(property => property.Name, property => property.Value.GetString() ?? "", StringComparer.Ordinal)
+            : new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (!environment.ContainsKey("PORT"))
+        {
+            environment["PORT"] = localPort.ToString(CultureInfo.InvariantCulture);
+        }
+
+        var targetHostname = $"{SanitizeIdentifier(moduleId).Replace('_', '-')}.localhost";
+        if (targetHostname.Length > 63)
+        {
+            targetHostname = $"{targetHostname[..52].TrimEnd('-')}.localhost";
+        }
+
+        return new DevManifest
+        {
+            ModuleCommand = command,
+            WorkingDirectory = source.TryGetProperty("workingDirectory", out var workingDirectory) &&
+                workingDirectory.ValueKind == JsonValueKind.String
+                ? workingDirectory.GetString()
+                : ".",
+            Target = new DevManifestTarget
+            {
+                Hostname = targetHostname,
+                PortKey = endpoint.EndpointKey,
+                LocalPort = localPort,
+            },
+            Users = CreateDefaultUsers(),
+            DirectoryPolicy = new DevManifestDirectoryPolicy { IncludeEmail = true },
+            Environment = environment,
+            ManifestPath = manifestPath,
+        };
+    }
+
+    private static IReadOnlyList<DevManifestUser> CreateDefaultUsers() =>
+        [
+            new DevManifestUser
+            {
+                Email = ReadEnvironmentOverride("HOST_DEV_ADMIN_EMAIL", "admin@docker-host.local"),
+                DisplayName = ReadEnvironmentOverride("HOST_DEV_ADMIN_NAME", "Dev Admin"),
+                Role = "host.admin",
+                Assigned = true,
+                Password = ReadEnvironmentOverride("HOST_DEV_ADMIN_PASSWORD"),
+            },
+            new DevManifestUser
+            {
+                Email = ReadEnvironmentOverride("HOST_DEV_USER_EMAIL", "user@docker-host.local"),
+                DisplayName = ReadEnvironmentOverride("HOST_DEV_USER_NAME", "Dev User"),
+                Role = "host.user",
+                Assigned = true,
+                Password = ReadEnvironmentOverride("HOST_DEV_USER_PASSWORD"),
+            },
+        ];
+
+    private static string ReadEnvironmentOverride(string key, string fallback)
+    {
+        var value = System.Environment.GetEnvironmentVariable(key);
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    }
+
+    private static string? ReadEnvironmentOverride(string key)
+    {
+        var value = System.Environment.GetEnvironmentVariable(key);
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
     private static (string EndpointKey, string ServiceKey, string PortKey) SelectDevEndpoint(JsonElement root)

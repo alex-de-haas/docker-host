@@ -96,6 +96,79 @@ public sealed class DevManifestTests
     }
 
     [Fact]
+    public void Load_InvalidJson_ThrowsSyntaxUsageError()
+    {
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+        var manifestPath = Path.Combine(root, "metadata.dev.json");
+        File.WriteAllText(manifestPath, """
+            {
+              "schemaVersion": "0.3",
+              "services": [
+            }
+            """);
+
+        var exception = Assert.Throws<CommandUsageException>(() => DevManifest.Load(manifestPath));
+
+        Assert.Contains("Dev metadata is not valid JSON:", exception.Message);
+    }
+
+    [Fact]
+    public void Load_MetadataDevJson_UsesDevelopmentUserEnvironmentOverrides()
+    {
+        var originalEnvironment = SetEnvironment(
+            ("HOST_DEV_ADMIN_EMAIL", "local-admin@example.test"),
+            ("HOST_DEV_ADMIN_NAME", "Local Admin"),
+            ("HOST_DEV_ADMIN_PASSWORD", "local-admin-password"),
+            ("HOST_DEV_USER_EMAIL", "local-user@example.test"),
+            ("HOST_DEV_USER_NAME", "Local User"),
+            ("HOST_DEV_USER_PASSWORD", "local-user-password"));
+        try
+        {
+            var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+            var manifestPath = Path.Combine(root, "metadata.dev.json");
+            File.WriteAllText(manifestPath, """
+                {
+                  "schemaVersion": "0.3",
+                  "id": "com.example.reports",
+                  "services": [
+                    {
+                      "key": "app",
+                      "source": {
+                        "type": "process",
+                        "command": "npm run dev"
+                      },
+                      "runtime": {
+                        "ports": [
+                          { "key": "http", "containerPort": 3100, "protocol": "http" }
+                        ]
+                      }
+                    }
+                  ],
+                  "endpoints": [
+                    { "key": "http", "service": "app", "port": "http", "public": true }
+                  ]
+                }
+                """);
+
+            var manifest = DevManifest.Load(manifestPath);
+
+            var admin = Assert.Single(manifest.Users, user => user.Role == "host.admin");
+            Assert.Equal("local-admin@example.test", admin.Email);
+            Assert.Equal("Local Admin", admin.DisplayName);
+            Assert.Equal("local-admin-password", manifest.GetPassword(admin));
+
+            var user = Assert.Single(manifest.Users, user => user.Role == "host.user");
+            Assert.Equal("local-user@example.test", user.Email);
+            Assert.Equal("Local User", user.DisplayName);
+            Assert.Equal("local-user-password", manifest.GetPassword(user));
+        }
+        finally
+        {
+            RestoreEnvironment(originalEnvironment);
+        }
+    }
+
+    [Fact]
     public void Load_CustomJsonManifest_ThrowsUsageError()
     {
         var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
@@ -146,5 +219,25 @@ public sealed class DevManifestTests
             """);
 
         Assert.Throws<CommandUsageException>(() => DevManifest.Load(manifestPath));
+    }
+
+    private static Dictionary<string, string?> SetEnvironment(params (string Key, string Value)[] values)
+    {
+        var originalEnvironment = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var (key, value) in values)
+        {
+            originalEnvironment[key] = Environment.GetEnvironmentVariable(key);
+            Environment.SetEnvironmentVariable(key, value);
+        }
+
+        return originalEnvironment;
+    }
+
+    private static void RestoreEnvironment(IReadOnlyDictionary<string, string?> originalEnvironment)
+    {
+        foreach (var (key, value) in originalEnvironment)
+        {
+            Environment.SetEnvironmentVariable(key, value);
+        }
     }
 }
