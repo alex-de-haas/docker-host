@@ -34,7 +34,7 @@ Do not inject fake module identity tokens into requests when validating Host int
 
 The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `docker-host dev up` for reusable `metadata.dev.json` local module development, `npm run host:dev:demo` for the repository's host-side demo loop, or the lower-level `docker-host modules dev link` commands when only target registration is needed.
 
-For Host development, the harness can connect to a local Host process instead of the installed Host container. Use `--host-url http://localhost:3000` when the Host is already running in a debugger or another terminal.
+For Host development, the harness can connect to a local Host process instead of the installed Host container. Use a loopback URL such as `--host-url http://localhost:3000` when the Host is already running in a debugger or another terminal.
 
 ## Decisions
 
@@ -132,7 +132,7 @@ docker-host dev reset --manifest modules/demo-module/metadata.dev.json
 docker-host dev clean modules/demo-module/metadata.dev.json
 ```
 
-`--host-url` makes the command connect to that already running development Host origin instead of starting `npm run host:dev` from `HOST_DEV_REPOSITORY_PATH`:
+`--host-url` makes the command connect to that already running loopback development Host origin instead of starting `npm run host:dev` from `HOST_DEV_REPOSITORY_PATH`:
 
 ```bash
 docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000

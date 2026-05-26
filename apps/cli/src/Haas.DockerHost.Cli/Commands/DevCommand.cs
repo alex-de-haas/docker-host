@@ -1019,7 +1019,25 @@ internal sealed class DevCommand(CommandContext context)
             throw new CommandUsageException("--host-url must be an absolute HTTP(S) URL.", Usage);
         }
 
+        if (!IsLoopbackHost(uri.Host))
+        {
+            throw new CommandUsageException("--host-url must point to a loopback Host origin such as http://localhost:3000.", Usage);
+        }
+
         return new Uri(uri.GetLeftPart(UriPartial.Authority));
+    }
+
+    private static bool IsLoopbackHost(string host)
+    {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var normalizedHost = host.Length >= 2 && host[0] == '[' && host[^1] == ']'
+            ? host[1..^1]
+            : host;
+        return IPAddress.TryParse(normalizedHost, out var address) && IPAddress.IsLoopback(address);
     }
 
     private int RenderApiFailure(string message, HttpStatusCode statusCode, string rawBody)

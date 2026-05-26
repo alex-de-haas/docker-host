@@ -45,7 +45,7 @@ docker-host dev reset [--manifest <path>] [--host-url <url>]
 docker-host dev clean <module-id-or-dev-metadata> [--host-url <url>] [--yes]
 ```
 
-It reads `metadata.dev.json` by default, starts the development Host from `HOST_DEV_REPOSITORY_PATH` or connects to `--host-url`, links a deterministic developer target through local control, seeds development users and assignments through Host-owned services, applies module directory policy, and starts the local module command in the foreground. The detailed workflow is documented in [Module Development Harness](module-development-harness.md).
+It reads `metadata.dev.json` by default, starts the development Host from `HOST_DEV_REPOSITORY_PATH` or connects to a loopback `--host-url`, links a deterministic developer target through local control, seeds development users and assignments through Host-owned services, applies module directory policy, and starts the local module command in the foreground. The detailed workflow is documented in [Module Development Harness](module-development-harness.md).
 
 `docker-host auth` contains local authentication recovery and bootstrap commands:
 

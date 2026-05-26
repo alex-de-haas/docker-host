@@ -32,7 +32,7 @@ Use the account switcher to validate assigned-user behavior. Do not edit module 
 The generic installed-CLI harness is `docker-host dev`. It reads a module-local `metadata.dev.json` file and can:
 
 - run the module's local process service;
-- start a local Host process from configured `HOST_DEV_REPOSITORY_PATH` or connect to an already running Host origin with `--host-url`;
+- start a local Host process from configured `HOST_DEV_REPOSITORY_PATH` or connect to an already running loopback Host origin with `--host-url`;
 - use `<HOST_DATA_ROOT_HOST>/run/control.json` for trusted local control;
 - seed development users, assignments, and module directory policy through Host-owned control routes;
 - revoke conflicting pending invitations before creating missing development users;
@@ -104,7 +104,7 @@ docker-host dev up --manifest modules/demo-module/metadata.dev.json
 docker-host dev up --manifest path/to/metadata.dev.json --host-url http://localhost:3000
 ```
 
-Use `--host-url` when the Host is already running locally in another terminal or debugger. Without `--host-url`, configure `HOST_DEV_REPOSITORY_PATH` first; the top-level dev harness does not start or inspect the production Host container.
+Use `--host-url` when the Host is already running locally in another terminal or debugger. The URL must be loopback, such as `http://localhost:3000` or `http://127.0.0.1:3000`, because the top-level dev harness serves metadata and module process targets through the developer machine loopback interface. Without `--host-url`, configure `HOST_DEV_REPOSITORY_PATH` first; the top-level dev harness does not start or inspect the production Host container.
 
 ## Manual Developer Target
 

@@ -45,7 +45,7 @@ Use `--prepare-only` when another terminal or process manager owns the module de
 docker-host dev up --prepare-only
 ```
 
-Use `--host-url` to connect to an already running Host origin:
+Use `--host-url` to connect to an already running local Host origin:
 
 ```bash
 docker-host dev up --host-url http://localhost:3000
@@ -164,9 +164,9 @@ docker-host dev up --manifest modules/demo-module/metadata.dev.json
 
 When `HOST_DEV_REPOSITORY_PATH` is set, `docker-host dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, and `PORT` into the Host process so trusted control discovery is written where the CLI expects it.
 
-If `HOST_DEV_REPOSITORY_PATH` is not configured, `docker-host dev up` exits before reading module metadata or starting anything. Configure it first or pass `--host-url` for an already running development Host.
+If `HOST_DEV_REPOSITORY_PATH` is not configured, `docker-host dev up` exits before reading module metadata or starting anything. Configure it first or pass a loopback `--host-url` for an already running development Host on the developer machine.
 
-`external` mode is for a development Host that is already running. The CLI does not start, stop, inspect, or read logs from the Host process. It connects to `--host-url` and uses local control for Host-owned operations.
+`external` mode is for a development Host that is already running on the developer machine. The CLI accepts only loopback `--host-url` origins such as `http://localhost:3000` or `http://127.0.0.1:3000`, because it serves `metadata.dev.json` and maps module process services through `127.0.0.1` from the Host process. The CLI does not start, stop, inspect, or read logs from the Host process. It connects to `--host-url` and uses local control for Host-owned operations.
 
 In both modes, `runtime.ports[].localPort` maps the module target to `127.0.0.1:<port>` from the Host process.
 

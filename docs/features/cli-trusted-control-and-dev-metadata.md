@@ -61,7 +61,7 @@ The first control contract covers:
 - developer target list, upsert, delete, and dev data cleanup;
 - Host-owned development user, invitation, assignment, directory policy, and app registry helpers used by `docker-host dev`.
 
-The CLI still inspects Docker only for Host container lifecycle and production module command Host URL discovery. The top-level `docker-host dev` harness does not inspect or start the production Host container; it starts the source-run Host from `HOST_DEV_REPOSITORY_PATH` or connects to an explicit `--host-url`.
+The CLI still inspects Docker only for Host container lifecycle and production module command Host URL discovery. The top-level `docker-host dev` harness does not inspect or start the production Host container; it starts the source-run Host from `HOST_DEV_REPOSITORY_PATH` or connects to an explicit loopback `--host-url`.
 
 ## Dev Metadata
 

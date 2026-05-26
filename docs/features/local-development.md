@@ -52,7 +52,7 @@ In this mode, local metadata test servers can usually be referenced as `http://l
 
 The repository uses npm workspace scripts from the root. `npm run host:dev`, `npm run host:build`, and `npm run host:lint` execute the Host app in `apps/host`.
 
-The installed CLI dev harness is dev-only. It starts the Host from `HOST_DEV_REPOSITORY_PATH` through `npm run host:dev`, or it can target an already running source Host with `--host-url http://localhost:3000`.
+The installed CLI dev harness is dev-only. It starts the Host from `HOST_DEV_REPOSITORY_PATH` through `npm run host:dev`, or it can target an already running source Host with a loopback URL such as `--host-url http://localhost:3000`.
 
 Module dev server upstreams should usually be `http://127.0.0.1:<port>`. The metadata `runtime.ports[].localPort` value expands to that address for the top-level `docker-host dev` harness.
 

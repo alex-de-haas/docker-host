@@ -129,6 +129,7 @@ public sealed class DevCommandTests : IDisposable
     }
 
     [Theory]
+    [InlineData("up")]
     [InlineData("status")]
     [InlineData("reset")]
     public async Task ExecuteAsync_InvalidHostUrl_ThrowsUsageException(string command)
@@ -139,6 +140,35 @@ public sealed class DevCommandTests : IDisposable
         await Assert.ThrowsAsync<CommandUsageException>(
             () => new DevCommand(context).ExecuteAsync([command, "--manifest", WriteManifest(), "--host-url", "ftp://example.test"]));
 
+        Assert.Empty(transport.Requests);
+    }
+
+    [Theory]
+    [InlineData("up")]
+    [InlineData("status")]
+    [InlineData("reset")]
+    public async Task ExecuteAsync_NonLoopbackHostUrl_ThrowsUsageException(string command)
+    {
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+
+        var exception = await Assert.ThrowsAsync<CommandUsageException>(
+            () => new DevCommand(context).ExecuteAsync([command, "--manifest", WriteManifest(), "--host-url", "http://example.test:3000"]));
+
+        Assert.Contains("--host-url must point to a loopback Host origin", exception.Message);
+        Assert.Empty(transport.Requests);
+    }
+
+    [Fact]
+    public async Task CleanAsync_NonLoopbackHostUrl_ThrowsUsageException()
+    {
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+
+        var exception = await Assert.ThrowsAsync<CommandUsageException>(
+            () => new DevCommand(context).ExecuteAsync(["clean", "com.example.reports", "--host-url", "http://example.test:3000"]));
+
+        Assert.Contains("--host-url must point to a loopback Host origin", exception.Message);
         Assert.Empty(transport.Requests);
     }
 

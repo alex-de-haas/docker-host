@@ -18,7 +18,7 @@ The skill is intentionally not a copy of the full documentation. `SKILL.md` is a
 
 For Host-facing module behavior, the skill points agents at the integrated developer target loop: run the module app locally, route it through Docker Host, seed Host-owned development users and assignments, and let the gateway issue the normal signed module identity token. Directly injecting fake module identity headers is not considered a valid Host integration check.
 
-The skill also distinguishes the Host API origin from the Host lifecycle mode. Agents should configure `HOST_DEV_REPOSITORY_PATH` for a source-run Host, or use `docker-host dev up --host-url` when validating modules against an already running Host process instead of the installed Host container.
+The skill also distinguishes the Host API origin from the Host lifecycle mode. Agents should configure `HOST_DEV_REPOSITORY_PATH` for a source-run Host, or use `docker-host dev up --host-url` with a loopback URL when validating modules against an already running Host process instead of the installed Host container.
 
 ```mermaid
 flowchart LR
