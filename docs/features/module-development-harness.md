@@ -4,7 +4,7 @@ The module development harness is the installed-CLI workflow for running a local
 
 ```mermaid
 flowchart LR
-  A["Dev manifest or metadata.dev.json"] --> B["docker-host dev up"]
+  A["metadata.dev.json"] --> B["docker-host dev up"]
   B --> C["Trusted control discovery"]
   C --> D["Host /control/v1"]
   D --> E["Developer target"]
@@ -19,7 +19,7 @@ flowchart LR
 
 ## Commands
 
-`docker-host dev up` prepares the integrated loop from a dev manifest or from `metadata.dev.json`:
+`docker-host dev up` prepares the integrated loop from `metadata.dev.json`:
 
 ```bash
 docker-host dev up
@@ -32,8 +32,8 @@ It performs these steps:
 - serves local dev metadata to the Host when needed;
 - links or updates a deterministic developer target through `/control/v1/modules/dev/targets/{targetId}`;
 - reuses existing development users, updates their display name or role when needed, or creates missing users through Host-owned invitation flows;
-- revokes an existing pending invitation for a manifest email before creating and accepting a fresh invitation, which keeps `dev up` idempotent after interrupted runs;
-- applies manifest user assignments through Host-owned assignment services;
+- revokes existing pending invitations for development account emails before creating and accepting fresh invitations, which keeps `dev up` idempotent after interrupted runs;
+- applies development user assignments through Host-owned assignment services;
 - applies module directory policy through Host-owned directory policy services;
 - creates `<HOST_DATA_ROOT_HOST>/dev/modules/<module-id>/` for persistent development data;
 - prints the Host shell app URL, gateway URL, and development account credentials;
@@ -45,7 +45,7 @@ Use `--prepare-only` when another terminal or process manager owns the module de
 docker-host dev up --prepare-only
 ```
 
-Use `--host-url` to connect to an already running Host origin:
+Use `--host-url` to connect to an already running local Host origin:
 
 ```bash
 docker-host dev up --host-url http://localhost:3000
@@ -59,13 +59,13 @@ docker-host dev reset --host-url http://localhost:3000
 docker-host dev status
 ```
 
-`docker-host dev reset` removes only harness-owned state for the manifest target:
+`docker-host dev reset` removes only harness-owned state for the metadata target:
 
 ```bash
 docker-host dev reset
 ```
 
-Reset deletes the developer target, removes the manifest module assignment from manifest users, and resets the module directory email policy when the target still exists and the module id can be resolved. It does not delete Host users because those accounts may also be useful for other local checks.
+Reset deletes the developer target, removes the module assignment from development users, and resets the module directory email policy when the target still exists and the module id can be resolved. It does not delete Host users because those accounts may also be useful for other local checks.
 
 `docker-host dev clean` removes persistent development data for one module after confirmation:
 
@@ -74,11 +74,11 @@ docker-host dev clean com.haas.demo-module
 docker-host dev clean modules/demo-module/metadata.dev.json --yes
 ```
 
-When `--manifest` is omitted, `up`, `status`, and `reset` use `metadata.dev.json` from the current working directory. A supplied manifest path may be a JSON file or a directory containing `metadata.dev.json`.
+When `--manifest` is omitted, `up`, `status`, and `reset` use `metadata.dev.json` from the current working directory. A supplied path may be a metadata JSON file or a directory containing `metadata.dev.json`.
 
 ## Dev Metadata
 
-The canonical development manifest is module metadata. The demo module manifest lives at:
+The canonical development input is module metadata. The demo module metadata lives at:
 
 ```text
 modules/demo-module/metadata.dev.json
@@ -143,37 +143,32 @@ The CLI injects process environment values needed by Docker Host modules:
 - `MODULE_ID`;
 - `MODULE_VERSION`.
 
-The repository demo loop uses a separate harness manifest at:
+The CLI also seeds two deterministic development accounts and assigns them to the linked module:
 
-```text
-modules/demo-module/.docker-host/dev.json
-```
+- `admin@docker-host.local` with password `docker-host-dev-admin` and role `host.admin`;
+- `user@docker-host.local` with password `docker-host-dev-user` and role `host.user`.
 
-That file points `metadataFile` at `../metadata.dev.json` so the Host still validates clean module metadata, while the harness manifest owns local commands, Host process environment, development users, directory policy, and the `demo.localhost` target. This keeps dev-only orchestration fields out of the module metadata contract.
+The harness sets module directory policy to include email addresses so local module UIs can validate scoped directory and module-owned role flows.
 
 ## Host Modes
 
-`docker-container` mode is the production-like installed CLI loop. The CLI reads launch settings, starts the configured Host container when needed, discovers the mapped Host UI port from Docker, then reads the Host control discovery file from the data root.
-
-`local-process` mode is for changing the Host itself. The CLI starts `host.command` as a child process, waits for the configured Host origin to publish control discovery, then links module developer targets through that local Host. The Host process is stopped when the foreground module command exits or the dev harness is interrupted.
+The top-level `docker-host dev` harness is dev-only. It does not start, inspect, or require the production Host container. Without `--host-url`, it requires `HOST_DEV_REPOSITORY_PATH` in CLI config and starts `npm run host:dev` in that repository, waits for the configured Host origin to publish control discovery, then links module developer targets through that local Host. The Host process is stopped when the foreground module command exits or the dev harness is interrupted.
 
 For repository-local Host development, the CLI can infer `local-process` mode from launch settings:
 
 ```bash
 docker-host config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
 docker-host config set HOST_DEV_PORT 3000
-docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
-When `HOST_DEV_REPOSITORY_PATH` is set and the manifest does not explicitly choose a host mode, `docker-host dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, and `PORT` into the Host process so trusted control discovery is written where the CLI expects it.
+When `HOST_DEV_REPOSITORY_PATH` is set, `docker-host dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, and `PORT` into the Host process so trusted control discovery is written where the CLI expects it.
 
-`external` mode is for a Host that is already running. The CLI does not start, stop, inspect, or read logs from the Host process. It connects to `host.origin` or `--host-url` and uses local control for Host-owned operations.
+If `HOST_DEV_REPOSITORY_PATH` is not configured, `docker-host dev up` exits before reading module metadata or starting anything. Configure it first or pass a loopback `--host-url` for an already running development Host on the developer machine.
 
-The important distinction is network perspective:
+`external` mode is for a development Host that is already running on the developer machine. The CLI accepts only loopback `--host-url` origins such as `http://localhost:3000` or `http://127.0.0.1:3000`, because it serves `metadata.dev.json` and maps module process services through `127.0.0.1` from the Host process. The CLI does not start, stop, inspect, or read logs from the Host process. It connects to `--host-url` and uses local control for Host-owned operations.
 
-- in `docker-container` mode, a module dev server on the developer machine is usually reached by the Host as `host.docker.internal`;
-- in `local-process` mode, the Host process runs on the developer machine, so module dev servers are reached as `127.0.0.1`;
-- in `external` mode, the local port shorthand assumes the Host also runs on the developer machine.
+In both modes, `runtime.ports[].localPort` maps the module target to `127.0.0.1:<port>` from the Host process.
 
 ## Boundaries
 

@@ -40,8 +40,8 @@ npm run host:dev:demo
 npm run demo-module:docker:build:local
 ```
 
-Use `npm run host:dev:demo` for shell app, Host identity, assigned-user, and scoped directory feedback. It wraps `docker-host dev up --manifest modules/demo-module/.docker-host/dev.json`, seeds the development administrator and user accounts, and links the demo module as a developer target, so the module receives normal Host-issued identity instead of a mock token.
+Use `npm run host:dev:demo` for shell app, Host identity, assigned-user, and scoped directory feedback. It wraps `docker-host dev up --manifest modules/demo-module/metadata.dev.json`, seeds the development administrator and user accounts, and links the demo module as a developer target, so the module receives normal Host-issued identity instead of a mock token.
 
-The demo module's `metadata.dev.json` uses a schema `0.3` process service with `runtime.ports[].localPort`. The `.docker-host/dev.json` harness manifest references that clean metadata and adds repository-local commands, users, directory policy, and target defaults.
+The demo module's `metadata.dev.json` uses a schema `0.3` process service with `runtime.ports[].localPort`. The CLI derives the local command, target, development users, assignments, and directory policy from the metadata-driven harness workflow.
 
 Use the local Docker image path when testing managed install, start, stop, restart, update, and storage behavior.

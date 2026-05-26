@@ -34,7 +34,7 @@ Do not inject fake module identity tokens into requests when validating Host int
 
 The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `docker-host dev up` for reusable `metadata.dev.json` local module development, `npm run host:dev:demo` for the repository's host-side demo loop, or the lower-level `docker-host modules dev link` commands when only target registration is needed.
 
-For Host development, the harness can connect to a local Host process instead of the installed Host container. Use `--host-url http://localhost:3000` when the Host is already running in a debugger or another terminal.
+For Host development, the harness can connect to a local Host process instead of the installed Host container. Use a loopback URL such as `--host-url http://localhost:3000` when the Host is already running in a debugger or another terminal.
 
 ## Decisions
 
@@ -123,19 +123,19 @@ docker-host modules dev unlink <target-id>
 
 The `modules dev` commands intentionally manage developer targets only. User seeding, assignment seeding, local module process startup, status checks, reset behavior, and dev data cleanup live in the top-level `docker-host dev` harness.
 
-The top-level harness can use module metadata directly or a richer dev manifest. The repository demo uses `modules/demo-module/.docker-host/dev.json` so local commands and development users stay outside the module metadata contract:
+The top-level harness uses `metadata.dev.json` directly. The repository demo metadata provides the local process command, working directory, environment, local port, endpoint selection, and shell UI metadata; the CLI derives the developer target and seeds standard development users from that metadata-driven workflow:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
-docker-host dev status --manifest modules/demo-module/.docker-host/dev.json
-docker-host dev reset --manifest modules/demo-module/.docker-host/dev.json
+docker-host dev up --manifest modules/demo-module/metadata.dev.json
+docker-host dev status --manifest modules/demo-module/metadata.dev.json
+docker-host dev reset --manifest modules/demo-module/metadata.dev.json
 docker-host dev clean modules/demo-module/metadata.dev.json
 ```
 
-`--host-url` makes the command connect to that Host origin and skip Docker container lifecycle and inspect operations:
+`--host-url` makes the command connect to that already running loopback development Host origin instead of starting `npm run host:dev` from `HOST_DEV_REPOSITORY_PATH`:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/.docker-host/dev.json --host-url http://localhost:3000
+docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
 ```
 
 ## Gateway Rules

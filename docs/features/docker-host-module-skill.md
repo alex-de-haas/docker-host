@@ -18,7 +18,7 @@ The skill is intentionally not a copy of the full documentation. `SKILL.md` is a
 
 For Host-facing module behavior, the skill points agents at the integrated developer target loop: run the module app locally, route it through Docker Host, seed Host-owned development users and assignments, and let the gateway issue the normal signed module identity token. Directly injecting fake module identity headers is not considered a valid Host integration check.
 
-The skill also distinguishes the Host API origin from the Host lifecycle mode. Agents should use the manifest `host.mode` field or `docker-host dev --host-url` when validating modules against a Host process that is running directly from source instead of inside the installed Host container.
+The skill also distinguishes the Host API origin from the Host lifecycle mode. Agents should configure `HOST_DEV_REPOSITORY_PATH` for a source-run Host, or use `docker-host dev up --host-url` with a loopback URL when validating modules against an already running Host process instead of the installed Host container.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,7 @@ flowchart LR
 - `skills/docker-host-module/agents/openai.yaml` - UI-facing skill metadata.
 - `skills/docker-host-module/references/module-metadata.md` - compact metadata schema, hard validation constraints, install/update behavior, and unsupported metadata assumptions.
 - `skills/docker-host-module/references/module-auth-and-users.md` - Host roles, gateway policies, identity modes, identity tokens, scoped directory, external providers, external ingress readiness, and module-owned roles.
-- `skills/docker-host-module/references/module-dev-mode.md` - local developer target workflow, trusted-control-backed dev manifest behavior, and developer-mode boundaries.
+- `skills/docker-host-module/references/module-dev-mode.md` - local developer target workflow, trusted-control-backed dev metadata behavior, and developer-mode boundaries.
 - `skills/docker-host-module/references/demo-module-patterns.md` - practical patterns from `modules/demo-module`.
 - `skills/docker-host-module/references/module-implementation-checklist.md` - final implementation and validation checklist.
 - `skills/docker-host-module/assets/module-template/metadata.json` - minimal valid metadata skeleton.

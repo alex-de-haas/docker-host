@@ -88,11 +88,12 @@ npm run host:dev:demo
 ```
 
 This wraps the local `docker-host` CLI project and runs `docker-host dev up`
-against `modules/demo-module/.docker-host/dev.json`. The script uses
+against `modules/demo-module/metadata.dev.json`. The script uses
 `.docker-host-dev-demo/` as an isolated `DOCKER_HOST_HOME`, configures the Host
 dev repository path to the current checkout, starts Docker Host on
 `http://localhost:3000`, and starts the demo module on
-`http://localhost:3100`.
+`http://localhost:3100`. It also enables local development auto-login and
+browser account seeding for the default development administrator and user.
 
 The server connects to Docker using:
 
@@ -103,10 +104,12 @@ The server connects to Docker using:
 For the installed-CLI module development harness, run:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/.docker-host/dev.json
+docker-host config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
+docker-host config set HOST_DEV_PORT 3000
+docker-host dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
-Use `docker-host dev status --manifest modules/demo-module/.docker-host/dev.json` to verify Host readiness, target reachability, app registry visibility, and identity mode. Use `docker-host dev reset --manifest modules/demo-module/.docker-host/dev.json` to remove the manifest target and assignments.
+Use `docker-host dev status --manifest modules/demo-module/metadata.dev.json` to verify Host readiness, target reachability, app registry visibility, and identity mode. Use `docker-host dev reset --manifest modules/demo-module/metadata.dev.json` to remove the metadata target and assignments.
 
 Examples:
 

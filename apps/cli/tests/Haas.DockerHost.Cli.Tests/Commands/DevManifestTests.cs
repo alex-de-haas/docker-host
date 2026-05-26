@@ -47,127 +47,139 @@ public sealed class DevManifestTests
         Assert.Equal("npm run dev", manifest.ModuleCommand);
         Assert.Equal(root, manifest.ResolveWorkingDirectory());
         Assert.Equal("com-example-reports.localhost", manifest.Target.Hostname);
+        Assert.Equal("mdev_com_example_reports_localhost", manifest.GetTargetId());
         Assert.Equal("http", manifest.Target.PortKey);
-        Assert.Equal("http://host.docker.internal:3100", manifest.GetTargetBaseUrl(DevHostMode.DockerContainer));
+        Assert.Equal("http://127.0.0.1:3100", manifest.GetTargetBaseUrl());
         Assert.Equal("3100", manifest.Environment["PORT"]);
         Assert.Equal("true", manifest.Environment["EXAMPLE"]);
+        Assert.Equal(2, manifest.Users.Count);
+        Assert.Contains(manifest.Users, user => user.Email == "admin@docker-host.local" && user.Role == "host.admin" && user.Assigned);
+        Assert.Contains(manifest.Users, user => user.Email == "user@docker-host.local" && user.Role == "host.user" && user.Assigned);
+        Assert.True(manifest.DirectoryPolicy?.IncludeEmail);
     }
 
     [Fact]
-    public void Load_MetadataFileManifest_ResolvesRelativePathsAndDefaults()
+    public void Load_MetadataDevJson_FallsBackToContainerPortWhenLocalPortIsMissing()
     {
-        var root = Directory.CreateTempSubdirectory("docker-host-dev-manifest-").FullName;
-        var manifestDirectory = Path.Combine(root, ".docker-host");
-        Directory.CreateDirectory(manifestDirectory);
-        File.WriteAllText(Path.Combine(root, "metadata.json"), "{}");
-        var manifestPath = Path.Combine(manifestDirectory, "dev.json");
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+        var manifestPath = Path.Combine(root, "metadata.dev.json");
         File.WriteAllText(manifestPath, """
             {
-              "metadataFile": "../metadata.json",
-              "moduleCommand": "npm run dev",
-              "workingDirectory": "..",
-              "target": {
-                "hostname": "demo.localhost",
-                "portKey": "http",
-                "targetBaseUrl": "http://host.docker.internal:3100"
-              },
-              "users": [
-                { "email": "user@docker-host.local", "role": "host.user", "assigned": true }
-              ],
-              "environment": {
-                "PORT": "3100"
-              }
-            }
-            """);
-
-        var manifest = DevManifest.Load(manifestPath);
-
-        Assert.Equal(Path.Combine(root, "metadata.json"), manifest.ResolveMetadataFile());
-        Assert.Equal(root, manifest.ResolveWorkingDirectory());
-        Assert.Equal("mdev_demo_localhost", manifest.GetTargetId());
-        Assert.Equal("docker-host-dev-user", manifest.GetPassword(manifest.Users[0]));
-        Assert.Equal(DevHostMode.DockerContainer, manifest.GetHostMode());
-        Assert.Null(manifest.GetHostOrigin());
-        Assert.Equal("http://host.docker.internal:3100", manifest.GetTargetBaseUrl(DevHostMode.DockerContainer));
-        Assert.Equal("3100", manifest.Environment["PORT"]);
-    }
-
-    [Fact]
-    public void Load_LocalProcessHost_ResolvesOriginAndLocalPortTarget()
-    {
-        var root = Directory.CreateTempSubdirectory("docker-host-dev-manifest-").FullName;
-        var manifestPath = Path.Combine(root, "dev.json");
-        File.WriteAllText(manifestPath, """
-            {
-              "metadataUrl": "http://localhost:3000/metadata.json",
-              "host": {
-                "mode": "local-process",
-                "port": 3005,
-                "command": "npm run host:dev"
-              },
-              "target": {
-                "hostname": "demo.localhost",
-                "portKey": "http",
-                "localPort": 3100
-              }
-            }
-            """);
-
-        var manifest = DevManifest.Load(manifestPath);
-
-        Assert.Equal(DevHostMode.LocalProcess, manifest.GetHostMode());
-        Assert.Equal("http://localhost:3005/", manifest.GetHostOrigin()?.ToString());
-        Assert.Equal("http://127.0.0.1:3100", manifest.GetTargetBaseUrl(DevHostMode.LocalProcess));
-        Assert.Equal("http://host.docker.internal:3100", manifest.GetTargetBaseUrl(DevHostMode.DockerContainer));
-    }
-
-    [Fact]
-    public void Load_CustomDevManifest_AllowsHostEnvironmentWithoutExplicitHostMode()
-    {
-        var root = Directory.CreateTempSubdirectory("docker-host-dev-manifest-").FullName;
-        File.WriteAllText(Path.Combine(root, "metadata.dev.json"), "{}");
-        var manifestPath = Path.Combine(root, "dev.json");
-        File.WriteAllText(manifestPath, """
-            {
-              "metadataFile": "metadata.dev.json",
-              "moduleCommand": "npm run dev",
-              "workingDirectory": ".",
-              "host": {
-                "environment": {
-                  "HOST_DEV_AUTH": "auto"
+              "schemaVersion": "0.3",
+              "id": "com.example.worker-ui",
+              "name": "Worker UI",
+              "version": "1.0.0",
+              "services": [
+                {
+                  "key": "app",
+                  "source": {
+                    "type": "process",
+                    "command": "npm run dev"
+                  },
+                  "runtime": {
+                    "ports": [
+                      { "key": "http", "containerPort": 3100, "protocol": "http" }
+                    ]
+                  }
                 }
-              },
-              "target": {
-                "hostname": "demo.localhost",
-                "portKey": "http",
-                "localPort": 3100
-              }
+              ],
+              "endpoints": [
+                { "key": "http", "service": "app", "port": "http", "public": true }
+              ]
             }
             """);
 
         var manifest = DevManifest.Load(manifestPath);
 
-        Assert.False(manifest.HasExplicitHostMode);
-        Assert.False(manifest.HasHostCommand);
-        Assert.Equal("auto", manifest.Host.Environment["HOST_DEV_AUTH"]);
-        Assert.Equal(DevHostMode.DockerContainer, manifest.GetHostMode());
+        Assert.Equal("3100", manifest.Environment["PORT"]);
+        Assert.Equal("http://127.0.0.1:3100", manifest.GetTargetBaseUrl());
     }
 
     [Fact]
-    public void Load_ExternalHostWithoutOrigin_ThrowsUsageError()
+    public void Load_InvalidJson_ThrowsSyntaxUsageError()
     {
-        var root = Directory.CreateTempSubdirectory("docker-host-dev-manifest-").FullName;
-        var manifestPath = Path.Combine(root, "dev.json");
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+        var manifestPath = Path.Combine(root, "metadata.dev.json");
+        File.WriteAllText(manifestPath, """
+            {
+              "schemaVersion": "0.3",
+              "services": [
+            }
+            """);
+
+        var exception = Assert.Throws<CommandUsageException>(() => DevManifest.Load(manifestPath));
+
+        Assert.Contains("Dev metadata is not valid JSON:", exception.Message);
+    }
+
+    [Fact]
+    public void Load_MetadataDevJson_UsesDevelopmentUserEnvironmentOverrides()
+    {
+        var originalEnvironment = SetEnvironment(
+            ("HOST_DEV_ADMIN_EMAIL", "local-admin@example.test"),
+            ("HOST_DEV_ADMIN_NAME", "Local Admin"),
+            ("HOST_DEV_ADMIN_PASSWORD", "local-admin-password"),
+            ("HOST_DEV_USER_EMAIL", "local-user@example.test"),
+            ("HOST_DEV_USER_NAME", "Local User"),
+            ("HOST_DEV_USER_PASSWORD", "local-user-password"));
+        try
+        {
+            var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+            var manifestPath = Path.Combine(root, "metadata.dev.json");
+            File.WriteAllText(manifestPath, """
+                {
+                  "schemaVersion": "0.3",
+                  "id": "com.example.reports",
+                  "services": [
+                    {
+                      "key": "app",
+                      "source": {
+                        "type": "process",
+                        "command": "npm run dev"
+                      },
+                      "runtime": {
+                        "ports": [
+                          { "key": "http", "containerPort": 3100, "protocol": "http" }
+                        ]
+                      }
+                    }
+                  ],
+                  "endpoints": [
+                    { "key": "http", "service": "app", "port": "http", "public": true }
+                  ]
+                }
+                """);
+
+            var manifest = DevManifest.Load(manifestPath);
+
+            var admin = Assert.Single(manifest.Users, user => user.Role == "host.admin");
+            Assert.Equal("local-admin@example.test", admin.Email);
+            Assert.Equal("Local Admin", admin.DisplayName);
+            Assert.Equal("local-admin-password", manifest.GetPassword(admin));
+
+            var user = Assert.Single(manifest.Users, user => user.Role == "host.user");
+            Assert.Equal("local-user@example.test", user.Email);
+            Assert.Equal("Local User", user.DisplayName);
+            Assert.Equal("local-user-password", manifest.GetPassword(user));
+        }
+        finally
+        {
+            RestoreEnvironment(originalEnvironment);
+        }
+    }
+
+    [Fact]
+    public void Load_CustomJsonManifest_ThrowsUsageError()
+    {
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+        var manifestPath = Path.Combine(root, "custom-manifest.json");
         File.WriteAllText(manifestPath, """
             {
               "metadataUrl": "http://localhost:3000/metadata.json",
-              "host": {
-                "mode": "external"
-              },
               "target": {
-                "hostname": "demo.localhost",
+                "hostname": "reports.localhost",
                 "portKey": "http",
-                "localPort": 3100
+                "targetBaseUrl": "http://127.0.0.1:3100"
               }
             }
             """);
@@ -176,25 +188,56 @@ public sealed class DevManifestTests
     }
 
     [Fact]
-    public void Load_DuplicateUserEmails_ThrowsUsageError()
+    public void Load_MetadataWithoutProcessService_ThrowsUsageError()
     {
-        var root = Directory.CreateTempSubdirectory("docker-host-dev-manifest-").FullName;
-        var manifestPath = Path.Combine(root, "dev.json");
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+        var manifestPath = Path.Combine(root, "metadata.dev.json");
         File.WriteAllText(manifestPath, """
             {
-              "metadataUrl": "http://localhost:3000/metadata.json",
-              "target": {
-                "hostname": "demo.localhost",
-                "portKey": "http",
-                "targetBaseUrl": "http://127.0.0.1:3100"
-              },
-              "users": [
-                { "email": "user@docker-host.local", "role": "host.user" },
-                { "email": "USER@docker-host.local", "role": "host.user" }
+              "schemaVersion": "0.3",
+              "id": "com.example.reports",
+              "name": "Reports",
+              "version": "1.0.0",
+              "services": [
+                {
+                  "key": "app",
+                  "source": {
+                    "type": "image",
+                    "image": { "repository": "reports", "tag": "latest" }
+                  },
+                  "runtime": {
+                    "ports": [
+                      { "key": "http", "containerPort": 3000, "protocol": "http" }
+                    ]
+                  }
+                }
+              ],
+              "endpoints": [
+                { "key": "http", "service": "app", "port": "http", "public": true }
               ]
             }
             """);
 
         Assert.Throws<CommandUsageException>(() => DevManifest.Load(manifestPath));
+    }
+
+    private static Dictionary<string, string?> SetEnvironment(params (string Key, string Value)[] values)
+    {
+        var originalEnvironment = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var (key, value) in values)
+        {
+            originalEnvironment[key] = Environment.GetEnvironmentVariable(key);
+            Environment.SetEnvironmentVariable(key, value);
+        }
+
+        return originalEnvironment;
+    }
+
+    private static void RestoreEnvironment(IReadOnlyDictionary<string, string?> originalEnvironment)
+    {
+        foreach (var (key, value) in originalEnvironment)
+        {
+            Environment.SetEnvironmentVariable(key, value);
+        }
     }
 }
