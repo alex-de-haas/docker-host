@@ -1098,6 +1098,12 @@ export async function prepareDevBrowserAccountUsers(
       nextAccountUsers.push(result.user);
     }
 
+    for (const user of users.filter(isDevBrowserAccountUser)) {
+      if (!nextAccountUsers.some(account => account.id === user.id)) {
+        nextAccountUsers.push(user);
+      }
+    }
+
     return {
       state: {
         ...state,
@@ -1153,6 +1159,14 @@ async function createDevSessionForCredentials(
 
     if (!sessionUser) {
       throw new AuthServiceError('dev_auth_user_missing', 'Development account could not be prepared.');
+    }
+
+    if (options.seedBrowserAccounts) {
+      for (const user of users.filter(isDevBrowserAccountUser)) {
+        if (!nextAccountUsers.some(account => account.id === user.id)) {
+          nextAccountUsers.push(user);
+        }
+      }
     }
 
     const session = createSessionRecord(sessionUser.id, sessionToken, now, request);
@@ -1232,6 +1246,12 @@ function getDevSessionAccountCredentials(
   return accountCredentials.filter((account, index, accounts) =>
     accounts.findIndex(candidate => candidate.email === account.email) === index
   );
+}
+
+function isDevBrowserAccountUser(user: AuthUserRecord) {
+  return !user.disabled &&
+    Boolean(user.email) &&
+    (user.authProvider === 'local' || user.authProvider === undefined);
 }
 
 export async function addUserToBrowserAccountSet(

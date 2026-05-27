@@ -202,6 +202,12 @@ test('development browser account seeding repairs an existing admin-only account
   process.env.HOST_RUNTIME_MODE = 'development';
 
   const login = await createDevSession({ userAgent: 'Dev Browser' }, config);
+  const extraUser = await addTestUser(config, {
+    id: 'user_extra_dev',
+    email: 'extra@example.test',
+    displayName: 'Extra Dev',
+    role: 'host.user',
+  });
   let accountSet = await addUserToBrowserAccountSet({
     accountSetToken: null,
     userId: login.user.id,
@@ -217,9 +223,10 @@ test('development browser account seeding repairs an existing admin-only account
   }, undefined, config);
 
   const listed = await listBrowserAccounts(accountSet.accountSetToken, login.user, config);
-  assert.equal(listed.accounts.length, 2);
+  assert.equal(listed.accounts.length, 3);
   assert.equal(listed.accounts.some(account => account.email === 'admin@docker-host.local'), true);
   assert.equal(listed.accounts.some(account => account.email === 'user@docker-host.local'), true);
+  assert.equal(listed.accounts.some(account => account.id === extraUser.id), true);
 });
 
 test('browser account set seeding rejects blank user ids as invalid input', async () => {

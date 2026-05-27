@@ -75,11 +75,14 @@ The script sets:
 - `HOST_DEV_REPOSITORY_PATH` in the isolated CLI config to the current checkout;
 - `HOST_DEV_PORT` in the isolated CLI config to `3000` unless `HOST_DEV_PORT` or `PORT` is provided.
 
-The demo wrapper sets the local Host process environment:
+The generic `docker-host dev up` command sets the local Host process environment:
 
 - `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the active CLI Host data root;
 - `HOST_DEV_AUTH=auto`, which enables development-only auto-login;
-- `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, which remembers both development accounts in the browser account menu;
+- `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, which remembers development accounts in the browser account menu.
+
+The demo wrapper also sets:
+
 - `HOST_ENABLE_DEV_FIXTURES=true`, which enables the current-branch demo metadata fixture.
 
 When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only when the Host server observes the client socket as a loopback address such as `127.0.0.1` or `::1`.
@@ -101,6 +104,24 @@ The demo script signs the first browser session in as the administrator account.
 - display name: `Dev User`.
 
 Override these values with `HOST_DEV_USER_EMAIL`, `HOST_DEV_USER_PASSWORD`, and `HOST_DEV_USER_NAME`. The administrator account is still seeded so the Host is not left in setup-required mode. The development user and administrator emails must be different.
+
+Module-specific development users can be added in `metadata.dev.json`:
+
+```json
+{
+  "development": {
+    "users": [
+      {
+        "email": "reviewer@example.test",
+        "displayName": "Review User",
+        "role": "user"
+      }
+    ]
+  }
+}
+```
+
+The CLI creates or updates those local Host users through trusted control and assigns them to the active developer target by default. The Host account menu seeds all enabled local development users into the current browser account set, so they are available for account switching without signing in. The CLI removes the `development` block before serving the metadata file to Docker Host's strict module metadata validator.
 
 Before starting the module process, the CLI seeds a deterministic developer target through Host trusted control. The target points at the current checkout's `modules/demo-module` UI and stores the current metadata `ui` snapshot, so `/api/apps` immediately returns a `Dev` app without a manual link step.
 

@@ -384,8 +384,10 @@ For local validation without pushing an image, the CLI must support overriding `
 - if the artifact differs, safely replace the installed `docker-host` binary by downloading to a temporary file next to the target executable, setting permissions, and then replacing the target;
 - if the CLI binary was replaced, continue the Host update through the new executable with `docker-host update --host-only` instead of performing Docker operations from the process whose executable was already replaced;
 - pull the new Host image version;
-- stop the current Host container;
+- stop the current Host container only when it is running;
 - recreate the Host container with the same volumes, environment variables, port mappings, and restart policy;
+- start the recreated Host container only when the previous Host container was running;
+- leave the recreated Host container stopped when the previous Host container was stopped or missing;
 - preserve the Host data root;
 - show a clear error if the CLI artifact update or Docker operation fails.
 

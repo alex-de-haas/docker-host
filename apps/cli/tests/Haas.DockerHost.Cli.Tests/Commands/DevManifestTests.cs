@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Haas.DockerHost.Cli.Commands;
 
 namespace Haas.DockerHost.Cli.Tests.Commands;
@@ -93,6 +94,71 @@ public sealed class DevManifestTests
 
         Assert.Equal("3100", manifest.Environment["PORT"]);
         Assert.Equal("http://127.0.0.1:3100", manifest.GetTargetBaseUrl());
+    }
+
+    [Fact]
+    public void Load_MetadataDevJson_ReadsDevelopmentUsersAndStripsThemFromServedMetadata()
+    {
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+        var manifestPath = Path.Combine(root, "metadata.dev.json");
+        File.WriteAllText(manifestPath, """
+            {
+              "schemaVersion": "0.3",
+              "id": "com.example.reports",
+              "name": "Reports",
+              "version": "1.0.0",
+              "development": {
+                "users": [
+                  {
+                    "email": "reviewer@example.test",
+                    "displayName": "Review User",
+                    "role": "user"
+                  },
+                  {
+                    "email": "operator@example.test",
+                    "name": "Operator Admin",
+                    "role": "host-admin",
+                    "assigned": false
+                  }
+                ]
+              },
+              "services": [
+                {
+                  "key": "app",
+                  "source": {
+                    "type": "process",
+                    "command": "npm run dev"
+                  },
+                  "runtime": {
+                    "ports": [
+                      { "key": "http", "containerPort": 3100, "protocol": "http" }
+                    ]
+                  }
+                }
+              ],
+              "endpoints": [
+                { "key": "http", "service": "app", "port": "http", "public": true }
+              ]
+            }
+            """);
+
+        var manifest = DevManifest.Load(manifestPath);
+
+        Assert.Equal(4, manifest.Users.Count);
+        Assert.Contains(manifest.Users, user =>
+            user.Email == "reviewer@example.test" &&
+            user.DisplayName == "Review User" &&
+            user.Role == "host.user" &&
+            user.Assigned);
+        Assert.Contains(manifest.Users, user =>
+            user.Email == "operator@example.test" &&
+            user.DisplayName == "Operator Admin" &&
+            user.Role == "host.admin" &&
+            !user.Assigned);
+
+        using var hostMetadata = JsonDocument.Parse(manifest.HostMetadataBytes);
+        Assert.False(hostMetadata.RootElement.TryGetProperty("development", out _));
+        Assert.Equal("com.example.reports", hostMetadata.RootElement.GetProperty("id").GetString());
     }
 
     [Fact]
