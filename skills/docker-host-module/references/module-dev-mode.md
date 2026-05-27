@@ -25,6 +25,8 @@ It also enables development auto-login and browser account seeding. The default 
 - `admin@docker-host.local` with password `docker-host-dev-admin`;
 - `user@docker-host.local` with password `docker-host-dev-user`.
 
+`metadata.dev.json` can add module-specific local users under `development.users`. The CLI reads this CLI-only block, creates or updates those Host users, assigns them to the developer target by default, and strips the block before serving metadata to the Host validator. Supported roles are `admin`, `user`, `host.admin`, `host.user`, `host-admin`, and `host-user`.
+
 Use the account switcher to validate assigned-user behavior. Do not edit module identity headers by hand for this path.
 
 ## Installed CLI Harness
@@ -53,6 +55,15 @@ Example `metadata.dev.json`:
   "id": "com.example.module",
   "name": "Example Module",
   "version": "1.0.0",
+  "development": {
+    "users": [
+      {
+        "email": "reviewer@example.test",
+        "displayName": "Review User",
+        "role": "user"
+      }
+    ]
+  },
   "services": [
     {
       "key": "app",

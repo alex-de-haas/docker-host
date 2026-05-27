@@ -2,6 +2,18 @@
 
 Docker Host administrators manage Host users from `/settings/users`.
 
+Host users can enter the system through these flows:
+
+- first-admin setup creates the initial local `host.admin`;
+- local invitations create `host.admin` or `host.user` accounts after the invite is accepted;
+- recovery restores a local administrator account with a recovery token;
+- OIDC login provisions or updates external users through provider role mappings;
+- trusted-proxy assertions provision or update external users through trusted proxy role mappings;
+- development auto-login creates or updates deterministic local development accounts;
+- `docker-host dev up` creates or updates development users from `metadata.dev.json` `development.users`.
+
+Browser account switching does not create users. It only remembers existing Host users in a browser-scoped account set and creates a fresh session when the user switches accounts.
+
 The feature uses the existing Host-owned auth state:
 
 - users are stored as `AuthUserRecord` entries in `/data/auth/state.json`;

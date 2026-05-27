@@ -60,8 +60,9 @@ internal sealed class UpdateCommand(CommandContext context)
         await HostLifecycle.PullHostImageAsync(context, docker, settings.HostImage);
 
         var existing = await docker.InspectContainerAsync(settings.HostContainerName);
+        var wasRunning = existing?.State?.Running == true;
         var previousPort = HostLifecycle.TryGetMappedPort(existing);
-        if (existing?.State?.Running == true)
+        if (wasRunning)
         {
             await CommandStatus.RunAsync(
                 context,
@@ -96,12 +97,22 @@ internal sealed class UpdateCommand(CommandContext context)
             context,
             $"Creating Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
             async () => await docker.CreateHostContainerAsync(plan));
-        await CommandStatus.RunAsync(
-            context,
-            $"Starting Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
-            async () => await docker.StartContainerAsync(settings.HostContainerName));
 
-        context.Console.MarkupLine($"[green]Host container updated.[/] {Markup.Escape($"http://localhost:{hostPort}")}");
+        if (wasRunning)
+        {
+            await CommandStatus.RunAsync(
+                context,
+                $"Starting Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                async () => await docker.StartContainerAsync(settings.HostContainerName));
+
+            context.Console.MarkupLine($"[green]Host container updated.[/] {Markup.Escape($"http://localhost:{hostPort}")}");
+        }
+        else
+        {
+            context.Console.MarkupLine("[green]Host container updated and left stopped.[/]");
+            context.Console.MarkupLine($"[grey]Start it with docker-host start when needed. Configured URL: {Markup.Escape($"http://localhost:{hostPort}")}[/]");
+        }
+
         return 0;
     }
 }

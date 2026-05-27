@@ -11,16 +11,19 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
     private readonly CancellationTokenSource cancellation = new();
     private readonly Task acceptLoop;
     private readonly Action<Exception>? onClientError;
+    private readonly byte[]? metadataBytes;
 
     private LocalMetadataFileServer(
         string metadataFilePath,
         TcpListener listener,
         string publicUrl,
-        Action<Exception>? onClientError)
+        Action<Exception>? onClientError,
+        byte[]? metadataBytes)
     {
         this.metadataFilePath = metadataFilePath;
         this.listener = listener;
         this.onClientError = onClientError;
+        this.metadataBytes = metadataBytes;
         PublicUrl = publicUrl;
         acceptLoop = AcceptLoopAsync();
     }
@@ -30,7 +33,8 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
     public static LocalMetadataFileServer Start(
         string metadataFilePath,
         string publicHost,
-        Action<Exception>? onClientError = null)
+        Action<Exception>? onClientError = null,
+        byte[]? metadataBytes = null)
     {
         if (!File.Exists(metadataFilePath))
         {
@@ -42,7 +46,7 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var host = string.IsNullOrWhiteSpace(publicHost) ? "host.docker.internal" : publicHost.Trim();
         var publicUrl = $"http://{host}:{port}/metadata.json";
-        return new LocalMetadataFileServer(metadataFilePath, listener, publicUrl, onClientError);
+        return new LocalMetadataFileServer(metadataFilePath, listener, publicUrl, onClientError, metadataBytes);
     }
 
     public async ValueTask DisposeAsync()
@@ -123,7 +127,7 @@ internal sealed class LocalMetadataFileServer : IAsyncDisposable
             return;
         }
 
-        var bytes = await File.ReadAllBytesAsync(metadataFilePath, cancellation.Token).ConfigureAwait(false);
+        var bytes = metadataBytes ?? await File.ReadAllBytesAsync(metadataFilePath, cancellation.Token).ConfigureAwait(false);
         await WriteResponseAsync(stream, "200 OK", "application/json", bytes).ConfigureAwait(false);
     }
 

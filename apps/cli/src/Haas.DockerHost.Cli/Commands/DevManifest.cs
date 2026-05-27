@@ -2,7 +2,9 @@ namespace Haas.DockerHost.Cli.Commands;
 
 using System.Globalization;
 using System.Net;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 internal enum DevHostMode
 {
@@ -34,6 +36,10 @@ internal sealed record DevManifest
     public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
     public string ManifestPath { get; private init; } = "";
 
+    public byte[] HostMetadataBytes { get; private init; } = [];
+
+    private static readonly JsonSerializerOptions IndentedSerializerOptions = new() { WriteIndented = true };
+
     public string ManifestDirectory => Path.GetDirectoryName(ManifestPath) ?? Directory.GetCurrentDirectory();
 
     public static DevManifest Load(string path)
@@ -51,7 +57,7 @@ internal sealed record DevManifest
             throw new CommandUsageException("docker-host dev requires metadata.dev.json with schemaVersion 0.3 process services.", DevCommand.Usage);
         }
 
-        var manifest = FromModuleDevMetadata(document.RootElement, manifestPath);
+        var manifest = FromModuleDevMetadata(document.RootElement, manifestPath, raw);
         manifest.Validate();
         return manifest;
     }
@@ -76,7 +82,7 @@ internal sealed record DevManifest
             root.TryGetProperty("services", out var services) &&
             services.ValueKind == JsonValueKind.Array;
 
-    private static DevManifest FromModuleDevMetadata(JsonElement root, string manifestPath)
+    private static DevManifest FromModuleDevMetadata(JsonElement root, string manifestPath, string raw)
     {
         var moduleId = ReadRequiredString(root, "id", "Dev metadata id is required.");
         var endpoint = SelectDevEndpoint(root);
@@ -127,11 +133,23 @@ internal sealed record DevManifest
                 PortKey = endpoint.EndpointKey,
                 LocalPort = localPort,
             },
-            Users = CreateDefaultUsers(),
+            Users = ReadDevelopmentUsers(root),
             DirectoryPolicy = new DevManifestDirectoryPolicy { IncludeEmail = true },
             Environment = environment,
             ManifestPath = manifestPath,
+            HostMetadataBytes = CreateHostMetadataBytes(raw),
         };
+    }
+
+    private static byte[] CreateHostMetadataBytes(string raw)
+    {
+        var node = JsonNode.Parse(raw, documentOptions: JsonDocumentOptions);
+        if (node is JsonObject obj && obj.Remove("development"))
+        {
+            return JsonSerializer.SerializeToUtf8Bytes(obj, IndentedSerializerOptions);
+        }
+
+        return Encoding.UTF8.GetBytes(raw);
     }
 
     private static IReadOnlyList<DevManifestUser> CreateDefaultUsers() =>
@@ -154,6 +172,86 @@ internal sealed record DevManifest
             },
         ];
 
+    private static IReadOnlyList<DevManifestUser> ReadDevelopmentUsers(JsonElement root)
+    {
+        var users = CreateDefaultUsers().ToList();
+        if (!root.TryGetProperty("development", out var development) ||
+            development.ValueKind == JsonValueKind.Undefined)
+        {
+            return users;
+        }
+
+        if (development.ValueKind != JsonValueKind.Object)
+        {
+            throw new CommandUsageException("Dev metadata development must be an object.", DevCommand.Usage);
+        }
+
+        if (!development.TryGetProperty("users", out var configuredUsers) ||
+            configuredUsers.ValueKind == JsonValueKind.Undefined)
+        {
+            return users;
+        }
+
+        if (configuredUsers.ValueKind != JsonValueKind.Array)
+        {
+            throw new CommandUsageException("Dev metadata development.users must be an array.", DevCommand.Usage);
+        }
+
+        var index = 0;
+        foreach (var configuredUser in configuredUsers.EnumerateArray())
+        {
+            if (configuredUser.ValueKind != JsonValueKind.Object)
+            {
+                throw new CommandUsageException($"Dev metadata development.users[{index}] must be an object.", DevCommand.Usage);
+            }
+
+            var email = ReadRequiredString(
+                configuredUser,
+                "email",
+                $"Dev metadata development.users[{index}].email is required.");
+            var role = NormalizeDevRole(
+                configuredUser.TryGetProperty("role", out var roleElement) &&
+                roleElement.ValueKind == JsonValueKind.String
+                    ? roleElement.GetString()
+                    : null,
+                $"development.users[{index}].role");
+            var assigned = true;
+            if (configuredUser.TryGetProperty("assigned", out var assignedElement))
+            {
+                assigned = assignedElement.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => throw new CommandUsageException($"Dev metadata development.users[{index}].assigned must be a boolean.", DevCommand.Usage),
+                };
+            }
+
+            users.Add(new DevManifestUser
+            {
+                Email = email,
+                DisplayName = ReadOptionalString(configuredUser, "displayName") ?? ReadOptionalString(configuredUser, "name"),
+                Role = role,
+                Assigned = assigned,
+                Password = ReadOptionalString(configuredUser, "password"),
+            });
+
+            index++;
+        }
+
+        return users;
+    }
+
+    private static string NormalizeDevRole(string? value, string path)
+    {
+        var normalized = value?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            null or "" or "user" or "host.user" or "host-user" => "host.user",
+            "admin" or "host.admin" or "host-admin" => "host.admin",
+            _ => throw new CommandUsageException($"Dev metadata {path} must be admin, user, host.admin, or host.user.", DevCommand.Usage),
+        };
+    }
+
     private static string ReadEnvironmentOverride(string key, string fallback)
     {
         var value = System.Environment.GetEnvironmentVariable(key);
@@ -165,6 +263,13 @@ internal sealed record DevManifest
         var value = System.Environment.GetEnvironmentVariable(key);
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
+
+    private static string? ReadOptionalString(JsonElement value, string propertyName)
+        => value.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(property.GetString())
+            ? property.GetString()!.Trim()
+            : null;
 
     private static (string EndpointKey, string ServiceKey, string PortKey) SelectDevEndpoint(JsonElement root)
     {

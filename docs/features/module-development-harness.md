@@ -28,6 +28,7 @@ docker-host dev up
 It performs these steps:
 
 - starts Docker Host or connects to the selected Host origin;
+- enables development auto-login and browser account seeding when it starts the local Host process;
 - discovers the Host local control channel from `<HOST_DATA_ROOT_HOST>/run/control.json`;
 - serves local dev metadata to the Host when needed;
 - links or updates a deterministic developer target through `/control/v1/modules/dev/targets/{targetId}`;
@@ -148,6 +149,34 @@ The CLI also seeds two deterministic development accounts and assigns them to th
 - `admin@docker-host.local` with password `docker-host-dev-admin` and role `host.admin`;
 - `user@docker-host.local` with password `docker-host-dev-user` and role `host.user`.
 
+Additional development users can be declared in the CLI-only `development.users` section of `metadata.dev.json`:
+
+```json
+{
+  "development": {
+    "users": [
+      {
+        "email": "reviewer@example.test",
+        "displayName": "Review User",
+        "role": "user"
+      },
+      {
+        "email": "operator@example.test",
+        "displayName": "Operator Admin",
+        "role": "host.admin",
+        "assigned": false
+      }
+    ]
+  }
+}
+```
+
+Supported role values are `admin`, `user`, `host.admin`, `host.user`, `host-admin`, and `host-user`; they normalize to `host.admin` or `host.user`. `assigned` defaults to `true`, so declared users are assigned to the linked module unless explicitly disabled. Passwords are optional and normally omitted; Docker Host uses deterministic development passwords only to satisfy the local-account model, not as a required dev workflow.
+
+The `development` block is not part of production module metadata. The CLI reads it for local orchestration and strips it before serving metadata to the Host developer target validator, so the Host still validates the normal strict module metadata schema.
+
+When development browser account seeding is enabled, Docker Host adds the deterministic accounts and all enabled local development users to the current browser account set. The sidebar account menu can then switch among those users without opening `/login` or entering credentials.
+
 The harness sets module directory policy to include email addresses so local module UIs can validate scoped directory and module-owned role flows.
 
 ## Host Modes
@@ -162,7 +191,7 @@ docker-host config set HOST_DEV_PORT 3000
 docker-host dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
-When `HOST_DEV_REPOSITORY_PATH` is set, `docker-host dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, and `PORT` into the Host process so trusted control discovery is written where the CLI expects it.
+When `HOST_DEV_REPOSITORY_PATH` is set, `docker-host dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, `HOST_DEV_AUTH=auto`, `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, and `PORT` into the Host process so trusted control discovery and development browser sessions work without manual setup. Existing `HOST_DEV_AUTH` and `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS` environment values are preserved when they are already set.
 
 If `HOST_DEV_REPOSITORY_PATH` is not configured, `docker-host dev up` exits before reading module metadata or starting anything. Configure it first or pass a loopback `--host-url` for an already running development Host on the developer machine.
 

@@ -368,6 +368,8 @@ internal sealed class DevCommand(CommandContext context)
             ["HOST_DATA_ROOT_CONTAINER"] = dataRoot,
             ["HOST_INTERNAL_ORIGIN"] = origin.ToString().TrimEnd('/'),
             ["HOST_CONTROL_PUBLIC_PORT"] = origin.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["HOST_DEV_AUTH"] = ReadEnvironmentOverride("HOST_DEV_AUTH", "auto"),
+            ["HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS"] = ReadEnvironmentOverride("HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS", "enabled"),
         };
 
         if (!values.ContainsKey("HOST_MODULE_DEV_MODE"))
@@ -381,6 +383,12 @@ internal sealed class DevCommand(CommandContext context)
         }
 
         return values;
+    }
+
+    private static string ReadEnvironmentOverride(string key, string fallback)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
 
     private static Uri BuildLoopbackOrigin(int port)
@@ -887,7 +895,8 @@ internal sealed class DevCommand(CommandContext context)
         var server = LocalMetadataFileServer.Start(
             metadataFile,
             IPAddress.Loopback.ToString(),
-            ex => context.Console.MarkupLine($"[yellow]Metadata file server warning:[/] {Markup.Escape(ex.Message)}"));
+            ex => context.Console.MarkupLine($"[yellow]Metadata file server warning:[/] {Markup.Escape(ex.Message)}"),
+            manifest.HostMetadataBytes);
         context.Console.MarkupLine($"[grey]Serving metadata file for Host fetch:[/] {Markup.Escape(server.PublicUrl)}");
         return server;
     }
