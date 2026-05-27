@@ -13,6 +13,7 @@ import type { HostAppEntry, HostAppNavigationItem } from '@/types/apps';
 export function AppHostClient({ appId }: { appId: string }) {
   const searchParams = useSearchParams();
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const identityRetryIdsRef = useRef<number[]>([]);
   const selectedPath = normalizeSelectedPath(searchParams.get('path'));
   const appsState = useHostApps();
   const [frameWarning, setFrameWarning] = useState<string | null>(null);
@@ -53,6 +54,23 @@ export function AppHostClient({ appId }: { appId: string }) {
       // Token delivery is best-effort; the module can request it again through postMessage.
     }
   }, [app]);
+  const clearIdentityRetries = useCallback(() => {
+    for (const retryId of identityRetryIdsRef.current) {
+      window.clearTimeout(retryId);
+    }
+    identityRetryIdsRef.current = [];
+  }, []);
+  const scheduleIdentityDelivery = useCallback(() => {
+    clearIdentityRetries();
+    void sendIdentityToken();
+
+    for (const delayMs of [250, 1_000, 2_500, 5_000]) {
+      const retryId = window.setTimeout(() => {
+        void sendIdentityToken();
+      }, delayMs);
+      identityRetryIdsRef.current.push(retryId);
+    }
+  }, [clearIdentityRetries, sendIdentityToken]);
 
   useEffect(() => {
     if (!app?.origin) {
@@ -61,7 +79,6 @@ export function AppHostClient({ appId }: { appId: string }) {
 
     function handleMessage(event: MessageEvent) {
       if (
-        event.source !== frameRef.current?.contentWindow ||
         event.origin !== app?.origin ||
         !isIdentityRequestMessage(event.data)
       ) {
@@ -75,6 +92,8 @@ export function AppHostClient({ appId }: { appId: string }) {
     return () => window.removeEventListener('message', handleMessage);
   }, [app?.origin, sendIdentityToken]);
 
+  useEffect(() => clearIdentityRetries, [clearIdentityRetries, embeddedUrl]);
+
   return (
     <AdminShell contentClassName="flex h-full max-w-none flex-col p-0 sm:px-0 lg:px-0">
       {renderAppHostContent({
@@ -84,7 +103,7 @@ export function AppHostClient({ appId }: { appId: string }) {
         frameRef,
         frameWarning,
         setFrameWarning,
-        sendIdentityToken,
+        scheduleIdentityDelivery,
       })}
     </AdminShell>
   );
@@ -97,7 +116,7 @@ function renderAppHostContent({
   frameRef,
   frameWarning,
   setFrameWarning,
-  sendIdentityToken,
+  scheduleIdentityDelivery,
 }: {
   appsState: ReturnType<typeof useHostApps>;
   app: HostAppEntry | null;
@@ -105,7 +124,7 @@ function renderAppHostContent({
   frameRef: RefObject<HTMLIFrameElement | null>;
   frameWarning: string | null;
   setFrameWarning: (message: string | null) => void;
-  sendIdentityToken: () => Promise<void>;
+  scheduleIdentityDelivery: () => void;
 }) {
   if (appsState.loading) {
     return (
@@ -203,7 +222,7 @@ function renderAppHostContent({
         }}
         onLoad={() => {
           setFrameWarning(null);
-          void sendIdentityToken();
+          scheduleIdentityDelivery();
         }}
       />
     </section>

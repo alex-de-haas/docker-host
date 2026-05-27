@@ -376,6 +376,61 @@ test('includes enabled developer targets when module developer mode is active', 
   ]);
 });
 
+test('keeps developer targets that point back to the Host origin out of apps', async () => {
+  const config = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
+  await writeModuleDevTargetState({
+    schemaVersion: '0.1',
+    targets: [
+      createDeveloperTarget({
+        id: 'mdev_self',
+        targetBaseUrl: 'http://localhost:3000',
+        targetPathPrefix: '',
+      }),
+      createDeveloperTarget({
+        id: 'mdev_reports',
+        targetBaseUrl: 'http://127.0.0.1:3001/dev',
+        targetPathPrefix: '/dev',
+      }),
+    ],
+    updatedAt: new Date().toISOString(),
+  }, config);
+
+  const apps = await listHostApps(admin, {
+    config,
+    requestOrigin: 'http://127.0.0.1:3000',
+  });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].id, 'dev:mdev_reports');
+  assert.equal(apps[0].embeddedUrl, 'http://127.0.0.1:3001/dev/');
+});
+
+test('maps loopback developer app origins to the Host request hostname', async () => {
+  const config = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
+  await writeModuleDevTargetState({
+    schemaVersion: '0.1',
+    targets: [createDeveloperTarget()],
+    updatedAt: new Date().toISOString(),
+  }, config);
+
+  const apps = await listHostApps(assignedUser, {
+    config,
+    requestOrigin: 'http://localhost:3000',
+  });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].origin, 'http://localhost:3001');
+  assert.equal(apps[0].embeddedUrl, 'http://localhost:3001/dev/');
+  assert.deepEqual(apps[0].navigation, [
+    {
+      label: 'People',
+      path: '/people',
+      entryPath: '/apps/dev/mdev_reports?path=%2Fpeople',
+      embeddedUrl: 'http://localhost:3001/dev/people',
+    },
+  ]);
+});
+
 test('keeps disabled developer targets out of apps without requiring a dev-mode launch flag', async () => {
   const disabledTargetConfig = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
   await writeModuleDevTargetState({
@@ -443,13 +498,16 @@ async function createAppRegistryTestConfig(input: { moduleDevModeEnabled?: boole
 
 function createDeveloperTarget(
   input: {
+    id?: string;
     enabled?: boolean;
     exposurePolicy?: ModuleDevTargetRecord['exposurePolicy'];
+    targetBaseUrl?: string;
+    targetPathPrefix?: string;
   } = {}
 ): ModuleDevTargetRecord {
   const now = new Date().toISOString();
   return {
-    id: 'mdev_reports',
+    id: input.id ?? 'mdev_reports',
     moduleId: 'com.example.reports',
     moduleName: 'Reports',
     moduleVersion: '1.0.0',
@@ -457,8 +515,8 @@ function createDeveloperTarget(
     metadataUrl: 'http://127.0.0.1:3000/metadata.json',
     hostname: 'reports.localhost',
     portKey: 'web',
-    targetBaseUrl: 'http://127.0.0.1:3001/dev',
-    targetPathPrefix: '/dev',
+    targetBaseUrl: input.targetBaseUrl ?? 'http://127.0.0.1:3001/dev',
+    targetPathPrefix: input.targetPathPrefix ?? '/dev',
     containerPort: 3000,
     protocol: 'http',
     exposurePolicy: input.exposurePolicy ?? 'loginRequired',

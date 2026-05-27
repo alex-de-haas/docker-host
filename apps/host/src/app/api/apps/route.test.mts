@@ -119,15 +119,15 @@ test('GET /api/apps returns developer apps without local target internals', asyn
   assert.equal(body.apps[0]?.id, 'dev:mdev_reports');
   assert.equal(body.apps[0]?.source, 'developer');
   assert.equal(body.apps[0]?.entryPath, '/apps/dev/mdev_reports');
-  assert.equal(body.apps[0]?.embeddedUrl, 'http://127.0.0.1:3001/dev/');
-  assert.equal(body.apps[0]?.origin, 'http://127.0.0.1:3001');
+  assert.equal(body.apps[0]?.embeddedUrl, 'http://localhost:3001/dev/');
+  assert.equal(body.apps[0]?.origin, 'http://localhost:3001');
   assert.equal(body.apps[0]?.identityTokenUrl, '/api/apps/dev/mdev_reports/identity-token');
   assert.deepEqual(body.apps[0]?.navigation, [
     {
       label: 'People',
       path: '/people',
       entryPath: '/apps/dev/mdev_reports?path=%2Fpeople',
-      embeddedUrl: 'http://127.0.0.1:3001/dev/people',
+      embeddedUrl: 'http://localhost:3001/dev/people',
     },
   ]);
   assert.equal('targetBaseUrl' in body.apps[0]!, false);

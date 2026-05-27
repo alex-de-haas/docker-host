@@ -113,7 +113,7 @@ export async function listHostApps(
       )
     : [];
   const developerCandidates = developerTargetState
-    ? developerTargetState.targets.map(target => buildDeveloperAppCandidate(target))
+    ? developerTargetState.targets.map(target => buildDeveloperAppCandidate(target, options.requestOrigin))
     : [];
   const candidates = [...installedCandidates, ...developerCandidates];
 
@@ -359,8 +359,11 @@ function buildUnavailableApp({
   };
 }
 
-function buildDeveloperAppCandidate(target: ModuleDevTargetRecord): ModuleAppCandidate {
-  if (!target.enabled || !target.shellApp) {
+function buildDeveloperAppCandidate(
+  target: ModuleDevTargetRecord,
+  requestOrigin: string | undefined
+): ModuleAppCandidate {
+  if (!target.enabled || !target.shellApp || isSelfReferentialDeveloperTarget(target, requestOrigin)) {
     return {
       app: null,
       visibleToUsers: false,
@@ -368,6 +371,7 @@ function buildDeveloperAppCandidate(target: ModuleDevTargetRecord): ModuleAppCan
   }
 
   const accessMode = getDeveloperShellAccessMode(target.exposurePolicy);
+  const origin = resolveDeveloperBrowserOrigin(target, requestOrigin);
 
   return {
     app: {
@@ -385,10 +389,10 @@ function buildDeveloperAppCandidate(target: ModuleDevTargetRecord): ModuleAppCan
       statusReason: 'available',
       accessMode,
       entryPath: buildDeveloperAppEntryPath(target.id, target.shellApp.entrypointPath),
-      embeddedUrl: buildDirectUrl(resolveDeveloperOrigin(target), buildDeveloperModulePath(target, target.shellApp.entrypointPath)),
-      origin: resolveDeveloperOrigin(target),
+      embeddedUrl: buildDirectUrl(origin, buildDeveloperModulePath(target, target.shellApp.entrypointPath)),
+      origin,
       identityTokenUrl: buildDeveloperIdentityTokenUrl(target.id),
-      navigation: buildDeveloperNavigation(target.id, target.shellApp.navigation, target),
+      navigation: buildDeveloperNavigation(target.id, target.shellApp.navigation, target, origin),
     },
     visibleToUsers: true,
   };
@@ -446,9 +450,9 @@ function buildNavigation(
 function buildDeveloperNavigation(
   targetId: string,
   navigation: NonNullable<ModuleDevTargetRecord['shellApp']>['navigation'],
-  target: ModuleDevTargetRecord
+  target: ModuleDevTargetRecord,
+  origin: string
 ): HostAppNavigationItem[] {
-  const origin = resolveDeveloperOrigin(target);
   return navigation.map(item => ({
     label: item.label,
     path: item.path,
@@ -545,6 +549,79 @@ function buildDeveloperIdentityTokenUrl(targetId: string) {
 
 function resolveDeveloperOrigin(target: ModuleDevTargetRecord) {
   return new URL(target.targetBaseUrl).origin;
+}
+
+function isSelfReferentialDeveloperTarget(
+  target: ModuleDevTargetRecord,
+  requestOrigin: string | undefined
+) {
+  const targetOrigin = parseHttpOrigin(resolveDeveloperBrowserOrigin(target, requestOrigin));
+  const hostOrigin = parseHttpOrigin(requestOrigin);
+  if (!targetOrigin || !hostOrigin) {
+    return false;
+  }
+
+  return isSameHttpOrigin(targetOrigin, hostOrigin);
+}
+
+function parseHttpOrigin(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function resolveDeveloperBrowserOrigin(
+  target: ModuleDevTargetRecord,
+  requestOrigin: string | undefined
+) {
+  const targetOrigin = parseHttpOrigin(resolveDeveloperOrigin(target));
+  const hostOrigin = parseHttpOrigin(requestOrigin);
+  if (
+    targetOrigin &&
+    hostOrigin &&
+    isCanonicalLoopbackHostname(targetOrigin.hostname) &&
+    isCanonicalLoopbackHostname(hostOrigin.hostname)
+  ) {
+    targetOrigin.hostname = hostOrigin.hostname;
+    return targetOrigin.origin;
+  }
+
+  return resolveDeveloperOrigin(target);
+}
+
+function isSameHttpOrigin(left: URL, right: URL) {
+  return left.protocol === right.protocol &&
+    getEffectivePort(left) === getEffectivePort(right) &&
+    (
+      left.hostname === right.hostname ||
+      (isCanonicalLoopbackHostname(left.hostname) && isCanonicalLoopbackHostname(right.hostname))
+    );
+}
+
+function getEffectivePort(url: URL) {
+  if (url.port) {
+    return url.port;
+  }
+
+  return url.protocol === 'https:' ? '443' : '80';
+}
+
+function isCanonicalLoopbackHostname(hostname: string) {
+  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1';
 }
 
 function buildDeveloperModulePath(target: ModuleDevTargetRecord, modulePath: string) {
