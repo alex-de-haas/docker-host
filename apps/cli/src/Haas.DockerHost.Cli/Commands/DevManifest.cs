@@ -38,6 +38,8 @@ internal sealed record DevManifest
 
     public byte[] HostMetadataBytes { get; private init; } = [];
 
+    private static readonly JsonSerializerOptions IndentedSerializerOptions = new() { WriteIndented = true };
+
     public string ManifestDirectory => Path.GetDirectoryName(ManifestPath) ?? Directory.GetCurrentDirectory();
 
     public static DevManifest Load(string path)
@@ -141,20 +143,13 @@ internal sealed record DevManifest
 
     private static byte[] CreateHostMetadataBytes(string raw)
     {
-        using var document = ParseMetadata(raw);
-        if (!document.RootElement.TryGetProperty("development", out _))
-        {
-            return Encoding.UTF8.GetBytes(raw);
-        }
-
         var node = JsonNode.Parse(raw, documentOptions: JsonDocumentOptions);
-        if (node is not JsonObject obj)
+        if (node is JsonObject obj && obj.Remove("development"))
         {
-            return Encoding.UTF8.GetBytes(raw);
+            return JsonSerializer.SerializeToUtf8Bytes(obj, IndentedSerializerOptions);
         }
 
-        obj.Remove("development");
-        return JsonSerializer.SerializeToUtf8Bytes(obj, new JsonSerializerOptions { WriteIndented = true });
+        return Encoding.UTF8.GetBytes(raw);
     }
 
     private static IReadOnlyList<DevManifestUser> CreateDefaultUsers() =>
