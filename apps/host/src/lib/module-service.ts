@@ -10,10 +10,11 @@ import {
   toModuleOperationError,
 } from '@/lib/module-docker';
 import { buildModuleAggregateRuntimeStatus } from './module-lifecycle.ts';
+import { validateAndNormalizeMetadata } from './module-metadata.ts';
 import {
   findInstalledModule,
-  getModulesStoreStatus,
   readModuleMetadata,
+  getModulesStoreStatus,
   readModulesStore,
   writeModulesStore,
 } from '@/lib/module-store';
@@ -24,10 +25,10 @@ import type {
   ModuleActionResult,
   ModuleDetail,
   ModuleImage,
-  ModuleMetadata,
   ModuleRuntimeState,
   ModuleRuntimeStatus,
   ModuleSummary,
+  NormalizedModuleMetadata,
   ResolvedDependency,
 } from '@/types/modules';
 
@@ -137,7 +138,7 @@ export async function restartInstalledModule(moduleId: string): Promise<ModuleAc
 async function runModuleAction(
   moduleId: string,
   operation: string,
-  action: (module: InstalledModuleRecord, metadata?: ModuleMetadata | null) => Promise<ModuleRuntimeStatus[]>,
+  action: (module: InstalledModuleRecord, metadata?: NormalizedModuleMetadata | null) => Promise<ModuleRuntimeStatus[]>,
   fallbackMessage: string,
   nextStep: string
 ): Promise<ModuleActionResult> {
@@ -265,9 +266,14 @@ async function markModuleFailed(
 async function safeReadModuleMetadata(
   module: InstalledModuleRecord,
   config = getHostRuntimeConfig()
-) {
+): Promise<NormalizedModuleMetadata | null> {
   try {
-    return await readModuleMetadata(module, config);
+    const metadata = await readModuleMetadata(module, config);
+    if (!metadata) {
+      return null;
+    }
+
+    return validateAndNormalizeMetadata(metadata, '$').metadata;
   } catch {
     return null;
   }
@@ -275,7 +281,7 @@ async function safeReadModuleMetadata(
 
 function toModuleSummary(
   module: InstalledModuleRecord,
-  metadata: ModuleMetadata | null,
+  metadata: NormalizedModuleMetadata | null,
   runtimeStatuses: ModuleRuntimeStatus[]
 ): ModuleSummary {
   const containers = buildContainerSummaries(module, metadata, runtimeStatuses);
@@ -298,7 +304,7 @@ function toModuleSummary(
 
 function buildContainerSummaries(
   module: InstalledModuleRecord,
-  metadata: ModuleMetadata | null,
+  metadata: NormalizedModuleMetadata | null,
   runtimeStatuses: ModuleRuntimeStatus[]
 ): ModuleSummary['containers'] {
   return module.containers.map((container, index) => {
@@ -323,7 +329,7 @@ function buildContainerSummaries(
 
 function buildContainerImage(
   storedImage: ModuleImage,
-  metadataImage: ModuleMetadata['containers'][number]['image'] | undefined
+  metadataImage: NormalizedModuleMetadata['containers'][number]['image'] | undefined
 ): ModuleImage {
   const repository = metadataImage?.repository || storedImage.repository || 'unknown';
   const tag = metadataImage?.tag || storedImage.tag || 'latest';
@@ -336,7 +342,7 @@ function buildContainerImage(
   };
 }
 
-function buildSettings(module: InstalledModuleRecord, metadata: ModuleMetadata | null) {
+function buildSettings(module: InstalledModuleRecord, metadata: NormalizedModuleMetadata | null) {
   const values = module.settings || {};
 
   return (metadata?.settings || []).map(setting => ({
@@ -347,7 +353,7 @@ function buildSettings(module: InstalledModuleRecord, metadata: ModuleMetadata |
 
 function buildStorageDirectories(
   module: InstalledModuleRecord,
-  metadata: ModuleMetadata | null
+  metadata: NormalizedModuleMetadata | null
 ): InstalledStorageMapping[] {
   const config = getHostRuntimeConfig();
 
@@ -371,7 +377,7 @@ function buildStorageDirectories(
 
 function buildDependencies(
   module: InstalledModuleRecord,
-  metadata: ModuleMetadata | null
+  metadata: NormalizedModuleMetadata | null
 ): ResolvedDependency[] {
   const resolvedDependencies = getResolvedDependencies(module);
 

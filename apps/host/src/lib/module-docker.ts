@@ -5,12 +5,12 @@ import {
   getModuleContainersInStartOrder,
   getModuleContainersInStopOrder,
 } from './module-lifecycle.ts';
+import type { ModuleContainerDependencyMetadata } from './module-lifecycle.ts';
 import type { HostRuntimeConfig } from '@/lib/host-runtime';
 import type {
   InstallPlanImage,
   InstalledModuleContainerRecord,
   InstalledModuleRecord,
-  ModuleMetadata,
   ModuleOperationError,
   ModuleRuntimeState,
   ModuleRuntimeStatus,
@@ -296,7 +296,7 @@ export async function createAndStartModuleContainer(config: CreateModuleContaine
 
 export async function ensureModuleContainersStarted(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   for (const container of getRuntimeContainersInStartOrder(module, metadata)) {
     await startModuleContainerRecord(module.id, container);
@@ -307,7 +307,7 @@ export async function ensureModuleContainersStarted(
 
 export async function ensureModuleContainerStarted(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   return ensureModuleContainersStarted(module, metadata);
 }
@@ -333,7 +333,7 @@ export async function removeModuleContainerIfExists(module: InstalledModuleRecor
 
 export async function startModuleContainers(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   for (const container of getRuntimeContainersInStartOrder(module, metadata)) {
     await startModuleContainerRecord(module.id, container);
@@ -344,7 +344,7 @@ export async function startModuleContainers(
 
 export async function stopModuleContainers(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   for (const container of getRuntimeContainersInStopOrder(module, metadata)) {
     await stopModuleContainerRecord(container);
@@ -355,7 +355,7 @@ export async function stopModuleContainers(
 
 export async function restartModuleContainers(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   for (const container of getRuntimeContainersInStopOrder(module, metadata)) {
     await stopModuleContainerRecord(container);
@@ -370,7 +370,7 @@ export async function restartModuleContainers(
 
 export async function startModuleContainer(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   const statuses = await startModuleContainers(module, metadata);
   return statuses[0] ?? getModuleRuntimeStatus(module);
@@ -378,7 +378,7 @@ export async function startModuleContainer(
 
 export async function stopModuleContainer(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   const statuses = await stopModuleContainers(module, metadata);
   return statuses[0] ?? getModuleRuntimeStatus(module);
@@ -386,7 +386,7 @@ export async function stopModuleContainer(
 
 export async function restartModuleContainer(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   const statuses = await restartModuleContainers(module, metadata);
   return statuses[0] ?? getModuleRuntimeStatus(module);
@@ -416,7 +416,7 @@ function getInstalledContainerRecords(module: InstalledModuleRecord): InstalledM
 
 function getRuntimeContainersInStartOrder(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   return getModuleContainersInStartOrder(
     {
@@ -428,7 +428,7 @@ function getRuntimeContainersInStartOrder(
 
 function getRuntimeContainersInStopOrder(
   module: InstalledModuleRecord,
-  metadata?: ModuleMetadata | null
+  metadata?: ModuleContainerDependencyMetadata | null
 ) {
   return getModuleContainersInStopOrder(
     {

@@ -5,7 +5,7 @@ import type {
   ModuleRuntimeStatus,
 } from '../types/modules.ts';
 
-interface ModuleContainerDependencyMetadata {
+export interface ModuleContainerDependencyMetadata {
   containers?: Array<{
     key: string;
     dependsOn?: string[];
