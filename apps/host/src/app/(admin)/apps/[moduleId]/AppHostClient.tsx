@@ -13,7 +13,9 @@ import type { HostAppEntry, HostAppNavigationItem } from '@/types/apps';
 export function AppHostClient({ appId }: { appId: string }) {
   const searchParams = useSearchParams();
   const principal = useAdminPrincipal();
-  const principalIdentityKey = `${principal.id}:${principal.role}:${principal.email ?? ''}:${principal.displayName ?? ''}`;
+  const principalIdentityKey = principal
+    ? `${principal.id}:${principal.role}:${principal.email ?? ''}:${principal.displayName ?? ''}`
+    : '';
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const identityRetryIdsRef = useRef<number[]>([]);
   const selectedPath = normalizeSelectedPath(searchParams.get('path'));

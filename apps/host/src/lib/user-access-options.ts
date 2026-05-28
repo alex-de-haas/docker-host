@@ -26,7 +26,7 @@ export async function listAssignableModules(
   const assignableModules = new Map<string, AssignableModuleSummary>();
 
   await Promise.all(
-    store.modules.map(async module => {
+    (store?.modules ?? []).map(async module => {
       try {
         const metadata = await readModuleMetadata(module, config);
         assignableModules.set(module.id, {
@@ -47,7 +47,7 @@ export async function listAssignableModules(
     })
   );
 
-  for (const target of developerTargetState.targets) {
+  for (const target of developerTargetState?.targets ?? []) {
     if (!target.enabled || !target.shellApp || assignableModules.has(target.moduleId)) {
       continue;
     }
