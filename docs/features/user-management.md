@@ -104,12 +104,14 @@ Every user, invitation, role, disable, and assignment mutation appends an auth a
 
 User Management uses the existing module assignment model.
 
-For ordinary users, an installed app is visible when:
+For ordinary users, an app is visible when:
 
 - the app has no assignments, which means all authenticated users can see it; or
 - the app has assignments and the current user is assigned.
 
 Administrators can see all Host apps. Module directory responses still include only explicitly assigned, enabled users.
+
+The access picker lists installed modules and enabled developer-mode shell apps. Developer entries reuse the target's `moduleId`, because Host access assignments are module-wide and the same assignment controls installed apps, developer shell apps, and assigned-only gateway exposures for that module.
 
 Invitation assignments are stored on the invitation and applied only when the invite is accepted, because the target user id does not exist before acceptance.
 

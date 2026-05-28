@@ -95,6 +95,8 @@ Instead, the Host shell uses a minimal `postMessage` bridge:
 
 The module can use that token directly for module-owned bootstrap logic or exchange it for its own HttpOnly module-origin session cookie. The demo module uses `/api/auth/bootstrap` to store the token in a module-origin cookie and then reloads once so server-rendered routes can read the module identity.
 
+When the active Host principal changes, the Host shell remounts the iframe and sends a fresh identity token for the new principal. Modules that keep their own module-origin session cookie should compare the new token identity with the currently rendered identity and replace the module cookie immediately instead of waiting for the old cookie to expire.
+
 Gateway service/API traffic can still receive `X-Docker-Host-Identity` through the existing gateway proxy. The direct-origin shell iframe identity bridge is only for browser UI embedding.
 
 ## Iframe Sandbox

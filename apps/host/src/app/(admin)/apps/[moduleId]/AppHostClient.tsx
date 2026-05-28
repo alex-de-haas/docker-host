@@ -5,13 +5,15 @@ import type { ReactNode, RefObject } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
-import { AdminShell } from '@/components/AdminShell';
+import { AdminShell, useAdminPrincipal } from '@/components/AdminShell';
 import { Button } from '@/components/ui/button';
 import { useHostApps } from '@/hooks/useHostApps';
 import type { HostAppEntry, HostAppNavigationItem } from '@/types/apps';
 
 export function AppHostClient({ appId }: { appId: string }) {
   const searchParams = useSearchParams();
+  const principal = useAdminPrincipal();
+  const principalIdentityKey = `${principal.id}:${principal.role}:${principal.email ?? ''}:${principal.displayName ?? ''}`;
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const identityRetryIdsRef = useRef<number[]>([]);
   const selectedPath = normalizeSelectedPath(searchParams.get('path'));
@@ -94,6 +96,10 @@ export function AppHostClient({ appId }: { appId: string }) {
 
   useEffect(() => clearIdentityRetries, [clearIdentityRetries, embeddedUrl]);
 
+  useEffect(() => {
+    scheduleIdentityDelivery();
+  }, [principalIdentityKey, scheduleIdentityDelivery]);
+
   return (
     <AdminShell contentClassName="flex h-full max-w-none flex-col p-0 sm:px-0 lg:px-0">
       {renderAppHostContent({
@@ -102,6 +108,7 @@ export function AppHostClient({ appId }: { appId: string }) {
         embeddedUrl,
         frameRef,
         frameWarning,
+        frameIdentityKey: principalIdentityKey,
         setFrameWarning,
         scheduleIdentityDelivery,
       })}
@@ -115,6 +122,7 @@ function renderAppHostContent({
   embeddedUrl,
   frameRef,
   frameWarning,
+  frameIdentityKey,
   setFrameWarning,
   scheduleIdentityDelivery,
 }: {
@@ -123,6 +131,7 @@ function renderAppHostContent({
   embeddedUrl: string | null;
   frameRef: RefObject<HTMLIFrameElement | null>;
   frameWarning: string | null;
+  frameIdentityKey: string;
   setFrameWarning: (message: string | null) => void;
   scheduleIdentityDelivery: () => void;
 }) {
@@ -212,7 +221,7 @@ function renderAppHostContent({
       {/* Module UI runs on its own origin; Host integration is limited to the postMessage identity bridge. */}
       <iframe
         ref={frameRef}
-        key={embeddedUrl}
+        key={`${embeddedUrl}:${frameIdentityKey}`}
         src={embeddedUrl}
         title={`${app.displayName} module UI`}
         sandbox="allow-clipboard-write allow-downloads allow-forms allow-popups allow-same-origin allow-scripts"
