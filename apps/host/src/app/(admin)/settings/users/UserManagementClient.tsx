@@ -76,6 +76,7 @@ interface AssignableModule {
   name: string;
   version?: string;
   operationStatus?: string;
+  source?: 'installed' | 'developer';
 }
 
 interface InviteTtlOption {
@@ -394,12 +395,12 @@ export function UserManagementClient() {
                   <TableCell>{formatDateTime(user.lastSeenAt)}</TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
-                      {user.role === 'host.user' && (
+                      {user.role === 'host.user' && (modules.length > 0 || user.assignedModuleIds.length > 0) && (
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => openAccessDialog(user)}
-                          disabled={user.disabled || modules.length === 0}
+                          disabled={user.disabled}
                         >
                           <UserCog className="h-4 w-4" />
                           Access
@@ -709,12 +710,27 @@ function ModulePicker({
   selectedModuleIds: string[];
   onToggle: (moduleId: string, selected: boolean) => void;
 }) {
+  const moduleOptions = useMemo(() => {
+    const knownModuleIds = new Set(modules.map(module => module.id));
+    return [
+      ...modules,
+      ...selectedModuleIds
+        .filter(moduleId => !knownModuleIds.has(moduleId))
+        .map(moduleId => ({
+          id: moduleId,
+          name: moduleId,
+          source: 'unknown' as const,
+        })),
+    ];
+  }, [modules, selectedModuleIds]);
+  const selectedModuleIdSet = useMemo(() => new Set(selectedModuleIds), [selectedModuleIds]);
+
   return (
     <div className="space-y-2">
       <Label>App access</Label>
       <div className="max-h-72 overflow-y-auto rounded-md border">
-        {modules.map(module => {
-          const checked = selectedModuleIds.includes(module.id);
+        {moduleOptions.map(module => {
+          const checked = selectedModuleIdSet.has(module.id);
           return (
             <label key={module.id} className="flex cursor-pointer items-center gap-3 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-muted/50">
               <input
@@ -724,13 +740,17 @@ function ModulePicker({
                 onChange={event => onToggle(module.id, event.target.checked)}
               />
               <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{module.name}</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-medium">{module.name}</span>
+                  {module.source === 'developer' && <Badge variant="outline">Dev</Badge>}
+                  {module.source === 'unknown' && <Badge variant="outline">Unavailable</Badge>}
+                </span>
                 <span className="block truncate text-xs text-muted-foreground">{module.id}</span>
               </span>
             </label>
           );
         })}
-        {modules.length === 0 && (
+        {moduleOptions.length === 0 && (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">
             No apps available.
           </div>

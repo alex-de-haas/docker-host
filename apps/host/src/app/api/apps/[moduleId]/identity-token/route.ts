@@ -5,7 +5,10 @@ import { readAuthStateSnapshot } from '@/lib/auth-store';
 import { listHostApps } from '@/lib/app-registry-service';
 import { getHostRuntimeConfig } from '@/lib/host-runtime';
 import { readModuleMetadata, readModulesStoreSnapshot } from '@/lib/module-store';
-import { createModuleIdentityToken } from '@/lib/module-identity.mjs';
+import {
+  MODULE_IDENTITY_TOKEN_TTL_SECONDS,
+  createModuleIdentityToken,
+} from '@/lib/module-identity.mjs';
 import type { ModuleExposurePolicy } from '@/types/auth';
 import type { ModuleMetadata } from '@/types/modules';
 
@@ -99,7 +102,7 @@ export async function POST(
     moduleId,
     origin: app.origin,
     hostOrigin: requestOrigin,
-    expiresInSeconds: 300,
+    expiresInSeconds: MODULE_IDENTITY_TOKEN_TTL_SECONDS,
   }, {
     headers: {
       'Cache-Control': 'no-store',

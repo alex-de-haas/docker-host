@@ -163,7 +163,7 @@ Developer target visibility reuses the target exposure policy after Host authent
 
 The iframe uses the direct `embeddedUrl` returned by `/api/apps`, for example `https://reports.example.com/` or `http://localhost:3210/people`. The Host validates the current principal before returning app registry entries and before issuing identity tokens, but it does not proxy module HTML or rewrite module assets. The iframe is sandboxed and uses Host theme-aware background styling. `/apps/{moduleId}` remains shell state and does not become a direct module proxy.
 
-The Host shell delivers module identity through `/api/apps/{moduleId}/identity-token` and a `postMessage` bridge. The iframe can post `docker-host:ready` or `docker-host:request-identity`; the Host shell verifies the iframe origin, requests a short-lived module identity token, and posts `docker-host:identity` back to the module origin.
+The Host shell delivers module identity through `/api/apps/{moduleId}/identity-token` and a `postMessage` bridge. The iframe can post `docker-host:ready` or `docker-host:request-identity`; the Host shell verifies the iframe origin, requests a short-lived module identity token, and posts `docker-host:identity` back to the module origin. The shell also refreshes the token before expiry and when the browser page becomes active again, without remounting the iframe for same-user profile changes.
 
 Module UIs must serve their own routes, assets, cookies, and API calls from their own origin. The Host does not rewrite root-relative URLs, Next.js assets, App Router `_rsc` requests, or response headers. If a module blocks framing with `X-Frame-Options` or `Content-Security-Policy: frame-ancestors`, the browser blocks the iframe according to the module's own response policy.
 

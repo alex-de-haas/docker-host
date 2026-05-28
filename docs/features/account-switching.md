@@ -118,6 +118,8 @@ Gateway proxying strips:
 
 Shell Apps run in direct-origin iframes, so Host cookies are not forwarded to the module origin. Modules receive Host identity only through Host-signed module identity tokens: gateway traffic can receive the token as `X-Docker-Host-Identity`, while shell iframe traffic receives it through the Host `postMessage` identity bridge.
 
+The Host shell remounts an open module iframe and sends a fresh identity token when the active Host principal id or role changes. Same-user profile changes and token refreshes are delivered silently without remounting. A module that stores the bridge token in its own module-origin cookie must treat an incoming token with a different Host user identity as an immediate session replacement, then reload server-rendered views that were produced from the old module cookie.
+
 ## Audit Events
 
 Account switching writes structured audit events for:

@@ -7,7 +7,7 @@ import {
   USER_INVITE_MAX_TTL_MS,
   USER_INVITE_MIN_TTL_MS,
 } from '@/lib/auth-service';
-import { readModuleMetadata, readModulesStoreSnapshot } from '@/lib/module-store';
+import { listAssignableModules } from '@/lib/user-access-options';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -34,29 +34,4 @@ export async function GET(request: Request) {
       { label: '7 days', ttlMs: USER_INVITE_MAX_TTL_MS },
     ],
   });
-}
-
-async function listAssignableModules() {
-  const store = await readModulesStoreSnapshot();
-  const modules = await Promise.all(
-    store.modules.map(async module => {
-      try {
-        const metadata = await readModuleMetadata(module);
-        return {
-          id: module.id,
-          name: metadata?.name || module.id,
-          version: metadata?.version,
-          operationStatus: module.operationStatus || 'installed',
-        };
-      } catch {
-        return {
-          id: module.id,
-          name: module.id,
-          operationStatus: module.operationStatus || 'installed',
-        };
-      }
-    })
-  );
-
-  return modules.sort((left, right) => left.name.localeCompare(right.name));
 }

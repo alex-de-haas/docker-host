@@ -396,7 +396,7 @@ Response:
 }
 ```
 
-The response is `Cache-Control: no-store`. The Host shell delivers the token to the iframe with `postMessage`; the module can use it directly or exchange it for a module-origin session cookie.
+The response is `Cache-Control: no-store`. The Host shell delivers the token to the iframe with `postMessage` and uses `expiresInSeconds` to schedule silent refresh before expiry; the module can use it directly or exchange it for a module-origin session cookie.
 
 ### `POST /api/apps/dev/{targetId}/identity-token`
 
@@ -836,7 +836,7 @@ Session revocation and audit purge require `host.auth.configure`; mutating brows
 
 User Management APIs support the `/settings/users` operations surface:
 
-- `GET /api/auth/users` returns Host user summaries, invitation summaries, assignable installed modules, and supported invite expiry options.
+- `GET /api/auth/users` returns Host user summaries, invitation summaries, assignable installed modules and enabled developer shell apps, and supported invite expiry options.
 - `GET /api/auth/invitations` returns invitation summaries.
 - `POST /api/auth/invitations` creates a local user invitation. Request body: `{ "email": "user@example.test", "displayName": "User", "role": "host.user", "ttlMs": 86400000, "assignedModuleIds": ["com.example.reports"] }`. The response includes the raw setup token and setup URL once.
 - `DELETE /api/auth/invitations/{inviteId}` revokes a pending invitation.

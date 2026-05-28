@@ -5,15 +5,31 @@ import type { ReactNode, RefObject } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
-import { AdminShell } from '@/components/AdminShell';
+import { AdminShell, useAdminPrincipal } from '@/components/AdminShell';
 import { Button } from '@/components/ui/button';
 import { useHostApps } from '@/hooks/useHostApps';
 import type { HostAppEntry, HostAppNavigationItem } from '@/types/apps';
 
+const IDENTITY_DELIVERY_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000] as const;
+const DEFAULT_IDENTITY_REFRESH_DELAY_MS = 4 * 60 * 1_000;
+const IDENTITY_REFRESH_SAFETY_MARGIN_MS = 30 * 1_000;
+const MIN_IDENTITY_REFRESH_DELAY_MS = 1_000;
+
+type IdentityTokenResponse = Record<string, unknown> & {
+  expiresInSeconds?: unknown;
+};
+
 export function AppHostClient({ appId }: { appId: string }) {
   const searchParams = useSearchParams();
+  const principal = useAdminPrincipal();
+  const principalFrameKey = principal ? `${principal.id}:${principal.role}` : '';
+  const principalRefreshKey = principal
+    ? `${principalFrameKey}:${principal.email ?? ''}:${principal.displayName ?? ''}`
+    : '';
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const identityRetryIdsRef = useRef<number[]>([]);
+  const identityRefreshTimeoutRef = useRef<number | null>(null);
+  const scheduleIdentityRefreshRef = useRef<(delayMs: number) => void>(() => {});
   const selectedPath = normalizeSelectedPath(searchParams.get('path'));
   const appsState = useHostApps();
   const [frameWarning, setFrameWarning] = useState<string | null>(null);
@@ -29,48 +45,86 @@ export function AppHostClient({ appId }: { appId: string }) {
   const embeddedUrl = app
     ? getEmbeddedUrl(app, selectedNavigation, selectedPath)
     : null;
-  const sendIdentityToken = useCallback(async () => {
-    if (!app?.identityTokenUrl || !app.origin || !frameRef.current?.contentWindow) {
-      return;
+  const sendIdentityToken = useCallback(async (): Promise<number | null> => {
+    if (!principal || !app?.identityTokenUrl || !app.origin || !frameRef.current?.contentWindow) {
+      return null;
     }
 
+    const targetWindow = frameRef.current.contentWindow;
+    const appIdForLog = app.id;
+    const identityTokenUrl = app.identityTokenUrl;
+    const targetOrigin = app.origin;
+
     try {
-      const response = await fetch(app.identityTokenUrl, {
+      const response = await fetch(identityTokenUrl, {
         method: 'POST',
         cache: 'no-store',
       });
       if (!response.ok) {
-        console.error(`Failed to fetch identity token for app ${app.id}: ${response.status}`);
-        return;
+        console.error(`Failed to fetch identity token for app ${appIdForLog}: ${response.status}`);
+        return null;
       }
 
-      const payload = await response.json();
-      frameRef.current.contentWindow.postMessage({
+      const payload = await response.json() as IdentityTokenResponse;
+      if (frameRef.current?.contentWindow !== targetWindow) {
+        return null;
+      }
+
+      targetWindow.postMessage({
         type: 'docker-host:identity',
         ...payload,
-      }, app.origin);
+      }, targetOrigin);
+      return getIdentityRefreshDelayMs(payload);
     } catch (error) {
-      console.error(`Error sending identity token for app ${app.id}:`, error);
+      console.error(`Error sending identity token for app ${appIdForLog}:`, error);
       // Token delivery is best-effort; the module can request it again through postMessage.
+      return null;
     }
-  }, [app]);
+  }, [app, principal]);
   const clearIdentityRetries = useCallback(() => {
     for (const retryId of identityRetryIdsRef.current) {
       window.clearTimeout(retryId);
     }
     identityRetryIdsRef.current = [];
   }, []);
-  const scheduleIdentityDelivery = useCallback(() => {
+  const clearIdentityRefresh = useCallback(() => {
+    if (identityRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(identityRefreshTimeoutRef.current);
+      identityRefreshTimeoutRef.current = null;
+    }
+  }, []);
+  const clearIdentityTimers = useCallback(() => {
     clearIdentityRetries();
-    void sendIdentityToken();
+    clearIdentityRefresh();
+  }, [clearIdentityRefresh, clearIdentityRetries]);
+  const deliverIdentityToken = useCallback(async () => {
+    const refreshDelayMs = await sendIdentityToken();
+    if (refreshDelayMs !== null) {
+      scheduleIdentityRefreshRef.current(refreshDelayMs);
+    }
+  }, [sendIdentityToken]);
+  const scheduleIdentityRefresh = useCallback((delayMs: number) => {
+    clearIdentityRefresh();
+    identityRefreshTimeoutRef.current = window.setTimeout(() => {
+      identityRefreshTimeoutRef.current = null;
+      void deliverIdentityToken();
+    }, delayMs);
+  }, [clearIdentityRefresh, deliverIdentityToken]);
+  const scheduleIdentityDelivery = useCallback(() => {
+    clearIdentityTimers();
+    void deliverIdentityToken();
 
-    for (const delayMs of [250, 1_000, 2_500, 5_000]) {
+    for (const delayMs of IDENTITY_DELIVERY_RETRY_DELAYS_MS) {
       const retryId = window.setTimeout(() => {
-        void sendIdentityToken();
+        void deliverIdentityToken();
       }, delayMs);
       identityRetryIdsRef.current.push(retryId);
     }
-  }, [clearIdentityRetries, sendIdentityToken]);
+  }, [clearIdentityTimers, deliverIdentityToken]);
+
+  useEffect(() => {
+    scheduleIdentityRefreshRef.current = scheduleIdentityRefresh;
+  }, [scheduleIdentityRefresh]);
 
   useEffect(() => {
     if (!app?.origin) {
@@ -85,14 +139,44 @@ export function AppHostClient({ appId }: { appId: string }) {
         return;
       }
 
-      void sendIdentityToken();
+      void deliverIdentityToken();
     }
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [app?.origin, sendIdentityToken]);
+  }, [app?.origin, deliverIdentityToken]);
 
-  useEffect(() => clearIdentityRetries, [clearIdentityRetries, embeddedUrl]);
+  useEffect(() => clearIdentityTimers, [clearIdentityTimers, embeddedUrl, principalFrameKey]);
+
+  useEffect(() => {
+    scheduleIdentityDelivery();
+  }, [principalRefreshKey, scheduleIdentityDelivery]);
+
+  useEffect(() => {
+    if (!embeddedUrl) {
+      return undefined;
+    }
+
+    function refreshActivePageIdentity() {
+      void deliverIdentityToken();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        refreshActivePageIdentity();
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', refreshActivePageIdentity);
+    window.addEventListener('pageshow', refreshActivePageIdentity);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', refreshActivePageIdentity);
+      window.removeEventListener('pageshow', refreshActivePageIdentity);
+    };
+  }, [deliverIdentityToken, embeddedUrl]);
 
   return (
     <AdminShell contentClassName="flex h-full max-w-none flex-col p-0 sm:px-0 lg:px-0">
@@ -102,6 +186,7 @@ export function AppHostClient({ appId }: { appId: string }) {
         embeddedUrl,
         frameRef,
         frameWarning,
+        frameIdentityKey: principalFrameKey,
         setFrameWarning,
         scheduleIdentityDelivery,
       })}
@@ -115,6 +200,7 @@ function renderAppHostContent({
   embeddedUrl,
   frameRef,
   frameWarning,
+  frameIdentityKey,
   setFrameWarning,
   scheduleIdentityDelivery,
 }: {
@@ -123,6 +209,7 @@ function renderAppHostContent({
   embeddedUrl: string | null;
   frameRef: RefObject<HTMLIFrameElement | null>;
   frameWarning: string | null;
+  frameIdentityKey: string;
   setFrameWarning: (message: string | null) => void;
   scheduleIdentityDelivery: () => void;
 }) {
@@ -212,7 +299,7 @@ function renderAppHostContent({
       {/* Module UI runs on its own origin; Host integration is limited to the postMessage identity bridge. */}
       <iframe
         ref={frameRef}
-        key={embeddedUrl}
+        key={`${embeddedUrl}:${frameIdentityKey}`}
         src={embeddedUrl}
         title={`${app.displayName} module UI`}
         sandbox="allow-clipboard-write allow-downloads allow-forms allow-popups allow-same-origin allow-scripts"
@@ -300,6 +387,19 @@ function isIdentityRequestMessage(value: unknown) {
       (value as { type?: unknown }).type === 'docker-host:request-identity'
     )
   );
+}
+
+function getIdentityRefreshDelayMs(payload: IdentityTokenResponse) {
+  const ttlSeconds = payload.expiresInSeconds;
+  if (typeof ttlSeconds !== 'number' || !Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
+    return DEFAULT_IDENTITY_REFRESH_DELAY_MS;
+  }
+
+  const ttlMs = ttlSeconds * 1_000;
+  const delayMs = ttlMs > IDENTITY_REFRESH_SAFETY_MARGIN_MS * 2
+    ? ttlMs - IDENTITY_REFRESH_SAFETY_MARGIN_MS
+    : ttlMs * 0.8;
+  return Math.max(MIN_IDENTITY_REFRESH_DELAY_MS, Math.floor(delayMs));
 }
 
 function formatAppStatusReason(reason: HostAppEntry['statusReason']) {
