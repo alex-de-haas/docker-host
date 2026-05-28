@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import { requireHostAdmin } from '@/lib/auth-http';
 import {
   buildInstallPlanRequestValidationError,
-  createInstallPlan,
   extractInstallPlanMetadataUrl,
 } from '@/lib/module-install-plan';
+import { createInstallOrUpdatePlan } from '@/lib/module-install-or-update-plan';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await createInstallPlan(metadataUrl);
+    const result = await createInstallOrUpdatePlan(metadataUrl);
     return NextResponse.json(result.body, { status: result.status });
   } catch (error) {
     console.error('Error creating install plan:', error);

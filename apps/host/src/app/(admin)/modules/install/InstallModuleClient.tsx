@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   CheckCircle2,
   CircleAlert,
@@ -50,6 +51,7 @@ import type {
 } from '@/types/modules';
 
 export function InstallModuleClient() {
+  const router = useRouter();
   const [metadataUrl, setMetadataUrl] = useState('');
   const [isPlanning, setIsPlanning] = useState(false);
   const [plan, setPlan] = useState<InstallPlan | null>(null);
@@ -78,6 +80,21 @@ export function InstallModuleClient() {
         body: JSON.stringify({ metadataUrl }),
       });
       const data = await response.json() as InstallPlanResponse;
+
+      if (data.mode === 'update' && data.existingModuleId) {
+        if (data.updatePlan) {
+          router.push(`/modules/${encodeURIComponent(data.existingModuleId)}/update`);
+          return;
+        }
+
+        setPlanError(data.error ?? {
+          code: 'install_update_handoff_failed',
+          message: `Module "${data.existingModuleId}" is already installed, but an update plan could not be created.`,
+          validationErrors: [],
+          conflicts: [],
+        });
+        return;
+      }
 
       setPlan(data.plan ?? null);
       setPlanError(data.error ?? null);

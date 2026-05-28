@@ -108,10 +108,14 @@ docker-host modules add <metadata-url>
 ```mermaid
 flowchart LR
   A["metadata URL"] --> B["POST /control/v1/modules/install/plan"]
-  B --> C["Terminal install plan review"]
+  B --> X{"Already installed from same URL?"}
+  X -- "No" --> C["Terminal install plan review"]
   C --> D["Collect settings and mounts"]
   D --> E["POST /control/v1/modules/install"]
   E --> F["Installed module"]
+  X -- "Yes" --> U["Terminal update plan review"]
+  U --> V["POST /control/v1/modules/{moduleId}/update"]
+  V --> W["Updated module"]
 ```
 
 ### Interactive install flow
@@ -125,7 +129,8 @@ flowchart LR
 }
 ```
 
-3. CLI renders the returned plan as terminal tables and sections:
+3. If the response is `mode: "update"`, CLI switches to the update review flow using the returned `updatePlan`. This happens when the metadata URL identifies a module id already registered from the same source URL.
+4. CLI renders the returned install plan as terminal tables and sections:
 
 - root module identity;
 - metadata digest and plan digest;
@@ -137,12 +142,12 @@ flowchart LR
 - runtime ports and Docker container names;
 - conflicts and validation messages.
 
-4. If the plan contains conflicts, CLI does not submit apply. It exits non-zero after printing conflict details.
-5. CLI prompts for setting values declared in `plan.settings`.
-6. CLI prompts for required external mount collection items and allows optional items to be skipped.
-7. CLI shows a redacted request preview and asks for final confirmation.
-8. CLI calls `POST /control/v1/modules/install` with the reviewed `planDigest`, setting values, and external mount selections.
-9. CLI prints installed and reused module ids, root module status, and next actions.
+5. If the plan contains conflicts, CLI does not submit apply. It exits non-zero after printing conflict details.
+6. CLI prompts for setting values declared in `plan.settings`.
+7. CLI prompts for required external mount collection items and allows optional items to be skipped.
+8. CLI shows a redacted request preview and asks for final confirmation.
+9. CLI calls `POST /control/v1/modules/install` with the reviewed `planDigest`, setting values, and external mount selections.
+10. CLI prints installed and reused module ids, root module status, and next actions.
 
 ### Setting prompts
 

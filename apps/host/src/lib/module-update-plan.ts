@@ -78,13 +78,13 @@ export async function createModuleUpdatePlan(
   }
 
   const status = installedModule.operationStatus || 'installed';
-  if (status !== 'installed' && !(status === 'failed' && installedModule.lastOperation === 'update')) {
+  if (status !== 'installed' && status !== 'failed') {
     return conflictResult(
       'module_update_status_conflict',
       `Module "${moduleId}" cannot be updated while operationStatus is "${status}".`,
       [{
         code: 'module_update_status_conflict',
-        message: 'Only installed modules and failed updates can create an update plan.',
+        message: 'Only installed or failed modules can create an update plan.',
         resourceType: 'installed_module',
         resourceId: moduleId,
         path: '$.operationStatus',
@@ -798,6 +798,10 @@ function buildReplacementReasons(
 
   if (installedModule.containers.length === 0) {
     reasons.add('containers');
+  }
+
+  if ((installedModule.operationStatus || 'installed') === 'failed') {
+    reasons.add('failedState');
   }
 
   if (hasMissingPublishedEndpointBinding(proposedMetadata, installedModule)) {

@@ -1183,6 +1183,7 @@ async function persistInstallingState(
     ...existing,
     ...buildInstalledModuleRecord(context, plan, existing),
     operationStatus: 'installing',
+    lastOperation: 'install',
     lastError: null,
     updatedAt: new Date().toISOString(),
   }));
@@ -1333,6 +1334,7 @@ async function markModuleInstalled(moduleId: string, config: HostRuntimeConfig) 
       operationStatus: 'installed',
       installedAt: existing.installedAt || now,
       updatedAt: now,
+      lastOperation: 'install',
       lastError: null,
     };
   });
@@ -1350,6 +1352,7 @@ async function markModuleFailed(
         metadataUrl: '',
         containers: [],
         operationStatus: 'failed',
+        lastOperation: 'install',
         updatedAt: new Date().toISOString(),
         lastError: error,
       };
@@ -1358,6 +1361,7 @@ async function markModuleFailed(
     return {
       ...existing,
       operationStatus: 'failed',
+      lastOperation: 'install',
       updatedAt: new Date().toISOString(),
       lastError: error,
     };

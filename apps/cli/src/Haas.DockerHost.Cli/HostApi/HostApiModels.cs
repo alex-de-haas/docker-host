@@ -312,7 +312,13 @@ internal sealed class ModuleActionResult
 
 internal sealed class InstallPlanResponse
 {
+    public string? Mode { get; init; }
+
     public InstallPlan? Plan { get; init; }
+
+    public ModuleUpdatePlan? UpdatePlan { get; init; }
+
+    public string? ExistingModuleId { get; init; }
 
     public InstallPlanErrorEnvelope? Error { get; init; }
 }

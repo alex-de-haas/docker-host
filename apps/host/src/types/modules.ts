@@ -661,7 +661,10 @@ export interface InstallPlanErrorEnvelope {
 }
 
 export interface InstallPlanResponse {
+  mode?: 'install' | 'update';
   plan?: InstallPlan;
+  updatePlan?: ModuleUpdatePlan;
+  existingModuleId?: string;
   error?: InstallPlanErrorEnvelope;
 }
 

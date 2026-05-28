@@ -127,6 +127,31 @@ internal sealed class ModulesCommand(CommandContext context)
 
         var planResponse = await hostApi.CreateInstallPlanAsync(args[0]);
         var planBody = planResponse.Body;
+        if (planBody?.Mode == "update" || planBody?.UpdatePlan is not null)
+        {
+            context.Console.MarkupLine("[yellow]Module is already installed from this metadata URL. Switching to update review.[/]");
+            if (planBody?.UpdatePlan is not null)
+            {
+                RenderUpdatePlan(planBody.UpdatePlan);
+            }
+
+            if (!planResponse.IsSuccess || planBody?.Error is not null)
+            {
+                return RenderPlanFailure(
+                    planBody?.Error,
+                    "Failed to create module update plan.",
+                    planResponse.StatusCode,
+                    planResponse.RawBody);
+            }
+
+            if (planBody?.UpdatePlan is null)
+            {
+                return RenderApiFailure("Install plan response did not include an update plan.", planResponse.StatusCode, planResponse.RawBody);
+            }
+
+            return await ApplyReviewedUpdatePlanAsync(hostApi, planBody.UpdatePlan);
+        }
+
         if (planBody?.Plan is not null)
         {
             RenderInstallPlan(planBody.Plan);
@@ -297,6 +322,11 @@ internal sealed class ModulesCommand(CommandContext context)
             return 1;
         }
 
+        return await ApplyReviewedUpdatePlanAsync(hostApi, plan);
+    }
+
+    private async Task<int> ApplyReviewedUpdatePlanAsync(HostControlClient hostApi, ModuleUpdatePlan plan)
+    {
         var settings = PromptForSettings(plan.Settings);
         var externalMounts = PromptForExternalMounts(plan.Storage.MountCollections);
         var request = new ModuleUpdateRequest
@@ -316,8 +346,8 @@ internal sealed class ModulesCommand(CommandContext context)
 
         var applyResponse = await CommandStatus.RunAsync(
             context,
-            $"Updating module [grey]{Markup.Escape(moduleId)}[/]...",
-            async () => await hostApi.ApplyUpdateAsync(moduleId, request));
+            $"Updating module [grey]{Markup.Escape(plan.ModuleId)}[/]...",
+            async () => await hostApi.ApplyUpdateAsync(plan.ModuleId, request));
         var applyBody = applyResponse.Body;
         if (!applyResponse.IsSuccess || applyBody?.Error is not null)
         {

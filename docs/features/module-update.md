@@ -11,6 +11,7 @@ The update flow implements:
 - a reviewed update UI;
 - an update apply API;
 - explicit retry behavior for failed updates.
+- same-source install handoff, where installing an already registered module id from the same metadata URL opens update review instead of blocking on the existing id or container names.
 
 The update flow does not support:
 
@@ -29,9 +30,11 @@ The Host uses separate update endpoints:
 
 The plan endpoint reads the installed module record from `modules.json` and refreshes the stored `metadataUrl`. The update API does not accept a replacement metadata URL during update.
 
+`POST /api/modules/install/plan` may also return an update handoff when the requested metadata resolves to a module id that is already registered with the same stored metadata URL. In that case clients should switch to update review and apply through `POST /api/modules/{moduleId}/update`, preserving existing settings, storage mappings, external mounts, and published ports where compatible.
+
 The apply endpoint recomputes the update plan from the installed record, refreshed metadata, and submitted administrator decisions. It rejects the request when the reviewed `updatePlanDigest` no longer matches the recomputed plan.
 
-The retry endpoint is only for failed update attempts. Failed installs continue to use `POST /api/modules/{moduleId}/retry`.
+The retry endpoint is only for failed update attempts. Failed installs still have `POST /api/modules/{moduleId}/retry`; a same-source reinstall attempt can also move into update review when the administrator enters the original metadata URL again.
 
 ## Plan Shape
 
@@ -78,6 +81,8 @@ flowchart TD
   N --> O["Save metadata.json and modules.json"]
   O --> P["Set operationStatus=installed"]
 ```
+
+Failed modules can create an update plan. A failed module always requires container replacement so a repeated same-source install can repair partially created files, images, directories, or Docker containers without manual cleanup first.
 
 ## Settings Decisions
 

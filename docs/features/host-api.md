@@ -473,6 +473,8 @@ The module installation API:
 - `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker container names, network aliases, and endpoints/ports;
 - `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install.
 
+If the requested metadata resolves to a module id that is already registered from the same stored metadata URL, the install plan endpoint returns `mode: "update"`, `existingModuleId`, and an `updatePlan` instead of treating the installed module id or its Docker container names as install blockers. Clients must then apply the reviewed plan through the module update endpoint, not `POST /api/modules/install`.
+
 The install apply endpoint returns HTTP `201` on success:
 
 ```json
@@ -622,7 +624,7 @@ The Host should not persist pending install plans as durable state. Apply endpoi
 Install plan validation and conflict status boundaries:
 
 - HTTP `422` is used when metadata is invalid by itself, dependency graph validation fails, or the metadata requests unsupported fields, setting types, protocols, storage mount types, or unsafe paths.
-- HTTP `409` is used when metadata is valid but conflicts with current Host or Docker state, such as an already installed module id, generated container name collision, network alias collision, environment variable target collision, or storage mapping collision.
+- HTTP `409` is used when metadata is valid but conflicts with current Host or Docker state, such as an already installed module id from a different metadata URL, generated container name collision, network alias collision, environment variable target collision, or storage mapping collision.
 - `validationErrors[].path` should use a JSONPath-like string pointing to the failing metadata field, for example `$.containers[0].image.repository` or `$.dependencies[0].connection.endpoint`.
 - `validationErrors[].node` should identify the dependency graph node when the error belongs to dependency metadata rather than the root metadata. For the root metadata, `node` can be omitted or set to the root module id.
 - `409` responses should include the partial install plan together with `conflicts[]` so the Web UI can show the reviewed plan and highlight conflict locations.
@@ -681,7 +683,7 @@ The update contract is defined in [Module update flow](module-update.md). The AP
 - `POST /api/modules/{moduleId}/update` - recompute the update plan from refreshed metadata and submitted administrator decisions, compare the reviewed update plan digest, then apply image, container, settings, storage, and dependency changes after confirmation;
 - `POST /api/modules/{moduleId}/update/retry` - retry a failed update attempt using update semantics and the stored failed update context.
 
-The update API does not accept a replacement metadata URL. It updates from the metadata URL stored in the installed module record.
+The update API does not accept a replacement metadata URL. It updates from the metadata URL stored in the installed module record. Failed modules can create update plans; these plans force container replacement so a partially failed install or update can be repaired from the stored metadata URL.
 
 `POST /api/modules/{moduleId}/update/plan` has no request body. It returns HTTP `200` with a top-level `plan` object when the refreshed metadata can be reviewed:
 

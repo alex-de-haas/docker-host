@@ -19,6 +19,7 @@ The dashboard and `/modules` page are admin-only Host management surfaces inside
 Implemented module-management flows:
 
 - Install uses the dedicated `/modules/install` route. It accepts a metadata URL, calls `POST /api/modules/install/plan`, renders the reviewed plan, collects setting values and external mount selections, shows a redacted payload preview, then submits `POST /api/modules/install`.
+- If the install plan response is `mode: "update"` for a module already registered from the same metadata URL, the install page redirects to that module's update review instead of showing an already-installed conflict.
 - Update uses the dedicated `/modules/{moduleId}/update` route. Installed module rows link to it for installed modules. The route calls `POST /api/modules/{moduleId}/update/plan`, shows refreshed metadata changes and prompts, builds a redacted update request, then submits `POST /api/modules/{moduleId}/update`.
 - Failed update rows expose `POST /api/modules/{moduleId}/update/retry` plus a link to review the update again.
 - Failed install rows expose `POST /api/modules/{moduleId}/retry` and cleanup through a backend-generated confirmation dialog.

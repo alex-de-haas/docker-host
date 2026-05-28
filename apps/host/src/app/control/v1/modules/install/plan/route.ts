@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import { requireTrustedControl } from '@/lib/control-auth';
 import {
   buildInstallPlanRequestValidationError,
-  createInstallPlan,
   extractInstallPlanMetadataUrl,
 } from '@/lib/module-install-plan';
+import { createInstallOrUpdatePlan } from '@/lib/module-install-or-update-plan';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -29,6 +29,6 @@ export async function POST(request: Request) {
     return NextResponse.json(result.body, { status: result.status });
   }
 
-  const result = await createInstallPlan(metadataUrl);
+  const result = await createInstallOrUpdatePlan(metadataUrl);
   return NextResponse.json(result.body, { status: result.status });
 }

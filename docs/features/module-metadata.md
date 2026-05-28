@@ -95,7 +95,7 @@ The Host must keep a local copy of the metadata file used for installation or th
 
 The install flow is optimistic and fail-fast, and it does not perform automatic rollback. If one installation step fails, the Host must preserve already created files, directories, downloaded images, and containers for diagnosis, mark the install as `failed`, and show the administrator the error.
 
-Retry and cleanup must be explicit administrator actions. Retry should tolerate already existing directories, images, and containers when possible. Cleanup/removal of a failed install can be a separate operation and must explicitly show whether module data directories will be deleted.
+Retry and cleanup must be explicit administrator actions. Retry should tolerate already existing directories, images, and containers when possible. Cleanup/removal of a failed install can be a separate operation and must explicitly show whether module data directories will be deleted. Entering the same metadata URL again for an already registered module id is treated as update review, preserving compatible stored settings and storage decisions instead of blocking on the existing module id or Docker container names.
 
 Minimum persistent operation statuses for the first implementation:
 
@@ -114,6 +114,7 @@ Implemented recovery rules:
 - failed install retry is started explicitly and uses the local `metadata.json` plus the stored install record by default;
 - retry recreates failed module containers and preserves module-owned data directories;
 - failed install cleanup and installed module removal use a backend-generated plan before apply;
+- same-source reinstall attempts can use the update plan path and force container replacement when the stored module is failed;
 - module-owned data is deleted only with explicit `deleteModuleData=true`;
 - external host paths are never deleted; the Host removes only mappings from its own state;
 - Docker images are preserved and shown only as preserved artifacts.
