@@ -133,6 +133,41 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
   }
 }
 
+export async function syncPathOwnershipWithDataRoot(
+  targetPath: string,
+  config = getHostRuntimeConfig()
+) {
+  try {
+    const [dataRootStat, targetStat] = await Promise.all([
+      fs.stat(config.dataRootContainer),
+      fs.stat(targetPath),
+    ]);
+
+    if (targetStat.uid === dataRootStat.uid && targetStat.gid === dataRootStat.gid) {
+      return;
+    }
+
+    await fs.chown(targetPath, dataRootStat.uid, dataRootStat.gid);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error) {
+      const code = error.code;
+      if (
+        code === 'ENOENT' ||
+        code === 'EACCES' ||
+        code === 'EPERM' ||
+        code === 'EINVAL' ||
+        code === 'ENOSYS' ||
+        code === 'ENOTSUP' ||
+        code === 'EOPNOTSUPP'
+      ) {
+        return;
+      }
+    }
+
+    throw error;
+  }
+}
+
 export async function pathExists(targetPath: string) {
   try {
     await fs.access(targetPath);

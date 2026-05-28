@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
-import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
+import { getHostRuntimeConfig, pathExists, syncPathOwnershipWithDataRoot } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostRole } from '../types/auth.ts';
 import type { ModuleAccessAssignment } from '../types/auth.ts';
@@ -234,6 +234,7 @@ export async function writeAuthState(
   });
   await fs.rename(temporaryPath, config.authStatePath);
   await fs.chmod(config.authStatePath, PRIVATE_AUTH_STATE_FILE_MODE);
+  await syncPathOwnershipWithDataRoot(config.authStatePath, config);
 }
 
 export async function updateAuthState<T>(

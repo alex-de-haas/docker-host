@@ -506,6 +506,37 @@ async function writeAuthState(state, config) {
   });
   await fs.rename(temporaryPath, config.authStatePath);
   await fs.chmod(config.authStatePath, PRIVATE_AUTH_STATE_FILE_MODE);
+  await syncPathOwnershipWithDataRoot(config.authStatePath, config);
+}
+
+async function syncPathOwnershipWithDataRoot(targetPath, config) {
+  try {
+    const [dataRootStat, targetStat] = await Promise.all([
+      fs.stat(config.dataRootContainer),
+      fs.stat(targetPath),
+    ]);
+
+    if (targetStat.uid === dataRootStat.uid && targetStat.gid === dataRootStat.gid) {
+      return;
+    }
+
+    await fs.chown(targetPath, dataRootStat.uid, dataRootStat.gid);
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : undefined;
+    if (
+      code === 'ENOENT' ||
+      code === 'EACCES' ||
+      code === 'EPERM' ||
+      code === 'EINVAL' ||
+      code === 'ENOSYS' ||
+      code === 'ENOTSUP' ||
+      code === 'EOPNOTSUPP'
+    ) {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 async function appendAuthAuditEvent(event, config) {

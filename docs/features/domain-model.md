@@ -123,6 +123,8 @@ The standalone `docker-host` CLI reads this file for Host lifecycle commands. `H
 
 The Host backend creates and validates the Host data root structure at startup. The CLI creates the initial Host data root and `launch.env` during bootstrap.
 
+Private Host state files such as `modules.json` and `auth/state.json` are written with owner-only permissions. When the Host runs as root inside a container against a bind-mounted data root, it preserves those private permissions but synchronizes the file owner to the mounted data root owner after atomic writes so WSL and local editor access follow the data root ownership.
+
 Initial `modules.json` shape:
 
 ```json

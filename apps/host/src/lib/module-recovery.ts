@@ -737,7 +737,7 @@ function buildRetryEnvironment(
     const endpoint = metadata.endpoints.find(candidate => candidate.key === connection.source.key);
     const sourceContainer = getRecoveryContainerRecords(module, metadata).find(candidate => candidate.key === endpoint?.container);
     const metadataContainer = metadata.containers.find(candidate => candidate.key === endpoint?.container);
-    const port = metadataContainer?.runtime.ports.find(candidate => candidate.key === endpoint?.port);
+    const port = metadataContainer?.runtime?.ports?.find(candidate => candidate.key === endpoint?.port);
     if (!endpoint || !sourceContainer || !port) {
       continue;
     }
@@ -770,7 +770,8 @@ function buildInstallImage(
   metadata: NormalizedModuleMetadata,
   containerKey?: string
 ): InstallPlanImage {
-  const storedContainer = module.containers.find(container => container.key === containerKey) ?? module.containers[0];
+  const storedContainers = getInstalledContainerRecords(module);
+  const storedContainer = storedContainers.find(container => container.key === containerKey) ?? storedContainers[0];
   const metadataContainer = metadata.containers.find(container => container.key === containerKey) ?? metadata.containers[0];
   const repository = storedContainer?.image.repository || metadataContainer?.image.repository || 'unknown';
   const tag = storedContainer?.image.tag || metadataContainer?.image.tag || 'latest';
@@ -806,8 +807,9 @@ function getRecoveryContainerRecords(
   module: InstalledModuleRecord,
   metadata: NormalizedModuleMetadata | null
 ) {
-  if (module.containers.length > 0) {
-    return module.containers;
+  const storedContainers = getInstalledContainerRecords(module);
+  if (storedContainers.length > 0) {
+    return storedContainers;
   }
 
   if (!metadata) {
@@ -844,7 +846,8 @@ function buildImageReference(
   metadata: NormalizedModuleMetadata | null,
   containerKey: string
 ) {
-  const storedContainer = module.containers.find(container => container.key === containerKey) ?? module.containers[0];
+  const storedContainers = getInstalledContainerRecords(module);
+  const storedContainer = storedContainers.find(container => container.key === containerKey) ?? storedContainers[0];
   const metadataContainer = metadata?.containers.find(container => container.key === containerKey) ?? metadata?.containers[0];
 
   if (storedContainer?.image.reference) {
@@ -854,6 +857,10 @@ function buildImageReference(
   const repository = storedContainer?.image.repository || metadataContainer?.image.repository || 'unknown';
   const tag = storedContainer?.image.tag || metadataContainer?.image.tag || 'latest';
   return `${repository}:${tag}`;
+}
+
+function getInstalledContainerRecords(module: InstalledModuleRecord) {
+  return Array.isArray(module.containers) ? module.containers : [];
 }
 
 async function storageMappingExists(

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { getHostRuntimeConfig, pathExists } from './host-runtime.ts';
+import { getHostRuntimeConfig, pathExists, syncPathOwnershipWithDataRoot } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type {
   InstalledModuleContainerRecord,
@@ -76,6 +76,7 @@ export async function writeModulesStore(
   });
   await fs.rename(temporaryPath, config.modulesStorePath);
   await fs.chmod(config.modulesStorePath, PRIVATE_STORE_FILE_MODE);
+  await syncPathOwnershipWithDataRoot(config.modulesStorePath, config);
 }
 
 export async function getModulesStoreStatus(

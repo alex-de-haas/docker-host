@@ -84,7 +84,7 @@ type DockerError = Error & {
 };
 
 export function getModuleContainerName(module: InstalledModuleRecord) {
-  return module.containers[0]?.containerName || getModuleDockerName(module.id, 'main');
+  return getInstalledContainerRecords(module)[0]?.containerName || getModuleDockerName(module.id, 'main');
 }
 
 export function getModuleNetworkAlias(moduleId: string, containerKey = 'main') {
@@ -393,8 +393,9 @@ export async function restartModuleContainer(
 }
 
 export function getRuntimeContainerRecords(module: InstalledModuleRecord): InstalledModuleContainerRecord[] {
-  if (module.containers.length > 0) {
-    return module.containers;
+  const containers = getInstalledContainerRecords(module);
+  if (containers.length > 0) {
+    return containers;
   }
 
   return [{
@@ -407,6 +408,10 @@ export function getRuntimeContainerRecords(module: InstalledModuleRecord): Insta
       reference: 'unknown:latest',
     },
   }];
+}
+
+function getInstalledContainerRecords(module: InstalledModuleRecord): InstalledModuleContainerRecord[] {
+  return Array.isArray(module.containers) ? module.containers : [];
 }
 
 function getRuntimeContainersInStartOrder(
