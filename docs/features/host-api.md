@@ -396,7 +396,7 @@ Response:
 }
 ```
 
-The response is `Cache-Control: no-store`. The Host shell delivers the token to the iframe with `postMessage`; the module can use it directly or exchange it for a module-origin session cookie.
+The response is `Cache-Control: no-store`. The Host shell delivers the token to the iframe with `postMessage` and uses `expiresInSeconds` to schedule silent refresh before expiry; the module can use it directly or exchange it for a module-origin session cookie.
 
 ### `POST /api/apps/dev/{targetId}/identity-token`
 

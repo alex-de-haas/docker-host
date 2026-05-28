@@ -5,7 +5,10 @@ import { readAuthStateSnapshot } from '@/lib/auth-store';
 import { listHostApps } from '@/lib/app-registry-service';
 import { getHostRuntimeConfig } from '@/lib/host-runtime';
 import { readModuleDevTargetStateSnapshot } from '@/lib/module-dev-store';
-import { createModuleIdentityToken } from '@/lib/module-identity.mjs';
+import {
+  MODULE_IDENTITY_TOKEN_TTL_SECONDS,
+  createModuleIdentityToken,
+} from '@/lib/module-identity.mjs';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -85,7 +88,7 @@ export async function POST(
     moduleId: target.moduleId,
     origin: app.origin,
     hostOrigin: requestOrigin,
-    expiresInSeconds: 300,
+    expiresInSeconds: MODULE_IDENTITY_TOKEN_TTL_SECONDS,
   }, {
     headers: {
       'Cache-Control': 'no-store',
