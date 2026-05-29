@@ -44,7 +44,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useHostApps } from '@/hooks/useHostApps';
+import { notifyHostAppsChanged, useHostApps } from '@/hooks/useHostApps';
 import { formatAppStatusReason, formatAppStatusReasonLabel } from '@/lib/host-app-status';
 import { cn } from '@/lib/utils';
 import type { HostPrincipal } from '@/types/auth';
@@ -656,7 +656,7 @@ function AppNavigationSection({
         ));
       }
 
-      await appsState.refetch();
+      notifyHostAppsChanged();
       toast.success(formatAppMenuSuccessMessage(action, app.displayName));
     } catch (error) {
       toast.error(formatAppMenuFailureMessage(action, app.displayName), {

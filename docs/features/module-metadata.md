@@ -1140,7 +1140,7 @@ For installed image-backed modules, Docker daemon container state remains the ba
 
 For required dependencies, the Host considers a dependency running when Docker successfully starts dependency containers and the Host can compute an internal Docker-network base URL for the requested endpoint. Health checks can refine readiness where supported, but dependency URL resolution remains based on declared endpoints.
 
-Module browser UI opens through the Host shell iframe from a direct module origin. That origin can be an administrator-provided public origin or a Host-generated local fallback origin based on the assigned Host port. Shell Apps are discovered only after Host authentication from explicit `ui` metadata plus Host access policy; gateway exposure policy names apply only to separate service/API endpoint publishing.
+Module browser UI opens through the Host shell iframe from a direct module origin. That origin can be an administrator-provided public origin or the `http://localhost:{hostPort}` local fallback based on the assigned Host port. Shell Apps using the local fallback are marked local-only and become unavailable when the Host shell is opened through a non-loopback origin. Shell Apps are discovered only after Host authentication from explicit `ui` metadata plus Host access policy; gateway exposure policy names apply only to separate service/API endpoint publishing.
 
 The Host-managed Docker network must be one shared user-defined network for all managed modules. The default bridge network is not suitable because it does not provide a reliable enough DNS model for module-to-module names.
 

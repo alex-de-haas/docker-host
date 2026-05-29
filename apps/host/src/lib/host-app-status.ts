@@ -2,6 +2,8 @@ import type { HostAppStatusReason } from '@/types/apps';
 
 export function formatAppStatusReason(reason: HostAppStatusReason) {
   switch (reason) {
+    case 'localOriginUnavailable':
+      return 'This app uses a local-only origin. Open Docker Host through localhost to use it, or configure a public origin for the module.';
     case 'metadataMissing':
       return 'App metadata is missing.';
     case 'metadataInvalid':
@@ -23,6 +25,8 @@ export function formatAppStatusReason(reason: HostAppStatusReason) {
 
 export function formatAppStatusReasonLabel(reason: HostAppStatusReason) {
   switch (reason) {
+    case 'localOriginUnavailable':
+      return 'Local only';
     case 'metadataMissing':
       return 'Metadata missing';
     case 'metadataInvalid':

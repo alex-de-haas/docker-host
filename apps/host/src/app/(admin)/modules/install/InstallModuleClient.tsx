@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { notifyHostAppsChanged } from '@/hooks/useHostApps';
 import {
   buildModuleInstallRequest,
   computeExternalMountContainerPath,
@@ -111,11 +112,6 @@ export function InstallModuleClient() {
     }
   }
 
-  function handleUseFixture() {
-    const origin = window.location.origin;
-    setMetadataUrl(`${origin}/fixtures/modules/sample-reports`);
-  }
-
   function handleUseCurrentDemo() {
     const origin = window.location.origin;
     setMetadataUrl(`${origin}/fixtures/modules/demo-module`);
@@ -167,6 +163,7 @@ export function InstallModuleClient() {
       }
 
       setInstallResult(data);
+      notifyHostAppsChanged();
     } catch (error) {
       setInstallError({
         code: 'install_apply_request_failed',
@@ -192,7 +189,7 @@ export function InstallModuleClient() {
         />
 
         <section className="rounded-lg border bg-card p-5">
-          <form onSubmit={handlePlanSubmit} className="grid gap-4 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">
+          <form onSubmit={handlePlanSubmit} className="grid gap-4 lg:grid-cols-[1fr_auto_auto] lg:items-end">
             <div className="space-y-2">
               <Label htmlFor="metadata-url">Metadata URL</Label>
               <Input
@@ -204,10 +201,6 @@ export function InstallModuleClient() {
                 required
               />
             </div>
-            <Button type="button" variant="outline" onClick={handleUseFixture}>
-              <Database className="h-4 w-4" />
-              Local fixture
-            </Button>
             <Button type="button" variant="outline" onClick={handleUseCurrentDemo}>
               <GitBranch className="h-4 w-4" />
               Current demo

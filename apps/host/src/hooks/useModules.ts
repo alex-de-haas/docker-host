@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { notifyHostAppsChanged } from '@/hooks/useHostApps';
 import type {
   ModuleActionResult,
   ModuleOperationError,
@@ -90,6 +91,7 @@ export function useModules() {
 
         setError(null);
         await fetchModules({ suppressLoading: true });
+        notifyHostAppsChanged();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown module action error');
       } finally {
@@ -143,6 +145,7 @@ export function useModules() {
 
         setError(null);
         await fetchModules({ suppressLoading: true });
+        notifyHostAppsChanged();
         return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown module recovery action error');

@@ -183,6 +183,7 @@ Returned by `GET /api/apps`.
   "entryPath": "/apps/com.acme.reports",
   "embeddedUrl": "https://reports.example.com/",
   "origin": "https://reports.example.com",
+  "originScope": "public",
   "identityTokenUrl": "/api/apps/com.acme.reports/identity-token",
   "navigation": [
     {
@@ -374,8 +375,11 @@ Response entries include:
 - same-origin Host entry path;
 - direct iframe URL;
 - iframe origin;
+- iframe origin scope, when known;
 - identity token URL;
 - nested navigation items.
+
+Installed apps without an administrator-provided public origin use `originScope: "local"` and `http://localhost:{hostPort}` iframe URLs. If the Host shell request origin is not loopback, these entries are returned as unavailable with `statusReason: "localOriginUnavailable"` so clients can show a local-only warning instead of opening a broken iframe.
 
 ### `POST /api/apps/{moduleId}/identity-token`
 

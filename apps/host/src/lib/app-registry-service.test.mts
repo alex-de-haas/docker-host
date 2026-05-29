@@ -50,6 +50,7 @@ test('returns available shell apps to authenticated Host users', async () => {
   assert.equal(apps[0].entryPath, '/apps/com.example.reports');
   assert.equal(apps[0].embeddedUrl, 'http://localhost:3101/');
   assert.equal(apps[0].origin, 'http://localhost:3101');
+  assert.equal(apps[0].originScope, 'local');
   assert.equal(apps[0].identityTokenUrl, '/api/apps/com.example.reports/identity-token');
   assert.deepEqual(apps[0].navigation, [
     {
@@ -61,7 +62,28 @@ test('returns available shell apps to authenticated Host users', async () => {
   ]);
 });
 
-test('preserves request protocol for local fallback shell app origins', async () => {
+test('uses localhost for local fallback shell app origins', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    withUi: true,
+  });
+
+  const apps = await listHostApps(assignedUser, {
+    config,
+    runtimeStatusReader: runtimeStatus('running'),
+    requestOrigin: 'http://localhost:3000',
+  });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].status, 'available');
+  assert.equal(apps[0].embeddedUrl, 'http://localhost:3101/');
+  assert.equal(apps[0].origin, 'http://localhost:3101');
+  assert.equal(apps[0].originScope, 'local');
+});
+
+test('marks local fallback shell apps unavailable from non-loopback Host origins', async () => {
   const config = await createAppRegistryTestConfig();
   await writeInstalledModule(config, {
     moduleId: 'com.example.reports',
@@ -76,8 +98,33 @@ test('preserves request protocol for local fallback shell app origins', async ()
   });
 
   assert.equal(apps.length, 1);
-  assert.equal(apps[0].embeddedUrl, 'https://host.example.test:3101/');
-  assert.equal(apps[0].origin, 'https://host.example.test:3101');
+  assert.equal(apps[0].status, 'unavailable');
+  assert.equal(apps[0].statusReason, 'localOriginUnavailable');
+  assert.equal(apps[0].embeddedUrl, 'http://localhost:3101/');
+  assert.equal(apps[0].origin, 'http://localhost:3101');
+  assert.equal(apps[0].originScope, 'local');
+});
+
+test('uses configured public origin for shell app origins', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    publicOrigin: 'https://reports.example.test',
+    withUi: true,
+  });
+
+  const apps = await listHostApps(assignedUser, {
+    config,
+    runtimeStatusReader: runtimeStatus('running'),
+    requestOrigin: 'https://host.example.test',
+  });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].status, 'available');
+  assert.equal(apps[0].embeddedUrl, 'https://reports.example.test/');
+  assert.equal(apps[0].origin, 'https://reports.example.test');
+  assert.equal(apps[0].originScope, 'public');
 });
 
 test('resolves schema 0.3 service endpoints for installed shell app origins', async () => {
@@ -93,14 +140,15 @@ test('resolves schema 0.3 service endpoints for installed shell app origins', as
   const apps = await listHostApps(assignedUser, {
     config,
     runtimeStatusReader: runtimeStatus('running'),
-    requestOrigin: 'http://host.example.test',
+    requestOrigin: 'http://localhost:3000',
   });
 
   assert.equal(apps.length, 1);
   assert.equal(apps[0].status, 'available');
   assert.equal(apps[0].statusReason, 'available');
-  assert.equal(apps[0].embeddedUrl, 'http://host.example.test:3101/');
-  assert.equal(apps[0].origin, 'http://host.example.test:3101');
+  assert.equal(apps[0].embeddedUrl, 'http://localhost:3101/');
+  assert.equal(apps[0].origin, 'http://localhost:3101');
+  assert.equal(apps[0].originScope, 'local');
 });
 
 test('filters assigned shell apps for host users but keeps them visible to admins', async () => {
@@ -572,6 +620,7 @@ async function writeInstalledModule(
     operationStatus?: 'installed' | 'installing' | 'updating' | 'failed' | 'removing';
     lastOperation?: InstalledModuleRecord['lastOperation'];
     withPortBindings?: boolean;
+    publicOrigin?: string;
     schemaVersion?: '0.2' | '0.3';
     endpointTargetField?: 'container' | 'service';
   }
@@ -617,6 +666,7 @@ async function writeInstalledModule(
                     hostPort: 3101,
                     protocol: 'http',
                     hostPublished: true,
+                    ...(input.publicOrigin ? { publicOrigin: input.publicOrigin } : {}),
                   },
                 ],
               }),

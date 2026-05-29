@@ -163,6 +163,8 @@ Developer target visibility reuses the target exposure policy after Host authent
 
 The iframe uses the direct `embeddedUrl` returned by `/api/apps`, for example `https://reports.example.com/` or `http://localhost:3210/people`. The Host validates the current principal before returning app registry entries and before issuing identity tokens, but it does not proxy module HTML or rewrite module assets. The iframe is sandboxed and uses Host theme-aware background styling. `/apps/{moduleId}` remains shell state and does not become a direct module proxy.
 
+Apps backed by the `http://localhost:{hostPort}` fallback are marked with `originScope: "local"`. When the Host shell is opened through a non-loopback origin, those apps are shown as unavailable with a local-only warning because the browser would resolve `localhost` on the user's own machine.
+
 The Host shell delivers module identity through `/api/apps/{moduleId}/identity-token` and a `postMessage` bridge. The iframe can post `docker-host:ready` or `docker-host:request-identity`; the Host shell verifies the iframe origin, requests a short-lived module identity token, and posts `docker-host:identity` back to the module origin. The shell also refreshes the token before expiry and when the browser page becomes active again, without remounting the iframe for same-user profile changes.
 
 Module UIs must serve their own routes, assets, cookies, and API calls from their own origin. The Host does not rewrite root-relative URLs, Next.js assets, App Router `_rsc` requests, or response headers. If a module blocks framing with `X-Frame-Options` or `Content-Security-Policy: frame-ancestors`, the browser blocks the iframe according to the module's own response policy.
@@ -171,7 +173,7 @@ Developer app transport follows the same direct-origin pattern. It resolves the 
 
 ## Module UI Metadata
 
-The `ui` contract is shell-only. It describes how the Host lists and embeds a module UI; it does not create DNS, TLS, tunnel, reverse proxy, or service/API gateway exposure records. The actual iframe origin comes from the install-time public origin or Host-assigned local fallback port.
+The `ui` contract is shell-only. It describes how the Host lists and embeds a module UI; it does not create DNS, TLS, tunnel, reverse proxy, or service/API gateway exposure records. The actual iframe origin comes from the install-time public origin or the `http://localhost:{hostPort}` local fallback.
 
 Supported fields:
 

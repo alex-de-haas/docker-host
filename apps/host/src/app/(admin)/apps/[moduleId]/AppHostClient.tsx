@@ -303,7 +303,8 @@ function renderAppHostContent({
         key={`${embeddedUrl}:${frameIdentityKey}`}
         src={embeddedUrl}
         title={`${app.displayName} module UI`}
-        sandbox="allow-clipboard-write allow-downloads allow-forms allow-popups allow-same-origin allow-scripts"
+        allow="clipboard-write"
+        sandbox="allow-downloads allow-forms allow-popups allow-same-origin allow-scripts"
         className="min-h-0 flex-1 border-0 bg-background"
         onError={() => {
           setFrameWarning('The module UI could not be embedded. Open it through the Host shell after the module supports iframe embedding.');

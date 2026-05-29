@@ -3,6 +3,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { HostAppEntry, HostAppsResponse } from '@/types/apps';
 
+const HOST_APPS_CHANGED_EVENT = 'docker-host:host-apps-changed';
+
+export function notifyHostAppsChanged() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.dispatchEvent(new Event(HOST_APPS_CHANGED_EVENT));
+}
+
 export function useHostApps() {
   const [apps, setApps] = useState<HostAppEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,6 +53,19 @@ export function useHostApps() {
 
   useEffect(() => {
     void fetchApps();
+  }, [fetchApps]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    function handleHostAppsChanged() {
+      void fetchApps({ suppressLoading: true });
+    }
+
+    window.addEventListener(HOST_APPS_CHANGED_EVENT, handleHostAppsChanged);
+    return () => window.removeEventListener(HOST_APPS_CHANGED_EVENT, handleHostAppsChanged);
   }, [fetchApps]);
 
   const refetch = useCallback(async () => {

@@ -8,12 +8,15 @@ export type HostAppSource = 'installed' | 'developer';
 
 export type HostAppStatusReason =
   | 'available'
+  | 'localOriginUnavailable'
   | 'metadataMissing'
   | 'metadataInvalid'
   | 'uiPortMissing'
   | 'uiPortNotPublic'
   | 'moduleOperationUnavailable'
   | 'runtimeUnavailable';
+
+export type HostAppOriginScope = 'local' | 'public';
 
 export interface HostAppNavigationItem {
   label: string;
@@ -40,6 +43,7 @@ export interface HostAppEntry {
   entryPath: string;
   embeddedUrl: string;
   origin: string | null;
+  originScope?: HostAppOriginScope;
   identityTokenUrl: string | null;
   navigation: HostAppNavigationItem[];
 }

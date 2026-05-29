@@ -13,6 +13,7 @@ import type {
   HostAppAccessMode,
   HostAppEntry,
   HostAppNavigationItem,
+  HostAppOriginScope,
   HostAppStatusReason,
 } from '../types/apps.ts';
 import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
@@ -42,6 +43,12 @@ interface RuntimeStatusCacheEntry {
 interface ModuleAppCandidate {
   app: HostAppEntry | null;
   visibleToUsers: boolean;
+}
+
+interface InstalledUiRoute {
+  origin: string;
+  originScope: HostAppOriginScope;
+  embeddedUrl: string;
 }
 
 export function createCachedRuntimeStatusReader(
@@ -176,7 +183,7 @@ async function buildModuleAppCandidate(
   const operationStatus = module.operationStatus || 'installed';
   const accessMode = getShellAccessMode(module.id, assignments);
   const route = uiResult.ui
-    ? resolveInstalledUiRoute(module, metadataResult.metadata, uiResult.ui, requestOrigin)
+    ? resolveInstalledUiRoute(module, metadataResult.metadata, uiResult.ui)
     : null;
   if (!route && uiResult.ui) {
     return {
@@ -208,6 +215,7 @@ async function buildModuleAppCandidate(
         entryPath: buildAppEntryPath(module.id, uiResult.ui.entrypoint.path),
         embeddedUrl: route?.embeddedUrl ?? '',
         origin: route?.origin ?? null,
+        ...(route ? { originScope: route.originScope } : {}),
         identityTokenUrl: buildIdentityTokenUrl(module.id),
         navigation: route ? buildNavigation(module.id, uiResult.ui.navigation, route.origin) : [],
       },
@@ -216,7 +224,11 @@ async function buildModuleAppCandidate(
   }
 
   const runtimeStatus = await safeReadRuntimeStatus(module, runtimeStatusReader);
-  const available = runtimeStatus.state === 'running';
+  const runtimeAvailable = runtimeStatus.state === 'running';
+  const localOriginReachable = !route ||
+    route.originScope !== 'local' ||
+    isLocalOriginReachableFromRequest(requestOrigin);
+  const available = runtimeAvailable && localOriginReachable;
 
   return {
     app: {
@@ -228,7 +240,9 @@ async function buildModuleAppCandidate(
       ...(uiResult.ui.icon ? { icon: uiResult.ui.icon } : {}),
       version: metadataResult.metadata.version || 'unknown',
       status: available ? 'available' : 'unavailable',
-      statusReason: available ? 'available' : 'runtimeUnavailable',
+      statusReason: runtimeAvailable
+        ? (localOriginReachable ? 'available' : 'localOriginUnavailable')
+        : 'runtimeUnavailable',
       accessMode,
       operationStatus,
       lastOperation: module.lastOperation,
@@ -236,10 +250,11 @@ async function buildModuleAppCandidate(
       entryPath: buildAppEntryPath(module.id, uiResult.ui.entrypoint.path),
       embeddedUrl: route?.embeddedUrl ?? '',
       origin: route?.origin ?? null,
+      ...(route ? { originScope: route.originScope } : {}),
       identityTokenUrl: buildIdentityTokenUrl(module.id),
       navigation: route ? buildNavigation(module.id, uiResult.ui.navigation, route.origin) : [],
     },
-    visibleToUsers: available,
+    visibleToUsers: runtimeAvailable,
   };
 }
 
@@ -491,9 +506,8 @@ function compareHostApps(left: HostAppEntry, right: HostAppEntry) {
 function resolveInstalledUiRoute(
   module: InstalledModuleRecord,
   metadata: ModuleMetadata,
-  ui: ModuleUiMetadata,
-  requestOrigin: string | undefined
-) {
+  ui: ModuleUiMetadata
+): InstalledUiRoute | null {
   const endpoint = metadata.endpoints?.find(candidate => candidate.key === ui.entrypoint.portKey);
   const endpointContainerKey = endpoint?.container ?? endpoint?.service;
   const container = module.containers.find(candidate => candidate.key === endpointContainerKey);
@@ -505,30 +519,22 @@ function resolveInstalledUiRoute(
     return null;
   }
 
-  const origin = port.publicOrigin || buildLocalOrigin(requestOrigin, port.hostPort);
+  const originScope: HostAppOriginScope = port.publicOrigin ? 'public' : 'local';
+  const origin = port.publicOrigin || buildLocalOrigin(port.hostPort);
   return {
     origin,
+    originScope,
     embeddedUrl: buildDirectUrl(origin, ui.entrypoint.path),
   };
 }
 
-function buildLocalOrigin(requestOrigin: string | undefined, hostPort: number) {
-  try {
-    const parsed = new URL(requestOrigin || 'http://localhost');
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return `http://localhost:${hostPort}`;
-    }
+function buildLocalOrigin(hostPort: number) {
+  return `http://localhost:${hostPort}`;
+}
 
-    parsed.port = String(hostPort);
-    parsed.pathname = '/';
-    parsed.search = '';
-    parsed.hash = '';
-    parsed.username = '';
-    parsed.password = '';
-    return parsed.origin;
-  } catch {
-    return `http://localhost:${hostPort}`;
-  }
+function isLocalOriginReachableFromRequest(requestOrigin: string | undefined) {
+  const hostOrigin = parseHttpOrigin(requestOrigin);
+  return !hostOrigin || isCanonicalLoopbackHostname(hostOrigin.hostname);
 }
 
 function buildDirectUrl(origin: string, modulePath: string) {

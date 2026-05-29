@@ -29,6 +29,7 @@ import {
   createExternalMountDrafts,
   validateExternalMountDrafts,
 } from '@/lib/module-install-request';
+import { notifyHostAppsChanged } from '@/hooks/useHostApps';
 import type {
   ExternalMountDraft,
   ExternalMountValidationError,
@@ -139,6 +140,7 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
       }
 
       setUpdateResult(data);
+      notifyHostAppsChanged();
     } catch (error) {
       setUpdateError({
         code: 'update_apply_request_failed',

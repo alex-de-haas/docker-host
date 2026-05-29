@@ -8,13 +8,14 @@ import {
   LayoutGrid,
   LoaderCircle,
   LockKeyhole,
+  Monitor,
   RefreshCw,
 } from 'lucide-react';
 import { AdminShell, HostPageHeader, useAdminPrincipal } from '@/components/AdminShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useHostApps } from '@/hooks/useHostApps';
-import { formatAppStatusReason } from '@/lib/host-app-status';
+import { formatAppStatusReason, formatAppStatusReasonLabel } from '@/lib/host-app-status';
 import { cn } from '@/lib/utils';
 import type { HostAppEntry } from '@/types/apps';
 
@@ -136,6 +137,12 @@ function AppPortalEntry({ app }: { app: HostAppEntry }) {
             Dev
           </Badge>
         )}
+        {app.originScope === 'local' && (
+          <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+            <Monitor className="h-3 w-3" />
+            Local only
+          </Badge>
+        )}
         <Badge variant="secondary">
           {app.accessMode === 'assignedUsersOnly' ? 'Assigned' : 'All users'}
         </Badge>
@@ -151,9 +158,12 @@ function AppPortalEntry({ app }: { app: HostAppEntry }) {
       )}
       <div className="flex items-center justify-between border-t pt-3 text-sm">
         <span className="text-muted-foreground">{app.version}</span>
-        <span className="inline-flex items-center gap-1 font-medium text-primary">
-          Open
-          <ArrowRight className="h-4 w-4" />
+        <span className={cn(
+          'inline-flex items-center gap-1 font-medium',
+          available ? 'text-primary' : 'text-muted-foreground'
+        )}>
+          {available ? 'Open' : formatAppStatusReasonLabel(app.statusReason)}
+          {available && <ArrowRight className="h-4 w-4" />}
         </span>
       </div>
     </>

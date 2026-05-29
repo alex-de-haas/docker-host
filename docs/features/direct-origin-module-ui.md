@@ -2,7 +2,7 @@
 
 ## Description
 
-Docker Host opens module browser UIs in the Host shell iframe without proxying module HTML, JavaScript, CSS, assets, or application requests through Host-owned embed routes. Each module UI runs on its own browser origin. That origin can be any administrator-provided `http` or `https` origin, for example `https://reports.example.com`, or a Host-generated local fallback origin based on a published Host port.
+Docker Host opens module browser UIs in the Host shell iframe without proxying module HTML, JavaScript, CSS, assets, or application requests through Host-owned embed routes. Each module UI runs on its own browser origin. That origin can be any administrator-provided `http` or `https` origin, for example `https://reports.example.com`, or a local fallback origin based on the module's published Host port.
 
 The Host still owns app discovery, Host authentication, app access checks, shell navigation, and short-lived module identity token issuance. The module owns its own UI runtime, routing, cookies, assets, data model, and application-specific authorization.
 
@@ -46,9 +46,11 @@ For each browser-facing endpoint, the install plan shows:
 - optional public origin, such as `https://reports.example.com`;
 - whether the endpoint is required for the shell App UI.
 
-If the administrator leaves the public origin empty, the Host still publishes the assigned Host port and builds a local fallback iframe URL from the current Host request host plus that port. For example, if the Host shell is opened as `http://192.0.2.10:3000` and the module endpoint uses Host port `3210`, the iframe origin becomes `http://192.0.2.10:3210`.
+If the administrator leaves the public origin empty, the Host still publishes the assigned Host port and builds a local fallback iframe URL as `http://localhost:{hostPort}`. For example, if the module endpoint uses Host port `3210`, the iframe origin becomes `http://localhost:3210` regardless of the Host shell request origin.
 
-The public origin is optional for local or directly reachable Host deployments. It is only needed when browsers should load the module UI through a different externally managed origin, such as a DNS name, tunnel, or reverse proxy. Schema `0.3` module endpoints that target `services[]` use the same Host port and fallback origin behavior as schema `0.2` endpoints that target `containers[]`.
+When the Host shell itself is opened from a non-loopback origin, local fallback apps are returned as unavailable with `statusReason: "localOriginUnavailable"` and `originScope: "local"`. The Apps portal marks them as local-only instead of attempting to open an iframe that would resolve `localhost` on the end user's machine.
+
+The public origin is optional when the browser can reach the module through the local published port. It is needed when browsers should load the module UI through a different externally managed origin, such as a DNS name, tunnel, or reverse proxy. Schema `0.3` module endpoints that target `services[]` use the same Host port and fallback origin behavior as schema `0.2` endpoints that target `containers[]`.
 
 ## Host Port Assignment
 
@@ -76,6 +78,7 @@ Open the module update review to recreate affected containers with assigned Host
 - `entryPath`: the Host shell route, such as `/apps/com.example.reports`;
 - `embeddedUrl`: the direct module iframe URL;
 - `origin`: the module iframe origin;
+- `originScope`: `local` for localhost fallback origins or `public` for administrator-provided origins;
 - `identityTokenUrl`: the Host endpoint that issues a short-lived module identity token;
 - nested navigation entries whose `embeddedUrl` values also point directly at the module origin.
 
@@ -134,7 +137,8 @@ LAN installation:
 1. The install plan assigns Host port `3210`.
 2. The administrator leaves public origin empty.
 3. Users open the Host shell at `http://192.0.2.10:3000`.
-4. `/api/apps` returns `embeddedUrl: "http://192.0.2.10:3210/"`.
+4. `/api/apps` returns the app as `status: "unavailable"`, `statusReason: "localOriginUnavailable"`, and `originScope: "local"`.
+5. The administrator must configure and enter a public origin before remote browsers can open the app.
 
 Public origin installation:
 
