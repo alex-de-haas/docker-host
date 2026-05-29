@@ -26,6 +26,47 @@ internal sealed class ModuleDevTargetResponse
     public ModuleDevTargetSummary? Target { get; init; }
 }
 
+internal sealed class ModuleDevIdentityTokenRequest
+{
+    public string? UserEmail { get; init; }
+
+    public string? UserId { get; init; }
+}
+
+internal sealed class ModuleDevIdentityTokenResponse
+{
+    public string Token { get; init; } = "";
+
+    public string TokenType { get; init; } = "";
+
+    public string HeaderName { get; init; } = "";
+
+    public string TargetId { get; init; } = "";
+
+    public string ModuleId { get; init; } = "";
+
+    public string Origin { get; init; } = "";
+
+    public string Hostname { get; init; } = "";
+
+    public string PortKey { get; init; } = "";
+
+    public int ExpiresInSeconds { get; init; }
+
+    public ModuleDevIdentityUser? User { get; init; }
+}
+
+internal sealed class ModuleDevIdentityUser
+{
+    public string Id { get; init; } = "";
+
+    public string Role { get; init; } = "";
+
+    public string? Email { get; init; }
+
+    public string? DisplayName { get; init; }
+}
+
 internal sealed class ModuleDevTargetRequest
 {
     public string? Id { get; init; }

@@ -60,6 +60,22 @@ docker-host dev reset --host-url http://localhost:3000
 docker-host dev status
 ```
 
+`docker-host dev identity` issues a short-lived Host-signed module identity token for the prepared developer target:
+
+```bash
+docker-host dev identity --format token
+docker-host dev identity --user user@docker-host.local --format header
+```
+
+The command uses the trusted local control channel and the current `metadata.dev.json` to resolve the target id. `--user` accepts a development user email or Host user id. When omitted, the CLI uses the first assigned development user from the manifest, which is normally `admin@docker-host.local`. Supported output formats are:
+
+- `header` - prints `X-Docker-Host-Identity: <token>` for direct `curl` probes;
+- `token` - prints only the JWT for shell scripting;
+- `json` - prints the full token response with module, target, origin, and user details;
+- `env` - prints environment assignments for diagnostic scripts.
+
+This token is real Host identity, signed by the local Host key store and scoped to the module id. It is still only a diagnostic helper for direct module-origin API probes. Use the Host shell app URL or gateway URL printed by `dev up` when validating app shell transport, gateway policy, browser sessions, redirects, WebSockets, SSE, or iframe identity bridging.
+
 `docker-host dev reset` removes only harness-owned state for the metadata target:
 
 ```bash
@@ -76,6 +92,8 @@ docker-host dev clean modules/demo-module/metadata.dev.json --yes
 ```
 
 When `--manifest` is omitted, `up`, `status`, and `reset` use `metadata.dev.json` from the current working directory. A supplied path may be a metadata JSON file or a directory containing `metadata.dev.json`.
+
+`identity` follows the same manifest resolution rules and requires that `dev up` has already prepared the target and development users.
 
 ## Dev Metadata
 

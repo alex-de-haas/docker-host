@@ -120,7 +120,9 @@ Example:
 }
 ```
 
-`docker-host dev up` accepts a module metadata path, a repository directory containing `metadata.dev.json`, or the current directory when it contains `metadata.dev.json`. Repository scripts pass `modules/demo-module/metadata.dev.json` explicitly and provide Host process development environment through the wrapper process when needed.
+`docker-host dev up`, `status`, `identity`, and `reset` accept a module metadata path, a repository directory containing `metadata.dev.json`, or the current directory when it contains `metadata.dev.json`. Repository scripts pass `modules/demo-module/metadata.dev.json` explicitly and provide Host process development environment through the wrapper process when needed.
+
+After `dev up` has prepared the target, `docker-host dev identity --format token` asks trusted control for a real Host-signed module identity token for the selected development user. This is intended for direct module-origin diagnostics; full Host integration checks should still use the printed shell app and gateway URLs.
 
 Development module data persists under `<HOST_DATA_ROOT_HOST>/dev/modules/<module-id>/` between runs. Use:
 

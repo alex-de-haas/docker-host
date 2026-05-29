@@ -15,11 +15,14 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  Settings2,
   Square,
   Trash2,
 } from 'lucide-react';
 import type { ModuleLifecycleAction } from '@/hooks/useModules';
 import type {
+  ModuleConfigurationPlanResponse,
+  ModuleConfigurationRequest,
   ModuleRecoveryAction,
   ModuleRecoveryPlan,
   ModuleRecoveryPlanResponse,
@@ -27,6 +30,10 @@ import type {
   ModuleRuntimeState,
   ModuleSummary,
 } from '@/types/modules';
+import {
+  ModuleConfigurationDialog,
+  type ModuleConfigurationDialogState,
+} from '@/components/ModuleConfigurationDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -62,6 +69,8 @@ interface ModuleListProps {
     action: ModuleRecoveryAction,
     deleteModuleData: boolean
   ) => Promise<boolean>;
+  onConfigurationPlan: (id: string) => Promise<ModuleConfigurationPlanResponse>;
+  onConfigurationApply: (id: string, request: ModuleConfigurationRequest) => Promise<boolean>;
 }
 
 const runtimeLabels: Record<ModuleRuntimeState, string> = {
@@ -118,9 +127,13 @@ export function ModuleList({
   onAction,
   onRecoveryPlan,
   onRecoveryApply,
+  onConfigurationPlan,
+  onConfigurationApply,
 }: ModuleListProps) {
   const [expandedModuleId, setExpandedModuleId] = useState<string | null>(null);
   const [recoveryDialog, setRecoveryDialog] = useState<RecoveryDialogState | null>(null);
+  const [configurationDialog, setConfigurationDialog] =
+    useState<ModuleConfigurationDialogState | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -232,6 +245,65 @@ export function ModuleList({
           : previous
       );
     }
+  }
+
+  async function openConfigurationDialog(module: ModuleSummary) {
+    setConfigurationDialog({
+      module,
+      plan: null,
+      loading: true,
+      applying: false,
+      error: null,
+    });
+
+    try {
+      const response = await onConfigurationPlan(module.id);
+      setConfigurationDialog(current =>
+        current && current.module.id === module.id
+          ? {
+              ...current,
+              plan: response.plan ?? null,
+              loading: false,
+              error: response.error ? formatConfigurationPlanError(response) : null,
+            }
+          : current
+      );
+    } catch (error) {
+      setConfigurationDialog(current =>
+        current && current.module.id === module.id
+          ? {
+              ...current,
+              loading: false,
+              error: error instanceof Error ? error.message : 'Configuration plan could not be loaded.',
+            }
+          : current
+      );
+    }
+  }
+
+  async function applyConfigurationDialog(request: ModuleConfigurationRequest) {
+    const current = configurationDialog;
+    if (!current) {
+      return false;
+    }
+
+    setConfigurationDialog({ ...current, applying: true, error: null });
+    const applied = await onConfigurationApply(current.module.id, request);
+
+    if (applied) {
+      setConfigurationDialog(null);
+      return true;
+    }
+
+    setConfigurationDialog(previous =>
+      previous
+        ? {
+            ...previous,
+            applying: false,
+          }
+        : previous
+    );
+    return false;
   }
 
   return (
@@ -373,6 +445,14 @@ export function ModuleList({
                       )}
                       {module.operationStatus === 'installed' && (
                         <>
+                          <IconActionButton
+                            action="configure"
+                            title="Configure module"
+                            icon={<Settings2 className="h-4 w-4" />}
+                            pendingAction={modulePendingAction}
+                            disabled={disabled}
+                            onClick={() => void openConfigurationDialog(module)}
+                          />
                           <IconLinkButton
                             title="Update module"
                             href={`/modules/${encodeURIComponent(module.id)}/update`}
@@ -451,6 +531,16 @@ export function ModuleList({
         }}
         onDeleteModuleDataChange={value => void setDeleteModuleData(value)}
         onApply={() => void applyRecoveryDialog()}
+      />
+      <ModuleConfigurationDialog
+        key={configurationDialog?.plan?.configurationDigest ?? configurationDialog?.module.id ?? 'closed'}
+        state={configurationDialog}
+        onOpenChange={open => {
+          if (!open) {
+            setConfigurationDialog(null);
+          }
+        }}
+        onApply={request => applyConfigurationDialog(request)}
       />
     </>
   );
@@ -872,6 +962,7 @@ const actionProgressLabels: Record<ModuleLifecycleAction, string> = {
   start: 'Starting...',
   stop: 'Stopping...',
   restart: 'Restarting...',
+  configure: 'Configuring...',
   retry: 'Retrying...',
   'update-retry': 'Retrying update...',
   cleanup: 'Cleaning up...',
@@ -879,6 +970,17 @@ const actionProgressLabels: Record<ModuleLifecycleAction, string> = {
 };
 
 function formatPlanError(response: ModuleRecoveryPlanResponse) {
+  if (!response.error) {
+    return null;
+  }
+
+  return [
+    response.error.message,
+    ...response.error.conflicts.map(conflict => conflict.message),
+  ].filter(Boolean).join(' ');
+}
+
+function formatConfigurationPlanError(response: ModuleConfigurationPlanResponse) {
   if (!response.error) {
     return null;
   }

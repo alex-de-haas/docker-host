@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getRequestOrigin, requireHostPrincipal } from '@/lib/auth-http';
+import { getObservedRequestOrigin, requireHostPrincipal } from '@/lib/auth-http';
 import { listHostApps } from '@/lib/app-registry-service';
 
 export const dynamic = 'force-dynamic';
@@ -13,7 +13,7 @@ export async function GET(request: Request) {
 
   try {
     const apps = await listHostApps(auth.principal, {
-      requestOrigin: getRequestOrigin(request),
+      requestOrigin: getObservedRequestOrigin(request),
     });
     return NextResponse.json({ apps });
   } catch (error) {

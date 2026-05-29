@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { notifyHostAppsChanged } from '@/hooks/useHostApps';
 import type {
   ModuleActionResult,
+  ModuleConfigurationPlanResponse,
+  ModuleConfigurationRequest,
+  ModuleConfigurationResponse,
   ModuleOperationError,
   ModuleRecoveryAction,
   ModuleRecoveryActionResult,
@@ -15,6 +18,7 @@ export type ModuleLifecycleAction =
   | 'start'
   | 'stop'
   | 'restart'
+  | 'configure'
   | 'retry'
   | 'update-retry'
   | ModuleRecoveryAction;
@@ -157,6 +161,55 @@ export function useModules() {
     [fetchModules]
   );
 
+  const getConfigurationPlan = useCallback(
+    async (id: string): Promise<ModuleConfigurationPlanResponse> => {
+      const response = await fetch(`/api/modules/${encodeURIComponent(id)}/configure/plan`, {
+        method: 'POST',
+      });
+      const data: ModuleConfigurationPlanResponse = await response.json();
+
+      if (!response.ok && !data.plan) {
+        throw new Error(formatConfigurationPlanError(data, 'Failed to load configuration plan'));
+      }
+
+      return data;
+    },
+    []
+  );
+
+  const applyConfiguration = useCallback(
+    async (id: string, request: ModuleConfigurationRequest) => {
+      setPendingAction({ id, action: 'configure' });
+
+      try {
+        const response = await fetch(`/api/modules/${encodeURIComponent(id)}/configure`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        });
+        const data: ModuleConfigurationResponse = await response.json();
+
+        if (!response.ok || data.error) {
+          throw new Error(formatConfigurationResponseError(data, 'Failed to configure module'));
+        }
+
+        setModules(current =>
+          current.map(module => (module.id === id ? data.module : module))
+        );
+        setError(null);
+        await fetchModules({ suppressLoading: true });
+        notifyHostAppsChanged();
+        return data;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown module configuration error');
+        return null;
+      } finally {
+        setPendingAction(null);
+      }
+    },
+    [fetchModules]
+  );
+
   return {
     modules,
     loading,
@@ -168,6 +221,8 @@ export function useModules() {
     performAction,
     getRecoveryPlan,
     applyRecoveryAction,
+    getConfigurationPlan,
+    applyConfiguration,
   };
 }
 
@@ -202,6 +257,29 @@ function formatRecoveryPlanError(data: ModuleRecoveryPlanResponse, fallback: str
 
   return [
     data.error.message,
+    ...data.error.conflicts.map(conflict => conflict.message),
+  ].filter(Boolean).join(' ');
+}
+
+function formatConfigurationPlanError(data: ModuleConfigurationPlanResponse, fallback: string) {
+  if (!data.error) {
+    return fallback;
+  }
+
+  return [
+    data.error.message,
+    ...data.error.conflicts.map(conflict => conflict.message),
+  ].filter(Boolean).join(' ');
+}
+
+function formatConfigurationResponseError(data: ModuleConfigurationResponse, fallback: string) {
+  if (!data.error) {
+    return fallback;
+  }
+
+  return [
+    data.error.message,
+    ...data.error.validationErrors.map(error => error.message),
     ...data.error.conflicts.map(conflict => conflict.message),
   ].filter(Boolean).join(' ');
 }

@@ -15,11 +15,17 @@ internal sealed class DevCommand(CommandContext context)
         Usage:
           docker-host dev up [--manifest <path>] [--host-url <url>] [--prepare-only]
           docker-host dev status [--manifest <path>] [--host-url <url>]
+          docker-host dev identity [--manifest <path>] [--host-url <url>] [--user <email-or-id>] [--format token|header|json|env]
           docker-host dev reset [--manifest <path>] [--host-url <url>]
           docker-host dev clean <module-id-or-dev-metadata> [--host-url <url>] [--yes]
 
         Default metadata path: metadata.dev.json
         """;
+
+    private static readonly JsonSerializerOptions OutputJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+    };
 
     public async Task<int> ExecuteAsync(string[] args)
     {
@@ -33,6 +39,7 @@ internal sealed class DevCommand(CommandContext context)
         {
             "up" => await UpAsync(args[1..]),
             "status" => await StatusAsync(args[1..]),
+            "identity" => await IdentityAsync(args[1..]),
             "reset" => await ResetAsync(args[1..]),
             "clean" => await CleanAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown dev command '{args[0]}'.", Usage),
@@ -181,6 +188,38 @@ internal sealed class DevCommand(CommandContext context)
 
         context.Console.Write(table);
         return hostReady && targetsResponse.Body.DeveloperModeEnabled && target is not null && targetReachable ? 0 : 1;
+    }
+
+    private async Task<int> IdentityAsync(string[] args)
+    {
+        var options = ParseIdentityOptions(args);
+        var host = ResolveRunningHost(options.HostOrigin);
+        if (host is null)
+        {
+            return 1;
+        }
+
+        var manifest = DevManifest.Load(options.ManifestPath);
+        var targetId = manifest.GetTargetId();
+        var user = ResolveIdentityUser(options.User, manifest);
+
+        using var hostApi = CreateHostControlClient(host.Origin);
+        if (!await IsHostReadyAsync(hostApi))
+        {
+            context.Console.MarkupLine("[red]Docker Host is not reachable or not ready.[/]");
+            return 1;
+        }
+
+        var response = await hostApi.IssueModuleDevIdentityTokenAsync(
+            targetId,
+            CreateIdentityTokenRequest(user));
+        if (!response.IsSuccess || response.Body is null || string.IsNullOrWhiteSpace(response.Body.Token))
+        {
+            return RenderApiFailure("Failed to issue module developer identity token.", response.StatusCode, response.RawBody);
+        }
+
+        RenderIdentityToken(response.Body, options.Format);
+        return 0;
     }
 
     private async Task<int> ResetAsync(string[] args)
@@ -794,6 +833,55 @@ internal sealed class DevCommand(CommandContext context)
         return values;
     }
 
+    private static ModuleDevIdentityTokenRequest CreateIdentityTokenRequest(string user)
+    {
+        if (user.Contains('@'))
+        {
+            return new ModuleDevIdentityTokenRequest { UserEmail = user };
+        }
+
+        return new ModuleDevIdentityTokenRequest { UserId = user };
+    }
+
+    private static string ResolveIdentityUser(string? configuredUser, DevManifest manifest)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredUser))
+        {
+            return configuredUser.Trim();
+        }
+
+        var defaultUser = manifest.Users.FirstOrDefault(candidate => candidate.Assigned)?.Email;
+        if (!string.IsNullOrWhiteSpace(defaultUser))
+        {
+            return defaultUser.Trim();
+        }
+
+        throw new CommandUsageException("dev identity requires --user because metadata.dev.json does not declare an assigned development user.", Usage);
+    }
+
+    private void RenderIdentityToken(ModuleDevIdentityTokenResponse identity, string format)
+    {
+        switch (format)
+        {
+            case "token":
+                context.Console.WriteLine(identity.Token);
+                break;
+            case "header":
+                context.Console.WriteLine($"{(string.IsNullOrWhiteSpace(identity.HeaderName) ? "X-Docker-Host-Identity" : identity.HeaderName)}: {identity.Token}");
+                break;
+            case "env":
+                context.Console.WriteLine($"DOCKER_HOST_MODULE_ID={identity.ModuleId}");
+                context.Console.WriteLine($"DOCKER_HOST_MODULE_ORIGIN={identity.Origin}");
+                context.Console.WriteLine($"DOCKER_HOST_MODULE_IDENTITY_TOKEN={identity.Token}");
+                break;
+            case "json":
+                context.Console.WriteLine(JsonSerializer.Serialize(identity, OutputJsonOptions));
+                break;
+            default:
+                throw new CommandUsageException($"Unsupported dev identity format '{format}'.", Usage);
+        }
+    }
+
     private string EnsureDevModuleDataRoot(string moduleId)
     {
         var settings = context.SettingsStore.EnsureInstalled();
@@ -946,6 +1034,70 @@ internal sealed class DevCommand(CommandContext context)
         return new DevCommandOptions(Path.GetFullPath(manifestPath), prepareOnly, hostOrigin);
     }
 
+    private static DevIdentityOptions ParseIdentityOptions(string[] args)
+    {
+        var manifestPath = Path.Combine(Directory.GetCurrentDirectory(), "metadata.dev.json");
+        Uri? hostOrigin = null;
+        string? user = null;
+        var format = "header";
+
+        for (var index = 0; index < args.Length; index++)
+        {
+            var arg = args[index];
+            switch (arg)
+            {
+                case "--manifest":
+                case "-m":
+                    if (index + 1 >= args.Length)
+                    {
+                        throw new CommandUsageException($"{arg} requires a path.", Usage);
+                    }
+
+                    manifestPath = args[++index];
+                    break;
+                case "--host-url":
+                case "--host-origin":
+                    if (index + 1 >= args.Length)
+                    {
+                        throw new CommandUsageException($"{arg} requires a URL.", Usage);
+                    }
+
+                    hostOrigin = ParseHostOriginOverride(args[++index]);
+                    break;
+                case "--user":
+                case "--user-email":
+                case "--user-id":
+                    if (index + 1 >= args.Length)
+                    {
+                        throw new CommandUsageException($"{arg} requires a user email or id.", Usage);
+                    }
+
+                    user = args[++index];
+                    break;
+                case "--format":
+                    if (index + 1 >= args.Length)
+                    {
+                        throw new CommandUsageException("--format requires token, header, json, or env.", Usage);
+                    }
+
+                    format = ParseIdentityFormat(args[++index]);
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown dev identity option '{arg}'.", Usage);
+            }
+        }
+
+        return new DevIdentityOptions(Path.GetFullPath(manifestPath), hostOrigin, user, format);
+    }
+
+    private static string ParseIdentityFormat(string value)
+    {
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized is "token" or "header" or "json" or "env"
+            ? normalized
+            : throw new CommandUsageException("--format must be token, header, json, or env.", Usage);
+    }
+
     private static DevCleanOptions ParseCleanOptions(string[] args)
     {
         var positionals = new List<string>();
@@ -1063,6 +1215,8 @@ internal sealed class DevCommand(CommandContext context)
 }
 
 internal sealed record DevCommandOptions(string ManifestPath, bool PrepareOnly, Uri? HostOrigin);
+
+internal sealed record DevIdentityOptions(string ManifestPath, Uri? HostOrigin, string? User, string Format);
 
 internal sealed record DevCleanOptions(string Target, Uri? HostOrigin, bool AssumeYes);
 

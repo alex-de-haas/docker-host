@@ -55,8 +55,9 @@ Use this skill to implement Docker Host modules in the shape expected by this re
 3. For this repository's host-side demo loop, use `npm run host:dev:demo`. It wraps `docker-host dev up --manifest modules/demo-module/metadata.dev.json`, starts Host and the module locally, seeds development accounts, and registers the demo developer target.
 4. When changing the Host itself, either set `HOST_DEV_REPOSITORY_PATH`/`HOST_DEV_PORT` in CLI config for `local-process` startup or pass a loopback URL such as `--host-url http://localhost:<port>` when the Host is already running in another terminal or debugger. The CLI should talk to that Host origin through trusted local control, not assume the Host is a Docker container.
 5. Use `runtime.ports[].localPort` in `metadata.dev.json` for module dev servers on the developer machine when possible. The top-level dev harness maps it to `127.0.0.1` for the source-run Host.
-6. For low-level target-only work, run the module dev server locally, then link it with `docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>`.
-7. Do not hand-inject fake `X-Docker-Host-Identity` tokens to claim Host integration is working. Use Host-owned development users and assignments so Docker Host signs the token and serves the scoped directory through its normal APIs.
+6. For direct module-origin endpoint probes after the target is prepared, use `docker-host dev identity --manifest <path-to-metadata.dev.json> --format token` and pass the returned token as `X-Docker-Host-Identity`. This token is Host-signed and scoped to the development target; it is a diagnostic helper, not a replacement for gateway or shell testing.
+7. For low-level target-only work, run the module dev server locally, then link it with `docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url>`.
+8. Do not hand-inject fake `X-Docker-Host-Identity` tokens to claim Host integration is working. Use Host-owned development users and assignments so Docker Host signs the token and serves the scoped directory through its normal APIs.
 
 ### Update an Existing Module
 

@@ -53,6 +53,7 @@ Developer target control routes are local machine-control routes:
 
 - `GET /control/v1/modules/dev/targets` lists developer targets.
 - `PUT /control/v1/modules/dev/targets/{targetId}` replaces a developer target.
+- `POST /control/v1/modules/dev/targets/{targetId}/identity-token` issues a Host-signed identity token for a local development user.
 - `DELETE /control/v1/modules/dev/targets/{targetId}` removes a developer target.
 - `DELETE /control/v1/modules/dev/data/{moduleId}` removes stored development data for one module.
 
@@ -80,6 +81,16 @@ When the selected `portKey` matches valid module `ui.entrypoint` metadata, the H
 - nested navigation from `ui.navigation`.
 
 This snapshot keeps `/api/apps` fast and deterministic. Module authors should re-run `docker-host dev up` or relink a developer target when UI metadata changes.
+
+Identity-token input:
+
+```json
+{
+  "userEmail": "user@docker-host.local"
+}
+```
+
+The request may use `userEmail` or `userId`. The Host looks up an enabled local user, checks the developer target exposure policy and module assignments, and signs the same module identity JWT used by the shell and gateway paths. It does not issue a token when the target identity mode is `none` or when the selected user cannot access the target.
 
 ## Apps Portal
 
@@ -128,6 +139,7 @@ The top-level harness uses `metadata.dev.json` directly. The repository demo met
 ```bash
 docker-host dev up --manifest modules/demo-module/metadata.dev.json
 docker-host dev status --manifest modules/demo-module/metadata.dev.json
+docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token
 docker-host dev reset --manifest modules/demo-module/metadata.dev.json
 docker-host dev clean modules/demo-module/metadata.dev.json
 ```
@@ -137,6 +149,8 @@ docker-host dev clean modules/demo-module/metadata.dev.json
 ```bash
 docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
 ```
+
+Use `docker-host dev identity` only for direct module-origin probes, for example checking `/api/auth/identity` on a local Next.js server with a real Host-signed JWT. It is not a substitute for validating shell iframe transport or gateway routing through Docker Host.
 
 ## Gateway Rules
 

@@ -76,7 +76,10 @@ test('GET /api/apps accepts authenticated host users', async t => {
 
 test('GET /api/apps returns developer apps without local target internals', async t => {
   const config = await createRouteTestConfig();
-  setRouteTestEnv(t, config, { moduleDevMode: true });
+  setRouteTestEnv(t, config, {
+    moduleDevMode: true,
+    hostPublicOrigin: 'https://host.example.test',
+  });
   const now = new Date().toISOString();
 
   await writeAuthState({
@@ -260,10 +263,11 @@ async function createRouteTestConfig(): Promise<HostRuntimeConfig> {
 function setRouteTestEnv(
   t: TestContext,
   config: HostRuntimeConfig,
-  options: { moduleDevMode?: boolean } = {}
+  options: { moduleDevMode?: boolean; hostPublicOrigin?: string | null } = {}
 ) {
   const previousDataRoot = process.env.HOST_DATA_ROOT_CONTAINER;
   const previousDevMode = process.env.HOST_MODULE_DEV_MODE;
+  const previousPublicOrigin = process.env.HOST_PUBLIC_ORIGIN;
   process.env.HOST_DATA_ROOT_CONTAINER = config.dataRootContainer;
   if (options.moduleDevMode) {
     process.env.HOST_MODULE_DEV_MODE = 'enabled';
@@ -272,6 +276,7 @@ function setRouteTestEnv(
     delete process.env.HOST_MODULE_DEV_MODE;
     config.moduleDevModeEnabled = false;
   }
+  restoreEnvValue('HOST_PUBLIC_ORIGIN', options.hostPublicOrigin ?? undefined);
 
   t.after(() => {
     if (previousDataRoot === undefined) {
@@ -285,6 +290,8 @@ function setRouteTestEnv(
     } else {
       process.env.HOST_MODULE_DEV_MODE = previousDevMode;
     }
+
+    restoreEnvValue('HOST_PUBLIC_ORIGIN', previousPublicOrigin);
   });
 }
 
@@ -329,4 +336,13 @@ async function listAppsWithSession(sessionToken: string) {
       cookie: `${SESSION_COOKIE_NAME}=${sessionToken}`,
     },
   }));
+}
+
+function restoreEnvValue(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
 }

@@ -259,6 +259,7 @@ docker-host config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
 docker-host config set HOST_DEV_PORT 3000
 docker-host dev up --manifest modules/demo-module/metadata.dev.json
 docker-host dev status --manifest modules/demo-module/metadata.dev.json
+docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token
 docker-host dev reset --manifest modules/demo-module/metadata.dev.json
 ```
 
@@ -271,6 +272,15 @@ docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url h
 This skips Docker lifecycle operations and uses the running Host's local control channel for dev target registration, user seeding, assignments, and directory policy.
 
 Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They do not modify installed module records, module metadata, or production gateway exposure records. The harness manages targets, development users, assignments, directory policy, local process startup, status checks, reset behavior, and development data cleanup through Host-owned control routes.
+
+For direct local module endpoint probes, `docker-host dev identity` can issue a real Host-signed identity token for the prepared developer target:
+
+```bash
+TOKEN="$(docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
+curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
+```
+
+Use this only as a diagnostic shortcut for direct module-origin requests. Browser shell transport and gateway behavior should still be validated through the Host app URL and gateway URL printed by `docker-host dev up`.
 
 See [Module developer mode](module-developer-mode.md) for API, CLI, and gateway details.
 

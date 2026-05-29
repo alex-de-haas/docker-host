@@ -479,6 +479,8 @@ The module installation API:
 
 If the requested metadata resolves to a module id that is already registered from the same stored metadata URL, the install plan endpoint returns `mode: "update"`, `existingModuleId`, and an `updatePlan` instead of treating the installed module id or its Docker container names as install blockers. Clients must then apply the reviewed plan through the module update endpoint, not `POST /api/modules/install`.
 
+The Web UI can apply the install request directly from the reviewed form. A redacted JSON preview is optional and does not need to be generated before apply.
+
 The install apply endpoint returns HTTP `201` on success:
 
 ```json
@@ -761,6 +763,15 @@ When runtime configuration changes, update apply stops/removes/recreates the mod
 
 Failed update apply uses the shared install-plan error envelope for validation/conflict failures before mutation. Partial failures after mutation has started mark the module `failed`, set `lastOperation` to `update`, preserve files, storage, images, and containers for diagnosis, and store enough update attempt context for `POST /api/modules/{moduleId}/update/retry`.
 
+### Module configuration
+
+Installed modules can be reconfigured without reinstalling from metadata:
+
+- `POST /api/modules/{moduleId}/configure/plan` - read the installed local metadata and stored runtime decisions, then return configurable setting prompts, current public endpoint origins and Host ports, external mount collections, selected external mounts, warnings, and a `configurationDigest`;
+- `POST /api/modules/{moduleId}/configure` - accept the reviewed `configurationDigest`, setting values, endpoint origin selections, and external mounts, reject stale or conflicting decisions, then persist the configuration.
+
+Changing only a public origin updates `modules.json` and Host app discovery without recreating containers. Changing setting values, external mounts, or endpoint Host ports requires container recreation so environment variables, bind mounts, and published ports match the stored configuration. Partial failures after mutation has started mark the module `failed` with `lastOperation: "configure"` and preserve the stored configuration for retry or cleanup.
+
 ### Module recovery and removal
 
 The recovery API adds explicit actions for failed installs, failed updates, failed install cleanup, and installed module removal.
@@ -824,6 +835,7 @@ Initial control routes:
 - `POST /control/v1/modules/{moduleId}/remove/plan` creates a remove plan.
 - `POST /control/v1/modules/{moduleId}/remove` applies a reviewed remove plan.
 - `GET /control/v1/modules/dev/targets`, `PUT /control/v1/modules/dev/targets/{targetId}`, and `DELETE /control/v1/modules/dev/targets/{targetId}` manage local developer targets.
+- `POST /control/v1/modules/dev/targets/{targetId}/identity-token` issues a short-lived Host-signed identity token for a local development user and developer target. Request body: `{ "userEmail": "user@docker-host.local" }` or `{ "userId": "user_..." }`. The Host checks the target exposure policy and module assignments before signing the token.
 - `DELETE /control/v1/modules/dev/data/{moduleId}` removes one module's persistent development data.
 - Control auth, user, invitation, assignment, directory policy, and app registry helpers support `docker-host dev`.
 

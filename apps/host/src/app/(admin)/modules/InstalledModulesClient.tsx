@@ -19,6 +19,8 @@ export function InstalledModulesClient() {
     performAction,
     getRecoveryPlan,
     applyRecoveryAction,
+    getConfigurationPlan,
+    applyConfiguration,
   } = useModules();
 
   const isRefreshing = refreshState !== 'idle';
@@ -66,6 +68,8 @@ export function InstalledModulesClient() {
           onAction={performAction}
           onRecoveryPlan={getRecoveryPlan}
           onRecoveryApply={applyRecoveryAction}
+          onConfigurationPlan={getConfigurationPlan}
+          onConfigurationApply={async (id, request) => Boolean(await applyConfiguration(id, request))}
         />
       )}
     </AdminShell>

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getRequestOrigin } from '@/lib/auth-http';
+import { getObservedRequestOrigin } from '@/lib/auth-http';
 import { listHostApps } from '@/lib/app-registry-service';
 import { LOCAL_CONTROL_ACTOR_ID, requireTrustedControl } from '@/lib/control-auth';
 import type { HostPrincipal } from '@/types/auth';
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   };
 
   const apps = await listHostApps(principal, {
-    requestOrigin: getRequestOrigin(request),
+    requestOrigin: getObservedRequestOrigin(request),
   });
   return NextResponse.json({ apps });
 }
