@@ -495,7 +495,8 @@ function resolveInstalledUiRoute(
   requestOrigin: string | undefined
 ) {
   const endpoint = metadata.endpoints?.find(candidate => candidate.key === ui.entrypoint.portKey);
-  const container = module.containers.find(candidate => candidate.key === endpoint?.container);
+  const endpointContainerKey = endpoint?.container ?? endpoint?.service;
+  const container = module.containers.find(candidate => candidate.key === endpointContainerKey);
   const port = container?.ports?.find(candidate =>
     candidate.endpointKey === endpoint?.key ||
     candidate.key === endpoint?.port

@@ -45,6 +45,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useHostApps } from '@/hooks/useHostApps';
+import { formatAppStatusReason, formatAppStatusReasonLabel } from '@/lib/host-app-status';
 import { cn } from '@/lib/utils';
 import type { HostPrincipal } from '@/types/auth';
 import type { HostAppEntry } from '@/types/apps';
@@ -712,8 +713,10 @@ function AppNavigationSection({
         const action = getAppMenuAction(app);
         const pending = pendingAppAction?.appId === app.id && pendingAppAction.action === action?.action;
         const ActionIcon = action?.icon;
+        const unavailableReasonLabel = canNavigate ? null : formatAppStatusReasonLabel(app.statusReason);
         const itemClassName = cn(
-          'relative flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md text-sm transition-colors',
+          'relative flex min-w-0 flex-1 items-center gap-2 rounded-md text-sm transition-colors',
+          !compact && !canNavigate ? 'min-h-11 py-1' : 'min-h-9',
           compact ? 'justify-center px-0' : 'px-2',
           canNavigate
             ? (
@@ -731,18 +734,27 @@ function AppNavigationSection({
             <Icon className="h-4 w-4 shrink-0" />
             {!compact && (
               <>
-                <span className="min-w-0 flex-1 truncate">{app.displayName}</span>
-                {app.source === 'developer' && (
-                  <Badge
-                    variant="outline"
-                    className="shrink-0 border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] leading-4 text-sky-700"
-                  >
-                    Dev
-                  </Badge>
-                )}
-                {!canNavigate && (
-                  <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
-                )}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">{app.displayName}</span>
+                    {app.source === 'developer' && (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] leading-4 text-sky-700"
+                      >
+                        Dev
+                      </Badge>
+                    )}
+                    {!canNavigate && (
+                      <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+                    )}
+                  </span>
+                  {unavailableReasonLabel && (
+                    <span className="truncate text-[11px] leading-4 text-amber-700">
+                      {unavailableReasonLabel}
+                    </span>
+                  )}
+                </span>
               </>
             )}
             {compact && (
@@ -1160,25 +1172,4 @@ function normalizeSelectedAppPath(path: string | null) {
   }
 
   return path;
-}
-
-function formatAppStatusReason(reason: HostAppEntry['statusReason']) {
-  switch (reason) {
-    case 'metadataMissing':
-      return 'App metadata is missing.';
-    case 'metadataInvalid':
-      return 'App metadata is invalid.';
-    case 'uiPortMissing':
-      return 'App UI needs a published Host port. Open the module update review or reinstall the module.';
-    case 'uiPortNotPublic':
-      return 'App UI port is not marked public.';
-    case 'moduleOperationUnavailable':
-      return 'Module operation is not ready.';
-    case 'runtimeUnavailable':
-      return 'Module runtime is not running.';
-    case 'available':
-      return 'Available';
-    default:
-      return 'App is unavailable.';
-  }
 }

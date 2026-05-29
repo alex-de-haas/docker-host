@@ -37,7 +37,7 @@ Embedded app behavior:
 - app entries can show nested navigation from `ui.navigation`;
 - `/apps/{moduleId}` opens a Host-owned app page without proxying that path to module containers;
 - the Host app page embeds module UIs in an iframe using the direct module origin returned by `/api/apps`;
-- the shell keeps Host-owned app navigation in the sidebar and shows app status/developer markers next to app entries;
+- the shell keeps Host-owned app navigation in the sidebar and shows app status/developer markers next to app entries, including visible unavailable reason labels for administrator-visible app diagnostics;
 - module UIs own their in-page headers, page actions, and internal navigation;
 - Host authentication and app access checks happen before app registry data and identity tokens are issued;
 - module identity for shell iframe traffic is delivered through a short-lived identity token endpoint and a `postMessage` bridge.
@@ -133,7 +133,7 @@ Install, update, and security pages keep their existing backend calls and form b
 
 Non-admin users do not receive Host management pages. Opening `/`, `/ingress`, `/modules`, `/modules/install`, `/modules/{moduleId}/update`, or `/settings/security` as `host.user` keeps the authenticated shell but routes the user to `/apps` or renders an access-denied state. The underlying management APIs continue to require `host.admin`.
 
-`/apps` is the default portal page for `host.user`. It renders the current principal's app registry entries, lets users open available apps, and shows clear empty states when no apps are assigned, app registry data is unavailable, or the session needs login again.
+`/apps` is the default portal page for `host.user`. It renders the current principal's app registry entries, lets users open available apps, shows unavailable reasons for administrator-visible diagnostics, and shows clear empty states when no apps are assigned, app registry data is unavailable, or the session needs login again.
 
 ## App Registry API
 

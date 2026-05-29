@@ -80,6 +80,29 @@ test('preserves request protocol for local fallback shell app origins', async ()
   assert.equal(apps[0].origin, 'https://host.example.test:3101');
 });
 
+test('resolves schema 0.3 service endpoints for installed shell app origins', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledModule(config, {
+    moduleId: 'com.example.reports',
+    name: 'Example Reports',
+    withUi: true,
+    schemaVersion: '0.3',
+    endpointTargetField: 'service',
+  });
+
+  const apps = await listHostApps(assignedUser, {
+    config,
+    runtimeStatusReader: runtimeStatus('running'),
+    requestOrigin: 'http://host.example.test',
+  });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].status, 'available');
+  assert.equal(apps[0].statusReason, 'available');
+  assert.equal(apps[0].embeddedUrl, 'http://host.example.test:3101/');
+  assert.equal(apps[0].origin, 'http://host.example.test:3101');
+});
+
 test('filters assigned shell apps for host users but keeps them visible to admins', async () => {
   const config = await createAppRegistryTestConfig();
   await writeInstalledModule(config, {
@@ -549,9 +572,22 @@ async function writeInstalledModule(
     operationStatus?: 'installed' | 'installing' | 'updating' | 'failed' | 'removing';
     lastOperation?: InstalledModuleRecord['lastOperation'];
     withPortBindings?: boolean;
+    schemaVersion?: '0.2' | '0.3';
+    endpointTargetField?: 'container' | 'service';
   }
 ) {
   const moduleRoot = path.join(config.modulesRootContainer, input.moduleId);
+  const schemaVersion = input.schemaVersion ?? '0.2';
+  const endpointTargetField = input.endpointTargetField ?? 'container';
+  const runtimeNode = {
+    ports: [
+      {
+        key: 'http',
+        containerPort: 3000,
+        protocol: 'http',
+      },
+    ],
+  };
   await fs.mkdir(moduleRoot, { recursive: true });
   await writeModulesStore(config, [
     {
@@ -589,33 +625,43 @@ async function writeInstalledModule(
     },
   ]);
   await fs.writeFile(path.join(moduleRoot, 'metadata.json'), `${JSON.stringify({
-    schemaVersion: '0.2',
+    schemaVersion,
     id: input.moduleId,
     name: input.name,
     description: `${input.name} fixture.`,
     version: '1.0.0',
-    containers: [
-      {
-        key: 'app',
-        image: {
-          repository: 'ghcr.io/example/module',
-          tag: 'latest',
-        },
-        runtime: {
-          ports: [
+    ...(schemaVersion === '0.3'
+      ? {
+          services: [
             {
-              key: 'http',
-              containerPort: 3000,
-              protocol: 'http',
+              key: 'app',
+              source: {
+                type: 'image',
+                image: {
+                  repository: 'ghcr.io/example/module',
+                  tag: 'latest',
+                },
+              },
+              runtime: runtimeNode,
             },
           ],
-        },
-      },
-    ],
+        }
+      : {
+          containers: [
+            {
+              key: 'app',
+              image: {
+                repository: 'ghcr.io/example/module',
+                tag: 'latest',
+              },
+              runtime: runtimeNode,
+            },
+          ],
+        }),
     endpoints: [
       {
         key: 'web',
-        container: 'app',
+        [endpointTargetField]: 'app',
         port: 'http',
         public: true,
       },

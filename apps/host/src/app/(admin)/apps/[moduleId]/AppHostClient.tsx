@@ -8,6 +8,7 @@ import { useSearchParams } from 'next/navigation';
 import { AdminShell, useAdminPrincipal } from '@/components/AdminShell';
 import { Button } from '@/components/ui/button';
 import { useHostApps } from '@/hooks/useHostApps';
+import { formatAppStatusReason } from '@/lib/host-app-status';
 import type { HostAppEntry, HostAppNavigationItem } from '@/types/apps';
 
 const IDENTITY_DELIVERY_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000] as const;
@@ -400,25 +401,4 @@ function getIdentityRefreshDelayMs(payload: IdentityTokenResponse) {
     ? ttlMs - IDENTITY_REFRESH_SAFETY_MARGIN_MS
     : ttlMs * 0.8;
   return Math.max(MIN_IDENTITY_REFRESH_DELAY_MS, Math.floor(delayMs));
-}
-
-function formatAppStatusReason(reason: HostAppEntry['statusReason']) {
-  switch (reason) {
-    case 'metadataMissing':
-      return 'App metadata is missing.';
-    case 'metadataInvalid':
-      return 'App metadata is invalid.';
-    case 'uiPortMissing':
-      return 'App UI needs a published Host port. Open the module update review or reinstall the module.';
-    case 'uiPortNotPublic':
-      return 'App UI port is not marked public.';
-    case 'moduleOperationUnavailable':
-      return 'Module operation is not ready.';
-    case 'runtimeUnavailable':
-      return 'Module runtime is not running.';
-    case 'available':
-      return 'App is available.';
-    default:
-      return 'The module UI cannot be opened from the Host shell.';
-  }
 }

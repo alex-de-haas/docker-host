@@ -14,6 +14,7 @@ import { AdminShell, HostPageHeader, useAdminPrincipal } from '@/components/Admi
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useHostApps } from '@/hooks/useHostApps';
+import { formatAppStatusReason } from '@/lib/host-app-status';
 import { cn } from '@/lib/utils';
 import type { HostAppEntry } from '@/types/apps';
 
@@ -142,6 +143,12 @@ function AppPortalEntry({ app }: { app: HostAppEntry }) {
           <span>{app.navigation.length} section{app.navigation.length === 1 ? '' : 's'}</span>
         )}
       </div>
+      {!available && (
+        <p className="flex items-start gap-2 rounded-md bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+          <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{formatAppStatusReason(app.statusReason)}</span>
+        </p>
+      )}
       <div className="flex items-center justify-between border-t pt-3 text-sm">
         <span className="text-muted-foreground">{app.version}</span>
         <span className="inline-flex items-center gap-1 font-medium text-primary">

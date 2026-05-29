@@ -48,6 +48,8 @@ For each browser-facing endpoint, the install plan shows:
 
 If the administrator leaves the public origin empty, the Host still publishes the assigned Host port and builds a local fallback iframe URL from the current Host request host plus that port. For example, if the Host shell is opened as `http://192.0.2.10:3000` and the module endpoint uses Host port `3210`, the iframe origin becomes `http://192.0.2.10:3210`.
 
+The public origin is optional for local or directly reachable Host deployments. It is only needed when browsers should load the module UI through a different externally managed origin, such as a DNS name, tunnel, or reverse proxy. Schema `0.3` module endpoints that target `services[]` use the same Host port and fallback origin behavior as schema `0.2` endpoints that target `containers[]`.
+
 ## Host Port Assignment
 
 Docker Host assigns Host ports from `HOST_MODULE_PORT_RANGE`. The default range is `3100-3999`. The allocator skips ports already used by installed modules and by earlier endpoints in the same install plan.
