@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { canAccessModule } from '@/lib/auth-policy';
-import { getRequestOrigin, requireHostPrincipal } from '@/lib/auth-http';
+import { getAppRegistryRequestOrigin, requireHostPrincipal } from '@/lib/auth-http';
 import { readAuthStateSnapshot } from '@/lib/auth-store';
 import { listHostApps } from '@/lib/app-registry-service';
 import { getHostRuntimeConfig } from '@/lib/host-runtime';
@@ -24,7 +24,7 @@ export async function POST(
 
   const { targetId } = await context.params;
   const config = getHostRuntimeConfig();
-  const requestOrigin = getRequestOrigin(request);
+  const requestOrigin = getAppRegistryRequestOrigin(request);
   const [apps, authState, devState] = await Promise.all([
     listHostApps(auth.principal, { config, requestOrigin }),
     readAuthStateSnapshot(config),

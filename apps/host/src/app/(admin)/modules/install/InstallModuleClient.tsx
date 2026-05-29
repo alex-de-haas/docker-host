@@ -59,7 +59,7 @@ export function InstallModuleClient() {
   const [planError, setPlanError] = useState<InstallPlanErrorEnvelope | null>(null);
   const [externalMountDrafts, setExternalMountDrafts] = useState<ExternalMountDraft[]>([]);
   const [externalMountErrors, setExternalMountErrors] = useState<ExternalMountValidationError[]>([]);
-  const [preparedRequest, setPreparedRequest] = useState<ModuleInstallRequest | null>(null);
+  const [previewRequest, setPreviewRequest] = useState<ModuleInstallRequest | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
   const [installResult, setInstallResult] = useState<ModuleInstallSuccessResponse | null>(null);
   const [installError, setInstallError] = useState<InstallPlanErrorEnvelope | null>(null);
@@ -69,7 +69,7 @@ export function InstallModuleClient() {
     setIsPlanning(true);
     setPlan(null);
     setPlanError(null);
-    setPreparedRequest(null);
+    setPreviewRequest(null);
     setInstallResult(null);
     setInstallError(null);
     setExternalMountErrors([]);
@@ -117,10 +117,9 @@ export function InstallModuleClient() {
     setMetadataUrl(`${origin}/fixtures/modules/demo-module`);
   }
 
-  function handlePrepareRequest(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function buildRequestFromForm(form: HTMLFormElement) {
     if (!plan || plan.conflicts.length > 0) {
-      return;
+      return null;
     }
 
     setInstallResult(null);
@@ -129,23 +128,30 @@ export function InstallModuleClient() {
     setExternalMountErrors(externalMountValidation.errors);
 
     if (externalMountValidation.errors.length > 0) {
-      return;
+      return null;
     }
 
-    const payload = buildModuleInstallRequest(
+    return buildModuleInstallRequest(
       plan,
-      new FormData(event.currentTarget),
+      new FormData(form),
       externalMountValidation.selections
     );
-    setPreparedRequest(payload);
   }
 
-  async function handleInstallPrepared() {
-    if (!preparedRequest) {
+  function handlePreviewRequest(form: HTMLFormElement) {
+    setInstallError(null);
+    setPreviewRequest(buildRequestFromForm(form));
+  }
+
+  async function handleInstallSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const request = buildRequestFromForm(event.currentTarget);
+    if (!request) {
       return;
     }
 
     setIsInstalling(true);
+    setPreviewRequest(null);
     setInstallResult(null);
     setInstallError(null);
 
@@ -153,7 +159,7 @@ export function InstallModuleClient() {
       const response = await fetch('/api/modules/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(preparedRequest),
+        body: JSON.stringify(request),
       });
       const data = await response.json() as ModuleInstallResponse;
 
@@ -217,7 +223,7 @@ export function InstallModuleClient() {
         {installResult && <InstallSuccessPanel result={installResult} />}
 
         {plan && (
-          <form key={plan.planDigest} onSubmit={handlePrepareRequest} className="space-y-6">
+          <form key={plan.planDigest} onSubmit={handleInstallSubmit} className="space-y-6">
             <PlanReview
               plan={plan}
               externalMountDrafts={externalMountDrafts}
@@ -232,25 +238,31 @@ export function InstallModuleClient() {
                   <p className="text-sm text-muted-foreground">
                     {plan.conflicts.length > 0
                       ? 'Resolve plan conflicts before confirmation.'
-                      : 'Payload preview is redacted for write-only settings.'}
+                      : 'Install now or inspect the redacted request first.'}
                   </p>
                 </div>
-                <Button type="submit" disabled={plan.conflicts.length > 0}>
-                  Prepare request
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={plan.conflicts.length > 0 || isInstalling}
+                    onClick={event => handlePreviewRequest(event.currentTarget.form as HTMLFormElement)}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Preview request
+                  </Button>
+                  <Button type="submit" disabled={plan.conflicts.length > 0 || isInstalling}>
+                    {isInstalling ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    Install module
+                  </Button>
+                </div>
               </div>
 
-              {preparedRequest && (
+              {previewRequest && (
                 <div className="mt-4 space-y-4">
                   <pre className="max-h-80 overflow-auto rounded-md bg-muted p-4 text-xs">
-                    {JSON.stringify(redactModuleInstallRequest(preparedRequest), null, 2)}
+                    {JSON.stringify(redactModuleInstallRequest(previewRequest), null, 2)}
                   </pre>
-                  <div className="flex justify-end">
-                    <Button type="button" onClick={handleInstallPrepared} disabled={isInstalling}>
-                      {isInstalling ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                      Install module
-                    </Button>
-                  </div>
                 </div>
               )}
             </section>

@@ -64,6 +64,15 @@ To run it through Docker Host with real gateway identity, app shell embedding, d
 docker-host dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
+For direct API diagnostics against the local module origin, issue a real Host-signed development token after `dev up` has prepared the target:
+
+```bash
+TOKEN="$(docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
+curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
+```
+
+This is useful for checking module-side identity validation without a browser, but it is not a replacement for testing the app shell or gateway URLs printed by `docker-host dev up`.
+
 When running from inside `modules/demo-module`, the default works because the CLI discovers `metadata.dev.json` in the current directory:
 
 ```bash

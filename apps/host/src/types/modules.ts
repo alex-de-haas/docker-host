@@ -124,7 +124,7 @@ export interface InstalledModuleRecord {
   dependencies?: ResolvedDependency[];
   installedAt?: string;
   updatedAt?: string;
-  lastOperation?: 'install' | 'update' | 'remove' | 'lifecycle';
+  lastOperation?: 'install' | 'update' | 'configure' | 'remove' | 'lifecycle';
   updateAttempt?: {
     updatePlanDigest: string;
     settings: ModuleInstallSettingSelection[];
@@ -825,3 +825,52 @@ export interface ModuleUpdateFailureResponse {
 }
 
 export type ModuleUpdateResponse = ModuleUpdateSuccessResponse | ModuleUpdateFailureResponse;
+
+export interface ModuleConfigurationSettingPrompt extends InstallPlanSettingPrompt {
+  valueSet: boolean;
+}
+
+export interface ModuleConfigurationPlan {
+  moduleId: string;
+  moduleName: string;
+  moduleVersion: string;
+  metadataUrl: string;
+  configurationDigest: string;
+  settings: ModuleConfigurationSettingPrompt[];
+  runtime: {
+    endpoints: NormalizedModuleEndpointMetadata[];
+    endpointOrigins: InstallPlanEndpointOrigin[];
+  };
+  storage: {
+    mountCollections: InstallPlanMountCollection[];
+    externalMounts: InstalledExternalMountMapping[];
+  };
+  conflicts: InstallPlanConflict[];
+  warnings: string[];
+}
+
+export interface ModuleConfigurationPlanResponse {
+  plan?: ModuleConfigurationPlan;
+  error?: InstallPlanErrorEnvelope;
+}
+
+export interface ModuleConfigurationRequest {
+  configurationDigest: string;
+  settings: ModuleInstallSettingSelection[];
+  externalMounts: ModuleInstallExternalMountSelection[];
+  endpointOrigins: ModuleInstallEndpointOriginSelection[];
+}
+
+export interface ModuleConfigurationSuccessResponse {
+  module: ModuleSummary;
+  recreatedContainers: boolean;
+  error: null;
+}
+
+export interface ModuleConfigurationFailureResponse {
+  error: InstallPlanErrorEnvelope;
+}
+
+export type ModuleConfigurationResponse =
+  | ModuleConfigurationSuccessResponse
+  | ModuleConfigurationFailureResponse;

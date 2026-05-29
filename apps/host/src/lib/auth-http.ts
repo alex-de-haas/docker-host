@@ -376,7 +376,11 @@ function isMutatingMethod(method: string) {
 function passesSameOriginCheck(request: Request) {
   const origin = request.headers.get('origin');
   if (origin) {
-    return origin === getRequestOrigin(request);
+    if (origin === getRequestOrigin(request)) {
+      return true;
+    }
+
+    return origin === getObservedRequestOrigin(request) && isLoopbackRequest(request);
   }
 
   const fetchSite = request.headers.get('sec-fetch-site');
@@ -414,6 +418,16 @@ export function getRequestOrigin(request: Request) {
     return configuredOrigin;
   }
 
+  return getObservedRequestOrigin(request);
+}
+
+export function getAppRegistryRequestOrigin(request: Request) {
+  return isLoopbackRequest(request)
+    ? getObservedRequestOrigin(request)
+    : getRequestOrigin(request);
+}
+
+export function getObservedRequestOrigin(request: Request) {
   const url = new URL(request.url);
   const host = parseHeaderHost(request.headers.get('host')) ||
     url.host;
@@ -467,7 +481,7 @@ function isLocalOnlyDockerPortRequest(request: Request) {
 
 function isLoopbackRequestHostname(request: Request) {
   try {
-    return isLoopbackHostname(new URL(getRequestOrigin(request)).hostname);
+    return isLoopbackHostname(new URL(getObservedRequestOrigin(request)).hostname);
   } catch {
     return false;
   }

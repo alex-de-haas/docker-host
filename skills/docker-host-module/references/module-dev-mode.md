@@ -42,6 +42,7 @@ The generic installed-CLI harness is `docker-host dev`. It reads a module-local 
 - create persistent dev data under `<HOST_DATA_ROOT_HOST>/dev/modules/<module-id>/`;
 - print the Host shell app URL;
 - report Host readiness, target reachability, app registry visibility, and identity mode;
+- issue a real Host-signed development identity token for direct module-origin endpoint probes;
 - reset only harness-owned developer state;
 - clean persistent dev data explicitly.
 
@@ -109,6 +110,7 @@ Run the harness:
 docker-host dev up
 docker-host dev up --prepare-only
 docker-host dev status
+docker-host dev identity --format token
 docker-host dev reset
 docker-host dev clean metadata.dev.json
 docker-host dev up --manifest modules/demo-module/metadata.dev.json
@@ -116,6 +118,15 @@ docker-host dev up --manifest path/to/metadata.dev.json --host-url http://localh
 ```
 
 Use `--host-url` when the Host is already running locally in another terminal or debugger. The URL must be loopback, such as `http://localhost:3000` or `http://127.0.0.1:3000`, because the top-level dev harness serves metadata and module process targets through the developer machine loopback interface. Without `--host-url`, configure `HOST_DEV_REPOSITORY_PATH` first; the top-level dev harness does not start or inspect the production Host container.
+
+After `dev up` prepares the target, use `docker-host dev identity --format token` when a direct `curl` or test script needs a module identity JWT:
+
+```bash
+TOKEN="$(docker-host dev identity --manifest path/to/metadata.dev.json --format token)"
+curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
+```
+
+Use `--user user@docker-host.local` to issue the token for the normal development user. This helper still uses Host-owned users, assignments, access policy, and signing keys. It is not a substitute for validating gateway routing or shell iframe identity through the Host URLs printed by `dev up`.
 
 ## Manual Developer Target
 

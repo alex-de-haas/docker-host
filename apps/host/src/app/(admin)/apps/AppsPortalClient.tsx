@@ -15,7 +15,7 @@ import { AdminShell, HostPageHeader, useAdminPrincipal } from '@/components/Admi
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useHostApps } from '@/hooks/useHostApps';
-import { formatAppStatusReason, formatAppStatusReasonLabel } from '@/lib/host-app-status';
+import { formatAppStatusReason } from '@/lib/host-app-status';
 import { cn } from '@/lib/utils';
 import type { HostAppEntry } from '@/types/apps';
 
@@ -138,9 +138,14 @@ function AppPortalEntry({ app }: { app: HostAppEntry }) {
           </Badge>
         )}
         {app.originScope === 'local' && (
-          <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+          <Badge
+            variant="outline"
+            className="size-6 rounded-full border-amber-200 bg-amber-50 p-0 text-amber-800"
+            aria-label="Local-only origin"
+            title="Local-only origin"
+          >
             <Monitor className="h-3 w-3" />
-            Local only
+            <span className="sr-only">Local-only origin</span>
           </Badge>
         )}
         <Badge variant="secondary">
@@ -162,7 +167,7 @@ function AppPortalEntry({ app }: { app: HostAppEntry }) {
           'inline-flex items-center gap-1 font-medium',
           available ? 'text-primary' : 'text-muted-foreground'
         )}>
-          {available ? 'Open' : formatAppStatusReasonLabel(app.statusReason)}
+          {available ? 'Open' : 'Unavailable'}
           {available && <ArrowRight className="h-4 w-4" />}
         </span>
       </div>

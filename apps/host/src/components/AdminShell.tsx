@@ -21,6 +21,7 @@ import {
   LayoutGrid,
   LoaderCircle,
   LogOut,
+  Monitor,
   OctagonX,
   PackagePlus,
   PanelsTopLeft,
@@ -713,10 +714,9 @@ function AppNavigationSection({
         const action = getAppMenuAction(app);
         const pending = pendingAppAction?.appId === app.id && pendingAppAction.action === action?.action;
         const ActionIcon = action?.icon;
-        const unavailableReasonLabel = canNavigate ? null : formatAppStatusReasonLabel(app.statusReason);
         const itemClassName = cn(
           'relative flex min-w-0 flex-1 items-center gap-2 rounded-md text-sm transition-colors',
-          !compact && !canNavigate ? 'min-h-11 py-1' : 'min-h-9',
+          'min-h-9',
           compact ? 'justify-center px-0' : 'px-2',
           canNavigate
             ? (
@@ -746,14 +746,9 @@ function AppNavigationSection({
                       </Badge>
                     )}
                     {!canNavigate && (
-                      <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+                      <AppUnavailableBadge reason={app.statusReason} />
                     )}
                   </span>
-                  {unavailableReasonLabel && (
-                    <span className="truncate text-[11px] leading-4 text-amber-700">
-                      {unavailableReasonLabel}
-                    </span>
-                  )}
                 </span>
               </>
             )}
@@ -933,6 +928,20 @@ function NavigationLink({
       <Icon className="h-4 w-4 shrink-0" />
       <span className={cn('min-w-0 truncate', compact && 'sr-only')}>{item.label}</span>
     </Link>
+  );
+}
+
+function AppUnavailableBadge({ reason }: { reason: HostAppEntry['statusReason'] }) {
+  const Icon = reason === 'localOriginUnavailable' ? Monitor : CircleAlert;
+
+  return (
+    <span
+      className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-700"
+      aria-label={formatAppStatusReasonLabel(reason)}
+      title={formatAppStatusReason(reason)}
+    >
+      <Icon className="h-3 w-3" />
+    </span>
   );
 }
 

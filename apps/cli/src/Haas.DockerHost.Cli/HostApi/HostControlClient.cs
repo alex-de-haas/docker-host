@@ -54,6 +54,17 @@ internal sealed class HostControlClient(HttpClient httpClient, string controlSec
             $"modules/dev/targets/{Uri.EscapeDataString(targetId)}",
             cancellationToken: cancellationToken);
 
+    public Task<HostApiResponse<ModuleDevIdentityTokenResponse>> IssueModuleDevIdentityTokenAsync(
+        string targetId,
+        ModuleDevIdentityTokenRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<ModuleDevIdentityTokenResponse>(
+            "issue module developer identity token",
+            HttpMethod.Post,
+            $"modules/dev/targets/{Uri.EscapeDataString(targetId)}/identity-token",
+            request,
+            cancellationToken);
+
     public Task<HostApiResponse<DevDataCleanupResponse>> CleanDevModuleDataAsync(
         string moduleId,
         CancellationToken cancellationToken = default)

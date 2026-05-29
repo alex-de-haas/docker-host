@@ -86,10 +86,11 @@ A branch URL is convenient for development, but it is less predictable: the JSON
 6. The Host computes volume mappings for directories from `storage.directories`.
 7. If metadata declares `storage.mountCollections`, the Host lets the administrator add external storage mounts.
 8. The Host shows the administrator the final install plan: module, containers/images, dependencies, settings, module directory, storage mappings, external storage mounts, endpoints, Host-assigned published ports, optional public origins, and potential conflicts.
-9. After confirmation, the Host saves the metadata file in the module directory, downloads images, and creates dependency containers.
-10. The Host computes internal base URLs for dependency modules and passes them to the consumer container through environment variables.
-11. The Host starts the containers for the module being installed.
-12. The Host stores the installed module source: metadata URL, container image references, computed storage mappings, resolved dependency URLs, published Host port bindings, selected public origins, and external storage mounts.
+9. The administrator can apply the install directly, or explicitly request a redacted JSON preview of the install request before applying it.
+10. After confirmation, the Host saves the metadata file in the module directory, downloads images, and creates dependency containers.
+11. The Host computes internal base URLs for dependency modules and passes them to the consumer container through environment variables.
+12. The Host starts the containers for the module being installed.
+13. The Host stores the installed module source: metadata URL, container image references, computed storage mappings, resolved dependency URLs, published Host port bindings, selected public origins, and external storage mounts.
 
 The Host must keep a local copy of the metadata file used for installation or the latest module update.
 
@@ -1134,7 +1135,7 @@ Example:
 
 `endpoints[].public: false` means the endpoint is needed only inside the Host-managed Docker network. For module-to-module communication, the Host must use an internal URL, not a published host port.
 
-`endpoints[].public: true` means the endpoint is eligible for Host-assigned local port publishing, direct-origin shell UI embedding, and service/API gateway exposure. The metadata still does not pin the Host port or external domain. The install plan assigns the Host port, lets the administrator edit it, and optionally records a public origin. Auth Gateway still owns service/API exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
+`endpoints[].public: true` means the endpoint is eligible for Host-assigned local port publishing, direct-origin shell UI embedding, and service/API gateway exposure. The metadata still does not pin the Host port or external domain. The install plan assigns the Host port, lets the administrator edit it, and optionally records a public origin. After install, the module configuration action can update the stored public origin without reinstalling the module. Auth Gateway still owns service/API exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
 
 For installed image-backed modules, Docker daemon container state remains the baseline module status. Schema `0.3` `healthCheck` metadata is available as a readiness refinement and as the Host-visible signal for process-backed developer services.
 

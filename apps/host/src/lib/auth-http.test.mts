@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assertSecureEnoughForCookies,
+  getAppRegistryRequestOrigin,
+  getObservedRequestOrigin,
   getRequestOrigin,
   isLoopbackRequest,
 } from './auth-http.ts';
@@ -40,6 +42,47 @@ test('configured public origin is the explicit proxy trust boundary', t => {
   });
 
   assert.equal(getRequestOrigin(request), 'https://host.example.test');
+});
+
+test('observed request origin keeps the browser Host origin when public origin is configured', t => {
+  const previousPublicOrigin = process.env.HOST_PUBLIC_ORIGIN;
+  process.env.HOST_PUBLIC_ORIGIN = 'https://host.example.test/base';
+  t.after(() => {
+    restoreEnvValue('HOST_PUBLIC_ORIGIN', previousPublicOrigin);
+  });
+
+  const request = new Request('http://docker-host:3000/api/apps', {
+    headers: {
+      host: 'localhost:7171',
+    },
+  });
+
+  assert.equal(getRequestOrigin(request), 'https://host.example.test');
+  assert.equal(getObservedRequestOrigin(request), 'http://localhost:7171');
+});
+
+test('app registry request origin trusts observed origin only for loopback callers', t => {
+  const previousPublicOrigin = process.env.HOST_PUBLIC_ORIGIN;
+  process.env.HOST_PUBLIC_ORIGIN = 'https://host.example.test/base';
+  t.after(() => {
+    restoreEnvValue('HOST_PUBLIC_ORIGIN', previousPublicOrigin);
+  });
+
+  const remoteRequest = new Request('http://docker-host:3000/api/apps', {
+    headers: {
+      host: 'localhost:7171',
+      'x-docker-host-remote-address': '203.0.113.10',
+    },
+  });
+  const loopbackRequest = new Request('http://docker-host:3000/api/apps', {
+    headers: {
+      host: 'localhost:7171',
+      'x-docker-host-remote-address': '127.0.0.1',
+    },
+  });
+
+  assert.equal(getAppRegistryRequestOrigin(remoteRequest), 'https://host.example.test');
+  assert.equal(getAppRegistryRequestOrigin(loopbackRequest), 'http://localhost:7171');
 });
 
 test('loopback checks ignore spoofed forwarded host values', t => {
@@ -104,6 +147,28 @@ test('loopback checks allow localhost through a Docker bridge when the Host port
 
   assert.equal(isLoopbackRequest(request), true);
   assert.doesNotThrow(() => assertSecureEnoughForCookies(request));
+});
+
+test('loopback checks use the observed localhost host when a public origin is configured', t => {
+  const previousPublicOrigin = process.env.HOST_PUBLIC_ORIGIN;
+  const previousBindAddress = process.env.HOST_BIND_ADDRESS;
+  process.env.HOST_PUBLIC_ORIGIN = 'https://host.example.test';
+  process.env.HOST_BIND_ADDRESS = '127.0.0.1';
+  t.after(() => {
+    restoreEnvValue('HOST_PUBLIC_ORIGIN', previousPublicOrigin);
+    restoreEnvValue('HOST_BIND_ADDRESS', previousBindAddress);
+  });
+
+  const request = new Request('http://docker-host:3000/api/auth/login', {
+    headers: {
+      host: 'localhost:7171',
+      'x-docker-host-remote-address': '172.17.0.1',
+    },
+  });
+
+  assert.equal(getRequestOrigin(request), 'https://host.example.test');
+  assert.equal(getObservedRequestOrigin(request), 'http://localhost:7171');
+  assert.equal(isLoopbackRequest(request), true);
 });
 
 test('loopback checks reject Docker bridge HTTP cookies when the Host port is externally bound', t => {

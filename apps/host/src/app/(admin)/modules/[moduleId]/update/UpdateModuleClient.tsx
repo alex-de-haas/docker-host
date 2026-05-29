@@ -55,7 +55,7 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
   const [planError, setPlanError] = useState<InstallPlanErrorEnvelope | null>(null);
   const [externalMountDrafts, setExternalMountDrafts] = useState<ExternalMountDraft[]>([]);
   const [externalMountErrors, setExternalMountErrors] = useState<ExternalMountValidationError[]>([]);
-  const [preparedRequest, setPreparedRequest] = useState<ModuleUpdateRequest | null>(null);
+  const [previewRequest, setPreviewRequest] = useState<ModuleUpdateRequest | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateResult, setUpdateResult] = useState<ModuleUpdateSuccessResponse | null>(null);
   const [updateError, setUpdateError] = useState<InstallPlanErrorEnvelope | null>(null);
@@ -64,7 +64,7 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
     setIsPlanning(true);
     setPlan(null);
     setPlanError(null);
-    setPreparedRequest(null);
+    setPreviewRequest(null);
     setUpdateResult(null);
     setUpdateError(null);
     setExternalMountErrors([]);
@@ -94,10 +94,9 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
     void loadPlan();
   }, [loadPlan]);
 
-  function handlePrepareRequest(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function buildRequestFromForm(form: HTMLFormElement) {
     if (!plan || plan.conflicts.length > 0) {
-      return;
+      return null;
     }
 
     setUpdateResult(null);
@@ -106,23 +105,34 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
     setExternalMountErrors(externalMountValidation.errors);
 
     if (externalMountValidation.errors.length > 0) {
+      return null;
+    }
+
+    return buildModuleUpdateRequest(
+      plan,
+      new FormData(form),
+      externalMountValidation.selections
+    );
+  }
+
+  function handlePreviewRequest(form: HTMLFormElement) {
+    setUpdateError(null);
+    setPreviewRequest(buildRequestFromForm(form));
+  }
+
+  async function handleUpdateSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!plan) {
       return;
     }
 
-    const payload = buildModuleUpdateRequest(
-      plan,
-      new FormData(event.currentTarget),
-      externalMountValidation.selections
-    );
-    setPreparedRequest(payload);
-  }
-
-  async function handleApplyPrepared() {
-    if (!preparedRequest || !plan) {
+    const request = buildRequestFromForm(event.currentTarget);
+    if (!request) {
       return;
     }
 
     setIsUpdating(true);
+    setPreviewRequest(null);
     setUpdateResult(null);
     setUpdateError(null);
 
@@ -130,7 +140,7 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
       const response = await fetch(`/api/modules/${encodeURIComponent(plan.moduleId)}/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(preparedRequest),
+        body: JSON.stringify(request),
       });
       const data = await response.json() as ModuleUpdateResponse;
 
@@ -186,7 +196,7 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
         {updateResult && <UpdateSuccessPanel result={updateResult} />}
 
         {plan && (
-          <form key={plan.updatePlanDigest} onSubmit={handlePrepareRequest} className="space-y-6">
+          <form key={plan.updatePlanDigest} onSubmit={handleUpdateSubmit} className="space-y-6">
             <PlanReview
               plan={plan}
               externalMountDrafts={externalMountDrafts}
@@ -201,25 +211,31 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
                   <p className="text-sm text-muted-foreground">
                     {plan.conflicts.length > 0
                       ? 'Resolve plan conflicts before confirmation.'
-                      : 'Payload preview is redacted for write-only settings.'}
+                      : 'Apply now or inspect the redacted request first.'}
                   </p>
                 </div>
-                <Button type="submit" disabled={plan.conflicts.length > 0}>
-                  Prepare request
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={plan.conflicts.length > 0 || isUpdating}
+                    onClick={event => handlePreviewRequest(event.currentTarget.form as HTMLFormElement)}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Preview request
+                  </Button>
+                  <Button type="submit" disabled={plan.conflicts.length > 0 || isUpdating}>
+                    {isUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    Apply update
+                  </Button>
+                </div>
               </div>
 
-              {preparedRequest && (
+              {previewRequest && (
                 <div className="mt-4 space-y-4">
                   <pre className="max-h-80 overflow-auto rounded-md bg-muted p-4 text-xs">
-                    {JSON.stringify(redactModuleUpdateRequest(preparedRequest), null, 2)}
+                    {JSON.stringify(redactModuleUpdateRequest(previewRequest), null, 2)}
                   </pre>
-                  <div className="flex justify-end">
-                    <Button type="button" onClick={handleApplyPrepared} disabled={isUpdating}>
-                      {isUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                      Apply update
-                    </Button>
-                  </div>
                 </div>
               )}
             </section>

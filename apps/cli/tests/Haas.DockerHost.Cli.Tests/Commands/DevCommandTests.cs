@@ -95,6 +95,43 @@ public sealed class DevCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task IdentityAsync_WithHostUrl_UsesTrustedControlIdentityEndpoint()
+    {
+        using var hostApi = FakeHostApiServer.Start();
+        WriteControlDiscovery();
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+
+        var exitCode = await new DevCommand(context).ExecuteAsync([
+            "identity",
+            "--manifest",
+            WriteManifest(),
+            "--host-url",
+            hostApi.BaseUrl,
+            "--format",
+            "token",
+        ]);
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(transport.Requests);
+        Assert.Contains(hostApi.Requests, request => request.Path == "/control/v1/host/status");
+        Assert.Contains(hostApi.Requests, request => request.Path == "/control/v1/modules/dev/targets/mdev_com_example_dev_localhost/identity-token");
+        Assert.Contains(hostApi.RequestBodies, body => body.Contains("admin@docker-host.local", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task IdentityAsync_InvalidFormat_ThrowsUsageException()
+    {
+        var transport = new FakeDockerTransport();
+        var context = CreateContext(transport);
+
+        await Assert.ThrowsAsync<CommandUsageException>(
+            () => new DevCommand(context).ExecuteAsync(["identity", "--manifest", WriteManifest(), "--format", "yaml"]));
+
+        Assert.Empty(transport.Requests);
+    }
+
+    [Fact]
     public async Task StatusAsync_WithConfiguredHostDevRepository_UsesTrustedControlOnly()
     {
         using var hostApi = FakeHostApiServer.Start();
@@ -316,6 +353,8 @@ public sealed class DevCommandTests : IDisposable
 
         public List<(string Method, string Path)> Requests { get; } = [];
 
+        public List<string> RequestBodies { get; } = [];
+
         public static FakeHostApiServer Start()
         {
             var port = GetAvailablePort();
@@ -352,15 +391,36 @@ public sealed class DevCommandTests : IDisposable
 
                 var path = requestContext.Request.Url?.AbsolutePath ?? "";
                 Requests.Add((requestContext.Request.HttpMethod, path));
+                using var reader = new StreamReader(requestContext.Request.InputStream, requestContext.Request.ContentEncoding);
+                RequestBodies.Add(await reader.ReadToEndAsync());
 
                 var body = path switch
                 {
                     "/control/v1/host/status" => "{}",
                     "/control/v1/modules/dev/targets" => """{"developerModeEnabled":true,"targets":[]}""",
                     "/control/v1/apps" => """{"apps":[]}""",
+                    "/control/v1/modules/dev/targets/mdev_com_example_dev_localhost/identity-token" => """
+                    {
+                      "token": "dev-token",
+                      "tokenType": "DockerHostModuleIdentity",
+                      "headerName": "X-Docker-Host-Identity",
+                      "targetId": "mdev_com_example_dev_localhost",
+                      "moduleId": "com.example.dev",
+                      "origin": "http://127.0.0.1:3100",
+                      "hostname": "com-example-dev.localhost",
+                      "portKey": "http",
+                      "expiresInSeconds": 300,
+                      "user": {
+                        "id": "user_admin",
+                        "role": "host.admin",
+                        "email": "admin@docker-host.local",
+                        "displayName": "Dev Admin"
+                      }
+                    }
+                    """,
                     _ => """{"message":"not found"}""",
                 };
-                requestContext.Response.StatusCode = path is "/control/v1/host/status" or "/control/v1/modules/dev/targets" or "/control/v1/apps"
+                requestContext.Response.StatusCode = path is "/control/v1/host/status" or "/control/v1/modules/dev/targets" or "/control/v1/apps" or "/control/v1/modules/dev/targets/mdev_com_example_dev_localhost/identity-token"
                     ? (int)HttpStatusCode.OK
                     : (int)HttpStatusCode.NotFound;
                 requestContext.Response.ContentType = "application/json";

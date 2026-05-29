@@ -111,6 +111,17 @@ docker-host dev up --manifest modules/demo-module/metadata.dev.json
 
 Use `docker-host dev status --manifest modules/demo-module/metadata.dev.json` to verify Host readiness, target reachability, app registry visibility, and identity mode. Use `docker-host dev reset --manifest modules/demo-module/metadata.dev.json` to remove the metadata target and assignments.
 
+For direct module API probes that need Host identity, ask the local Host to issue a real development identity token instead of inventing one:
+
+```bash
+TOKEN="$(docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
+curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
+```
+
+Use `--user user@docker-host.local` to issue the token as the standard development user. This helper is for diagnostics against a local module origin; shell and gateway integration should still be tested through the Host app URL printed by `docker-host dev up`.
+
+When an agent is working on a Docker Host module, add the same rule to that repository's `AGENTS.md`: use `docker-host dev up` for Host identity, assignments, app shell, and scoped directory checks, and use `docker-host dev identity --format token` only for direct endpoint probes. Do not treat standalone module runs as valid Host identity tests.
+
 Examples:
 
 ```bash
