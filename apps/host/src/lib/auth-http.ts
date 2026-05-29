@@ -421,6 +421,12 @@ export function getRequestOrigin(request: Request) {
   return getObservedRequestOrigin(request);
 }
 
+export function getAppRegistryRequestOrigin(request: Request) {
+  return isLoopbackRequest(request)
+    ? getObservedRequestOrigin(request)
+    : getRequestOrigin(request);
+}
+
 export function getObservedRequestOrigin(request: Request) {
   const url = new URL(request.url);
   const host = parseHeaderHost(request.headers.get('host')) ||

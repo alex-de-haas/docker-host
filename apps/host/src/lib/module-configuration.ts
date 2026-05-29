@@ -1146,7 +1146,7 @@ async function recreateConfiguredContainers({
       `module.configure.${nextModule.id}`,
       error,
       `Docker Host could not configure module "${nextModule.id}".`,
-      'Inspect the preserved files and Docker containers, then retry the failed install recovery action.'
+      'Inspect the preserved files and Docker containers, then retry the module configuration action.'
     );
     await markModuleFailed(nextModule.id, operationError, config);
     return configurationEnvelopeResult(500, {

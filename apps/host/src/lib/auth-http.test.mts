@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assertSecureEnoughForCookies,
+  getAppRegistryRequestOrigin,
   getObservedRequestOrigin,
   getRequestOrigin,
   isLoopbackRequest,
@@ -58,6 +59,30 @@ test('observed request origin keeps the browser Host origin when public origin i
 
   assert.equal(getRequestOrigin(request), 'https://host.example.test');
   assert.equal(getObservedRequestOrigin(request), 'http://localhost:7171');
+});
+
+test('app registry request origin trusts observed origin only for loopback callers', t => {
+  const previousPublicOrigin = process.env.HOST_PUBLIC_ORIGIN;
+  process.env.HOST_PUBLIC_ORIGIN = 'https://host.example.test/base';
+  t.after(() => {
+    restoreEnvValue('HOST_PUBLIC_ORIGIN', previousPublicOrigin);
+  });
+
+  const remoteRequest = new Request('http://docker-host:3000/api/apps', {
+    headers: {
+      host: 'localhost:7171',
+      'x-docker-host-remote-address': '203.0.113.10',
+    },
+  });
+  const loopbackRequest = new Request('http://docker-host:3000/api/apps', {
+    headers: {
+      host: 'localhost:7171',
+      'x-docker-host-remote-address': '127.0.0.1',
+    },
+  });
+
+  assert.equal(getAppRegistryRequestOrigin(remoteRequest), 'https://host.example.test');
+  assert.equal(getAppRegistryRequestOrigin(loopbackRequest), 'http://localhost:7171');
 });
 
 test('loopback checks ignore spoofed forwarded host values', t => {

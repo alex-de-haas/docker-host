@@ -5,7 +5,7 @@
 - Do not validate Host identity, app shell embedding, module assignments, or scoped directory behavior by running a module only in standalone mode.
 - Use the integrated Docker Host development harness for module work that depends on Host identity:
   ```bash
-  docker-host config set HOST_DEV_REPOSITORY_PATH /Users/haas/Sources/haas/docker-host
+  docker-host config set HOST_DEV_REPOSITORY_PATH "<path-to-docker-host-repository>"
   docker-host config set HOST_DEV_PORT 3000
   docker-host dev up --manifest modules/demo-module/metadata.dev.json
   ```
