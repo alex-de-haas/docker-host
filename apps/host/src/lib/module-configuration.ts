@@ -1228,6 +1228,9 @@ async function startResolvedDependencies(
     }
 
     const dependencyMetadata = await readModuleMetadata(installedDependency, config).catch(() => null);
+    if (!dependencyMetadata) {
+      throw new Error(`Metadata for dependency "${dependency.id}" could not be read.`);
+    }
     await ensureModuleContainersStarted(installedDependency, dependencyMetadata);
   }
 }
@@ -1351,9 +1354,13 @@ function collectInstalledHostPorts(module: InstalledModuleRecord) {
 
 function validateSettingValue(
   type: string,
-  value: ModuleInstallSettingValue,
+  value: ModuleInstallSettingValue | null | undefined,
   required: boolean
 ) {
+  if (!required && (value === undefined || value === null || value === '')) {
+    return null;
+  }
+
   if (type === 'number') {
     return typeof value === 'number' && Number.isFinite(value)
       ? null

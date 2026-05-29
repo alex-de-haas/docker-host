@@ -100,9 +100,12 @@ function coerceSettingValue(
     return undefined;
   }
 
-  const rawValue = String(value);
+  const rawValue = String(value).trim();
   if (setting.secret && rawValue === '' && setting.valueSet) {
     return undefined;
+  }
+  if (rawValue === '') {
+    return '';
   }
 
   if (setting.type === 'number') {

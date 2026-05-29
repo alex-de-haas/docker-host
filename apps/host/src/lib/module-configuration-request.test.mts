@@ -28,6 +28,55 @@ test('configuration request preserves stored secret when left blank', () => {
   ]);
 });
 
+test('configuration request preserves empty optional number and boolean values', () => {
+  const plan: ModuleConfigurationPlan = {
+    ...planFixture,
+    settings: [
+      ...planFixture.settings,
+      {
+        moduleId: 'com.example.reports',
+        key: 'OPTIONAL_RETENTION_DAYS',
+        type: 'number',
+        required: false,
+        targets: [{ container: 'app', type: 'env', name: 'OPTIONAL_RETENTION_DAYS' }],
+        secret: false,
+        redacted: false,
+        valueSet: true,
+      },
+      {
+        moduleId: 'com.example.reports',
+        key: 'ENABLE_EXPORTS',
+        type: 'boolean',
+        required: false,
+        targets: [{ container: 'app', type: 'env', name: 'ENABLE_EXPORTS' }],
+        secret: false,
+        redacted: false,
+        valueSet: true,
+      },
+    ],
+  };
+  const formData = new FormData();
+  formData.set(getConfigurationSettingFieldName(plan.settings[2]), '');
+  formData.set(getConfigurationSettingFieldName(plan.settings[3]), '');
+
+  const request = buildModuleConfigurationRequest(plan, formData, []);
+
+  assert.deepEqual(request.settings, [
+    {
+      moduleId: 'com.example.reports',
+      key: 'OPTIONAL_RETENTION_DAYS',
+      value: '',
+      secret: false,
+    },
+    {
+      moduleId: 'com.example.reports',
+      key: 'ENABLE_EXPORTS',
+      value: '',
+      secret: false,
+    },
+  ]);
+});
+
 test('configuration request carries endpoint origin edits and redacts secret preview', () => {
   const formData = new FormData();
   formData.set(getConfigurationSettingFieldName(planFixture.settings[1]), 'new-secret');

@@ -251,10 +251,12 @@ function SettingInput({ setting }: { setting: ModuleConfigurationSettingPrompt }
       <select
         id={id}
         name={id}
-        defaultValue={defaultValue || 'false'}
+        defaultValue={defaultValue}
         required={setting.required}
         className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
+        {setting.required && defaultValue === '' ? <option value="" disabled>Select...</option> : null}
+        {!setting.required ? <option value="">Not set</option> : null}
         <option value="true">true</option>
         <option value="false">false</option>
       </select>

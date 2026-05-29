@@ -10,6 +10,17 @@ import { writeModuleDevTargetState } from './module-dev-store.ts';
 import { getModuleIdentityJwks } from './module-identity.mjs';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
+test('rejects identity issuance when target id is missing', async () => {
+  const config = await createModuleDevIdentityTestConfig();
+
+  await assert.rejects(
+    () => issueModuleDevIdentityToken({} as Parameters<typeof issueModuleDevIdentityToken>[0], 'test-cli', config),
+    error => isModuleDevIdentityError(error) &&
+      error.code === 'target_id_required' &&
+      error.status === 422
+  );
+});
+
 test('issues a Host-signed identity token for an assigned developer target user', async () => {
   const config = await createModuleDevIdentityTestConfig();
   await writeDeveloperTarget(config, 'assignedUsersOnly');

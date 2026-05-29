@@ -71,8 +71,9 @@ function readIdentityRequest(body: unknown) {
 }
 
 function readOptionalString(input: Record<string, unknown>, key: string) {
-  return typeof input[key] === 'string' && input[key].trim()
-    ? input[key].trim()
+  const value = input[key];
+  return typeof value === 'string' && value.trim()
+    ? value.trim()
     : undefined;
 }
 

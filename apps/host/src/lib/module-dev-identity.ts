@@ -22,7 +22,7 @@ export async function issueModuleDevIdentityToken(
   actorUserId = 'local-cli',
   config = getHostRuntimeConfig()
 ) {
-  const targetId = input.targetId.trim();
+  const targetId = input.targetId?.trim();
   if (!targetId) {
     throw new ModuleDevIdentityError('target_id_required', 'Developer target id is required.', 422);
   }
