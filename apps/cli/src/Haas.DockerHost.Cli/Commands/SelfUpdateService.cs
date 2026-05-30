@@ -1,6 +1,5 @@
 namespace Haas.DockerHost.Cli.Commands;
 
-using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -11,7 +10,6 @@ internal sealed class SelfUpdateService(CommandContext context)
 {
     private const string ReleaseBaseUrl = "https://github.com/alex-de-haas/docker-host/releases/download/cli-dev";
     private const int DownloadBufferSize = 81920;
-    internal static readonly IReadOnlyList<string> HostOnlyUpdateArguments = ["update", "--host-only"];
 
     public async Task<SelfUpdateResult> UpdateAsync(CancellationToken cancellationToken = default)
     {
@@ -81,8 +79,7 @@ internal sealed class SelfUpdateService(CommandContext context)
                 UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         }
 
-        WarmRelaunchSupport();
-        File.Move(tempPath, processPath, overwrite: true);
+        ReplaceExecutable(tempPath, processPath);
         context.Console.MarkupLine("[green]CLI updated.[/] New version installed.");
         return SelfUpdateResult.Updated(processPath);
     }
@@ -93,38 +90,55 @@ internal sealed class SelfUpdateService(CommandContext context)
     internal static string CalculateSha256(byte[] bytes)
         => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
-    internal static async Task<int> RunUpdatedExecutableAsync(
-        string executablePath,
-        IReadOnlyList<string> arguments,
-        CancellationToken cancellationToken = default)
+    internal static void ReplaceExecutable(string tempPath, string processPath)
     {
-        using var process = Process.Start(CreateRelaunchStartInfo(executablePath, arguments))
-            ?? throw new InvalidOperationException($"Unable to start the updated docker-host executable at '{executablePath}'.");
-
-        await process.WaitForExitAsync(cancellationToken);
-        return process.ExitCode;
-    }
-
-    internal static ProcessStartInfo CreateRelaunchStartInfo(string executablePath, IReadOnlyList<string> arguments)
-    {
-        var startInfo = new ProcessStartInfo(executablePath)
+        if (!OperatingSystem.IsWindows())
         {
-            UseShellExecute = false,
-        };
-
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
+            File.Move(tempPath, processPath, overwrite: true);
+            return;
         }
 
-        return startInfo;
+        var backupPath = processPath + ".bak";
+        File.Move(processPath, backupPath, overwrite: true);
+
+        try
+        {
+            File.Move(tempPath, processPath);
+        }
+        catch
+        {
+            TryRestoreWindowsBackup(backupPath, processPath);
+            throw;
+        }
+
+        TryDeleteFile(backupPath);
     }
 
-    private static void WarmRelaunchSupport()
+    private static void TryRestoreWindowsBackup(string backupPath, string processPath)
     {
-        using var currentProcess = Process.GetCurrentProcess();
-        _ = currentProcess.Id;
-        _ = typeof(ProcessStartInfo).Assembly.FullName;
+        try
+        {
+            if (!File.Exists(processPath) && File.Exists(backupPath))
+            {
+                File.Move(backupPath, processPath);
+            }
+        }
+        catch
+        {
+            // Best-effort rollback; preserve the original replacement error.
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // The renamed executable can remain locked by the current process on Windows.
+        }
     }
 
     private static string CalculateFileSha256(string path)

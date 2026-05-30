@@ -41,15 +41,18 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
     }
 
     public async Task<bool> ImageExistsAsync(string image, CancellationToken cancellationToken = default)
+        => await InspectImageAsync(image, cancellationToken) is not null;
+
+    public async Task<DockerImageInspect?> InspectImageAsync(string image, CancellationToken cancellationToken = default)
     {
         var response = await transport.SendAsync("inspect Host image", HttpMethod.Get, $"/images/{EncodePathSegment(image)}/json", cancellationToken: cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
-            return false;
+            return null;
         }
 
         EnsureSuccess(response, $"Pull or build the image '{image}', then retry.");
-        return true;
+        return Deserialize<DockerImageInspect>(response);
     }
 
     public async Task PullImageAsync(string image, CancellationToken cancellationToken = default)

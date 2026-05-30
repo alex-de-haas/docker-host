@@ -53,7 +53,7 @@ internal sealed class HostControlDiscovery
             throw new HostApiException(
                 "discover trusted control channel",
                 $"Docker Host trusted control contract '{parsed?.ControlContractVersion ?? "missing"}' is not supported.",
-                nextStep: "Update docker-host and the Host image, then retry.");
+                nextStep: "Update docker-host, restart the Host with 'docker-host stop' and 'docker-host start', then retry.");
         }
 
         if (string.IsNullOrWhiteSpace(parsed.Secret) ||

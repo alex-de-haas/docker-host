@@ -264,7 +264,7 @@ internal sealed class HostControlClient(HttpClient httpClient, string controlSec
                     "Docker Host control returned a response that docker-host could not parse.",
                     response.StatusCode,
                     rawBody,
-                    "Update docker-host and the Host image, then retry.",
+                    "Update docker-host, restart the Host with 'docker-host stop' and 'docker-host start', then retry.",
                     ex);
             }
         }
