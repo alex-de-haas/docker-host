@@ -132,6 +132,7 @@ The high-level adapter owns Docker Engine paths, request payloads, response pars
 - creates the shared module network if needed;
 - checks the configured Host image before creating or starting a stopped Host container;
 - pulls registry-backed Host image references so rolling tags such as `latest` can move forward;
+- falls back to a locally cached Host image when the registry pull fails and the configured image already exists locally;
 - recreates a stopped Host container when the configured image tag now points at a different local image id;
 - selects a free loopback host port when `HOST_UI_PORT=auto`;
 - creates and starts the Host container with Docker socket, data root, env vars, restart policy, and module network.

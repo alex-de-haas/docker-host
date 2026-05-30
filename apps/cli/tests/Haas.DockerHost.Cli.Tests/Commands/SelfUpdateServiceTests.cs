@@ -47,6 +47,29 @@ public sealed class SelfUpdateServiceTests
     }
 
     [Fact]
+    public void ReplaceExecutable_ReplacesTargetWithDownloadedFile()
+    {
+        var testDirectory = Path.Combine(Path.GetTempPath(), $"docker-host-replace-test-{Guid.NewGuid():N}");
+        var executablePath = Path.Combine(testDirectory, OperatingSystem.IsWindows() ? "docker-host.exe" : "docker-host");
+        var tempPath = executablePath + ".download";
+        Directory.CreateDirectory(testDirectory);
+        File.WriteAllText(executablePath, "old executable");
+        File.WriteAllText(tempPath, "new executable");
+
+        try
+        {
+            SelfUpdateService.ReplaceExecutable(tempPath, executablePath);
+
+            Assert.Equal("new executable", File.ReadAllText(executablePath));
+            Assert.False(File.Exists(tempPath));
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void TryFindChecksum_ArtifactEntryExists_ReturnsChecksum()
     {
         const string checksums = """

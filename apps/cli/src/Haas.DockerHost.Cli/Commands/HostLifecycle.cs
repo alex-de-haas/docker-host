@@ -230,8 +230,18 @@ internal sealed class HostLifecycle(CommandContext context)
             return localImage;
         }
 
-        await PullHostImageAsync(context, docker, image, cancellationToken);
-        return await docker.InspectImageAsync(image, cancellationToken);
+        try
+        {
+            await PullHostImageAsync(context, docker, image, cancellationToken);
+        }
+        catch (Exception ex) when (localImage is not null && ex is not OperationCanceledException)
+        {
+            context.Console.MarkupLine($"[yellow]Could not pull Host image updates:[/] {Markup.Escape(ex.Message)}");
+            context.Console.MarkupLine("[yellow]Using the locally cached Host image.[/]");
+            return localImage;
+        }
+
+        return await docker.InspectImageAsync(image, cancellationToken) ?? localImage;
     }
 
     private static bool ContainerUsesCurrentHostImage(

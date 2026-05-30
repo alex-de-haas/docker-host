@@ -80,6 +80,33 @@ public sealed class StartCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_StoppedHostStartsCachedContainerWhenRegistryPullFails()
+    {
+        var transport = new FakeDockerTransport(
+            HostContainerState.Stopped,
+            initialImageId: "sha256:current",
+            imageIdAfterPull: "sha256:current",
+            containerImageId: "sha256:current",
+            failPull: true);
+        var context = CreateContext(transport);
+
+        var exitCode = await new StartCommand(context).ExecuteAsync([]);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(
+            [
+                "/version",
+                "/networks/docker-host-modules",
+                "/containers/docker-host/json",
+                ImageInspectPath(HostImage),
+                PullPath(HostImage),
+                "/containers/docker-host/start",
+                "/containers/docker-host/json",
+            ],
+            transport.Requests.Select(request => request.PathAndQuery));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_RunningHostDoesNotPullOrRecreate()
     {
         var transport = new FakeDockerTransport(HostContainerState.Running);
@@ -170,7 +197,8 @@ public sealed class StartCommandTests : IDisposable
         HostContainerState hostContainerState,
         string? initialImageId = "sha256:current",
         string? imageIdAfterPull = "sha256:current",
-        string? containerImageId = "sha256:current") : IDockerEngineTransport
+        string? containerImageId = "sha256:current",
+        bool failPull = false) : IDockerEngineTransport
     {
         private bool containerExists = hostContainerState != HostContainerState.Missing;
         private bool containerRunning = hostContainerState == HostContainerState.Running;
@@ -210,6 +238,11 @@ public sealed class StartCommandTests : IDisposable
 
             if (method == HttpMethod.Post && pathAndQuery.StartsWith("/images/create?", StringComparison.Ordinal))
             {
+                if (failPull)
+                {
+                    throw new DockerEngineException("pull Host image", "registry unavailable");
+                }
+
                 pullCount++;
                 return Task.FromResult(Response(operation, HttpStatusCode.OK, "{}"));
             }

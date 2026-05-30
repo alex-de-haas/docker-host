@@ -79,7 +79,7 @@ internal sealed class SelfUpdateService(CommandContext context)
                 UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         }
 
-        File.Move(tempPath, processPath, overwrite: true);
+        ReplaceExecutable(tempPath, processPath);
         context.Console.MarkupLine("[green]CLI updated.[/] New version installed.");
         return SelfUpdateResult.Updated(processPath);
     }
@@ -89,6 +89,57 @@ internal sealed class SelfUpdateService(CommandContext context)
 
     internal static string CalculateSha256(byte[] bytes)
         => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    internal static void ReplaceExecutable(string tempPath, string processPath)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.Move(tempPath, processPath, overwrite: true);
+            return;
+        }
+
+        var backupPath = processPath + ".bak";
+        File.Move(processPath, backupPath, overwrite: true);
+
+        try
+        {
+            File.Move(tempPath, processPath);
+        }
+        catch
+        {
+            TryRestoreWindowsBackup(backupPath, processPath);
+            throw;
+        }
+
+        TryDeleteFile(backupPath);
+    }
+
+    private static void TryRestoreWindowsBackup(string backupPath, string processPath)
+    {
+        try
+        {
+            if (!File.Exists(processPath) && File.Exists(backupPath))
+            {
+                File.Move(backupPath, processPath);
+            }
+        }
+        catch
+        {
+            // Best-effort rollback; preserve the original replacement error.
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // The renamed executable can remain locked by the current process on Windows.
+        }
+    }
 
     private static string CalculateFileSha256(string path)
     {
