@@ -79,18 +79,6 @@ public sealed class SelfUpdateServiceTests
     }
 
     [Fact]
-    public void CreateRelaunchStartInfo_UsesExecutablePathAndArguments()
-    {
-        var startInfo = SelfUpdateService.CreateRelaunchStartInfo(
-            "/usr/local/bin/docker-host",
-            SelfUpdateService.HostOnlyUpdateArguments);
-
-        Assert.Equal("/usr/local/bin/docker-host", startInfo.FileName);
-        Assert.False(startInfo.UseShellExecute);
-        Assert.Equal(["update", "--host-only"], startInfo.ArgumentList.ToArray());
-    }
-
-    [Fact]
     public void CreateDownloadProgressColumns_KnownContentLength_UsesDeterminateProgressColumns()
     {
         var columns = SelfUpdateService.CreateDownloadProgressColumns(1024);

@@ -22,6 +22,8 @@ internal sealed class HostLifecycle(CommandContext context)
             async () => await docker.EnsureNetworkAsync(settings.HostModuleNetwork, cancellationToken));
 
         var existing = await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
+        var previousPort = TryGetMappedPort(existing);
+        var hostImageReady = false;
         if (existing is not null && recreate)
         {
             if (existing.State?.Running == true)
@@ -47,6 +49,25 @@ internal sealed class HostLifecycle(CommandContext context)
                 return existing;
             }
 
+            var currentHostImage = await RefreshHostImageForStartAsync(
+                context,
+                docker,
+                settings.HostImage,
+                cancellationToken);
+            hostImageReady = true;
+
+            if (!ContainerUsesCurrentHostImage(existing, settings.HostImage, currentHostImage))
+            {
+                await CommandStatus.RunAsync(
+                    context,
+                    $"Removing Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                    async () => await docker.RemoveContainerAsync(settings.HostContainerName, cancellationToken));
+                existing = null;
+            }
+        }
+
+        if (existing is not null)
+        {
             await CommandStatus.RunAsync(
                 context,
                 $"Starting Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
@@ -55,12 +76,16 @@ internal sealed class HostLifecycle(CommandContext context)
             return await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
         }
 
-        if (!await docker.ImageExistsAsync(settings.HostImage, cancellationToken))
+        if (!hostImageReady)
         {
-            await PullHostImageAsync(context, docker, settings.HostImage, cancellationToken);
+            await RefreshHostImageForStartAsync(
+                context,
+                docker,
+                settings.HostImage,
+                cancellationToken);
         }
 
-        var hostPort = settings.GetFixedHostPort() ?? PortAllocator.GetFreeLoopbackPort();
+        var hostPort = settings.GetFixedHostPort() ?? previousPort ?? PortAllocator.GetFreeLoopbackPort();
         var plan = new HostContainerPlan(
             settings.HostImage,
             settings.HostContainerName,
@@ -191,6 +216,43 @@ internal sealed class HostLifecycle(CommandContext context)
 
     private static bool IsSingleComponentImageReference(string image)
         => !image.Contains('/', StringComparison.Ordinal);
+
+    private static async Task<DockerImageInspect?> RefreshHostImageForStartAsync(
+        CommandContext context,
+        DockerEngineClient docker,
+        string image,
+        CancellationToken cancellationToken)
+    {
+        var localImage = await docker.InspectImageAsync(image, cancellationToken);
+        if (IsSingleComponentImageReference(image) && localImage is not null)
+        {
+            context.Console.MarkupLine($"[grey]Using local Host image {Markup.Escape(image)}.[/]");
+            return localImage;
+        }
+
+        await PullHostImageAsync(context, docker, image, cancellationToken);
+        return await docker.InspectImageAsync(image, cancellationToken);
+    }
+
+    private static bool ContainerUsesCurrentHostImage(
+        DockerContainerInspect container,
+        string hostImage,
+        DockerImageInspect? currentHostImage)
+    {
+        if (!string.IsNullOrWhiteSpace(container.Config?.Image) &&
+            !string.Equals(container.Config.Image, hostImage, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(container.Image) ||
+            string.IsNullOrWhiteSpace(currentHostImage?.Id))
+        {
+            return true;
+        }
+
+        return string.Equals(container.Image, currentHostImage.Id, StringComparison.Ordinal);
+    }
 
     private async Task TryStopModuleContainerAsync(
         DockerEngineClient docker,

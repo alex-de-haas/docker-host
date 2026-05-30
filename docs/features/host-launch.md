@@ -382,16 +382,13 @@ For local validation without pushing an image, the CLI must support overriding `
 - verify `SHA256SUMS` when the checksum file is available;
 - compare the downloaded artifact with the current executable and explicitly report whether the CLI was updated or was already current;
 - if the artifact differs, safely replace the installed `docker-host` binary by downloading to a temporary file next to the target executable, setting permissions, and then replacing the target;
-- if the CLI binary was replaced, continue the Host update through the new executable with `docker-host update --host-only` instead of performing Docker operations from the process whose executable was already replaced;
-- pull the new Host image version;
-- stop the current Host container only when it is running;
-- recreate the Host container with the same volumes, environment variables, port mappings, and restart policy;
-- start the recreated Host container only when the previous Host container was running;
-- leave the recreated Host container stopped when the previous Host container was stopped or missing;
-- preserve the Host data root;
-- show a clear error if the CLI artifact update or Docker operation fails.
+- stop without relaunching the updated executable or performing Docker operations;
+- recommend restarting the Host with `docker-host stop` and `docker-host start`;
+- show a clear error if the CLI artifact update fails.
 
-`scripts/install.sh` is used for first installation and can also be rerun as a repair/reinstall path, but the normal update command updates both the CLI and the Host container.
+`docker-host start` owns Host image refresh. When starting a stopped or missing Host container, it checks the configured image reference, pulls registry-backed references, and recreates the Host container when the configured tag points at a different local image id. Running Host containers are not changed by `docker-host start`; administrators can stop and start the Host when they want to adopt the newly pulled image.
+
+`scripts/install.sh` is used for first installation and can also be rerun as a repair/reinstall path. The normal update command updates only the CLI; Host image adoption happens on the next Host start.
 
 Module updates must be handled by separate module commands through the Host backend API, for example:
 
