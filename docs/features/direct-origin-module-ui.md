@@ -115,6 +115,10 @@ Module UIs are sandboxed by the Host shell iframe with permissions required by n
 - clipboard writes;
 - downloads.
 
+Clipboard write permission is delegated with the iframe Permissions Policy `allow` attribute for the resolved module origin. The Host keeps this scoped to the module origin instead of granting a wildcard clipboard policy. If a module embeds its own nested iframes or redirects clipboard-writing UI to a different origin, that module must delegate `clipboard-write` to the nested or redirected origin itself.
+
+Clipboard writes also remain subject to browser rules such as secure context and user activation requirements.
+
 The Host does not rewrite module response headers. A module UI must allow being framed by the Host origin through its own `Content-Security-Policy` and must avoid `X-Frame-Options` values that block the Host shell.
 
 ## External Module Direction

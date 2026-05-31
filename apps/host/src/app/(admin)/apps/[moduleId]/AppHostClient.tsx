@@ -303,7 +303,7 @@ function renderAppHostContent({
         key={`${embeddedUrl}:${frameIdentityKey}`}
         src={embeddedUrl}
         title={`${app.displayName} module UI`}
-        allow="clipboard-write"
+        allow={buildFramePermissionsPolicy(app.origin)}
         sandbox="allow-downloads allow-forms allow-popups allow-same-origin allow-scripts"
         className="min-h-0 flex-1 border-0 bg-background"
         onError={() => {
@@ -369,6 +369,30 @@ function getEmbeddedUrl(
 
 function buildDirectClientUrl(origin: string, modulePath: string) {
   return new URL(modulePath, origin.endsWith('/') ? origin : `${origin}/`).toString();
+}
+
+function buildFramePermissionsPolicy(origin: string | null) {
+  const allowedOrigin = getPermissionsPolicyOrigin(origin);
+  return allowedOrigin
+    ? `clipboard-write 'src' ${allowedOrigin}`
+    : "clipboard-write 'src'";
+}
+
+function getPermissionsPolicyOrigin(origin: string | null) {
+  if (!origin) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+
+    return parsed.origin;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeSelectedPath(path: string | null) {
