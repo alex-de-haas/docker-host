@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { canUseHostApi, canUseHostShell, getDefaultHostShellPath } from './auth-policy.ts';
+import { isHostDataRootUnavailableError } from './host-runtime.ts';
 import {
   authenticateSessionToken,
   getAuthStatus,
@@ -19,54 +20,75 @@ export async function requireHostAdminPage(): Promise<HostPrincipal> {
 }
 
 export async function requireHostPrincipalPage(): Promise<HostPrincipal> {
-  const status = await getAuthStatus();
-  if (status.setupRequired) {
-    if (isDevAuthAutoLoginEnabled()) {
-      redirectToDevLogin('/');
+  try {
+    const status = await getAuthStatus();
+    if (status.setupRequired) {
+      if (isDevAuthAutoLoginEnabled()) {
+        redirectToDevLogin('/');
+      }
+      redirect('/setup');
     }
-    redirect('/setup');
-  }
 
-  const principal = await getCurrentPagePrincipal();
-  if (!principal || !canUseHostShell(principal)) {
-    if (isDevAuthAutoLoginEnabled()) {
-      redirectToDevLogin('/');
+    const principal = await getCurrentPagePrincipal();
+    if (!principal || !canUseHostShell(principal)) {
+      if (isDevAuthAutoLoginEnabled()) {
+        redirectToDevLogin('/');
+      }
+      redirect('/login');
     }
-    redirect('/login');
-  }
 
-  return principal;
+    return principal;
+  } catch (error) {
+    if (isHostDataRootUnavailableError(error)) {
+      redirect('/data-root-unavailable');
+    }
+    throw error;
+  }
 }
 
 export async function redirectAuthenticatedPage() {
-  const status = await getAuthStatus();
-  if (status.setupRequired) {
+  try {
+    const status = await getAuthStatus();
+    if (status.setupRequired) {
+      if (isDevAuthAutoLoginEnabled()) {
+        redirectToDevLogin('/');
+      }
+      redirect('/setup');
+    }
+
+    const principal = await getCurrentPagePrincipal();
+    if (principal && canUseHostShell(principal)) {
+      redirect(getDefaultHostShellPath(principal));
+    }
     if (isDevAuthAutoLoginEnabled()) {
       redirectToDevLogin('/');
     }
-    redirect('/setup');
-  }
-
-  const principal = await getCurrentPagePrincipal();
-  if (principal && canUseHostShell(principal)) {
-    redirect(getDefaultHostShellPath(principal));
-  }
-  if (isDevAuthAutoLoginEnabled()) {
-    redirectToDevLogin('/');
+  } catch (error) {
+    if (isHostDataRootUnavailableError(error)) {
+      redirect('/data-root-unavailable');
+    }
+    throw error;
   }
 }
 
 export async function redirectSetupCompletePage() {
-  const status = await getAuthStatus();
-  if (status.setupRequired && isDevAuthAutoLoginEnabled()) {
-    redirectToDevLogin('/');
-  }
-
-  if (!status.setupRequired) {
-    if (isDevAuthAutoLoginEnabled()) {
+  try {
+    const status = await getAuthStatus();
+    if (status.setupRequired && isDevAuthAutoLoginEnabled()) {
       redirectToDevLogin('/');
     }
-    redirect('/login');
+
+    if (!status.setupRequired) {
+      if (isDevAuthAutoLoginEnabled()) {
+        redirectToDevLogin('/');
+      }
+      redirect('/login');
+    }
+  } catch (error) {
+    if (isHostDataRootUnavailableError(error)) {
+      redirect('/data-root-unavailable');
+    }
+    throw error;
   }
 }
 

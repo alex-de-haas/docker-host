@@ -12,6 +12,7 @@ internal sealed record HostContainerPlan(
     string HostPublicOrigin,
     string HostGatewayBaseDomain,
     string HostModuleDevMode,
+    string DataRootMarker,
     int HostUiPort)
 {
     public const int ContainerUiPort = 3000;

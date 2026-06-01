@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using Haas.DockerHost.Cli.Configuration;
 
 internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDisposable
 {
@@ -118,6 +119,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             $"HOST_DOCKER_SOCKET={plan.DockerSocket}",
             $"HOST_MODULE_NETWORK={plan.ModuleNetwork}",
             $"HOST_MODULE_DEV_MODE={plan.HostModuleDevMode}",
+            $"{HostDataRootMarker.EnvironmentVariable}={plan.DataRootMarker}",
             $"HOST_BIND_ADDRESS={plan.HostBindAddress}",
             $"HOST_CONTROL_PUBLIC_PORT={hostPort}",
             "HOST_INTERNAL_ORIGIN=http://docker-host:3000",
