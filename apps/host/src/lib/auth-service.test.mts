@@ -40,6 +40,7 @@ import {
 } from './auth-service.ts';
 import { listAuthAuditEvents } from './auth-audit.ts';
 import { readAuthStateSnapshot, writeAuthState } from './auth-store.ts';
+import { HostDataRootUnavailableError } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
 test('bootstraps the first admin with a setup token and creates a session', async () => {
@@ -66,6 +67,37 @@ test('bootstraps the first admin with a setup token and creates a session', asyn
   assert.equal(state.users.length, 1);
   assert.equal(state.sessions.length, 1);
   assert.equal(state.setupTokens[0]?.usedAt !== undefined, true);
+});
+
+test('auth state creation is blocked when the expected data root marker is missing', async () => {
+  const config = await createTestConfig();
+  config.dataRootExpectedMarker = 'root_expected';
+  config.dataRootMarkerPath = path.join(config.dataRootContainer, '.docker-host-root.json');
+
+  await assert.rejects(
+    getAuthStatus(config),
+    (error: unknown) => error instanceof HostDataRootUnavailableError &&
+      error.code === 'data_root_unavailable'
+  );
+  await assert.rejects(fs.access(config.authStatePath), /ENOENT/);
+});
+
+test('auth state creation proceeds when the expected data root marker matches', async () => {
+  const config = await createTestConfig();
+  config.dataRootExpectedMarker = 'root_expected';
+  config.dataRootMarkerPath = path.join(config.dataRootContainer, '.docker-host-root.json');
+  await fs.writeFile(config.dataRootMarkerPath, JSON.stringify({
+    schemaVersion: '0.1',
+    id: 'root_expected',
+    createdAt: new Date().toISOString(),
+  }));
+
+  const setup = await createSetupToken('first-admin', config);
+
+  assert.match(setup.token, /^dhstp_/);
+  const state = await readAuthStateSnapshot(config);
+  assert.equal(state.users.length, 0);
+  assert.equal(state.setupTokens.length, 1);
 });
 
 test('development auto-login creates a normal admin session only when enabled', async t => {

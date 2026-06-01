@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { canUseHostApi } from './auth-policy.ts';
-import { getHostRuntimeConfig } from './host-runtime.ts';
+import { getHostRuntimeConfig, isHostDataRootUnavailableError } from './host-runtime.ts';
 import {
   authenticateSessionToken,
   ACCOUNT_SET_ABSOLUTE_TIMEOUT_MS,
@@ -26,7 +26,10 @@ export async function requireHostPrincipal(
   request: Request,
   action: HostApiAction
 ): Promise<AuthenticatedRequest | NextResponse> {
-  const status = await getAuthStatus();
+  const status = await getAuthStatusOrDataRootError(action);
+  if (status instanceof NextResponse) {
+    return status;
+  }
   if (status.setupRequired) {
     return authError('setup_required', 'Docker Host setup must be completed first.', 403, {
       action,
@@ -61,7 +64,10 @@ export async function requireHostAdmin(
   request: Request,
   action: HostApiAction
 ): Promise<AuthenticatedRequest | NextResponse> {
-  const status = await getAuthStatus();
+  const status = await getAuthStatusOrDataRootError(action);
+  if (status instanceof NextResponse) {
+    return status;
+  }
   if (status.setupRequired) {
     return authError('setup_required', 'Docker Host setup must be completed first.', 403, {
       action,
@@ -99,6 +105,20 @@ export async function requireHostAdmin(
     principal: auth.principal,
     source: auth.source,
   };
+}
+
+async function getAuthStatusOrDataRootError(action: HostApiAction) {
+  try {
+    return await getAuthStatus();
+  } catch (error) {
+    if (isHostDataRootUnavailableError(error)) {
+      return authError('data_root_unavailable', error.message, 503, {
+        action,
+        nextStep: 'Verify the configured Host data root is mounted, then run docker-host restart.',
+      });
+    }
+    throw error;
+  }
 }
 
 export async function requireRecentReauthentication(

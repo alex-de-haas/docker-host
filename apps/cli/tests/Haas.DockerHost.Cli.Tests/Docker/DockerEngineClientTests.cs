@@ -25,6 +25,7 @@ public sealed class DockerEngineClientTests
             "",
             "",
             "disabled",
+            "root_test",
             3000);
 
         await client.CreateHostContainerAsync(plan);
@@ -43,6 +44,7 @@ public sealed class DockerEngineClientTests
             .GetString();
 
         Assert.Contains("HOST_BIND_ADDRESS=127.0.0.1", env);
+        Assert.Contains("HOST_DATA_ROOT_MARKER=root_test", env);
         Assert.Equal("127.0.0.1", hostIp);
     }
 

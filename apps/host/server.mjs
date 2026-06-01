@@ -20,6 +20,7 @@ const SESSION_COOKIE_NAME = 'docker_host_session';
 const ACCOUNT_SET_COOKIE_NAME = 'docker_host_accounts';
 const INTERNAL_REMOTE_ADDRESS_HEADER = 'x-docker-host-remote-address';
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
+const DATA_ROOT_MARKER_FILE = '.docker-host-root.json';
 const DEFAULT_MODULE_EXPOSURE_POLICY = 'loginRequired';
 const CONTROL_CONTRACT_VERSION = '0.1';
 const CONTROL_SECRET_HEADER = 'X-Docker-Host-Control-Secret';
@@ -145,6 +146,7 @@ export async function resolveGatewayRequest(req) {
   }
 
   const config = getRuntimeConfig();
+  await verifyDataRootMarker(config);
   const devTarget = await resolveModuleDevTarget(hostnameValue, config);
   if (devTarget) {
     const authState = await readAuthState(config);
@@ -643,6 +645,8 @@ function getRuntimeConfig() {
   return {
     dataRootHost,
     dataRootContainer,
+    dataRootMarkerPath: path.join(dataRootContainer, DATA_ROOT_MARKER_FILE),
+    dataRootExpectedMarker: process.env.HOST_DATA_ROOT_MARKER?.trim() || null,
     modulesRootContainer,
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
     authRootContainer,
@@ -656,6 +660,36 @@ function getRuntimeConfig() {
     hostPublicOrigin: process.env.HOST_PUBLIC_ORIGIN?.trim() || null,
     hostInternalOrigin: process.env.HOST_INTERNAL_ORIGIN?.trim() || 'http://docker-host:3000',
   };
+}
+
+async function verifyDataRootMarker(config) {
+  const expectedMarker = config.dataRootExpectedMarker;
+  if (!expectedMarker) {
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(await fs.readFile(config.dataRootMarkerPath, 'utf-8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new GatewayHttpError(
+        503,
+        'data_root_unavailable',
+        `Host data root marker is missing at ${config.dataRootMarkerPath}. The configured data root may not be mounted.`
+      );
+    }
+    throw error;
+  }
+
+  const actualMarker = isObject(parsed) && typeof parsed.id === 'string' ? parsed.id.trim() : '';
+  if (actualMarker !== expectedMarker) {
+    throw new GatewayHttpError(
+      503,
+      'data_root_unavailable',
+      `Host data root marker at ${config.dataRootMarkerPath} does not match the running container configuration.`
+    );
+  }
 }
 
 function getModuleNetworkAlias(moduleId, containerKey = 'main') {
@@ -1061,6 +1095,7 @@ function isControlRequestPath(url) {
 
 async function writeControlDiscoveryFile() {
   const config = getRuntimeConfig();
+  await verifyDataRootMarker(config);
   const runRoot = path.join(config.dataRootContainer, 'run');
   const discoveryPath = path.join(runRoot, 'control.json');
   const temporaryPath = `${discoveryPath}.${process.pid}.${randomUUID()}.tmp`;

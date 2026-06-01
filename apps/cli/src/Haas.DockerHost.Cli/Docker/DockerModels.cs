@@ -20,7 +20,8 @@ internal sealed record DockerImageInspect(
     [property: JsonPropertyName("Id")] string? Id);
 
 internal sealed record DockerContainerConfig(
-    [property: JsonPropertyName("Image")] string? Image);
+    [property: JsonPropertyName("Image")] string? Image,
+    [property: JsonPropertyName("Env")] string[]? Env);
 
 internal sealed record DockerContainerState(
     [property: JsonPropertyName("Status")] string? Status,
