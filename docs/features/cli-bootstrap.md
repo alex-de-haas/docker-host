@@ -117,6 +117,8 @@ The transport supports:
 - `unix:///var/run/docker.sock` on macOS, Linux, and WSL;
 - `npipe:////./pipe/docker_engine` on native Windows.
 
+When the CLI runs inside WSL with Docker Desktop for Windows, Docker Desktop WSL integration must be enabled for the active distro. If integration is disabled, commands running in that distro cannot reach `/var/run/docker.sock` even when Docker Desktop itself is running.
+
 The high-level adapter owns Docker Engine paths, request payloads, response parsing, and Docker error diagnostics. Commands call typed methods for image pull, container inspect/create/start/stop/remove, logs, and network inspect/create.
 
 ## Lifecycle behavior
