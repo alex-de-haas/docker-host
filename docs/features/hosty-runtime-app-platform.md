@@ -325,12 +325,9 @@ hosty apps restore <app-id> <backup-id>
 
 The following concepts remain planned, not implemented:
 
-- product channel index download and `hosty update --channel`;
-- runtime app channel discovery and switching;
-- runtime profile switch planning and apply;
-- repository checkout/cache and local command runtime process supervision;
-- standalone auth redirect code exchange for Hosty-aware apps;
-- optional gateway-protected app mode as a manifest-level access setting;
-- automatic backup retention and backup deletion APIs;
-- agent bridge annotations, repository edits, and pull request channel promotion;
-- separate public origins for Hosty Core API and Hosty Shell. The current implementation uses one combined `HOST_PUBLIC_ORIGIN` for the bundled Core/Shell app.
+- product channel index download and `hosty update --channel`, tracked in [Update Channels](../planning/update-channels.md);
+- runtime app channel discovery and switching, tracked in [Update Channels](../planning/update-channels.md);
+- runtime profile switch planning, repository checkout/cache, and local command runtime supervision, tracked in [Runtime Profiles And Source Runtimes](../planning/runtime-profiles-and-source-runtimes.md);
+- standalone auth redirect, optional gateway-protected app mode, and separate public origins for Hosty Core API and Hosty Shell, tracked in [App Auth And Origin Separation](../planning/app-auth-and-origin-separation.md);
+- automatic backup retention and backup deletion APIs, tracked in [App Data Backup Retention](../planning/app-data-backup-retention.md);
+- agent bridge annotations, repository edits, and pull request channel promotion, tracked in [Agent Bridge Workflow](../planning/agent-bridge-workflow.md).

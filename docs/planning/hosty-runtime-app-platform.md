@@ -731,56 +731,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 - Store new app manifest copies as `apps/<app-id>/manifest.json`, with legacy `modules/<module-id>/metadata.json` retained for legacy module records.
 - Defer active access-mode behavior, capability overrides, and production local-command runtime execution to later phases.
 
-### Phase 6 - Add runtime profile planning
-
-**Status**: In Progress
-
-- Store the active runtime profile for an installed app.
-- Parse Docker and local command runtime profiles from `app.0.1` manifests.
-- Install Docker runtime profiles through the legacy Docker runtime adapter.
-- Add switch-runtime plan and apply APIs.
-- Preserve compatible storage and settings when switching runtimes.
-- Preserve and pass the same primary app data directory to every compatible runtime profile.
-- Show endpoint, setting, storage, and dependency impact before applying.
-- Start with Docker-to-Docker and Docker-to-local-development transitions where possible.
-
-Implemented so far:
-
-- `apps.json` stores `selectedRuntime`.
-- `app.0.1` manifests can declare multiple runtime profiles.
-- Docker runtime profiles are normalized into the existing module install/update engine.
-- Local command runtime profiles are parsed and normalized for future planning, but are not executable in production install/update flows yet.
-
-Remaining before this phase can close:
-
-- switch-runtime plan and apply APIs;
-- runtime adapter execution for repository/local command profiles;
-- reviewed impact display for switching runtime profiles;
-- data/settings preservation checks across different runtime profile types.
-
-### Phase 7 - Add repository-backed app source support
-
-**Status**: Not Started
-
-- Add source repository metadata to app records.
-- Support manifest channels that resolve to git refs and commits.
-- Add a repository checkout/cache model.
-- Add a generic local command runtime adapter for repository-backed apps.
-- Validate common command-based workflows such as `npm run ...` and `dotnet run`, without treating npm packages as an app distribution format.
-- Keep apps without source repositories fully supported.
-
-### Phase 8 - Add standalone app auth and optional gateway access
-
-**Status**: Not Started
-
-- Define Core-owned app authorize and token exchange endpoints for standalone auth redirect.
-- Add app-scoped auth codes or signed identity tokens with app audience validation.
-- Add runtime app SDK/middleware guidance for Hosty-aware apps.
-- Keep Shell embedded identity bridge as the iframe-specific bootstrap path.
-- Keep gateway-protected access as an optional outer traffic wrapper for non-aware apps, legacy tools, external URL/API wrappers, and service endpoints.
-- Ensure Hosty session cookies are never forwarded to runtime apps.
-
-### Phase 9 - Add app data backup and restore
+### Phase 6 - Add app data backup and restore
 
 **Status**: Completed
 
@@ -794,32 +745,14 @@ Remaining before this phase can close:
 - Verify archive digest and per-entry CRC before restore.
 - Document the retention boundary: automatic backup retention and backup deletion APIs are not implemented yet, so backups are retained until manual cleanup or future retention work.
 
-### Phase 10 - Add agent bridge workflow
+## Follow-up Planning
 
-**Status**: Not Started
+The compatibility foundation is intentionally smaller than the long-term Hosty product model. Remaining work moved to focused planning documents so each subsystem can be implemented in a safer order:
 
-- Capture app, route, channel, runtime profile, and user annotation from Shell.
-- Add an agent bridge service interface.
-- Connect repository-aware apps to branch or pull request creation.
-- Show generated pull request channels in Hosty.
-- Validate PR channels against the same local app data before promotion.
-
-### Phase 11 - Split Core and Shell public origins
-
-**Status**: Not Started
-
-The current implementation uses one public origin for the combined Hosty Core and Shell bundle. `HOST_PUBLIC_ORIGIN` points at the same deployed web origin that serves Shell pages, Core-owned auth pages, and public Core APIs. This is intentional while Shell is still bundled into the Host application.
-
-Future work should separate at least Hosty Core API and Hosty Shell as independently addressable public origins.
-
-- Add explicit configuration for Core and Shell public origins, such as `HOST_CORE_PUBLIC_ORIGIN` and `HOST_SHELL_PUBLIC_ORIGIN`, while keeping `HOST_PUBLIC_ORIGIN` as a compatibility alias during migration.
-- Define whether Core-owned auth pages live on the Core origin, the Shell origin, or a dedicated auth system-app origin.
-- Update browser session cookie, account-set cookie, CSRF, CORS, OIDC callback, trusted proxy, and logout behavior for cross-origin Shell-to-Core requests.
-- Update Shell to call Core APIs through the configured Core origin instead of assuming same-origin `/api`.
-- Define Shell system-app settings and channel behavior for a Shell that is delivered separately from Core.
-- Keep runtime app origins independent from both Core and Shell origins, with app-scoped identity tokens or auth codes instead of Hosty session cookies.
-- Document reverse-proxy requirements for the split-origin deployment model.
-- Add migration behavior for existing installations where `HOST_PUBLIC_ORIGIN` currently represents the combined Core/Shell origin.
+- [Runtime Profiles And Source Runtimes](runtime-profiles-and-source-runtimes.md) - runtime switching, repository source records, checkout cache, and local command runtime execution.
+- [App Auth And Origin Separation](app-auth-and-origin-separation.md) - standalone app auth, optional gateway-protected mode, and split Core/Shell public origins.
+- [Agent Bridge Workflow](agent-bridge-workflow.md) - Shell annotations, agent requests, repository edits, pull request channels, and validation.
+- [App Data Backup Retention](app-data-backup-retention.md) - automatic retention, deletion APIs, scheduled cleanup, and UI/CLI controls for backups.
 
 ## Resolved Decisions
 

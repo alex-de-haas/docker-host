@@ -49,5 +49,9 @@ flowchart LR
 
 ## Planning
 
-- [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - planned Hosty Core, Shell/system apps, runtime apps, manifest contract, optional source repositories, runtime profiles, and agent-oriented workflow.
+- [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation plan for Hosty Core, Shell/system apps, runtime apps, manifest contract, app registry, and backups.
 - [Update Channels](planning/update-channels.md) - planned generated channel indexes for Shell, runtime app, and optional CLI updates from `main` and pull request builds.
+- [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - planned runtime switching, repository source records, checkout cache, and local command runtime execution.
+- [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - planned standalone app auth, optional gateway protection, and split Core/Shell public origins.
+- [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - planned Shell annotation to agent, branch/PR, and PR channel validation workflow.
+- [App Data Backup Retention](planning/app-data-backup-retention.md) - planned automatic backup retention, deletion APIs, scheduled cleanup, and backup UI/CLI controls.
