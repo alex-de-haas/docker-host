@@ -256,6 +256,10 @@ internal sealed class HostAppSummary
 {
     public string Id { get; init; } = "";
 
+    public string Kind { get; init; } = "";
+
+    public bool System { get; init; }
+
     public string Source { get; init; } = "";
 
     public string? DeveloperTargetId { get; init; }
@@ -263,6 +267,74 @@ internal sealed class HostAppSummary
     public string ModuleId { get; init; } = "";
 
     public string DisplayName { get; init; } = "";
+
+    public string Version { get; init; } = "";
+
+    public string Status { get; init; } = "";
+
+    public string? SelectedRuntime { get; init; }
+
+    public string? SelectedChannel { get; init; }
+
+    public IReadOnlyList<string> Capabilities { get; init; } = [];
+}
+
+internal sealed class AppBackupsResponse
+{
+    public IReadOnlyList<AppBackupSummary> Backups { get; init; } = [];
+}
+
+internal sealed class AppBackupResponse
+{
+    public AppBackupSummary? Backup { get; init; }
+
+    public HostApiError? Error { get; init; }
+}
+
+internal sealed class AppRestoreRequest
+{
+    public bool Confirmed { get; init; }
+
+    public bool StopBeforeRestore { get; init; } = true;
+
+    public bool CreatePreRestoreBackup { get; init; } = true;
+}
+
+internal sealed class AppRestoreResponse
+{
+    public AppBackupSummary? Restored { get; init; }
+
+    public AppBackupSummary? PreRestoreBackup { get; init; }
+
+    public HostApiError? Error { get; init; }
+}
+
+internal sealed class AppBackupSummary
+{
+    public string Id { get; init; } = "";
+
+    public string AppId { get; init; } = "";
+
+    public string Reason { get; init; } = "";
+
+    public string CreatedAt { get; init; } = "";
+
+    public string DataPath { get; init; } = "";
+
+    public string ArchivePath { get; init; } = "";
+
+    public string ArchiveDigest { get; init; } = "";
+
+    public long ArchiveBytes { get; init; }
+
+    public int FileCount { get; init; }
+}
+
+internal sealed class HostApiError
+{
+    public string Code { get; init; } = "";
+
+    public string Message { get; init; } = "";
 }
 
 internal sealed class ModuleSummary

@@ -1,10 +1,10 @@
 # Module Development Harness
 
-The module development harness is the installed-CLI workflow for running a local module process through Docker Host. It keeps Docker Host responsible for gateway authentication, module assignment checks, Host-signed module identity tokens, direct-origin shell embedding, scoped module directory behavior, and app registry visibility while the module application runs from the developer machine.
+The module development harness is the installed-CLI workflow for running a local module process through Hosty. It keeps Hosty responsible for gateway authentication, module assignment checks, Host-signed module identity tokens, direct-origin shell embedding, scoped module directory behavior, and app registry visibility while the module application runs from the developer machine.
 
 ```mermaid
 flowchart LR
-  A["metadata.dev.json"] --> B["docker-host dev up"]
+  A["metadata.dev.json"] --> B["hosty dev up"]
   B --> C["Trusted control discovery"]
   C --> D["Host /control/v1"]
   D --> E["Developer target"]
@@ -19,15 +19,15 @@ flowchart LR
 
 ## Commands
 
-`docker-host dev up` prepares the integrated loop from `metadata.dev.json`:
+`hosty dev up` prepares the integrated loop from `metadata.dev.json`:
 
 ```bash
-docker-host dev up
+hosty dev up
 ```
 
 It performs these steps:
 
-- starts Docker Host or connects to the selected Host origin;
+- starts Hosty Core from source or connects to the selected Host origin;
 - enables development auto-login and browser account seeding when it starts the local Host process;
 - discovers the Host local control channel from `<HOST_DATA_ROOT_HOST>/run/control.json`;
 - serves local dev metadata to the Host when needed;
@@ -43,28 +43,28 @@ It performs these steps:
 Use `--prepare-only` when another terminal or process manager owns the module dev server:
 
 ```bash
-docker-host dev up --prepare-only
+hosty dev up --prepare-only
 ```
 
 Use `--host-url` to connect to an already running local Host origin:
 
 ```bash
-docker-host dev up --host-url http://localhost:3000
-docker-host dev status --host-url http://localhost:3000
-docker-host dev reset --host-url http://localhost:3000
+hosty dev up --host-url http://localhost:3000
+hosty dev status --host-url http://localhost:3000
+hosty dev reset --host-url http://localhost:3000
 ```
 
-`docker-host dev status` reports Host readiness, target link state, target URL reachability, app registry visibility, and identity mode:
+`hosty dev status` reports Host readiness, target link state, target URL reachability, app registry visibility, and identity mode:
 
 ```bash
-docker-host dev status
+hosty dev status
 ```
 
-`docker-host dev identity` issues a short-lived Host-signed module identity token for the prepared developer target:
+`hosty dev identity` issues a short-lived Host-signed module identity token for the prepared developer target:
 
 ```bash
-docker-host dev identity --format token
-docker-host dev identity --user user@docker-host.local --format header
+hosty dev identity --format token
+hosty dev identity --user user@docker-host.local --format header
 ```
 
 The command uses the trusted local control channel and the current `metadata.dev.json` to resolve the target id. `--user` accepts a development user email or Host user id. When omitted, the CLI uses the first assigned development user from the manifest, which is normally `admin@docker-host.local`. Supported output formats are:
@@ -76,19 +76,19 @@ The command uses the trusted local control channel and the current `metadata.dev
 
 This token is real Host identity, signed by the local Host key store and scoped to the module id. It is still only a diagnostic helper for direct module-origin API probes. Use the Host shell app URL or gateway URL printed by `dev up` when validating app shell transport, gateway policy, browser sessions, redirects, WebSockets, SSE, or iframe identity bridging.
 
-`docker-host dev reset` removes only harness-owned state for the metadata target:
+`hosty dev reset` removes only harness-owned state for the metadata target:
 
 ```bash
-docker-host dev reset
+hosty dev reset
 ```
 
 Reset deletes the developer target, removes the module assignment from development users, and resets the module directory email policy when the target still exists and the module id can be resolved. It does not delete Host users because those accounts may also be useful for other local checks.
 
-`docker-host dev clean` removes persistent development data for one module after confirmation:
+`hosty dev clean` removes persistent development data for one module after confirmation:
 
 ```bash
-docker-host dev clean com.haas.demo-module
-docker-host dev clean modules/demo-module/metadata.dev.json --yes
+hosty dev clean com.haas.demo-module
+hosty dev clean modules/demo-module/metadata.dev.json --yes
 ```
 
 When `--manifest` is omitted, `up`, `status`, and `reset` use `metadata.dev.json` from the current working directory. A supplied path may be a metadata JSON file or a directory containing `metadata.dev.json`.
@@ -199,19 +199,19 @@ The harness sets module directory policy to include email addresses so local mod
 
 ## Host Modes
 
-The top-level `docker-host dev` harness is dev-only. It does not start, inspect, or require the production Host container. Without `--host-url`, it requires `HOST_DEV_REPOSITORY_PATH` in CLI config and starts `npm run host:dev` in that repository, waits for the configured Host origin to publish control discovery, then links module developer targets through that local Host. The Host process is stopped when the foreground module command exits or the dev harness is interrupted.
+The top-level `hosty dev` harness is dev-only. It does not start, inspect, or require the production Host container. Without `--host-url`, it requires `HOST_DEV_REPOSITORY_PATH` in CLI config and starts `npm run host:dev` in that repository, waits for the configured Host origin to publish control discovery, then links module developer targets through that local Host. The Host process is stopped when the foreground module command exits or the dev harness is interrupted.
 
 For repository-local Host development, the CLI can infer `local-process` mode from launch settings:
 
 ```bash
-docker-host config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
-docker-host config set HOST_DEV_PORT 3000
-docker-host dev up --manifest modules/demo-module/metadata.dev.json
+hosty config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
+hosty config set HOST_DEV_PORT 3000
+hosty dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
-When `HOST_DEV_REPOSITORY_PATH` is set, `docker-host dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, `HOST_DEV_AUTH=auto`, `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, and `PORT` into the Host process so trusted control discovery and development browser sessions work without manual setup. Existing `HOST_DEV_AUTH` and `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS` environment values are preserved when they are already set.
+When `HOST_DEV_REPOSITORY_PATH` is set, `hosty dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, `HOST_DEV_AUTH=auto`, `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, and `PORT` into the Host process so trusted control discovery and development browser sessions work without manual setup. Existing `HOST_DEV_AUTH` and `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS` environment values are preserved when they are already set.
 
-If `HOST_DEV_REPOSITORY_PATH` is not configured, `docker-host dev up` exits before reading module metadata or starting anything. Configure it first or pass a loopback `--host-url` for an already running development Host on the developer machine.
+If `HOST_DEV_REPOSITORY_PATH` is not configured, `hosty dev up` exits before reading module metadata or starting anything. Configure it first or pass a loopback `--host-url` for an already running development Host on the developer machine.
 
 `external` mode is for a development Host that is already running on the developer machine. The CLI accepts only loopback `--host-url` origins such as `http://localhost:3000` or `http://127.0.0.1:3000`, because it serves `metadata.dev.json` and maps module process services through `127.0.0.1` from the Host process. The CLI does not start, stop, inspect, or read logs from the Host process. It connects to `--host-url` and uses local control for Host-owned operations.
 
@@ -240,6 +240,6 @@ Use production-like image testing for:
 
 ## Authentication
 
-`docker-host dev` uses the trusted local control channel. It requires local access to the Host data root and a running Host control endpoint; it does not require a Host user session, a CLI admin token, or `DOCKER_HOST_CLI_TOKEN`.
+`hosty dev` uses the trusted local control channel. It requires local access to the Host data root and a running Host control endpoint; it does not require a Host user session, a CLI admin token, or `DOCKER_HOST_CLI_TOKEN`.
 
 The CLI does not write Host auth JSON, module assignment JSON, or developer target JSON directly. It calls Host-owned control routes so audit events, metadata validation, and state normalization stay centralized in Docker Host.

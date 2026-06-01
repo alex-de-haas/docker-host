@@ -9,7 +9,7 @@ internal sealed class InstallCommand(CommandContext context)
     {
         if (args.Length > 0)
         {
-            throw new CommandUsageException("install does not accept arguments.", "Usage: docker-host install");
+            throw new CommandUsageException("install does not accept arguments.", "Usage: hosty install");
         }
 
         var settings = context.SettingsStore.EnsureInstalled();
@@ -21,7 +21,7 @@ internal sealed class InstallCommand(CommandContext context)
         context.Console.MarkupLine("[green]Launch configuration is ready.[/]");
         context.Console.MarkupLine($"Config: [grey]{Markup.Escape(context.Environment.LaunchConfigPath)}[/]");
         context.Console.MarkupLine($"Data root: [grey]{Markup.Escape(settings.ResolveHostDataRoot(context.Environment))}[/]");
-        context.Console.MarkupLine("Next: run [grey]docker-host start[/]");
+        context.Console.MarkupLine("Next: run [grey]hosty start[/]");
         return 0;
     }
 }

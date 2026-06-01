@@ -7,11 +7,11 @@ internal sealed class ConfigCommand(CommandContext context)
 {
     private const string Usage = """
         Usage:
-          docker-host config list
-          docker-host config get <KEY>
-          docker-host config set <KEY> <VALUE>
-          docker-host config set <KEY>=<VALUE>
-          docker-host config reset <KEY>
+          hosty config list
+          hosty config get <KEY>
+          hosty config set <KEY> <VALUE>
+          hosty config set <KEY>=<VALUE>
+          hosty config reset <KEY>
         """;
 
     public Task<int> ExecuteAsync(string[] args)
@@ -100,4 +100,3 @@ internal sealed class ConfigCommand(CommandContext context)
         return 0;
     }
 }
-

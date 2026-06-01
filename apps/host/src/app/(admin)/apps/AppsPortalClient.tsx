@@ -105,10 +105,27 @@ function renderPortalContent({
     );
   }
 
+  const systemApps = appsState.apps.filter(app => app.system);
+  const runtimeApps = appsState.apps.filter(app => !app.system);
+
   return (
-    <section className="space-y-4">
+    <section className="space-y-6">
+      {systemApps.length > 0 && (
+        <AppSection title="System apps" apps={systemApps} />
+      )}
+      {runtimeApps.length > 0 && (
+        <AppSection title="Runtime apps" apps={runtimeApps} />
+      )}
+    </section>
+  );
+}
+
+function AppSection({ title, apps }: { title: string; apps: HostAppEntry[] }) {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {appsState.apps.map(app => (
+        {apps.map(app => (
           <AppPortalEntry key={app.id} app={app} />
         ))}
       </div>
@@ -135,6 +152,11 @@ function AppPortalEntry({ app }: { app: HostAppEntry }) {
         {app.source === 'developer' && (
           <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
             Dev
+          </Badge>
+        )}
+        {app.system && (
+          <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-700">
+            System
           </Badge>
         )}
         {app.originScope === 'local' && (

@@ -3,33 +3,33 @@ set -eu
 
 REPO="alex-de-haas/docker-host"
 REF="main"
-SKILL_PATH="skills/docker-host-module"
-SKILL_NAME="docker-host-module"
+SKILL_PATH="skills/hosty-app-skill"
+SKILL_NAME="hosty-app-skill"
 DEST_ROOT="${CODEX_HOME:-$HOME/.codex}/skills"
 SOURCE_DIR=""
 DRY_RUN="false"
 
 usage() {
   cat <<'EOF'
-Install or update the Docker Host Module Codex skill.
+Install or update the Hosty App Codex skill.
 
 Usage:
-  install-docker-host-module-skill.sh [options]
+  install-hosty-app-skill.sh [options]
 
 Options:
   --repo OWNER/REPO       GitHub repository to install from. Default: alex-de-haas/docker-host
   --ref REF               Git branch, tag, or commit SHA. Default: main
-  --path PATH             Skill path inside the repository. Default: skills/docker-host-module
-  --name NAME             Destination skill name. Default: docker-host-module
+  --path PATH             Skill path inside the repository. Default: skills/hosty-app-skill
+  --name NAME             Destination skill name. Default: hosty-app-skill
   --dest DIR              Destination skills root. Default: ${CODEX_HOME:-$HOME/.codex}/skills
   --source-dir DIR        Install from a local skill directory instead of GitHub
   --dry-run               Print what would happen without changing files
   -h, --help              Show this help
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-docker-host-module-skill.sh | sh
-  curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-docker-host-module-skill.sh | sh -s -- --ref main
-  scripts/install-docker-host-module-skill.sh --source-dir skills/docker-host-module
+  curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-hosty-app-skill.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-hosty-app-skill.sh | sh -s -- --ref main
+  scripts/install-hosty-app-skill.sh --source-dir skills/hosty-app-skill
 EOF
 }
 
@@ -91,7 +91,7 @@ copy_skill() {
 }
 
 download_skill() {
-  tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/docker-host-skill.XXXXXX")"
+  tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/hosty-app-skill.XXXXXX")"
   archive="$tmp_root/repo.tar.gz"
   extract_dir="$tmp_root/extract"
   mkdir -p "$extract_dir"

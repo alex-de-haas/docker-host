@@ -6,7 +6,7 @@ internal sealed class RestartCommand(CommandContext context)
     {
         if (args.Length > 0)
         {
-            throw new CommandUsageException("restart does not accept arguments.", "Usage: docker-host restart");
+            throw new CommandUsageException("restart does not accept arguments.", "Usage: hosty restart");
         }
 
         var settings = context.SettingsStore.EnsureInstalled();

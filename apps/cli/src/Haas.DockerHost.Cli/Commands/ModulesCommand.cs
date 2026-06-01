@@ -7,21 +7,24 @@ using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.HostApi;
 using Spectre.Console;
 
-internal sealed class ModulesCommand(CommandContext context)
+internal sealed class ModulesCommand(CommandContext context, string commandName = "modules")
 {
-    private const string Usage = """
+    private string Usage => $"""
         Usage:
-          docker-host modules list
-          docker-host modules install <metadata-url>
-          docker-host modules add <metadata-url>
-          docker-host modules start <module-id>
-          docker-host modules stop <module-id>
-          docker-host modules restart <module-id>
-          docker-host modules update <module-id>
-          docker-host modules remove <module-id> [--delete-data]
-          docker-host modules dev list
-          docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
-          docker-host modules dev unlink <target-id>
+          hosty {commandName} list
+          hosty {commandName} install <manifest-url>
+          hosty {commandName} add <manifest-url>
+          hosty {commandName} start <app-id>
+          hosty {commandName} stop <app-id>
+          hosty {commandName} restart <app-id>
+          hosty {commandName} update <app-id>
+          hosty {commandName} backup <app-id>
+          hosty {commandName} backups <app-id>
+          hosty {commandName} restore <app-id> <backup-id>
+          hosty {commandName} remove <app-id> [--delete-data]
+          hosty {commandName} dev list
+          hosty {commandName} dev link <manifest-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
+          hosty {commandName} dev unlink <target-id>
         """;
 
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
@@ -46,6 +49,9 @@ internal sealed class ModulesCommand(CommandContext context)
             "stop" => await RunLifecycleActionAsync("stop", args[1..]),
             "restart" => await RunLifecycleActionAsync("restart", args[1..]),
             "update" => await UpdateAsync(args[1..]),
+            "backup" => await CreateBackupAsync(args[1..]),
+            "backups" => await ListBackupsAsync(args[1..]),
+            "restore" => await RestoreBackupAsync(args[1..]),
             "remove" => await RemoveAsync(args[1..]),
             "dev" => await ExecuteDevAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown modules command '{args[0]}'.", Usage),
@@ -56,7 +62,12 @@ internal sealed class ModulesCommand(CommandContext context)
     {
         if (args.Length != 0)
         {
-            throw new CommandUsageException("modules list does not accept arguments.", "Usage: docker-host modules list");
+            throw new CommandUsageException($"{commandName} list does not accept arguments.", $"Usage: hosty {commandName} list");
+        }
+
+        if (string.Equals(commandName, "apps", StringComparison.Ordinal))
+        {
+            return await ListAppsAsync();
         }
 
         using var hostApi = await CreateHostControlClientAsync();
@@ -75,7 +86,7 @@ internal sealed class ModulesCommand(CommandContext context)
         if (modules.Count == 0)
         {
             context.Console.MarkupLine("[yellow]No installed modules.[/]");
-            context.Console.WriteLine("Install one with docker-host modules install <metadata-url>.");
+            context.Console.WriteLine($"Install one with hosty {commandName} install <manifest-url>.");
             return 0;
         }
 
@@ -105,13 +116,61 @@ internal sealed class ModulesCommand(CommandContext context)
         return 0;
     }
 
+    private async Task<int> ListAppsAsync()
+    {
+        using var hostApi = await CreateHostControlClientAsync();
+        if (hostApi is null)
+        {
+            return 1;
+        }
+
+        var response = await hostApi.ListAppsAsync();
+        if (!response.IsSuccess || response.Body is null)
+        {
+            return RenderApiFailure("Failed to list apps.", response.StatusCode, response.RawBody);
+        }
+
+        var apps = response.Body.Apps;
+        if (apps.Count == 0)
+        {
+            context.Console.MarkupLine("[yellow]No apps.[/]");
+            context.Console.WriteLine("Install one with hosty apps install <manifest-url>.");
+            return 0;
+        }
+
+        var table = new Table()
+            .RoundedBorder()
+            .AddColumn("App")
+            .AddColumn("Kind")
+            .AddColumn("Source")
+            .AddColumn("Status")
+            .AddColumn("Runtime")
+            .AddColumn("Channel")
+            .AddColumn("Capabilities");
+
+        foreach (var app in apps)
+        {
+            table.AddRow(
+                Markup.Escape($"{app.DisplayName} ({app.Id})"),
+                Markup.Escape(app.Kind),
+                Markup.Escape(app.Source),
+                Markup.Escape(app.Status),
+                Markup.Escape(app.SelectedRuntime ?? ""),
+                Markup.Escape(app.SelectedChannel ?? ""),
+                Markup.Escape(string.Join(", ", app.Capabilities)));
+        }
+
+        context.Console.Write(table);
+        return 0;
+    }
+
     private async Task<int> InstallAsync(string[] args)
     {
         if (args.Length != 1)
         {
             throw new CommandUsageException(
-                "modules install requires exactly one metadata URL.",
-                "Usage: docker-host modules install <metadata-url>");
+                $"{commandName} install requires exactly one manifest URL.",
+                $"Usage: hosty {commandName} install <manifest-url>");
         }
 
         using var hostApi = await CreateHostControlClientAsync();
@@ -129,7 +188,7 @@ internal sealed class ModulesCommand(CommandContext context)
         var planBody = planResponse.Body;
         if (planBody?.Mode == "update" || planBody?.UpdatePlan is not null)
         {
-            context.Console.MarkupLine("[yellow]Module is already installed from this metadata URL. Switching to update review.[/]");
+            context.Console.MarkupLine("[yellow]App is already installed from this manifest URL. Switching to update review.[/]");
             if (planBody?.UpdatePlan is not null)
             {
                 RenderUpdatePlan(planBody.UpdatePlan);
@@ -139,7 +198,7 @@ internal sealed class ModulesCommand(CommandContext context)
             {
                 return RenderPlanFailure(
                     planBody?.Error,
-                    "Failed to create module update plan.",
+                    "Failed to create app update plan.",
                     planResponse.StatusCode,
                     planResponse.RawBody);
             }
@@ -161,7 +220,7 @@ internal sealed class ModulesCommand(CommandContext context)
         {
             return RenderPlanFailure(
                 planBody?.Error,
-                "Failed to create module install plan.",
+                "Failed to create app install plan.",
                 planResponse.StatusCode,
                 planResponse.RawBody);
         }
@@ -190,7 +249,7 @@ internal sealed class ModulesCommand(CommandContext context)
         };
 
         RenderRequestPreview(RedactInstallRequest(request));
-        if (!Confirm("Apply this module install?"))
+        if (!Confirm("Apply this app install?"))
         {
             context.Console.MarkupLine("[yellow]Install cancelled.[/]");
             return 130;
@@ -198,19 +257,19 @@ internal sealed class ModulesCommand(CommandContext context)
 
         var applyResponse = await CommandStatus.RunAsync(
             context,
-            $"Installing module [grey]{Markup.Escape(plan.Module.Id)}[/]...",
+            $"Installing app [grey]{Markup.Escape(plan.Module.Id)}[/]...",
             async () => await hostApi.ApplyInstallAsync(request));
         var applyBody = applyResponse.Body;
         if (!applyResponse.IsSuccess || applyBody?.Error is not null)
         {
             return RenderPlanFailure(
                 applyBody?.Error,
-                "Failed to install module.",
+                "Failed to install app.",
                 applyResponse.StatusCode,
                 applyResponse.RawBody);
         }
 
-        context.Console.MarkupLine("[green]Module install completed.[/]");
+        context.Console.MarkupLine("[green]App install completed.[/]");
         if (applyBody is not null)
         {
             RenderStringList("Installed", applyBody.InstalledModuleIds);
@@ -224,13 +283,118 @@ internal sealed class ModulesCommand(CommandContext context)
         return 0;
     }
 
+    private async Task<int> ListBackupsAsync(string[] args)
+    {
+        EnsureAppsCommand("backups <app-id>");
+        if (args.Length != 1)
+        {
+            throw new CommandUsageException("apps backups requires exactly one app id.", "Usage: hosty apps backups <app-id>");
+        }
+
+        using var hostApi = await CreateHostControlClientAsync();
+        if (hostApi is null)
+        {
+            return 1;
+        }
+
+        var response = await hostApi.ListAppBackupsAsync(args[0]);
+        if (!response.IsSuccess || response.Body is null)
+        {
+            return RenderApiFailure("Failed to list app backups.", response.StatusCode, response.RawBody);
+        }
+
+        if (response.Body.Backups.Count == 0)
+        {
+            context.Console.MarkupLine("[yellow]No app data backups.[/]");
+            return 0;
+        }
+
+        RenderBackups(response.Body.Backups);
+        return 0;
+    }
+
+    private async Task<int> CreateBackupAsync(string[] args)
+    {
+        EnsureAppsCommand("backup <app-id>");
+        if (args.Length != 1)
+        {
+            throw new CommandUsageException("apps backup requires exactly one app id.", "Usage: hosty apps backup <app-id>");
+        }
+
+        using var hostApi = await CreateHostControlClientAsync();
+        if (hostApi is null)
+        {
+            return 1;
+        }
+
+        var response = await CommandStatus.RunAsync(
+            context,
+            $"Creating app data backup [grey]{Markup.Escape(args[0])}[/]...",
+            async () => await hostApi.CreateAppBackupAsync(args[0]));
+        if (!response.IsSuccess || response.Body?.Backup is null)
+        {
+            return RenderApiFailure("Failed to create app backup.", response.StatusCode, response.RawBody);
+        }
+
+        context.Console.MarkupLine("[green]App data backup created.[/]");
+        RenderBackup(response.Body.Backup);
+        return 0;
+    }
+
+    private async Task<int> RestoreBackupAsync(string[] args)
+    {
+        EnsureAppsCommand("restore <app-id> <backup-id>");
+        if (args.Length != 2)
+        {
+            throw new CommandUsageException("apps restore requires an app id and backup id.", "Usage: hosty apps restore <app-id> <backup-id>");
+        }
+
+        var appId = args[0];
+        var backupId = args[1];
+        if (!Confirm($"Restore backup {backupId} for app {appId}? The app will be stopped first."))
+        {
+            context.Console.MarkupLine("[yellow]Restore cancelled.[/]");
+            return 130;
+        }
+
+        using var hostApi = await CreateHostControlClientAsync();
+        if (hostApi is null)
+        {
+            return 1;
+        }
+
+        var response = await CommandStatus.RunAsync(
+            context,
+            $"Restoring app data backup [grey]{Markup.Escape(backupId)}[/]...",
+            async () => await hostApi.RestoreAppBackupAsync(appId, backupId, new AppRestoreRequest
+            {
+                Confirmed = true,
+                StopBeforeRestore = true,
+                CreatePreRestoreBackup = true,
+            }));
+        if (!response.IsSuccess || response.Body?.Restored is null)
+        {
+            return RenderApiFailure("Failed to restore app backup.", response.StatusCode, response.RawBody);
+        }
+
+        context.Console.MarkupLine("[green]App data backup restored.[/]");
+        RenderBackup(response.Body.Restored);
+        if (response.Body.PreRestoreBackup is not null)
+        {
+            context.Console.MarkupLine("[grey]Pre-restore backup:[/]");
+            RenderBackup(response.Body.PreRestoreBackup);
+        }
+
+        return 0;
+    }
+
     private async Task<int> RunLifecycleActionAsync(string action, string[] args)
     {
         if (args.Length != 1)
         {
             throw new CommandUsageException(
-                $"modules {action} requires exactly one module id.",
-                $"Usage: docker-host modules {action} <module-id>");
+                $"{commandName} {action} requires exactly one app id.",
+                $"Usage: hosty {commandName} {action} <app-id>");
         }
 
         using var hostApi = await CreateHostControlClientAsync();
@@ -254,16 +418,16 @@ internal sealed class ModulesCommand(CommandContext context)
         };
         var response = await CommandStatus.RunAsync(
             context,
-            $"{statusVerb} module [grey]{Markup.Escape(moduleId)}[/]...",
+            $"{statusVerb} app [grey]{Markup.Escape(moduleId)}[/]...",
             async () => await hostApi.RunModuleActionAsync(moduleId, action));
         var body = response.Body;
         if (!response.IsSuccess || body?.Success != true)
         {
-            RenderModuleOperationError(body?.Error, $"Failed to {action} module.", response.StatusCode, response.RawBody);
+            RenderModuleOperationError(body?.Error, $"Failed to {action} app.", response.StatusCode, response.RawBody);
             return response.StatusCode == HttpStatusCode.UnprocessableEntity ? 2 : 1;
         }
 
-        context.Console.MarkupLine($"[green]Module {Markup.Escape(action)} completed.[/]");
+        context.Console.MarkupLine($"[green]App {Markup.Escape(action)} completed.[/]");
         if (body.Module is not null)
         {
             RenderModuleSummary(body.Module);
@@ -277,8 +441,8 @@ internal sealed class ModulesCommand(CommandContext context)
         if (args.Length != 1)
         {
             throw new CommandUsageException(
-                "modules update requires exactly one module id.",
-                "Usage: docker-host modules update <module-id>");
+                $"{commandName} update requires exactly one app id.",
+                $"Usage: hosty {commandName} update <app-id>");
         }
 
         using var hostApi = await CreateHostControlClientAsync();
@@ -304,7 +468,7 @@ internal sealed class ModulesCommand(CommandContext context)
         {
             return RenderPlanFailure(
                 planBody?.Error,
-                "Failed to create module update plan.",
+                "Failed to create app update plan.",
                 planResponse.StatusCode,
                 planResponse.RawBody);
         }
@@ -338,7 +502,7 @@ internal sealed class ModulesCommand(CommandContext context)
         };
 
         RenderRequestPreview(RedactUpdateRequest(request));
-        if (!Confirm("Apply this module update?"))
+        if (!Confirm("Apply this app update?"))
         {
             context.Console.MarkupLine("[yellow]Update cancelled.[/]");
             return 130;
@@ -346,19 +510,19 @@ internal sealed class ModulesCommand(CommandContext context)
 
         var applyResponse = await CommandStatus.RunAsync(
             context,
-            $"Updating module [grey]{Markup.Escape(plan.ModuleId)}[/]...",
+            $"Updating app [grey]{Markup.Escape(plan.ModuleId)}[/]...",
             async () => await hostApi.ApplyUpdateAsync(plan.ModuleId, request));
         var applyBody = applyResponse.Body;
         if (!applyResponse.IsSuccess || applyBody?.Error is not null)
         {
             return RenderPlanFailure(
                 applyBody?.Error,
-                "Failed to update module.",
+                "Failed to update app.",
                 applyResponse.StatusCode,
                 applyResponse.RawBody);
         }
 
-        context.Console.MarkupLine("[green]Module update completed.[/]");
+        context.Console.MarkupLine("[green]App update completed.[/]");
         if (applyBody is not null)
         {
             if (!string.IsNullOrWhiteSpace(applyBody.UpdatedModuleId))
@@ -383,8 +547,8 @@ internal sealed class ModulesCommand(CommandContext context)
         if (parsed.Positionals.Count != 1)
         {
             throw new CommandUsageException(
-                "modules remove requires exactly one module id.",
-                "Usage: docker-host modules remove <module-id> [--delete-data]");
+                $"{commandName} remove requires exactly one app id.",
+                $"Usage: hosty {commandName} remove <app-id> [--delete-data]");
         }
 
         using var hostApi = await CreateHostControlClientAsync();
@@ -414,7 +578,7 @@ internal sealed class ModulesCommand(CommandContext context)
         {
             return RenderPlanFailure(
                 planBody?.Error,
-                "Failed to create module remove plan.",
+                "Failed to create app remove plan.",
                 planResponse.StatusCode,
                 planResponse.RawBody);
         }
@@ -432,7 +596,7 @@ internal sealed class ModulesCommand(CommandContext context)
             return 1;
         }
 
-        if (!Confirm(deleteData ? "Remove this module and delete its module-owned data?" : "Remove this module?"))
+        if (!Confirm(deleteData ? "Remove this app and delete its app-owned data?" : "Remove this app?"))
         {
             context.Console.MarkupLine("[yellow]Remove cancelled.[/]");
             return 130;
@@ -440,7 +604,7 @@ internal sealed class ModulesCommand(CommandContext context)
 
         var applyResponse = await CommandStatus.RunAsync(
             context,
-            $"Removing module [grey]{Markup.Escape(moduleId)}[/]...",
+            $"Removing app [grey]{Markup.Escape(moduleId)}[/]...",
             async () => await hostApi.ApplyRemoveAsync(moduleId, new ModuleRemoveRequest
             {
                 Confirmed = true,
@@ -449,21 +613,21 @@ internal sealed class ModulesCommand(CommandContext context)
         var body = applyResponse.Body;
         if (!applyResponse.IsSuccess || body?.Success != true)
         {
-            RenderModuleOperationError(body?.Error, "Failed to remove module.", applyResponse.StatusCode, applyResponse.RawBody);
+            RenderModuleOperationError(body?.Error, "Failed to remove app.", applyResponse.StatusCode, applyResponse.RawBody);
             return 1;
         }
 
-        context.Console.MarkupLine("[green]Module remove completed.[/]");
+        context.Console.MarkupLine("[green]App remove completed.[/]");
         return 0;
     }
 
     private async Task<int> ExecuteDevAsync(string[] args)
     {
-        const string devUsage = """
+        var devUsage = $"""
             Usage:
-              docker-host modules dev list
-              docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
-              docker-host modules dev unlink <target-id>
+              hosty {commandName} dev list
+              hosty {commandName} dev link <manifest-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
+              hosty {commandName} dev unlink <target-id>
             """;
 
         if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"])
@@ -477,7 +641,7 @@ internal sealed class ModulesCommand(CommandContext context)
             "list" => await ListDevTargetsAsync(args[1..]),
             "link" => await LinkDevTargetAsync(args[1..]),
             "unlink" => await UnlinkDevTargetAsync(args[1..]),
-            _ => throw new CommandUsageException($"Unknown modules dev command '{args[0]}'.", devUsage),
+            _ => throw new CommandUsageException($"Unknown {commandName} dev command '{args[0]}'.", devUsage),
         };
     }
 
@@ -485,7 +649,7 @@ internal sealed class ModulesCommand(CommandContext context)
     {
         if (args.Length != 0)
         {
-            throw new CommandUsageException("modules dev list does not accept arguments.", "Usage: docker-host modules dev list");
+            throw new CommandUsageException($"{commandName} dev list does not accept arguments.", $"Usage: hosty {commandName} dev list");
         }
 
         using var hostApi = await CreateHostControlClientAsync();
@@ -510,8 +674,8 @@ internal sealed class ModulesCommand(CommandContext context)
         if (parsed.Positionals.Count != 4)
         {
             throw new CommandUsageException(
-                "modules dev link requires metadata URL, hostname, port key, and target URL.",
-                "Usage: docker-host modules dev link <metadata-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]");
+                $"{commandName} dev link requires manifest URL, hostname, port key, and target URL.",
+                $"Usage: hosty {commandName} dev link <manifest-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]");
         }
 
         using var hostApi = await CreateHostControlClientAsync();
@@ -545,7 +709,7 @@ internal sealed class ModulesCommand(CommandContext context)
     {
         if (args.Length != 1)
         {
-            throw new CommandUsageException("modules dev unlink requires exactly one target id.", "Usage: docker-host modules dev unlink <target-id>");
+            throw new CommandUsageException($"{commandName} dev unlink requires exactly one target id.", $"Usage: hosty {commandName} dev unlink <target-id>");
         }
 
         using var hostApi = await CreateHostControlClientAsync();
@@ -575,14 +739,14 @@ internal sealed class ModulesCommand(CommandContext context)
         if (container is null)
         {
             context.Console.MarkupLine("[red]Host container does not exist.[/]");
-            context.Console.WriteLine("Run docker-host start first.");
+            context.Console.WriteLine("Run hosty start first.");
             return null;
         }
 
         if (container.State?.Running != true)
         {
             context.Console.MarkupLine("[red]Host container is not running.[/]");
-            context.Console.WriteLine("Run docker-host start first.");
+            context.Console.WriteLine("Run hosty start first.");
             return null;
         }
 
@@ -590,7 +754,7 @@ internal sealed class ModulesCommand(CommandContext context)
         if (url is null)
         {
             context.Console.MarkupLine("[red]Unable to determine the Host API URL from Docker container metadata.[/]");
-            context.Console.WriteLine("Run docker-host status and docker-host start to inspect or recreate the Host container.");
+            context.Console.WriteLine("Run hosty status and hosty start to inspect or recreate the Host container.");
             return null;
         }
 
@@ -625,7 +789,7 @@ internal sealed class ModulesCommand(CommandContext context)
             return true;
         }
 
-        context.Console.MarkupLine("[red]Docker Host is not ready.[/]");
+        context.Console.MarkupLine("[red]Host is not ready.[/]");
         if (!string.IsNullOrWhiteSpace(response.RawBody))
         {
             context.Console.WriteLine(response.RawBody);
@@ -1274,6 +1438,16 @@ internal sealed class ModulesCommand(CommandContext context)
         return statusCode == HttpStatusCode.UnprocessableEntity ? 2 : 1;
     }
 
+    private void EnsureAppsCommand(string actionUsage)
+    {
+        if (!string.Equals(commandName, "apps", StringComparison.Ordinal))
+        {
+            throw new CommandUsageException(
+                $"Use hosty apps {actionUsage} for app data backups.",
+                $"Usage: hosty apps {actionUsage}");
+        }
+    }
+
     private void RenderValidationErrors(IReadOnlyList<InstallPlanValidationError> validationErrors)
     {
         if (validationErrors.Count == 0)
@@ -1339,6 +1513,40 @@ internal sealed class ModulesCommand(CommandContext context)
         table.AddRow("Container", Markup.Escape(module.RuntimeStatus?.ContainerName ?? ""));
         table.AddRow("Image", Markup.Escape(module.Image?.Reference ?? ""));
         context.Console.Write(table);
+    }
+
+    private void RenderBackups(IReadOnlyList<AppBackupSummary> backups)
+    {
+        var table = new Table()
+            .RoundedBorder()
+            .AddColumn("Backup")
+            .AddColumn("Reason")
+            .AddColumn("Created")
+            .AddColumn("Files")
+            .AddColumn("Bytes");
+
+        foreach (var backup in backups)
+        {
+            table.AddRow(
+                Markup.Escape(backup.Id),
+                Markup.Escape(backup.Reason),
+                Markup.Escape(backup.CreatedAt),
+                backup.FileCount.ToString(CultureInfo.InvariantCulture),
+                backup.ArchiveBytes.ToString(CultureInfo.InvariantCulture));
+        }
+
+        context.Console.Write(table);
+    }
+
+    private void RenderBackup(AppBackupSummary backup)
+    {
+        context.Console.MarkupLine($"[bold]Backup:[/] {Markup.Escape(backup.Id)}");
+        context.Console.MarkupLine($"[bold]App:[/] {Markup.Escape(backup.AppId)}");
+        context.Console.MarkupLine($"[bold]Reason:[/] {Markup.Escape(backup.Reason)}");
+        context.Console.MarkupLine($"[bold]Created:[/] {Markup.Escape(backup.CreatedAt)}");
+        context.Console.MarkupLine($"[bold]Files:[/] {backup.FileCount.ToString(CultureInfo.InvariantCulture)}");
+        context.Console.MarkupLine($"[bold]Archive:[/] {Markup.Escape(backup.ArchivePath)}");
+        context.Console.MarkupLine($"[bold]Digest:[/] {Markup.Escape(backup.ArchiveDigest)}");
     }
 
     private void RenderStringList(string label, IReadOnlyList<string> values)
@@ -1418,7 +1626,7 @@ internal sealed class ModulesCommand(CommandContext context)
         return true;
     }
 
-    private static ParsedArguments ParseArguments(string[] args)
+    private ParsedArguments ParseArguments(string[] args)
     {
         var positionals = new List<string>();
         var options = new Dictionary<string, string>(StringComparer.Ordinal);

@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import {
+  APP_MANIFEST_SCHEMA_VERSION,
+  convertAppManifestToModuleMetadata,
+} from '@/lib/app-manifest';
 import type {
   InstallPlanValidationError,
   ModuleImagePullPolicy,
@@ -412,6 +416,30 @@ export function validateAndNormalizeMetadata(
           message: 'Metadata must be a JSON object.',
           path: nodePath,
         },
+      ],
+    };
+  }
+
+  if (value.schemaVersion === APP_MANIFEST_SCHEMA_VERSION) {
+    const converted = convertAppManifestToModuleMetadata(value, nodePath);
+    if (!converted.metadata) {
+      return {
+        metadata: null,
+        validationErrors: converted.validationErrors,
+      };
+    }
+
+    const normalized = validateAndNormalizeMetadata(converted.metadata, nodePath);
+    return {
+      metadata: normalized.metadata
+        ? {
+            ...normalized.metadata,
+            sourceSchemaVersion: APP_MANIFEST_SCHEMA_VERSION,
+          }
+        : null,
+      validationErrors: [
+        ...converted.validationErrors,
+        ...normalized.validationErrors,
       ],
     };
   }

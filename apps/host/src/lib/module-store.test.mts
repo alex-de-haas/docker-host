@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  readModuleMetadata,
   readModulesStoreSnapshot,
   writeModulesStore,
 } from './module-store.ts';
@@ -104,6 +105,28 @@ test('migrates legacy array module stores in snapshot reads', async () => {
   assert.deepEqual(store.hostSettings, {});
   assert.equal(store.modules[0]?.containers[0]?.containerName, 'array-container');
   assert.equal(store.modules[0]?.containers[0]?.networkAlias, 'mod-com-example-array');
+});
+
+test('reads manifestPath as a metadataPath compatibility alias', async () => {
+  const config = await createModuleStoreTestConfig();
+  const moduleRoot = path.join(config.dataRootContainer, 'apps', 'com.example.app');
+  await fs.mkdir(moduleRoot, { recursive: true });
+  await fs.writeFile(path.join(moduleRoot, 'manifest.json'), `${JSON.stringify({
+    schemaVersion: '0.2',
+    id: 'com.example.app',
+    name: 'Example App',
+    version: '1.0.0',
+    containers: [],
+  })}\n`);
+
+  const metadata = await readModuleMetadata({
+    id: 'com.example.app',
+    metadataUrl: 'https://apps.example.test/app/manifest.json',
+    manifestPath: 'apps/com.example.app/manifest.json',
+    containers: [],
+  }, config);
+
+  assert.equal(metadata?.id, 'com.example.app');
 });
 
 async function createModuleStoreTestConfig(): Promise<HostRuntimeConfig> {

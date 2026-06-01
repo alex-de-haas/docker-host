@@ -1,10 +1,10 @@
-# Module metadata files
+# Module metadata and app manifest files
 
-This document describes the implemented contract for adding modules to Docker Host.
+This document describes the implemented contract for adding runtime apps to the Host. Legacy Docker module metadata remains supported. New app-oriented installs should use manifest terminology.
 
 ## Idea
 
-Docker Host must be able to add logical modules that run in Docker, not just Docker images. The source of a module description is not a Git repository or an image repository, but a direct URL to a JSON module metadata file.
+Docker Host must be able to add logical runtime apps that run in Docker, not just Docker images. The source of an app description can be a direct URL to a JSON app manifest or a legacy module metadata file.
 
 That JSON file can live in:
 
@@ -32,8 +32,10 @@ The metadata file describes:
 
 - **Host** - the current Docker Host application that manages modules and containers.
 - **Module** - a logical functional unit hosted in one or more Docker containers.
-- **Module metadata file** - the JSON file that describes one module.
-- **Module metadata URL** - a direct link to a module metadata file.
+- **App manifest file** - the preferred JSON file that describes one runtime app.
+- **Manifest URL** - a direct link to an app manifest file.
+- **Module metadata file** - the legacy JSON file that describes one Docker module.
+- **Module metadata URL** - a direct link to a legacy module metadata file.
 - **Image repository** - the registry path where a module Docker image lives, for example `ghcr.io/acme/reports-module`.
 - **Dependency module** - another module whose metadata file is referenced by the current module.
 - **Host data root** - the physical folder where Docker Host stores installed modules and their data.
@@ -45,9 +47,9 @@ The metadata file describes:
 - **Shell UI entrypoint** - the metadata contract for browser UI that opens inside the Host shell iframe from a module-owned origin.
 - **Service/API exposure** - a separate Host-owned gateway record for an endpoint that can be published on a dedicated hostname for external clients. This record does not control shell App discovery.
 
-## Metadata URL
+## Manifest and metadata URL
 
-An administrator adds a module through the URL of a specific JSON file, for example:
+An administrator adds an app/module through the URL of a specific JSON file, for example:
 
 ```text
 https://raw.githubusercontent.com/acme/docker-host-modules/main/reports.json
@@ -55,7 +57,7 @@ https://modules.acme.internal/reports/1.0.0/metadata.json
 https://cdn.example.com/docker-host/modules/reports.json
 ```
 
-The Host must not assume that the URL points to a Git repository. Even if the URL is hosted inside GitHub, it is treated as a normal JSON resource.
+The Host must not assume that the URL points to a Git repository. Even if the URL is hosted inside GitHub, it is treated as a normal JSON resource. A source repository can be declared separately in an `app.0.1` manifest, but it is optional.
 
 The Host does not apply special security restrictions to metadata URLs. The administrator makes the trust decision when entering a metadata file URL for module installation. The Host must download the specified resource, parse JSON, validate the metadata schema, and show an install plan before creating containers or mounts.
 
@@ -92,7 +94,89 @@ A branch URL is convenient for development, but it is less predictable: the JSON
 12. The Host starts the containers for the module being installed.
 13. The Host stores the installed module source: metadata URL, container image references, computed storage mappings, resolved dependency URLs, published Host port bindings, selected public origins, and external storage mounts.
 
-The Host must keep a local copy of the metadata file used for installation or the latest module update.
+The Host must keep a local copy of the manifest or metadata file used for installation or the latest module update.
+
+## `app.0.1` manifest adapter
+
+The preferred manifest schema version is:
+
+```json
+{
+  "schemaVersion": "app.0.1"
+}
+```
+
+The first implementation maps `app.0.1` manifests into the legacy Docker module runtime model before planning. This preserves existing install/update safety behavior while allowing new manifests to use app vocabulary.
+
+Supported adapter fields:
+
+- `id`, `name`, `description`, `version`;
+- optional `source` with `type: "git"`;
+- optional `channelsUrl`;
+- `runtimes`;
+- `defaultRuntime`;
+- `ui`;
+- `data`;
+- `storage`;
+- `settings`;
+- `dependencies`;
+- `endpoints`.
+
+Supported runtime profile types:
+
+- `docker` - installable through the current Docker runtime engine;
+- `localCommand` - parsed and normalized for future runtime planning, but not yet installable by the production Docker install path.
+
+Example:
+
+```json
+{
+  "schemaVersion": "app.0.1",
+  "id": "com.example.notes",
+  "name": "Notes",
+  "version": "1.2.3",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/example/notes"
+  },
+  "runtimes": [
+    {
+      "key": "docker",
+      "type": "docker",
+      "image": "ghcr.io/example/notes:1.2.3",
+      "ports": [
+        {
+          "key": "http",
+          "containerPort": 3000,
+          "protocol": "http"
+        }
+      ]
+    }
+  ],
+  "ui": {
+    "entrypoint": "/"
+  },
+  "data": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "docker",
+        "containerPath": "/app/data"
+      }
+    ]
+  }
+}
+```
+
+When `data.enabled` is true for a Docker runtime, Hosty creates a primary app data mapping and injects `HOSTY_APP_DATA_DIR` into the container. The target layout is:
+
+```text
+<hosty-data-root>/apps/<app-id>/data/
+```
+
+Dependencies can use either `manifestUrl` or legacy `metadataUrl`. The adapter normalizes `manifestUrl` to the legacy dependency field before the existing dependency graph resolver runs.
+
+Legacy `schemaVersion: "0.2"` and `"0.3"` metadata files remain valid and continue using the legacy sections below.
 
 The install flow is optimistic and fail-fast, and it does not perform automatic rollback. If one installation step fails, the Host must preserve already created files, directories, downloaded images, and containers for diagnosis, mark the install as `failed`, and show the administrator the error.
 
@@ -433,7 +517,7 @@ Top-level metadata object:
 { "type": "process", "command": "npm run dev", "workingDirectory": ".", "environment": { "PORT": "3100" } }
 ```
 
-Production install and update currently reject non-image services. Process services are for local development metadata consumed by `docker-host dev`.
+Production install and update currently reject non-image services. Process services are for local development metadata consumed by `hosty dev`.
 
 `services[].healthCheck` object:
 

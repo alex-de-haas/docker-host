@@ -257,7 +257,7 @@ function buildUpdatePlan({
   const preservedSettings = buildPreservedSettings(root.metadata, installedModule);
   const storageDirectories = buildUpdateStorageDirectories(root.metadata, installedModule, dependencies, config);
   const externalMountPlan = buildUpdateExternalMountPlan(root.metadata, installedModule, dependencies);
-  const paths = buildModulePaths(root.id, config);
+  const paths = buildModulePaths(root.id, config, root.metadata);
   const rootContainers = buildUpdateRootContainers(root.metadata, installedModule, portAllocator);
   const endpointOrigins = buildPlanEndpointOrigins(root.id, root.metadata, rootContainers);
   const changes = buildUpdateChanges({
@@ -373,7 +373,7 @@ function buildUpdateDependencyNode(
           endpoints: node.metadata.endpoints.filter(endpoint => endpoint.container === container.key),
         }))
       : buildPlanContainers(node.id, node.metadata, portAllocator),
-    paths: buildModulePaths(node.id, config),
+    paths: buildModulePaths(node.id, config, node.metadata),
     connections: buildDependencyConnections(graph, node.id),
   };
 }
@@ -966,7 +966,7 @@ function buildEnvironmentConflictPlan({
   installedModule: InstalledModuleRecord;
   config: HostRuntimeConfig;
 }): InstallPlan {
-  const paths = buildModulePaths(rootMetadata.id, config);
+  const paths = buildModulePaths(rootMetadata.id, config, rootMetadata);
 
   return {
     metadataUrl: installedModule.metadataUrl,

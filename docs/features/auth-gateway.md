@@ -184,9 +184,9 @@ Control requests do not send `Authorization: Bearer`, browser cookies, account-s
 
 Operational CLI auth decisions:
 
-- `docker-host auth setup-token` remains for first-administrator bootstrap.
-- `docker-host auth recovery-token` remains for local administrator recovery.
-- `docker-host auth token ...` commands are not part of the active CLI surface.
+- `hosty auth setup-token` remains for first-administrator bootstrap.
+- `hosty auth recovery-token` remains for local administrator recovery.
+- `hosty auth token ...` commands are not part of the active CLI surface.
 - The Web UI no longer generates CLI admin tokens.
 - Browser sessions, user roles, OIDC, trusted proxy authentication, and recent browser reauthentication continue to protect normal Host API routes.
 
@@ -228,8 +228,8 @@ Implemented local-auth surface:
 - `/api/auth/sessions/{sessionId}` revokes a Host session by id for Host administrators;
 - `/api/health` is the minimal unauthenticated health endpoint;
 - current Host API routes for Host status, modules, containers, images, install, update, lifecycle, remove, and recovery require `host.admin`;
-- `docker-host auth setup-token` writes a hashed one-time setup token into the Host auth JSON store through local filesystem access;
-- `docker-host auth recovery-token` writes a hashed one-time recovery token into the Host auth JSON store through local filesystem access;
+- `hosty auth setup-token` writes a hashed one-time setup token into the Host auth JSON store through local filesystem access;
+- `hosty auth recovery-token` writes a hashed one-time recovery token into the Host auth JSON store through local filesystem access;
 - local CLI module and dev commands use `/control/v1` through `<HOST_DATA_ROOT_HOST>/run/control.json`.
 
 Audit events are stored as append-only NDJSON under `/data/auth/audit.ndjson`, separate from the main auth state. New events use a stable envelope with event identity, timestamp, type, optional actor, optional target, request metadata, success state, and sanitized details. Raw passwords, bearer tokens, setup tokens, recovery tokens, OIDC tokens, trusted proxy assertions, cookies, and authorization headers must not be written to the audit log.
@@ -517,7 +517,7 @@ Supported developer mode behavior:
 - target URLs are limited to localhost, `*.localhost`, `host.docker.internal`, loopback, and private IP ranges;
 - gateway developer targets are checked before production gateway exposures when the target is enabled;
 - integrated requests use the normal Host access policy and the normal Host-signed `X-Docker-Host-Identity` token;
-- CLI management is available through trusted-control-backed `docker-host modules dev list`, `link`, and `unlink`.
+- CLI management is available through trusted-control-backed `hosty apps dev list`, `link`, and `unlink`. The legacy `docker-host modules dev ...` alias remains supported during migration.
 
 More details live in [Module developer mode](module-developer-mode.md).
 

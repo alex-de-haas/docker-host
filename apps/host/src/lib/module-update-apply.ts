@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ensureHostDataRoot, getHostRuntimeConfig } from '@/lib/host-runtime';
+import { getAppsRootContainer, upsertInstalledAppRecord } from '@/lib/app-store';
+import { createAppDataBackup } from '@/lib/app-backups';
 import type { HostRuntimeConfig } from '@/lib/host-runtime';
 import {
   createAndStartModuleContainer,
@@ -264,6 +266,7 @@ async function applyValidatedUpdateRequest(
   const now = new Date().toISOString();
 
   try {
+    await createAppDataBackup(moduleId, 'pre-update', config);
     await markModuleUpdating(moduleId, request, config, now);
 
     for (const dependencyId of plan.installOrder.filter(candidate => candidate !== moduleId)) {
@@ -286,7 +289,7 @@ async function applyValidatedUpdateRequest(
 
       const context = buildDependencyInstallContext(plan, graphResult.graph, dependencyId, decisionValidation.decisions);
       await persistInstalledDependency(context, plan, config, now);
-      await writeModuleFiles(context);
+      await writeModuleFiles(context, config);
       await createModuleOwnedDirectories(context);
       for (const image of context.containers.map(container => container.image)) {
         await pullModuleImage(image);
@@ -309,6 +312,13 @@ async function applyValidatedUpdateRequest(
         });
       }
       await markModuleInstalled(context.id, config, now);
+      await upsertInstalledAppRecord({
+        id: context.id,
+        manifestUrl: context.metadataUrl,
+        manifestPath: path.posix.join('apps', context.id, 'manifest.json'),
+        selectedRuntime: getSelectedRuntime(context.metadata),
+        updatedAt: now,
+      }, config);
       installedDependencyIds.push(dependencyId);
     }
 
@@ -339,8 +349,15 @@ async function applyValidatedUpdateRequest(
       }
     }
 
-    await writeModuleFiles(rootContext);
+    await writeModuleFiles(rootContext, config);
     await persistUpdatedRoot(rootContext, plan, installedModule, config, now);
+    await upsertInstalledAppRecord({
+      id: rootContext.id,
+      manifestUrl: rootContext.metadataUrl,
+      manifestPath: path.posix.join('apps', rootContext.id, 'manifest.json'),
+      selectedRuntime: getSelectedRuntime(rootContext.metadata),
+      updatedAt: now,
+    }, config);
 
     const modules = await listInstalledModules();
     const updatedModule = modules.find(candidate => candidate.id === moduleId);
@@ -781,10 +798,13 @@ function buildInstalledModuleRecord(
   planDigest: string,
   existing: InstalledModuleRecord | null
 ): InstalledModuleRecord {
+  const metadataPath = getInstalledManifestPath(context.metadata, context.id);
   return {
     id: context.id,
     metadataUrl: context.metadataUrl,
-    metadataPath: path.posix.join('modules', context.id, 'metadata.json'),
+    manifestUrl: context.metadataUrl,
+    metadataPath,
+    manifestPath: metadataPath,
     metadataDigest: `sha256:${createHash('sha256').update(context.graphNode.rawBytes).digest('hex')}`,
     planDigest,
     containers: context.containers.map(container => ({
@@ -821,9 +841,24 @@ function buildInstalledModuleRecord(
   };
 }
 
-async function writeModuleFiles(context: UpdateNodeContext) {
+function getInstalledManifestPath(metadata: NormalizedModuleMetadata, moduleId: string) {
+  return metadata.sourceSchemaVersion === 'app.0.1'
+    ? path.posix.join('apps', moduleId, 'manifest.json')
+    : path.posix.join('modules', moduleId, 'metadata.json');
+}
+
+function getSelectedRuntime(metadata: NormalizedModuleMetadata) {
+  return metadata.sourceSchemaVersion === 'app.0.1'
+    ? metadata.containers[0]?.key ?? 'docker'
+    : 'docker';
+}
+
+async function writeModuleFiles(context: UpdateNodeContext, config: HostRuntimeConfig) {
   await fs.mkdir(context.paths.moduleDirectoryContainer, { recursive: true });
   await fs.writeFile(context.paths.metadataPathContainer, context.graphNode.rawBytes);
+  const appManifestPath = path.join(getAppsRootContainer(config), context.id, 'manifest.json');
+  await fs.mkdir(path.dirname(appManifestPath), { recursive: true });
+  await fs.writeFile(appManifestPath, context.graphNode.rawBytes);
 }
 
 async function createModuleOwnedDirectories(context: UpdateNodeContext) {
@@ -845,6 +880,10 @@ function buildContainerEnvironment(
     serviceToken: moduleServiceToken,
     hostInternalOrigin: config.hostInternalOrigin,
   });
+  const appDataDirectory = resolveContainerAppDataDirectory(context.storageDirectories, containerKey);
+  if (appDataDirectory) {
+    env.HOSTY_APP_DATA_DIR = appDataDirectory;
+  }
 
   for (const setting of context.metadata.settings) {
     const value = context.settings[setting.key];
@@ -877,6 +916,17 @@ function buildContainerEnvironment(
   }
 
   return env;
+}
+
+function resolveContainerAppDataDirectory(
+  storageDirectories: UpdateNodeContext['storageDirectories'],
+  containerKey: string
+) {
+  const candidates = storageDirectories.filter(directory => directory.container === containerKey);
+  return candidates.find(directory => directory.key === 'data')?.containerPath ??
+    candidates.find(directory => directory.writable)?.containerPath ??
+    candidates[0]?.containerPath ??
+    null;
 }
 
 function buildContainerMounts(context: UpdateNodeContext, containerKey: string) {

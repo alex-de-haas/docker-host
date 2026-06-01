@@ -9,7 +9,7 @@ internal sealed class StatusCommand(CommandContext context)
     {
         if (args.Length > 0)
         {
-            throw new CommandUsageException("status does not accept arguments.", "Usage: docker-host status");
+            throw new CommandUsageException("status does not accept arguments.", "Usage: hosty status");
         }
 
         var settings = context.SettingsStore.Load();

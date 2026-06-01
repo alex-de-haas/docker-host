@@ -4,7 +4,9 @@ export type HostAppAccessMode = 'allAuthenticated' | 'assignedUsersOnly';
 
 export type HostAppStatus = 'available' | 'unavailable';
 
-export type HostAppSource = 'installed' | 'developer';
+export type HostAppSource = 'system' | 'installed' | 'developer';
+
+export type HostAppKind = 'system' | 'runtime';
 
 export type HostAppStatusReason =
   | 'available'
@@ -27,6 +29,8 @@ export interface HostAppNavigationItem {
 
 export interface HostAppEntry {
   id: string;
+  kind: HostAppKind;
+  system: boolean;
   source: HostAppSource;
   moduleId: string;
   developerTargetId?: string;
@@ -37,6 +41,9 @@ export interface HostAppEntry {
   status: HostAppStatus;
   statusReason: HostAppStatusReason;
   accessMode: HostAppAccessMode;
+  capabilities: string[];
+  selectedChannel?: string;
+  selectedRuntime?: string;
   operationStatus?: ModuleOperationStatus;
   lastOperation?: InstalledModuleRecord['lastOperation'];
   runtimeState?: ModuleRuntimeState;

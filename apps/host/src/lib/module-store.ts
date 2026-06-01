@@ -142,6 +142,12 @@ export function resolveModuleMetadataPath(
       : path.join(config.dataRootContainer, module.metadataPath);
   }
 
+  if (module.manifestPath) {
+    return path.isAbsolute(module.manifestPath)
+      ? module.manifestPath
+      : path.join(config.dataRootContainer, module.manifestPath);
+  }
+
   return path.join(config.modulesRootContainer, module.id, 'metadata.json');
 }
 
@@ -204,6 +210,12 @@ function normalizeInstalledModuleRecord(value: unknown): InstalledModuleRecord |
 
   return {
     ...record,
+    metadataUrl: typeof record.metadataUrl === 'string' && record.metadataUrl
+      ? record.metadataUrl
+      : record.manifestUrl as string,
+    ...(typeof record.manifestUrl === 'string' && record.manifestUrl
+      ? { manifestUrl: record.manifestUrl }
+      : {}),
     containers: Array.isArray(containers)
       ? containers
       : [
@@ -219,10 +231,10 @@ function normalizeInstalledModuleRecord(value: unknown): InstalledModuleRecord |
 
 function isInstalledModuleRecord(
   value: unknown
-): value is Record<string, unknown> & { id: string; metadataUrl: string } {
+): value is Record<string, unknown> & { id: string; metadataUrl?: string; manifestUrl?: string } {
   return isObject(value) &&
     typeof value.id === 'string' &&
-    typeof value.metadataUrl === 'string';
+    (typeof value.metadataUrl === 'string' || typeof value.manifestUrl === 'string');
 }
 
 function buildLegacyContainerRecord(input: {

@@ -14,6 +14,7 @@ export async function GET(request: Request) {
   try {
     const apps = await listHostApps(auth.principal, {
       requestOrigin: getAppRegistryRequestOrigin(request),
+      includeSystemApps: auth.principal.role === 'host.admin',
     });
     return NextResponse.json({ apps });
   } catch (error) {

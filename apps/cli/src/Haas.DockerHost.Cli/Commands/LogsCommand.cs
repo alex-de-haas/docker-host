@@ -11,12 +11,12 @@ internal sealed class LogsCommand(CommandContext context)
         {
             if (!int.TryParse(args[1], out tail) || tail <= 0)
             {
-                throw new CommandUsageException("--tail must be a positive integer.", "Usage: docker-host logs [--tail <lines>]");
+                throw new CommandUsageException("--tail must be a positive integer.", "Usage: hosty logs [--tail <lines>]");
             }
         }
         else if (args.Length > 0)
         {
-            throw new CommandUsageException("logs accepts only --tail <lines>.", "Usage: docker-host logs [--tail <lines>]");
+            throw new CommandUsageException("logs accepts only --tail <lines>.", "Usage: hosty logs [--tail <lines>]");
         }
 
         var settings = context.SettingsStore.Load();

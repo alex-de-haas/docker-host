@@ -1,8 +1,10 @@
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
+const PREFERRED_DATA_ROOT = path.join(os.homedir(), '.hosty');
+const LEGACY_DATA_ROOT = path.join(os.homedir(), '.docker-host');
 const DEFAULT_DOCKER_SOCKET = '/var/run/docker.sock';
 const DEFAULT_MODULE_NETWORK = 'docker-host-modules';
 const DEFAULT_HOST_INTERNAL_ORIGIN = 'http://docker-host:3000';
@@ -15,6 +17,9 @@ export interface HostRuntimeConfig {
   dataRootContainer: string;
   dataRootMarkerPath: string;
   dataRootExpectedMarker: string | null;
+  appsRootContainer?: string;
+  appsStorePath?: string;
+  backupsRootContainer?: string;
   modulesRootContainer: string;
   modulesStorePath: string;
   moduleDevModeEnabled?: boolean;
@@ -44,6 +49,8 @@ export interface HostDataRootStatus {
   containerPath: string;
   modulesPath: string;
   modulesStorePath: string;
+  appsPath?: string;
+  appsStorePath?: string;
   ready: boolean;
   writable: boolean;
   error: string | null;
@@ -69,7 +76,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
   const configuredDataRootHost = process.env.HOST_DATA_ROOT_HOST?.trim();
   const configuredDataRootContainer = process.env.HOST_DATA_ROOT_CONTAINER?.trim();
   const dataRootContainer =
-    configuredDataRootContainer || configuredDataRootHost || DEFAULT_DATA_ROOT;
+    configuredDataRootContainer || configuredDataRootHost || resolveDefaultDataRoot();
   const dataRootHost = configuredDataRootHost || dataRootContainer;
 
   const dockerSocketPath =
@@ -78,6 +85,8 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     DEFAULT_DOCKER_SOCKET;
 
   const moduleNetwork = process.env.HOST_MODULE_NETWORK?.trim() || DEFAULT_MODULE_NETWORK;
+  const appsRootContainer = path.join(dataRootContainer, 'apps');
+  const backupsRootContainer = path.join(dataRootContainer, 'backups');
   const modulesRootContainer = path.join(dataRootContainer, 'modules');
   const moduleDevRootContainer = path.join(dataRootContainer, 'dev');
   const authRootContainer = path.join(dataRootContainer, 'auth');
@@ -89,6 +98,9 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     dataRootContainer,
     dataRootMarkerPath: path.join(dataRootContainer, DATA_ROOT_MARKER_FILE),
     dataRootExpectedMarker: normalizeOptionalRuntimeValue(process.env.HOST_DATA_ROOT_MARKER),
+    appsRootContainer,
+    appsStorePath: path.join(dataRootContainer, 'apps.json'),
+    backupsRootContainer,
     modulesRootContainer,
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
     moduleDevModeEnabled: isEnabledRuntimeFlag(process.env.HOST_MODULE_DEV_MODE),
@@ -112,11 +124,13 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
 }
 
 export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promise<HostDataRootStatus> {
+  const appsRootContainer = config.appsRootContainer ?? path.join(config.dataRootContainer, 'apps');
   const moduleDevRootContainer = config.moduleDevRootContainer ?? path.join(config.dataRootContainer, 'dev');
   const ingressRootContainer = config.ingressRootContainer ?? path.join(config.dataRootContainer, 'ingress');
   try {
     await verifyHostDataRootMarker(config);
     await fs.mkdir(config.dataRootContainer, { recursive: true });
+    await fs.mkdir(appsRootContainer, { recursive: true });
     await fs.mkdir(config.modulesRootContainer, { recursive: true });
     if (config.moduleDevModeEnabled) {
       await fs.mkdir(moduleDevRootContainer, { recursive: true });
@@ -125,6 +139,7 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     await fs.mkdir(config.gatewayRootContainer, { recursive: true });
     await fs.mkdir(ingressRootContainer, { recursive: true });
     await fs.access(config.dataRootContainer, fs.constants.R_OK | fs.constants.W_OK);
+    await fs.access(appsRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.modulesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     if (config.moduleDevModeEnabled) {
       await fs.access(moduleDevRootContainer, fs.constants.R_OK | fs.constants.W_OK);
@@ -136,6 +151,8 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     return {
       hostPath: config.dataRootHost,
       containerPath: config.dataRootContainer,
+      appsPath: appsRootContainer,
+      appsStorePath: config.appsStorePath ?? path.join(config.dataRootContainer, 'apps.json'),
       modulesPath: config.modulesRootContainer,
       modulesStorePath: config.modulesStorePath,
       ready: true,
@@ -146,6 +163,8 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     return {
       hostPath: config.dataRootHost,
       containerPath: config.dataRootContainer,
+      appsPath: appsRootContainer,
+      appsStorePath: config.appsStorePath ?? path.join(config.dataRootContainer, 'apps.json'),
       modulesPath: config.modulesRootContainer,
       modulesStorePath: config.modulesStorePath,
       ready: false,
@@ -250,6 +269,18 @@ export async function pathExists(targetPath: string) {
   } catch {
     return false;
   }
+}
+
+function resolveDefaultDataRoot() {
+  if (existsSync(PREFERRED_DATA_ROOT)) {
+    return PREFERRED_DATA_ROOT;
+  }
+
+  if (existsSync(LEGACY_DATA_ROOT)) {
+    return LEGACY_DATA_ROOT;
+  }
+
+  return PREFERRED_DATA_ROOT;
 }
 
 function normalizeOptionalRuntimeValue(value: string | undefined) {

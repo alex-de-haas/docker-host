@@ -204,7 +204,7 @@ function buildPlan(
   const mountCollections = nodesRequiringAdministratorInput.flatMap(node =>
     buildMountCollections(node.id, node.metadata)
   );
-  const rootPaths = buildModulePaths(root.id, config);
+  const rootPaths = buildModulePaths(root.id, config, root.metadata);
   const rootContainers = buildPlanContainers(root.id, root.metadata, portAllocator);
   const endpointOrigins = buildPlanEndpointOrigins(root.id, root.metadata, rootContainers);
 
@@ -273,7 +273,7 @@ function buildDependencyNode(
     containers: existingModule
       ? buildExistingPlanContainers(node.id, node.metadata, existingModule)
       : buildPlanContainers(node.id, node.metadata, portAllocator),
-    paths: buildModulePaths(node.id, config),
+    paths: buildModulePaths(node.id, config, node.metadata),
     connections: buildDependencyConnections(graph, node.id),
   };
 }
@@ -502,7 +502,7 @@ export function buildStorageDirectories(
   metadata: NormalizedModuleMetadata,
   config: HostRuntimeConfig
 ): InstallPlanStorageDirectory[] {
-  const modulePaths = buildModulePaths(moduleId, config);
+  const modulePaths = buildModulePaths(moduleId, config, metadata);
 
   return metadata.storage.directories.flatMap(directory => directory.targets.map(target => {
     const modulePathSegments = directory.mount.modulePath.split('/');
@@ -534,15 +534,29 @@ export function buildMountCollections(
   }));
 }
 
-export function buildModulePaths(moduleId: string, config: HostRuntimeConfig) {
-  const moduleDirectoryHost = path.join(config.dataRootHost, 'modules', moduleId);
-  const moduleDirectoryContainer = path.join(config.modulesRootContainer, moduleId);
+export function buildModulePaths(
+  moduleId: string,
+  config: HostRuntimeConfig,
+  metadata?: Pick<NormalizedModuleMetadata, 'sourceSchemaVersion'>
+) {
+  // Temporary compatibility boundary: app manifests use the new apps layout,
+  // while legacy Docker module metadata keeps the old modules layout.
+  const useAppLayout = metadata?.sourceSchemaVersion === 'app.0.1';
+  const rootHost = useAppLayout
+    ? path.join(config.dataRootHost, 'apps')
+    : path.join(config.dataRootHost, 'modules');
+  const rootContainer = useAppLayout
+    ? (config.appsRootContainer ?? path.join(config.dataRootContainer, 'apps'))
+    : config.modulesRootContainer;
+  const manifestFileName = useAppLayout ? 'manifest.json' : 'metadata.json';
+  const moduleDirectoryHost = path.join(rootHost, moduleId);
+  const moduleDirectoryContainer = path.join(rootContainer, moduleId);
 
   return {
     moduleDirectoryHost,
     moduleDirectoryContainer,
-    metadataPathHost: path.join(moduleDirectoryHost, 'metadata.json'),
-    metadataPathContainer: path.join(moduleDirectoryContainer, 'metadata.json'),
+    metadataPathHost: path.join(moduleDirectoryHost, manifestFileName),
+    metadataPathContainer: path.join(moduleDirectoryContainer, manifestFileName),
   };
 }
 
@@ -1105,8 +1119,8 @@ export function buildInstallPlanRequestValidationError(): InstallPlanResult {
   const validationErrors: InstallPlanValidationError[] = [
     {
       code: 'install_plan_request_invalid',
-      message: 'Request body must be { "metadataUrl": "https://..." }.',
-      path: '$.metadataUrl',
+      message: 'Request body must be { "manifestUrl": "https://..." } or legacy { "metadataUrl": "https://..." }.',
+      path: '$.manifestUrl',
     },
   ];
 
@@ -1128,6 +1142,12 @@ export function extractInstallPlanMetadataUrl(value: unknown) {
     return null;
   }
 
-  const metadataUrl = (value as { metadataUrl?: unknown }).metadataUrl;
+  const source = value as { manifestUrl?: unknown; metadataUrl?: unknown };
+  const manifestUrl = source.manifestUrl;
+  if (typeof manifestUrl === 'string' && manifestUrl.trim()) {
+    return manifestUrl.trim();
+  }
+
+  const metadataUrl = source.metadataUrl;
   return typeof metadataUrl === 'string' && metadataUrl.trim() ? metadataUrl.trim() : null;
 }

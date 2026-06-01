@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hosty App"
+  short_description: "Build Hosty runtime apps"
+  default_prompt: "Use $hosty-app-skill to wrap this app as a Hosty runtime app."

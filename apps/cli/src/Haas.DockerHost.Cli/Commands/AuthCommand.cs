@@ -17,8 +17,8 @@ internal sealed class AuthCommand(CommandContext context)
     private static readonly TimeSpan AuthStateLockRetryDelay = TimeSpan.FromMilliseconds(50);
     private const string Usage = """
         Usage:
-          docker-host auth setup-token
-          docker-host auth recovery-token
+          hosty auth setup-token
+          hosty auth recovery-token
 
         Commands:
           setup-token    Create a one-time setup token for the first Host administrator.
@@ -48,7 +48,7 @@ internal sealed class AuthCommand(CommandContext context)
             requireNoAdmin: true,
             "Setup token created.",
             "auth setup-token does not accept arguments.",
-            "Usage: docker-host auth setup-token");
+            "Usage: hosty auth setup-token");
 
     private async Task<int> CreateRecoveryTokenAsync(string[] args)
         => await CreateLocalSetupTokenAsync(
@@ -57,7 +57,7 @@ internal sealed class AuthCommand(CommandContext context)
             requireNoAdmin: false,
             "Recovery token created.",
             "auth recovery-token does not accept arguments.",
-            "Usage: docker-host auth recovery-token");
+            "Usage: hosty auth recovery-token");
 
     private async Task<int> CreateLocalSetupTokenAsync(
         string[] args,
@@ -246,7 +246,7 @@ internal sealed class AuthCommand(CommandContext context)
             {
                 throw new ConfigurationException(
                     $"Unable to acquire auth state lock '{lockPath}' within {AuthStateLockTimeout.TotalSeconds:0} seconds. " +
-                    $"If no docker-host auth command is running, remove the lock file or fix ownership and permissions. {ex.Message}");
+                    $"If no hosty auth command is running, remove the lock file or fix ownership and permissions. {ex.Message}");
             }
         }
     }

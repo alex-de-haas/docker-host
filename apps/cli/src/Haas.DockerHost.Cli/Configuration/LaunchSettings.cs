@@ -72,7 +72,7 @@ internal sealed class LaunchSettings
         {
             if (!values.TryGetValue(definition.Key, out var value))
             {
-                throw new ConfigurationException($"Missing launch setting '{definition.Key}'. Run 'docker-host install' to repair launch.env.");
+                throw new ConfigurationException($"Missing launch setting '{definition.Key}'. Run 'hosty install' to repair launch.env.");
             }
 
             var error = definition.Validate(value, environment);

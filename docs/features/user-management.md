@@ -10,7 +10,7 @@ Host users can enter the system through these flows:
 - OIDC login provisions or updates external users through provider role mappings;
 - trusted-proxy assertions provision or update external users through trusted proxy role mappings;
 - development auto-login creates or updates deterministic local development accounts;
-- `docker-host dev up` creates or updates development users from `metadata.dev.json` `development.users`.
+- `hosty dev up` creates or updates development users from `metadata.dev.json` `development.users`.
 
 Browser account switching does not create users. It only remembers existing Host users in a browser-scoped account set and creates a fresh session when the user switches accounts.
 

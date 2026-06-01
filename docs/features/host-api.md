@@ -25,6 +25,8 @@ The current API surface includes:
 - retry failed installs, clean up failed install artifacts, and remove installed modules through reviewed recovery plans;
 - create and apply reviewed module update plans;
 - retry failed updates separately from failed installs;
+- expose Hosty Shell as a system app and legacy modules as runtime apps through `/api/apps` and `/control/v1/apps`;
+- create, list, and restore app data backups through local control routes;
 - support local and generic OIDC browser authentication flows;
 - serve scoped module directory responses to modules through an internal service-token API;
 - return authenticated, principal-filtered shell App registry data through `/api/apps`.
@@ -169,6 +171,8 @@ Returned by `GET /api/apps`.
 ```json
 {
   "id": "com.acme.reports",
+  "kind": "runtime",
+  "system": false,
   "source": "installed",
   "moduleId": "com.acme.reports",
   "displayName": "Reports",
@@ -178,6 +182,9 @@ Returned by `GET /api/apps`.
   "status": "available",
   "statusReason": "available",
   "accessMode": "allAuthenticated",
+  "capabilities": ["open", "update", "restart", "stop", "remove"],
+  "selectedRuntime": "docker",
+  "selectedChannel": null,
   "operationStatus": "installed",
   "runtimeState": "running",
   "entryPath": "/apps/com.acme.reports",
@@ -201,6 +208,8 @@ Developer app entries use the same shape with `source: "developer"` and `develop
 ```json
 {
   "id": "dev:mdev_reports",
+  "kind": "runtime",
+  "system": false,
   "source": "developer",
   "moduleId": "com.acme.reports",
   "developerTargetId": "mdev_reports",
@@ -217,7 +226,52 @@ Developer app entries use the same shape with `source: "developer"` and `develop
 }
 ```
 
+Hosty Shell is returned as a system app to administrators:
+
+```json
+{
+  "id": "hosty.shell",
+  "kind": "system",
+  "system": true,
+  "source": "system",
+  "moduleId": "hosty.shell",
+  "displayName": "Hosty Shell",
+  "version": "bundled",
+  "status": "available",
+  "selectedRuntime": "host-core",
+  "capabilities": ["open", "update"],
+  "entryPath": "/",
+  "embeddedUrl": "/",
+  "origin": null,
+  "identityTokenUrl": null,
+  "navigation": []
+}
+```
+
 `GET /api/apps` intentionally omits raw Docker/container internals. It does not return container ids, container names, Docker network aliases, Docker network URLs, or service/API gateway exposure hostnames. It does return direct browser iframe URLs and origins for visible shell Apps.
+
+System apps and runtime apps share the response shape but differ in capabilities. System apps must not expose ordinary runtime app remove actions.
+
+### `AppDataBackupRecord`
+
+Returned by app backup control endpoints.
+
+```json
+{
+  "schemaVersion": "app-backup.0.1",
+  "id": "2026-06-01T12-00-00Z_manual",
+  "appId": "com.acme.reports",
+  "reason": "manual",
+  "createdAt": "2026-06-01T12:00:00Z",
+  "dataPath": "/data/apps/com.acme.reports/data",
+  "archivePath": "/data/backups/com.acme.reports/2026-06-01T12-00-00Z_manual.zip",
+  "archiveDigest": "sha256:...",
+  "archiveBytes": 12345,
+  "fileCount": 8
+}
+```
+
+The archive includes only the primary app `data/` directory. External mounts and additional storage mappings are excluded.
 
 Allowed `accessMode` values:
 
@@ -474,8 +528,8 @@ Response should include:
 
 The module installation API:
 
-- `POST /api/modules/install/plan` - load metadata from URL, validate and normalize metadata, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker container names, network aliases, and endpoints/ports;
-- `POST /api/modules/install` - accept a reviewed install request with metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install.
+- `POST /api/modules/install/plan` - load a manifest from `manifestUrl` or legacy metadata from `metadataUrl`, validate and normalize it, resolve required dependencies, and return a read-only install plan with `metadataDigest`, `planDigest`, conflicts, settings prompts, storage mappings, external mount collection requirements, Docker container names, network aliases, and endpoints/ports;
+- `POST /api/modules/install` - accept a reviewed install request with manifest/metadata URL, reviewed `planDigest`, settings values, and selected external mounts, recompute the plan, reject if the digest changed, then apply the install.
 
 If the requested metadata resolves to a module id that is already registered from the same stored metadata URL, the install plan endpoint returns `mode: "update"`, `existingModuleId`, and an `updatePlan` instead of treating the installed module id or its Docker container names as install blockers. Clients must then apply the reviewed plan through the module update endpoint, not `POST /api/modules/install`.
 
@@ -496,9 +550,11 @@ The install apply endpoint returns HTTP `201` on success:
 
 Apply request validation failures use HTTP `422` and the shared error envelope. Current-state conflicts, including reviewed plan digest mismatch, incompatible or missing-container reusable dependencies, and external mount conflicts, use HTTP `409`. Docker/runtime unavailability before mutation uses HTTP `503`. Failures after mutation has started use HTTP `500`, mark the affected module `failed`, and preserve created files, images, and containers for explicit recovery.
 
-Install apply persists each newly installed module in root-level `modules.json` with:
+Install apply persists each newly installed module in root-level `modules.json` and upserts an app-oriented record in `apps.json`.
 
-- source `metadataUrl`, local `metadataPath`, root or dependency `metadataDigest`, and reviewed `planDigest`;
+`modules.json` stores:
+
+- source `metadataUrl`, preferred `manifestUrl`, local `metadataPath` or `manifestPath`, root or dependency `metadataDigest`, and reviewed `planDigest`;
 - Docker container image references, pull policies, container names, and operation status;
 - typed setting values, including write-only secret values;
 - computed module-owned `storageMappings`;
@@ -506,11 +562,22 @@ Install apply persists each newly installed module in root-level `modules.json` 
 - resolved dependency base URLs;
 - timestamps and the last operation error.
 
+`apps.json` stores the app-oriented source pointer and current app selection:
+
+- `id`;
+- `manifestUrl`;
+- `manifestPath`;
+- `selectedRuntime`;
+- `selectedChannel` when known;
+- timestamps.
+
+Legacy Docker metadata still writes `modules/<module-id>/metadata.json`. New `app.0.1` manifests use `apps/<app-id>/manifest.json` as their local manifest path. The compatibility adapter keeps legacy metadata paths readable.
+
 The reviewed install request payload shape is:
 
 ```json
 {
-  "metadataUrl": "https://modules.example.com/reports.json",
+  "manifestUrl": "https://apps.example.com/reports/manifest.json",
   "planDigest": "sha256:...",
   "settings": [
     {
@@ -826,6 +893,10 @@ The control channel is not a public Host API surface. It is not proxied by the g
 Initial control routes:
 
 - `GET /control/v1/host/status` returns Host readiness for CLI preflight checks.
+- `GET /control/v1/apps` lists Hosty system apps, runtime apps, and developer apps for local CLI management.
+- `GET /control/v1/apps/{appId}/backups` lists app data backups.
+- `POST /control/v1/apps/{appId}/backups` creates a manual app data backup.
+- `POST /control/v1/apps/{appId}/backups/{backupId}/restore` restores one backup. Request body: `{ "confirmed": true, "stopBeforeRestore": true, "createPreRestoreBackup": true }`.
 - `GET /control/v1/modules` lists installed modules.
 - `POST /control/v1/modules/install/plan` creates an install plan.
 - `POST /control/v1/modules/install` applies a reviewed install plan.
@@ -837,7 +908,15 @@ Initial control routes:
 - `GET /control/v1/modules/dev/targets`, `PUT /control/v1/modules/dev/targets/{targetId}`, and `DELETE /control/v1/modules/dev/targets/{targetId}` manage local developer targets.
 - `POST /control/v1/modules/dev/targets/{targetId}/identity-token` issues a short-lived Host-signed identity token for a local development user and developer target. Request body: `{ "userEmail": "user@docker-host.local" }` or `{ "userId": "user_..." }`. The Host checks the target exposure policy and module assignments before signing the token.
 - `DELETE /control/v1/modules/dev/data/{moduleId}` removes one module's persistent development data.
-- Control auth, user, invitation, assignment, directory policy, and app registry helpers support `docker-host dev`.
+- Control auth, user, invitation, assignment, directory policy, and app registry helpers support `hosty dev`.
+
+App data backups protect only the primary app data directory:
+
+- preferred path: `apps/<app-id>/data`;
+- legacy fallback: installed storage mapping with key `data`;
+- secondary fallback: installed storage mapping whose host path ends in `data`.
+
+External mounts are excluded. Update apply creates a `pre-update` backup when a data directory exists. Current ZIP creation is in-memory and rejects app data above 256 MiB until a streaming archive writer is implemented. Restore verifies archive digest and per-entry CRCs, stops the app by default, creates a `pre-restore` backup by default, replaces the data directory, and does not restart the app automatically.
 
 ### Sessions and audit
 

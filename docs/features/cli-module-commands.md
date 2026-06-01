@@ -1,20 +1,20 @@
-# CLI module commands
+# CLI app and module commands
 
-This document describes `docker-host modules ...` commands as a terminal-first interface on top of the Host local control channel.
+This document describes `hosty apps ...` and legacy `docker-host modules ...` commands as a terminal-first interface on top of the Host local control channel.
 
 ## Description
 
-CLI module commands support headless, server-side, and scripted scenarios where an administrator does not want to or cannot use the Web UI. They are not a separate module-management runtime. The `docker-host` CLI remains a thin local control client: it receives plans, renders them in the terminal, collects administrator input, and submits confirmed requests.
+CLI app commands support headless, server-side, and scripted scenarios where an administrator does not want to or cannot use the Web UI. They are not a separate runtime. The `hosty` CLI remains a thin local control client: it receives plans, renders them in the terminal, collects administrator input, and submits confirmed requests.
 
-The business logic for installation, update, dependency resolution, Docker conflict checks, storage mappings, secret handling, module state, retry, and cleanup remains in the Host backend.
+The business logic for installation, update, dependency resolution, Docker conflict checks, storage mappings, app data backups, secret handling, module state, retry, and cleanup remains in the Host backend.
 
 ```mermaid
 flowchart LR
-  A["docker-host modules ..."] --> B["Resolve running Host URL"]
+  A["hosty apps ..."] --> B["Resolve running Host URL"]
   B --> C["Host /control/v1"]
-  C --> D["Module service"]
+  C --> D["App/module service"]
   D --> E["Docker daemon"]
-  D --> F["modules.json and module directories"]
+  D --> F["apps.json, modules.json, app data"]
   G["Web UI"] --> C
 ```
 
@@ -39,22 +39,32 @@ flowchart LR
 
 ## Command surface
 
-The initial module command surface:
+The preferred app command surface:
 
 ```text
-docker-host modules list
-docker-host modules install <metadata-url>
-docker-host modules start <module-id>
-docker-host modules stop <module-id>
-docker-host modules restart <module-id>
-docker-host modules update <module-id>
-docker-host modules remove <module-id> [--delete-data]
+hosty apps list
+hosty apps install <manifest-url>
+hosty apps start <app-id>
+hosty apps stop <app-id>
+hosty apps restart <app-id>
+hosty apps update <app-id>
+hosty apps backup <app-id>
+hosty apps backups <app-id>
+hosty apps restore <app-id> <backup-id>
+hosty apps remove <app-id> [--delete-data]
 ```
 
-`install` is the preferred verb because it matches the backend install flow. `add` may be kept as a user-friendly alias because earlier launch documentation used `docker-host modules add <metadata-url>`:
+Compatibility aliases remain:
 
 ```text
-docker-host modules add <metadata-url>
+hosty modules ...
+docker-host modules ...
+```
+
+`install` is the preferred verb because it matches the backend install flow. `add` remains a user-friendly alias:
+
+```text
+hosty apps add <manifest-url>
 ```
 
 ## Shared command behavior
@@ -62,52 +72,51 @@ docker-host modules add <metadata-url>
 Every module command should:
 
 1. Load `launch.env` through the existing launch settings store.
-2. Inspect the Host container through Docker Engine only to resolve the local Host URL, using the same model as `docker-host open`.
-3. Exit with a clear message if the Host container is missing or stopped, suggesting `docker-host start`.
+2. Inspect the Host container through Docker Engine only to resolve the local Host URL, using the same model as `hosty open`.
+3. Exit with a clear message if the Host container is missing or stopped, suggesting `hosty start`.
 4. Read `<HOST_DATA_ROOT_HOST>/run/control.json` and use `/control/v1` for module operations.
 5. Preserve Host API error boundaries and diagnostics.
 
 The CLI may call `GET /control/v1/host/status` before commands that mutate module state. `list` can skip the preflight and rely on `GET /control/v1/modules` when a faster read-only path is preferred.
 
-## `modules list`
+## `apps list`
 
 ```text
-docker-host modules list
+hosty apps list
 ```
 
-`list` calls:
+`apps list` calls:
 
 ```text
-GET /control/v1/modules
+GET /control/v1/apps
 ```
 
-CLI output should use a compact table with:
+CLI output uses a compact table with:
 
-- module id;
-- name;
-- version;
-- operation status;
-- Docker runtime state;
-- image reference;
-- updated timestamp or installed timestamp;
-- last error summary when present.
+- app display name and id;
+- kind: `system` or `runtime`;
+- source: `system`, `installed`, or `developer`;
+- status;
+- selected runtime;
+- selected channel;
+- capabilities.
 
-When no modules are installed, CLI should print a short empty-state message and suggest `docker-host modules install <metadata-url>`.
+When no apps are registered, CLI prints a short empty-state message and suggests `hosty apps install <manifest-url>`.
 
-JSON output is not part of the current `modules list` command.
+Legacy `modules list` still calls `GET /control/v1/modules` and renders the installed module table.
 
-## `modules install`
+## `apps install`
 
 ```text
-docker-host modules install <metadata-url>
-docker-host modules add <metadata-url>
+hosty apps install <manifest-url>
+hosty apps add <manifest-url>
 ```
 
 `install` is a two-step reviewed flow:
 
 ```mermaid
 flowchart LR
-  A["metadata URL"] --> B["POST /control/v1/modules/install/plan"]
+  A["manifest URL"] --> B["POST /control/v1/modules/install/plan"]
   B --> X{"Already installed from same URL?"}
   X -- "No" --> C["Terminal install plan review"]
   C --> D["Collect settings and mounts"]
@@ -121,11 +130,12 @@ flowchart LR
 ### Interactive install flow
 
 1. CLI calls `GET /control/v1/host/status` and fails before planning if Host runtime or Docker daemon dependencies are unavailable.
-2. CLI calls `POST /control/v1/modules/install/plan` with:
+2. CLI calls `POST /control/v1/modules/install/plan` with both preferred and compatibility fields:
 
 ```json
 {
-  "metadataUrl": "https://modules.example.com/reports.json"
+  "manifestUrl": "https://apps.example.com/reports/manifest.json",
+  "metadataUrl": "https://apps.example.com/reports/manifest.json"
 }
 ```
 
@@ -167,7 +177,7 @@ The submitted shape must stay compatible with `ModuleInstallRequest`:
 
 ```json
 {
-  "metadataUrl": "https://modules.example.com/reports.json",
+      "metadataUrl": "https://apps.example.com/reports/manifest.json",
   "planDigest": "sha256:...",
   "settings": [
     {
@@ -200,10 +210,10 @@ For each selected item, CLI collects:
 
 CLI may pre-validate item keys with the same safe path segment rules as the Web UI helper, but the Host backend remains authoritative.
 
-## `modules start`
+## `apps start`
 
 ```text
-docker-host modules start <module-id>
+hosty apps start <app-id>
 ```
 
 `start` calls:
@@ -216,10 +226,10 @@ CLI should print the updated runtime state on success. On failure, it should pri
 
 This command should not directly start module containers through Docker Engine. Missing container, invalid operation status, storage mapping, and dependency checks belong to the Host backend.
 
-## `modules stop`
+## `apps stop`
 
 ```text
-docker-host modules stop <module-id>
+hosty apps stop <app-id>
 ```
 
 `stop` calls:
@@ -230,10 +240,10 @@ POST /control/v1/modules/{moduleId}/stop
 
 CLI should print the updated runtime state on success. Stop remains a backend lifecycle action so persistent module status and Docker error handling stay consistent with Web UI behavior.
 
-## `modules restart`
+## `apps restart`
 
 ```text
-docker-host modules restart <module-id>
+hosty apps restart <app-id>
 ```
 
 `restart` calls:
@@ -244,10 +254,10 @@ POST /control/v1/modules/{moduleId}/restart
 
 CLI should print the updated runtime state on success. If restart fails because the module container is missing or the module is not in a runnable operation state, CLI should surface the backend error without attempting local repair.
 
-## `modules update`
+## `apps update`
 
 ```text
-docker-host modules update <module-id>
+hosty apps update <app-id>
 ```
 
 `update` is a two-step reviewed flow:
@@ -293,12 +303,44 @@ flowchart LR
 
 8. CLI prints updated module id, installed dependency ids, reused dependency ids, and the resulting runtime state.
 
-Failed update retry remains future CLI scope.
+Before applying an update, the Host backend creates a `pre-update` app data backup when a primary app data directory exists.
 
-## `modules remove`
+## `apps backup`, `apps backups`, and `apps restore`
 
 ```text
-docker-host modules remove <module-id> [--delete-data]
+hosty apps backup <app-id>
+hosty apps backups <app-id>
+hosty apps restore <app-id> <backup-id>
+```
+
+Backup commands use the app data backup control API:
+
+```text
+POST /control/v1/apps/{appId}/backups
+GET /control/v1/apps/{appId}/backups
+POST /control/v1/apps/{appId}/backups/{backupId}/restore
+```
+
+`backup` creates a manual ZIP backup of the app's primary `data/` directory. If the app has no data directory, the backend returns `404`.
+
+`backups` lists backup id, reason, creation time, file count, and archive size.
+
+`restore` asks for confirmation, then submits:
+
+```json
+{
+  "confirmed": true,
+  "stopBeforeRestore": true,
+  "createPreRestoreBackup": true
+}
+```
+
+Restore stops the app first by default, creates a `pre-restore` backup by default, verifies archive integrity, replaces the data directory, and does not restart the app automatically.
+
+## `apps remove`
+
+```text
+hosty apps remove <app-id> [--delete-data]
 ```
 
 `remove` is a two-step reviewed flow:
@@ -321,7 +363,8 @@ CLI module commands use interactive human-readable output. Automation flags, JSO
 ## Command decisions
 
 - `install` is the canonical command. `add` is supported as an alias.
-- Module commands do not auto-start the Host container. If Host is stopped, CLI prints `docker-host start` as the next step.
+- `apps` is the preferred command group. `modules` remains a compatibility alias for legacy scripts.
+- App commands do not auto-start the Host container. If Host is stopped, CLI prints `hosty start` as the next step.
 - Install, update, and remove call `GET /control/v1/host/status` before requesting a plan.
 - Module commands are interactive-first.
 - Interactive install and update always ask for final confirmation before apply.
@@ -331,7 +374,7 @@ CLI module commands use interactive human-readable output. Automation flags, JSO
 - CLI performs safe external mount item key pre-validation, while Host backend remains authoritative.
 - Install and update conflicts block apply; CLI must not ask the backend to apply a conflicted plan.
 - Initial exit code mapping is `0` for success, `1` for runtime/API failure, `2` for usage/input errors, and `130` for cancelled operations.
-- Module control requests include CLI version and expected control contract version headers.
+- App/module control requests include CLI version and expected control contract version headers.
 - `Haas.DockerHost.Cli.HostApi` owns HTTP details; command classes own argument parsing and terminal UX.
 
 ## Error handling
@@ -345,7 +388,7 @@ CLI should preserve the Host API error boundary:
 
 When an API response includes `validationErrors[]`, `conflicts[]`, or `ModuleOperationError`, CLI should print them as structured terminal tables. It should not collapse backend diagnostics into a single generic error string.
 
-If the Host URL cannot be resolved from the container, CLI should suggest `docker-host status` and `docker-host start`.
+If the Host URL cannot be resolved from the container, CLI should suggest `hosty status` and `hosty start`.
 
 ## Trusted Control Compatibility
 

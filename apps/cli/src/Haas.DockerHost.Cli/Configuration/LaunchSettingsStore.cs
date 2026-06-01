@@ -31,6 +31,7 @@ internal sealed class LaunchSettingsStore(DockerHostEnvironment environment)
             Directory.CreateDirectory(environment.RootDirectory);
             Directory.CreateDirectory(environment.ConfigDirectory);
             Directory.CreateDirectory(environment.BinDirectory);
+            Directory.CreateDirectory(environment.AppsDirectory);
             Directory.CreateDirectory(environment.ModulesDirectory);
 
             var settings = Load();
@@ -53,8 +54,8 @@ internal sealed class LaunchSettingsStore(DockerHostEnvironment environment)
         Directory.CreateDirectory(environment.ConfigDirectory);
 
         var builder = new StringBuilder();
-        builder.AppendLine("# docker-host launch settings");
-        builder.AppendLine("# Managed by docker-host config.");
+        builder.AppendLine("# hosty launch settings");
+        builder.AppendLine("# Managed by hosty config.");
 
         foreach (var definition in LaunchSettingDefinitions.All)
         {

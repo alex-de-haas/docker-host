@@ -4,15 +4,19 @@ namespace Haas.DockerHost.Cli.Tests.Configuration;
 
 public sealed class LaunchSettingsStoreTests : IDisposable
 {
-    private const string RootVariable = "DOCKER_HOST_HOME";
+    private const string RootVariable = "HOSTY_HOME";
+    private const string LegacyRootVariable = "DOCKER_HOST_HOME";
     private readonly string? previousRoot;
+    private readonly string? previousLegacyRoot;
     private readonly string rootDirectory;
 
     public LaunchSettingsStoreTests()
     {
         previousRoot = Environment.GetEnvironmentVariable(RootVariable);
+        previousLegacyRoot = Environment.GetEnvironmentVariable(LegacyRootVariable);
         rootDirectory = Path.Combine(Path.GetTempPath(), $"docker-host-cli-tests-{Guid.NewGuid():N}");
         Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
+        Environment.SetEnvironmentVariable(LegacyRootVariable, null);
     }
 
     [Fact]
@@ -46,6 +50,9 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         var environment = DockerHostEnvironment.Current();
         var store = new LaunchSettingsStore(environment);
         store.EnsureInstalled();
+
+        Assert.True(Directory.Exists(environment.AppsDirectory));
+        Assert.True(Directory.Exists(environment.ModulesDirectory));
 
         var exception = Assert.Throws<ConfigurationException>(
             () => store.Set(LaunchSettingDefinitions.HostDataRootContainer, "/other-data"));
@@ -86,6 +93,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);
+        Environment.SetEnvironmentVariable(LegacyRootVariable, previousLegacyRoot);
 
         if (Directory.Exists(rootDirectory))
         {

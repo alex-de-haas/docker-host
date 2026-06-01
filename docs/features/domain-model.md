@@ -1,20 +1,22 @@
 # Docker Host domain model
 
-This document defines the Docker Host domain model. It is the shared vocabulary for Host backend API, Web UI, CLI module commands, and persistent files.
+This document defines the Docker Host and Hosty compatibility domain model. It is the shared vocabulary for Host backend API, Web UI, CLI app/module commands, and persistent files.
 
 ## Scope
 
-The product model is module-first. Docker containers are an implementation detail managed by Docker Host, not the primary user-facing entity.
+The implemented system is moving from a module-first model to a runtime app model. Docker containers remain an implementation detail managed by the Host, not the primary user-facing entity.
 
 The domain model covers:
 
-- installed module registry;
+- Hosty system apps and runtime app summaries;
+- app-oriented registry;
+- installed module compatibility registry;
 - Docker runtime status for installed modules;
 - module start, stop, and restart actions;
 - failed install retry and cleanup;
 - installed module removal;
 - module update planning, apply, and retry;
-- persistent launch and module state files;
+- persistent launch, app, backup, and module state files;
 - settings, storage, and dependency contracts.
 
 The domain model does not include:
@@ -28,10 +30,10 @@ The domain model does not include:
 
 ```mermaid
 flowchart LR
-  A["Metadata URL"] --> B["Module metadata"]
+  A["Manifest or metadata URL"] --> B["Manifest adapter"]
   B --> C["Install plan"]
-  C --> D["Installed module registry entry"]
-  D --> E["Module directory"]
+  C --> D["Runtime app registry entry"]
+  D --> E["App or module directory"]
   D --> F["Docker containers"]
   G["Docker daemon"] --> H["Runtime status"]
   F --> H
@@ -39,9 +41,11 @@ flowchart LR
   H --> I
 ```
 
-### Module metadata
+### App manifest and module metadata
 
-Module metadata is the JSON document downloaded from a metadata URL and copied into the installed module directory as `metadata.json`.
+An app manifest or legacy module metadata file is the JSON document downloaded from a URL and copied into the installed app/module directory.
+
+Preferred app manifests use `manifest.json` terminology and `schemaVersion: "app.0.1"`. Legacy Docker module metadata with `schemaVersion: "0.2"` or `"0.3"` remains supported.
 
 It defines:
 
@@ -52,7 +56,25 @@ It defines:
 - storage declarations;
 - module endpoints, container ports, and resource hints.
 
-The metadata schema source of truth is [Module metadata files](module-metadata.md).
+The metadata and manifest schema source of truth is [Module metadata files](module-metadata.md).
+
+### Runtime app
+
+A runtime app is a managed workload visible through the app registry. Legacy Docker modules are runtime apps through a compatibility adapter.
+
+Runtime app summaries include:
+
+- `kind`;
+- `system`;
+- `source`;
+- `selectedRuntime`;
+- `selectedChannel`;
+- capabilities;
+- browser entrypoint when the app has UI.
+
+### System app
+
+A system app is Hosty-owned and supports the platform. Hosty Shell is currently synthesized as a non-removable system app with `id: "hosty.shell"`.
 
 ### Installed module
 
@@ -77,13 +99,30 @@ Docker runtime status is not persisted in the installed module record. The Host 
 
 ### Module directory
 
-Each installed module has a directory under:
+Each new app-oriented install has a directory under:
+
+```text
+~/.hosty/apps/<app-id>/
+```
+
+The directory contains:
+
+- `manifest.json` - local copy of the source manifest document;
+- `data/` - primary app data directory when the app uses local persistent data.
+
+Legacy installed modules can still have a directory under:
 
 ```text
 ~/.docker-host/modules/<module-id>/
 ```
 
-The directory contains:
+or under the active data root:
+
+```text
+<hosty-data-root>/modules/<module-id>/
+```
+
+The legacy directory contains:
 
 - `metadata.json` - local copy of the source metadata document;
 - module-owned storage directories such as `settings/`, `data/`, `cache/`, or other metadata-declared paths.
@@ -95,8 +134,10 @@ There are no per-module `module-state.json`, `module-installation.json`, or `mod
 The Host container launch configuration is stored in:
 
 ```text
-~/.docker-host/config/launch.env
+~/.hosty/config/launch.env
 ```
+
+The legacy `~/.docker-host/config/launch.env` remains readable when the legacy root is selected.
 
 It owns Host container lifecycle settings, not module state:
 
@@ -110,22 +151,48 @@ It owns Host container lifecycle settings, not module state:
 - `HOST_DOCKER_SOCKET`;
 - `HOST_MODULE_NETWORK`.
 
-The standalone `docker-host` CLI reads this file for Host lifecycle commands. `HOST_DOCKER_ENDPOINT` is the CLI-side Docker Engine endpoint, such as `unix:///var/run/docker.sock` on macOS/Linux/WSL or `npipe:////./pipe/docker_engine` on native Windows. On Windows with Docker Desktop, WSL integration must be enabled for the WSL distro where the CLI runs so the Unix socket is available there. `HOST_DOCKER_SOCKET` is the socket path mounted into the Linux Host container and remains `/var/run/docker.sock`.
+The standalone `hosty` CLI reads this file for Host lifecycle commands. `docker-host` remains a deprecated compatibility alias. `HOST_DOCKER_ENDPOINT` is the CLI-side Docker Engine endpoint, such as `unix:///var/run/docker.sock` on macOS/Linux/WSL or `npipe:////./pipe/docker_engine` on native Windows. On Windows with Docker Desktop, WSL integration must be enabled for the WSL distro where the CLI runs so the Unix socket is available there. `HOST_DOCKER_SOCKET` is the socket path mounted into the Linux Host container and remains `/var/run/docker.sock`.
 
 ## Persistent Files
 
 | Path | Owner | Responsibility |
 | --- | --- | --- |
-| `~/.docker-host/config/launch.env` | CLI | Host container launch settings. |
-| `~/.docker-host/modules.json` | Host backend | Installed module registry, persistent module state, and Host-owned settings. |
-| `~/.docker-host/modules/<module-id>/metadata.json` | Host backend | Local copy of downloaded module metadata. |
-| `~/.docker-host/modules/<module-id>/<storage-key>/` | Host backend | Default bind-mount target for module-owned persistent storage. |
+| `~/.hosty/config/launch.env` | CLI | Host container launch settings. |
+| `~/.hosty/apps.json` | Host backend | App-oriented registry with manifest source, selected runtime, selected channel, and timestamps. |
+| `~/.hosty/apps/<app-id>/manifest.json` | Host backend | Local copy of downloaded app manifest. |
+| `~/.hosty/apps/<app-id>/data/` | Host backend | Primary app data directory for new app-oriented installs. |
+| `~/.hosty/backups/<app-id>/` | Host backend | ZIP app data backups and JSON backup metadata. |
+| `~/.hosty/modules.json` | Host backend | Legacy installed module registry, persistent module state, and Host-owned settings. |
+| `~/.hosty/modules/<module-id>/metadata.json` | Host backend | Local copy of downloaded legacy module metadata. |
+| `~/.hosty/modules/<module-id>/<storage-key>/` | Host backend | Legacy bind-mount target for module-owned persistent storage. |
+
+The same layout can live under `~/.docker-host` when the legacy data root is selected.
 
 The Host backend creates and validates the Host data root structure at startup. The CLI creates the initial Host data root and `launch.env` during bootstrap.
 
 Private Host state files such as `modules.json` and `auth/state.json` are written with owner-only permissions. When the Host runs as root inside a container against a bind-mounted data root, it preserves those private permissions but synchronizes the file owner to the mounted data root owner after atomic writes so WSL and local editor access follow the data root ownership.
 
-Initial `modules.json` shape:
+Initial `apps.json` shape:
+
+```json
+{
+  "schemaVersion": "app-store.0.1",
+  "apps": [
+    {
+      "id": "com.acme.reports",
+      "manifestUrl": "https://apps.example/reports/manifest.json",
+      "manifestPath": "apps/com.acme.reports/manifest.json",
+      "selectedRuntime": "docker",
+      "selectedChannel": "main",
+      "installedAt": "2026-06-01T09:00:00Z",
+      "updatedAt": "2026-06-01T09:00:00Z"
+    }
+  ],
+  "updatedAt": "2026-06-01T09:00:00Z"
+}
+```
+
+Initial legacy `modules.json` shape:
 
 ```json
 {
@@ -200,6 +267,25 @@ Initial `modules.json` shape:
   "updatedAt": "2026-05-13T09:00:00Z"
 }
 ```
+
+App backup metadata shape:
+
+```json
+{
+  "schemaVersion": "app-backup.0.1",
+  "id": "2026-06-01T12-00-00Z_manual",
+  "appId": "com.acme.reports",
+  "reason": "manual",
+  "createdAt": "2026-06-01T12:00:00Z",
+  "dataPath": "/data/apps/com.acme.reports/data",
+  "archivePath": "/data/backups/com.acme.reports/2026-06-01T12-00-00Z_manual.zip",
+  "archiveDigest": "sha256:...",
+  "archiveBytes": 12345,
+  "fileCount": 8
+}
+```
+
+Backups contain only the primary app `data/` directory. External mounts are not backed up by Hosty.
 
 The Host backend creates an empty store automatically:
 

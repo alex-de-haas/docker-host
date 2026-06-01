@@ -6,7 +6,7 @@ internal sealed class StartCommand(CommandContext context)
     {
         if (args.Length > 0)
         {
-            throw new CommandUsageException("start does not accept arguments.", "Usage: docker-host start");
+            throw new CommandUsageException("start does not accept arguments.", "Usage: hosty start");
         }
 
         var settings = context.SettingsStore.EnsureInstalled();
@@ -14,4 +14,3 @@ internal sealed class StartCommand(CommandContext context)
         return 0;
     }
 }
-

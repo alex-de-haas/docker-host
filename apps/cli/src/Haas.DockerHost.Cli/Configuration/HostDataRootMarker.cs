@@ -20,7 +20,7 @@ internal sealed record HostDataRootMarker(string Id, string Path)
             {
                 throw new ConfigurationException(
                     $"Host data root marker '{markerPath}' does not match the existing Host container. " +
-                    "Verify HOST_DATA_ROOT_HOST points at the expected data root, then run 'docker-host restart' again.");
+                    "Verify HOST_DATA_ROOT_HOST points at the expected data root, then run 'hosty restart' again.");
             }
 
             return new HostDataRootMarker(existingId, markerPath);
@@ -30,7 +30,7 @@ internal sealed record HostDataRootMarker(string Id, string Path)
         {
             throw new ConfigurationException(
                 $"Host data root marker '{markerPath}' is missing, but the existing Host container expects it. " +
-                "The configured data root may not be mounted yet. Verify the disk or mount, then run 'docker-host restart' again.");
+                "The configured data root may not be mounted yet. Verify the disk or mount, then run 'hosty restart' again.");
         }
 
         Directory.CreateDirectory(dataRoot);

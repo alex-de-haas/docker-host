@@ -54,7 +54,7 @@ internal sealed record DevManifest
         using var document = ParseMetadata(raw);
         if (!LooksLikeModuleDevMetadata(document.RootElement))
         {
-            throw new CommandUsageException("docker-host dev requires metadata.dev.json with schemaVersion 0.3 process services.", DevCommand.Usage);
+            throw new CommandUsageException("hosty dev requires metadata.dev.json with schemaVersion 0.3 process services.", DevCommand.Usage);
         }
 
         var manifest = FromModuleDevMetadata(document.RootElement, manifestPath, raw);
@@ -92,7 +92,7 @@ internal sealed record DevManifest
             sourceType.ValueKind != JsonValueKind.String ||
             sourceType.GetString() != "process")
         {
-            throw new CommandUsageException("metadata.dev.json must select a process service for docker-host dev up.", DevCommand.Usage);
+            throw new CommandUsageException("metadata.dev.json must select a process service for hosty dev up.", DevCommand.Usage);
         }
 
         var command = ReadRequiredString(source, "command", "Process service source.command is required.");

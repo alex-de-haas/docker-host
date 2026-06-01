@@ -21,6 +21,7 @@ export async function GET(request: Request) {
 
   const apps = await listHostApps(principal, {
     requestOrigin: getObservedRequestOrigin(request),
+    includeSystemApps: true,
   });
   return NextResponse.json({ apps });
 }

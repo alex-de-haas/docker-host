@@ -1,12 +1,12 @@
 # CLI Trusted Control and Dev Metadata
 
-Docker Host treats the local `docker-host` CLI as a trusted machine-control tool for the local Host installation. A person who can run the CLI with access to the Host data root already has local administrative control over that installation, so module lifecycle and local development commands no longer authenticate with Host user sessions or CLI bearer tokens.
+Hosty treats the local `hosty` CLI as a trusted machine-control tool for the local Host installation. A person who can run the CLI with access to the Host data root already has local administrative control over that installation, so app lifecycle and local development commands no longer authenticate with Host user sessions or CLI bearer tokens. The deprecated `docker-host` command remains a compatibility alias during migration.
 
 The Host remains the owner of module state and side effects. The CLI resolves the running Host, discovers the local control channel, renders terminal plans and prompts, supervises local development processes, and submits confirmed requests. Install, update, remove, lifecycle, developer target registration, app registry state, assignments, directory policy, Docker container creation, gateway behavior, and audit records stay Host-owned.
 
 ```mermaid
 flowchart LR
-  CLI["docker-host CLI"] --> Discovery["<host-data-root>/run/control.json"]
+  CLI["hosty CLI"] --> Discovery["<host-data-root>/run/control.json"]
   Discovery --> Control["/control/v1 local control"]
   Control --> Host["Host services"]
   Web["Web UI / remote HTTP"] --> Auth["Host browser auth"]
@@ -41,11 +41,11 @@ CLI control requests do not send `Authorization: Bearer`, Host cookies, account-
 
 ## CLI Auth Surface
 
-The active `docker-host auth` surface is local recovery only:
+The active `hosty auth` surface is local recovery only:
 
 ```text
-docker-host auth setup-token
-docker-host auth recovery-token
+hosty auth setup-token
+hosty auth recovery-token
 ```
 
 `setup-token` writes a hashed, expiring, one-time token for first-admin setup. `recovery-token` writes a hashed, expiring, one-time recovery token for local administrator recovery. Neither token grants CLI API access.
@@ -59,9 +59,9 @@ The first control contract covers:
 - Host readiness: `GET /control/v1/host/status`;
 - module list, install plan/apply, update plan/apply, remove plan/apply, start, stop, and restart;
 - developer target list, upsert, delete, and dev data cleanup;
-- Host-owned development user, invitation, assignment, directory policy, and app registry helpers used by `docker-host dev`.
+- Host-owned development user, invitation, assignment, directory policy, and app registry helpers used by `hosty dev`.
 
-The CLI still inspects Docker only for Host container lifecycle and production module command Host URL discovery. The top-level `docker-host dev` harness does not inspect or start the production Host container; it starts the source-run Host from `HOST_DEV_REPOSITORY_PATH` or connects to an explicit loopback `--host-url`.
+The CLI still inspects Docker only for Host container lifecycle and production app command Host URL discovery. The top-level `hosty dev` harness does not inspect or start the production Host container; it starts the source-run Host from `HOST_DEV_REPOSITORY_PATH` or connects to an explicit loopback `--host-url`.
 
 ## Dev Metadata
 
@@ -72,7 +72,7 @@ Repository-local development uses `metadata.dev.json` beside production `metadat
 - `image` for production-like Docker image services;
 - `process` for local development services launched by the CLI.
 
-Production install and update currently accept only image-backed services. Process-backed services are for local development through `docker-host dev`.
+Production install and update currently accept only image-backed services. Process-backed services are for local development through `hosty dev`.
 
 Example:
 
@@ -120,14 +120,14 @@ Example:
 }
 ```
 
-`docker-host dev up`, `status`, `identity`, and `reset` accept a module metadata path, a repository directory containing `metadata.dev.json`, or the current directory when it contains `metadata.dev.json`. Repository scripts pass `modules/demo-module/metadata.dev.json` explicitly and provide Host process development environment through the wrapper process when needed.
+`hosty dev up`, `status`, `identity`, and `reset` accept a module metadata path, a repository directory containing `metadata.dev.json`, or the current directory when it contains `metadata.dev.json`. Repository scripts pass `modules/demo-module/metadata.dev.json` explicitly and provide Host process development environment through the wrapper process when needed.
 
-After `dev up` has prepared the target, `docker-host dev identity --format token` asks trusted control for a real Host-signed module identity token for the selected development user. This is intended for direct module-origin diagnostics; full Host integration checks should still use the printed shell app and gateway URLs.
+After `dev up` has prepared the target, `hosty dev identity --format token` asks trusted control for a real Host-signed module identity token for the selected development user. This is intended for direct module-origin diagnostics; full Host integration checks should still use the printed shell app and gateway URLs.
 
 Development module data persists under `<HOST_DATA_ROOT_HOST>/dev/modules/<module-id>/` between runs. Use:
 
 ```bash
-docker-host dev clean <module-id-or-dev-metadata>
+hosty dev clean <module-id-or-dev-metadata>
 ```
 
 to remove one development module's stored data after confirmation.

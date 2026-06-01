@@ -66,12 +66,12 @@ Run the Host shell with this current checkout's demo module already linked as a 
 npm run host:dev:demo
 ```
 
-This uses the local `docker-host` CLI project to run `docker-host dev up --manifest modules/demo-module/metadata.dev.json`. The wrapper keeps state in `.docker-host-dev-demo/`, configures the Host dev repository path to the current checkout, enables local development auto-login, starts Docker Host locally on port `3000`, starts the demo module locally on port `3100`, seeds development users, and links the demo developer target through Host trusted control.
+This uses the local `hosty` CLI project to run `hosty dev up --manifest modules/demo-module/metadata.dev.json`. The wrapper keeps state in `.hosty-dev-demo/`, configures the Host dev repository path to the current checkout, enables local development auto-login, starts Hosty locally on port `3000`, starts the demo module locally on port `3100`, seeds development users, and links the demo developer target through Host trusted control.
 
 Run the installed CLI harness against the demo dev metadata:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json
+hosty dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
 `modules/demo-module/metadata.dev.json` is the metadata served to Docker Host and the CLI's local process source. The harness derives the process command, working directory, environment, local port, developer target, development users, assignments, and module directory policy from this metadata-driven workflow.
@@ -81,10 +81,10 @@ Run Docker Host from a built Host image and install the built demo module image 
 ```bash
 docker build -f apps/host/Dockerfile -t docker-host:dev .
 npm run demo-module:docker:build:local
-docker-host config set HOST_IMAGE docker-host:dev
-docker-host config set HOST_DATA_ROOT_HOST "$HOME/.docker-host-dev"
-docker-host start
-docker-host open
+hosty config set HOST_IMAGE docker-host:dev
+hosty config set HOST_DATA_ROOT_HOST "$HOME/.hosty-dev"
+hosty start
+hosty open
 ```
 
 Then install the fixture metadata from `/modules/install` using `http://localhost:3000/fixtures/modules/demo-module`. This mode is slower, but it exercises the same installed-module lifecycle path used by production-like runs: install plan, install apply, module container creation, start/stop/restart, runtime status, storage mounts, shell app discovery, direct iframe navigation, and Host identity propagation.
@@ -121,10 +121,10 @@ The CI image workflow publishes `latest` and SHA tags to GitHub Container Regist
 
 ## Install Testing
 
-Docker Host accepts a URL to a metadata JSON file. Install this module from the repository metadata URL:
+Hosty accepts a URL to a manifest or legacy metadata JSON file. Install this demo runtime app from the repository metadata URL:
 
 ```bash
-docker-host modules install https://raw.githubusercontent.com/alex-de-haas/docker-host/main/modules/demo-module/metadata.json
+hosty apps install https://raw.githubusercontent.com/alex-de-haas/docker-host/main/modules/demo-module/metadata.json
 ```
 
 The module currently validates these Host flows:
