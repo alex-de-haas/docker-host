@@ -698,14 +698,15 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 3 - Add app summary model
 
-**Status**: In Progress
+**Status**: Completed
 
 - Add app summary fields for `kind`, `system`, `capabilities`, `selectedChannel`, and `selectedRuntime`.
-- Add app access summary fields for Shell embedded, standalone auth redirect, and gateway-protected availability.
+- Add current app access summary fields for Shell-embedded apps: `accessMode`, `entryPath`, `embeddedUrl`, `origin`, `originScope`, and `identityTokenUrl`.
 - Keep legacy module summary fields for current screens.
 - Add a system app entry for Hosty Shell.
 - Show system apps separately from runtime apps in the management UI.
 - Disable unsupported actions based on capabilities rather than hardcoded module ids.
+- Defer standalone auth redirect and gateway-protected availability summaries to Phase 8 because those access modes are not implemented yet.
 
 ### Phase 4 - Rename CLI surface
 
@@ -722,23 +723,40 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 5 - Define `app.0.1` manifest schema
 
-**Status**: In Progress
+**Status**: Completed
 
-- Specify manifest identity, optional source, runtime profiles, UI, access modes, primary app data directory, backup policy, storage, settings, dependencies, and capabilities.
+- Specify and document the first compatibility manifest shape: identity, optional source, channels URL, runtime profiles, UI, primary app data directory, storage, settings, dependencies, endpoints, and reserved `access`/`capabilities` fields.
 - Add parser and validator for `schemaVersion: "app.0.1"`.
 - Map legacy Docker module metadata into an app manifest compatibility model.
-- Decide whether new manifest files are stored as `manifest.json`, with legacy `metadata.json` retained.
+- Store new app manifest copies as `apps/<app-id>/manifest.json`, with legacy `modules/<module-id>/metadata.json` retained for legacy module records.
+- Defer active access-mode behavior, capability overrides, and production local-command runtime execution to later phases.
 
 ### Phase 6 - Add runtime profile planning
 
 **Status**: In Progress
 
 - Store the active runtime profile for an installed app.
+- Parse Docker and local command runtime profiles from `app.0.1` manifests.
+- Install Docker runtime profiles through the legacy Docker runtime adapter.
 - Add switch-runtime plan and apply APIs.
 - Preserve compatible storage and settings when switching runtimes.
 - Preserve and pass the same primary app data directory to every compatible runtime profile.
 - Show endpoint, setting, storage, and dependency impact before applying.
 - Start with Docker-to-Docker and Docker-to-local-development transitions where possible.
+
+Implemented so far:
+
+- `apps.json` stores `selectedRuntime`.
+- `app.0.1` manifests can declare multiple runtime profiles.
+- Docker runtime profiles are normalized into the existing module install/update engine.
+- Local command runtime profiles are parsed and normalized for future planning, but are not executable in production install/update flows yet.
+
+Remaining before this phase can close:
+
+- switch-runtime plan and apply APIs;
+- runtime adapter execution for repository/local command profiles;
+- reviewed impact display for switching runtime profiles;
+- data/settings preservation checks across different runtime profile types.
 
 ### Phase 7 - Add repository-backed app source support
 
@@ -764,15 +782,17 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 9 - Add app data backup and restore
 
-**Status**: In Progress
+**Status**: Completed
 
 - Create a standard primary app data directory convention.
-- Inject `HOSTY_APP_DATA_DIR` into Docker and process runtime profiles.
+- Inject `HOSTY_APP_DATA_DIR` into Docker runtime profiles that have a primary data mapping.
+- Document local command `HOSTY_APP_DATA_DIR` injection as future runtime-adapter work.
 - Add backup records and ZIP archive creation for app data directories.
-- Add pre-update backups for apps whose backup policy requires them.
+- Add pre-update backups for apps with a primary data directory.
 - Add manual backup and restore APIs.
 - Add restore safety behavior, including stop-before-restore and optional `pre-restore` backup.
-- Add retention and integrity verification decisions before broad use.
+- Verify archive digest and per-entry CRC before restore.
+- Document the retention boundary: automatic backup retention and backup deletion APIs are not implemented yet, so backups are retained until manual cleanup or future retention work.
 
 ### Phase 10 - Add agent bridge workflow
 
@@ -784,12 +804,30 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 - Show generated pull request channels in Hosty.
 - Validate PR channels against the same local app data before promotion.
 
+### Phase 11 - Split Core and Shell public origins
+
+**Status**: Not Started
+
+The current implementation uses one public origin for the combined Hosty Core and Shell bundle. `HOST_PUBLIC_ORIGIN` points at the same deployed web origin that serves Shell pages, Core-owned auth pages, and public Core APIs. This is intentional while Shell is still bundled into the Host application.
+
+Future work should separate at least Hosty Core API and Hosty Shell as independently addressable public origins.
+
+- Add explicit configuration for Core and Shell public origins, such as `HOST_CORE_PUBLIC_ORIGIN` and `HOST_SHELL_PUBLIC_ORIGIN`, while keeping `HOST_PUBLIC_ORIGIN` as a compatibility alias during migration.
+- Define whether Core-owned auth pages live on the Core origin, the Shell origin, or a dedicated auth system-app origin.
+- Update browser session cookie, account-set cookie, CSRF, CORS, OIDC callback, trusted proxy, and logout behavior for cross-origin Shell-to-Core requests.
+- Update Shell to call Core APIs through the configured Core origin instead of assuming same-origin `/api`.
+- Define Shell system-app settings and channel behavior for a Shell that is delivered separately from Core.
+- Keep runtime app origins independent from both Core and Shell origins, with app-scoped identity tokens or auth codes instead of Hosty session cookies.
+- Document reverse-proxy requirements for the split-origin deployment model.
+- Add migration behavior for existing installations where `HOST_PUBLIC_ORIGIN` currently represents the combined Core/Shell origin.
+
 ## Resolved Decisions
 
 No open questions remain for this planning pass. The current accepted decisions are:
 
 - `source` is optional. Apps can be Docker-only, external, or otherwise runtime-only without a source repository known to Hosty.
 - Shell is a system app/client for Hosty Core, not a removable runtime app.
+- Core and Shell currently share one deployed public origin through `HOST_PUBLIC_ORIGIN`; a future phase must split Core API and Shell public origins explicitly.
 - System apps and runtime apps should be shown in separate UI sections, even if they share a backend summary shape.
 - Channels are runtime-neutral. They select a manifest/source snapshot, not specifically a Docker image.
 - Channels may add, remove, or modify runtime profiles, but only through a reviewed update plan.
