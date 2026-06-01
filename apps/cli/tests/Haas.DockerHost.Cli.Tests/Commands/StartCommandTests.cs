@@ -150,6 +150,32 @@ public sealed class StartCommandTests : IDisposable
     }
 
     [Fact]
+    public void HostDataRootMarker_ExistingMarkerWithNonStringIdThrowsConfigurationException()
+    {
+        Directory.CreateDirectory(rootDirectory);
+        var markerPath = Path.Combine(rootDirectory, HostDataRootMarker.FileName);
+        File.WriteAllText(markerPath, """{"id":{"unexpected":true}}""");
+
+        var exception = Assert.Throws<ConfigurationException>(() => HostDataRootMarker.Ensure(rootDirectory));
+
+        Assert.Contains("must contain a non-empty id", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryGetDataRootMarker_IgnoresNullEnvironmentEntries()
+    {
+        var container = new DockerContainerInspect(
+            "host",
+            "/docker-host",
+            "sha256:current",
+            new DockerContainerConfig(HostImage, [null!, "HOST_DATA_ROOT_MARKER=root_expected"]),
+            null,
+            null);
+
+        Assert.Equal("root_expected", HostLifecycle.TryGetDataRootMarker(container));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MissingHostPullsImageAndCreatesContainer()
     {
         var transport = new FakeDockerTransport(

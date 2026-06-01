@@ -14,7 +14,10 @@ import {
   readAuthStateSnapshot,
   writeAuthState,
 } from './auth-store.ts';
-import { authenticateTrustedProxyRequest } from './trusted-proxy.mjs';
+import {
+  TrustedProxyServiceError,
+  authenticateTrustedProxyRequest,
+} from './trusted-proxy.mjs';
 import type { AuthTrustedProxyProviderRecord } from './auth-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
@@ -117,6 +120,23 @@ test('trusted proxy assertion denies unmapped and disabled users', async () => {
   assert.equal(disabled.reason, 'trusted_proxy_user_disabled');
 });
 
+test('trusted proxy reports unavailable data root when marker JSON is malformed', async () => {
+  const config = await createTestConfig();
+  config.dataRootExpectedMarker = 'root_expected';
+  config.dataRootMarkerPath = path.join(config.dataRootContainer, '.docker-host-root.json');
+  await fs.writeFile(config.dataRootMarkerPath, '{');
+
+  await assert.rejects(
+    authenticateTrustedProxyRequest(
+      new Request('https://host.example.test/api/host/status'),
+      config
+    ),
+    (error: unknown) => error instanceof TrustedProxyServiceError &&
+      error.code === 'data_root_unavailable' &&
+      /not valid JSON/.test(error.message)
+  );
+});
+
 function testProvider(jwk: JsonWebKey): AuthTrustedProxyProviderRecord {
   const now = new Date().toISOString();
   return {
@@ -196,6 +216,8 @@ async function createTestConfig(): Promise<HostRuntimeConfig> {
   return {
     dataRootHost: dataRootContainer,
     dataRootContainer,
+    dataRootMarkerPath: path.join(dataRootContainer, '.docker-host-root.json'),
+    dataRootExpectedMarker: null,
     modulesRootContainer: path.join(dataRootContainer, 'modules'),
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
     authRootContainer,
