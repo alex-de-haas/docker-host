@@ -100,7 +100,7 @@ internal sealed class DockerEngineTransport : IDockerEngineTransport
     private static string DescribeEndpoint(DockerEndpoint endpoint)
         => endpoint.Kind == DockerEndpointKind.UnixSocket
             ? $"unix socket {endpoint.Address}"
-            : $"named pipe {endpoint.Address}";
+            : $"named pipe npipe:////./pipe/{endpoint.Address}";
 
     private static string GetReachabilityNextStep(DockerEndpoint endpoint)
         => endpoint.Kind == DockerEndpointKind.UnixSocket
