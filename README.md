@@ -101,6 +101,8 @@ The server connects to Docker using:
 2. `DOCKER_HOST`, if set
 3. `/var/run/docker.sock`, by default
 
+On Windows with Docker Desktop, enable WSL integration for the WSL distro where you run these commands. Without that integration, `/var/run/docker.sock` is unavailable in that distro even when Docker Desktop is running.
+
 For the installed-CLI module development harness, run:
 
 ```bash

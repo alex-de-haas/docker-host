@@ -209,6 +209,8 @@ The Host container remains Linux-based and accesses the Docker daemon through th
 
 `HOST_DOCKER_SOCKET` is the container-side socket path that the Host container sees as `/var/run/docker.sock`. It is separate from `HOST_DOCKER_ENDPOINT`: on native Windows the CLI endpoint is a named pipe, but the Host container socket mount still uses `/var/run/docker.sock`.
 
+When the CLI runs inside WSL with Docker Desktop for Windows, Docker Desktop WSL integration must be enabled for the default distro or the selected additional distro. Without that integration, `/var/run/docker.sock` is unavailable inside WSL and Docker Engine reachability checks fail even if Docker Desktop is running.
+
 `DOCKER_HOST`, TCP, SSH, TLS, and non-standard Docker daemon endpoints are not supported by the local Host launch model.
 
 CLI access to the Docker daemon is performed directly through the Docker Engine API over a local Unix socket or Windows named pipe. The Docker CLI executable is not a runtime dependency for the `docker-host` CLI.
