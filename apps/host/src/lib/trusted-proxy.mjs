@@ -9,6 +9,7 @@ import {
 } from 'jose';
 
 const DEFAULT_DATA_ROOT = path.join(os.homedir(), '.docker-host');
+const DATA_ROOT_MARKER_FILE = '.docker-host-root.json';
 const TRUSTED_PROXY_TYPE = 'trusted-proxy';
 const CLOUDFLARE_ACCESS_ASSERTION_HEADER = 'cf-access-jwt-assertion';
 const GENERIC_ASSERTION_HEADER = 'x-docker-host-trusted-proxy-jwt';
@@ -466,6 +467,7 @@ function getTrustedProxyAssertionHeaderNamesFromProviders(providers) {
 }
 
 async function readAuthState(config) {
+  await verifyDataRootMarker(config);
   await fs.mkdir(config.authRootContainer, { recursive: true });
   try {
     const raw = await fs.readFile(config.authStatePath, 'utf-8');
@@ -494,6 +496,7 @@ async function updateAuthState(operation, config) {
 }
 
 async function writeAuthState(state, config) {
+  await verifyDataRootMarker(config);
   await fs.mkdir(config.authRootContainer, { recursive: true });
   const nextState = normalizeAuthState({
     ...state,
@@ -565,6 +568,7 @@ async function withTrustedProxyStoreLock(operation) {
 }
 
 async function withAuthStateFileLock(config, operation) {
+  await verifyDataRootMarker(config);
   await fs.mkdir(config.authRootContainer, { recursive: true });
   const lockPath = `${config.authStatePath}.lock`;
   const start = Date.now();
@@ -804,8 +808,44 @@ function getRuntimeConfig() {
   return {
     dataRootHost,
     dataRootContainer,
+    dataRootMarkerPath: path.join(dataRootContainer, DATA_ROOT_MARKER_FILE),
+    dataRootExpectedMarker: process.env.HOST_DATA_ROOT_MARKER?.trim() || null,
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
   };
+}
+
+async function verifyDataRootMarker(config) {
+  const expectedMarker = config.dataRootExpectedMarker;
+  if (!expectedMarker) {
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(await fs.readFile(config.dataRootMarkerPath, 'utf-8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new TrustedProxyServiceError(
+        'data_root_unavailable',
+        `Host data root marker is missing at ${config.dataRootMarkerPath}. The configured data root may not be mounted.`
+      );
+    }
+    if (error instanceof SyntaxError) {
+      throw new TrustedProxyServiceError(
+        'data_root_unavailable',
+        `Host data root marker at ${config.dataRootMarkerPath} is not valid JSON.`
+      );
+    }
+    throw error;
+  }
+
+  const actualMarker = isObject(parsed) && typeof parsed.id === 'string' ? parsed.id.trim() : '';
+  if (actualMarker !== expectedMarker) {
+    throw new TrustedProxyServiceError(
+      'data_root_unavailable',
+      `Host data root marker at ${config.dataRootMarkerPath} does not match the running container configuration.`
+    );
+  }
 }

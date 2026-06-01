@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.Docker;
@@ -50,6 +51,10 @@ public sealed class StartCommandTests : IDisposable
                 "/containers/docker-host/json",
             ],
             transport.Requests.Select(request => request.PathAndQuery));
+        var markerPath = Path.Combine(rootDirectory, HostDataRootMarker.FileName);
+        Assert.True(File.Exists(markerPath));
+        using var marker = JsonDocument.Parse(File.ReadAllText(markerPath));
+        Assert.StartsWith("root_", marker.RootElement.GetProperty("id").GetString());
     }
 
     [Fact]
@@ -125,6 +130,52 @@ public sealed class StartCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_RunningHostWithExpectedMarkerFailsWhenDataRootMarkerIsMissing()
+    {
+        var transport = new FakeDockerTransport(HostContainerState.Running, dataRootMarker: "root_expected");
+        var context = CreateContext(transport);
+
+        var exception = await Assert.ThrowsAsync<ConfigurationException>(
+            async () => await new StartCommand(context).ExecuteAsync([]));
+
+        Assert.Contains("Host data root marker", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("is missing", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            [
+                "/version",
+                "/networks/docker-host-modules",
+                "/containers/docker-host/json",
+            ],
+            transport.Requests.Select(request => request.PathAndQuery));
+    }
+
+    [Fact]
+    public void HostDataRootMarker_ExistingMarkerWithNonStringIdThrowsConfigurationException()
+    {
+        Directory.CreateDirectory(rootDirectory);
+        var markerPath = Path.Combine(rootDirectory, HostDataRootMarker.FileName);
+        File.WriteAllText(markerPath, """{"id":{"unexpected":true}}""");
+
+        var exception = Assert.Throws<ConfigurationException>(() => HostDataRootMarker.Ensure(rootDirectory));
+
+        Assert.Contains("must contain a non-empty id", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryGetDataRootMarker_IgnoresNullEnvironmentEntries()
+    {
+        var container = new DockerContainerInspect(
+            "host",
+            "/docker-host",
+            "sha256:current",
+            new DockerContainerConfig(HostImage, [null!, "HOST_DATA_ROOT_MARKER=root_expected"]),
+            null,
+            null);
+
+        Assert.Equal("root_expected", HostLifecycle.TryGetDataRootMarker(container));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MissingHostPullsImageAndCreatesContainer()
     {
         var transport = new FakeDockerTransport(
@@ -193,12 +244,13 @@ public sealed class StartCommandTests : IDisposable
         public override DockerEngineClient Create(string endpoint) => new(transport);
     }
 
-    private sealed class FakeDockerTransport(
-        HostContainerState hostContainerState,
-        string? initialImageId = "sha256:current",
-        string? imageIdAfterPull = "sha256:current",
-        string? containerImageId = "sha256:current",
-        bool failPull = false) : IDockerEngineTransport
+        private sealed class FakeDockerTransport(
+            HostContainerState hostContainerState,
+            string? initialImageId = "sha256:current",
+            string? imageIdAfterPull = "sha256:current",
+            string? containerImageId = "sha256:current",
+            string? dataRootMarker = null,
+            bool failPull = false) : IDockerEngineTransport
     {
         private bool containerExists = hostContainerState != HostContainerState.Missing;
         private bool containerRunning = hostContainerState == HostContainerState.Running;
@@ -255,6 +307,14 @@ public sealed class StartCommandTests : IDisposable
                 }
 
                 var status = containerRunning ? "running" : "exited";
+                var envJson = dataRootMarker is null
+                    ? ""
+                    : $"""
+                        ,
+                        "Env": [
+                          "HOST_DATA_ROOT_MARKER={dataRootMarker}"
+                        ]
+                    """;
                 var bodyJson =
                     $$"""
                     {
@@ -263,6 +323,7 @@ public sealed class StartCommandTests : IDisposable
                       "Image": "{{currentContainerImageId}}",
                       "Config": {
                         "Image": "{{HostImage}}"
+                        {{envJson}}
                       },
                       "State": {
                         "Status": "{{status}}",

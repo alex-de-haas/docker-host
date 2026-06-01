@@ -8,10 +8,13 @@ const DEFAULT_MODULE_NETWORK = 'docker-host-modules';
 const DEFAULT_HOST_INTERNAL_ORIGIN = 'http://docker-host:3000';
 const DEFAULT_MODULE_HOST_PORT_START = 3100;
 const DEFAULT_MODULE_HOST_PORT_END = 3999;
+const DATA_ROOT_MARKER_FILE = '.docker-host-root.json';
 
 export interface HostRuntimeConfig {
   dataRootHost: string;
   dataRootContainer: string;
+  dataRootMarkerPath: string;
+  dataRootExpectedMarker: string | null;
   modulesRootContainer: string;
   modulesStorePath: string;
   moduleDevModeEnabled?: boolean;
@@ -46,6 +49,22 @@ export interface HostDataRootStatus {
   error: string | null;
 }
 
+export class HostDataRootUnavailableError extends Error {
+  readonly code = 'data_root_unavailable';
+  readonly markerPath: string;
+
+  constructor(
+    message: string,
+    markerPath: string
+  ) {
+    super(message);
+    this.name = 'HostDataRootUnavailableError';
+    this.markerPath = markerPath;
+  }
+}
+
+let verifiedDataRootMarker: { markerPath: string; expectedMarker: string } | null = null;
+
 export function getHostRuntimeConfig(): HostRuntimeConfig {
   const configuredDataRootHost = process.env.HOST_DATA_ROOT_HOST?.trim();
   const configuredDataRootContainer = process.env.HOST_DATA_ROOT_CONTAINER?.trim();
@@ -68,6 +87,8 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
   return {
     dataRootHost,
     dataRootContainer,
+    dataRootMarkerPath: path.join(dataRootContainer, DATA_ROOT_MARKER_FILE),
+    dataRootExpectedMarker: normalizeOptionalRuntimeValue(process.env.HOST_DATA_ROOT_MARKER),
     modulesRootContainer,
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
     moduleDevModeEnabled: isEnabledRuntimeFlag(process.env.HOST_MODULE_DEV_MODE),
@@ -94,6 +115,7 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
   const moduleDevRootContainer = config.moduleDevRootContainer ?? path.join(config.dataRootContainer, 'dev');
   const ingressRootContainer = config.ingressRootContainer ?? path.join(config.dataRootContainer, 'ingress');
   try {
+    await verifyHostDataRootMarker(config);
     await fs.mkdir(config.dataRootContainer, { recursive: true });
     await fs.mkdir(config.modulesRootContainer, { recursive: true });
     if (config.moduleDevModeEnabled) {
@@ -131,6 +153,59 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
       error: error instanceof Error ? error.message : 'Unknown data root error',
     };
   }
+}
+
+export async function verifyHostDataRootMarker(config = getHostRuntimeConfig()) {
+  const expectedMarker = config.dataRootExpectedMarker?.trim();
+  if (!expectedMarker) {
+    return;
+  }
+
+  const markerPath = config.dataRootMarkerPath || path.join(config.dataRootContainer, DATA_ROOT_MARKER_FILE);
+  if (
+    verifiedDataRootMarker?.markerPath === markerPath &&
+    verifiedDataRootMarker.expectedMarker === expectedMarker
+  ) {
+    return;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await fs.readFile(markerPath, 'utf-8')) as unknown;
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      throw new HostDataRootUnavailableError(
+        `Host data root marker is missing at ${markerPath}. The configured data root may not be mounted.`,
+        markerPath
+      );
+    }
+    if (error instanceof SyntaxError) {
+      throw new HostDataRootUnavailableError(
+        `Host data root marker at ${markerPath} is not valid JSON.`,
+        markerPath
+      );
+    }
+    throw error;
+  }
+
+  const actualMarker = isObject(parsed) && typeof parsed.id === 'string' ? parsed.id.trim() : '';
+  if (actualMarker !== expectedMarker) {
+    throw new HostDataRootUnavailableError(
+      `Host data root marker at ${markerPath} does not match the running container configuration.`,
+      markerPath
+    );
+  }
+
+  verifiedDataRootMarker = { markerPath, expectedMarker };
+}
+
+export function isHostDataRootUnavailableError(error: unknown): error is HostDataRootUnavailableError {
+  return error instanceof HostDataRootUnavailableError ||
+    (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'data_root_unavailable'
+    );
 }
 
 export async function syncPathOwnershipWithDataRoot(
@@ -180,6 +255,14 @@ export async function pathExists(targetPath: string) {
 function normalizeOptionalRuntimeValue(value: string | undefined) {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
 }
 
 function isEnabledRuntimeFlag(value: string | undefined) {

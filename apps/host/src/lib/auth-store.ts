@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
-import { getHostRuntimeConfig, pathExists, syncPathOwnershipWithDataRoot } from './host-runtime.ts';
+import {
+  getHostRuntimeConfig,
+  pathExists,
+  syncPathOwnershipWithDataRoot,
+  verifyHostDataRootMarker,
+} from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostRole } from '../types/auth.ts';
 import type { ModuleAccessAssignment } from '../types/auth.ts';
@@ -210,6 +215,7 @@ export async function readAuthState(config = getHostRuntimeConfig()): Promise<Au
 export async function readAuthStateSnapshot(
   config = getHostRuntimeConfig()
 ): Promise<AuthState> {
+  await verifyHostDataRootMarker(config);
   if (!(await pathExists(config.authStatePath))) {
     return createEmptyAuthState();
   }
@@ -222,6 +228,7 @@ export async function writeAuthState(
   state: AuthState,
   config = getHostRuntimeConfig()
 ) {
+  await verifyHostDataRootMarker(config);
   await fs.mkdir(config.authRootContainer, { recursive: true });
   const nextState = normalizeAuthState({
     ...state,
@@ -259,6 +266,7 @@ export async function appendAuthAuditEvent(
   event: Omit<AuthAuditEvent, 'id' | 'createdAt'>,
   config = getHostRuntimeConfig()
 ) {
+  await verifyHostDataRootMarker(config);
   await fs.mkdir(path.dirname(config.authAuditPath), { recursive: true });
   const entry: AuthAuditEvent = {
     id: `evt_${randomUUID()}`,
@@ -287,6 +295,7 @@ export function createEmptyAuthState(): AuthState {
 }
 
 async function ensureAuthState(config: HostRuntimeConfig) {
+  await verifyHostDataRootMarker(config);
   await fs.mkdir(config.authRootContainer, { recursive: true });
 
   if (!(await pathExists(config.authStatePath))) {
@@ -297,6 +306,7 @@ async function ensureAuthState(config: HostRuntimeConfig) {
 }
 
 async function ensureAuthStateUnlocked(config: HostRuntimeConfig) {
+  await verifyHostDataRootMarker(config);
   await fs.mkdir(config.authRootContainer, { recursive: true });
 
   if (!(await pathExists(config.authStatePath))) {
@@ -324,6 +334,7 @@ async function withAuthStateFileLock<T>(
   config: HostRuntimeConfig,
   operation: () => Promise<T>
 ): Promise<T> {
+  await verifyHostDataRootMarker(config);
   await fs.mkdir(config.authRootContainer, { recursive: true });
   const lockPath = `${config.authStatePath}.lock`;
   const start = Date.now();

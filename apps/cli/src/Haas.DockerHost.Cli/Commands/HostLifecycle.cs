@@ -1,5 +1,7 @@
 namespace Haas.DockerHost.Cli.Commands;
 
+using System.Net;
+using System.Text.Json;
 using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.Docker;
 using Spectre.Console;
@@ -9,7 +11,7 @@ internal sealed class HostLifecycle(CommandContext context)
     public async Task<DockerContainerInspect?> StartAsync(LaunchSettings settings, bool recreate, CancellationToken cancellationToken = default)
     {
         settings.Validate(context.Environment);
-        Directory.CreateDirectory(settings.ResolveHostDataRoot(context.Environment));
+        var dataRoot = settings.ResolveHostDataRoot(context.Environment);
 
         using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
         await CommandStatus.RunAsync(
@@ -22,6 +24,7 @@ internal sealed class HostLifecycle(CommandContext context)
             async () => await docker.EnsureNetworkAsync(settings.HostModuleNetwork, cancellationToken));
 
         var existing = await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
+        var dataRootMarker = HostDataRootMarker.Ensure(dataRoot, TryGetDataRootMarker(existing));
         var previousPort = TryGetMappedPort(existing);
         var hostImageReady = false;
         if (existing is not null && recreate)
@@ -45,24 +48,44 @@ internal sealed class HostLifecycle(CommandContext context)
         {
             if (existing.State?.Running == true)
             {
-                context.Console.MarkupLine("[green]Host container is already running.[/]");
-                return existing;
+                if (TryGetDataRootMarker(existing) is not null &&
+                    await RunningHostReportsDataRootUnavailableAsync(existing, settings, cancellationToken))
+                {
+                    context.Console.MarkupLine("[yellow]Host container reports the configured data root is unavailable. Recreating the Host container to rebind /data...[/]");
+                    await CommandStatus.RunAsync(
+                        context,
+                        $"Stopping Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                        async () => await docker.StopContainerAsync(settings.HostContainerName, cancellationToken));
+                    await CommandStatus.RunAsync(
+                        context,
+                        $"Removing Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                        async () => await docker.RemoveContainerAsync(settings.HostContainerName, cancellationToken));
+                    existing = null;
+                }
+                else
+                {
+                    context.Console.MarkupLine("[green]Host container is already running.[/]");
+                    return existing;
+                }
             }
 
-            var currentHostImage = await RefreshHostImageForStartAsync(
-                context,
-                docker,
-                settings.HostImage,
-                cancellationToken);
-            hostImageReady = true;
-
-            if (!ContainerUsesCurrentHostImage(existing, settings.HostImage, currentHostImage))
+            if (existing is not null)
             {
-                await CommandStatus.RunAsync(
+                var currentHostImage = await RefreshHostImageForStartAsync(
                     context,
-                    $"Removing Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
-                    async () => await docker.RemoveContainerAsync(settings.HostContainerName, cancellationToken));
-                existing = null;
+                    docker,
+                    settings.HostImage,
+                    cancellationToken);
+                hostImageReady = true;
+
+                if (!ContainerUsesCurrentHostImage(existing, settings.HostImage, currentHostImage))
+                {
+                    await CommandStatus.RunAsync(
+                        context,
+                        $"Removing Host container [grey]{Markup.Escape(settings.HostContainerName)}[/]...",
+                        async () => await docker.RemoveContainerAsync(settings.HostContainerName, cancellationToken));
+                    existing = null;
+                }
             }
         }
 
@@ -98,6 +121,7 @@ internal sealed class HostLifecycle(CommandContext context)
             settings.HostPublicOrigin,
             settings.HostGatewayBaseDomain,
             settings.HostModuleDevMode,
+            dataRootMarker.Id,
             hostPort);
 
         await CommandStatus.RunAsync(
@@ -186,6 +210,85 @@ internal sealed class HostLifecycle(CommandContext context)
         }
 
         return null;
+    }
+
+    internal static string? TryGetDataRootMarker(DockerContainerInspect? container)
+    {
+        var env = container?.Config?.Env;
+        if (env is null)
+        {
+            return null;
+        }
+
+        var prefix = HostDataRootMarker.EnvironmentVariable + "=";
+        foreach (var entry in env)
+        {
+            if (entry is not null && entry.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                var marker = entry[prefix.Length..].Trim();
+                return string.IsNullOrWhiteSpace(marker) ? null : marker;
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> RunningHostReportsDataRootUnavailableAsync(
+        DockerContainerInspect container,
+        LaunchSettings settings,
+        CancellationToken cancellationToken)
+    {
+        var url = TryGetHostUrl(container, settings);
+        if (url is null)
+        {
+            return false;
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+        using var http = new HttpClient
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+
+        try
+        {
+            using var response = await http.GetAsync($"{url}/api/health", timeout.Token);
+            if (response.StatusCode != HttpStatusCode.ServiceUnavailable)
+            {
+                return false;
+            }
+
+            var raw = await response.Content.ReadAsStringAsync(timeout.Token);
+            if (!raw.Contains("\"data_root_unavailable\"", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            using var json = JsonDocument.Parse(raw);
+            if (json.RootElement.ValueKind != JsonValueKind.Object ||
+                !json.RootElement.TryGetProperty("error", out var error) ||
+                error.ValueKind != JsonValueKind.Object ||
+                !error.TryGetProperty("code", out var code) ||
+                code.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            return string.Equals(
+                code.GetString(),
+                "data_root_unavailable",
+                StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (
+            ex is HttpRequestException ||
+            (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested) ||
+            (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested) ||
+            ex is JsonException ||
+            ex is KeyNotFoundException)
+        {
+            return false;
+        }
     }
 
     internal static async Task PullHostImageAsync(
