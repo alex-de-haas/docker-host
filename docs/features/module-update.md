@@ -118,7 +118,7 @@ The backup includes only the primary app data directory:
 - legacy fallback: installed storage mapping with key `data`;
 - secondary fallback: installed storage mapping whose host path ends in `data`.
 
-External mounts and additional storage mappings are not backed up. This is intentional because external mounts can contain very large media libraries or storage devices that Hosty should not archive automatically.
+External mounts and additional storage mappings are not backed up. This is intentional because external mounts can contain very large media libraries or storage devices that Hosty should not archive automatically. Current ZIP creation is in-memory and rejects app data above 256 MiB until a streaming archive writer is implemented.
 
 Backups are ZIP archives with sibling JSON metadata under:
 

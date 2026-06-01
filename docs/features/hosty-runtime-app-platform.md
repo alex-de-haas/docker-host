@@ -311,6 +311,7 @@ Current behavior:
 - Restore creates a `pre-restore` backup by default.
 - Restore verifies archive digest and per-entry CRC before replacing data.
 - Restore does not automatically restart the app.
+- Current ZIP creation is in-memory and rejects app data above 256 MiB until a streaming archive writer is implemented.
 - Automatic backup retention and backup deletion APIs are not implemented yet. Backups are retained until manual filesystem cleanup or a future retention feature removes them.
 
 CLI commands:

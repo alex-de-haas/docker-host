@@ -28,6 +28,9 @@ export interface RestoreAppDataBackupOptions {
   createPreRestoreBackup?: boolean;
 }
 
+export const APP_BACKUP_MAX_DATA_BYTES = 256 * 1024 * 1024;
+const MAX_ZIP_ENTRY_COUNT = 0xffff;
+
 export class AppBackupError extends Error {
   readonly status: 404 | 409 | 422 | 500;
   readonly code: string;
@@ -136,7 +139,12 @@ export async function restoreAppDataBackup(
   const restoreRoot = `${dataPath}.restore-${process.pid}-${Date.now()}`;
   await fs.rm(restoreRoot, { recursive: true, force: true });
   await fs.mkdir(restoreRoot, { recursive: true });
-  await extractZipArchive(archive, restoreRoot);
+  try {
+    await extractZipArchive(archive, restoreRoot);
+  } catch (error) {
+    await fs.rm(restoreRoot, { recursive: true, force: true });
+    throw error;
+  }
 
   const replacedRoot = `${dataPath}.replaced-${process.pid}-${Date.now()}`;
   if (await pathExists(dataPath)) {
@@ -230,6 +238,7 @@ async function readBackupRecord(metadataPath: string): Promise<AppDataBackupReco
 
 async function collectZipEntries(rootPath: string) {
   const entries: Array<{ name: string; data: Buffer }> = [];
+  let totalBytes = 0;
 
   async function visit(directory: string) {
     const items = await fs.readdir(directory, { withFileTypes: true });
@@ -244,9 +253,28 @@ async function collectZipEntries(rootPath: string) {
         continue;
       }
 
+      if (entries.length >= MAX_ZIP_ENTRY_COUNT) {
+        throw new AppBackupError(
+          422,
+          'backup_file_count_limit_exceeded',
+          'App data backup contains too many files for the current ZIP archive format.'
+        );
+      }
+
+      const stats = await fs.stat(absolutePath);
+      if (!stats.isFile()) {
+        continue;
+      }
+      totalBytes += stats.size;
+      assertBackupDataSizeLimit(totalBytes);
+
+      const data = await fs.readFile(absolutePath);
+      totalBytes = totalBytes - stats.size + data.byteLength;
+      assertBackupDataSizeLimit(totalBytes);
+
       entries.push({
         name: relativeName,
-        data: await fs.readFile(absolutePath),
+        data,
       });
     }
   }
@@ -256,7 +284,7 @@ async function collectZipEntries(rootPath: string) {
 }
 
 export function buildZipArchive(entries: Array<{ name: string; data: Buffer }>) {
-  if (entries.length > 0xffff) {
+  if (entries.length > MAX_ZIP_ENTRY_COUNT) {
     throw new AppBackupError(
       422,
       'backup_file_count_limit_exceeded',
@@ -329,6 +357,21 @@ export function buildZipArchive(entries: Array<{ name: string; data: Buffer }>) 
   end.writeUInt16LE(0, 20);
 
   return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+function assertBackupDataSizeLimit(totalBytes: number) {
+  if (totalBytes > APP_BACKUP_MAX_DATA_BYTES) {
+    throw new AppBackupError(
+      422,
+      'backup_data_too_large',
+      `App data backup exceeds the current ${formatByteSize(APP_BACKUP_MAX_DATA_BYTES)} in-memory archive limit.`
+    );
+  }
+}
+
+function formatByteSize(bytes: number) {
+  const mib = bytes / (1024 * 1024);
+  return `${mib.toLocaleString('en-US', { maximumFractionDigits: 0 })} MiB`;
 }
 
 async function extractZipArchive(archive: Buffer, destination: string) {

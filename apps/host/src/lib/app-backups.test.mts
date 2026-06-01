@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  APP_BACKUP_MAX_DATA_BYTES,
   buildZipArchive,
   createAppDataBackup,
   listAppDataBackups,
@@ -118,6 +119,10 @@ test('restore rejects backup archives with traversal path segments', async () =>
   );
   assert.equal(await fs.readFile(path.join(dataPath, 'note.txt'), 'utf-8'), 'safe');
   await assert.rejects(() => fs.access(path.join(root, 'apps', appId, 'escape.txt')));
+  assert.deepEqual(
+    (await fs.readdir(path.dirname(dataPath))).filter(name => name.includes('.restore-')),
+    []
+  );
 });
 
 test('ZIP archive creation rejects more than 65535 entries', () => {
@@ -130,6 +135,23 @@ test('ZIP archive creation rejects more than 65535 entries', () => {
     () => buildZipArchive(entries),
     { code: 'backup_file_count_limit_exceeded' }
   );
+});
+
+test('backup rejects app data above the current in-memory archive limit', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hosty-backups-'));
+  const config = createConfig(root);
+  const appId = 'com.example.notes';
+  const dataPath = path.join(root, 'apps', appId, 'data');
+  const largeFilePath = path.join(dataPath, 'too-large.bin');
+  await fs.mkdir(dataPath, { recursive: true });
+  await fs.writeFile(largeFilePath, '');
+  await fs.truncate(largeFilePath, APP_BACKUP_MAX_DATA_BYTES + 1);
+
+  await assert.rejects(
+    () => createAppDataBackup(appId, 'manual', config),
+    { code: 'backup_data_too_large' }
+  );
+  await assert.rejects(() => fs.access(path.join(root, 'backups', appId)));
 });
 
 function createConfig(root: string): HostRuntimeConfig {

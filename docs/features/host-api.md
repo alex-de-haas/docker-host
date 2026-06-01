@@ -916,7 +916,7 @@ App data backups protect only the primary app data directory:
 - legacy fallback: installed storage mapping with key `data`;
 - secondary fallback: installed storage mapping whose host path ends in `data`.
 
-External mounts are excluded. Update apply creates a `pre-update` backup when a data directory exists. Restore verifies archive digest and per-entry CRCs, stops the app by default, creates a `pre-restore` backup by default, replaces the data directory, and does not restart the app automatically.
+External mounts are excluded. Update apply creates a `pre-update` backup when a data directory exists. Current ZIP creation is in-memory and rejects app data above 256 MiB until a streaming archive writer is implemented. Restore verifies archive digest and per-entry CRCs, stops the app by default, creates a `pre-restore` backup by default, replaces the data directory, and does not restart the app automatically.
 
 ### Sessions and audit
 

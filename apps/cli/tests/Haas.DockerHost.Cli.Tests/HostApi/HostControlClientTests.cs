@@ -144,13 +144,13 @@ public sealed class HostControlClientTests
             """);
         using var client = CreateClient(handler);
 
-        var response = await client.ListAppBackupsAsync("com.acme/reports");
+        var response = await client.ListAppBackupsAsync("com.acme.reports");
 
         var backup = Assert.Single(response.Body?.Backups ?? []);
         Assert.Equal("manual", backup.Reason);
         Assert.Equal(123, backup.ArchiveBytes);
         Assert.Equal(HttpMethod.Get, handler.Request?.Method);
-        Assert.Equal("/control/v1/apps/com.acme%2Freports/backups", handler.Request?.RequestUri?.AbsolutePath);
+        Assert.Equal("/control/v1/apps/com.acme.reports/backups", handler.Request?.RequestUri?.AbsolutePath);
     }
 
     [Fact]
@@ -174,7 +174,9 @@ public sealed class HostControlClientTests
             """);
         using var client = CreateClient(handler);
 
-        var response = await client.RestoreAppBackupAsync("com.acme.reports", "backup/one", new AppRestoreRequest
+        var backupId = "2026-06-01T12-00-00-000Z_manual_a1b2c3d4";
+
+        var response = await client.RestoreAppBackupAsync("com.acme.reports", backupId, new AppRestoreRequest
         {
             Confirmed = true,
             StopBeforeRestore = true,
@@ -183,7 +185,7 @@ public sealed class HostControlClientTests
 
         Assert.Equal("backup-one", response.Body?.Restored?.Id);
         Assert.Equal(HttpMethod.Post, handler.Request?.Method);
-        Assert.Equal("/control/v1/apps/com.acme.reports/backups/backup%2Fone/restore", handler.Request?.RequestUri?.AbsolutePath);
+        Assert.Equal($"/control/v1/apps/com.acme.reports/backups/{backupId}/restore", handler.Request?.RequestUri?.AbsolutePath);
         Assert.Contains("\"confirmed\":true", handler.Body);
         Assert.Contains("\"stopBeforeRestore\":true", handler.Body);
         Assert.Contains("\"createPreRestoreBackup\":true", handler.Body);
