@@ -31,7 +31,7 @@ internal static class LaunchSettingDefinitions
         new(HostPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
         new(HostGatewayBaseDomain, _ => "", true, ValidateOptionalDnsName),
         new(HostRestartPolicy, _ => "unless-stopped", true, ValidateRestartPolicy),
-        new(HostDockerEndpoint, env => env.IsWindows ? "npipe:////./pipe/docker_engine" : "unix:///var/run/docker.sock", true, ValidateDockerEndpoint),
+        new(HostDockerEndpoint, DefaultDockerEndpoint, true, ValidateDockerEndpoint),
         new(HostDockerSocket, _ => "/var/run/docker.sock", true, ValidateContainerPath),
         new(HostModuleNetwork, _ => "docker-host-modules", true, Required),
         new(HostModuleDevMode, _ => "disabled", true, ValidateEnabledDisabled),
@@ -49,6 +49,25 @@ internal static class LaunchSettingDefinitions
         }
 
         return environment.IsWindows ? Path.Combine(environment.HomeDirectory, ".docker-host") : "$HOME/.docker-host";
+    }
+
+    private static string DefaultDockerEndpoint(DockerHostEnvironment environment)
+    {
+        if (environment.IsWindows)
+        {
+            return "npipe:////./pipe/docker_engine";
+        }
+
+        const string defaultSocket = "/var/run/docker.sock";
+        if (File.Exists(defaultSocket))
+        {
+            return $"unix://{defaultSocket}";
+        }
+
+        var dockerDesktopSocket = Path.Combine(environment.HomeDirectory, ".docker", "run", "docker.sock");
+        return File.Exists(dockerDesktopSocket)
+            ? $"unix://{dockerDesktopSocket}"
+            : $"unix://{defaultSocket}";
     }
 
     public static LaunchSettingDefinition Get(string key)

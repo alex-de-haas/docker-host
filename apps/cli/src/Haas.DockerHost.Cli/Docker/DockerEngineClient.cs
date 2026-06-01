@@ -116,7 +116,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
         {
             $"HOST_DATA_ROOT_HOST={plan.DataRootHost}",
             $"HOST_DATA_ROOT_CONTAINER={plan.DataRootContainer}",
-            $"HOST_DOCKER_SOCKET={plan.DockerSocket}",
+            $"HOST_DOCKER_SOCKET={plan.DockerSocketTarget}",
             $"HOST_MODULE_NETWORK={plan.ModuleNetwork}",
             $"HOST_MODULE_DEV_MODE={plan.HostModuleDevMode}",
             $"{HostDataRootMarker.EnvironmentVariable}={plan.DataRootMarker}",
@@ -149,7 +149,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             {
                 Binds = new[]
                 {
-                    $"{plan.DockerSocket}:{plan.DockerSocket}",
+                    $"{plan.DockerSocketSource}:{plan.DockerSocketTarget}",
                     $"{plan.DataRootHost}:{plan.DataRootContainer}",
                 },
                 PortBindings = new Dictionary<string, object[]>

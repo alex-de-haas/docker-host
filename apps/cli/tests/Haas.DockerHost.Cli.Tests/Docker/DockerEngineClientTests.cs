@@ -18,6 +18,7 @@ public sealed class DockerEngineClientTests
             "docker-host",
             "/host/data",
             "/data",
+            "/Users/example/.docker/run/docker.sock",
             "/var/run/docker.sock",
             "docker-host-modules",
             "unless-stopped",
@@ -42,9 +43,17 @@ public sealed class DockerEngineClientTests
             .GetProperty("3000/tcp")[0]
             .GetProperty("HostIp")
             .GetString();
+        var binds = root
+            .GetProperty("HostConfig")
+            .GetProperty("Binds")
+            .EnumerateArray()
+            .Select(value => value.GetString())
+            .ToArray();
 
         Assert.Contains("HOST_BIND_ADDRESS=127.0.0.1", env);
+        Assert.Contains("HOST_DOCKER_SOCKET=/var/run/docker.sock", env);
         Assert.Contains("HOST_DATA_ROOT_MARKER=root_test", env);
+        Assert.Contains("/Users/example/.docker/run/docker.sock:/var/run/docker.sock", binds);
         Assert.Equal("127.0.0.1", hostIp);
     }
 

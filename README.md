@@ -101,6 +101,8 @@ The server connects to Docker using:
 2. `DOCKER_HOST`, if set
 3. `/var/run/docker.sock`, by default
 
+On macOS after Docker Desktop updates, `/var/run/docker.sock` may no longer be created unless "Allow the default Docker socket to be used" is enabled. In that case, use the socket shown by `docker context inspect`, commonly `unix://$HOME/.docker/run/docker.sock`.
+
 For the installed-CLI module development harness, run:
 
 ```bash
@@ -127,6 +129,7 @@ Examples:
 ```bash
 DOCKER_SOCKET_PATH=/var/run/docker.sock npm run host:dev
 DOCKER_HOST=unix:///var/run/docker.sock npm run host:dev
+DOCKER_HOST=unix://$HOME/.docker/run/docker.sock npm run host:dev
 DOCKER_HOST=tcp://127.0.0.1:2375 npm run host:dev
 ```
 

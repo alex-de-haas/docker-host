@@ -115,7 +115,10 @@ flowchart LR
 The transport supports:
 
 - `unix:///var/run/docker.sock` on macOS, Linux, and WSL;
+- `unix://$HOME/.docker/run/docker.sock` on macOS when Docker Desktop does not expose the default `/var/run/docker.sock` compatibility symlink;
 - `npipe:////./pipe/docker_engine` on native Windows.
+
+On macOS, new launch configuration prefers `/var/run/docker.sock` when that compatibility socket exists. If Docker Desktop no longer creates it, the CLI falls back to the Docker Desktop user socket at `$HOME/.docker/run/docker.sock`. For Host container creation, the CLI can mount the configured Unix endpoint source into the container at `HOST_DOCKER_SOCKET`, which remains `/var/run/docker.sock` by default.
 
 The high-level adapter owns Docker Engine paths, request payloads, response parsing, and Docker error diagnostics. Commands call typed methods for image pull, container inspect/create/start/stop/remove, logs, and network inspect/create.
 

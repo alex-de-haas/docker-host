@@ -194,6 +194,7 @@ CLI lifecycle commands must manage the Host container through the Docker daemon.
 
 ```text
 macOS/Linux/WSL: unix:///var/run/docker.sock
+macOS Docker Desktop fallback: unix://$HOME/.docker/run/docker.sock
 native Windows: npipe:////./pipe/docker_engine
 ```
 
@@ -204,10 +205,10 @@ The CLI uses `HOST_DOCKER_ENDPOINT` for lifecycle commands of the Host container
 The Host container remains Linux-based and accesses the Docker daemon through the Unix socket path inside the Docker Desktop/Engine VM:
 
 ```text
-/var/run/docker.sock:/var/run/docker.sock
+<configured Unix endpoint socket>:/var/run/docker.sock
 ```
 
-`HOST_DOCKER_SOCKET` is the container-side socket path that the Host container sees as `/var/run/docker.sock`. It is separate from `HOST_DOCKER_ENDPOINT`: on native Windows the CLI endpoint is a named pipe, but the Host container socket mount still uses `/var/run/docker.sock`.
+`HOST_DOCKER_SOCKET` is the container-side socket path that the Host container sees as `/var/run/docker.sock`. It is separate from `HOST_DOCKER_ENDPOINT`: on macOS the host-side mount source may be `$HOME/.docker/run/docker.sock` while the container-side path stays `/var/run/docker.sock`; on native Windows the CLI endpoint is a named pipe, but the Host container socket path still uses `/var/run/docker.sock`.
 
 `DOCKER_HOST`, TCP, SSH, TLS, and non-standard Docker daemon endpoints are not supported by the local Host launch model.
 
@@ -287,7 +288,7 @@ docker-host config reset HOST_IMAGE
 
 `config list` prints all launch settings with current values. `config get <KEY>` prints one value. `config set <KEY> <VALUE>` and the convenience form `config set <KEY>=<VALUE>` write the value to `launch.env`. `config reset <KEY>` restores the setting to its default value.
 
-The CLI must validate known keys before writing. Unknown keys must return a clear error. `HOST_UI_PORT` must accept `auto` or a valid TCP port number. `HOST_BIND_ADDRESS` must accept `127.0.0.1` or `0.0.0.0`. `HOST_PUBLIC_ORIGIN` must be an absolute `http`/`https` origin without a path. `HOST_GATEWAY_BASE_DOMAIN` must be a valid DNS name or an empty value. `HOST_DOCKER_ENDPOINT` must accept only supported local endpoints for the current platform: Unix socket on macOS/Linux/WSL or Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` and `HOST_DOCKER_SOCKET` must remain `/data` and `/var/run/docker.sock` and must not be changed through the normal config flow.
+The CLI must validate known keys before writing. Unknown keys must return a clear error. `HOST_UI_PORT` must accept `auto` or a valid TCP port number. `HOST_BIND_ADDRESS` must accept `127.0.0.1` or `0.0.0.0`. `HOST_PUBLIC_ORIGIN` must be an absolute `http`/`https` origin without a path. `HOST_GATEWAY_BASE_DOMAIN` must be a valid DNS name or an empty value. `HOST_DOCKER_ENDPOINT` must accept only supported local endpoints for the current platform: Unix socket on macOS/Linux/WSL or Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` must remain `/data`. `HOST_DOCKER_SOCKET` defaults to `/var/run/docker.sock`; the host-side mount source is derived from `HOST_DOCKER_ENDPOINT` for Unix endpoints.
 
 If `~/.docker-host/bin` is not in `PATH`, the install script should add an idempotent PATH block to the shell profile. For `zsh`, it uses `~/.zshrc`; for `bash`, it uses the typical bash profile for the current platform; for `sh`, it uses `~/.profile`. If the profile cannot be detected or writing is disabled with `DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE=1`, the script should print this instruction:
 

@@ -110,7 +110,7 @@ It owns Host container lifecycle settings, not module state:
 - `HOST_DOCKER_SOCKET`;
 - `HOST_MODULE_NETWORK`.
 
-The standalone `docker-host` CLI reads this file for Host lifecycle commands. `HOST_DOCKER_ENDPOINT` is the CLI-side Docker Engine endpoint, such as `unix:///var/run/docker.sock` on macOS/Linux/WSL or `npipe:////./pipe/docker_engine` on native Windows. `HOST_DOCKER_SOCKET` is the socket path mounted into the Linux Host container and remains `/var/run/docker.sock`.
+The standalone `docker-host` CLI reads this file for Host lifecycle commands. `HOST_DOCKER_ENDPOINT` is the CLI-side Docker Engine endpoint, such as `unix:///var/run/docker.sock` on macOS/Linux/WSL, `unix://$HOME/.docker/run/docker.sock` for Docker Desktop on macOS when the default compatibility socket is unavailable, or `npipe:////./pipe/docker_engine` on native Windows. `HOST_DOCKER_SOCKET` is the socket path inside the Linux Host container and remains `/var/run/docker.sock` by default; for Unix endpoints, the host-side mount source is derived from `HOST_DOCKER_ENDPOINT`.
 
 ## Persistent Files
 

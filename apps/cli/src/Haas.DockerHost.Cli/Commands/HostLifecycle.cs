@@ -114,6 +114,7 @@ internal sealed class HostLifecycle(CommandContext context)
             settings.HostContainerName,
             settings.ResolveHostDataRoot(context.Environment),
             settings.HostDataRootContainer,
+            GetDockerSocketMountSource(settings),
             settings.HostDockerSocket,
             settings.HostModuleNetwork,
             settings.HostRestartPolicy,
@@ -135,6 +136,14 @@ internal sealed class HostLifecycle(CommandContext context)
 
         context.Console.MarkupLine($"[green]Host container started on[/] {Markup.Escape(BuildUrl(hostPort))}");
         return await docker.InspectContainerAsync(settings.HostContainerName, cancellationToken);
+    }
+
+    private static string GetDockerSocketMountSource(LaunchSettings settings)
+    {
+        const string UnixPrefix = "unix://";
+        return settings.HostDockerEndpoint.StartsWith(UnixPrefix, StringComparison.OrdinalIgnoreCase)
+            ? settings.HostDockerEndpoint[UnixPrefix.Length..]
+            : settings.HostDockerSocket;
     }
 
     public async Task StopAsync(LaunchSettings settings, CancellationToken cancellationToken = default)
