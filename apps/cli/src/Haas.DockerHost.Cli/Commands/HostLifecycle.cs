@@ -223,7 +223,7 @@ internal sealed class HostLifecycle(CommandContext context)
         var prefix = HostDataRootMarker.EnvironmentVariable + "=";
         foreach (var entry in env)
         {
-            if (entry.StartsWith(prefix, StringComparison.Ordinal))
+            if (entry is not null && entry.StartsWith(prefix, StringComparison.Ordinal))
             {
                 var marker = entry[prefix.Length..].Trim();
                 return string.IsNullOrWhiteSpace(marker) ? null : marker;
@@ -266,8 +266,17 @@ internal sealed class HostLifecycle(CommandContext context)
             }
 
             using var json = JsonDocument.Parse(raw);
+            if (json.RootElement.ValueKind != JsonValueKind.Object ||
+                !json.RootElement.TryGetProperty("error", out var error) ||
+                error.ValueKind != JsonValueKind.Object ||
+                !error.TryGetProperty("code", out var code) ||
+                code.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
             return string.Equals(
-                json.RootElement.GetProperty("error").GetProperty("code").GetString(),
+                code.GetString(),
                 "data_root_unavailable",
                 StringComparison.Ordinal);
         }

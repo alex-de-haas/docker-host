@@ -51,11 +51,16 @@ internal sealed record HostDataRootMarker(string Id, string Path)
     {
         try
         {
-            var parsed = JsonNode.Parse(File.ReadAllText(markerPath)) as JsonObject;
-            var id = parsed?["id"]?.GetValue<string>();
-            if (!string.IsNullOrWhiteSpace(id))
+            using var parsed = JsonDocument.Parse(File.ReadAllText(markerPath));
+            if (parsed.RootElement.ValueKind == JsonValueKind.Object &&
+                parsed.RootElement.TryGetProperty("id", out var idElement) &&
+                idElement.ValueKind == JsonValueKind.String)
             {
-                return id.Trim();
+                var id = idElement.GetString();
+                if (!string.IsNullOrWhiteSpace(id))
+                {
+                    return id.Trim();
+                }
             }
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)

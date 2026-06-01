@@ -285,6 +285,30 @@ test('gateway resolves unavailable installed module as service unavailable', asy
   }
 });
 
+test('gateway reports unavailable data root when marker JSON is malformed', async () => {
+  const config = await createGatewayServerTestConfig();
+  const markerPath = path.join(config.dataRootContainer, '.docker-host-root.json');
+  await fs.writeFile(markerPath, '{');
+  const restoreEnv = applyRuntimeEnv(config, { dataRootMarker: 'root_expected' });
+  const { GatewayHttpError, resolveGatewayRequest } = await import('../../server.mjs');
+
+  try {
+    await assert.rejects(
+      resolveGatewayRequest({
+        headers: {
+          host: 'reports.example.test',
+        },
+      }),
+      (error: unknown) => error instanceof GatewayHttpError &&
+        error.status === 503 &&
+        error.code === 'data_root_unavailable' &&
+        /not valid JSON/.test(error.message)
+    );
+  } finally {
+    restoreEnv();
+  }
+});
+
 test('gateway trusted proxy mode requires assertion instead of browser session fallback', async () => {
   const config = await createGatewayServerTestConfig();
   const restoreEnv = applyRuntimeEnv(config);
@@ -717,6 +741,8 @@ async function createGatewayServerTestConfig(): Promise<HostRuntimeConfig> {
   return {
     dataRootHost: dataRootContainer,
     dataRootContainer,
+    dataRootMarkerPath: path.join(dataRootContainer, '.docker-host-root.json'),
+    dataRootExpectedMarker: null,
     modulesRootContainer: path.join(dataRootContainer, 'modules'),
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
     authRootContainer,
@@ -732,10 +758,11 @@ async function createGatewayServerTestConfig(): Promise<HostRuntimeConfig> {
   };
 }
 
-function applyRuntimeEnv(config: HostRuntimeConfig, options: { moduleDevMode?: boolean } = {}) {
+function applyRuntimeEnv(config: HostRuntimeConfig, options: { moduleDevMode?: boolean; dataRootMarker?: string } = {}) {
   const keys = [
     'HOST_DATA_ROOT_HOST',
     'HOST_DATA_ROOT_CONTAINER',
+    'HOST_DATA_ROOT_MARKER',
     'HOST_GATEWAY_BASE_DOMAIN',
     'HOST_PUBLIC_ORIGIN',
     'HOST_INTERNAL_ORIGIN',
@@ -745,6 +772,7 @@ function applyRuntimeEnv(config: HostRuntimeConfig, options: { moduleDevMode?: b
 
   process.env.HOST_DATA_ROOT_HOST = config.dataRootHost;
   process.env.HOST_DATA_ROOT_CONTAINER = config.dataRootContainer;
+  process.env.HOST_DATA_ROOT_MARKER = options.dataRootMarker || '';
   process.env.HOST_GATEWAY_BASE_DOMAIN = config.gatewayBaseDomain || '';
   process.env.HOST_PUBLIC_ORIGIN = config.hostPublicOrigin || '';
   process.env.HOST_INTERNAL_ORIGIN = config.hostInternalOrigin || '';

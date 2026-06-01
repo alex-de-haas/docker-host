@@ -63,6 +63,8 @@ export class HostDataRootUnavailableError extends Error {
   }
 }
 
+let verifiedDataRootMarker: { markerPath: string; expectedMarker: string } | null = null;
+
 export function getHostRuntimeConfig(): HostRuntimeConfig {
   const configuredDataRootHost = process.env.HOST_DATA_ROOT_HOST?.trim();
   const configuredDataRootContainer = process.env.HOST_DATA_ROOT_CONTAINER?.trim();
@@ -160,6 +162,13 @@ export async function verifyHostDataRootMarker(config = getHostRuntimeConfig()) 
   }
 
   const markerPath = config.dataRootMarkerPath || path.join(config.dataRootContainer, DATA_ROOT_MARKER_FILE);
+  if (
+    verifiedDataRootMarker?.markerPath === markerPath &&
+    verifiedDataRootMarker.expectedMarker === expectedMarker
+  ) {
+    return;
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(await fs.readFile(markerPath, 'utf-8')) as unknown;
@@ -167,6 +176,12 @@ export async function verifyHostDataRootMarker(config = getHostRuntimeConfig()) 
     if (isNodeError(error) && error.code === 'ENOENT') {
       throw new HostDataRootUnavailableError(
         `Host data root marker is missing at ${markerPath}. The configured data root may not be mounted.`,
+        markerPath
+      );
+    }
+    if (error instanceof SyntaxError) {
+      throw new HostDataRootUnavailableError(
+        `Host data root marker at ${markerPath} is not valid JSON.`,
         markerPath
       );
     }
@@ -180,6 +195,8 @@ export async function verifyHostDataRootMarker(config = getHostRuntimeConfig()) 
       markerPath
     );
   }
+
+  verifiedDataRootMarker = { markerPath, expectedMarker };
 }
 
 export function isHostDataRootUnavailableError(error: unknown): error is HostDataRootUnavailableError {

@@ -832,6 +832,12 @@ async function verifyDataRootMarker(config) {
         `Host data root marker is missing at ${config.dataRootMarkerPath}. The configured data root may not be mounted.`
       );
     }
+    if (error instanceof SyntaxError) {
+      throw new TrustedProxyServiceError(
+        'data_root_unavailable',
+        `Host data root marker at ${config.dataRootMarkerPath} is not valid JSON.`
+      );
+    }
     throw error;
   }
 
