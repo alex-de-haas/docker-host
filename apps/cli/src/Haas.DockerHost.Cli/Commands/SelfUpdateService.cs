@@ -145,9 +145,17 @@ internal sealed class SelfUpdateService(CommandContext context)
     {
         foreach (var aliasPath in GetCommandAliasPaths(processPath))
         {
+            TrySynchronizeCommandAlias(processPath, aliasPath);
+        }
+    }
+
+    private static void TrySynchronizeCommandAlias(string processPath, string aliasPath)
+    {
+        try
+        {
             if (string.Equals(Path.GetFullPath(aliasPath), Path.GetFullPath(processPath), StringComparison.Ordinal))
             {
-                continue;
+                return;
             }
 
             File.Copy(processPath, aliasPath, overwrite: true);
@@ -159,6 +167,11 @@ internal sealed class SelfUpdateService(CommandContext context)
                     UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
                     UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
             }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Alias synchronization is best-effort. The updated executable remains usable even if
+            // the deprecated or preferred command alias cannot be refreshed.
         }
     }
 

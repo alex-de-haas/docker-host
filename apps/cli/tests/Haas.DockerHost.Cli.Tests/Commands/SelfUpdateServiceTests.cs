@@ -102,6 +102,28 @@ public sealed class SelfUpdateServiceTests
     }
 
     [Fact]
+    public void SynchronizeCommandAliases_IgnoresAliasCopyFailure()
+    {
+        var testDirectory = Path.Combine(Path.GetTempPath(), $"hosty-alias-test-{Guid.NewGuid():N}");
+        var executablePath = Path.Combine(testDirectory, OperatingSystem.IsWindows() ? "hosty.exe" : "hosty");
+        var legacyAliasPath = Path.Combine(testDirectory, OperatingSystem.IsWindows() ? "docker-host.exe" : "docker-host");
+        Directory.CreateDirectory(testDirectory);
+        File.WriteAllText(executablePath, "hosty executable");
+        Directory.CreateDirectory(legacyAliasPath);
+
+        try
+        {
+            var exception = Record.Exception(() => SelfUpdateService.SynchronizeCommandAliases(executablePath));
+
+            Assert.Null(exception);
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void TryFindChecksum_ArtifactEntryExists_ReturnsChecksum()
     {
         const string checksums = """

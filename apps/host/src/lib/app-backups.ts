@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getAppsRootContainer } from '@/lib/app-store';
@@ -52,7 +52,7 @@ export async function createAppDataBackup(
   }
 
   const createdAt = new Date().toISOString();
-  const backupId = `${formatBackupTimestamp(createdAt)}_${reason}`;
+  const backupId = `${formatBackupTimestamp(createdAt)}_${reason}_${randomUUID().slice(0, 8)}`;
   const backupRoot = getBackupRoot(appId, config);
   const archivePath = path.join(backupRoot, `${backupId}.zip`);
   const metadataPath = path.join(backupRoot, `${backupId}.json`);
@@ -145,7 +145,6 @@ export async function restoreAppDataBackup(
 
   try {
     await fs.rename(restoreRoot, dataPath);
-    await fs.rm(replacedRoot, { recursive: true, force: true });
   } catch (error) {
     if (await pathExists(replacedRoot)) {
       await fs.rename(replacedRoot, dataPath);
@@ -154,6 +153,8 @@ export async function restoreAppDataBackup(
   } finally {
     await fs.rm(restoreRoot, { recursive: true, force: true });
   }
+
+  await fs.rm(replacedRoot, { recursive: true, force: true }).catch(() => undefined);
 
   return {
     restored: backup,
@@ -254,13 +255,31 @@ async function collectZipEntries(rootPath: string) {
   return entries.sort((first, second) => first.name.localeCompare(second.name));
 }
 
-function buildZipArchive(entries: Array<{ name: string; data: Buffer }>) {
+export function buildZipArchive(entries: Array<{ name: string; data: Buffer }>) {
+  if (entries.length > 0xffff) {
+    throw new AppBackupError(
+      422,
+      'backup_file_count_limit_exceeded',
+      'App data backup contains too many files for the current ZIP archive format.'
+    );
+  }
+
   const localParts: Buffer[] = [];
   const centralParts: Buffer[] = [];
   let offset = 0;
 
   for (const entry of entries) {
     const name = Buffer.from(entry.name, 'utf-8');
+    if (name.byteLength > 0xffff) {
+      throw new AppBackupError(422, 'backup_path_too_long', `Backup path "${entry.name}" is too long.`);
+    }
+    if (entry.data.byteLength > 0xffffffff) {
+      throw new AppBackupError(422, 'backup_file_too_large', `Backup file "${entry.name}" is too large.`);
+    }
+    if (offset > 0xffffffff) {
+      throw new AppBackupError(422, 'backup_archive_too_large', 'App data backup is too large for the current ZIP archive format.');
+    }
+
     const crc = crc32(entry.data);
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
@@ -295,6 +314,10 @@ function buildZipArchive(entries: Array<{ name: string; data: Buffer }>) {
   }
 
   const centralDirectory = Buffer.concat(centralParts);
+  if (centralDirectory.byteLength > 0xffffffff || offset > 0xffffffff) {
+    throw new AppBackupError(422, 'backup_archive_too_large', 'App data backup is too large for the current ZIP archive format.');
+  }
+
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
   end.writeUInt16LE(0, 4);
@@ -310,9 +333,14 @@ function buildZipArchive(entries: Array<{ name: string; data: Buffer }>) {
 
 async function extractZipArchive(archive: Buffer, destination: string) {
   const entries = readZipEntries(archive);
+  const destinationRoot = path.resolve(destination);
   for (const entry of entries) {
     const relativePath = fromZipEntryName(entry.name);
-    const targetPath = path.join(destination, relativePath);
+    const targetPath = path.resolve(destinationRoot, relativePath);
+    if (!isPathInside(destinationRoot, targetPath)) {
+      throw new AppBackupError(422, 'backup_archive_path_invalid', `Backup archive entry "${entry.name}" is not safe.`);
+    }
+
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.writeFile(targetPath, entry.data);
   }
@@ -380,7 +408,8 @@ function verifyArchiveDigest(archive: Buffer, backup: AppDataBackupRecord) {
 
 function toZipEntryName(relativePath: string) {
   const normalized = relativePath.split(path.sep).join('/');
-  if (!normalized || normalized.startsWith('../') || normalized.includes('/../') || normalized.startsWith('/')) {
+  const segments = splitZipPathSegments(normalized);
+  if (!normalized || normalized.startsWith('/') || hasUnsafeZipPathSegment(segments)) {
     throw new AppBackupError(422, 'backup_path_invalid', `Backup path "${relativePath}" is not safe.`);
   }
 
@@ -388,7 +417,8 @@ function toZipEntryName(relativePath: string) {
 }
 
 function fromZipEntryName(name: string) {
-  if (!name || name.startsWith('/') || name.startsWith('../') || name.includes('/../') || name.includes('\0')) {
+  const segments = splitZipPathSegments(name);
+  if (!name || name.startsWith('/') || name.includes('\0') || hasUnsafeZipPathSegment(segments)) {
     throw new AppBackupError(422, 'backup_archive_path_invalid', `Backup archive entry "${name}" is not safe.`);
   }
 
@@ -396,7 +426,20 @@ function fromZipEntryName(name: string) {
 }
 
 function formatBackupTimestamp(value: string) {
-  return value.replace(/\.\d{3}Z$/, 'Z').replace(/[:.]/g, '-');
+  return value.replace(/[:.]/g, '-');
+}
+
+function splitZipPathSegments(value: string) {
+  return value.split(/[\\/]+/);
+}
+
+function hasUnsafeZipPathSegment(segments: string[]) {
+  return segments.some(segment => segment === '..');
+}
+
+function isPathInside(root: string, candidate: string) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function assertSafeAppId(appId: string) {

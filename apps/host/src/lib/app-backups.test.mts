@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  buildZipArchive,
   createAppDataBackup,
   listAppDataBackups,
   restoreAppDataBackup,
@@ -62,6 +64,71 @@ test('resolves legacy data mappings only inside the Host data root', async () =>
   assert.equal(
     await resolveAppDataDirectory('com.example.legacy', config),
     path.join(root, 'modules', 'com.example.legacy', 'data')
+  );
+});
+
+test('creates unique backup ids for rapid backups', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hosty-backups-'));
+  const config = createConfig(root);
+  const dataPath = path.join(root, 'apps', 'com.example.notes', 'data');
+  await fs.mkdir(dataPath, { recursive: true });
+  await fs.writeFile(path.join(dataPath, 'note.txt'), 'content', 'utf-8');
+
+  const first = await createAppDataBackup('com.example.notes', 'manual', config);
+  const second = await createAppDataBackup('com.example.notes', 'manual', config);
+
+  assert.ok(first);
+  assert.ok(second);
+  assert.notEqual(first.id, second.id);
+});
+
+test('restore rejects backup archives with traversal path segments', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hosty-backups-'));
+  const config = createConfig(root);
+  const appId = 'com.example.notes';
+  const backupId = 'malicious';
+  const dataPath = path.join(root, 'apps', appId, 'data');
+  const backupRoot = path.join(root, 'backups', appId);
+  await fs.mkdir(dataPath, { recursive: true });
+  await fs.mkdir(backupRoot, { recursive: true });
+  await fs.writeFile(path.join(dataPath, 'note.txt'), 'safe', 'utf-8');
+
+  const archive = buildZipArchive([{ name: 'nested/../escape.txt', data: Buffer.from('bad') }]);
+  const archivePath = path.join(backupRoot, `${backupId}.zip`);
+  await fs.writeFile(archivePath, archive);
+  await fs.writeFile(path.join(backupRoot, `${backupId}.json`), `${JSON.stringify({
+    schemaVersion: 'app-backup.0.1',
+    id: backupId,
+    appId,
+    reason: 'manual',
+    createdAt: new Date().toISOString(),
+    dataPath,
+    archivePath,
+    archiveDigest: `sha256:${createHash('sha256').update(archive).digest('hex')}`,
+    archiveBytes: archive.byteLength,
+    fileCount: 1,
+  }, null, 2)}\n`, 'utf-8');
+
+  await assert.rejects(
+    () => restoreAppDataBackup(appId, backupId, {
+      stopBeforeRestore: false,
+      createPreRestoreBackup: false,
+    }, config),
+    { code: 'backup_archive_path_invalid' }
+  );
+  assert.equal(await fs.readFile(path.join(dataPath, 'note.txt'), 'utf-8'), 'safe');
+  await assert.rejects(() => fs.access(path.join(root, 'apps', appId, 'escape.txt')));
+});
+
+test('ZIP archive creation rejects more than 65535 entries', () => {
+  const entries = Array.from({ length: 0x10000 }, (_, index) => ({
+    name: `file-${index}.txt`,
+    data: Buffer.alloc(0),
+  }));
+
+  assert.throws(
+    () => buildZipArchive(entries),
+    { code: 'backup_file_count_limit_exceeded' }
   );
 });
 
