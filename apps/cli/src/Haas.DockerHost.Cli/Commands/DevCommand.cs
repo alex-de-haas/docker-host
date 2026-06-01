@@ -13,11 +13,11 @@ internal sealed class DevCommand(CommandContext context)
 
     public const string Usage = """
         Usage:
-          docker-host dev up [--manifest <path>] [--host-url <url>] [--prepare-only]
-          docker-host dev status [--manifest <path>] [--host-url <url>]
-          docker-host dev identity [--manifest <path>] [--host-url <url>] [--user <email-or-id>] [--format token|header|json|env]
-          docker-host dev reset [--manifest <path>] [--host-url <url>]
-          docker-host dev clean <module-id-or-dev-metadata> [--host-url <url>] [--yes]
+          hosty dev up [--manifest <path>] [--host-url <url>] [--prepare-only]
+          hosty dev status [--manifest <path>] [--host-url <url>]
+          hosty dev identity [--manifest <path>] [--host-url <url>] [--user <email-or-id>] [--format token|header|json|env]
+          hosty dev reset [--manifest <path>] [--host-url <url>]
+          hosty dev clean <module-id-or-dev-metadata> [--host-url <url>] [--yes]
 
         Default metadata path: metadata.dev.json
         """;
@@ -362,7 +362,7 @@ internal sealed class DevCommand(CommandContext context)
         if (string.IsNullOrWhiteSpace(configuredRepository))
         {
             throw new CommandUsageException(
-                $"{LaunchSettingDefinitions.HostDevRepositoryPath} is required for docker-host dev. Configure it with `docker-host config set {LaunchSettingDefinitions.HostDevRepositoryPath} /path/to/docker-host`, or pass --host-url <url> for an already running development Host.",
+                $"{LaunchSettingDefinitions.HostDevRepositoryPath} is required for hosty dev. Configure it with `hosty config set {LaunchSettingDefinitions.HostDevRepositoryPath} /path/to/docker-host`, or pass --host-url <url> for an already running development Host.",
                 Usage);
         }
 

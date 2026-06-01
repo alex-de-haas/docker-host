@@ -142,6 +142,36 @@ internal sealed class HostControlClient(HttpClient httpClient, string controlSec
     public Task<HostApiResponse<HostAppsResponse>> ListAppsAsync(CancellationToken cancellationToken = default)
         => SendAsync<HostAppsResponse>("list Host apps", HttpMethod.Get, "apps", cancellationToken: cancellationToken);
 
+    public Task<HostApiResponse<AppBackupsResponse>> ListAppBackupsAsync(
+        string appId,
+        CancellationToken cancellationToken = default)
+        => SendAsync<AppBackupsResponse>(
+            "list app backups",
+            HttpMethod.Get,
+            $"apps/{Uri.EscapeDataString(appId)}/backups",
+            cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<AppBackupResponse>> CreateAppBackupAsync(
+        string appId,
+        CancellationToken cancellationToken = default)
+        => SendAsync<AppBackupResponse>(
+            "create app backup",
+            HttpMethod.Post,
+            $"apps/{Uri.EscapeDataString(appId)}/backups",
+            cancellationToken: cancellationToken);
+
+    public Task<HostApiResponse<AppRestoreResponse>> RestoreAppBackupAsync(
+        string appId,
+        string backupId,
+        AppRestoreRequest request,
+        CancellationToken cancellationToken = default)
+        => SendAsync<AppRestoreResponse>(
+            "restore app backup",
+            HttpMethod.Post,
+            $"apps/{Uri.EscapeDataString(appId)}/backups/{Uri.EscapeDataString(backupId)}/restore",
+            request,
+            cancellationToken);
+
     public Task<HostApiResponse<ModuleActionResult>> RunModuleActionAsync(
         string moduleId,
         string action,
@@ -159,7 +189,7 @@ internal sealed class HostControlClient(HttpClient httpClient, string controlSec
             "create module install plan",
             HttpMethod.Post,
             "modules/install/plan",
-            new { metadataUrl },
+            new { manifestUrl = metadataUrl, metadataUrl },
             cancellationToken);
 
     public Task<HostApiResponse<ModuleInstallResponse>> ApplyInstallAsync(
@@ -242,9 +272,9 @@ internal sealed class HostControlClient(HttpClient httpClient, string controlSec
         {
             throw new HostApiException(
                 operation,
-                "Unable to reach the Docker Host trusted control channel.",
+                "Unable to reach the Host trusted control channel.",
                 responseBody: ex.Message,
-                nextStep: "Run 'docker-host start' first, or restart Docker Host so it can publish run/control.json.",
+                nextStep: "Run 'hosty start' first, or restart the Host so it can publish run/control.json.",
                 innerException: ex);
         }
 
@@ -261,10 +291,10 @@ internal sealed class HostControlClient(HttpClient httpClient, string controlSec
             {
                 throw new HostApiException(
                     operation,
-                    "Docker Host control returned a response that docker-host could not parse.",
+                    "Host control returned a response that hosty could not parse.",
                     response.StatusCode,
                     rawBody,
-                    "Update docker-host, restart the Host with 'docker-host stop' and 'docker-host start', then retry.",
+                    "Update hosty, restart the Host with 'hosty stop' and 'hosty start', then retry.",
                     ex);
             }
         }

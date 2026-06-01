@@ -69,6 +69,38 @@ public sealed class SelfUpdateServiceTests
         }
     }
 
+    [Theory]
+    [InlineData("hosty", true)]
+    [InlineData("hosty.exe", true)]
+    [InlineData("docker-host", true)]
+    [InlineData("docker-host.exe", true)]
+    [InlineData("other", false)]
+    public void IsManagedExecutableName_RecognizesHostyAndLegacyNames(string executableName, bool expected)
+    {
+        Assert.Equal(expected, SelfUpdateService.IsManagedExecutableName(executableName));
+    }
+
+    [Fact]
+    public void SynchronizeCommandAliases_CopiesCurrentExecutableToMissingAlias()
+    {
+        var testDirectory = Path.Combine(Path.GetTempPath(), $"hosty-alias-test-{Guid.NewGuid():N}");
+        var executablePath = Path.Combine(testDirectory, OperatingSystem.IsWindows() ? "hosty.exe" : "hosty");
+        Directory.CreateDirectory(testDirectory);
+        File.WriteAllText(executablePath, "hosty executable");
+
+        try
+        {
+            SelfUpdateService.SynchronizeCommandAliases(executablePath);
+
+            var legacyAliasPath = Path.Combine(testDirectory, OperatingSystem.IsWindows() ? "docker-host.exe" : "docker-host");
+            Assert.Equal("hosty executable", File.ReadAllText(legacyAliasPath));
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
     [Fact]
     public void TryFindChecksum_ArtifactEntryExists_ReturnsChecksum()
     {

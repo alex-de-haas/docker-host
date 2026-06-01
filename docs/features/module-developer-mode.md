@@ -1,6 +1,6 @@
 # Module Developer Mode
 
-Module developer mode lets module authors test a local development server through the Docker Host gateway without running the full install flow for every code change.
+Module developer mode lets app/module authors test a local development server through the Hosty gateway without running the full install flow for every code change.
 
 It is local-only operational state. It does not change production module metadata, installed module records, or production gateway exposure records.
 
@@ -13,10 +13,10 @@ module dev server -> http://localhost:3100
 auth -> module-owned mock user or local test token
 ```
 
-Integrated mode is owned by Docker Host:
+Integrated mode is owned by Hosty:
 
 ```text
-demo.localhost -> Docker Host Gateway -> http://127.0.0.1:3100
+demo.localhost -> Hosty Gateway -> http://127.0.0.1:3100
 auth -> real Host principal and module-scoped JWT
 ```
 
@@ -32,7 +32,7 @@ Use three development loops with clear ownership:
 
 Do not inject fake module identity tokens into requests when validating Host integration. Seed Host development users and module assignments instead, then reach the module through the Host gateway or app shell so the module receives the same signed identity contract it receives in production-like runs.
 
-The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `docker-host dev up` for reusable `metadata.dev.json` local module development, `npm run host:dev:demo` for the repository's host-side demo loop, or the lower-level `docker-host modules dev link` commands when only target registration is needed.
+The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `hosty dev up` for reusable `metadata.dev.json` local module development, `npm run host:dev:demo` for the repository's host-side demo loop, or the lower-level `hosty apps dev link` commands when only target registration is needed. Legacy `docker-host modules dev ...` commands remain compatibility aliases.
 
 For Host development, the harness can connect to a local Host process instead of the installed Host container. Use a loopback URL such as `--host-url http://localhost:3000` when the Host is already running in a debugger or another terminal.
 
@@ -80,7 +80,7 @@ When the selected `portKey` matches valid module `ui.entrypoint` metadata, the H
 - entrypoint path from `ui.entrypoint.path`;
 - nested navigation from `ui.navigation`.
 
-This snapshot keeps `/api/apps` fast and deterministic. Module authors should re-run `docker-host dev up` or relink a developer target when UI metadata changes.
+This snapshot keeps `/api/apps` fast and deterministic. Module authors should re-run `hosty dev up` or relink a developer target when UI metadata changes.
 
 Identity-token input:
 
@@ -119,9 +119,9 @@ Developer app entries remain local-only portal state. They do not create product
 Manage targets directly:
 
 ```bash
-docker-host modules dev list
-docker-host modules dev link http://localhost:3000/fixtures/modules/demo-module demo.localhost http http://127.0.0.1:3100
-docker-host modules dev unlink <target-id>
+hosty apps dev list
+hosty apps dev link http://localhost:3000/fixtures/modules/demo-module demo.localhost http http://127.0.0.1:3100
+hosty apps dev unlink <target-id>
 ```
 
 `modules dev link` also accepts:
@@ -132,25 +132,25 @@ docker-host modules dev unlink <target-id>
 --disabled
 ```
 
-The `modules dev` commands intentionally manage developer targets only. User seeding, assignment seeding, local module process startup, status checks, reset behavior, and dev data cleanup live in the top-level `docker-host dev` harness.
+The `apps dev` commands intentionally manage developer targets only. User seeding, assignment seeding, local module process startup, status checks, reset behavior, and dev data cleanup live in the top-level `hosty dev` harness.
 
 The top-level harness uses `metadata.dev.json` directly. The repository demo metadata provides the local process command, working directory, environment, local port, endpoint selection, and shell UI metadata; the CLI derives the developer target and seeds standard development users from that metadata-driven workflow:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json
-docker-host dev status --manifest modules/demo-module/metadata.dev.json
-docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token
-docker-host dev reset --manifest modules/demo-module/metadata.dev.json
-docker-host dev clean modules/demo-module/metadata.dev.json
+hosty dev up --manifest modules/demo-module/metadata.dev.json
+hosty dev status --manifest modules/demo-module/metadata.dev.json
+hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token
+hosty dev reset --manifest modules/demo-module/metadata.dev.json
+hosty dev clean modules/demo-module/metadata.dev.json
 ```
 
 `--host-url` makes the command connect to that already running loopback development Host origin instead of starting `npm run host:dev` from `HOST_DEV_REPOSITORY_PATH`:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
+hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
 ```
 
-Use `docker-host dev identity` only for direct module-origin probes, for example checking `/api/auth/identity` on a local Next.js server with a real Host-signed JWT. It is not a substitute for validating shell iframe transport or gateway routing through Docker Host.
+Use `hosty dev identity` only for direct module-origin probes, for example checking `/api/auth/identity` on a local Next.js server with a real Host-signed JWT. It is not a substitute for validating shell iframe transport or gateway routing through Hosty.
 
 ## Gateway Rules
 

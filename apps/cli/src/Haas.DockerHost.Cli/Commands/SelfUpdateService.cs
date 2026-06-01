@@ -20,10 +20,9 @@ internal sealed class SelfUpdateService(CommandContext context)
         }
 
         var executableName = Path.GetFileName(processPath);
-        if (!string.Equals(executableName, "docker-host", StringComparison.Ordinal) &&
-            !string.Equals(executableName, "docker-host.exe", StringComparison.OrdinalIgnoreCase))
+        if (!IsManagedExecutableName(executableName))
         {
-            throw new InvalidOperationException($"Refusing to replace '{processPath}' because it is not the docker-host executable.");
+            throw new InvalidOperationException($"Refusing to replace '{processPath}' because it is not a managed hosty/docker-host executable.");
         }
 
         var artifact = GetArtifactName();
@@ -39,6 +38,7 @@ internal sealed class SelfUpdateService(CommandContext context)
         var hasExpectedSha256 = TryFindChecksum(checksums, artifact, out var expectedSha256);
         if (hasExpectedSha256 && CurrentExecutableMatches(processPath, expectedSha256))
         {
+            SynchronizeCommandAliases(processPath);
             context.Console.MarkupLine("[green]CLI ready up to date.[/]");
             return SelfUpdateResult.AlreadyCurrent(processPath);
         }
@@ -64,6 +64,7 @@ internal sealed class SelfUpdateService(CommandContext context)
 
         if (CurrentExecutableMatches(processPath, artifactSha256))
         {
+            SynchronizeCommandAliases(processPath);
             context.Console.MarkupLine("[green]CLI ready up to date.[/]");
             return SelfUpdateResult.AlreadyCurrent(processPath);
         }
@@ -80,6 +81,7 @@ internal sealed class SelfUpdateService(CommandContext context)
         }
 
         ReplaceExecutable(tempPath, processPath);
+        SynchronizeCommandAliases(processPath);
         context.Console.MarkupLine("[green]CLI updated.[/] New version installed.");
         return SelfUpdateResult.Updated(processPath);
     }
@@ -112,6 +114,52 @@ internal sealed class SelfUpdateService(CommandContext context)
         }
 
         TryDeleteFile(backupPath);
+    }
+
+    internal static bool IsManagedExecutableName(string executableName)
+        => string.Equals(executableName, "hosty", StringComparison.Ordinal) ||
+            string.Equals(executableName, "hosty.exe", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(executableName, "docker-host", StringComparison.Ordinal) ||
+            string.Equals(executableName, "docker-host.exe", StringComparison.OrdinalIgnoreCase);
+
+    internal static IReadOnlyList<string> GetCommandAliasPaths(string processPath)
+    {
+        var directory = Path.GetDirectoryName(processPath);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return [];
+        }
+
+        return OperatingSystem.IsWindows()
+            ? [
+                Path.Combine(directory, "hosty.exe"),
+                Path.Combine(directory, "docker-host.exe"),
+            ]
+            : [
+                Path.Combine(directory, "hosty"),
+                Path.Combine(directory, "docker-host"),
+            ];
+    }
+
+    internal static void SynchronizeCommandAliases(string processPath)
+    {
+        foreach (var aliasPath in GetCommandAliasPaths(processPath))
+        {
+            if (string.Equals(Path.GetFullPath(aliasPath), Path.GetFullPath(processPath), StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            File.Copy(processPath, aliasPath, overwrite: true);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(
+                    aliasPath,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                    UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            }
+        }
     }
 
     private static void TryRestoreWindowsBackup(string backupPath, string processPath)

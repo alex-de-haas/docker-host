@@ -75,7 +75,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             return null;
         }
 
-        EnsureSuccess(response, "Run 'docker-host start' to recreate the Host container if it is missing or broken.");
+        EnsureSuccess(response, "Run 'hosty start' to recreate the Host container if it is missing or broken.");
         return Deserialize<DockerContainerInspect>(response);
     }
 
@@ -187,7 +187,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             body,
             cancellationToken);
 
-        EnsureSuccess(response, $"Remove the existing container named '{plan.ContainerName}' or run 'docker-host restart'.");
+        EnsureSuccess(response, $"Remove the existing container named '{plan.ContainerName}' or run 'hosty restart'.");
     }
 
     public async Task StartContainerAsync(string containerName, CancellationToken cancellationToken = default)
@@ -198,7 +198,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             return;
         }
 
-        EnsureSuccess(response, "Inspect Host container logs with 'docker-host logs'.");
+        EnsureSuccess(response, "Inspect Host container logs with 'hosty logs'.");
     }
 
     public async Task StopContainerAsync(string containerName, CancellationToken cancellationToken = default)
@@ -253,7 +253,7 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             $"/containers/{EncodePathSegment(containerName)}/logs?stdout=1&stderr=1&timestamps=0&tail={tail.ToString(CultureInfo.InvariantCulture)}",
             cancellationToken: cancellationToken);
 
-        EnsureSuccess(response, "Run 'docker-host status' to confirm that the Host container exists.");
+        EnsureSuccess(response, "Run 'hosty status' to confirm that the Host container exists.");
         return DecodeDockerLogs(response.BodyBytes);
     }
 

@@ -43,6 +43,14 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public async Task RunAsync_AppsHelpCommand_RoutesToModulesCompatibilityCommand()
+    {
+        var exitCode = await CommandLine.RunAsync(["apps", "--help"]);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
     public async Task RunAsync_AuthHelpCommand_RoutesToAuthCommand()
     {
         var exitCode = await CommandLine.RunAsync(["auth", "--help"]);

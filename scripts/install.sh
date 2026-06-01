@@ -5,7 +5,7 @@ DEFAULT_REPO="alex-de-haas/docker-host"
 DEFAULT_TAG="cli-dev"
 
 fail() {
-  printf '%s\n' "docker-host install: $*" >&2
+  printf '%s\n' "hosty install: $*" >&2
   exit 1
 }
 
@@ -15,16 +15,18 @@ Usage:
   sh scripts/install.sh [--start]
 
 Environment overrides:
-  DOCKER_HOST_INSTALL_REPO   GitHub repository, default alex-de-haas/docker-host
-  DOCKER_HOST_INSTALL_TAG    GitHub Release tag, default cli-dev
-  DOCKER_HOST_INSTALL_DIR    Directory for the docker-host executable, default ~/.docker-host/bin
-  DOCKER_HOST_INSTALL_PROFILE Shell profile to update for PATH, default auto-detect
-  DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE Set to 1 to skip shell profile updates
-  DOCKER_HOST_INSTALL_START  Set to 1 to run docker-host start and open after install
+  HOSTY_INSTALL_REPO         GitHub repository, default alex-de-haas/docker-host
+  HOSTY_INSTALL_TAG          GitHub Release tag, default cli-dev
+  HOSTY_INSTALL_DIR          Directory for the hosty executable, default ~/.hosty/bin
+  HOSTY_INSTALL_PROFILE      Shell profile to update for PATH, default auto-detect
+  HOSTY_INSTALL_SKIP_PATH_UPDATE Set to 1 to skip shell profile updates
+  HOSTY_INSTALL_START        Set to 1 to run hosty start and open after install
+
+Legacy DOCKER_HOST_INSTALL_* variables are still accepted during migration.
 USAGE
 }
 
-START_AFTER_INSTALL="${DOCKER_HOST_INSTALL_START:-0}"
+START_AFTER_INSTALL="${HOSTY_INSTALL_START:-${DOCKER_HOST_INSTALL_START:-0}}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --start)
@@ -47,17 +49,17 @@ command -v uname >/dev/null 2>&1 || fail "uname is required to detect OS and arc
 HOME_DIR="${HOME:-}"
 [ -n "$HOME_DIR" ] || fail "HOME is not set."
 
-REPO="${DOCKER_HOST_INSTALL_REPO:-$DEFAULT_REPO}"
-TAG="${DOCKER_HOST_INSTALL_TAG:-$DEFAULT_TAG}"
-INSTALL_DIR="${DOCKER_HOST_INSTALL_DIR:-$HOME_DIR/.docker-host/bin}"
+REPO="${HOSTY_INSTALL_REPO:-${DOCKER_HOST_INSTALL_REPO:-$DEFAULT_REPO}}"
+TAG="${HOSTY_INSTALL_TAG:-${DOCKER_HOST_INSTALL_TAG:-$DEFAULT_TAG}}"
+INSTALL_DIR="${HOSTY_INSTALL_DIR:-${DOCKER_HOST_INSTALL_DIR:-$HOME_DIR/.hosty/bin}}"
 
-[ -n "$REPO" ] || fail "DOCKER_HOST_INSTALL_REPO cannot be empty."
-[ -n "$TAG" ] || fail "DOCKER_HOST_INSTALL_TAG cannot be empty."
-[ -n "$INSTALL_DIR" ] || fail "DOCKER_HOST_INSTALL_DIR cannot be empty."
+[ -n "$REPO" ] || fail "HOSTY_INSTALL_REPO cannot be empty."
+[ -n "$TAG" ] || fail "HOSTY_INSTALL_TAG cannot be empty."
+[ -n "$INSTALL_DIR" ] || fail "HOSTY_INSTALL_DIR cannot be empty."
 case "$INSTALL_DIR" in
   *'
 '*)
-    fail "DOCKER_HOST_INSTALL_DIR cannot contain a newline."
+    fail "HOSTY_INSTALL_DIR cannot contain a newline."
     ;;
 esac
 
@@ -88,7 +90,8 @@ esac
 ARTIFACT="docker-host-$OS_NAME-$ARCH_NAME"
 BASE_URL="https://github.com/$REPO/releases/download/$TAG"
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t docker-host-install)"
-TARGET="$INSTALL_DIR/docker-host"
+TARGET="$INSTALL_DIR/hosty"
+LEGACY_TARGET="$INSTALL_DIR/docker-host"
 TARGET_TMP="$TARGET.tmp.$$"
 
 cleanup() {
@@ -130,6 +133,11 @@ shell_single_quote() {
 }
 
 detect_shell_profile() {
+  if [ -n "${HOSTY_INSTALL_PROFILE:-}" ]; then
+    printf '%s\n' "$HOSTY_INSTALL_PROFILE"
+    return 0
+  fi
+
   if [ -n "${DOCKER_HOST_INSTALL_PROFILE:-}" ]; then
     printf '%s\n' "$DOCKER_HOST_INSTALL_PROFILE"
     return 0
@@ -164,21 +172,21 @@ append_path_block() {
   profile="$1"
   quoted_install_dir="$(shell_single_quote "$INSTALL_DIR")"
   {
-    printf '\n%s\n' "# >>> docker-host PATH >>>"
-    printf '%s\n' "# Added by docker-host install.sh"
-    printf 'DOCKER_HOST_INSTALL_BIN=%s\n' "$quoted_install_dir"
+    printf '\n%s\n' "# >>> hosty PATH >>>"
+    printf '%s\n' "# Added by hosty install.sh"
+    printf 'HOSTY_INSTALL_BIN=%s\n' "$quoted_install_dir"
     printf '%s\n' 'case ":$PATH:" in'
-    printf '%s\n' '  *":$DOCKER_HOST_INSTALL_BIN:"*) ;;'
-    printf '%s\n' '  *) export PATH="$DOCKER_HOST_INSTALL_BIN:$PATH" ;;'
+    printf '%s\n' '  *":$HOSTY_INSTALL_BIN:"*) ;;'
+    printf '%s\n' '  *) export PATH="$HOSTY_INSTALL_BIN:$PATH" ;;'
     printf '%s\n' 'esac'
-    printf '%s\n' 'unset DOCKER_HOST_INSTALL_BIN'
-    printf '%s\n' "# <<< docker-host PATH <<<"
+    printf '%s\n' 'unset HOSTY_INSTALL_BIN'
+    printf '%s\n' "# <<< hosty PATH <<<"
   } >> "$profile"
 }
 
 ensure_path_profile() {
-  if [ "${DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE:-0}" = "1" ]; then
-    printf '\n%s\n' "Skipping shell profile PATH update because DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE=1."
+  if [ "${HOSTY_INSTALL_SKIP_PATH_UPDATE:-${DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE:-0}}" = "1" ]; then
+    printf '\n%s\n' "Skipping shell profile PATH update because HOSTY_INSTALL_SKIP_PATH_UPDATE=1."
     print_manual_path_instruction
     return 0
   fi
@@ -190,8 +198,8 @@ ensure_path_profile() {
     return 0
   fi
 
-  if [ -f "$profile" ] && grep -F "# >>> docker-host PATH >>>" "$profile" >/dev/null 2>&1; then
-    printf '\n%s\n' "docker-host PATH entry is already managed in $profile"
+  if [ -f "$profile" ] && grep -F "# >>> hosty PATH >>>" "$profile" >/dev/null 2>&1; then
+    printf '\n%s\n' "hosty PATH entry is already managed in $profile"
     return 0
   fi
 
@@ -201,7 +209,7 @@ ensure_path_profile() {
   fi
 
   if append_path_block "$profile"; then
-    printf '\n%s\n' "Added docker-host to PATH in $profile"
+    printf '\n%s\n' "Added hosty to PATH in $profile"
     case ":$PATH:" in
       *":$INSTALL_DIR:"*)
         ;;
@@ -217,7 +225,7 @@ ensure_path_profile() {
 }
 
 print_manual_path_instruction() {
-  printf '%s\n' "Add docker-host to your PATH:"
+  printf '%s\n' "Add hosty to your PATH:"
   printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
 }
 
@@ -244,8 +252,11 @@ mkdir -p "$INSTALL_DIR"
 cp "$TMP_DIR/$ARTIFACT" "$TARGET_TMP"
 chmod 755 "$TARGET_TMP"
 mv "$TARGET_TMP" "$TARGET"
+cp "$TARGET" "$LEGACY_TARGET"
+chmod 755 "$LEGACY_TARGET"
 
-printf '%s\n' "Installed docker-host to $TARGET"
+printf '%s\n' "Installed hosty to $TARGET"
+printf '%s\n' "Installed deprecated docker-host alias to $LEGACY_TARGET"
 
 "$TARGET" install
 

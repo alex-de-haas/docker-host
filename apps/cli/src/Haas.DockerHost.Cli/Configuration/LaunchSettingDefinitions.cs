@@ -48,14 +48,19 @@ internal static class LaunchSettingDefinitions
             return environment.RootDirectory;
         }
 
-        return environment.IsWindows ? Path.Combine(environment.HomeDirectory, ".docker-host") : "$HOME/.docker-host";
+        if (environment.UsesLegacyRoot)
+        {
+            return environment.IsWindows ? environment.LegacyRootDirectory : "$HOME/.docker-host";
+        }
+
+        return environment.IsWindows ? environment.PreferredRootDirectory : "$HOME/.hosty";
     }
 
     public static LaunchSettingDefinition Get(string key)
     {
         if (!ByKey.TryGetValue(key, out var definition))
         {
-            throw new ConfigurationException($"Unknown launch setting '{key}'. Run 'docker-host config list' to see supported settings.");
+            throw new ConfigurationException($"Unknown launch setting '{key}'. Run 'hosty config list' to see supported settings.");
         }
 
         return definition;

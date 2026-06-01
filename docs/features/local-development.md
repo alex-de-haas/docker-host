@@ -54,7 +54,7 @@ The repository uses npm workspace scripts from the root. `npm run host:dev`, `np
 
 The installed CLI dev harness is dev-only. It starts the Host from `HOST_DEV_REPOSITORY_PATH` through `npm run host:dev`, or it can target an already running source Host with a loopback URL such as `--host-url http://localhost:3000`.
 
-Module dev server upstreams should usually be `http://127.0.0.1:<port>`. The metadata `runtime.ports[].localPort` value expands to that address for the top-level `docker-host dev` harness.
+Module dev server upstreams should usually be `http://127.0.0.1:<port>`. The metadata `runtime.ports[].localPort` value expands to that address for the top-level `hosty dev` harness.
 
 ## Direct host-run development with a demo shell app
 
@@ -64,18 +64,18 @@ Use this mode for Host shell work, Apps sidebar work, account switching checks, 
 npm run host:dev:demo
 ```
 
-This script configures an isolated CLI home and then delegates orchestration to `docker-host dev up --manifest modules/demo-module/metadata.dev.json`. It starts both local development servers:
+This script configures an isolated CLI home and then delegates orchestration to `hosty dev up --manifest modules/demo-module/metadata.dev.json`. It starts both local development servers:
 
-- Docker Host at `http://localhost:3000`;
+- Hosty Core and Shell at `http://localhost:3000`;
 - the repository-local demo module at `http://localhost:3100`.
 
 The script sets:
 
-- `DOCKER_HOST_HOME` to the repository-local `.docker-host-dev-demo/` directory unless already provided;
+- `HOSTY_HOME` to the repository-local `.hosty-dev-demo/` directory unless already provided. Legacy `DOCKER_HOST_HOME` remains accepted for older scripts;
 - `HOST_DEV_REPOSITORY_PATH` in the isolated CLI config to the current checkout;
 - `HOST_DEV_PORT` in the isolated CLI config to `3000` unless `HOST_DEV_PORT` or `PORT` is provided.
 
-The generic `docker-host dev up` command sets the local Host process environment:
+The generic `hosty dev up` command sets the local Host process environment:
 
 - `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the active CLI Host data root;
 - `HOST_DEV_AUTH=auto`, which enables development-only auto-login;
@@ -149,7 +149,7 @@ The Host container still receives Docker access through the Linux Engine socket 
 /var/run/docker.sock:/var/run/docker.sock
 ```
 
-During `docker-host install/start/status`, the CLI should fail clearly if Docker Desktop is in Windows containers mode and should instruct the administrator to switch to Linux containers.
+During `hosty install/start/status`, the CLI should fail clearly if Docker Desktop is in Windows containers mode and should instruct the administrator to switch to Linux containers.
 
 ## Production-like local container testing
 
@@ -160,14 +160,14 @@ docker build -f apps/host/Dockerfile -t docker-host:dev .
 
 docker run --rm --name docker-host-dev -p 127.0.0.1:3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$HOME/.docker-host-dev:/data" \
-  -e HOST_DATA_ROOT_HOST="$HOME/.docker-host-dev" \
+  -v "$HOME/.hosty-dev:/data" \
+  -e HOST_DATA_ROOT_HOST="$HOME/.hosty-dev" \
   -e HOST_DATA_ROOT_CONTAINER=/data \
   -e HOST_BIND_ADDRESS=127.0.0.1 \
   docker-host:dev
 ```
 
-Use a dedicated development data root such as `~/.docker-host-dev` to avoid mixing test module state with a real local installation.
+Use a dedicated development data root such as `~/.hosty-dev` to avoid mixing test app state with a real local installation.
 
 The loopback bind and `HOST_BIND_ADDRESS=127.0.0.1` are intentional. Docker port forwarding can make the Host container observe browser traffic as coming from a Docker bridge address instead of `127.0.0.1`; the bind setting tells the Host that `http://localhost:<port>` is still local-only, so it may issue non-`Secure` development cookies over HTTP. If the port is bound to `0.0.0.0` or the Host is reachable from another machine, browser authentication must use HTTPS through `HOST_PUBLIC_ORIGIN`.
 
@@ -181,27 +181,27 @@ http://host.docker.internal:<port>/...
 
 ## CLI development contract
 
-The standalone `docker-host` CLI allows local Host image override so the lifecycle flow can be tested without registry push.
+The standalone `hosty` CLI allows local Host image override so the lifecycle flow can be tested without registry push. The deprecated `docker-host` alias remains available during migration.
 
 Target local flow:
 
 ```bash
 docker build -f apps/host/Dockerfile -t docker-host:dev .
-docker-host config set HOST_IMAGE docker-host:dev
-docker-host config set HOST_DATA_ROOT_HOST "$HOME/.docker-host-dev"
-docker-host start
-docker-host open
+hosty config set HOST_IMAGE docker-host:dev
+hosty config set HOST_DATA_ROOT_HOST "$HOME/.hosty-dev"
+hosty start
+hosty open
 ```
 
 The CLI config command shape is:
 
 ```bash
-docker-host config list
-docker-host config get HOST_IMAGE
-docker-host config set HOST_IMAGE docker-host:dev
-docker-host config set HOST_DATA_ROOT_HOST "$HOME/.docker-host-dev"
-docker-host config set HOST_IMAGE=docker-host:dev
-docker-host config reset HOST_IMAGE
+hosty config list
+hosty config get HOST_IMAGE
+hosty config set HOST_IMAGE docker-host:dev
+hosty config set HOST_DATA_ROOT_HOST "$HOME/.hosty-dev"
+hosty config set HOST_IMAGE=docker-host:dev
+hosty config reset HOST_IMAGE
 ```
 
 `config list` shows all launch settings, `config get` shows one setting, `config set` updates one known launch setting, and `config reset` restores one setting to its default. The `KEY VALUE` form is the primary syntax, while `KEY=VALUE` is supported as a convenience for shell users.
@@ -238,14 +238,14 @@ When the Host itself runs directly through `npm run host:dev`, local metadata UR
 
 ## Module developer mode
 
-For faster module UI/runtime iteration, Docker Host also supports local-only module developer targets. This mode validates module metadata and lets the Host gateway route a module hostname to a local dev server without creating a managed module container.
+For faster module UI/runtime iteration, Hosty also supports local-only app developer targets. This mode validates manifest or legacy metadata and lets the Host gateway route an app hostname to a local dev server without creating a managed app container.
 
-Use this as the default module integration loop when the change touches shell embedding, authenticated pages, Host identity tokens, scoped directory reads, assigned-user behavior, redirects, WebSockets, or SSE. Run the module app locally, link it as a developer target, and let Docker Host issue the normal gateway identity instead of injecting hand-written tokens into the module.
+Use this as the default app integration loop when the change touches shell embedding, authenticated pages, Host identity tokens, scoped directory reads, assigned-user behavior, redirects, WebSockets, or SSE. Run the app locally, link it as a developer target, and let Hosty issue the normal gateway identity instead of injecting hand-written tokens into the app.
 
 Link a target directly:
 
 ```bash
-docker-host modules dev link \
+hosty apps dev link \
   http://localhost:3000/fixtures/modules/demo-module \
   demo.localhost \
   http \
@@ -255,32 +255,32 @@ docker-host modules dev link \
 For the reusable installed-CLI workflow, prefer the metadata-driven harness:
 
 ```bash
-docker-host config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
-docker-host config set HOST_DEV_PORT 3000
-docker-host dev up --manifest modules/demo-module/metadata.dev.json
-docker-host dev status --manifest modules/demo-module/metadata.dev.json
-docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token
-docker-host dev reset --manifest modules/demo-module/metadata.dev.json
+hosty config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
+hosty config set HOST_DEV_PORT 3000
+hosty dev up --manifest modules/demo-module/metadata.dev.json
+hosty dev status --manifest modules/demo-module/metadata.dev.json
+hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token
+hosty dev reset --manifest modules/demo-module/metadata.dev.json
 ```
 
 When iterating on Host source code, run the same harness against a local Host origin:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
+hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
 ```
 
 This skips Docker lifecycle operations and uses the running Host's local control channel for dev target registration, user seeding, assignments, and directory policy.
 
 Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They do not modify installed module records, module metadata, or production gateway exposure records. The harness manages targets, development users, assignments, directory policy, local process startup, status checks, reset behavior, and development data cleanup through Host-owned control routes.
 
-For direct local module endpoint probes, `docker-host dev identity` can issue a real Host-signed identity token for the prepared developer target:
+For direct local module endpoint probes, `hosty dev identity` can issue a real Host-signed identity token for the prepared developer target:
 
 ```bash
-TOKEN="$(docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
+TOKEN="$(hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
 curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
 ```
 
-Use this only as a diagnostic shortcut for direct module-origin requests. Browser shell transport and gateway behavior should still be validated through the Host app URL and gateway URL printed by `docker-host dev up`.
+Use this only as a diagnostic shortcut for direct module-origin requests. Browser shell transport and gateway behavior should still be validated through the Host app URL and gateway URL printed by `hosty dev up`.
 
 See [Module developer mode](module-developer-mode.md) for API, CLI, and gateway details.
 

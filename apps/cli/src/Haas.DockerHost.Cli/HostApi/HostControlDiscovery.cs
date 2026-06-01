@@ -30,7 +30,7 @@ internal sealed class HostControlDiscovery
             throw new HostApiException(
                 "discover trusted control channel",
                 $"Docker Host trusted control discovery file was not found at '{discoveryPath}'.",
-                nextStep: "Run 'docker-host start' first, or restart Docker Host so it can publish run/control.json.");
+                nextStep: "Run 'hosty start' first, or restart the Host so it can publish run/control.json.");
         }
 
         ControlDiscoveryFile? parsed;
@@ -53,7 +53,7 @@ internal sealed class HostControlDiscovery
             throw new HostApiException(
                 "discover trusted control channel",
                 $"Docker Host trusted control contract '{parsed?.ControlContractVersion ?? "missing"}' is not supported.",
-                nextStep: "Update docker-host, restart the Host with 'docker-host stop' and 'docker-host start', then retry.");
+                nextStep: "Update hosty, restart the Host with 'hosty stop' and 'hosty start', then retry.");
         }
 
         if (string.IsNullOrWhiteSpace(parsed.Secret) ||

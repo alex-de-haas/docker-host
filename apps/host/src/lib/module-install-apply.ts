@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ensureHostDataRoot, getHostRuntimeConfig } from '@/lib/host-runtime';
+import { getAppsRootContainer, upsertInstalledAppRecord } from '@/lib/app-store';
 import {
   createAndStartModuleContainer,
   ensureModuleContainerStarted,
@@ -224,7 +225,7 @@ async function applyValidatedInstallRequest(
 
     try {
       await persistInstallingState(context, plan, config);
-      await writeModuleFiles(context);
+      await writeModuleFiles(context, config);
       await createModuleOwnedDirectories(context);
       for (const image of context.containers.map(container => container.image)) {
         await pullModuleImage(image);
@@ -248,6 +249,12 @@ async function applyValidatedInstallRequest(
         });
       }
       await markModuleInstalled(context.id, config);
+      await upsertInstalledAppRecord({
+        id: context.id,
+        manifestUrl: context.metadataUrl,
+        manifestPath: path.posix.join('apps', context.id, 'manifest.json'),
+        selectedRuntime: getSelectedRuntime(context.metadata),
+      }, config);
       installedModuleIds.push(context.id);
     } catch (error) {
       const operationError = toModuleOperationError(
@@ -307,7 +314,7 @@ function parseInstallRequest(body: unknown): {
     };
   }
 
-  const metadataUrl = readString(body, 'metadataUrl', '$.metadataUrl', validationErrors);
+  const metadataUrl = readManifestOrMetadataUrl(body, validationErrors);
   const planDigest = readString(body, 'planDigest', '$.planDigest', validationErrors);
   const settings = readSettingSelections(body.settings, validationErrors);
   const externalMounts = readExternalMountSelections(body.externalMounts, validationErrors);
@@ -327,6 +334,18 @@ function parseInstallRequest(body: unknown): {
     },
     validationErrors,
   };
+}
+
+function readManifestOrMetadataUrl(
+  object: Record<string, unknown>,
+  validationErrors: InstallPlanValidationError[]
+) {
+  const manifestUrl = object.manifestUrl;
+  if (typeof manifestUrl === 'string' && manifestUrl.trim()) {
+    return manifestUrl.trim();
+  }
+
+  return readString(object, 'metadataUrl', '$.metadataUrl', validationErrors);
 }
 
 function readSettingSelections(
@@ -1194,10 +1213,13 @@ function buildInstalledModuleRecord(
   plan: InstallPlan,
   existing: InstalledModuleRecord | null
 ): InstalledModuleRecord {
+  const metadataPath = getInstalledManifestPath(context.metadata, context.id);
   return {
     id: context.id,
     metadataUrl: context.metadataUrl,
-    metadataPath: path.posix.join('modules', context.id, 'metadata.json'),
+    manifestUrl: context.metadataUrl,
+    metadataPath,
+    manifestPath: metadataPath,
     metadataDigest: metadataDigest(context.graphNode),
     planDigest: plan.planDigest,
     containers: context.containers.map(container => ({
@@ -1233,9 +1255,24 @@ function buildInstalledModuleRecord(
   };
 }
 
-async function writeModuleFiles(context: InstallNodeContext) {
+function getInstalledManifestPath(metadata: NormalizedModuleMetadata, moduleId: string) {
+  return metadata.sourceSchemaVersion === 'app.0.1'
+    ? path.posix.join('apps', moduleId, 'manifest.json')
+    : path.posix.join('modules', moduleId, 'metadata.json');
+}
+
+function getSelectedRuntime(metadata: NormalizedModuleMetadata) {
+  return metadata.sourceSchemaVersion === 'app.0.1'
+    ? metadata.containers[0]?.key ?? 'docker'
+    : 'docker';
+}
+
+async function writeModuleFiles(context: InstallNodeContext, config: HostRuntimeConfig) {
   await fs.mkdir(context.paths.moduleDirectoryContainer, { recursive: true });
   await fs.writeFile(context.paths.metadataPathContainer, context.graphNode.rawBytes);
+  const appManifestPath = path.join(getAppsRootContainer(config), context.id, 'manifest.json');
+  await fs.mkdir(path.dirname(appManifestPath), { recursive: true });
+  await fs.writeFile(appManifestPath, context.graphNode.rawBytes);
 }
 
 async function createModuleOwnedDirectories(context: InstallNodeContext) {
@@ -1257,6 +1294,10 @@ function buildContainerEnvironment(
     serviceToken: moduleServiceToken,
     hostInternalOrigin: config.hostInternalOrigin,
   });
+  const appDataDirectory = resolveContainerAppDataDirectory(context.storageDirectories, containerKey);
+  if (appDataDirectory) {
+    env.HOSTY_APP_DATA_DIR = appDataDirectory;
+  }
 
   for (const setting of context.metadata.settings) {
     const value = context.settings[setting.key];
@@ -1289,6 +1330,17 @@ function buildContainerEnvironment(
   }
 
   return env;
+}
+
+function resolveContainerAppDataDirectory(
+  storageDirectories: InstallNodeContext['storageDirectories'],
+  containerKey: string
+) {
+  const candidates = storageDirectories.filter(directory => directory.container === containerKey);
+  return candidates.find(directory => directory.key === 'data')?.containerPath ??
+    candidates.find(directory => directory.writable)?.containerPath ??
+    candidates[0]?.containerPath ??
+    null;
 }
 
 function resolveInstalledPublicOrigin(

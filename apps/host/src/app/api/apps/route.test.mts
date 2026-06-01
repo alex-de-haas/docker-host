@@ -197,7 +197,10 @@ test('GET /api/apps applies assigned developer target filtering by principal', a
   assert.equal(adminResponse.status, 200);
   assert.equal((await assignedResponse.json() as { apps?: unknown[] }).apps?.length, 1);
   assert.equal((await unassignedResponse.json() as { apps?: unknown[] }).apps?.length, 0);
-  assert.equal((await adminResponse.json() as { apps?: unknown[] }).apps?.length, 1);
+  const adminBody = await adminResponse.json() as { apps?: Array<{ id?: string; source?: string }> };
+  assert.equal(adminBody.apps?.length, 2);
+  assert.equal(adminBody.apps?.[0]?.id, 'hosty.shell');
+  assert.equal(adminBody.apps?.[0]?.source, 'system');
 });
 
 test('GET /api/apps returns structured registry errors', async t => {

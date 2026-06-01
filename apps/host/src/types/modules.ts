@@ -109,7 +109,9 @@ export interface InstalledModulePortBinding {
 export interface InstalledModuleRecord {
   id: string;
   metadataUrl: string;
+  manifestUrl?: string;
   metadataPath?: string;
+  manifestPath?: string;
   metadataDigest?: string;
   planDigest?: string;
   containers: InstalledModuleContainerRecord[];
@@ -487,6 +489,11 @@ export interface NormalizedModuleConnectionMetadata extends ModuleConnectionMeta
 
 export interface NormalizedModuleMetadata {
   schemaVersion: '0.2' | '0.3';
+  /**
+   * Compatibility marker for records that were parsed from a newer app manifest
+   * and then mapped to the legacy Docker module runtime model.
+   */
+  sourceSchemaVersion?: 'app.0.1';
   id: string;
   name: string;
   description?: string;

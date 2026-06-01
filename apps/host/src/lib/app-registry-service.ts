@@ -28,6 +28,7 @@ export interface ListHostAppsOptions {
   config?: HostRuntimeConfig;
   runtimeStatusReader?: RuntimeStatusReader;
   requestOrigin?: string;
+  includeSystemApps?: boolean;
 }
 
 type RuntimeStatusReader = (module: InstalledModuleRecord) => Promise<ModuleRuntimeStatus>;
@@ -122,7 +123,10 @@ export async function listHostApps(
   const developerCandidates = developerTargetState
     ? developerTargetState.targets.map(target => buildDeveloperAppCandidate(target, options.requestOrigin))
     : [];
-  const candidates = [...installedCandidates, ...developerCandidates];
+  const systemCandidates = options.includeSystemApps && principal.role === 'host.admin'
+    ? [buildShellSystemAppCandidate()]
+    : [];
+  const candidates = [...systemCandidates, ...installedCandidates, ...developerCandidates];
 
   return candidates
     .filter(candidate => candidate.app)
@@ -201,6 +205,8 @@ async function buildModuleAppCandidate(
     return {
       app: {
         id: module.id,
+        kind: 'runtime',
+        system: false,
         source: 'installed',
         moduleId: module.id,
         displayName: metadataResult.metadata.name || module.id,
@@ -210,6 +216,8 @@ async function buildModuleAppCandidate(
         status: 'unavailable',
         statusReason: 'moduleOperationUnavailable',
         accessMode,
+        capabilities: getRuntimeAppCapabilities(module),
+        selectedRuntime: 'docker',
         operationStatus,
         lastOperation: module.lastOperation,
         entryPath: buildAppEntryPath(module.id, uiResult.ui.entrypoint.path),
@@ -233,6 +241,8 @@ async function buildModuleAppCandidate(
   return {
     app: {
       id: module.id,
+      kind: 'runtime',
+      system: false,
       source: 'installed',
       moduleId: module.id,
       displayName: metadataResult.metadata.name || module.id,
@@ -244,6 +254,8 @@ async function buildModuleAppCandidate(
         ? (localOriginReachable ? 'available' : 'localOriginUnavailable')
         : 'runtimeUnavailable',
       accessMode,
+      capabilities: getRuntimeAppCapabilities(module),
+      selectedRuntime: 'docker',
       operationStatus,
       lastOperation: module.lastOperation,
       runtimeState: runtimeStatus.state,
@@ -356,6 +368,8 @@ function buildUnavailableApp({
   const operationStatus = module.operationStatus || 'installed';
   return {
     id: module.id,
+    kind: 'runtime',
+    system: false,
     source: 'installed',
     moduleId: module.id,
     displayName: metadata?.name || module.id,
@@ -364,6 +378,8 @@ function buildUnavailableApp({
     status: 'unavailable',
     statusReason: reason,
     accessMode,
+    capabilities: getRuntimeAppCapabilities(module),
+    selectedRuntime: 'docker',
     operationStatus,
     lastOperation: module.lastOperation,
     entryPath: buildAppEntryPath(module.id, '/'),
@@ -391,6 +407,8 @@ function buildDeveloperAppCandidate(
   return {
     app: {
       id: getDeveloperAppId(target.id),
+      kind: 'runtime',
+      system: false,
       source: 'developer',
       moduleId: target.moduleId,
       developerTargetId: target.id,
@@ -403,6 +421,8 @@ function buildDeveloperAppCandidate(
       status: 'available',
       statusReason: 'available',
       accessMode,
+      capabilities: ['open'],
+      selectedRuntime: 'localCommand',
       entryPath: buildDeveloperAppEntryPath(target.id, target.shellApp.entrypointPath),
       embeddedUrl: buildDirectUrl(origin, buildDeveloperModulePath(target, target.shellApp.entrypointPath)),
       origin,
@@ -410,6 +430,32 @@ function buildDeveloperAppCandidate(
       navigation: buildDeveloperNavigation(target.id, target.shellApp.navigation, target, origin),
     },
     visibleToUsers: true,
+  };
+}
+
+function buildShellSystemAppCandidate(): ModuleAppCandidate {
+  return {
+    app: {
+      id: 'hosty.shell',
+      kind: 'system',
+      system: true,
+      source: 'system',
+      moduleId: 'hosty.shell',
+      displayName: 'Hosty Shell',
+      description: 'Default Hosty management UI.',
+      version: process.env.HOST_IMAGE?.trim() || 'bundled',
+      status: 'available',
+      statusReason: 'available',
+      accessMode: 'assignedUsersOnly',
+      capabilities: ['open', 'update'],
+      selectedRuntime: 'host-core',
+      entryPath: '/',
+      embeddedUrl: '',
+      origin: null,
+      identityTokenUrl: null,
+      navigation: [],
+    },
+    visibleToUsers: false,
   };
 }
 
@@ -495,12 +541,32 @@ function buildDeveloperAppEntryPath(targetId: string, modulePath: string) {
 }
 
 function compareHostApps(left: HostAppEntry, right: HostAppEntry) {
+  if (left.kind !== right.kind) {
+    return left.kind === 'system' ? -1 : 1;
+  }
+
   const nameComparison = left.displayName.localeCompare(right.displayName);
   if (nameComparison !== 0) {
     return nameComparison;
   }
 
   return left.id.localeCompare(right.id);
+}
+
+function getRuntimeAppCapabilities(module: InstalledModuleRecord) {
+  const operationStatus = module.operationStatus || 'installed';
+  if (operationStatus === 'removing') {
+    return [];
+  }
+
+  return [
+    'open',
+    'update',
+    'restart',
+    'stop',
+    'configure',
+    'remove',
+  ];
 }
 
 function resolveInstalledUiRoute(

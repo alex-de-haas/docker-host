@@ -45,6 +45,7 @@ public static class CommandLine
                 "logs" => await new LogsCommand(commandContext).ExecuteAsync(args[1..]),
                 "open" => await new OpenCommand(commandContext).ExecuteAsync(args[1..]),
                 "config" => await new ConfigCommand(commandContext).ExecuteAsync(args[1..]),
+                "apps" => await new ModulesCommand(commandContext, "apps").ExecuteAsync(args[1..]),
                 "modules" => await new ModulesCommand(commandContext).ExecuteAsync(args[1..]),
                 "dev" => await new DevCommand(commandContext).ExecuteAsync(args[1..]),
                 "auth" => await new AuthCommand(commandContext).ExecuteAsync(args[1..]),
@@ -140,10 +141,10 @@ public static class CommandLine
     }
 
     public const string HelpText = """
-        docker-host
+        hosty
 
         Usage:
-          docker-host <command> [options]
+          hosty <command> [options]
 
         Commands:
           install
@@ -156,13 +157,18 @@ public static class CommandLine
           logs
           open
           config
+          apps
           modules
           dev
           auth
 
-        Run docker-host config --help for configuration commands.
-        Run docker-host modules --help for module commands.
-        Run docker-host dev --help for module development commands.
-        Run docker-host auth --help for authentication commands.
+        Compatibility:
+          docker-host remains a deprecated command alias during migration.
+          modules remains a deprecated command alias for apps.
+
+        Run hosty config --help for configuration commands.
+        Run hosty apps --help for app commands.
+        Run hosty dev --help for module development commands.
+        Run hosty auth --help for authentication commands.
         """;
 }

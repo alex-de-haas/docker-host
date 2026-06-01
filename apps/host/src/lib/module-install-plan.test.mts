@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPlanContainers } from './module-install-plan.ts';
+import { buildPlanContainers, extractInstallPlanMetadataUrl } from './module-install-plan.ts';
 import type { NormalizedModuleMetadata } from '../types/modules.ts';
 
 test('buildPlanContainers assigns host ports only to public endpoints', () => {
@@ -27,6 +27,22 @@ test('buildPlanContainers assigns host ports only to public endpoints', () => {
       hostPublished: false,
     },
   ]);
+});
+
+test('extractInstallPlanMetadataUrl prefers manifestUrl and keeps metadataUrl compatibility', () => {
+  assert.equal(
+    extractInstallPlanMetadataUrl({
+      manifestUrl: ' https://apps.example.test/reports/manifest.json ',
+      metadataUrl: 'https://modules.example.test/reports/metadata.json',
+    }),
+    'https://apps.example.test/reports/manifest.json'
+  );
+  assert.equal(
+    extractInstallPlanMetadataUrl({
+      metadataUrl: ' https://modules.example.test/reports/metadata.json ',
+    }),
+    'https://modules.example.test/reports/metadata.json'
+  );
 });
 
 const metadataFixture: NormalizedModuleMetadata = {

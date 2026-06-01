@@ -10,7 +10,7 @@ internal sealed class UninstallCommand(CommandContext context)
     {
         if (args.Length > 0)
         {
-            throw new CommandUsageException("uninstall does not accept arguments.", "Usage: docker-host uninstall");
+            throw new CommandUsageException("uninstall does not accept arguments.", "Usage: hosty uninstall");
         }
 
         var settings = context.SettingsStore.Load();
@@ -62,7 +62,7 @@ internal sealed class UninstallCommand(CommandContext context)
 
         context.Console.MarkupLine("[green]Docker Host has been uninstalled.[/]");
         context.Console.MarkupLine($"CLI directory preserved: [grey]{Markup.Escape(context.Environment.BinDirectory)}[/]");
-        context.Console.MarkupLine("Run [grey]docker-host install[/] to recreate launch configuration and Host directories.");
+        context.Console.MarkupLine("Run [grey]hosty install[/] to recreate launch configuration and Host directories.");
         return 0;
     }
 

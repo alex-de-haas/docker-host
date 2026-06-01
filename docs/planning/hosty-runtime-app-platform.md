@@ -675,7 +675,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 1 - Document target vocabulary
 
-**Status**: In Progress
+**Status**: Completed
 
 - Introduce Hosty, Hosty Core, Hosty Shell, system apps, runtime apps, manifests, channels, and runtime profiles.
 - Document that `source` is optional.
@@ -684,7 +684,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 2 - Add compatibility fields
 
-**Status**: Not Started
+**Status**: Completed
 
 - Add Hosty data root resolution with `~/.hosty` preferred and `~/.docker-host` as a legacy fallback.
 - Add app store reading from `apps.json` plus legacy module reading from `modules.json`.
@@ -698,7 +698,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 3 - Add app summary model
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Add app summary fields for `kind`, `system`, `capabilities`, `selectedChannel`, and `selectedRuntime`.
 - Add app access summary fields for Shell embedded, standalone auth redirect, and gateway-protected availability.
@@ -709,7 +709,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 4 - Rename CLI surface
 
-**Status**: Not Started
+**Status**: Completed
 
 - Introduce the `hosty` CLI command.
 - Keep `docker-host` as a deprecated alias during migration.
@@ -722,7 +722,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 5 - Define `app.0.1` manifest schema
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Specify manifest identity, optional source, runtime profiles, UI, access modes, primary app data directory, backup policy, storage, settings, dependencies, and capabilities.
 - Add parser and validator for `schemaVersion: "app.0.1"`.
@@ -731,7 +731,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 6 - Add runtime profile planning
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Store the active runtime profile for an installed app.
 - Add switch-runtime plan and apply APIs.
@@ -764,7 +764,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 ### Phase 9 - Add app data backup and restore
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Create a standard primary app data directory convention.
 - Inject `HOSTY_APP_DATA_DIR` into Docker and process runtime profiles.

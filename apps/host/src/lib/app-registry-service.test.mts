@@ -62,6 +62,24 @@ test('returns available shell apps to authenticated Host users', async () => {
   ]);
 });
 
+test('includes Hosty Shell as a system app for admin management views', async () => {
+  const config = await createAppRegistryTestConfig();
+
+  const apps = await listHostApps(admin, {
+    config,
+    includeSystemApps: true,
+  });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].id, 'hosty.shell');
+  assert.equal(apps[0].kind, 'system');
+  assert.equal(apps[0].system, true);
+  assert.equal(apps[0].source, 'system');
+  assert.equal(apps[0].status, 'available');
+  assert.equal(apps[0].entryPath, '/');
+  assert.deepEqual(apps[0].capabilities, ['open', 'update']);
+});
+
 test('uses localhost for local fallback shell app origins', async () => {
   const config = await createAppRegistryTestConfig();
   await writeInstalledModule(config, {

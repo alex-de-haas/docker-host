@@ -6,7 +6,7 @@ internal sealed class StopCommand(CommandContext context)
     {
         if (args.Length > 0)
         {
-            throw new CommandUsageException("stop does not accept arguments.", "Usage: docker-host stop");
+            throw new CommandUsageException("stop does not accept arguments.", "Usage: hosty stop");
         }
 
         var settings = context.SettingsStore.Load();
@@ -14,4 +14,3 @@ internal sealed class StopCommand(CommandContext context)
         return 0;
     }
 }
-

@@ -288,7 +288,7 @@ When applying a product channel, the CLI should:
 - reconcile the shell profile PATH block so the managed CLI bin directory is available in new terminal sessions;
 - print a manual `export PATH=...` command when the current terminal session does not yet include the managed CLI bin directory;
 - store the selected product channel locally so the next interactive update can default to it;
-- leave Host container recreation to the existing `docker-host start` flow unless an explicit restart/apply command is introduced.
+- leave Host container recreation to the existing `hosty start` flow unless an explicit restart/apply command is introduced.
 
 The selected product channel is user preference, not a permanent property of the binary. Build metadata should still be embedded separately in the CLI over time, such as version, commit SHA, build time, release tag, and build channel.
 
@@ -340,7 +340,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 2 - Show Shell as a managed system app
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Add a Hosty Shell entry to a system apps management section.
 - Label Shell as a system app with non-removable behavior.
@@ -419,7 +419,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 - Validate switching Shell to `main`.
 - Validate switching Shell to `pr-<number>-<branch-slug>`.
 - Confirm the Shell image setting changes to the selected channel image.
-- Confirm `docker-host start` pulls and starts the matching Host image.
+- Confirm `hosty start` pulls and starts the matching Host image.
 - Validate switching an installed runtime app to an app PR channel.
 - Confirm runtime app channel switching uses the update plan before applying changes.
 - Validate that source-less Docker apps remain installable and updateable.

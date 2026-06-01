@@ -9,7 +9,7 @@ internal sealed class OpenCommand(CommandContext context)
     {
         if (args.Length > 0)
         {
-            throw new CommandUsageException("open does not accept arguments.", "Usage: docker-host open");
+            throw new CommandUsageException("open does not accept arguments.", "Usage: hosty open");
         }
 
         var settings = context.SettingsStore.Load();
@@ -19,7 +19,7 @@ internal sealed class OpenCommand(CommandContext context)
         if (container?.State?.Running != true)
         {
             context.Console.MarkupLine("[red]Host container is not running.[/]");
-            context.Console.MarkupLine("Run [grey]docker-host start[/] first.");
+            context.Console.MarkupLine("Run [grey]hosty start[/] first.");
             return 1;
         }
 
