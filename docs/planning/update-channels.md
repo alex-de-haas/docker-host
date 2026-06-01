@@ -2,15 +2,16 @@
 
 ## Description
 
-Update Channels define how Docker Host discovers, displays, and applies alternate builds for the Host Shell, installed modules, and the bootstrap CLI.
+Update Channels define how Hosty discovers, displays, and applies alternate builds for Hosty Shell, system apps, runtime apps, and the bootstrap CLI.
 
 The original channel idea started as a CLI self-update source. The broader target model is runtime-oriented:
 
-- the Host Shell should be visible in management surfaces next to installed modules, even though it is currently bundled into the Host application;
-- installed modules should be able to expose selectable channels for feature validation against real local data;
+- Hosty Shell should be visible in management surfaces as a system app, even though it is currently bundled into the Host application;
+- runtime apps should be able to expose selectable channels for feature validation against real local data;
+- channels should resolve to concrete manifest/source snapshots, not directly imply a runtime type;
 - the CLI should remain a thin bootstrap and lifecycle tool, with its own channels only where separate CLI delivery is useful.
 
-The current system installs modules from a direct module metadata URL and updates them by refreshing that stored metadata URL. That flow remains the baseline. Channels add a discovery layer above metadata URLs and image tags. Selecting a channel should resolve to concrete metadata, image, or release references, then reuse the existing install/update planning model.
+The current system installs modules from a direct module metadata URL and updates them by refreshing that stored metadata URL. That flow remains the legacy Docker module baseline. In the target model, metadata JSON becomes manifest JSON. Channels add a discovery layer above manifest URLs, source refs, image tags, and release artifacts. Selecting a channel should resolve to concrete manifest, source, image, or release references, then reuse the existing install/update planning model.
 
 The runtime channel indexes are generated artifacts. They are not committed as JSON files in the repository. The repository should contain schema documentation, planning, and workflow code that generates and publishes those indexes.
 
@@ -24,13 +25,14 @@ The `stable` channel is intentionally deferred. It can be added later as a manua
 ```mermaid
 flowchart LR
   A["Channel-capable source"] --> B["Generated channel index"]
-  B --> C["Host Shell channel"]
-  B --> D["Module channel"]
+  B --> C["Hosty Shell channel"]
+  B --> D["Runtime app channel"]
   B --> E["Optional CLI channel"]
-  C --> F["Update plan"]
+  C --> F["Manifest/source snapshot"]
   D --> F
+  F --> J["Update plan"]
   E --> G["CLI self-update"]
-  F --> H["Apply selected runtime build"]
+  J --> H["Apply selected runtime build"]
   G --> I["Bootstrap executable updated"]
 ```
 
@@ -38,18 +40,18 @@ flowchart LR
 
 ### Runtime App
 
-A runtime app is something the Host can show as an installed or managed application with a current version, source, channel, and update state.
+A runtime app is something Hosty can show as an installed or managed application with a current version, optional source, selected channel, selected runtime profile, and update state.
 
 Initial runtime app types:
 
-- `shell` - the Host Shell used to manage Docker Host and embed module UIs.
-- `module` - an installed module from module metadata.
+- `system` - a Hosty-owned system app such as Hosty Shell.
+- `runtime` - a user-installed app, including legacy Docker modules.
 
 The CLI is not a runtime app. It is a local bootstrap executable. It can still use a channel index for self-update, but it should not drive the whole product model.
 
-### Host Shell
+### Hosty Shell
 
-The Host Shell is currently part of the Host Web UI and Host container image. The planning target is to show it in installed-app management as a first-class system app.
+Hosty Shell is currently part of the Host Web UI and Host container image. The planning target is to show it in app management as a first-class system app.
 
 The first implementation can model Shell updates as Host image updates:
 
@@ -57,29 +59,33 @@ The first implementation can model Shell updates as Host image updates:
 - switching the Shell channel updates the Host image setting or Host-owned Shell source state;
 - the existing Host lifecycle recreates or restarts the Host container when needed.
 
-A later implementation can separate Shell delivery from the Host backend if the architecture needs it. The channel model should allow that, but not require it now.
+A later implementation can separate Shell delivery from Hosty Core if the architecture needs it. The channel model should allow that, but not require it now.
 
-### Module
+### Runtime App Manifest
 
-Installed modules already have a concrete source:
+Legacy Docker modules already have a concrete manifest-like source:
 
 - `metadataUrl` in `modules.json`;
 - a local copied `metadata.json`;
 - container image references resolved from metadata.
 
-For modules, a channel switch should resolve to a replacement metadata source and then use the existing module update plan:
+Target runtime apps should use `manifestUrl` and a local `manifest.json`. Legacy `metadataUrl` and `metadata.json` remain supported as compatibility aliases.
 
-1. The administrator chooses a channel for an installed module.
-2. The Host resolves that channel to a metadata URL or metadata snapshot.
-3. The Host builds an update plan using the selected metadata.
-4. The administrator reviews settings, storage, dependencies, and image changes.
-5. The Host applies the update and stores the selected channel/source state.
+For runtime apps, a channel switch should resolve to a replacement manifest source or manifest snapshot and then use the existing app/module update plan:
+
+1. The administrator chooses a channel for an installed runtime app.
+2. Hosty resolves that channel to a manifest URL or manifest snapshot.
+3. Hosty builds an update plan using the selected manifest.
+4. The administrator reviews settings, storage, dependencies, runtime profiles, and image/source changes.
+5. Hosty applies the update and stores the selected channel/source state.
 
 This keeps channel switching compatible with existing update safety behavior. It is not only a Docker image tag replacement.
 
 ### Repository-backed Source
 
-Direct metadata URLs remain supported. Future repository-backed modules should still produce concrete metadata before install or update planning.
+Direct manifest and legacy metadata URLs remain supported. Repository-backed runtime apps should still produce a concrete manifest before install or update planning.
+
+Source repositories are optional. A runtime app can be installed from a Docker image or another runtime reference with no source known to Hosty. When source is present, channels can point to branches, pull requests, commits, and generated artifacts for agent-driven validation.
 
 Repository-backed channels can be represented as source selectors:
 
@@ -88,9 +94,19 @@ Repository-backed channels can be represented as source selectors:
 - commit selector for immutable validation;
 - release tag selector for manually promoted builds.
 
-The Host should not need to understand every repository layout at the update-plan layer. A repository integration can discover or generate the module metadata for a selected branch or pull request, but the install/update engine should still consume a concrete metadata document.
+Hosty should not need to understand every repository layout at the update-plan layer. A repository integration can discover or generate the app manifest for a selected branch or pull request, but the install/update engine should still consume a concrete manifest document.
 
-For source-code modules, metadata can later describe how the app is built or run, for example a Node.js app with package scripts. That is a separate runtime-source extension. Channels should select the version of that source; update planning should still work from a concrete resolved metadata document.
+For source-code apps, manifests can later describe how the app is built or run, for example a Node.js app with package scripts. Channels should select the version of that source; update planning should still work from a concrete resolved manifest document.
+
+### Runtime Profiles
+
+Runtime profiles and channels are separate axes.
+
+- A channel selects a version, source ref, manifest snapshot, and runtime artifact references.
+- A runtime profile selects how the installed app runs, such as Docker image, local process, npm script, Python process, command, or external URL.
+- A channel can change available runtime profiles, but switching channel should not silently switch the active runtime profile unless the update plan explicitly requires it.
+
+This lets one app run from a Docker image for normal use, then temporarily switch to a repository-backed development runtime while preserving the same storage mappings and settings.
 
 ## Channel Indexes
 
@@ -98,13 +114,13 @@ There are two related but separate index types.
 
 ### Product Channel Index
 
-The product channel index is owned by this repository and covers Docker Host itself.
+The product channel index is owned by this repository and covers Hosty itself: Hosty Core, Hosty Shell, and optionally the CLI.
 
 It should be published to a stable GitHub Release asset, for example:
 
 - release tag: `update-channels`
 - asset name: `channels.json`
-- URL shape: `https://github.com/alex-de-haas/docker-host/releases/download/update-channels/channels.json`
+- URL shape: `https://github.com/alex-de-haas/hosty/releases/download/update-channels/channels.json`
 
 Example shape:
 
@@ -123,8 +139,11 @@ Example shape:
         "branch": "main",
         "commit": "abc123"
       },
+      "core": {
+        "image": "ghcr.io/alex-de-haas/hosty-core:latest"
+      },
       "shell": {
-        "image": "ghcr.io/alex-de-haas/docker-host:latest"
+        "image": "ghcr.io/alex-de-haas/hosty-shell:latest"
       },
       "cli": {
         "releaseTag": "cli-main"
@@ -140,8 +159,11 @@ Example shape:
         "branch": "feature/auth-flow",
         "commit": "def456"
       },
+      "core": {
+        "image": "ghcr.io/alex-de-haas/hosty-core:pr-42-auth-flow"
+      },
       "shell": {
-        "image": "ghcr.io/alex-de-haas/docker-host:pr-42-auth-flow"
+        "image": "ghcr.io/alex-de-haas/hosty-shell:pr-42-auth-flow"
       },
       "cli": {
         "releaseTag": "cli-pr-42-auth-flow"
@@ -152,28 +174,30 @@ Example shape:
 }
 ```
 
-The `cli` block is optional over time. If the CLI remains simple enough, Shell and module channels may carry most product changes while the CLI updates less often.
+The `cli` block is optional over time. If the CLI remains simple enough, Shell, Core, and runtime app channels may carry most product changes while the CLI updates less often.
 
-### Module Channel Index
+The current implementation can map `shell.image` or `core.image` to the existing Host image until Shell and Core delivery are split.
 
-A module channel index is owned by the module publisher. It advertises selectable metadata sources for one module.
+### Runtime App Channel Index
 
-The module metadata can later add an optional pointer to this index:
+A runtime app channel index is owned by the app publisher. It advertises selectable manifest sources for one app.
+
+The app manifest can later add an optional pointer to this index. Legacy metadata can add the same pointer during compatibility migration:
 
 ```json
 {
   "id": "com.acme.reports",
   "version": "1.0.0",
-  "channelsUrl": "https://modules.acme.example/reports/channels.json"
+  "channelsUrl": "https://apps.acme.example/reports/channels.json"
 }
 ```
 
-Example module channel index:
+Example runtime app channel index:
 
 ```json
 {
   "schemaVersion": 1,
-  "moduleId": "com.acme.reports",
+  "appId": "com.acme.reports",
   "defaultChannel": "main",
   "channels": [
     {
@@ -184,7 +208,7 @@ Example module channel index:
         "branch": "main",
         "commit": "abc123"
       },
-      "metadataUrl": "https://modules.acme.example/reports/main/metadata.json"
+      "manifestUrl": "https://apps.acme.example/reports/main/manifest.json"
     },
     {
       "id": "pr-42-new-dashboard",
@@ -195,7 +219,7 @@ Example module channel index:
         "branch": "feature/new-dashboard",
         "commit": "def456"
       },
-      "metadataUrl": "https://modules.acme.example/reports/pr-42-new-dashboard/metadata.json",
+      "manifestUrl": "https://apps.acme.example/reports/pr-42-new-dashboard/manifest.json",
       "expiresAt": "2026-06-14T00:00:00Z"
     }
   ]
@@ -204,31 +228,42 @@ Example module channel index:
 
 Channel ids and generated tags should use the pull request number as the stable identifier. A branch slug can be appended for readability, but the pull request number must remain the conflict-resistant key. Branch names can contain unsupported characters, become too long, or change over time.
 
+The `source` block is optional at the channel level. Source-less apps can still publish channels that only resolve to manifest or image references.
+
+Legacy indexes may continue to provide `moduleId` and `metadataUrl`. New indexes should use `appId` and `manifestUrl`. Hosty should treat `metadataUrl` as a legacy alias for `manifestUrl` when resolving Docker module channels.
+
 ## UI Behavior
 
-The installed modules view should evolve into a runtime apps management view.
+The installed modules view should evolve into an app management view with separate sections for system apps and runtime apps.
 
 It should show:
 
-- Host Shell as a system app;
-- installed modules as module apps;
+- Hosty Shell as a system app;
+- future core services as system apps when they are independently manageable;
+- installed modules as legacy runtime apps;
+- new runtime apps from app manifests;
 - current channel where known;
 - current version or commit where known;
+- selected runtime profile where applicable;
 - current runtime status;
-- available actions such as update, switch channel, restart, stop, remove, or open.
+- available actions such as update, switch channel, switch runtime, restart, stop, remove, configure, or open.
 
 Shell-specific behavior:
 
-- Shell should be visible even when no modules are installed.
+- Shell should be visible even when no runtime apps are installed.
 - Shell should be labeled as a system app so administrators do not confuse it with a removable module.
 - Channel switching should make it clear whether a Host restart or container recreation is required.
+- Shell should expose update from the UI so remote administrators do not need to SSH into a server only to run the CLI.
+- Shell should not expose remove or ordinary stop actions.
 
-Module-specific behavior:
+Runtime-app-specific behavior:
 
-- A module with no `channelsUrl` or repository source can keep the current update behavior.
-- A module with channels can expose `Switch channel` next to `Update`.
+- A runtime app with no `channelsUrl` or repository source can keep the current update behavior.
+- A runtime app with channels can expose `Switch channel` next to `Update`.
+- A runtime app can have no source repository and still be channel-capable if the channel resolves to a manifest or image reference.
 - Channel switching should always show an update plan before applying changes.
-- The UI should preserve real-data validation safety by showing storage, settings, dependency, image, and endpoint changes.
+- Runtime profile switching should always show a plan before applying changes.
+- The UI should preserve real-data validation safety by showing storage, settings, dependency, runtime profile, image/source, and endpoint changes.
 
 ## CLI Behavior
 
@@ -236,23 +271,28 @@ The CLI should remain focused on bootstrap, Host lifecycle, and local update tra
 
 Supported product channel command shapes:
 
-- `docker-host update` - fetch product channels, show an interactive selection prompt, default to the configured channel or `main`.
-- `docker-host update --channel main` - update non-interactively from the named product channel.
-- `docker-host update --channel pr-42-auth-flow` - update from a PR-specific product channel.
-- `docker-host update --list-channels` - print the current generated product channel list without updating.
+- `hosty update` - fetch product channels, show an interactive selection prompt, default to the configured channel or `main`.
+- `hosty update --channel main` - update non-interactively from the named product channel.
+- `hosty update --channel pr-42-auth-flow` - update from a PR-specific product channel.
+- `hosty update --list-channels` - print the current generated product channel list without updating.
 
 When applying a product channel, the CLI should:
 
 - download the product channel index;
 - validate the schema version;
 - resolve the selected channel;
-- update the local Host Shell image setting from `channel.shell.image`;
+- update the local Hosty Core or Shell image setting from `channel.core.image` or `channel.shell.image`, depending on current packaging;
 - download and apply a CLI artifact from `channel.cli.releaseTag` only if the selected channel includes a CLI block;
 - verify CLI artifacts with `SHA256SUMS` when available;
+- refresh the managed CLI command shims, including `hosty` and the deprecated `docker-host` alias during migration;
+- reconcile the shell profile PATH block so the managed CLI bin directory is available in new terminal sessions;
+- print a manual `export PATH=...` command when the current terminal session does not yet include the managed CLI bin directory;
 - store the selected product channel locally so the next interactive update can default to it;
 - leave Host container recreation to the existing `docker-host start` flow unless an explicit restart/apply command is introduced.
 
 The selected product channel is user preference, not a permanent property of the binary. Build metadata should still be embedded separately in the CLI over time, such as version, commit SHA, build time, release tag, and build channel.
+
+The existing `docker-host` command should remain a compatibility alias during migration. New docs and new commands should prefer `hosty`.
 
 ## GitHub Actions Model
 
@@ -260,8 +300,8 @@ The implementation should extend the existing artifact publishing workflows inst
 
 Main product channel workflow:
 
-- build the Host image from `main`;
-- publish the Host image as `ghcr.io/alex-de-haas/docker-host:latest`;
+- build the current Host image from `main`;
+- publish the current Host image as the compatibility Hosty Core/Shell image until packaging is split;
 - build the CLI only when CLI inputs changed or when a coordinated product channel requires it;
 - publish or update a rolling GitHub prerelease with tag `cli-main` when CLI assets are built;
 - update the generated product channel index entry for `main`;
@@ -270,8 +310,8 @@ Main product channel workflow:
 Pull request product channel workflow:
 
 - run only when a PR is intended to expose an update channel, for example by label `update-channel`;
-- build the Host image for the PR;
-- publish the Host image with a tag like `pr-42-auth-flow`;
+- build the current Host image for the PR;
+- publish the current Host image with a tag like `pr-42-auth-flow`;
 - build and publish PR-specific CLI assets only when needed;
 - publish or update a rolling GitHub prerelease with a tag like `cli-pr-42-auth-flow` when CLI assets are built;
 - add or update the PR channel in the generated product channel index;
@@ -285,7 +325,7 @@ Pull request cleanup workflow:
 - delete generated PR release assets, release tags, and package/image tags when GitHub permissions allow it;
 - never delete the source branch from the cleanup workflow.
 
-Module channel workflows are publisher-owned. A module repository can generate its own channel index from branches, pull requests, commits, or release tags. Docker Host should consume those indexes through documented URLs rather than requiring all module publishers to use this repository's workflow implementation.
+Runtime app channel workflows are publisher-owned. An app repository can generate its own channel index from branches, pull requests, commits, or release tags. Hosty should consume those indexes through documented URLs rather than requiring all app publishers to use this repository's workflow implementation.
 
 ## Milestones
 
@@ -293,25 +333,26 @@ Module channel workflows are publisher-owned. A module repository can generate i
 
 **Status**: Completed
 
-- Document channels as runtime app channels, not only CLI channels.
-- Define Host Shell, module, and optional CLI channel responsibilities.
+- Document channels as runtime-neutral app channels, not only CLI channels.
+- Define Hosty Shell, system app, runtime app, and optional CLI channel responsibilities.
 - Document that generated runtime indexes are release assets, not committed repository JSON.
-- Add future repository-backed source considerations without replacing the existing metadata update model.
+- Add future repository-backed source considerations without replacing the existing manifest/update model.
 
 ### Phase 2 - Show Shell as a managed system app
 
 **Status**: Not Started
 
-- Add a Host Shell entry to the management UI next to installed modules.
+- Add a Hosty Shell entry to a system apps management section.
 - Label Shell as a system app with non-removable behavior.
 - Show current Shell image, channel, version, or commit where available.
+- Expose Shell update from the UI.
 - Show restart or recreate requirements when the Shell channel changes.
 
 ### Phase 3 - Generate and publish the main product channel
 
 **Status**: Not Started
 
-- Publish the `main` channel entry with `ghcr.io/alex-de-haas/docker-host:latest`.
+- Publish the `main` channel entry for the current Host image, mapped to Hosty Core/Shell until packaging is split.
 - Rename or replace the current rolling `cli-dev` behavior with `cli-main` if CLI channel publishing remains useful.
 - Keep backward compatibility for `cli-dev` only if needed for existing installers.
 - Publish `channels.json` to the `update-channels` release.
@@ -321,45 +362,57 @@ Module channel workflows are publisher-owned. A module repository can generate i
 **Status**: Not Started
 
 - Add product channel index download and schema validation.
-- Add interactive product channel selection to `docker-host update`.
+- Add interactive product channel selection to `hosty update`.
 - Add non-interactive `--channel` and `--list-channels` options.
 - Store the selected product channel in local CLI configuration.
 - Update the local Host image setting when a product channel is applied.
 - Preserve existing checksum verification and executable replacement behavior for channels that include CLI artifacts.
+- Reconcile CLI shims and PATH profile entries during update, especially for the `docker-host` to `hosty` command migration.
 
-### Phase 5 - Add module channel discovery
-
-**Status**: Not Started
-
-- Add optional module metadata support for a channel index pointer such as `channelsUrl`.
-- Add Host-side loading and validation for module channel indexes.
-- Store the selected module channel and resolved metadata source in `modules.json`.
-- Keep direct metadata URL modules fully supported.
-
-### Phase 6 - Add module channel switching
+### Phase 5 - Add runtime app channel discovery
 
 **Status**: Not Started
 
-- Add a `Switch channel` action for modules with available channels.
-- Resolve the selected channel to metadata before planning.
+- Add optional app manifest support for a channel index pointer such as `channelsUrl`.
+- Keep legacy module metadata support for the same pointer.
+- Add Host-side loading and validation for runtime app channel indexes.
+- Store the selected app channel and resolved manifest source in persistent app state.
+- Keep direct manifest URL and legacy metadata URL apps fully supported.
+
+### Phase 6 - Add runtime app channel switching
+
+**Status**: Not Started
+
+- Add a `Switch channel` action for runtime apps with available channels.
+- Resolve the selected channel to a manifest before planning.
 - Reuse the existing module update plan and apply flow.
-- Show settings, storage, dependency, image, endpoint, and runtime changes before applying.
+- Show settings, storage, dependency, runtime profile, image/source, endpoint, and manifest changes before applying.
 - Validate channel switching against real installed data and failure recovery behavior.
 
-### Phase 7 - Add pull request channels and cleanup
+### Phase 7 - Add runtime profile switching
+
+**Status**: Not Started
+
+- Add selected runtime profile state for runtime apps.
+- Add `Switch runtime` planning and apply APIs.
+- Keep channel switching and runtime switching as separate actions.
+- Preserve compatible storage and settings when switching from Docker image runtime to repository/local process runtime.
+- Show explicit conflicts when the target runtime cannot use the current data mappings.
+
+### Phase 8 - Add pull request channels and cleanup
 
 **Status**: Not Started
 
 - Add an opt-in trigger for PR product channels, preferably a label such as `update-channel`.
 - Generate PR-safe slugs using `pr-<number>-<branch-slug>`.
-- Publish PR-specific Host image tags.
+- Publish PR-specific Hosty Core/Shell image tags while packaging is combined.
 - Publish PR-specific CLI releases only when needed.
 - Add PR channel entries to the generated product channel index.
 - Remove closed PR channels from the generated product channel index.
 - Delete generated PR CLI releases, release tags, and Host image tags when safe.
 - Keep cleanup best-effort and visible in workflow logs.
 
-### Phase 8 - Validate end-to-end delivery
+### Phase 9 - Validate end-to-end delivery
 
 **Status**: Not Started
 
@@ -367,44 +420,29 @@ Module channel workflows are publisher-owned. A module repository can generate i
 - Validate switching Shell to `pr-<number>-<branch-slug>`.
 - Confirm the Shell image setting changes to the selected channel image.
 - Confirm `docker-host start` pulls and starts the matching Host image.
-- Validate switching an installed module to a module PR channel.
-- Confirm module channel switching uses the update plan before applying changes.
+- Validate switching an installed runtime app to an app PR channel.
+- Confirm runtime app channel switching uses the update plan before applying changes.
+- Validate that source-less Docker apps remain installable and updateable.
+- Validate that source-backed Docker apps can advertise PR channels from their repository.
 - Confirm closed PR channels disappear from channel lists.
 
-## Open Questions And Answers
+## Resolved Decisions
 
-- Question: Should the default product channel be called `stable`?
-  - Answer: No, not initially. The current delivery model has development PR validation and the real mainline environment, but no separate release approval environment.
-  - Recommendation: Use `main` as the default channel and reserve `stable` for future manually promoted releases.
+No open questions remain for this planning pass. The current accepted decisions are:
 
-- Question: Should the runtime channel JSON be committed to the repository?
-  - Answer: No. Runtime channel indexes should be generated and published as release assets so PR channels can appear and disappear without CI committing to `main`.
-  - Recommendation: Commit only schema documentation, planning, and workflow implementation.
-
-- Question: Should the CLI have its own channels?
-  - Answer: Maybe, but it should not be the center of the model. The CLI has relatively small scope compared with Shell and module behavior.
-  - Recommendation: Keep CLI channel support optional inside product channels and only publish CLI artifacts when CLI changes need validation.
-
-- Question: Should Shell be treated exactly like an installed module?
-  - Answer: Not yet. Shell is currently part of the Host application and container image, while installed modules use metadata and module lifecycle state.
-  - Recommendation: Show Shell as a managed system app first. Revisit a module-like Shell packaging model only if Shell delivery separates from the Host backend.
-
-- Question: Should module channels replace `metadata.json`?
-  - Answer: No. Channels should resolve to concrete metadata. The existing metadata-based install and update plan remains the safety boundary.
-  - Recommendation: Add channel discovery above metadata, not instead of metadata.
-
-- Question: Should branch names be treated as channels automatically?
-  - Answer: Not directly. Branch names are useful source selectors, but raw branch lists can be noisy and unstable.
-  - Recommendation: Generate curated channel indexes from branches or pull requests. Use PR number as the stable channel id for PR channels.
-
-- Question: Should PR channels be created for every pull request?
-  - Answer: Not by default. That can make channel lists noisy and spend build capacity on PRs that do not need local channel validation.
-  - Recommendation: Make PR channel publishing opt-in with a label such as `update-channel`.
-
-- Question: Should PR cleanup delete the source branch?
-  - Answer: No. The source branch may belong to a developer workflow or a fork.
-  - Recommendation: Delete only generated releases, tags, images, and channel index entries.
-
-- Question: Should PR assets be deleted immediately after closing a PR?
-  - Answer: The channel entry should be removed immediately. Asset deletion should be attempted immediately when safe, but treated as best-effort because registry package deletion can depend on permissions and retention behavior.
-  - Recommendation: Keep cleanup logs explicit and avoid blocking channel index cleanup on package deletion failures.
+- The default product channel is `main`. The `stable` channel is reserved for a future manually promoted release process.
+- Runtime channel JSON is generated and published as release assets. It is not committed to the repository.
+- The repository should contain schema documentation, planning, and workflow code for channel generation, not live generated channel indexes.
+- CLI channel support is optional inside product channels. Publish CLI artifacts only when CLI changes need validation or coordinated rollout.
+- Shell is a Hosty system app/client. It is managed and updateable, but not removable like a user runtime app.
+- Runtime app channels do not replace `manifest.json`. Channels resolve to concrete manifests or manifest snapshots.
+- Channel discovery sits above manifests. Legacy metadata remains a manifest compatibility layer.
+- Source repositories are optional for channel support. Source-less Docker apps can still use channels that resolve to a manifest or image reference.
+- Channels and runtime profiles are separate axes. `Switch channel` and `Switch runtime` remain separate actions with separate plans.
+- A channel can change available runtime profiles. The update plan must show those changes and avoid implicit active-runtime switches unless required and explicitly confirmed.
+- Branch names are not treated as channels automatically. Curated channel indexes are generated from selected branches or pull requests.
+- Pull request channels are opt-in, preferably through a label such as `update-channel`.
+- Pull request channel ids use the PR number as the stable key, with an optional branch slug only for readability.
+- Pull request cleanup must not delete the source branch.
+- Pull request cleanup removes the channel entry immediately. Generated releases, tags, images, and package assets are deleted best-effort when permissions allow.
+- Cleanup logs must stay explicit, and channel index cleanup must not be blocked by package/image deletion failures.

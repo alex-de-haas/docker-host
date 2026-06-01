@@ -48,4 +48,5 @@ flowchart LR
 
 ## Planning
 
-- [Update Channels](planning/update-channels.md) - planned generated channel indexes for Shell, module, and optional CLI updates from `main` and pull request builds.
+- [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - planned Hosty Core, Shell/system apps, runtime apps, manifest contract, optional source repositories, runtime profiles, and agent-oriented workflow.
+- [Update Channels](planning/update-channels.md) - planned generated channel indexes for Shell, runtime app, and optional CLI updates from `main` and pull request builds.
