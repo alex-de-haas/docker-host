@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "com.example.app",
+  "name": "Example App",
+  "description": "Example Hosty runtime app manifest. Replace all example values before shipping.",
+  "version": "1.0.0",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/example/example-app"
+  },
+  "runtimes": [
+    {
+      "key": "docker",
+      "type": "docker",
+      "image": "ghcr.io/example/example-app:1.0.0",
+      "ports": [
+        {
+          "key": "http",
+          "containerPort": 3000,
+          "protocol": "http",
+          "public": true
+        }
+      ],
+      "resources": {
+        "cpus": 0.5,
+        "memory": "512m"
+      }
+    }
+  ],
+  "defaultRuntime": "docker",
+  "ui": {
+    "icon": "boxes",
+    "entrypoint": "/",
+    "navigation": [
+      {
+        "label": "Overview",
+        "path": "/"
+      }
+    ]
+  },
+  "data": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "docker",
+        "containerPath": "/app/data"
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "APP_BASE_URL",
+      "type": "url",
+      "required": false,
+      "default": "http://localhost:3000",
+      "targets": [
+        {
+          "container": "docker",
+          "type": "env",
+          "name": "APP_BASE_URL"
+        }
+      ]
+    }
+  ],
+  "dependencies": []
+}
