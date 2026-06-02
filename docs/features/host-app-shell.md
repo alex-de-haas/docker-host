@@ -33,7 +33,7 @@ Module UI metadata behavior:
 
 Embedded app behavior:
 
-- the Apps sidebar is populated from `/api/apps`;
+- the Apps sidebar is populated from `/api/apps`, excluding system apps so Host-owned management surfaces do not appear as user app entries;
 - app entries can show nested navigation from `ui.navigation`;
 - `/apps/{moduleId}` opens a Host-owned app page without proxying that path to module containers;
 - the Host app page embeds module UIs in an iframe using the direct module origin returned by `/api/apps`;
@@ -137,7 +137,7 @@ Non-admin users do not receive Host management pages. Opening `/`, `/ingress`, `
 
 ## App Registry API
 
-`GET /api/apps` returns a minimal, principal-filtered app registry for sidebar rendering and embedded app opening.
+`GET /api/apps` returns a minimal, principal-filtered app registry for management views, sidebar rendering, and embedded app opening. The sidebar applies a client-side presentation filter for system apps; the `/apps` portal can still show those entries in its separate System apps section.
 
 `host.admin` receives all shell-routable app entries, including unavailable entries with safe diagnostic status. `host.user` receives only available apps that are visible to all authenticated users or explicitly assigned to that user.
 

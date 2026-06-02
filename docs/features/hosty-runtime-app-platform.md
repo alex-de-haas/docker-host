@@ -161,6 +161,7 @@ Current system app behavior:
 
 - `GET /control/v1/apps` includes Hosty Shell for local CLI/admin management.
 - `GET /api/apps` includes Hosty Shell only for Host administrators.
+- The Host sidebar excludes system apps so Host-owned management surfaces do not appear as user app navigation items.
 - Host users see runtime and developer apps allowed by app access policy, but not the Hosty Shell system app as a removable/manageable app.
 - Hosty Shell currently has capabilities `open` and `update`.
 - Runtime apps currently derive capabilities from installed module operation status. Installed apps expose actions such as `open`, `update`, `restart`, `stop`, `configure`, and `remove`; removing apps expose no actions.
