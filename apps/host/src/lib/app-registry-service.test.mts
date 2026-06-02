@@ -6,10 +6,8 @@ import test from 'node:test';
 import { createCachedRuntimeStatusReader, listHostApps } from './app-registry-service.ts';
 import { writeAppsStore } from './app-store.ts';
 import { createEmptyAuthState, writeAuthState } from './auth-store.ts';
-import { writeModuleDevTargetState } from './module-dev-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type { HostPrincipal } from '../types/auth.ts';
-import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
 import type { InstalledModuleRecord, ModuleRuntimeState, ModuleRuntimeStatus } from '../types/modules.ts';
 
 const admin: HostPrincipal = {
@@ -498,144 +496,15 @@ test('reports missing metadata only to admins', async () => {
   assert.equal(adminApps[0].statusReason, 'metadataMissing');
 });
 
-test('includes enabled developer targets when module developer mode is active', async () => {
-  const config = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
-  await writeModuleDevTargetState({
-    schemaVersion: '0.1',
-    targets: [createDeveloperTarget()],
-    updatedAt: new Date().toISOString(),
-  }, config);
-
-  const apps = await listHostApps(assignedUser, { config });
-
-  assert.equal(apps.length, 1);
-  assert.equal(apps[0].id, 'dev:mdev_reports');
-  assert.equal(apps[0].source, 'developer');
-  assert.equal(apps[0].moduleId, 'com.example.reports');
-  assert.equal(apps[0].developerTargetId, 'mdev_reports');
-  assert.equal(apps[0].displayName, 'Reports Dev');
-  assert.equal(apps[0].status, 'available');
-  assert.equal(apps[0].entryPath, '/apps/dev/mdev_reports');
-  assert.equal(apps[0].embeddedUrl, 'http://127.0.0.1:3001/dev/');
-  assert.equal(apps[0].origin, 'http://127.0.0.1:3001');
-  assert.equal(apps[0].identityTokenUrl, '/api/apps/dev/mdev_reports/identity-token');
-  assert.deepEqual(apps[0].navigation, [
-    {
-      label: 'People',
-      path: '/people',
-      entryPath: '/apps/dev/mdev_reports?path=%2Fpeople',
-      embeddedUrl: 'http://127.0.0.1:3001/dev/people',
-    },
-  ]);
-});
-
-test('keeps developer targets that point back to the Host origin out of apps', async () => {
-  const config = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
-  await writeModuleDevTargetState({
-    schemaVersion: '0.1',
-    targets: [
-      createDeveloperTarget({
-        id: 'mdev_self',
-        targetBaseUrl: 'http://localhost:3000',
-        targetPathPrefix: '',
-      }),
-      createDeveloperTarget({
-        id: 'mdev_reports',
-        targetBaseUrl: 'http://127.0.0.1:3001/dev',
-        targetPathPrefix: '/dev',
-      }),
-    ],
-    updatedAt: new Date().toISOString(),
-  }, config);
-
-  const apps = await listHostApps(admin, {
-    config,
-    requestOrigin: 'http://127.0.0.1:3000',
-  });
-
-  assert.equal(apps.length, 1);
-  assert.equal(apps[0].id, 'dev:mdev_reports');
-  assert.equal(apps[0].embeddedUrl, 'http://127.0.0.1:3001/dev/');
-});
-
-test('maps loopback developer app origins to the Host request hostname', async () => {
-  const config = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
-  await writeModuleDevTargetState({
-    schemaVersion: '0.1',
-    targets: [createDeveloperTarget()],
-    updatedAt: new Date().toISOString(),
-  }, config);
-
-  const apps = await listHostApps(assignedUser, {
-    config,
-    requestOrigin: 'http://localhost:3000',
-  });
-
-  assert.equal(apps.length, 1);
-  assert.equal(apps[0].origin, 'http://localhost:3001');
-  assert.equal(apps[0].embeddedUrl, 'http://localhost:3001/dev/');
-  assert.deepEqual(apps[0].navigation, [
-    {
-      label: 'People',
-      path: '/people',
-      entryPath: '/apps/dev/mdev_reports?path=%2Fpeople',
-      embeddedUrl: 'http://localhost:3001/dev/people',
-    },
-  ]);
-});
-
-test('keeps disabled developer targets out of apps without requiring a dev-mode launch flag', async () => {
-  const disabledTargetConfig = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
-  await writeModuleDevTargetState({
-    schemaVersion: '0.1',
-    targets: [createDeveloperTarget({ enabled: false })],
-    updatedAt: new Date().toISOString(),
-  }, disabledTargetConfig);
-
-  assert.deepEqual(await listHostApps(admin, { config: disabledTargetConfig }), []);
-});
-
-test('filters assigned developer targets for host users but keeps them visible to admins', async () => {
-  const config = await createAppRegistryTestConfig({ moduleDevModeEnabled: true });
-  await writeModuleDevTargetState({
-    schemaVersion: '0.1',
-    targets: [createDeveloperTarget({ exposurePolicy: 'assignedUsersOnly' })],
-    updatedAt: new Date().toISOString(),
-  }, config);
-  await writeAuthState({
-    ...createEmptyAuthState(),
-    moduleAssignments: [
-      {
-        moduleId: 'com.example.reports',
-        userId: assignedUser.id,
-      },
-    ],
-  }, config);
-
-  const assignedApps = await listHostApps(assignedUser, { config });
-  const unassignedApps = await listHostApps(unassignedUser, { config });
-  const adminApps = await listHostApps(admin, { config });
-
-  assert.equal(assignedApps.length, 1);
-  assert.equal(assignedApps[0].accessMode, 'assignedUsersOnly');
-  assert.equal(unassignedApps.length, 0);
-  assert.equal(adminApps.length, 1);
-  assert.equal(adminApps[0].accessMode, 'assignedUsersOnly');
-});
-
-async function createAppRegistryTestConfig(input: { moduleDevModeEnabled?: boolean } = {}): Promise<HostRuntimeConfig> {
+async function createAppRegistryTestConfig(): Promise<HostRuntimeConfig> {
   const dataRootContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-host-apps-'));
   const authRootContainer = path.join(dataRootContainer, 'auth');
   const gatewayRootContainer = path.join(dataRootContainer, 'gateway');
-  const moduleDevRootContainer = path.join(dataRootContainer, 'dev');
   return {
     dataRootHost: dataRootContainer,
     dataRootContainer,
     modulesRootContainer: path.join(dataRootContainer, 'modules'),
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
-    moduleDevModeEnabled: input.moduleDevModeEnabled,
-    moduleDevRootContainer,
-    moduleDevTargetsPath: path.join(moduleDevRootContainer, 'module-targets.json'),
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
@@ -646,49 +515,6 @@ async function createAppRegistryTestConfig(input: { moduleDevModeEnabled?: boole
     hostInternalOrigin: 'http://docker-host:3000',
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
-  };
-}
-
-function createDeveloperTarget(
-  input: {
-    id?: string;
-    enabled?: boolean;
-    exposurePolicy?: ModuleDevTargetRecord['exposurePolicy'];
-    targetBaseUrl?: string;
-    targetPathPrefix?: string;
-  } = {}
-): ModuleDevTargetRecord {
-  const now = new Date().toISOString();
-  return {
-    id: input.id ?? 'mdev_reports',
-    moduleId: 'com.example.reports',
-    moduleName: 'Reports',
-    moduleVersion: '1.0.0',
-    moduleDescription: 'Reports developer target.',
-    metadataUrl: 'http://127.0.0.1:3000/metadata.json',
-    hostname: 'reports.localhost',
-    portKey: 'web',
-    targetBaseUrl: input.targetBaseUrl ?? 'http://127.0.0.1:3001/dev',
-    targetPathPrefix: input.targetPathPrefix ?? '/dev',
-    containerPort: 3000,
-    protocol: 'http',
-    exposurePolicy: input.exposurePolicy ?? 'loginRequired',
-    identityMode: 'required',
-    enabled: input.enabled ?? true,
-    shellApp: {
-      displayName: 'Reports Dev',
-      description: 'Reports developer target.',
-      icon: 'boxes',
-      entrypointPath: '/',
-      navigation: [
-        {
-          label: 'People',
-          path: '/people',
-        },
-      ],
-    },
-    createdAt: now,
-    updatedAt: now,
   };
 }
 

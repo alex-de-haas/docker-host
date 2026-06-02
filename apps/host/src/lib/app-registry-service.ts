@@ -8,10 +8,8 @@ import {
   readModuleMetadata,
   readModulesStoreSnapshot,
 } from './module-store.ts';
-import { readModuleDevTargetStateSnapshot } from './module-dev-store.ts';
 import { validateAndNormalizeMetadata, validateModuleUiMetadata } from './module-metadata.ts';
 import type { HostPrincipal, ModuleAccessAssignment } from '../types/auth.ts';
-import type { ModuleExposurePolicy } from '../types/auth.ts';
 import type {
   HostAppAccessMode,
   HostAppEntry,
@@ -19,7 +17,6 @@ import type {
   HostAppOriginScope,
   HostAppStatusReason,
 } from '../types/apps.ts';
-import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
 import type {
   InstalledModuleRecord,
   ModuleMetadata,
@@ -111,11 +108,10 @@ export async function listHostApps(
   options: ListHostAppsOptions = {}
 ): Promise<HostAppEntry[]> {
   const config = options.config ?? getHostRuntimeConfig();
-  const [modulesStore, appsStore, authState, developerTargetState] = await Promise.all([
+  const [modulesStore, appsStore, authState] = await Promise.all([
     readModulesStoreSnapshot(config),
     readAppsStoreSnapshot(config),
     readAuthStateSnapshot(config),
-    readModuleDevTargetStateSnapshot(config),
   ]);
   const installedModules = mergeInstalledRuntimeRecords(
     modulesStore.modules,
@@ -134,13 +130,10 @@ export async function listHostApps(
         )
       )
     : [];
-  const developerCandidates = developerTargetState
-    ? developerTargetState.targets.map(target => buildDeveloperAppCandidate(target, options.requestOrigin))
-    : [];
   const systemCandidates = options.includeSystemApps && principal.role === 'host.admin'
     ? [buildShellSystemAppCandidate()]
     : [];
-  const candidates = [...systemCandidates, ...installedCandidates, ...developerCandidates];
+  const candidates = [...systemCandidates, ...installedCandidates];
 
   return candidates
     .filter(candidate => candidate.app)
@@ -511,49 +504,6 @@ function getSelectedRuntime(
   return module.selectedRuntime ?? metadata?.selectedRuntime ?? 'docker';
 }
 
-function buildDeveloperAppCandidate(
-  target: ModuleDevTargetRecord,
-  requestOrigin: string | undefined
-): ModuleAppCandidate {
-  if (!target.enabled || !target.shellApp || isSelfReferentialDeveloperTarget(target, requestOrigin)) {
-    return {
-      app: null,
-      visibleToUsers: false,
-    };
-  }
-
-  const accessMode = getDeveloperShellAccessMode(target.exposurePolicy);
-  const origin = resolveDeveloperBrowserOrigin(target, requestOrigin);
-
-  return {
-    app: {
-      id: getDeveloperAppId(target.id),
-      kind: 'runtime',
-      system: false,
-      source: 'developer',
-      moduleId: target.moduleId,
-      developerTargetId: target.id,
-      displayName: target.shellApp.displayName || target.moduleName || target.moduleId,
-      ...(target.shellApp.description || target.moduleDescription
-        ? { description: target.shellApp.description || target.moduleDescription }
-        : {}),
-      ...(target.shellApp.icon ? { icon: target.shellApp.icon } : {}),
-      version: target.moduleVersion || 'unknown',
-      status: 'available',
-      statusReason: 'available',
-      accessMode,
-      capabilities: ['open'],
-      selectedRuntime: 'localCommand',
-      entryPath: buildDeveloperAppEntryPath(target.id, target.shellApp.entrypointPath),
-      embeddedUrl: buildDirectUrl(origin, buildDeveloperModulePath(target, target.shellApp.entrypointPath)),
-      origin,
-      identityTokenUrl: buildDeveloperIdentityTokenUrl(target.id),
-      navigation: buildDeveloperNavigation(target.id, target.shellApp.navigation, target, origin),
-    },
-    visibleToUsers: true,
-  };
-}
-
 function buildShellSystemAppCandidate(): ModuleAppCandidate {
   return {
     app: {
@@ -587,10 +537,6 @@ function getShellAccessMode(
   return assignments.some(assignment => assignment.moduleId === moduleId)
     ? 'assignedUsersOnly'
     : 'allAuthenticated';
-}
-
-function getDeveloperShellAccessMode(exposurePolicy: ModuleExposurePolicy): HostAppAccessMode {
-  return exposurePolicy === 'assignedUsersOnly' ? 'assignedUsersOnly' : 'allAuthenticated';
 }
 
 function shouldReturnApp(
@@ -629,36 +575,11 @@ function buildNavigation(
   }));
 }
 
-function buildDeveloperNavigation(
-  targetId: string,
-  navigation: NonNullable<ModuleDevTargetRecord['shellApp']>['navigation'],
-  target: ModuleDevTargetRecord,
-  origin: string
-): HostAppNavigationItem[] {
-  return navigation.map(item => ({
-    label: item.label,
-    path: item.path,
-    entryPath: buildDeveloperAppEntryPath(targetId, item.path),
-    embeddedUrl: buildDirectUrl(origin, buildDeveloperModulePath(target, item.path)),
-  }));
-}
-
 function buildAppEntryPath(moduleId: string, modulePath: string) {
   const moduleSegment = encodeURIComponent(moduleId);
   return modulePath === '/'
     ? `/apps/${moduleSegment}`
     : `/apps/${moduleSegment}?path=${encodeURIComponent(modulePath)}`;
-}
-
-function getDeveloperAppId(targetId: string) {
-  return `dev:${targetId}`;
-}
-
-function buildDeveloperAppEntryPath(targetId: string, modulePath: string) {
-  const targetSegment = encodeURIComponent(targetId);
-  return modulePath === '/'
-    ? `/apps/dev/${targetSegment}`
-    : `/apps/dev/${targetSegment}?path=${encodeURIComponent(modulePath)}`;
 }
 
 function compareHostApps(left: HostAppEntry, right: HostAppEntry) {
@@ -737,27 +658,6 @@ function buildIdentityTokenUrl(moduleId: string) {
   return `/api/apps/${encodeURIComponent(moduleId)}/identity-token`;
 }
 
-function buildDeveloperIdentityTokenUrl(targetId: string) {
-  return `/api/apps/dev/${encodeURIComponent(targetId)}/identity-token`;
-}
-
-function resolveDeveloperOrigin(target: ModuleDevTargetRecord) {
-  return new URL(target.targetBaseUrl).origin;
-}
-
-function isSelfReferentialDeveloperTarget(
-  target: ModuleDevTargetRecord,
-  requestOrigin: string | undefined
-) {
-  const targetOrigin = parseHttpOrigin(resolveDeveloperBrowserOrigin(target, requestOrigin));
-  const hostOrigin = parseHttpOrigin(requestOrigin);
-  if (!targetOrigin || !hostOrigin) {
-    return false;
-  }
-
-  return isSameHttpOrigin(targetOrigin, hostOrigin);
-}
-
 function parseHttpOrigin(value: string | undefined) {
   if (!value) {
     return null;
@@ -775,55 +675,9 @@ function parseHttpOrigin(value: string | undefined) {
   }
 }
 
-function resolveDeveloperBrowserOrigin(
-  target: ModuleDevTargetRecord,
-  requestOrigin: string | undefined
-) {
-  const targetOrigin = parseHttpOrigin(resolveDeveloperOrigin(target));
-  const hostOrigin = parseHttpOrigin(requestOrigin);
-  if (
-    targetOrigin &&
-    hostOrigin &&
-    isCanonicalLoopbackHostname(targetOrigin.hostname) &&
-    isCanonicalLoopbackHostname(hostOrigin.hostname)
-  ) {
-    targetOrigin.hostname = hostOrigin.hostname;
-    return targetOrigin.origin;
-  }
-
-  return resolveDeveloperOrigin(target);
-}
-
-function isSameHttpOrigin(left: URL, right: URL) {
-  return left.protocol === right.protocol &&
-    getEffectivePort(left) === getEffectivePort(right) &&
-    (
-      left.hostname === right.hostname ||
-      (isCanonicalLoopbackHostname(left.hostname) && isCanonicalLoopbackHostname(right.hostname))
-    );
-}
-
-function getEffectivePort(url: URL) {
-  if (url.port) {
-    return url.port;
-  }
-
-  return url.protocol === 'https:' ? '443' : '80';
-}
-
 function isCanonicalLoopbackHostname(hostname: string) {
   const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
   return normalized === 'localhost' ||
     normalized === '127.0.0.1' ||
     normalized === '::1';
-}
-
-function buildDeveloperModulePath(target: ModuleDevTargetRecord, modulePath: string) {
-  const prefix = target.targetPathPrefix.replace(/\/+$/, '');
-  if (!prefix) {
-    return modulePath;
-  }
-
-  const parsed = new URL(modulePath, 'http://docker-host-dev.local');
-  return `${prefix}${parsed.pathname}${parsed.search}${parsed.hash}`;
 }

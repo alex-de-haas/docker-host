@@ -30,7 +30,6 @@ flowchart LR
 ## Files
 
 - `modules/demo-module/metadata.json` - Docker Host metadata used for install and update tests.
-- `modules/demo-module/metadata.dev.json` - repository-local module metadata served by the dev harness.
 - `modules/demo-module/Dockerfile` - production image build for the demo module.
 - `modules/demo-module/src/app/page.tsx` - demo dashboard.
 - `modules/demo-module/src/app/people/page.tsx` - stable people page for shell app navigation.
@@ -60,22 +59,15 @@ npm run dev --workspace @haas/docker-host-demo-module
 
 The development server listens on `http://localhost:3100`.
 
-Run Hosty Core with this current checkout's demo module linked as a developer app:
+For Hosty-aware local command runtime development, use the app manifest flow in `apps/demo-app/manifest.json`:
 
 ```bash
-npm run core:dev
-hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001
+hosty core start
+hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps start com.haas.demo-app
 ```
 
-This uses the local `hosty` CLI project to link the demo developer target through Host trusted control, enables local development auto-login, starts the demo module locally on port `3100`, and seeds development users. Hosty Core listens on `http://localhost:3001` by default.
-
-Run the installed CLI harness against the demo dev metadata:
-
-```bash
-hosty dev up --manifest modules/demo-module/metadata.dev.json
-```
-
-`modules/demo-module/metadata.dev.json` is the metadata served to Docker Host and the CLI's local process source. The harness derives the process command, working directory, environment, local port, developer target, development users, assignments, and module directory policy from this metadata-driven workflow.
+The legacy `modules/demo-module` fixture remains for production metadata compatibility checks.
 
 Run Docker Host from a built Host image and install the built demo module image as a real managed module:
 

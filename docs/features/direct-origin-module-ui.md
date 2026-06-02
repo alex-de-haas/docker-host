@@ -84,7 +84,7 @@ Open the module update review to recreate affected containers with assigned Host
 
 The Host app shell route remains Host-owned shell state. `/apps/{moduleId}` does not proxy to the module and is not a standalone module URL.
 
-Developer app entries follow the same direct-origin model. Their iframe origin is derived from the developer target `targetBaseUrl`, and their identity endpoint is `/api/apps/dev/{targetId}/identity-token`.
+Local command runtime apps follow the same direct-origin model through their installed app record. Their iframe origin is derived from the active runtime endpoint, and identity is issued through the app identity APIs.
 
 ## Identity Bridge
 

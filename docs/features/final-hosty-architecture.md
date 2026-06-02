@@ -91,7 +91,7 @@ The `hosty` CLI is a bootstrap and Core API client:
 - `hosty update` runs bootstrap CLI update first, then Core reachability and Shell update planning through Core APIs.
 - `hosty update --list-channels` and `hosty update --channel <channel-id>` use the product channel index.
 
-The legacy `hosty dev` route is no longer exposed. Existing users are used for app identity helpers; deterministic development-user seeding is not part of the final workflow.
+The legacy developer harness route is no longer exposed. Existing users are used for app identity helpers; deterministic development-user seeding is not part of the final workflow.
 
 ## Runtime adapters
 
@@ -187,10 +187,10 @@ The following paths and behaviors are current implementation details only. They 
 - `modules/<module-id>/` as a first-party app location;
 - `modules.json` as a required lifecycle store;
 - legacy module metadata as the first-party demo contract;
-- `metadata.dev.json`;
-- `development.users`;
-- top-level `hosty dev` commands;
-- local developer target state and `/modules/dev` control routes;
+- separate dev metadata files;
+- deterministic development user blocks;
+- top-level developer harness commands;
+- separate local target state and local-target control routes;
 - deterministic development user seeding;
 - browser development account seeding tied to the dev harness;
 - Shell bundled into the same deployed Next.js app as Core APIs.

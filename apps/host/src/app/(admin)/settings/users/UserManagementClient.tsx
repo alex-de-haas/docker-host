@@ -76,7 +76,7 @@ interface AssignableModule {
   name: string;
   version?: string;
   operationStatus?: string;
-  source?: 'installed' | 'developer';
+  source?: 'installed';
 }
 
 interface InviteTtlOption {
@@ -742,7 +742,6 @@ function ModulePicker({
               <span className="min-w-0 flex-1">
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate font-medium">{module.name}</span>
-                  {module.source === 'developer' && <Badge variant="outline">Dev</Badge>}
                   {module.source === 'unknown' && <Badge variant="outline">Unavailable</Badge>}
                 </span>
                 <span className="block truncate text-xs text-muted-foreground">{module.id}</span>

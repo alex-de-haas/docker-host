@@ -471,7 +471,7 @@ External storage mounts can live outside `modules/<module-id>/`. In that case, o
 
 This document is the source of truth for the module metadata schema: the `Metadata example`, `Schema outline`, field notes, and validation rules below together describe the supported contract.
 
-Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes `schemaVersion: "0.2"` and `schemaVersion: "0.3"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from install/update planning and local developer target registration. A separate shared contracts package or generated schema artifact is not required for the metadata MVP; this document remains the source of truth for the supported metadata contract.
+Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes `schemaVersion: "0.2"` and `schemaVersion: "0.3"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from install/update planning. A separate shared contracts package or generated schema artifact is not required for the metadata MVP; this document remains the source of truth for the supported metadata contract.
 
 ## Schema outline
 
@@ -524,7 +524,7 @@ Top-level metadata object:
 | --- | --- | --- | --- |
 | `key` | string | yes | Stable port key, unique inside the container. |
 | `containerPort` | number | yes | Container port number. |
-| `localPort` | number | no | Developer-machine port used by `metadata.dev.json` process services. |
+| `localPort` | number | no | Local command runtime profiles use this in app manifests, not legacy module metadata. |
 | `protocol` | string | yes | First implementation target: `http`. |
 
 `services[]` item for `schemaVersion: "0.3"`:
@@ -533,7 +533,7 @@ Top-level metadata object:
 | --- | --- | --- | --- |
 | `key` | string | yes | Stable lowercase service key, unique inside the module. |
 | `dependsOn` | array | no | Service keys that must start before this service. Default: empty array. |
-| `source` | object | yes | Service source. Supported types are `image` and `process`. |
+| `source` | object | yes | Service source. Supported type for install/update is `image`. |
 | `runtime` | object | no | Ports and resource hints. |
 | `healthCheck` | object | no | Host-visible readiness metadata. Currently supports HTTP checks. |
 
@@ -543,11 +543,7 @@ Top-level metadata object:
 { "type": "image", "image": { "repository": "ghcr.io/acme/reports", "tag": "latest", "pullPolicy": "always" } }
 ```
 
-```json
-{ "type": "process", "command": "npm run dev", "workingDirectory": ".", "environment": { "PORT": "3100" } }
-```
-
-Production install and update currently reject non-image services. Process services are for local development metadata consumed by `hosty dev`.
+Local command process services belong to `app.0.1` runtime profiles and are managed through Hosty Core app lifecycle.
 
 `services[].healthCheck` object:
 
@@ -1251,7 +1247,7 @@ Example:
 
 `endpoints[].public: true` means the endpoint is eligible for Host-assigned local port publishing, direct-origin shell UI embedding, and service/API gateway exposure. The metadata still does not pin the Host port or external domain. The install plan assigns the Host port, lets the administrator edit it, and optionally records a public origin. After install, the module configuration action can update the stored public origin without reinstalling the module. Auth Gateway still owns service/API exposure policy: `public`, `loginRequired`, or `assignedUsersOnly`.
 
-For installed image-backed modules, Docker daemon container state remains the baseline module status. Schema `0.3` `healthCheck` metadata is available as a readiness refinement and as the Host-visible signal for process-backed developer services.
+For installed image-backed modules, Docker daemon container state remains the baseline module status. Schema `0.3` `healthCheck` metadata is available as a readiness refinement and as the Host-visible signal for process-backed local-command services.
 
 For required dependencies, the Host considers a dependency running when Docker successfully starts dependency containers and the Host can compute an internal Docker-network base URL for the requested endpoint. Health checks can refine readiness where supported, but dependency URL resolution remains based on declared endpoints.
 

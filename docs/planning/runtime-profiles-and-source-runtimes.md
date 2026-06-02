@@ -4,7 +4,7 @@
 
 This plan covers the next runtime layer after the Hosty compatibility foundation. The current implementation can parse `app.0.1` Docker and local command runtime profiles, stores `selectedRuntime` in `apps.json`, and installs Docker runtime profiles through the legacy module engine. It does not yet switch runtime profiles after install, execute repository/local command runtime profiles in production, or maintain source checkouts.
 
-Accepted planning change: the legacy developer harness is not migrating to a new app-manifest dev mode. Hosty should remove the top-level `hosty dev` workflow, `metadata.dev.json`, `development.users`, deterministic dev-user seeding, and developer target state. Local app development should instead use a normal installed runtime app with a source/local command runtime, optional local source override state, existing Host users, and trusted CLI helpers that can list users and issue short-lived app identity for those users.
+Accepted planning change: the legacy developer harness is not migrating to a new app-manifest dev mode. Hosty should remove the separate developer harness workflow, dev-only metadata, deterministic dev-user seeding, and separate local target state. Local app development should instead use a normal installed runtime app with a source/local command runtime, optional local source override state, existing Host users, and trusted CLI helpers that can list users and issue short-lived app identity for those users.
 
 The same source/local command runtime model applies to default Hosty-managed apps. Today the repository has one combined Host app that contains the future Core and Shell. After the split, Core is the local platform process and Shell is a default optional Hosty-managed runtime app. Shell can use managed source checkouts or local source overrides like other managed apps. The self-hosting boundary is explicit: Core or the currently combined Host cannot fully supervise its own runtime replacement after it stops, so switching or restarting Core requires the trusted CLI or another outer supervisor. Shell-only runtime changes can be managed by Core after Shell is split out.
 
@@ -150,20 +150,32 @@ Implemented so far:
 
 ### Phase 7 - Migrate demo app and remove legacy developer mode
 
-**Status**: Not Started
+**Status**: In Progress
+
+Completed in the legacy developer-mode removal pass:
+
+- Removed first-party `metadata.dev.json` usage and documentation.
+- Removed the top-level developer harness command group, deprecated aliases, CLI launch settings, and Host control/API routes for separate local target state.
+- Removed Host app registry, gateway, user-assignment, Shell UI, and identity-token handling for `developer` app sources.
+- Updated docs and skill references to use installed runtime apps with source/local command runtime profiles.
+
+Remaining before this phase can be closed:
+
+- Finish any remaining first-party demo-module-to-demo-app migration boundaries that still intentionally keep legacy `modules/demo-module` fixtures.
+- Reconfirm first-party Dockerfile fixture copies and release docs no longer rely on legacy module metadata as a primary demo workflow.
 
 - Convert the repository-local demo app production fixture from legacy `schemaVersion: "0.3"` metadata to the `app.0.1` manifest contract.
 - Rename the first-party demo from Demo Module to Demo App and move its source from `modules/demo-module/` to `apps/demo-app/` during this phase, not before it.
 - Update the demo workspace package name, scripts, fixture routes, Dockerfile paths, image references, tests, docs, and skill references to use Demo App terminology.
 - Prefer a clean app id such as `com.haas.demo` if old demo/dev state does not need to be preserved; otherwise keep the current id only for an explicit migration boundary.
 - Give the demo app Docker and local command runtime profiles in the same app-level source repository.
-- Update repository scripts, Dockerfile fixture copies, tests, and docs that currently point at `modules/demo-module/metadata.json` or `modules/demo-module/metadata.dev.json`.
-- Use explicit `npm run core:dev` plus `hosty dev up --host-url http://localhost:3001` while source-runtime demo orchestration is being finalized.
+- Update repository scripts, Dockerfile fixture copies, tests, and docs that currently point at `modules/demo-module/metadata.json`.
+- Use `npm run core:dev` plus `hosty apps install apps/demo-app/manifest.json --runtime dev` for source-runtime demo orchestration.
 - Keep the CLI relocation out of this phase. `apps/cli` may remain as a monorepo application package until a separate repository-layout cleanup moves it to `tools/cli` or another non-runtime-app location.
-- Remove `metadata.dev.json` from first-party workflows.
-- Remove the top-level `hosty dev up`, `status`, `identity`, `reset`, and `clean` command group and deprecated aliases.
-- Remove `development.users` parsing, deterministic development user seeding, browser account seeding tied to the dev harness, and dev-harness assignment seeding.
-- Remove local developer target state and control routes when installed source/local runtime plus app identity/open helpers cover the same validation workflows.
+- Remove separate dev metadata from first-party workflows.
+- Remove the top-level developer harness command group and deprecated aliases.
+- Remove deterministic development user seeding, browser account seeding tied to the dev harness, and dev-harness assignment seeding.
+- Remove separate local target state and control routes when installed source/local runtime plus app identity/open helpers cover the same validation workflows.
 - Preserve validation coverage for Shell embedding, Hosty identity, app assignments, scoped directory access, gateway routing, WebSockets, and direct endpoint probes through installed apps and existing-user identity helpers.
 - After this phase and the app-native lifecycle phase are complete, remove legacy module metadata support from first-party demo and development workflows.
 
@@ -239,8 +251,8 @@ Implemented so far:
 - Services owned by independent repositories should be modeled as separate runtime app dependencies until a future multi-source contract is intentionally designed.
 - Legacy `modules.json` can be removed as a required lifecycle store after the app-native lifecycle refactor is complete and first-party demo workflows use the app manifest contract.
 - The repository demo app should migrate to `app.0.1`.
-- The legacy top-level `hosty dev` harness should be removed instead of migrated.
-- `metadata.dev.json`, `development.users`, deterministic dev-user seeding, dev-harness assignment seeding, and developer target state should be removed from first-party workflows.
+- The legacy top-level developer harness should be removed instead of migrated.
+- Dev-only metadata, deterministic dev-user seeding, dev-harness assignment seeding, and separate local target state should be removed from first-party workflows.
 - Trusted local CLI app identity should use existing enabled Host users and enforce normal app access checks by default.
 - Local command runtimes are allowed by the manifest model, but production execution should allow them only when the working directory is Hosty-managed or explicitly configured by an administrator.
 - Runtime switching and channel switching remain separate commands first; channel switching must not implicitly switch runtime unless a reviewed plan explicitly confirms it.

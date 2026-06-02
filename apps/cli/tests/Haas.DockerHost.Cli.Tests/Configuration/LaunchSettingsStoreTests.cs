@@ -39,8 +39,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal("4321", settings.HostUiPort);
         Assert.Equal("test-host", settings.HostContainerName);
         Assert.Equal("ghcr.io/alex-de-haas/docker-host:latest", settings.HostImage);
-        Assert.Equal("", settings.HostDevRepositoryPathRaw);
-        Assert.Equal(3001, settings.GetHostDevPort());
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }
 
@@ -73,21 +71,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         var settings = store.Load();
 
         Assert.Equal(expectedPort, settings.GetFixedHostPort());
-    }
-
-    [Fact]
-    public void Load_HostDevRepositoryPath_ResolvesConfiguredPath()
-    {
-        var environment = DockerHostEnvironment.Current();
-        Directory.CreateDirectory(environment.ConfigDirectory);
-        File.WriteAllText(
-            environment.LaunchConfigPath,
-            $"HOST_DEV_REPOSITORY_PATH=~/docker-host-dev{Environment.NewLine}");
-        var store = new LaunchSettingsStore(environment);
-
-        var settings = store.Load();
-
-        Assert.Equal(Path.Combine(environment.HomeDirectory, "docker-host-dev"), settings.ResolveHostDevRepositoryPath(environment));
     }
 
     public void Dispose()

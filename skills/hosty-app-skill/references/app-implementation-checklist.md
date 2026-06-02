@@ -7,7 +7,7 @@ Use this checklist before finishing a Hosty runtime app task.
 - New app-oriented work uses `schemaVersion: "app.0.1"` when possible.
 - `app.0.1` manifests use app-level `runtimeProfiles[]` plus top-level `services[]`; image and command details live in `services[].runtimes.<profileKey>`.
 - Legacy Docker compatibility work may use `schemaVersion: "0.2"` with `containers[]` or schema `0.3` with image-backed `services[]`.
-- Development metadata uses `metadata.dev.json` with schema `0.3` process services when local process launch is needed.
+- Local process launch uses an app manifest runtime profile with `type: "localCommand"`.
 - The app id is stable and reverse-DNS-like.
 - Runtime profile keys, service/container keys, endpoint keys, setting keys, storage keys, and dependency ids are stable.
 - Every required service declares a runtime implementation for each supported runtime profile.
@@ -25,7 +25,7 @@ Use this checklist before finishing a Hosty runtime app task.
 ## Runtime
 
 - Docker service runtimes declare an installable Linux container image.
-- Local command service runtimes declare a command, but are not treated as production-installable until that runtime adapter is implemented.
+- Local command service runtimes declare a command and are launched by Core when the selected runtime profile is active.
 - Each service listens on its declared container or local port.
 - The Docker image can run without local development-only files.
 - Health or readiness endpoints do not require Hosty browser cookies.
@@ -63,15 +63,15 @@ Use this checklist before finishing a Hosty runtime app task.
 - For manifest-only work, run targeted metadata/parser tests when available.
 - For Hosty behavior changes, run `npm run core:test`.
 - For app changes, run that app's lint/build/test scripts.
-- For Shell integration, identity, assigned-user behavior, scoped directory reads, redirects, WebSockets, or SSE, run `hosty dev up` or link a developer target.
-- Integrated developer-target validation uses Hosty-seeded users and assignments; it does not rely on hand-written identity tokens.
+- For Shell integration, identity, assigned-user behavior, scoped directory reads, redirects, WebSockets, or SSE, install the manifest with a local runtime profile and run lifecycle through Core.
+- Integrated validation uses existing Hosty users and assignments; it does not rely on hand-written identity tokens.
 - For managed lifecycle behavior, build the app image locally and install the manifest through Hosty.
-- `hosty dev` is not a replacement for image install tests when Dockerfile, storage, lifecycle, or container networking changed.
+- Local command runtime profiles are not a replacement for image install tests when Dockerfile, storage, lifecycle, or container networking changed.
 
 ## Documentation
 
 - Update `docs/features/hosty-runtime-app-platform.md` if Hosty app registry, system app, data, or backup behavior changes.
 - Update `docs/features/module-metadata.md` if the manifest or legacy metadata contract changes.
 - Update `docs/features/auth-gateway.md` or `docs/features/user-management.md` if identity, roles, assignments, or gateway policy behavior changes.
-- Update `docs/features/module-developer-mode.md` or `docs/features/cli-trusted-control-and-dev-metadata.md` if developer target behavior changes.
+- Update `docs/features/local-development.md` if local runtime profile validation behavior changes.
 - Link new feature docs from `docs/root.md`.

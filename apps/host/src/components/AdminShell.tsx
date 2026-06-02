@@ -17,7 +17,6 @@ import {
   CircleAlert,
   Gauge,
   Globe2,
-  Hammer,
   LayoutGrid,
   LoaderCircle,
   LogOut,
@@ -739,14 +738,6 @@ function AppNavigationSection({
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="flex min-w-0 items-center gap-2">
                     <span className="min-w-0 flex-1 truncate">{app.displayName}</span>
-                    {app.source === 'developer' && (
-                      <Badge
-                        variant="outline"
-                        className="shrink-0 border-sky-200 bg-sky-50 px-1.5 py-0 text-[10px] leading-4 text-sky-700"
-                      >
-                        Dev
-                      </Badge>
-                    )}
                     {!canNavigate && (
                       <AppUnavailableBadge reason={app.statusReason} />
                     )}
@@ -948,18 +939,13 @@ function AppUnavailableBadge({ reason }: { reason: HostAppEntry['statusReason'] 
 }
 
 function AppCompactMarkers({ app }: { app: HostAppEntry }) {
-  if (app.source !== 'developer' && app.status === 'available') {
+  if (app.status === 'available') {
     return null;
   }
 
   return (
     <span className="absolute right-1 top-1 flex gap-0.5" aria-hidden="true">
-      {app.source === 'developer' && (
-        <span className="size-1.5 rounded-full bg-sky-500" />
-      )}
-      {app.status !== 'available' && (
-        <span className="size-1.5 rounded-full bg-amber-500" />
-      )}
+      <span className="size-1.5 rounded-full bg-amber-500" />
     </span>
   );
 }
@@ -1020,10 +1006,6 @@ function getAppMenuAction(app: HostAppEntry): AppMenuActionConfig | null {
 }
 
 function getAppNavigationIcon(app: HostAppEntry): LucideIcon {
-  if (app.source === 'developer') {
-    return Hammer;
-  }
-
   if (app.operationStatus === 'failed') {
     return OctagonX;
   }

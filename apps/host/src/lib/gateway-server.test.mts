@@ -392,111 +392,6 @@ test('gateway trusted proxy mode requires assertion instead of browser session f
   }
 });
 
-test('gateway developer target proxies to local override and keeps Host identity', async () => {
-  const config = await createGatewayServerTestConfig();
-  const restoreEnv = applyRuntimeEnv(config, { moduleDevMode: true });
-  const { proxyHttpRequest, resolveGatewayRequest } = await import('../../server.mjs');
-  const sessionToken = 'dhs_gateway_dev_session';
-  const now = new Date();
-  const user = {
-    id: 'user_dev',
-    email: 'dev@example.test',
-    displayName: 'Dev User',
-    role: 'host.user' as const,
-    authProvider: 'local' as const,
-    createdAt: now.toISOString(),
-    updatedAt: now.toISOString(),
-  };
-  const upstreamRequests: Array<{ headers: Record<string, string | string[] | undefined>; url?: string }> = [];
-  const upstream = createHttpServer((req, res) => {
-    upstreamRequests.push({
-      headers: req.headers,
-      url: req.url,
-    });
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('dev ok');
-  });
-
-  try {
-    await listen(upstream);
-    await fs.mkdir(path.join(config.dataRootContainer, 'dev'), { recursive: true });
-    await fs.writeFile(path.join(config.dataRootContainer, 'dev', 'module-targets.json'), `${JSON.stringify({
-      schemaVersion: '0.2',
-      targets: [{
-        id: 'mdev_reports',
-        moduleId: 'com.example.reports',
-        moduleName: 'Reports',
-        moduleVersion: '1.0.0',
-        metadataUrl: 'http://127.0.0.1/metadata.json',
-        hostname: 'reports.example.test',
-        portKey: 'web',
-        targetBaseUrl: `http://127.0.0.1:${getPort(upstream)}/dev`,
-        targetPathPrefix: '/dev',
-        containerPort: 8080,
-        protocol: 'http',
-        exposurePolicy: 'loginRequired',
-        identityMode: 'required',
-        enabled: true,
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString(),
-      }],
-    }, null, 2)}\n`, 'utf-8');
-    await writeAuthState({
-      ...createEmptyAuthState(),
-      users: [user],
-      sessions: [{
-        id: 'session_dev',
-        userId: user.id,
-        tokenHash: hashToken(sessionToken),
-        createdAt: now.toISOString(),
-        lastSeenAt: now.toISOString(),
-        idleExpiresAt: new Date(now.getTime() + 60_000).toISOString(),
-        absoluteExpiresAt: new Date(now.getTime() + 60_000).toISOString(),
-      }],
-    }, config);
-
-    const proxy = createHttpServer((req, res) => {
-      void resolveGatewayRequest(req).then(target => {
-        assert.ok(target);
-        assert.equal(target.developerMode, true);
-        return proxyHttpRequest(req, res, target);
-      }).catch(error => {
-        res.writeHead(500, { 'Content-Type': 'text/plain' });
-        res.end(error instanceof Error ? error.message : 'proxy failed');
-      });
-    });
-
-    try {
-      await listen(proxy);
-      const response = await sendHttpRequest(getPort(proxy), {
-        path: '/reports?range=day',
-        headers: {
-          Host: 'reports.example.test',
-          Cookie: `docker_host_session=${encodeURIComponent(sessionToken)}`,
-        },
-      });
-
-      assert.equal(response.statusCode, 200);
-      assert.equal(response.body, 'dev ok');
-      assert.equal(upstreamRequests.length, 1);
-      assert.equal(upstreamRequests[0]?.url, '/dev/reports?range=day');
-      const identityToken = upstreamRequests[0]?.headers['x-docker-host-identity'];
-      assert.equal(typeof identityToken, 'string');
-      const verified = await jwtVerify(identityToken as string, createLocalJWKSet(await getModuleIdentityJwks(config)), {
-        issuer: MODULE_IDENTITY_ISSUER,
-        audience: 'com.example.reports',
-      });
-      assert.equal(verified.payload.sub, user.id);
-      assert.equal(verified.payload.moduleAccess, 'authenticated');
-    } finally {
-      await closeServer(proxy);
-    }
-  } finally {
-    restoreEnv();
-    await closeServer(upstream);
-  }
-});
-
 function gatewayTarget(input: {
   moduleId?: string;
   hostname?: string;
@@ -758,7 +653,7 @@ async function createGatewayServerTestConfig(): Promise<HostRuntimeConfig> {
   };
 }
 
-function applyRuntimeEnv(config: HostRuntimeConfig, options: { moduleDevMode?: boolean; dataRootMarker?: string } = {}) {
+function applyRuntimeEnv(config: HostRuntimeConfig, options: { dataRootMarker?: string } = {}) {
   const keys = [
     'HOST_DATA_ROOT_HOST',
     'HOST_DATA_ROOT_CONTAINER',
@@ -766,7 +661,6 @@ function applyRuntimeEnv(config: HostRuntimeConfig, options: { moduleDevMode?: b
     'HOST_GATEWAY_BASE_DOMAIN',
     'HOST_PUBLIC_ORIGIN',
     'HOST_INTERNAL_ORIGIN',
-    'HOST_MODULE_DEV_MODE',
   ];
   const previous = new Map(keys.map(key => [key, process.env[key]]));
 
@@ -776,7 +670,6 @@ function applyRuntimeEnv(config: HostRuntimeConfig, options: { moduleDevMode?: b
   process.env.HOST_GATEWAY_BASE_DOMAIN = config.gatewayBaseDomain || '';
   process.env.HOST_PUBLIC_ORIGIN = config.hostPublicOrigin || '';
   process.env.HOST_INTERNAL_ORIGIN = config.hostInternalOrigin || '';
-  process.env.HOST_MODULE_DEV_MODE = options.moduleDevMode ? 'enabled' : '';
 
   return () => {
     for (const key of keys) {

@@ -39,19 +39,8 @@ internal sealed class LaunchSettings
 
     public string HostModuleNetwork => this[LaunchSettingDefinitions.HostModuleNetwork];
 
-    public string HostModuleDevMode => this[LaunchSettingDefinitions.HostModuleDevMode];
-
-    public string HostDevRepositoryPathRaw => this[LaunchSettingDefinitions.HostDevRepositoryPath];
-
-    public string HostDevPort => this[LaunchSettingDefinitions.HostDevPort];
-
     public string ResolveHostDataRoot(DockerHostEnvironment environment)
         => environment.ResolvePath(HostDataRootHostRaw);
-
-    public string? ResolveHostDevRepositoryPath(DockerHostEnvironment environment)
-        => string.IsNullOrWhiteSpace(HostDevRepositoryPathRaw)
-            ? null
-            : environment.ResolvePath(HostDevRepositoryPathRaw);
 
     public int? GetFixedHostPort()
     {
@@ -62,9 +51,6 @@ internal sealed class LaunchSettings
 
         return int.Parse(HostUiPort, CultureInfo.InvariantCulture);
     }
-
-    public int GetHostDevPort()
-        => int.Parse(HostDevPort, CultureInfo.InvariantCulture);
 
     public void Validate(DockerHostEnvironment environment)
     {

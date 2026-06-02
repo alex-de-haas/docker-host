@@ -1,4 +1,3 @@
-import { readModuleDevTargetStateSnapshot } from './module-dev-store.ts';
 import {
   readModuleMetadata,
   readModulesStoreSnapshot,
@@ -6,7 +5,7 @@ import {
 import { getHostRuntimeConfig } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
-export type AssignableModuleSource = 'installed' | 'developer';
+export type AssignableModuleSource = 'installed';
 
 export interface AssignableModuleSummary {
   id: string;
@@ -19,10 +18,7 @@ export interface AssignableModuleSummary {
 export async function listAssignableModules(
   config: HostRuntimeConfig = getHostRuntimeConfig()
 ): Promise<AssignableModuleSummary[]> {
-  const [store, developerTargetState] = await Promise.all([
-    readModulesStoreSnapshot(config),
-    readModuleDevTargetStateSnapshot(config),
-  ]);
+  const store = await readModulesStoreSnapshot(config);
   const assignableModules = new Map<string, AssignableModuleSummary>();
 
   await Promise.all(
@@ -46,20 +42,6 @@ export async function listAssignableModules(
       }
     })
   );
-
-  for (const target of developerTargetState?.targets ?? []) {
-    if (!target.enabled || !target.shellApp || assignableModules.has(target.moduleId)) {
-      continue;
-    }
-
-    assignableModules.set(target.moduleId, {
-      id: target.moduleId,
-      name: target.shellApp.displayName || target.moduleName || target.moduleId,
-      version: target.moduleVersion,
-      operationStatus: 'developer',
-      source: 'developer',
-    });
-  }
 
   return Array.from(assignableModules.values())
     .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));

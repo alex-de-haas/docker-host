@@ -4,7 +4,7 @@ The Host Web UI uses an authenticated admin shell for protected Host pages. The 
 
 ## Scope
 
-The Host app shell provides authenticated navigation, role-aware app discovery, embedded module UI hosting, gateway exposure management entry points, and local developer app integration.
+The Host app shell provides authenticated navigation, role-aware app discovery, embedded module UI hosting, gateway exposure management entry points, and local runtime app integration.
 
 Protected admin pages:
 
@@ -37,7 +37,7 @@ Embedded app behavior:
 - app entries can show nested navigation from `ui.navigation`;
 - `/apps/{moduleId}` opens a Host-owned app page without proxying that path to module containers;
 - the Host app page embeds module UIs in an iframe using the direct module origin returned by `/api/apps`;
-- the shell keeps Host-owned app navigation in the sidebar and shows app status/developer markers next to app entries, including visible unavailable reason labels for administrator-visible app diagnostics;
+- the shell keeps Host-owned app navigation in the sidebar and shows app status markers next to app entries, including visible unavailable reason labels for administrator-visible app diagnostics;
 - module UIs own their in-page headers, page actions, and internal navigation;
 - Host authentication and app access checks happen before app registry data and identity tokens are issued;
 - module identity for shell iframe traffic is delivered through a short-lived identity token endpoint and a `postMessage` bridge.
@@ -63,15 +63,7 @@ User portal behavior:
 - module lifecycle, install/update/remove, gateway exposure management, external ingress management, security settings, and other Host management APIs remain `host.admin` only;
 - the Apps portal includes empty states for no assigned apps, apps unavailable, login required, and access denied.
 
-Developer app behavior:
-
-- enabled module developer targets can appear in `/api/apps`;
-- developer app entries are hidden only when the individual target is disabled;
-- developer targets remain local-only state and do not create production gateway exposure records;
-- developer app ids are qualified as `dev:{targetId}` while module identity still uses the target's `moduleId`;
-- developer apps open through `/apps/dev/{targetId}` and embed the direct target origin derived from `targetBaseUrl`;
-- developer app identity uses `/api/apps/dev/{targetId}/identity-token` and the same `postMessage` bridge as installed apps;
-- the Apps sidebar and Apps portal mark developer entries with a compact `Dev` badge or marker.
+Local command runtime apps use the same Apps portal and Shell routes as Docker runtime apps. Their local origins are derived from the active runtime endpoints in the installed app record.
 
 ## Navigation
 
@@ -123,8 +115,6 @@ The shared topbar has been removed. Host management pages render any needed titl
 
 For embedded module apps, the sidebar remains Host-owned. The Host app route uses the selected app and nested navigation state to highlight sidebar entries, while the module UI renders its own internal header, navigation, and actions inside the iframe. Module-provided global shell actions are not part of the current `ui` contract; modules cannot directly control Host chrome at runtime.
 
-Developer app entries use the same shell chrome and add a compact `Dev` marker next to the app entry. The marker identifies local developer targets without changing module access rules or production exposure state.
-
 ## Page Integration
 
 The dashboard remains focused on Host overview widgets and links into the dedicated `/modules` management page. The current Installed modules widget owns its own refresh status and quick health summary. Installed module lifecycle actions, recovery dialogs, and links into install/update flows live on `/modules`. Gateway exposure management and external ingress readiness live on the dedicated `/ingress` page and reuse the existing gateway and readiness APIs.
@@ -153,9 +143,7 @@ Modules appear in the app registry only when local metadata includes an explicit
 
 The app registry keeps shell discovery responsive by avoiding Docker runtime reads for modules whose install/update operation state already makes them unavailable, and by reusing runtime status results for a short in-process TTL. The cache only affects `/api/apps` discovery; dedicated module management APIs still read fresh runtime details for lifecycle workflows.
 
-When module developer mode is enabled, `/api/apps` also reads enabled developer targets from local developer target state. A developer target appears as a shell App only when the target stores a valid shell app metadata snapshot. The response marks these entries with `source: "developer"` and `developerTargetId`, uses `/apps/dev/{targetId}` for shell navigation, and uses the direct developer target origin for iframe transport.
-
-Developer target visibility reuses the target exposure policy after Host authentication. `public` and `loginRequired` targets are visible to authenticated Host users. `assignedUsersOnly` targets use existing module access assignments. Anonymous shell App discovery is still not supported.
+Local command runtime profile visibility reuses the installed app access policy after Host authentication. Anonymous shell App discovery is still not supported.
 
 ## Embedded App Route
 
@@ -169,7 +157,7 @@ The Host shell delivers module identity through `/api/apps/{moduleId}/identity-t
 
 Module UIs must serve their own routes, assets, cookies, and API calls from their own origin. The Host does not rewrite root-relative URLs, Next.js assets, App Router `_rsc` requests, or response headers. If a module blocks framing with `X-Frame-Options` or `Content-Security-Policy: frame-ancestors`, the browser blocks the iframe according to the module's own response policy.
 
-Developer app transport follows the same direct-origin pattern. It resolves the local target origin and path prefix from developer target state, applies Host app access rules before app discovery, and issues identity through `/api/apps/dev/{targetId}/identity-token`.
+Local command runtime app transport follows the same direct-origin pattern as Docker runtime app transport. It resolves the active runtime origin from the installed app state, applies Host app access rules before app discovery, and issues identity through the app identity endpoint.
 
 ## Module UI Metadata
 

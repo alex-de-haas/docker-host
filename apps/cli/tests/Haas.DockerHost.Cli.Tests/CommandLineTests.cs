@@ -75,7 +75,7 @@ public sealed class CommandLineTests
     }
 
     [Fact]
-    public async Task RunAsync_DevCommand_IsNoLongerRouted()
+    public async Task RunAsync_DeveloperHarnessCommand_IsNotRouted()
     {
         var exitCode = await CommandLine.RunAsync(["dev", "--help"]);
 

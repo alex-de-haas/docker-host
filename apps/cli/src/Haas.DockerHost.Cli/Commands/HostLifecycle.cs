@@ -120,7 +120,6 @@ internal sealed class HostLifecycle(CommandContext context)
             settings.HostBindAddress,
             settings.HostPublicOrigin,
             settings.HostGatewayBaseDomain,
-            settings.HostModuleDevMode,
             dataRootMarker.Id,
             hostPort);
 

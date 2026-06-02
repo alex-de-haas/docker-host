@@ -46,7 +46,7 @@ The supported flows are:
 - development auto-login;
 - generic OIDC callback.
 
-When development browser account seeding is enabled, the accounts API also adds deterministic and `metadata.dev.json` development users to the current browser account set so they appear in the sidebar switcher without visiting `/login`.
+Browser account switching remembers existing Host users in the current browser account set so they can be selected without re-entering credentials.
 
 OIDC login stores the resulting Host user in the browser account set after provider validation, explicit role mapping, and Host user provisioning or update.
 

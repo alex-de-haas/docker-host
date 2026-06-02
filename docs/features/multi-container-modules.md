@@ -286,7 +286,7 @@ Dependency connection example:
 }
 ```
 
-Gateway exposure also uses module endpoint keys. Gateway exposure state stores `endpointKey`, validates exposure eligibility with `endpoints[].public = true`, and resolves target URLs through `endpoints[]`. Local development records that still contain the older `portKey` field are normalized to `endpointKey` when read. Module developer-mode targets keep their separate `portKey` field because that store is not gateway exposure state.
+Gateway exposure also uses module endpoint keys. Gateway exposure state stores `endpointKey`, validates exposure eligibility with `endpoints[].public = true`, and resolves target URLs through `endpoints[]`.
 
 ## Web UI
 

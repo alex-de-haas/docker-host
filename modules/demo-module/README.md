@@ -24,7 +24,6 @@ The module metadata lives at:
 
 ```text
 modules/demo-module/metadata.json
-modules/demo-module/metadata.dev.json
 ```
 
 For Docker Host testing, install the module from the raw metadata URL in this repository. The metadata declares two services:
@@ -64,28 +63,7 @@ npm run dev --workspace @haas/docker-host-demo-module
 
 The development server listens on `http://localhost:3100`.
 
-The development metadata also declares a `backend` process on `http://localhost:3101` so the same service keys, endpoint wiring, and dependency shape are available to the metadata validator. The current `hosty dev up` supervisor starts the process behind the selected public endpoint, which is the `frontend` service.
-
-To run it through Docker Host with real gateway identity, app shell embedding, development users, assignments, and scoped directory behavior, use the repository-local dev metadata:
-
-```bash
-hosty dev up --manifest modules/demo-module/metadata.dev.json
-```
-
-For direct API diagnostics against the local module origin, issue a real Host-signed development token after `dev up` has prepared the target:
-
-```bash
-TOKEN="$(hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
-curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
-```
-
-This is useful for checking module-side identity validation without a browser, but it is not a replacement for testing the app shell or gateway URLs printed by `hosty dev up`.
-
-When running from inside `modules/demo-module`, the default works because the CLI discovers `metadata.dev.json` in the current directory:
-
-```bash
-hosty dev up
-```
+For Hosty-aware local command runtime development, use the app manifest flow in `apps/demo-app/manifest.json` instead of the legacy module metadata fixture.
 
 Useful endpoints:
 

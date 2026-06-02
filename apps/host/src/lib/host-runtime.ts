@@ -23,9 +23,6 @@ export interface HostRuntimeConfig {
   backupsRootContainer?: string;
   modulesRootContainer: string;
   modulesStorePath: string;
-  moduleDevModeEnabled?: boolean;
-  moduleDevRootContainer?: string;
-  moduleDevTargetsPath?: string;
   authRootContainer: string;
   authStatePath: string;
   authAuditPath: string;
@@ -91,7 +88,6 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
   const sourcesRootContainer = path.join(dataRootContainer, 'sources');
   const backupsRootContainer = path.join(dataRootContainer, 'backups');
   const modulesRootContainer = path.join(dataRootContainer, 'modules');
-  const moduleDevRootContainer = path.join(dataRootContainer, 'dev');
   const authRootContainer = path.join(dataRootContainer, 'auth');
   const gatewayRootContainer = path.join(dataRootContainer, 'gateway');
   const ingressRootContainer = path.join(dataRootContainer, 'ingress');
@@ -107,9 +103,6 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     backupsRootContainer,
     modulesRootContainer,
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
-    moduleDevModeEnabled: isEnabledRuntimeFlag(process.env.HOST_MODULE_DEV_MODE),
-    moduleDevRootContainer,
-    moduleDevTargetsPath: path.join(moduleDevRootContainer, 'module-targets.json'),
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
@@ -130,7 +123,6 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
 export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promise<HostDataRootStatus> {
   const appsRootContainer = config.appsRootContainer ?? path.join(config.dataRootContainer, 'apps');
   const sourcesRootContainer = config.sourcesRootContainer ?? path.join(config.dataRootContainer, 'sources');
-  const moduleDevRootContainer = config.moduleDevRootContainer ?? path.join(config.dataRootContainer, 'dev');
   const ingressRootContainer = config.ingressRootContainer ?? path.join(config.dataRootContainer, 'ingress');
   try {
     await verifyHostDataRootMarker(config);
@@ -138,9 +130,6 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     await fs.mkdir(appsRootContainer, { recursive: true });
     await fs.mkdir(sourcesRootContainer, { recursive: true });
     await fs.mkdir(config.modulesRootContainer, { recursive: true });
-    if (config.moduleDevModeEnabled) {
-      await fs.mkdir(moduleDevRootContainer, { recursive: true });
-    }
     await fs.mkdir(config.authRootContainer, { recursive: true });
     await fs.mkdir(config.gatewayRootContainer, { recursive: true });
     await fs.mkdir(ingressRootContainer, { recursive: true });
@@ -148,9 +137,6 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     await fs.access(appsRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(sourcesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.modulesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
-    if (config.moduleDevModeEnabled) {
-      await fs.access(moduleDevRootContainer, fs.constants.R_OK | fs.constants.W_OK);
-    }
     await fs.access(config.authRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.gatewayRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(ingressRootContainer, fs.constants.R_OK | fs.constants.W_OK);
@@ -303,15 +289,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
-}
-
-function isEnabledRuntimeFlag(value: string | undefined) {
-  const normalized = value?.trim().toLowerCase();
-  return normalized === '1' ||
-    normalized === 'true' ||
-    normalized === 'enabled' ||
-    normalized === 'on' ||
-    normalized === 'yes';
 }
 
 function parseModuleHostPortRange(value: string | undefined) {

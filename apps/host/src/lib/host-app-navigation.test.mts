@@ -8,12 +8,11 @@ test('hides system apps from sidebar app navigation', () => {
     createApp({ id: 'hosty.shell', source: 'system', system: true, displayName: 'Hosty Shell' }),
     createApp({ id: 'hosty.backups', source: 'system', system: true, displayName: 'Hosty Backups' }),
     createApp({ id: 'com.example.reports', source: 'installed', system: false, displayName: 'Reports' }),
-    createApp({ id: 'dev.reports', source: 'developer', system: false, displayName: 'Reports Dev' }),
   ];
 
   assert.deepEqual(
     getSidebarHostApps(apps).map(app => app.id),
-    ['com.example.reports', 'dev.reports']
+    ['com.example.reports']
   );
 });
 

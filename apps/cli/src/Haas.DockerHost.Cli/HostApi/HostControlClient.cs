@@ -21,59 +21,6 @@ internal sealed class HostControlClient(HttpClient httpClient, string controlSec
     public Task<HostApiResponse<ModuleListResponse>> ListModulesAsync(CancellationToken cancellationToken = default)
         => SendAsync<ModuleListResponse>("list modules", HttpMethod.Get, "modules", cancellationToken: cancellationToken);
 
-    public Task<HostApiResponse<ModuleDevTargetListResponse>> ListModuleDevTargetsAsync(CancellationToken cancellationToken = default)
-        => SendAsync<ModuleDevTargetListResponse>("list module developer targets", HttpMethod.Get, "modules/dev/targets", cancellationToken: cancellationToken);
-
-    public Task<HostApiResponse<ModuleDevTargetResponse>> CreateModuleDevTargetAsync(
-        ModuleDevTargetRequest request,
-        CancellationToken cancellationToken = default)
-        => SendAsync<ModuleDevTargetResponse>(
-            "create module developer target",
-            HttpMethod.Post,
-            "modules/dev/targets",
-            request,
-            cancellationToken);
-
-    public Task<HostApiResponse<ModuleDevTargetResponse>> UpdateModuleDevTargetAsync(
-        string targetId,
-        ModuleDevTargetRequest request,
-        CancellationToken cancellationToken = default)
-        => SendAsync<ModuleDevTargetResponse>(
-            "update module developer target",
-            HttpMethod.Put,
-            $"modules/dev/targets/{Uri.EscapeDataString(targetId)}",
-            request,
-            cancellationToken);
-
-    public Task<HostApiResponse<ModuleDevTargetResponse>> DeleteModuleDevTargetAsync(
-        string targetId,
-        CancellationToken cancellationToken = default)
-        => SendAsync<ModuleDevTargetResponse>(
-            "delete module developer target",
-            HttpMethod.Delete,
-            $"modules/dev/targets/{Uri.EscapeDataString(targetId)}",
-            cancellationToken: cancellationToken);
-
-    public Task<HostApiResponse<ModuleDevIdentityTokenResponse>> IssueModuleDevIdentityTokenAsync(
-        string targetId,
-        ModuleDevIdentityTokenRequest request,
-        CancellationToken cancellationToken = default)
-        => SendAsync<ModuleDevIdentityTokenResponse>(
-            "issue module developer identity token",
-            HttpMethod.Post,
-            $"modules/dev/targets/{Uri.EscapeDataString(targetId)}/identity-token",
-            request,
-            cancellationToken);
-
-    public Task<HostApiResponse<DevDataCleanupResponse>> CleanDevModuleDataAsync(
-        string moduleId,
-        CancellationToken cancellationToken = default)
-        => SendAsync<DevDataCleanupResponse>(
-            "clean development module data",
-            HttpMethod.Delete,
-            $"modules/dev/data/{Uri.EscapeDataString(moduleId)}",
-            cancellationToken: cancellationToken);
-
     public Task<HostApiResponse<HostUsersResponse>> ListHostUsersAsync(CancellationToken cancellationToken = default)
         => SendAsync<HostUsersResponse>("list Host users", HttpMethod.Get, "auth/users", cancellationToken: cancellationToken);
 

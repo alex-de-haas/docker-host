@@ -2,13 +2,12 @@
 
 Use this reference when adapting or comparing against the repository-local demo app at `apps/demo-app`.
 
-The legacy `modules/demo-module` fixture remains useful when working on schema `0.3` metadata compatibility or the existing `hosty dev` harness.
+The legacy `modules/demo-module` fixture remains useful when working on schema `0.3` metadata compatibility.
 
 ## What To Copy
 
 - App manifest shape from `apps/demo-app/manifest.json` when working on runtime app manifests.
 - Legacy metadata shape from `modules/demo-module/metadata.json` when working on schema `0.3` multi-service compatibility.
-- Development metadata shape from `modules/demo-module/metadata.dev.json` when using `hosty dev` with process services.
 - Production image build pattern from `apps/demo-app/Dockerfile`.
 - Health endpoint pattern from `apps/demo-app/src/app/api/health/route.ts`.
 - Hosty identity validation pattern from `apps/demo-app/src/lib/host-auth.ts`.
@@ -42,12 +41,13 @@ npm run demo-app:dev
 npm run demo-app:lint
 npm run demo-app:build
 npm run core:dev
-hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001
+hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps start com.haas.demo-app
 npm run demo-app:docker:build:local
 ```
 
-Use `npm run core:dev` plus `hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001` for Shell app, Hosty identity, assigned-user, and scoped directory feedback. The harness seeds the development administrator and user accounts and links the demo app as a developer target, so the app receives normal Hosty-issued identity instead of a mock token.
+Use `npm run core:dev` plus `hosty apps install apps/demo-app/manifest.json --runtime dev` for Shell app, Hosty identity, assigned-user, and scoped directory feedback. Core starts the local command runtime profile and issues normal Hosty app identity instead of a mock token.
 
-The demo app's metadata uses schema `0.3` services for a tightly related frontend and backend fixture. `metadata.dev.json` uses process services with `runtime.ports[].localPort`. The CLI derives the local command, target, development users, assignments, and directory policy from the metadata-driven harness workflow.
+The demo app manifest uses app-level runtime profiles for tightly related frontend and backend services. The `dev` runtime profile uses local commands with `localPort` values for source-run development.
 
 Use the local Docker image path when testing managed install, start, stop, restart, update, app data backup, restore, and storage behavior.

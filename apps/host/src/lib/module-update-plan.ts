@@ -354,6 +354,9 @@ function buildUpdateDependencyNode(
           key: container.key,
           containerName: container.containerName,
           networkAlias: container.networkAlias,
+          runtimeKind: node.metadata.containers.find(candidate => candidate.key === container.key)?.source.type === 'process'
+            ? 'localCommand'
+            : 'docker',
           image: {
             moduleId: node.id,
             container: container.key,

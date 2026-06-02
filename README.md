@@ -81,18 +81,18 @@ npm run core:dev
 npm run shell:dev
 ```
 
-For UI work with isolated development state, auto-login, a switchable normal
-user, and the repository demo app, start Core and then link the demo app through
-the installed-CLI development harness:
+For runtime app work with Hosty identity and Shell integration, install the app
+manifest with its local runtime profile and start it through Core:
 
 ```bash
 npm run core:dev
-hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://127.0.0.1:3001
+hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps start com.haas.demo-app
 ```
 
-The Core process listens on `http://127.0.0.1:3001` by default. The harness
-starts the demo module on `http://localhost:3100`, enables local development
-auto-login, and seeds the default development administrator and user.
+The Core process listens on `http://127.0.0.1:3001` by default. The demo app
+manifest's `dev` runtime profile starts local command services on ports `3100`
+and `3101`.
 
 The server connects to Docker using:
 
@@ -102,26 +102,17 @@ The server connects to Docker using:
 
 On Windows with Docker Desktop, enable WSL integration for the WSL distro where you run these commands. Without that integration, `/var/run/docker.sock` is unavailable in that distro even when Docker Desktop is running.
 
-For the installed-CLI runtime app development harness, run:
+For direct app API probes that need Hosty identity, ask Core to issue a real
+app identity token instead of inventing one:
 
 ```bash
-hosty config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
-hosty config set HOST_DEV_PORT 3001
-hosty dev up --manifest modules/demo-module/metadata.dev.json
-```
-
-Use `hosty dev status --manifest modules/demo-module/metadata.dev.json` to verify Host readiness, target reachability, app registry visibility, and identity mode. Use `hosty dev reset --manifest modules/demo-module/metadata.dev.json` to remove the metadata target and assignments.
-
-For direct app API probes that need Hosty identity, ask the local Host to issue a real development identity token instead of inventing one:
-
-```bash
-TOKEN="$(hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
+TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
 curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
 ```
 
-Use `--user user@docker-host.local` to issue the token as the standard development user. This helper is for diagnostics against a local app origin; Shell and gateway integration should still be tested through the URLs printed by `hosty dev up`.
-
-When an agent is working on a Hosty runtime app, add the same rule to that repository's `AGENTS.md`: use `hosty dev up` for Hosty identity, assignments, Shell embedding, and scoped directory checks, and use `hosty dev identity --format token` only for direct endpoint probes. Do not treat standalone app runs as valid Hosty identity tests.
+Use `hosty apps open com.haas.demo-app --user user@docker-host.local` for
+Shell or standalone launch links. Do not treat standalone app runs as valid
+Hosty identity tests.
 
 Examples:
 

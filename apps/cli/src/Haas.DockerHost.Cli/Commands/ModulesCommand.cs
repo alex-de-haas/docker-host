@@ -22,9 +22,6 @@ internal sealed class ModulesCommand(CommandContext context, string commandName 
           hosty {commandName} backups <app-id>
           hosty {commandName} restore <app-id> <backup-id>
           hosty {commandName} remove <app-id> [--delete-data]
-          hosty {commandName} dev list
-          hosty {commandName} dev link <manifest-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
-          hosty {commandName} dev unlink <target-id>
         """;
 
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
@@ -53,7 +50,6 @@ internal sealed class ModulesCommand(CommandContext context, string commandName 
             "backups" => await ListBackupsAsync(args[1..]),
             "restore" => await RestoreBackupAsync(args[1..]),
             "remove" => await RemoveAsync(args[1..]),
-            "dev" => await ExecuteDevAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown modules command '{args[0]}'.", Usage),
         };
     }
@@ -621,114 +617,6 @@ internal sealed class ModulesCommand(CommandContext context, string commandName 
         return 0;
     }
 
-    private async Task<int> ExecuteDevAsync(string[] args)
-    {
-        var devUsage = $"""
-            Usage:
-              hosty {commandName} dev list
-              hosty {commandName} dev link <manifest-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]
-              hosty {commandName} dev unlink <target-id>
-            """;
-
-        if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"])
-        {
-            context.Console.WriteLine(devUsage);
-            return 0;
-        }
-
-        return args[0] switch
-        {
-            "list" => await ListDevTargetsAsync(args[1..]),
-            "link" => await LinkDevTargetAsync(args[1..]),
-            "unlink" => await UnlinkDevTargetAsync(args[1..]),
-            _ => throw new CommandUsageException($"Unknown {commandName} dev command '{args[0]}'.", devUsage),
-        };
-    }
-
-    private async Task<int> ListDevTargetsAsync(string[] args)
-    {
-        if (args.Length != 0)
-        {
-            throw new CommandUsageException($"{commandName} dev list does not accept arguments.", $"Usage: hosty {commandName} dev list");
-        }
-
-        using var hostApi = await CreateHostControlClientAsync();
-        if (hostApi is null)
-        {
-            return 1;
-        }
-
-        var response = await hostApi.ListModuleDevTargetsAsync();
-        if (!response.IsSuccess || response.Body is null)
-        {
-            return RenderApiFailure("Failed to list module developer targets.", response.StatusCode, response.RawBody);
-        }
-
-        RenderDevTargets(response.Body);
-        return 0;
-    }
-
-    private async Task<int> LinkDevTargetAsync(string[] args)
-    {
-        var parsed = ParseArguments(args);
-        if (parsed.Positionals.Count != 4)
-        {
-            throw new CommandUsageException(
-                $"{commandName} dev link requires manifest URL, hostname, port key, and target URL.",
-                $"Usage: hosty {commandName} dev link <manifest-url> <hostname> <port-key> <target-url> [--policy <policy>] [--identity <mode>] [--disabled]");
-        }
-
-        using var hostApi = await CreateHostControlClientAsync();
-        if (hostApi is null)
-        {
-            return 1;
-        }
-
-        var response = await hostApi.CreateModuleDevTargetAsync(new ModuleDevTargetRequest
-        {
-            MetadataUrl = parsed.Positionals[0],
-            Hostname = parsed.Positionals[1],
-            PortKey = parsed.Positionals[2],
-            TargetBaseUrl = parsed.Positionals[3],
-            ExposurePolicy = parsed.Options.GetValueOrDefault("policy"),
-            IdentityMode = parsed.Options.GetValueOrDefault("identity"),
-            Enabled = parsed.Flags.Contains("disabled") ? false : null,
-        });
-
-        if (!response.IsSuccess || response.Body?.Target is null)
-        {
-            return RenderApiFailure("Failed to link module developer target.", response.StatusCode, response.RawBody);
-        }
-
-        context.Console.MarkupLine("[green]Module developer target linked.[/]");
-        RenderDevTargetSummary(response.Body.Target);
-        return 0;
-    }
-
-    private async Task<int> UnlinkDevTargetAsync(string[] args)
-    {
-        if (args.Length != 1)
-        {
-            throw new CommandUsageException($"{commandName} dev unlink requires exactly one target id.", $"Usage: hosty {commandName} dev unlink <target-id>");
-        }
-
-        using var hostApi = await CreateHostControlClientAsync();
-        if (hostApi is null)
-        {
-            return 1;
-        }
-
-        var response = await hostApi.DeleteModuleDevTargetAsync(args[0]);
-        if (!response.IsSuccess || response.Body?.Target is null)
-        {
-            return RenderApiFailure("Failed to unlink module developer target.", response.StatusCode, response.RawBody);
-        }
-
-        context.Console.MarkupLine("[green]Module developer target removed.[/]");
-        RenderDevTargetSummary(response.Body.Target);
-        return 0;
-    }
-
     private async Task<HostControlClient?> CreateHostControlClientAsync()
     {
         var settings = context.SettingsStore.Load();
@@ -796,69 +684,6 @@ internal sealed class ModulesCommand(CommandContext context, string commandName 
         }
 
         return false;
-    }
-
-    private void RenderDevTargets(ModuleDevTargetListResponse response)
-    {
-        context.Console.MarkupLine(response.DeveloperModeEnabled
-            ? "[green]Local developer target management is available.[/]"
-            : "[yellow]Local developer target management is unavailable.[/]");
-
-        if (!response.DeveloperModeEnabled)
-        {
-            context.Console.WriteLine("Developer target management is available through the local control channel.");
-        }
-
-        if (response.Targets.Count == 0)
-        {
-            context.Console.MarkupLine("[yellow]No module developer targets.[/]");
-            return;
-        }
-
-        var table = new Table()
-            .RoundedBorder()
-            .AddColumn("Target id")
-            .AddColumn("Module")
-            .AddColumn("Hostname")
-            .AddColumn("Port")
-            .AddColumn("Target URL")
-            .AddColumn("Policy")
-            .AddColumn("Identity")
-            .AddColumn("Status");
-
-        foreach (var target in response.Targets)
-        {
-            table.AddRow(
-                Markup.Escape(target.Id),
-                Markup.Escape($"{target.ModuleName} ({target.ModuleId})"),
-                Markup.Escape(target.Hostname),
-                Markup.Escape(target.PortKey),
-                Markup.Escape(target.TargetBaseUrl),
-                Markup.Escape(target.ExposurePolicy),
-                Markup.Escape(target.IdentityMode),
-                target.Enabled ? "enabled" : "disabled");
-        }
-
-        context.Console.Write(table);
-    }
-
-    private void RenderDevTargetSummary(ModuleDevTargetSummary target)
-    {
-        var table = new Table()
-            .RoundedBorder()
-            .AddColumn("Property")
-            .AddColumn("Value");
-
-        table.AddRow("Target id", Markup.Escape(target.Id));
-        table.AddRow("Module", Markup.Escape($"{target.ModuleName} ({target.ModuleId})"));
-        table.AddRow("Version", Markup.Escape(target.ModuleVersion));
-        table.AddRow("Hostname", Markup.Escape(target.Hostname));
-        table.AddRow("Port key", Markup.Escape(target.PortKey));
-        table.AddRow("Target URL", Markup.Escape(target.TargetBaseUrl));
-        table.AddRow("Policy", Markup.Escape(target.ExposurePolicy));
-        table.AddRow("Identity", Markup.Escape(target.IdentityMode));
-        table.AddRow("Status", target.Enabled ? "enabled" : "disabled");
-        context.Console.Write(table);
     }
 
     private void RenderInstallPlan(InstallPlan plan)

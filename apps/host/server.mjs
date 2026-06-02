@@ -147,44 +147,6 @@ export async function resolveGatewayRequest(req) {
 
   const config = getRuntimeConfig();
   await verifyDataRootMarker(config);
-  const devTarget = await resolveModuleDevTarget(hostnameValue, config);
-  if (devTarget) {
-    const authState = await readAuthState(config);
-    const trustedProxy = await authenticateTrustedProxyRequest(req, config);
-    const principal = trustedProxy.principal ||
-      (trustedProxy.modeActive ? null : authenticateSession(req, authState));
-    const access = canAccessModule({
-      principal,
-      moduleId: devTarget.moduleId,
-      exposurePolicy: devTarget.exposurePolicy,
-      assignments: authState.moduleAssignments || [],
-    });
-    const targetUrl = parseDevTargetUrl(devTarget.targetBaseUrl);
-
-    return {
-      exposure: {
-        id: devTarget.id,
-        moduleId: devTarget.moduleId,
-        hostname: hostnameValue,
-        endpointKey: devTarget.portKey,
-        exposurePolicy: devTarget.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY,
-        identityMode: getExposureIdentityMode(devTarget, devTarget.exposurePolicy || DEFAULT_MODULE_EXPOSURE_POLICY),
-      },
-      access,
-      principal,
-      networkAlias: targetUrl.hostname,
-      containerPort: targetUrl.port,
-      proxyHostname: targetUrl.hostname,
-      proxyPort: targetUrl.port,
-      targetPathPrefix: targetUrl.pathPrefix,
-      targetOrigin: targetUrl.origin,
-      requestHost: req.headers.host,
-      requestProtocol: getRequestProtocol(req),
-      trustedProxyAssertionHeaders: trustedProxy.assertionHeaders,
-      developerMode: true,
-    };
-  }
-
   const gateway = await readJsonIfExists(config.gatewayExposuresPath, {
     schemaVersion: '0.2',
     exposures: [],
@@ -652,8 +614,6 @@ function getRuntimeConfig() {
     authRootContainer,
     authStatePath: path.join(authRootContainer, 'state.json'),
     authAuditPath: path.join(authRootContainer, 'audit.ndjson'),
-    moduleDevModeEnabled: isEnabledRuntimeFlag(process.env.HOST_MODULE_DEV_MODE),
-    moduleDevTargetsPath: path.join(dataRootContainer, 'dev', 'module-targets.json'),
     gatewayRootContainer,
     gatewayExposuresPath: path.join(gatewayRootContainer, 'exposures.json'),
     gatewayBaseDomain: normalizeDomain(process.env.HOST_GATEWAY_BASE_DOMAIN),
@@ -734,43 +694,6 @@ function resolveModuleEndpointTarget(metadata, endpointKey) {
     containerKey: endpoint.container,
     endpoint,
     port,
-  };
-}
-
-async function resolveModuleDevTarget(hostnameValue, config) {
-  const state = await readJsonIfExists(config.moduleDevTargetsPath, {
-    schemaVersion: '0.1',
-    targets: [],
-  });
-
-  return Array.isArray(state.targets)
-    ? state.targets.find(candidate =>
-        candidate &&
-        candidate.enabled !== false &&
-        typeof candidate.hostname === 'string' &&
-        candidate.hostname.toLowerCase() === hostnameValue &&
-        typeof candidate.targetBaseUrl === 'string' &&
-        typeof candidate.moduleId === 'string' &&
-        typeof candidate.portKey === 'string'
-      ) || null
-    : null;
-}
-
-function parseDevTargetUrl(value) {
-  const parsed = new URL(value);
-  if (parsed.protocol !== 'http:') {
-    throw new Error('Module developer gateway targets must use http.');
-  }
-
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
-  const port = Number(parsed.port || 80);
-  const pathPrefix = parsed.pathname.replace(/\/+$/, '');
-
-  return {
-    hostname,
-    port,
-    origin: parsed.origin,
-    pathPrefix: pathPrefix === '/' ? '' : pathPrefix,
   };
 }
 
@@ -922,15 +845,6 @@ function parseHostnameFromOrigin(origin) {
 function normalizeDomain(value) {
   const normalized = value?.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
   return normalized || null;
-}
-
-function isEnabledRuntimeFlag(value) {
-  const normalized = value?.trim().toLowerCase();
-  return normalized === '1' ||
-    normalized === 'true' ||
-    normalized === 'enabled' ||
-    normalized === 'on' ||
-    normalized === 'yes';
 }
 
 function getExposureIdentityMode(exposure, exposurePolicy) {

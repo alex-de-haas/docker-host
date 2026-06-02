@@ -11,7 +11,6 @@ internal sealed record HostContainerPlan(
     string HostBindAddress,
     string HostPublicOrigin,
     string HostGatewayBaseDomain,
-    string HostModuleDevMode,
     string DataRootMarker,
     int HostUiPort)
 {

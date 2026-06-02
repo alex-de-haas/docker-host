@@ -1,6 +1,6 @@
 ---
 name: hosty-app-skill
-description: Build, wrap, or update Hosty runtime apps. Use when creating app manifests under schemaVersion app.0.1, migrating legacy Docker Host modules, authoring legacy schemaVersion 0.2 or 0.3 metadata, configuring Docker or localCommand runtime profiles, app data directories and backups, Shell UI metadata, Hosty Core identity, scoped user directory access, runtime-app roles, dependencies, channels, or validating apps with Hosty developer mode.
+description: Build, wrap, or update Hosty runtime apps. Use when creating app manifests under schemaVersion app.0.1, migrating legacy Docker Host modules, authoring legacy schemaVersion 0.2 or 0.3 metadata, configuring Docker or localCommand runtime profiles, app data directories and backups, Shell UI metadata, Hosty Core identity, scoped user directory access, runtime-app roles, dependencies, channels, or validating apps with Core-managed local runtime profiles.
 ---
 
 # Hosty Runtime App
@@ -14,17 +14,17 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 ## First Pass
 
 1. Identify whether the user wants to create a new runtime app, wrap an existing app, update an app manifest, migrate legacy module metadata, add Hosty identity/roles, configure data/backups, or validate an app.
-2. Treat `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, `docs/features/domain-model.md`, `docs/features/auth-gateway.md`, `docs/features/cli-trusted-control-and-dev-metadata.md`, `apps/host/src/lib/app-manifest.ts`, `apps/host/src/lib/module-metadata.ts`, and `modules/demo-module` as source of truth when implementation details matter.
+2. Treat `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, `docs/features/domain-model.md`, `docs/features/auth-gateway.md`, `apps/host/src/lib/app-manifest.ts`, `apps/host/src/lib/module-metadata.ts`, and `modules/demo-module` as source of truth when implementation details matter.
 3. Prefer `hosty` commands and Hosty terminology. Use `docker-host` only as a deprecated compatibility alias or when referring to legacy behavior already implemented under that name.
 4. Keep Hosty Core access decisions separate from app-owned domain authorization. Hosty decides whether a Hosty user can reach the app; the app owns its internal roles and permissions.
-5. For Host-facing behavior, validate through the integrated developer target loop before rebuilding images. Seed Hosty users and assignments, then let Hosty issue the normal signed app identity token.
+5. For Host-facing behavior, validate through a Core-managed runtime app using a local runtime profile before rebuilding images. Use existing Hosty users and assignments, then let Core issue the normal signed app identity token.
 6. Validate with the narrowest useful checks for the change, and update repository docs in English when the app contract or user-visible workflow changes.
 
 ## Reference Map
 
 - Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, legacy `metadata.json`, app-level runtime profiles, service runtime implementations, settings, storage, dependencies, endpoints, install/update behavior, or backups.
 - Read `references/app-auth-and-users.md` when working with Shell embedding, standalone app auth, gateway protection, `X-Docker-Host-Identity`, scoped user directory APIs, app-owned roles, external providers, or third-party integration credentials.
-- Read `references/app-dev-mode.md` when linking a local app dev server through Hosty or authoring `metadata.dev.json`.
+- Read `references/app-dev-mode.md` when validating a local app through Hosty Core with a local command runtime profile.
 - Read `references/demo-app-patterns.md` when copying repo-local examples from `modules/demo-module`.
 - Read `references/app-implementation-checklist.md` before finishing an app implementation or review.
 
@@ -59,11 +59,11 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 
 1. Choose the fastest loop that proves the behavior:
    - standalone app dev for app-owned UI and business logic;
-   - integrated developer target for Shell embedding, gateway policy, Hosty sessions, identity, scoped directory access, redirects, WebSockets, and SSE;
+   - Core-managed local runtime profile for Shell embedding, gateway policy, Hosty sessions, identity, scoped directory access, redirects, WebSockets, and SSE;
    - production-like local image install for Dockerfile, storage, lifecycle, install/update, and container runtime behavior.
-2. Use `hosty dev up --manifest <path-to-metadata.dev.json>` for metadata-driven local orchestration. It starts or connects to a loopback Hosty Core, seeds development users and assignments, links the developer target, and starts local app commands.
-3. For this repository's demo loop, run Hosty Core with `npm run core:dev`, then use `hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001`.
-4. For direct app-origin endpoint probes after the target is prepared, use `hosty dev identity --manifest <path-to-metadata.dev.json> --format token` and pass the token as `X-Docker-Host-Identity`. This is a diagnostic helper, not a replacement for Shell or gateway testing.
+2. Use `hosty apps install <manifest> --runtime <local-profile>` and `hosty apps start <app-id>` for local orchestration through Core.
+3. For this repository's demo loop, run Hosty Core with `npm run core:dev`, then use `hosty apps install apps/demo-app/manifest.json --runtime dev` and `hosty apps start com.haas.demo-app`.
+4. For direct app-origin endpoint probes after the app is installed, use `hosty apps identity <app-id> --user <email-or-id> --format token` and pass the token as `X-Docker-Host-Identity`. This is a diagnostic helper, not a replacement for Shell or gateway testing.
 5. Do not hand-inject fake identity tokens or validate Hosty identity by running the app only in standalone mode.
 
 ### Update An Existing Runtime App
@@ -81,7 +81,7 @@ Use focused validation based on what changed:
 - App manifest or metadata parser behavior: run targeted Core tests, commonly `npm run core:test`.
 - App code changes: run the app's lint/build/test commands.
 - Demo app changes: run `npm run demo-app:lint` and `npm run demo-app:build`.
-- Shell app, embedded transport, identity behavior, or scoped directory behavior: use `hosty dev up` with a linked developer target.
+- Shell app, embedded transport, identity behavior, or scoped directory behavior: use a Core-managed local runtime profile and `hosty apps open`.
 - Production-like container behavior: build the Host image and app image locally, then install the manifest through Hosty.
 
 Do not claim app security or identity work is complete without checking Hosty-issued token validation, cookie/header stripping assumptions, and audience validation.

@@ -118,7 +118,6 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             $"HOST_DATA_ROOT_CONTAINER={plan.DataRootContainer}",
             $"HOST_DOCKER_SOCKET={plan.DockerSocket}",
             $"HOST_MODULE_NETWORK={plan.ModuleNetwork}",
-            $"HOST_MODULE_DEV_MODE={plan.HostModuleDevMode}",
             $"{HostDataRootMarker.EnvironmentVariable}={plan.DataRootMarker}",
             $"HOST_BIND_ADDRESS={plan.HostBindAddress}",
             $"HOST_CONTROL_PUBLIC_PORT={hostPort}",

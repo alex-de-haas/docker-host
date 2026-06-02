@@ -95,7 +95,7 @@ CLI output uses a compact table with:
 
 - app display name and id;
 - kind: `system` or `runtime`;
-- source: `system`, `installed`, or `developer`;
+- source: `system` or `installed`;
 - status;
 - selected runtime;
 - selected channel;

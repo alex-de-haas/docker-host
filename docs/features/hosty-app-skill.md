@@ -16,20 +16,20 @@ The skill helps agents:
 - integrate Hosty Core identity and scoped user directory access;
 - implement app-owned roles;
 - distinguish Shell UI access from gateway-protected service/API exposure;
-- validate apps with the Hosty developer-mode workflow before falling back to slower image rebuilds.
+- validate apps with Core-managed local runtime profiles before falling back to slower image rebuilds.
 
 The skill is intentionally not a copy of the full documentation. `SKILL.md` is a short workflow guide, while `references/` contains focused topic documents that agents load only when needed.
 
-For Host-facing app behavior, the skill points agents at the integrated developer target loop: run the app locally, route it through Hosty, seed Hosty-owned development users and assignments, and let Hosty issue the normal signed app identity token. For direct local endpoint probes, agents can use `hosty dev identity --format token` to request a real Hosty-signed token from trusted control. Directly injecting fake identity headers is not considered a valid Hosty integration check.
+For Host-facing app behavior, the skill points agents at the Core-managed local runtime loop: install the app manifest with a local runtime profile, start the app through Core, use existing Hosty users and assignments, and let Core issue the normal signed app identity token. For direct local endpoint probes, agents can use `hosty apps identity --format token` to request a real Hosty-signed token. Directly injecting fake identity headers is not considered a valid Hosty integration check.
 
-The skill also distinguishes the Hosty Core API origin from Host lifecycle mode. Agents should configure `HOST_DEV_REPOSITORY_PATH` for a source-run Hosty Core, or use `hosty dev up --host-url` with a loopback URL when validating apps against an already running Host process instead of the installed Host container.
+The skill also distinguishes the Hosty Core API origin from app runtime origins. Agents should start or connect to Hosty Core first, then use normal `hosty apps` commands for local runtime profiles.
 
 ```mermaid
 flowchart LR
   A["Agent task"] --> B["skills/hosty-app-skill/SKILL.md"]
   B --> C["App manifest reference"]
   B --> D["Auth and users reference"]
-  B --> E["Developer mode reference"]
+  B --> E["Local runtime reference"]
   B --> F["Checklist"]
   B --> G["App manifest template"]
   C --> H["Hosty runtime app implementation"]
@@ -45,7 +45,7 @@ flowchart LR
 - `skills/hosty-app-skill/agents/openai.yaml` - UI-facing skill metadata.
 - `skills/hosty-app-skill/references/app-manifest.md` - compact app manifest, legacy metadata, runtime profile, install/update, storage, and backup guidance.
 - `skills/hosty-app-skill/references/app-auth-and-users.md` - Hosty roles, Shell access, gateway policies, identity modes, identity tokens, scoped directory, external providers, third-party credentials, and app-owned roles.
-- `skills/hosty-app-skill/references/app-dev-mode.md` - local developer target workflow, trusted-control-backed dev metadata behavior, and developer-mode boundaries.
+- `skills/hosty-app-skill/references/app-dev-mode.md` - local runtime profile workflow, Core app identity helpers, and validation boundaries.
 - `skills/hosty-app-skill/references/demo-app-patterns.md` - practical patterns from `modules/demo-module`.
 - `skills/hosty-app-skill/references/app-implementation-checklist.md` - final implementation and validation checklist.
 - `skills/hosty-app-skill/assets/app-template/manifest.json` - minimal `app.0.1` manifest skeleton.
@@ -108,7 +108,7 @@ Keep the skill aligned with the source documentation:
 
 - update `references/app-manifest.md` when `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, or `apps/host/src/lib/app-manifest.ts` changes;
 - update `references/app-auth-and-users.md` when `docs/features/auth-gateway.md` or `docs/features/user-management.md` changes;
-- update `references/app-dev-mode.md` when `docs/features/module-developer-mode.md`, `docs/features/module-development-harness.md`, or `docs/features/cli-trusted-control-and-dev-metadata.md` changes;
+- update `references/app-dev-mode.md` when `docs/features/local-development.md` or Core local runtime behavior changes;
 - update `references/demo-app-patterns.md` when `modules/demo-module` changes in a way agents should copy;
 - update `references/app-implementation-checklist.md` when app validation, gateway publishing, backup, or security review expectations change.
 

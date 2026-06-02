@@ -9,8 +9,6 @@ Host users can enter the system through these flows:
 - recovery restores a local administrator account with a recovery token;
 - OIDC login provisions or updates external users through provider role mappings;
 - trusted-proxy assertions provision or update external users through trusted proxy role mappings;
-- development auto-login creates or updates deterministic local development accounts;
-- `hosty dev up` creates or updates development users from `metadata.dev.json` `development.users`.
 
 Browser account switching does not create users. It only remembers existing Host users in a browser-scoped account set and creates a fresh session when the user switches accounts.
 
@@ -111,7 +109,7 @@ For ordinary users, an app is visible when:
 
 Administrators can see all Host apps. Module directory responses still include only explicitly assigned, enabled users.
 
-The access picker lists installed modules and enabled developer-mode shell apps. Developer entries reuse the target's `moduleId`, because Host access assignments are module-wide and the same assignment controls installed apps, developer shell apps, and assigned-only gateway exposures for that module.
+The access picker lists installed runtime apps. Host access assignments are app-wide and the same assignment controls Shell visibility and assigned-only gateway exposures for that app.
 
 Invitation assignments are stored on the invitation and applied only when the invite is accepted, because the target user id does not exist before acceptance.
 

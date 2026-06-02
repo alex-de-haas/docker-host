@@ -157,7 +157,7 @@ The gateway sanitizes proxied requests:
 
 For responses, the gateway preserves relative redirects and rewrites absolute redirects from the internal module target back to the external module hostname. Module `Set-Cookie` headers are passed through with `Domain` stripped so module cookies stay host-only for the module origin.
 
-Shell iframe identity uses a separate direct-origin bridge. `/api/apps/{moduleId}/identity-token` and `/api/apps/dev/{targetId}/identity-token` require Host authentication, validate current app access, and issue short-lived Host-signed module identity tokens. The Host shell sends those tokens to the iframe with `postMessage`. The module UI then decides whether to use the token directly or exchange it for a module-origin session cookie.
+Shell iframe identity uses a separate direct-origin bridge. `/api/apps/{moduleId}/identity-token` requires Host authentication, validates current app access, and issues short-lived Host-signed module identity tokens. The Host shell sends those tokens to the iframe with `postMessage`. The module UI then decides whether to use the token directly or exchange it for a module-origin session cookie.
 
 Embedded module UIs are rendered in an iframe sandbox with `allow-same-origin` because each module UI runs on its own origin rather than the Host origin. Host cookies are not available to that origin, and Host APIs still require Host authentication and authorization.
 
@@ -278,7 +278,7 @@ Token decisions:
 - The discovery `jwks_uri` uses `HOST_INTERNAL_ORIGIN`, defaulting to `http://docker-host:3000`, so module containers can validate tokens from inside the Docker network.
 - Tokens use a 5-minute lifetime and are minted for each authenticated gateway HTTP request, WebSocket/SSE/long-poll setup request, or shell iframe identity bootstrap.
 - Host strips inbound `X-Docker-Host-*` request headers before adding its own identity header.
-- Shell iframe identity uses the same Host-signed identity token contract as gateway traffic. Installed app iframes use the installed module id as `aud`; developer app iframes preserve the developer target's `moduleId` as `aud`.
+- Shell iframe identity uses the same Host-signed identity token contract as gateway traffic. App iframes use the installed app or module id as `aud`, including local command runtime profiles.
 
 Example claims:
 
@@ -483,20 +483,16 @@ When trusted proxy mode is active:
 
 Trusted proxy users are stored as Host users with `authProvider: "trusted-proxy"` and an external identity keyed by provider id, issuer, and subject. Modules still receive normal Host-signed module identity tokens through gateway headers or the direct-origin shell identity bridge; provider-specific trusted proxy headers are never the module-facing identity contract.
 
-## Developer Mode
+## Local Runtime Development
 
-Module development should not require every change to run through a full Host install flow.
+Module development uses a normal installed runtime app with a source or local command runtime profile. The app still runs through Core-managed lifecycle and receives the same identity and gateway contracts as other runtime profiles.
 
-Supported target modes:
+Supported local flow:
 
 ```text
-Standalone:
-  module dev server -> http://localhost:3001
-  auth -> mock user or local test token
-
-Integrated:
-  reports.localhost -> Docker Host Gateway -> http://host.docker.internal:3001
-  auth -> real Host session and module-scoped token
+hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps start com.haas.demo-app
+hosty apps identity com.haas.demo-app --user user@docker-host.local --format token
 ```
 
 Integrated development should be used to verify:
@@ -509,17 +505,7 @@ Integrated development should be used to verify:
 - realtime transports;
 - module access policies.
 
-Supported developer mode behavior:
-
-- developer target records live in `/data/dev/module-targets.json`;
-- Host validates a metadata URL before linking a developer target;
-- each target maps a hostname and developer-target `portKey` to an HTTP local target URL; this field stores a metadata endpoint key in the developer-mode store;
-- target URLs are limited to localhost, `*.localhost`, `host.docker.internal`, loopback, and private IP ranges;
-- gateway developer targets are checked before production gateway exposures when the target is enabled;
-- integrated requests use the normal Host access policy and the normal Host-signed `X-Docker-Host-Identity` token;
-- CLI management is available through trusted-control-backed `hosty apps dev list`, `link`, and `unlink`. The legacy `docker-host modules dev ...` alias remains supported during migration.
-
-More details live in [Module developer mode](module-developer-mode.md).
+Local command runtime profiles use the same installed app records, gateway routing, access policy, and Host-signed `X-Docker-Host-Identity` token contract as Docker runtime profiles.
 
 ## External Ingress Readiness
 

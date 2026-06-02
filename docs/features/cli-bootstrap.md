@@ -21,7 +21,6 @@ hosty open
 hosty config
 hosty apps
 hosty modules
-hosty dev
 hosty auth
 ```
 
@@ -35,21 +34,9 @@ hosty config set <KEY>=<VALUE>
 hosty config reset <KEY>
 ```
 
-Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port number. `HOST_DOCKER_ENDPOINT` is limited to the supported local Docker Engine endpoint for the current platform. `HOST_DEV_REPOSITORY_PATH` and `HOST_DEV_PORT` configure the local Host process used by `hosty dev up`; dev commands do not fall back to the production Host container.
+Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port number. `HOST_DOCKER_ENDPOINT` is limited to the supported local Docker Engine endpoint for the current platform.
 
-`hosty apps` is the preferred trusted-control-backed app command group. It covers app list, install/add, start, stop, restart, update, remove, app data backup, app data restore, and low-level developer target commands. `hosty modules` and `docker-host modules` remain compatibility aliases. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
-
-`hosty dev` is the trusted-control-backed module development harness:
-
-```text
-hosty dev up [--manifest <path>] [--host-url <url>] [--prepare-only]
-hosty dev status [--manifest <path>] [--host-url <url>]
-hosty dev identity [--manifest <path>] [--host-url <url>] [--user <email-or-id>] [--format token|header|json|env]
-hosty dev reset [--manifest <path>] [--host-url <url>]
-hosty dev clean <module-id-or-dev-metadata> [--host-url <url>] [--yes]
-```
-
-It reads `metadata.dev.json` by default, starts the development Host from `HOST_DEV_REPOSITORY_PATH` or connects to a loopback `--host-url`, links a deterministic developer target through local control, seeds development users and assignments through Host-owned services, applies module directory policy, and starts the local module command in the foreground. The detailed workflow is documented in [Module Development Harness](module-development-harness.md).
+`hosty apps` is the preferred trusted-control-backed app command group. It covers app list, install/add, start, stop, restart, update, runtime switching, remove, app data backup, app data restore, app logs, app identity, and app open links. Local development uses app manifests with local command runtime profiles, for example `hosty apps install apps/demo-app/manifest.json --runtime dev`. `hosty modules` and `docker-host modules` remain compatibility aliases for legacy module management. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
 
 `hosty auth` contains local authentication recovery and bootstrap commands:
 

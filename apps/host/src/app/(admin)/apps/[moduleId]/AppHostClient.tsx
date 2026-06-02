@@ -360,10 +360,6 @@ function getEmbeddedUrl(
     return app.embeddedUrl;
   }
 
-  if (app.source === 'developer' && app.developerTargetId) {
-    return app.origin ? buildDirectClientUrl(app.origin, selectedPath) : null;
-  }
-
   return app.origin ? buildDirectClientUrl(app.origin, selectedPath) : null;
 }
 

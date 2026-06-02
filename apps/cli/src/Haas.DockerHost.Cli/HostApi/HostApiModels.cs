@@ -14,107 +14,6 @@ internal sealed class ModuleListResponse
     public IReadOnlyList<ModuleSummary> Modules { get; init; } = [];
 }
 
-internal sealed class ModuleDevTargetListResponse
-{
-    public bool DeveloperModeEnabled { get; init; }
-
-    public IReadOnlyList<ModuleDevTargetSummary> Targets { get; init; } = [];
-}
-
-internal sealed class ModuleDevTargetResponse
-{
-    public ModuleDevTargetSummary? Target { get; init; }
-}
-
-internal sealed class ModuleDevIdentityTokenRequest
-{
-    public string? UserEmail { get; init; }
-
-    public string? UserId { get; init; }
-}
-
-internal sealed class ModuleDevIdentityTokenResponse
-{
-    public string Token { get; init; } = "";
-
-    public string TokenType { get; init; } = "";
-
-    public string HeaderName { get; init; } = "";
-
-    public string TargetId { get; init; } = "";
-
-    public string ModuleId { get; init; } = "";
-
-    public string Origin { get; init; } = "";
-
-    public string Hostname { get; init; } = "";
-
-    public string PortKey { get; init; } = "";
-
-    public int ExpiresInSeconds { get; init; }
-
-    public ModuleDevIdentityUser? User { get; init; }
-}
-
-internal sealed class ModuleDevIdentityUser
-{
-    public string Id { get; init; } = "";
-
-    public string Role { get; init; } = "";
-
-    public string? Email { get; init; }
-
-    public string? DisplayName { get; init; }
-}
-
-internal sealed class ModuleDevTargetRequest
-{
-    public string? Id { get; init; }
-
-    public string MetadataUrl { get; init; } = "";
-
-    public string Hostname { get; init; } = "";
-
-    public string PortKey { get; init; } = "";
-
-    public string TargetBaseUrl { get; init; } = "";
-
-    public string? ExposurePolicy { get; init; }
-
-    public string? IdentityMode { get; init; }
-
-    public bool? Enabled { get; init; }
-}
-
-internal sealed class ModuleDevTargetSummary
-{
-    public string Id { get; init; } = "";
-
-    public string ModuleId { get; init; } = "";
-
-    public string ModuleName { get; init; } = "";
-
-    public string ModuleVersion { get; init; } = "";
-
-    public string MetadataUrl { get; init; } = "";
-
-    public string Hostname { get; init; } = "";
-
-    public string PortKey { get; init; } = "";
-
-    public string TargetBaseUrl { get; init; } = "";
-
-    public string ExposurePolicy { get; init; } = "";
-
-    public string IdentityMode { get; init; } = "";
-
-    public bool Enabled { get; init; }
-
-    public string CreatedAt { get; init; } = "";
-
-    public string UpdatedAt { get; init; } = "";
-}
-
 internal sealed class HostUsersResponse
 {
     public IReadOnlyList<HostUserSummary> Users { get; init; } = [];
@@ -261,8 +160,6 @@ internal sealed class HostAppSummary
     public bool System { get; init; }
 
     public string Source { get; init; } = "";
-
-    public string? DeveloperTargetId { get; init; }
 
     public string ModuleId { get; init; } = "";
 
@@ -833,13 +730,4 @@ internal sealed class ModuleRemovePlanContainer
     public bool Exists { get; init; }
 
     public bool WillRemove { get; init; }
-}
-
-internal sealed class DevDataCleanupResponse
-{
-    public string ModuleId { get; init; } = "";
-
-    public bool Removed { get; init; }
-
-    public string Path { get; init; } = "";
 }

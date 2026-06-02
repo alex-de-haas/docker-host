@@ -24,7 +24,6 @@ public sealed class DockerEngineClientTests
             "127.0.0.1",
             "",
             "",
-            "disabled",
             "root_test",
             3000);
 

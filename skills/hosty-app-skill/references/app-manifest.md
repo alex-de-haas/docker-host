@@ -73,7 +73,7 @@ Local command runtime fields:
 - `services[].runtimes.<profile>.command`: required for `type: "localCommand"`.
 - `services[].runtimes.<profile>.workingDirectory`: optional command working directory.
 - `services[].runtimes.<profile>.environment`: optional string map.
-- Local command profiles are parsed and normalized, but production local-process execution is future runtime-adapter work. Use `metadata.dev.json` and `hosty dev` for the current local process harness.
+- Local command profiles are executed by Hosty Core's local command runtime adapter when the app is installed or switched to that runtime profile.
 
 UI fields:
 

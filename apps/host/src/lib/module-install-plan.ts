@@ -317,7 +317,7 @@ export function buildInstallOrder(
 
 export function buildImages(moduleId: string, metadata: NormalizedModuleMetadata): InstallPlanImage[] {
   return metadata.containers
-    .filter(container => container.source.type === 'image')
+    .filter(container => (container.source?.type ?? 'image') === 'image')
     .map(container => ({
       moduleId,
       container: container.key,
@@ -334,6 +334,7 @@ export function buildPlanContainers(
   portAllocator?: PublishedPortAllocator
 ): InstallPlanContainer[] {
   return metadata.containers.map(container => {
+    const sourceType = container.source?.type ?? 'image';
     const image: InstallPlanImage = {
       moduleId,
       container: container.key,
@@ -352,11 +353,11 @@ export function buildPlanContainers(
     return {
       moduleId,
       key: container.key,
-      runtimeKind: container.source.type === 'process' ? 'localCommand' : 'docker',
-      containerName: container.source.type === 'process'
+      runtimeKind: sourceType === 'process' ? 'localCommand' : 'docker',
+      containerName: sourceType === 'process'
         ? getModuleProcessName(moduleId, container.key)
         : getModuleDockerName(moduleId, container.key),
-      networkAlias: container.source.type === 'process'
+      networkAlias: sourceType === 'process'
         ? ''
         : getModuleNetworkAlias(moduleId, container.key),
       image,

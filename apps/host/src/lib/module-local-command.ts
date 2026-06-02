@@ -19,6 +19,7 @@ import {
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type {
   InstalledModulePortBinding,
+  InstalledModuleContainerRecord,
   InstalledModuleProcessRecord,
   InstalledModuleRecord,
   InstalledSettingValue,
@@ -359,12 +360,15 @@ function getProcessServices(metadata: NormalizedModuleMetadata | null): Normaliz
   return (metadata?.containers ?? []).filter(service => service.source.type === 'process');
 }
 
-function serviceToContainerDependencyRecord(service: NormalizedModuleContainerMetadata) {
+function serviceToContainerDependencyRecord(service: NormalizedModuleContainerMetadata): InstalledModuleContainerRecord {
   return {
     key: service.key,
     containerName: getModuleProcessName('local', service.key),
     networkAlias: '',
-    image: service.image,
+    image: {
+      ...service.image,
+      reference: `${service.image.repository}:${service.image.tag}`,
+    },
   };
 }
 

@@ -203,29 +203,6 @@ Returned by `GET /api/apps`.
 }
 ```
 
-Developer app entries use the same shape with `source: "developer"` and `developerTargetId`:
-
-```json
-{
-  "id": "dev:mdev_reports",
-  "kind": "runtime",
-  "system": false,
-  "source": "developer",
-  "moduleId": "com.acme.reports",
-  "developerTargetId": "mdev_reports",
-  "displayName": "Reports Dev",
-  "version": "1.0.0",
-  "status": "available",
-  "statusReason": "available",
-  "accessMode": "allAuthenticated",
-  "entryPath": "/apps/dev/mdev_reports",
-  "embeddedUrl": "http://localhost:3100/",
-  "origin": "http://localhost:3100",
-  "identityTokenUrl": "/api/apps/dev/mdev_reports/identity-token",
-  "navigation": []
-}
-```
-
 Hosty Shell is returned as a system app to administrators:
 
 ```json
@@ -402,8 +379,6 @@ This endpoint requires authentication but does not require `host.admin`. Unauthe
 
 The backend reads installed module records from `modules.json`, reads each module's local `metadata.json`, requires explicit `ui` metadata, applies Host-owned module assignments, and reads runtime state for availability. It does not infer shell Apps from gateway exposure records or from `runtime.ports[].public` alone.
 
-The backend also reads enabled developer targets with stored shell app snapshots from `/data/dev/module-targets.json`. These entries are marked as `source: "developer"` and use developer app routes. Disabled targets are omitted from `/api/apps`.
-
 Response body:
 
 ```json
@@ -415,9 +390,8 @@ Response body:
 Response entries include:
 
 - app id;
-- source (`installed` or `developer`);
+- source (`installed`);
 - module id;
-- developer target id, for developer entries;
 - display name;
 - description, if available;
 - icon key, if declared by module `ui` metadata;
@@ -455,14 +429,6 @@ Response:
 ```
 
 The response is `Cache-Control: no-store`. The Host shell delivers the token to the iframe with `postMessage` and uses `expiresInSeconds` to schedule silent refresh before expiry; the module can use it directly or exchange it for a module-origin session cookie.
-
-### `POST /api/apps/dev/{targetId}/identity-token`
-
-Issues a short-lived Host-signed module identity token for a developer shell App iframe.
-
-This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. It is available only when the selected developer target is enabled, visible to the current principal, and has a stored shell app snapshot.
-
-Response shape matches the installed module identity token endpoint:
 
 ```json
 {
@@ -893,7 +859,7 @@ The control channel is not a public Host API surface. It is not proxied by the g
 Initial control routes:
 
 - `GET /control/v1/host/status` returns Host readiness for CLI preflight checks.
-- `GET /control/v1/apps` lists Hosty system apps, runtime apps, and developer apps for local CLI management.
+- `GET /control/v1/apps` lists Hosty system apps and runtime apps for local CLI management.
 - `GET /control/v1/apps/{appId}/backups` lists app data backups.
 - `POST /control/v1/apps/{appId}/backups` creates a manual app data backup.
 - `POST /control/v1/apps/{appId}/backups/{backupId}/restore` restores one backup. Request body: `{ "confirmed": true, "stopBeforeRestore": true, "createPreRestoreBackup": true }`.
@@ -905,11 +871,6 @@ Initial control routes:
 - `POST /control/v1/modules/{moduleId}/start`, `stop`, and `restart` run module lifecycle actions.
 - `POST /control/v1/modules/{moduleId}/remove/plan` creates a remove plan.
 - `POST /control/v1/modules/{moduleId}/remove` applies a reviewed remove plan.
-- `GET /control/v1/modules/dev/targets`, `PUT /control/v1/modules/dev/targets/{targetId}`, and `DELETE /control/v1/modules/dev/targets/{targetId}` manage local developer targets.
-- `POST /control/v1/modules/dev/targets/{targetId}/identity-token` issues a short-lived Host-signed identity token for a local development user and developer target. Request body: `{ "userEmail": "user@docker-host.local" }` or `{ "userId": "user_..." }`. The Host checks the target exposure policy and module assignments before signing the token.
-- `DELETE /control/v1/modules/dev/data/{moduleId}` removes one module's persistent development data.
-- Control auth, user, invitation, assignment, directory policy, and app registry helpers support `hosty dev`.
-
 App data backups protect only the primary app data directory:
 
 - preferred path: `apps/<app-id>/data`;
@@ -933,7 +894,7 @@ Session revocation and audit purge require `host.auth.configure`; mutating brows
 
 User Management APIs support the `/settings/users` operations surface:
 
-- `GET /api/auth/users` returns Host user summaries, invitation summaries, assignable installed modules and enabled developer shell apps, and supported invite expiry options.
+- `GET /api/auth/users` returns Host user summaries, invitation summaries, assignable installed runtime apps, and supported invite expiry options.
 - `GET /api/auth/invitations` returns invitation summaries.
 - `POST /api/auth/invitations` creates a local user invitation. Request body: `{ "email": "user@example.test", "displayName": "User", "role": "host.user", "ttlMs": 86400000, "assignedModuleIds": ["com.example.reports"] }`. The response includes the raw setup token and setup URL once.
 - `DELETE /api/auth/invitations/{inviteId}` revokes a pending invitation.

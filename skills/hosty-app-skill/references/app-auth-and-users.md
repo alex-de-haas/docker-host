@@ -83,7 +83,7 @@ Token rules:
 - Treat `hostRole`, `moduleAccess`, `moduleExposurePolicy`, email, and name as signed claims, not standalone trusted headers.
 - Public anonymous requests normally do not include a user token.
 - Public authenticated requests with optional identity use `moduleAccess: "publicAuthenticated"`.
-- Installed app embeds use the installed app or module id as `aud`; developer app embeds preserve the developer target module id as `aud`.
+- App embeds use the installed app or module id as `aud`, including local command runtime profiles.
 
 Common claims:
 

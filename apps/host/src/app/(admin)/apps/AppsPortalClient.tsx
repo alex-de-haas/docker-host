@@ -149,11 +149,6 @@ function AppPortalEntry({ app }: { app: HostAppEntry }) {
         </Badge>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {app.source === 'developer' && (
-          <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-            Dev
-          </Badge>
-        )}
         {app.system && (
           <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-700">
             System

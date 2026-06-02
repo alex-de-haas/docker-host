@@ -4,7 +4,7 @@ export type HostAppAccessMode = 'allAuthenticated' | 'assignedUsersOnly';
 
 export type HostAppStatus = 'available' | 'unavailable';
 
-export type HostAppSource = 'system' | 'installed' | 'developer';
+export type HostAppSource = 'system' | 'installed';
 
 export type HostAppKind = 'system' | 'runtime';
 
@@ -33,7 +33,6 @@ export interface HostAppEntry {
   system: boolean;
   source: HostAppSource;
   moduleId: string;
-  developerTargetId?: string;
   displayName: string;
   description?: string;
   icon?: string;
