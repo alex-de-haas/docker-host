@@ -1,4 +1,7 @@
+import path from 'node:path';
 import { readAuthStateSnapshot } from './auth-store.ts';
+import { readAppsStoreSnapshot } from './app-store.ts';
+import type { InstalledAppRecord } from './app-store.ts';
 import { getHostRuntimeConfig } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import {
@@ -6,7 +9,7 @@ import {
   readModulesStoreSnapshot,
 } from './module-store.ts';
 import { readModuleDevTargetStateSnapshot } from './module-dev-store.ts';
-import { validateModuleUiMetadata } from './module-metadata.ts';
+import { validateAndNormalizeMetadata, validateModuleUiMetadata } from './module-metadata.ts';
 import type { HostPrincipal, ModuleAccessAssignment } from '../types/auth.ts';
 import type { ModuleExposurePolicy } from '../types/auth.ts';
 import type {
@@ -20,6 +23,7 @@ import type { ModuleDevTargetRecord } from '../types/module-dev.ts';
 import type {
   InstalledModuleRecord,
   ModuleMetadata,
+  NormalizedModuleMetadata,
   ModuleRuntimeStatus,
   ModuleUiMetadata,
 } from '../types/modules.ts';
@@ -45,6 +49,10 @@ interface ModuleAppCandidate {
   app: HostAppEntry | null;
   visibleToUsers: boolean;
 }
+
+type AppRegistryMetadata = (ModuleMetadata | NormalizedModuleMetadata) & {
+  selectedRuntime?: string;
+};
 
 interface InstalledUiRoute {
   origin: string;
@@ -103,19 +111,25 @@ export async function listHostApps(
   options: ListHostAppsOptions = {}
 ): Promise<HostAppEntry[]> {
   const config = options.config ?? getHostRuntimeConfig();
-  const [modulesStore, authState, developerTargetState] = await Promise.all([
+  const [modulesStore, appsStore, authState, developerTargetState] = await Promise.all([
     readModulesStoreSnapshot(config),
+    readAppsStoreSnapshot(config),
     readAuthStateSnapshot(config),
     readModuleDevTargetStateSnapshot(config),
   ]);
+  const installedModules = mergeInstalledRuntimeRecords(
+    modulesStore.modules,
+    appsStore.apps,
+    config
+  );
 
-  const runtimeStatusReader = modulesStore.modules.length > 0
+  const runtimeStatusReader = installedModules.some(module => module.containers.length > 0)
     ? options.runtimeStatusReader ?? (await getDefaultRuntimeStatusReader())
     : null;
 
-  const installedCandidates = runtimeStatusReader
+  const installedCandidates = installedModules.length > 0
     ? await Promise.all(
-        modulesStore.modules.map(module =>
+        installedModules.map(module =>
           buildModuleAppCandidate(module, authState.moduleAssignments, runtimeStatusReader, config, options.requestOrigin)
         )
       )
@@ -144,10 +158,69 @@ async function getDefaultRuntimeStatusReader(): Promise<RuntimeStatusReader> {
   return defaultRuntimeStatusReaderPromise;
 }
 
+function mergeInstalledRuntimeRecords(
+  moduleRecords: InstalledModuleRecord[],
+  appRecords: InstalledAppRecord[],
+  config: HostRuntimeConfig
+): InstalledModuleRecord[] {
+  const appsById = new Map(appRecords.map(app => [app.id, app]));
+  const moduleIds = new Set(moduleRecords.map(module => module.id));
+  const mergedModules = moduleRecords.map(module => {
+    const app = appsById.get(module.id);
+    if (!app) {
+      return module;
+    }
+
+    return {
+      ...module,
+      ...(app.manifestUrl && !module.manifestUrl ? { manifestUrl: app.manifestUrl } : {}),
+      ...(app.manifestPath && !module.manifestPath ? { manifestPath: app.manifestPath } : {}),
+      ...(app.selectedChannel ? { selectedChannel: app.selectedChannel } : {}),
+      ...(app.selectedRuntime ? { selectedRuntime: app.selectedRuntime } : {}),
+    };
+  });
+  const appOnlyModules = appRecords
+    .filter(app => !moduleIds.has(app.id))
+    .map(app => appRecordToInstalledModuleRecord(app, config));
+
+  return [...mergedModules, ...appOnlyModules];
+}
+
+function appRecordToInstalledModuleRecord(
+  app: InstalledAppRecord,
+  config: HostRuntimeConfig
+): InstalledModuleRecord {
+  const manifestPath = app.manifestPath ?? path.posix.join('apps', app.id, 'manifest.json');
+  const resolvedManifestPath = resolveAppManifestPathForModuleRecord(manifestPath, config);
+
+  return {
+    id: app.id,
+    metadataUrl: app.manifestUrl ?? manifestPath,
+    ...(app.manifestUrl ? { manifestUrl: app.manifestUrl } : {}),
+    metadataPath: resolvedManifestPath,
+    manifestPath: resolvedManifestPath,
+    ...(app.selectedChannel ? { selectedChannel: app.selectedChannel } : {}),
+    ...(app.selectedRuntime ? { selectedRuntime: app.selectedRuntime } : {}),
+    containers: [],
+    operationStatus: 'installed',
+    installedAt: app.installedAt,
+    updatedAt: app.updatedAt,
+  };
+}
+
+function resolveAppManifestPathForModuleRecord(
+  manifestPath: string,
+  config: HostRuntimeConfig
+) {
+  return path.isAbsolute(manifestPath)
+    ? manifestPath
+    : path.join(config.dataRootContainer, manifestPath);
+}
+
 async function buildModuleAppCandidate(
   module: InstalledModuleRecord,
   assignments: ModuleAccessAssignment[],
-  runtimeStatusReader: RuntimeStatusReader,
+  runtimeStatusReader: RuntimeStatusReader | null,
   config: HostRuntimeConfig,
   requestOrigin: string | undefined
 ): Promise<ModuleAppCandidate> {
@@ -217,7 +290,8 @@ async function buildModuleAppCandidate(
         statusReason: 'moduleOperationUnavailable',
         accessMode,
         capabilities: getRuntimeAppCapabilities(module),
-        selectedRuntime: 'docker',
+        selectedChannel: module.selectedChannel,
+        selectedRuntime: getSelectedRuntime(module, metadataResult.metadata),
         operationStatus,
         lastOperation: module.lastOperation,
         entryPath: buildAppEntryPath(module.id, uiResult.ui.entrypoint.path),
@@ -227,6 +301,18 @@ async function buildModuleAppCandidate(
         identityTokenUrl: buildIdentityTokenUrl(module.id),
         navigation: route ? buildNavigation(module.id, uiResult.ui.navigation, route.origin) : [],
       },
+      visibleToUsers: false,
+    };
+  }
+
+  if (!runtimeStatusReader) {
+    return {
+      app: buildUnavailableApp({
+        module,
+        metadata: metadataResult.metadata,
+        reason: 'runtimeUnavailable',
+        accessMode,
+      }),
       visibleToUsers: false,
     };
   }
@@ -255,7 +341,8 @@ async function buildModuleAppCandidate(
         : 'runtimeUnavailable',
       accessMode,
       capabilities: getRuntimeAppCapabilities(module),
-      selectedRuntime: 'docker',
+      selectedChannel: module.selectedChannel,
+      selectedRuntime: getSelectedRuntime(module, metadataResult.metadata),
       operationStatus,
       lastOperation: module.lastOperation,
       runtimeState: runtimeStatus.state,
@@ -274,13 +361,14 @@ async function safeReadInstalledMetadata(
   module: InstalledModuleRecord,
   config: HostRuntimeConfig
 ): Promise<{
-  metadata: ModuleMetadata | null;
+  metadata: AppRegistryMetadata | null;
   reason: Extract<HostAppStatusReason, 'metadataMissing' | 'metadataInvalid'>;
 }> {
   try {
     const metadata = await readModuleMetadata(module, config);
+    const normalizedMetadata = normalizeMetadataForAppRegistry(metadata);
     return {
-      metadata,
+      metadata: normalizedMetadata,
       reason: metadata ? 'metadataInvalid' : 'metadataMissing',
     };
   } catch {
@@ -291,8 +379,22 @@ async function safeReadInstalledMetadata(
   }
 }
 
+function normalizeMetadataForAppRegistry(
+  metadata: ModuleMetadata | null
+): AppRegistryMetadata | null {
+  if (!metadata) {
+    return null;
+  }
+
+  if (metadata.schemaVersion !== 'app.0.1') {
+    return metadata;
+  }
+
+  return validateAndNormalizeMetadata(metadata, '$').metadata;
+}
+
 function normalizeInstalledModuleUi(
-  metadata: ModuleMetadata,
+  metadata: AppRegistryMetadata,
   moduleId: string
 ): {
   ui?: ModuleUiMetadata;
@@ -361,7 +463,7 @@ function buildUnavailableApp({
   accessMode,
 }: {
   module: InstalledModuleRecord;
-  metadata: ModuleMetadata | null;
+  metadata: AppRegistryMetadata | null;
   reason: HostAppStatusReason;
   accessMode: HostAppAccessMode;
 }): HostAppEntry {
@@ -379,7 +481,8 @@ function buildUnavailableApp({
     statusReason: reason,
     accessMode,
     capabilities: getRuntimeAppCapabilities(module),
-    selectedRuntime: 'docker',
+    selectedChannel: module.selectedChannel,
+    selectedRuntime: getSelectedRuntime(module, metadata),
     operationStatus,
     lastOperation: module.lastOperation,
     entryPath: buildAppEntryPath(module.id, '/'),
@@ -388,6 +491,13 @@ function buildUnavailableApp({
     identityTokenUrl: null,
     navigation: [],
   };
+}
+
+function getSelectedRuntime(
+  module: InstalledModuleRecord,
+  metadata: AppRegistryMetadata | null
+) {
+  return module.selectedRuntime ?? metadata?.selectedRuntime ?? 'docker';
 }
 
 function buildDeveloperAppCandidate(
@@ -571,7 +681,7 @@ function getRuntimeAppCapabilities(module: InstalledModuleRecord) {
 
 function resolveInstalledUiRoute(
   module: InstalledModuleRecord,
-  metadata: ModuleMetadata,
+  metadata: AppRegistryMetadata,
   ui: ModuleUiMetadata
 ): InstalledUiRoute | null {
   const endpoint = metadata.endpoints?.find(candidate => candidate.key === ui.entrypoint.portKey);

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createCachedRuntimeStatusReader, listHostApps } from './app-registry-service.ts';
+import { writeAppsStore } from './app-store.ts';
 import { createEmptyAuthState, writeAuthState } from './auth-store.ts';
 import { writeModuleDevTargetState } from './module-dev-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
@@ -78,6 +79,33 @@ test('includes Hosty Shell as a system app for admin management views', async ()
   assert.equal(apps[0].status, 'available');
   assert.equal(apps[0].entryPath, '/');
   assert.deepEqual(apps[0].capabilities, ['open', 'update']);
+});
+
+test('returns app-oriented installs from apps.json without legacy module records', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledApp(config, {
+    appId: 'com.example.project-manager',
+    name: 'Project Manager',
+  });
+
+  let runtimeStatusReads = 0;
+  const runtimeStatusReader = async (): Promise<ModuleRuntimeStatus> => {
+    runtimeStatusReads += 1;
+    throw new Error('app-only records should not read Docker status without runtime bindings');
+  };
+
+  const userApps = await listHostApps(assignedUser, { config, runtimeStatusReader });
+  const adminApps = await listHostApps(admin, { config, runtimeStatusReader });
+
+  assert.equal(userApps.length, 0);
+  assert.equal(adminApps.length, 1);
+  assert.equal(adminApps[0].id, 'com.example.project-manager');
+  assert.equal(adminApps[0].source, 'installed');
+  assert.equal(adminApps[0].displayName, 'Project Manager');
+  assert.equal(adminApps[0].selectedRuntime, 'docker');
+  assert.equal(adminApps[0].status, 'unavailable');
+  assert.equal(adminApps[0].statusReason, 'uiPortMissing');
+  assert.equal(runtimeStatusReads, 0);
 });
 
 test('uses localhost for local fallback shell app origins', async () => {
@@ -752,6 +780,79 @@ async function writeInstalledModule(
         }
       : {}),
   }, null, 2)}\n`);
+}
+
+async function writeInstalledApp(
+  config: HostRuntimeConfig,
+  input: {
+    appId: string;
+    name: string;
+  }
+) {
+  const appRoot = path.join(config.dataRootContainer, 'apps', input.appId);
+  await fs.mkdir(appRoot, { recursive: true });
+  await fs.writeFile(path.join(appRoot, 'manifest.json'), `${JSON.stringify({
+    schemaVersion: 'app.0.1',
+    id: input.appId,
+    name: input.name,
+    description: `${input.name} fixture.`,
+    version: '1.0.0',
+    runtimeProfiles: [
+      {
+        key: 'docker',
+        type: 'docker',
+        default: true,
+      },
+    ],
+    services: [
+      {
+        key: 'web',
+        runtimes: {
+          docker: {
+            type: 'docker',
+            image: 'ghcr.io/example/project-manager:1.0.0',
+            ports: [
+              {
+                key: 'http',
+                containerPort: 3000,
+                protocol: 'http',
+                public: true,
+              },
+            ],
+          },
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'web',
+        service: 'web',
+        port: 'http',
+        public: true,
+      },
+    ],
+    ui: {
+      icon: 'boxes',
+      entrypoint: {
+        endpoint: 'web',
+        path: '/',
+      },
+    },
+  }, null, 2)}\n`);
+  await writeAppsStore({
+    schemaVersion: 'app-store.0.1',
+    apps: [
+      {
+        id: input.appId,
+        manifestUrl: 'https://apps.example.test/project-manager/manifest.json',
+        manifestPath: `apps/${input.appId}/manifest.json`,
+        selectedRuntime: 'docker',
+        installedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  }, config);
 }
 
 async function writeModulesStore(

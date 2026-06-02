@@ -112,6 +112,8 @@ export interface InstalledModuleRecord {
   manifestUrl?: string;
   metadataPath?: string;
   manifestPath?: string;
+  selectedChannel?: string;
+  selectedRuntime?: string;
   metadataDigest?: string;
   planDigest?: string;
   containers: InstalledModuleContainerRecord[];
