@@ -22,7 +22,7 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 
 ## Reference Map
 
-- Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, legacy `metadata.json`, runtime profiles, settings, storage, dependencies, endpoints, install/update behavior, or backups.
+- Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, legacy `metadata.json`, app-level runtime profiles, service runtime implementations, settings, storage, dependencies, endpoints, install/update behavior, or backups.
 - Read `references/app-auth-and-users.md` when working with Shell embedding, standalone app auth, gateway protection, `X-Docker-Host-Identity`, scoped user directory APIs, app-owned roles, external providers, or third-party integration credentials.
 - Read `references/app-dev-mode.md` when linking a local app dev server through Hosty or authoring `metadata.dev.json`.
 - Read `references/demo-app-patterns.md` when copying repo-local examples from `modules/demo-module`.
@@ -33,8 +33,8 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 ### Author A New Runtime App
 
 1. Choose a stable reverse-DNS app id, display name, version, and whether the app is user-facing, service-only, or both.
-2. Prefer an `app.0.1` manifest. Start from `assets/app-template/manifest.json`, then replace ids, image references, ports, settings, storage, UI, and dependencies.
-3. Declare one or more runtime profiles. Docker profiles are installable today. `localCommand` profiles are parsed and normalized for future runtime switching and are useful for development planning, but production local-command supervision is still planned.
+2. Prefer an `app.0.1` manifest. Start from `assets/app-template/manifest.json`, then replace ids, service keys, runtime profiles, image references, ports, settings, storage, UI, and dependencies.
+3. Declare one or more app-level runtime profiles, then add per-service runtime implementations under `services[].runtimes.<profileKey>`. Docker service runtimes are installable today. `localCommand` service runtimes are parsed and normalized for future runtime switching and are useful for development planning, but production local-command supervision is still planned.
 4. Treat `source` as optional Git metadata. Some apps, such as Redis-like service dependencies, may have only a Docker image and no source repository.
 5. Use `data.enabled: true` when the app needs a primary Hosty-managed data directory. Hosty backs up only that primary `data/` directory, not external mounts or additional storage.
 6. Add `ui` only when the app should appear in Hosty Shell. Service-only apps can omit UI and still be managed as runtime apps or dependencies.
@@ -42,7 +42,7 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 ### Wrap An Existing Docker App
 
 1. Locate the image reference or Docker build context, runtime port, health endpoint, configuration environment variables, writable paths, and any external host folders.
-2. Prefer an `app.0.1` manifest with a Docker runtime profile. Legacy `0.2` or `0.3` module metadata is acceptable when updating an existing legacy module.
+2. Prefer an `app.0.1` manifest with one Docker runtime profile and one or more services. Legacy `0.2` or `0.3` module metadata is acceptable when updating an existing legacy module.
 3. Map administrator-provided settings to environment variables. Never place real secret defaults in a manifest.
 4. Use the primary data directory for app-owned persistent state. Use external mount collections only for administrator-selected external folders that Hosty must not back up or delete.
 5. Add Shell UI metadata only for browser UI access through Hosty Shell. Dedicated service/API hostnames are gateway exposures, not Shell discovery.
@@ -69,9 +69,9 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 ### Update An Existing Runtime App
 
 1. Preserve the app id unless intentionally creating a different app.
-2. Treat runtime profile keys, endpoint keys, setting keys, storage keys, dependency ids, and data directory semantics as stable contracts.
+2. Treat runtime profile keys, service keys, endpoint keys, setting keys, storage keys, dependency ids, and data directory semantics as stable contracts.
 3. Remember that update refreshes the manifest or metadata URL first. It is not only a Docker image pull.
-4. Review install/update plan impact: images, runtime profile selection, settings schema, primary data directory, storage mappings, dependencies, endpoints, resources, UI metadata, and backups.
+4. Review install/update plan impact: selected runtime profile, service images or commands, service dependencies, settings schema, primary data directory, storage mappings, dependencies, endpoints, resources, UI metadata, and backups.
 5. Hosty creates pre-update backups for the primary app data directory when it exists. External mounts are excluded by design.
 
 ## Validation

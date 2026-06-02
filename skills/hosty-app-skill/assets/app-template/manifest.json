@@ -8,29 +8,52 @@
     "type": "git",
     "repository": "https://github.com/example/example-app"
   },
-  "runtimes": [
+  "runtimeProfiles": [
     {
       "key": "docker",
+      "label": "Docker",
       "type": "docker",
-      "image": "ghcr.io/example/example-app:1.0.0",
-      "ports": [
-        {
-          "key": "http",
-          "containerPort": 3000,
-          "protocol": "http",
-          "public": true
+      "default": true
+    }
+  ],
+  "services": [
+    {
+      "key": "app",
+      "label": "App",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": "ghcr.io/example/example-app:1.0.0",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "resources": {
+            "cpus": 0.5,
+            "memory": "512m"
+          }
         }
-      ],
-      "resources": {
-        "cpus": 0.5,
-        "memory": "512m"
       }
     }
   ],
-  "defaultRuntime": "docker",
+  "endpoints": [
+    {
+      "key": "web",
+      "service": "app",
+      "port": "http",
+      "public": true
+    }
+  ],
   "ui": {
     "icon": "boxes",
-    "entrypoint": "/",
+    "entrypoint": {
+      "endpoint": "web",
+      "path": "/"
+    },
     "navigation": [
       {
         "label": "Overview",
@@ -43,6 +66,7 @@
     "targets": [
       {
         "runtime": "docker",
+        "service": "app",
         "containerPath": "/app/data"
       }
     ]
@@ -55,7 +79,7 @@
       "default": "http://localhost:3000",
       "targets": [
         {
-          "container": "docker",
+          "service": "app",
           "type": "env",
           "name": "APP_BASE_URL"
         }

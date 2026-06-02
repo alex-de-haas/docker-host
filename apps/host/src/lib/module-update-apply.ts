@@ -849,7 +849,7 @@ function getInstalledManifestPath(metadata: NormalizedModuleMetadata, moduleId: 
 
 function getSelectedRuntime(metadata: NormalizedModuleMetadata) {
   return metadata.sourceSchemaVersion === 'app.0.1'
-    ? metadata.containers[0]?.key ?? 'docker'
+    ? metadata.selectedRuntime ?? metadata.containers[0]?.key ?? 'docker'
     : 'docker';
 }
 

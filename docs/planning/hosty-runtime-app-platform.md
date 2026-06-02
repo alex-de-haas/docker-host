@@ -218,31 +218,72 @@ Example:
     "type": "git",
     "repository": "https://github.com/example/notes"
   },
-  "runtimes": [
+  "runtimeProfiles": [
     {
       "key": "docker",
       "type": "docker",
-      "image": "ghcr.io/example/notes:1.4.0"
+      "default": true
     },
     {
       "key": "dev",
-      "type": "localCommand",
-      "workingDirectory": ".",
-      "setup": "npm install",
-      "command": "npm run dev",
-      "port": 3000
+      "type": "localCommand"
     }
   ],
   "defaultRuntime": "docker",
+  "services": [
+    {
+      "key": "app",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": "ghcr.io/example/notes:1.4.0",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": ".",
+          "command": "npm run dev",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "localPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "web",
+      "service": "app",
+      "port": "http",
+      "public": true
+    }
+  ],
   "ui": {
-    "entrypoint": "/"
+    "entrypoint": {
+      "endpoint": "web",
+      "path": "/"
+    }
   },
-  "storage": {
-    "directories": [
+  "data": {
+    "enabled": true,
+    "targets": [
       {
-        "key": "data",
-        "path": "data",
-        "mountAs": "/app/data"
+        "runtime": "docker",
+        "service": "app",
+        "containerPath": "/app/data"
       }
     ]
   }
@@ -270,19 +311,23 @@ An app can have no source repository:
   "id": "io.redis.cache",
   "name": "Redis",
   "version": "7.2",
-  "runtimes": [
+  "runtimeProfiles": [
     {
       "key": "docker",
       "type": "docker",
-      "image": "redis:7.2"
+      "default": true
     }
   ],
   "defaultRuntime": "docker",
   "services": [
     {
       "key": "redis",
-      "port": 6379,
-      "protocol": "tcp"
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": "redis:7.2"
+        }
+      }
     }
   ]
 }

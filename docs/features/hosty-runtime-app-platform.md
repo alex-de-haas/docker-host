@@ -161,6 +161,7 @@ Current system app behavior:
 
 - `GET /control/v1/apps` includes Hosty Shell for local CLI/admin management.
 - `GET /api/apps` includes Hosty Shell only for Host administrators.
+- The Host sidebar excludes system apps so Host-owned management surfaces do not appear as user app navigation items.
 - Host users see runtime and developer apps allowed by app access policy, but not the Hosty Shell system app as a removable/manageable app.
 - Hosty Shell currently has capabilities `open` and `update`.
 - Runtime apps currently derive capabilities from installed module operation status. Installed apps expose actions such as `open`, `update`, `restart`, `stop`, `configure`, and `remove`; removing apps expose no actions.
@@ -189,16 +190,22 @@ Supported `app.0.1` fields in the compatibility adapter:
 - `id`, `name`, `description`, `version`;
 - optional `source` for Git metadata;
 - optional `channelsUrl`;
-- `runtimes` with `docker` and `localCommand` profiles;
+- `runtimeProfiles` with `docker` and `localCommand` profiles;
+- `services` with a runtime implementation for each declared runtime profile;
 - `defaultRuntime`;
 - `ui`;
 - `data`;
 - `storage`;
 - `settings`;
 - `dependencies` with `manifestUrl` or `metadataUrl`;
+- `connections`;
 - `endpoints`.
 
+`runtimeProfiles[]` are mutually exclusive app-level ways to run the app. `services[]` are the runtime services that run together for the selected profile, such as `web`, `api`, and `worker`. The compatibility adapter selects `defaultRuntime` or the first/default profile, then maps every `services[].runtimes[defaultRuntime]` entry into canonical legacy `0.3` services before install/update planning.
+
 Docker runtime profiles can be installed through the existing Docker module engine. Local command runtime profiles can be parsed and normalized, but production local-process runtime execution is not implemented yet.
+
+The earlier top-level `runtimes[]` shape is still accepted as a single-service compatibility path, but new `app.0.1` manifests should use `runtimeProfiles[]` and `services[]`.
 
 Reserved `app.0.1` fields:
 
@@ -209,7 +216,8 @@ These fields are accepted by the current parser so manifests can start using the
 
 Storage and data behavior:
 
-- `data.enabled: true` creates a primary `data` storage directory for Docker runtime profiles unless one is already declared.
+- `data.enabled: true` creates a primary `data` storage directory for Docker runtime services unless one is already declared.
+- `data.targets[].service` selects which service receives the primary data mount.
 - `data.targets[].containerPath` controls the Docker container path for the primary app data directory. The default is `/app/data`.
 - The Docker runtime injects `HOSTY_APP_DATA_DIR` when a primary data mapping exists.
 - For local command runtime profiles, the manifest can declare data intent, but production local process execution and environment injection are future runtime-adapter work.
@@ -222,28 +230,52 @@ Example minimal app manifest:
   "id": "com.example.notes",
   "name": "Notes",
   "version": "1.2.3",
-  "runtimes": [
+  "runtimeProfiles": [
     {
       "key": "docker",
       "type": "docker",
-      "image": "ghcr.io/example/notes:1.2.3",
-      "ports": [
-        {
-          "key": "http",
-          "containerPort": 3000,
-          "protocol": "http"
+      "default": true
+    }
+  ],
+  "services": [
+    {
+      "key": "app",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": "ghcr.io/example/notes:1.2.3",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
         }
-      ]
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "web",
+      "service": "app",
+      "port": "http",
+      "public": true
     }
   ],
   "ui": {
-    "entrypoint": "/"
+    "entrypoint": {
+      "endpoint": "web",
+      "path": "/"
+    }
   },
   "data": {
     "enabled": true,
     "targets": [
       {
         "runtime": "docker",
+        "service": "app",
         "containerPath": "/app/data"
       }
     ]

@@ -4,6 +4,7 @@ Demo Module is a small Next.js application used to validate Docker Host module o
 
 - install and remove through `metadata.json`;
 - start, stop, restart, and update lifecycle actions;
+- two-service frontend/backend metadata with startup dependency and internal endpoint wiring;
 - setting injection through environment variables;
 - module-owned storage mounts under `/app/data` and `/app/logs`;
 - optional external mount collections under `/mnt/sources/{key}`;
@@ -26,7 +27,12 @@ modules/demo-module/metadata.json
 modules/demo-module/metadata.dev.json
 ```
 
-For Docker Host testing, install the module from the raw metadata URL in this repository. The metadata declares one `app` container using the GitHub Container Registry image reference:
+For Docker Host testing, install the module from the raw metadata URL in this repository. The metadata declares two services:
+
+- `backend` exposes the non-public `api` endpoint;
+- `frontend` depends on `backend`, exposes the public `http` endpoint, and receives `DEMO_BACKEND_BASE_URL` from the `api` endpoint connection.
+
+Both services currently use the same GitHub Container Registry image reference:
 
 ```text
 ghcr.io/alex-de-haas/demo-module:latest
@@ -45,12 +51,12 @@ npm run demo-module:docker:build
 Then install the module in Docker Host:
 
 ```bash
-docker-host modules install https://raw.githubusercontent.com/alex-de-haas/docker-host/main/modules/demo-module/metadata.json
+hosty modules install https://raw.githubusercontent.com/alex-de-haas/docker-host/main/modules/demo-module/metadata.json
 ```
 
 ## Local app development
 
-Run the app without Docker:
+Run the frontend-compatible app process without Docker:
 
 ```bash
 npm run demo-module:dev
@@ -58,25 +64,27 @@ npm run demo-module:dev
 
 The development server listens on `http://localhost:3100`.
 
+The development metadata also declares a `backend` process on `http://localhost:3101` so the same service keys, endpoint wiring, and dependency shape are available to the metadata validator. The current `hosty dev up` supervisor starts the process behind the selected public endpoint, which is the `frontend` service.
+
 To run it through Docker Host with real gateway identity, app shell embedding, development users, assignments, and scoped directory behavior, use the repository-local dev metadata:
 
 ```bash
-docker-host dev up --manifest modules/demo-module/metadata.dev.json
+hosty dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
 For direct API diagnostics against the local module origin, issue a real Host-signed development token after `dev up` has prepared the target:
 
 ```bash
-TOKEN="$(docker-host dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
+TOKEN="$(hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
 curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
 ```
 
-This is useful for checking module-side identity validation without a browser, but it is not a replacement for testing the app shell or gateway URLs printed by `docker-host dev up`.
+This is useful for checking module-side identity validation without a browser, but it is not a replacement for testing the app shell or gateway URLs printed by `hosty dev up`.
 
 When running from inside `modules/demo-module`, the default works because the CLI discovers `metadata.dev.json` in the current directory:
 
 ```bash
-docker-host dev up
+hosty dev up
 ```
 
 Useful endpoints:
@@ -93,7 +101,7 @@ Useful endpoints:
 
 ## Auth gateway testing
 
-When the module is installed by Docker Host, the container receives:
+When the module is installed by Docker Host, each service container receives:
 
 - `DOCKER_HOST_INTERNAL_ORIGIN` for Host discovery and internal APIs;
 - `DOCKER_HOST_MODULE_ID` as the expected JWT audience;
@@ -103,12 +111,12 @@ Requests routed through a Host gateway exposure may include `X-Docker-Host-Ident
 
 ## External ingress readiness testing
 
-The demo module is suitable as the first manual external ingress readiness target because its metadata declares a public HTTP runtime port and a health endpoint:
+The demo module is suitable as the first manual external ingress readiness target because its `frontend` service metadata declares a public HTTP endpoint and a health endpoint:
 
 ```text
-runtime.ports[0].key = http
-runtime.ports[0].public = true
-runtime.healthcheck.path = /api/health
+endpoints[].key = http
+endpoints[].service = frontend
+services[].healthCheck.path = /api/health
 ```
 
 After installing the module, create a Host gateway exposure for the `http` port under `HOST_GATEWAY_BASE_DOMAIN`. The Host external ingress readiness panel can then generate manual DNS, reverse proxy, TLS, OIDC, and trusted-proxy setup guidance for that exposure. Once the external route is configured, use the demo dashboard and `/api/auth/identity` to verify that gateway identity headers, forwarded request headers, and module directory access still behave the same through the external hostname.

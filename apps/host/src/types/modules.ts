@@ -494,6 +494,11 @@ export interface NormalizedModuleMetadata {
    * and then mapped to the legacy Docker module runtime model.
    */
   sourceSchemaVersion?: 'app.0.1';
+  /**
+   * Active app-level runtime profile selected while converting an app manifest.
+   * For multi-service app manifests this is distinct from service/container keys.
+   */
+  selectedRuntime?: string;
   id: string;
   name: string;
   description?: string;

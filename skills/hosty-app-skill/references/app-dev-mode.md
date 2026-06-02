@@ -18,7 +18,9 @@ For this repository's demo app:
 npm run host:dev:demo
 ```
 
-This wraps `hosty dev up --manifest modules/demo-module/metadata.dev.json`. It starts Hosty at `http://localhost:3000`, the demo app at `http://localhost:3100`, seeds development users through Hosty control, and links a developer target visible through Hosty Shell.
+This wraps `hosty dev up --manifest modules/demo-module/metadata.dev.json`. It starts Hosty at `http://localhost:3000`, starts the demo app's public `frontend` process at `http://localhost:3100`, seeds development users through Hosty control, and links a developer target visible through Hosty Shell.
+
+The demo metadata also declares a `backend` process service for multi-service metadata validation. The current CLI supervisor starts the process behind the selected public endpoint; additional services remain in the metadata served to Hosty but are not launched as separate local processes yet.
 
 It also enables development auto-login and browser account seeding. The default accounts are:
 
@@ -35,7 +37,7 @@ The generic installed-CLI harness is `hosty dev`. The deprecated `docker-host de
 
 The harness reads a local `metadata.dev.json` file and can:
 
-- run the app's local process service;
+- run the app's selected public local process service;
 - start a local Hosty process from configured `HOST_DEV_REPOSITORY_PATH` or connect to an already running loopback Host origin with `--host-url`;
 - use `<HOST_DATA_ROOT_HOST>/run/control.json` for trusted local control;
 - seed development users, assignments, and directory policy through Hosty-owned control routes;

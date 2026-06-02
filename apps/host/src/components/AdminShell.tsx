@@ -46,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { notifyHostAppsChanged, useHostApps } from '@/hooks/useHostApps';
+import { getSidebarHostApps } from '@/lib/host-app-navigation';
 import { formatAppStatusReason, formatAppStatusReasonLabel } from '@/lib/host-app-status';
 import { cn } from '@/lib/utils';
 import type { HostPrincipal } from '@/types/auth';
@@ -636,6 +637,7 @@ function AppNavigationSection({
     appId: string;
     action: AppMenuLifecycleAction;
   } | null>(null);
+  const sidebarApps = getSidebarHostApps(appsState.apps);
 
   async function handleAppMenuAction(app: HostAppEntry, action: AppMenuLifecycleAction) {
     if (app.source !== 'installed' || pendingAppAction) {
@@ -691,7 +693,7 @@ function AppNavigationSection({
     );
   }
 
-  if (appsState.apps.length === 0) {
+  if (sidebarApps.length === 0) {
     return (
       <NavigationPlaceholder
         icon={LayoutGrid}
@@ -703,7 +705,7 @@ function AppNavigationSection({
 
   return (
     <>
-      {appsState.apps.map(app => {
+      {sidebarApps.map(app => {
         const appPathname = app.entryPath.split('?')[0] || app.entryPath;
         const canNavigate = app.status === 'available';
         const isActive = canNavigate && pathname === appPathname;
