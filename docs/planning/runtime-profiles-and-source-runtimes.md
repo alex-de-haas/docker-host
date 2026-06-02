@@ -4,28 +4,43 @@
 
 This plan covers the next runtime layer after the Hosty compatibility foundation. The current implementation can parse `app.0.1` Docker and local command runtime profiles, stores `selectedRuntime` in `apps.json`, and installs Docker runtime profiles through the legacy module engine. It does not yet switch runtime profiles after install, execute repository/local command runtime profiles in production, or maintain source checkouts.
 
+Accepted planning change: the legacy developer harness is not migrating to a new app-manifest dev mode. Hosty should remove the top-level `hosty dev` workflow, `metadata.dev.json`, `development.users`, deterministic dev-user seeding, and developer target state. Local app development should instead use a normal installed runtime app with a source/local command runtime, optional local source override state, existing Host users, and trusted CLI helpers that can list users and issue short-lived app identity for those users.
+
+The same source/local command runtime model applies to default Hosty-managed apps. Today the repository has one combined Host app that contains the future Core and Shell. After the split, Core is the local platform process and Shell is a default optional Hosty-managed runtime app. Shell can use managed source checkouts or local source overrides like other managed apps. The self-hosting boundary is explicit: Core or the currently combined Host cannot fully supervise its own runtime replacement after it stops, so switching or restarting Core requires the trusted CLI or another outer supervisor. Shell-only runtime changes can be managed by Core after Shell is split out.
+
+The target Core launch model is local-first. The current Docker-hosted Next implementation should split into Hosty Core as a long-running ASP.NET Core single-file process using Minimal APIs and Hosty Shell as an optional Next.js Docker runtime app before local command execution becomes the main runtime workflow. Core owns runtime state, planning, access checks, user state, settings, identity, and control APIs. The CLI is the Core bootstrap wrapper and local API client.
+
+A native tray/menu-bar companion is deferred. The first local-first Core implementation should expose running/stopped state and control through the `hosty` CLI and Core health/status APIs instead of requiring a platform-specific desktop companion.
+
 Recommended implementation order:
 
 1. Make runtime profile state explicit and stable.
 2. Refactor lifecycle state into the app-oriented store.
-3. Migrate the repository demo app and developer harness to the app manifest contract.
-4. Add Docker-to-Docker runtime switching first.
-5. Add source repository records and checkout/cache management.
-6. Add the local command runtime adapter.
-7. Add Docker-to-source/localCommand switching.
+3. Split the current combined Host into local-first Core and optional Shell runtime app boundaries.
+4. Add source repository state and local source overrides.
+5. Add the local command runtime adapter for installed apps.
+6. Add trusted existing-user app identity and open CLI helpers.
+7. Migrate the repository demo app to installed source/local runtime and remove legacy developer mode.
+8. Extend source/local runtime workflows to default Hosty-managed apps.
+9. Add Docker-to-Docker runtime switching.
+10. Add Docker-to-source/localCommand switching.
 
-This keeps the first switching implementation inside the existing Docker safety model before introducing source execution.
+This intentionally pulls source and local command execution ahead of Docker-to-Docker switching because the old developer harness is being removed instead of extended. The tradeoff is a larger source-runtime implementation earlier in the plan, but it avoids investing more work in soon-to-be-removed dev-only metadata and user seeding.
 
 ```mermaid
 flowchart LR
   A["App manifest"] --> B["Runtime profiles"]
   B --> C["Selected runtime state"]
   C --> L["App-native lifecycle state"]
-  L --> M["app.0.1 demo and dev harness"]
-  M --> D["Switch runtime plan"]
-  D --> E["Docker runtime adapter"]
-  D --> F["Source checkout cache"]
+  L --> X["Local-first Core and Shell runtime app"]
+  X --> F["Source state and local override"]
   F --> G["Local command runtime adapter"]
+  G --> I["Existing-user CLI identity/open"]
+  I --> M["app.0.1 demo without dev harness"]
+  M --> S["Default app source/local runtime"]
+  S --> D["Switch runtime plan"]
+  D --> E["Docker runtime switching"]
+  D --> H["Docker/source switching"]
 ```
 
 ## Milestones
@@ -61,7 +76,7 @@ Implemented so far:
 - Update install, update, retry, start, stop, restart, configure, remove, recovery, gateway resolution, identity-token issuance, app registry, and backup restore flows to resolve installed app state through the app-native lifecycle service.
 - Ensure app-owned data remains under `apps/<app-id>/data/` and external mounts remain excluded from Hosty-managed backup and delete-data behavior.
 - Add migration-safe tests for app-only lifecycle records, legacy module fallback records, failed operation retry, remove/delete-data behavior, gateway/app registry lookups, and backup restore stop-before-restore.
-- Document the temporary compatibility boundary and the removal criteria for legacy `modules.json` lifecycle reads. After this phase and the demo/developer harness migration phase are complete, Hosty can remove `modules.json` as a required app lifecycle store.
+- Document the temporary compatibility boundary and the removal criteria for legacy `modules.json` lifecycle reads. After this phase and the first-party demo/legacy dev-mode removal phase are complete, Hosty can remove `modules.json` as a required app lifecycle store.
 
 Implemented so far:
 
@@ -70,21 +85,101 @@ Implemented so far:
 - App registry resolution can expose runtime bindings from app-only lifecycle records without requiring legacy module records.
 - User-facing lifecycle summary errors now refer to installed app state instead of `modules.json`.
 - Gateway resolution, assignment options, backup data resolution, configure, failed install retry, and remove/delete-data behavior all support app-only lifecycle records without legacy module records.
-- Legacy `modules.json` remains readable as a temporary compatibility fallback until the first-party demo/developer harness migration is complete.
+- Legacy `modules.json` remains readable as a temporary compatibility fallback until the first-party demo migration and legacy developer-mode removal are complete.
 
-### Phase 3 - Migrate demo app and developer harness to app manifests
+### Phase 3 - Split local-first Core and Shell boundaries
+
+**Status**: Not Started
+
+- Introduce Hosty Core as a local-first long-running API and runtime control process implemented as an ASP.NET Core single-file application launched by the `hosty` CLI.
+- Use ASP.NET Core Minimal APIs for Core endpoint registration and configuration.
+- Keep the `hosty` CLI as bootstrap tooling and local API client; ordinary user, app, lifecycle, source, settings, identity, and runtime operations should call Core APIs.
+- Keep CLI-owned bootstrap operations narrow: install or repair Core bootstrap package, locate Core launch configuration, start/stop/restart/status Core where supported, and recover enough state to contact Core.
+- Make `hosty update` check and update components in order: bootstrap CLI, Hosty Core, then Hosty Shell.
+- Treat Shell as the third default Hosty component for update purposes, modeled as an optional Hosty-managed runtime app after the split.
+- Make `hosty start` start Core and then call Core APIs to start the configured Shell runtime app when Shell autostart is enabled. Shell autostart is enabled by default.
+- Add CLI-visible Core running/stopped and health/status checks for the first local-first Core implementation.
+- Do not require a native tray/menu-bar companion for this phase; treat it as a future platform-specific installer component.
+- Move the current web UI into Hosty Shell as a Next.js Docker runtime app. Shell should be a pure web UI client that can be unavailable without preventing CLI/API app management.
+- Give Shell the same Core-managed lifecycle shape as other managed apps, including start, stop, restart, update, runtime status, logs, and health where supported.
+- Hide self-stop for the active Shell instance in Shell UI, while allowing CLI and Core API to stop Shell.
+- Treat runtime apps as Hosty-aware apps. They receive Core origin and app identity configuration, then exchange app-scoped launch or auth codes with Core to create app-origin sessions.
+- Defer arbitrary third-party web app wrapping, gateway-protected browser UI mode, and reverse-proxy page wrapping to a separate future plan.
+- Keep service/API endpoint exposure distinct from browser UI launch.
+- Define migration boundaries for current Next routes: Core-owned API/state/auth/lifecycle routes move to Core, while Shell-owned pages/components move to the Shell runtime app.
+- Keep the current Docker-hosted Next implementation only as a migration compatibility state until local-first Core can own runtime execution.
+
+### Phase 4 - Add source state and local source overrides
+
+**Status**: Not Started
+
+- Store optional source repository metadata and source runtime state in app records.
+- Add a Host-managed source checkout/cache root under `<hosty-data-root>/sources/<app-id>/`, alongside `<hosty-data-root>/apps/<app-id>/` and `<hosty-data-root>/backups/<app-id>/`.
+- Add a local source override mode for administrator-selected worktrees that live outside `<hosty-data-root>/sources/<app-id>/`.
+- Treat local source override state as Host installation state, not public manifest metadata.
+- Treat `source` as one app-level repository. Multi-service apps are expected to keep their Hosty app manifest, service source, and local command runtime implementations inside that repository.
+- Resolve branch, tag, and commit refs to immutable commit SHAs for managed checkouts.
+- Keep direct Docker-only apps valid when no source exists.
+- Keep multi-repository apps out of scope for the first source runtime implementation. If a service is owned by a separate repository, model it as a separate runtime app dependency or defer support for an explicit future `source.repositories[]` contract.
+- Add cleanup rules for abandoned source checkouts.
+- Add private repository credential handling through app-owned secrets or a future credential provider.
+
+### Phase 5 - Add local command runtime adapter
+
+**Status**: Not Started
+
+- Define a runtime adapter interface for non-Docker process supervision.
+- Keep Core authoritative for local command lifecycle state, planning, access checks, and control routes.
+- Launch local command runtime profiles from a managed source checkout or explicitly configured local override path through local-first Core.
+- Inject `HOSTY_APP_DATA_DIR`, settings, dependency URLs, assigned ports, and Hosty internal service credentials into the process environment.
+- Track process status, logs, health, and restart behavior in app lifecycle state.
+- Define platform-specific command constraints without introducing npm-package app distribution.
+- Add start, stop, restart, remove, and failed-start recovery behavior for local command runtimes.
+
+### Phase 6 - Add existing-user CLI identity and open helpers
+
+**Status**: Not Started
+
+- Add `hosty users list` with a sanitized user projection, including id, email when available, display name, Host role, disabled state, and optional app assignment summary.
+- Add `hosty users list --app <app-id> --format json` so agents and local operators can choose from users that can realistically access a target app.
+- Add `hosty apps identity <app-id> --user <email-or-id> --format token|header|json|env` for short-lived Hosty-signed app identity tokens.
+- Add `hosty apps open <app-id> --user <email-or-id> --mode shell|standalone` for browser-oriented local checks. Standalone mode should use the app-scoped auth-code flow from the app auth plan when a browser cannot inject identity headers directly.
+- Enforce normal access checks by default: disabled users, missing assignments, incompatible exposure policy, and unavailable app runtime state must fail instead of silently issuing identity.
+- Do not add seeded development users as part of this workflow. The CLI uses existing Host users and app assignments.
+- Do not add a default bypass flag. Any future diagnostic bypass must be explicit and visibly marked as non-production-equivalent.
+
+### Phase 7 - Migrate demo app and remove legacy developer mode
 
 **Status**: Not Started
 
 - Convert the repository-local demo app production fixture from legacy `schemaVersion: "0.3"` metadata to the `app.0.1` manifest contract.
-- Convert the developer harness fixture from `metadata.dev.json` with process services to an app manifest development contract that can describe local command runtime profiles.
-- Update `hosty dev up`, `status`, `identity`, `reset`, and `clean` to accept the new development manifest shape while keeping only explicitly scoped compatibility for old dev metadata until this phase is complete.
+- Rename the first-party demo from Demo Module to Demo App and move its source from `modules/demo-module/` to `apps/demo-app/` during this phase, not before it.
+- Update the demo workspace package name, scripts, fixture routes, Dockerfile paths, image references, tests, docs, and skill references to use Demo App terminology.
+- Prefer a clean app id such as `com.haas.demo` if old demo/dev state does not need to be preserved; otherwise keep the current id only for an explicit migration boundary.
+- Give the demo app Docker and local command runtime profiles in the same app-level source repository.
 - Update repository scripts, Dockerfile fixture copies, tests, and docs that currently point at `modules/demo-module/metadata.json` or `modules/demo-module/metadata.dev.json`.
-- Preserve the integrated Hosty development harness behavior for Shell embedding, Hosty identity, app assignments, scoped directory access, gateway routing, WebSockets, and direct endpoint probes.
-- Keep the demo app multi-service structure in one app-level source repository. Do not introduce a multi-repository demo app contract.
+- Replace `npm run host:dev:demo` or remove it after an equivalent installed source-runtime demo workflow exists.
+- Keep the CLI relocation out of this phase. `apps/cli` may remain as a monorepo application package until a separate repository-layout cleanup moves it to `tools/cli` or another non-runtime-app location.
+- Remove `metadata.dev.json` from first-party workflows.
+- Remove the top-level `hosty dev up`, `status`, `identity`, `reset`, and `clean` command group and deprecated aliases.
+- Remove `development.users` parsing, deterministic development user seeding, browser account seeding tied to the dev harness, and dev-harness assignment seeding.
+- Remove local developer target state and control routes when installed source/local runtime plus app identity/open helpers cover the same validation workflows.
+- Preserve validation coverage for Shell embedding, Hosty identity, app assignments, scoped directory access, gateway routing, WebSockets, and direct endpoint probes through installed apps and existing-user identity helpers.
 - After this phase and the app-native lifecycle phase are complete, remove legacy module metadata support from first-party demo and development workflows.
 
-### Phase 4 - Add Docker-to-Docker runtime switching
+### Phase 8 - Add default app source/local runtime workflows
+
+**Status**: Not Started
+
+- Apply source state, local source overrides, and local command runtime profiles to default Hosty-managed apps as well as user-installed runtime apps.
+- Treat the current combined Host app as the temporary default-app target until Core and Shell are split.
+- Support local source override workflows for the combined Host app so developers and agents can run changed Host/Core/Shell code from a selected worktree.
+- Keep the self-hosting boundary explicit: Core or the combined Host must not rely on an in-process Core API call to complete its own stop/restart/switch after it exits.
+- Use the trusted CLI or another outer supervisor for combined Host/Core runtime switching and restart.
+- Allow Shell-only local runtime switching to be Core-managed after Shell becomes a separate runtime app.
+- Document the difference between ordinary user-installed runtime apps, default Shell runtime changes, and Core/combined-Host self-runtime changes.
+
+### Phase 9 - Add Docker-to-Docker runtime switching
 
 **Status**: Not Started
 
@@ -96,31 +191,7 @@ Implemented so far:
 - Preserve compatible settings and app data mappings by stable keys.
 - Stop and replace containers only after the reviewed plan is confirmed.
 
-### Phase 5 - Add source repository records and checkout cache
-
-**Status**: Not Started
-
-- Store optional source repository metadata in app records.
-- Add a Host-managed source checkout/cache root under `<hosty-data-root>/sources/<app-id>/`, alongside `<hosty-data-root>/apps/<app-id>/` and `<hosty-data-root>/backups/<app-id>/`.
-- Treat `source` as one app-level repository. Multi-service apps are expected to keep their Hosty app manifest, service source, and local command runtime implementations inside that repository.
-- Resolve branch, tag, and commit refs to immutable commit SHAs.
-- Keep direct Docker-only apps valid when no source exists.
-- Keep multi-repository apps out of scope for the first source runtime implementation. If a service is owned by a separate repository, model it as a separate runtime app dependency or defer support for an explicit future `source.repositories[]` contract.
-- Add cleanup rules for abandoned source checkouts.
-- Add private repository credential handling through app-owned secrets or a future credential provider.
-
-### Phase 6 - Add local command runtime adapter
-
-**Status**: Not Started
-
-- Define a runtime adapter interface for non-Docker process supervision.
-- Launch local command runtime profiles from a source checkout or configured working directory.
-- Inject `HOSTY_APP_DATA_DIR`, settings, dependency URLs, and assigned ports into the process environment.
-- Track process status, logs, health, and restart behavior.
-- Define platform-specific command constraints without introducing npm-package app distribution.
-- Add stop/restart/remove behavior for local command runtimes.
-
-### Phase 7 - Add Docker-to-source runtime switching
+### Phase 10 - Add Docker-to-source runtime switching
 
 **Status**: Not Started
 
@@ -130,7 +201,7 @@ Implemented so far:
 - Keep runtime switching separate from channel switching unless the reviewed plan explicitly combines them.
 - Validate rollback/recovery behavior after a failed runtime switch.
 
-### Phase 8 - Validation and documentation
+### Phase 11 - Validation and documentation
 
 **Status**: Not Started
 
@@ -143,12 +214,34 @@ Implemented so far:
 ## Resolved Decisions
 
 - Runtime app storage is app-oriented: app files live under `<hosty-data-root>/apps/<app-id>/`, app data lives under `<hosty-data-root>/apps/<app-id>/data/`, source checkouts live under `<hosty-data-root>/sources/<app-id>/`, and backups live under `<hosty-data-root>/backups/<app-id>/`.
+- Hosty Core should become a local-first ASP.NET Core single-file process using Minimal APIs before local command runtime execution becomes the primary workflow.
+- The `hosty` CLI is a bootstrap wrapper and local API client for Core; it uses Core APIs for ordinary operations.
+- CLI-owned update checks apply to the bootstrap CLI, Hosty Core, and Hosty Shell in that order.
+- Core owns ordinary lifecycle/domain behavior. The CLI should only duplicate behavior that is required before Core is installed, running, or reachable.
+- Tray/menu-bar companion apps are deferred. Core status and control are handled through CLI/API in the current plan.
+- Hosty Shell is an optional Hosty-managed runtime app and pure web UI client. It remains a Next.js app built and run as a Docker container in the first split.
+- `hosty start` starts Core and then asks Core to start the configured Shell runtime app when Shell autostart is enabled. Shell autostart is enabled by default.
+- Shell uses the same Core-managed lifecycle shape as other managed apps, but Shell UI should hide self-stop for the active Shell instance. CLI and Core API may still stop Shell.
+- Browser runtime apps in the current model are Hosty-aware apps, not arbitrary third-party pages wrapped through a proxy.
+- Runtime apps create app-origin sessions by exchanging Shell launch codes, standalone auth codes, or app-scoped identity with Core.
+- Gateway/proxy wrapping of arbitrary third-party browser apps is deferred to a separate future plan.
 - Use immutable source checkout directories plus a small mutable worktree cache when needed.
+- Local source override state belongs to the Host installation record, not to public app manifest metadata.
+- Source/local command runtime support applies to default Hosty-managed apps as well as user-installed runtime apps.
+- Core owns source/local command runtime state and policy, but local command execution location depends on Core launch mode.
+- When Core runs in Docker, local command execution must be delegated to a trusted host-side runtime supervisor so apps run on the host machine, not inside the Core container.
+- When Core runs as a trusted local process, Core may directly supervise local command apps.
+- The current combined Host app is the temporary default-app target for local source override workflows until Core and Shell are split.
+- Core or the combined Host cannot fully supervise its own runtime replacement after it stops; those runtime switch/restart operations require the trusted CLI or another outer supervisor.
+- After Shell is split into its own runtime app, Shell local runtime changes can be managed by Core like other runtime apps.
 - One runtime app has one app-level source repository in the first source runtime implementation.
 - Multi-service apps should keep their app manifest, service source, and local command runtime implementations in that repository.
 - Services owned by independent repositories should be modeled as separate runtime app dependencies until a future multi-source contract is intentionally designed.
-- Legacy `modules.json` can be removed as a required lifecycle store after the app-native lifecycle refactor is complete and first-party demo/developer harness workflows use the app manifest contract.
-- The repository demo app and developer harness should migrate to `app.0.1`; legacy `schemaVersion: "0.3"` metadata remains only as temporary compatibility input during that migration.
+- Legacy `modules.json` can be removed as a required lifecycle store after the app-native lifecycle refactor is complete and first-party demo workflows use the app manifest contract.
+- The repository demo app should migrate to `app.0.1`.
+- The legacy top-level `hosty dev` harness should be removed instead of migrated.
+- `metadata.dev.json`, `development.users`, deterministic dev-user seeding, dev-harness assignment seeding, and developer target state should be removed from first-party workflows.
+- Trusted local CLI app identity should use existing enabled Host users and enforce normal app access checks by default.
 - Local command runtimes are allowed by the manifest model, but production execution should allow them only when the working directory is Hosty-managed or explicitly configured by an administrator.
 - Runtime switching and channel switching remain separate commands first; channel switching must not implicitly switch runtime unless a reviewed plan explicitly confirms it.
 

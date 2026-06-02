@@ -43,6 +43,14 @@ test('writes normalized app records to apps.json', async () => {
         manifestPath: 'apps/com.example.notes/manifest.json',
         selectedChannel: 'main',
         selectedRuntime: 'docker',
+        runtimeKind: 'docker',
+        sourceState: {
+          mode: 'managedCheckout',
+          repository: 'https://github.example.test/notes.git',
+          ref: 'main',
+          commit: 'abc123',
+          path: 'sources/com.example.notes',
+        },
       },
     ],
     updatedAt: new Date().toISOString(),
@@ -56,6 +64,9 @@ test('writes normalized app records to apps.json', async () => {
   assert.equal(store.apps[0]?.manifestPath, 'apps/com.example.notes/manifest.json');
   assert.equal(store.apps[0]?.selectedChannel, 'main');
   assert.equal(store.apps[0]?.selectedRuntime, 'docker');
+  assert.equal(store.apps[0]?.runtimeKind, 'docker');
+  assert.equal(store.apps[0]?.sourceState?.mode, 'managedCheckout');
+  assert.equal(store.apps[0]?.sourceState?.path, 'sources/com.example.notes');
 });
 
 test('writes normalized app lifecycle records to apps.json', async () => {
@@ -69,6 +80,7 @@ test('writes normalized app lifecycle records to apps.json', async () => {
         manifestUrl: 'https://apps.example.test/notes/manifest.json',
         manifestPath: 'apps/com.example.notes/manifest.json',
         selectedRuntime: 'docker',
+        runtimeKind: 'docker',
         metadataDigest: 'sha256:metadata',
         planDigest: 'sha256:plan',
         containers: [
@@ -91,6 +103,15 @@ test('writes normalized app lifecycle records to apps.json', async () => {
                 hostPublished: true,
               },
             ],
+          },
+        ],
+        processes: [
+          {
+            key: 'web',
+            processName: 'proc-com-example-notes-web',
+            command: 'npm run dev',
+            workingDirectory: '/tmp/notes',
+            pid: 12345,
           },
         ],
         operationStatus: 'failed',
@@ -130,6 +151,7 @@ test('writes normalized app lifecycle records to apps.json', async () => {
   assert.equal(app?.metadataDigest, 'sha256:metadata');
   assert.equal(app?.planDigest, 'sha256:plan');
   assert.equal(app?.containers?.[0]?.containerName, 'mod-com-example-notes-web');
+  assert.equal(app?.processes?.[0]?.processName, 'proc-com-example-notes-web');
   assert.equal(app?.operationStatus, 'failed');
   assert.equal(app?.settings?.GREETING, 'Hello');
   assert.equal(Array.isArray(app?.storageMappings), true);

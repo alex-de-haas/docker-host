@@ -76,24 +76,6 @@ export async function createInstallPlanWithGraph(
     };
   }
 
-  const unsupportedServices = collectUnsupportedInstallServices(graphResult.graph);
-  if (unsupportedServices.length > 0) {
-    return {
-      graph: graphResult.graph,
-      result: {
-        status: 422,
-        body: {
-          error: {
-            code: 'install_plan_validation_failed',
-            message: 'Production module install currently supports image services only.',
-            validationErrors: unsupportedServices,
-            conflicts: [],
-          },
-        },
-      },
-    };
-  }
-
   const config = getHostRuntimeConfig();
   const store = await readModulesStoreSnapshot(config);
   const plan = buildPlan(graphResult.graph, store, config);
@@ -144,24 +126,6 @@ export async function createInstallPlanWithGraph(
       body: { plan },
     },
   };
-}
-
-function collectUnsupportedInstallServices(graph: MetadataGraph): InstallPlanValidationError[] {
-  const validationErrors: InstallPlanValidationError[] = [];
-  for (const node of graph.nodes.values()) {
-    node.metadata.containers.forEach((service, index) => {
-      if (service.source.type !== 'image') {
-        validationErrors.push({
-          code: 'service_source_unsupported_for_install',
-          message: 'Production install supports services with source.type "image" only.',
-          path: `$.services[${index}].source.type`,
-          node: node.id,
-        });
-      }
-    });
-  }
-
-  return validationErrors;
 }
 
 function buildPlan(
@@ -352,14 +316,16 @@ export function buildInstallOrder(
 }
 
 export function buildImages(moduleId: string, metadata: NormalizedModuleMetadata): InstallPlanImage[] {
-  return metadata.containers.map(container => ({
-    moduleId,
-    container: container.key,
-    repository: container.image.repository,
-    tag: container.image.tag,
-    reference: `${container.image.repository}:${container.image.tag}`,
-    pullPolicy: container.image.pullPolicy,
-  }));
+  return metadata.containers
+    .filter(container => container.source.type === 'image')
+    .map(container => ({
+      moduleId,
+      container: container.key,
+      repository: container.image.repository,
+      tag: container.image.tag,
+      reference: `${container.image.repository}:${container.image.tag}`,
+      pullPolicy: container.image.pullPolicy,
+    }));
 }
 
 export function buildPlanContainers(
@@ -386,8 +352,13 @@ export function buildPlanContainers(
     return {
       moduleId,
       key: container.key,
-      containerName: getModuleDockerName(moduleId, container.key),
-      networkAlias: getModuleNetworkAlias(moduleId, container.key),
+      runtimeKind: container.source.type === 'process' ? 'localCommand' : 'docker',
+      containerName: container.source.type === 'process'
+        ? getModuleProcessName(moduleId, container.key)
+        : getModuleDockerName(moduleId, container.key),
+      networkAlias: container.source.type === 'process'
+        ? ''
+        : getModuleNetworkAlias(moduleId, container.key),
       image,
       dependsOn: container.dependsOn,
       ports: container.runtime.ports.map(port => {
@@ -573,6 +544,11 @@ export function createPublishedPortAllocator(
         reserved.add(port.hostPort);
       }
     }
+    for (const process of installedModule.processes ?? []) {
+      for (const port of process.ports ?? []) {
+        reserved.add(port.hostPort);
+      }
+    }
   }
 
   let nextPort = range.start;
@@ -626,7 +602,7 @@ function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
     const nodeContainerName = target.containerName;
     const nodeAlias = target.networkAlias;
 
-    if (nodeContainerName) {
+    if (target.runtimeKind === 'docker' && nodeContainerName) {
       const existingNode = plannedContainerNames.get(nodeContainerName);
       if (existingNode && existingNode !== nodeId) {
         conflicts.push({
@@ -643,7 +619,7 @@ function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
       plannedContainerNames.set(nodeContainerName, nodeId);
     }
 
-    if (nodeAlias) {
+    if (target.runtimeKind === 'docker' && nodeAlias) {
       const existingNode = plannedNetworkAliases.get(nodeAlias);
       if (existingNode && existingNode !== nodeId) {
         conflicts.push({
@@ -757,6 +733,26 @@ function collectHostStateConflicts(plan: InstallPlan, store: ModulesStoreData) {
           resourceType: 'host_port',
           resourceId: String(installedPort.hostPort),
           path: '$.docker.containers',
+          node: plannedPortOwner.moduleId,
+          existingValue: installedModule.id,
+          proposedValue: `${plannedPortOwner.moduleId}:${plannedPortOwner.container}:${plannedPortOwner.portKey}`,
+        });
+      }
+    }
+
+    for (const installedProcess of installedModule.processes ?? []) {
+      for (const installedPort of installedProcess.ports ?? []) {
+        const plannedPortOwner = plannedHostPorts.get(installedPort.hostPort);
+        if (!plannedPortOwner) {
+          continue;
+        }
+
+        conflicts.push({
+          code: 'host_port_conflict',
+          message: `Host port "${installedPort.hostPort}" conflicts with installed app process "${installedProcess.processName}".`,
+          resourceType: 'host_port',
+          resourceId: String(installedPort.hostPort),
+          path: '$.runtime.endpointOrigins',
           node: plannedPortOwner.moduleId,
           existingValue: installedModule.id,
           proposedValue: `${plannedPortOwner.moduleId}:${plannedPortOwner.container}:${plannedPortOwner.portKey}`,
@@ -930,6 +926,14 @@ async function collectDockerConflicts(
       body: { error: InstallPlanErrorEnvelope };
     }
 > {
+  const plannedDockerContainers = collectPlannedDockerContainers(plan, store);
+  if (plannedDockerContainers.length === 0) {
+    return {
+      status: 200,
+      conflicts: [],
+    };
+  }
+
   const dockerStatus = await getDockerDaemonStatus();
   if (!dockerStatus.connected) {
     return {
@@ -947,26 +951,16 @@ async function collectDockerConflicts(
 
   const conflicts: InstallPlanConflict[] = [];
   const existingById = new Map(store.modules.map(module => [module.id, module]));
-  const plannedDockerTargets = new Map<string, { moduleId: string; containerName: string; alias: string }>();
-
-  for (const container of plan.docker.containers) {
-    plannedDockerTargets.set(`${container.moduleId}:${container.key}`, {
-      moduleId: container.moduleId,
-      containerName: container.containerName,
-      alias: container.networkAlias,
-    });
-  }
-  for (const dependency of plan.dependencies) {
-    const installed = existingById.get(dependency.id);
-    const containers = installed?.containers ?? dependency.containers;
-    for (const container of containers) {
-      plannedDockerTargets.set(`${dependency.id}:${container.key}`, {
-        moduleId: dependency.id,
+  const plannedDockerTargets = new Map<string, { moduleId: string; containerName: string; alias: string }>(
+    plannedDockerContainers.map(container => [
+      `${container.moduleId}:${container.key}`,
+      {
+        moduleId: container.moduleId,
         containerName: container.containerName,
         alias: container.networkAlias,
-      });
-    }
-  }
+      },
+    ])
+  );
 
   for (const target of plannedDockerTargets.values()) {
     const status = await inspectContainerNameReadOnly(target.containerName);
@@ -1056,6 +1050,39 @@ function isReusableInstalledDependency(
   existingById: Map<string, InstalledModuleRecord>
 ) {
   return moduleId !== rootModuleId && existingById.has(moduleId);
+}
+
+function collectPlannedDockerContainers(
+  plan: InstallPlan,
+  store: ModulesStoreData
+): Array<Pick<InstallPlanContainer, 'moduleId' | 'key' | 'containerName' | 'networkAlias'>> {
+  const existingById = new Map(store.modules.map(module => [module.id, module]));
+  const rootContainers = plan.docker.containers.filter(container => container.runtimeKind === 'docker');
+  const dependencyContainers = plan.dependencies.flatMap(dependency => {
+    const installed = existingById.get(dependency.id);
+    if (installed) {
+      return installed.containers.map(container => ({
+        moduleId: dependency.id,
+        key: container.key,
+        containerName: container.containerName,
+        networkAlias: container.networkAlias,
+      }));
+    }
+
+    return dependency.containers.filter(container => container.runtimeKind === 'docker');
+  });
+
+  return [...rootContainers, ...dependencyContainers];
+}
+
+function getModuleProcessName(moduleId: string, processKey = 'main') {
+  const normalized = moduleId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
+  return `proc-${normalized || 'app'}-${processKey}`;
 }
 
 function getPlanContainers(plan: InstallPlan): InstallPlanContainer[] {

@@ -19,6 +19,7 @@ export interface HostRuntimeConfig {
   dataRootExpectedMarker: string | null;
   appsRootContainer?: string;
   appsStorePath?: string;
+  sourcesRootContainer?: string;
   backupsRootContainer?: string;
   modulesRootContainer: string;
   modulesStorePath: string;
@@ -51,6 +52,7 @@ export interface HostDataRootStatus {
   modulesStorePath: string;
   appsPath?: string;
   appsStorePath?: string;
+  sourcesPath?: string;
   ready: boolean;
   writable: boolean;
   error: string | null;
@@ -86,6 +88,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
 
   const moduleNetwork = process.env.HOST_MODULE_NETWORK?.trim() || DEFAULT_MODULE_NETWORK;
   const appsRootContainer = path.join(dataRootContainer, 'apps');
+  const sourcesRootContainer = path.join(dataRootContainer, 'sources');
   const backupsRootContainer = path.join(dataRootContainer, 'backups');
   const modulesRootContainer = path.join(dataRootContainer, 'modules');
   const moduleDevRootContainer = path.join(dataRootContainer, 'dev');
@@ -100,6 +103,7 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
     dataRootExpectedMarker: normalizeOptionalRuntimeValue(process.env.HOST_DATA_ROOT_MARKER),
     appsRootContainer,
     appsStorePath: path.join(dataRootContainer, 'apps.json'),
+    sourcesRootContainer,
     backupsRootContainer,
     modulesRootContainer,
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
@@ -125,12 +129,14 @@ export function getHostRuntimeConfig(): HostRuntimeConfig {
 
 export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promise<HostDataRootStatus> {
   const appsRootContainer = config.appsRootContainer ?? path.join(config.dataRootContainer, 'apps');
+  const sourcesRootContainer = config.sourcesRootContainer ?? path.join(config.dataRootContainer, 'sources');
   const moduleDevRootContainer = config.moduleDevRootContainer ?? path.join(config.dataRootContainer, 'dev');
   const ingressRootContainer = config.ingressRootContainer ?? path.join(config.dataRootContainer, 'ingress');
   try {
     await verifyHostDataRootMarker(config);
     await fs.mkdir(config.dataRootContainer, { recursive: true });
     await fs.mkdir(appsRootContainer, { recursive: true });
+    await fs.mkdir(sourcesRootContainer, { recursive: true });
     await fs.mkdir(config.modulesRootContainer, { recursive: true });
     if (config.moduleDevModeEnabled) {
       await fs.mkdir(moduleDevRootContainer, { recursive: true });
@@ -140,6 +146,7 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
     await fs.mkdir(ingressRootContainer, { recursive: true });
     await fs.access(config.dataRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(appsRootContainer, fs.constants.R_OK | fs.constants.W_OK);
+    await fs.access(sourcesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     await fs.access(config.modulesRootContainer, fs.constants.R_OK | fs.constants.W_OK);
     if (config.moduleDevModeEnabled) {
       await fs.access(moduleDevRootContainer, fs.constants.R_OK | fs.constants.W_OK);
@@ -153,6 +160,7 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
       containerPath: config.dataRootContainer,
       appsPath: appsRootContainer,
       appsStorePath: config.appsStorePath ?? path.join(config.dataRootContainer, 'apps.json'),
+      sourcesPath: sourcesRootContainer,
       modulesPath: config.modulesRootContainer,
       modulesStorePath: config.modulesStorePath,
       ready: true,
@@ -165,6 +173,7 @@ export async function ensureHostDataRoot(config = getHostRuntimeConfig()): Promi
       containerPath: config.dataRootContainer,
       appsPath: appsRootContainer,
       appsStorePath: config.appsStorePath ?? path.join(config.dataRootContainer, 'apps.json'),
+      sourcesPath: sourcesRootContainer,
       modulesPath: config.modulesRootContainer,
       modulesStorePath: config.modulesStorePath,
       ready: false,

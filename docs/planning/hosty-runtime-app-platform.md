@@ -4,12 +4,12 @@
 
 Hosty is the planned product model that evolves the current Docker Host implementation into a general local and remote application orchestrator.
 
-The current system is Docker-first: administrators install Docker-hosted modules from JSON metadata files, and the Host Shell is bundled into the same Host application that exposes the backend API. That model remains supported as the legacy Docker module runtime. The target model is broader:
+The current system is Docker-first: administrators install Docker-hosted modules from JSON metadata files, and the Host Shell is bundled into the same Host application that exposes the backend API. That model remains supported as the legacy Docker module runtime during migration. The target model is broader and local-first:
 
-- Hosty Core is a headless API and orchestration process.
-- The `hosty` CLI bootstraps, starts, updates, and talks to Hosty Core.
-- System apps and core services provide management UI and platform services.
-- Runtime apps are user-installed applications with one or more supported runtime profiles.
+- Hosty Core is a long-running local API and orchestration process.
+- The `hosty` CLI is the bootstrap wrapper for Hosty Core and the local client for Core APIs.
+- Hosty Shell is the default optional Hosty-managed runtime app and provides the web UI client.
+- Runtime apps are Hosty-aware user-installed applications with one or more supported runtime profiles.
 - Docker is one runtime adapter, not the product boundary.
 - App manifests replace metadata JSON as the public contract name.
 - Source repositories are optional, but when present they enable agent-driven development, pull request channels, and source-based runtime profiles.
@@ -18,15 +18,18 @@ The goal is a home or personal server orchestrator for many small applications, 
 
 ```mermaid
 flowchart LR
-  A["hosty CLI"] --> B["Hosty Core API"]
-  C["Hosty Shell"] --> B
-  B --> D["App registry"]
-  B --> E["Runtime adapters"]
-  E --> F["Docker runtime"]
-  E --> G["Local process runtime"]
-  E --> H["Repository runtime"]
-  B --> I["Channels and update plans"]
-  B --> J["Identity, gateway, storage, logs"]
+  A["hosty CLI bootstrap"] --> B["Hosty Core API"]
+  A --> C["Optional Shell autostart"]
+  C --> B
+  B --> D["Hosty Shell runtime app"]
+  D --> B
+  B --> E["App registry"]
+  B --> F["Runtime adapters"]
+  F --> G["Docker runtime"]
+  F --> H["Local process runtime"]
+  F --> I["Repository runtime"]
+  B --> J["Channels and update plans"]
+  B --> K["Identity, app auth, storage, logs"]
 ```
 
 ## Naming Direction
@@ -38,10 +41,10 @@ Target names:
 - Product and orchestrator: Hosty.
 - CLI command: `hosty`.
 - Current `docker-host` CLI: deprecated compatibility alias during migration.
-- Backend service: Hosty Core.
-- Browser management UI: Hosty Shell.
+- Backend service: Hosty Core, a local-first long-running process.
+- Browser management UI: Hosty Shell, a default optional Hosty-managed runtime app.
 - Installed user workloads: runtime apps.
-- Built-in management workloads: system apps or core services.
+- Built-in management workloads: default Hosty-managed apps or core services.
 
 The exact repository name is not finalized. The planning docs should use Hosty for the target model while keeping references to Docker Host where they describe the implemented legacy behavior.
 
@@ -49,55 +52,86 @@ The exact repository name is not finalized. The planning docs should use Hosty f
 
 ### Hosty Core
 
-Hosty Core is the headless orchestration API. It owns:
+Hosty Core is the headless orchestration API and runtime control plane. In the target architecture it is a local-first long-running ASP.NET Core process, packaged as a single-file application in the same broad style as the current CLI. Core should use ASP.NET Core Minimal APIs for endpoint registration and configuration so the application stays compact, explicit, and easy to bootstrap. It is launched and managed by the `hosty` bootstrap CLI. It owns:
 
 - app registry and persistent state;
 - install, update, switch-channel, switch-runtime, configure, remove, and recovery plans;
 - identity, user assignments, and module/app access policies;
 - service discovery and dependency resolution;
-- gateway exposure and embedded-app identity;
-- runtime adapter coordination;
+- app launch, app-scoped identity exchange, and endpoint exposure;
+- runtime adapter coordination, including the default Shell runtime app;
 - logs, events, health, and diagnostics;
 - channel resolution and source snapshot validation.
 
-Hosty Core may continue to run as a Docker container initially. Architecturally, it should not depend on Docker as the only runtime model.
+Hosty Core should not be a runtime app. It is the platform process that manages runtime apps, default Hosty-managed apps, and core services. The existing Docker-hosted Next implementation is a migration state, not the target Core launch model.
+
+Core exposes APIs that the CLI, Shell, desktop clients, mobile clients, agents, and Hosty-aware runtime apps can call. The CLI should keep bootstrap responsibilities, while ordinary app lifecycle, user, assignment, identity, source, settings, and runtime operations flow through Core APIs.
+
+A native tray/menu-bar companion can be added later as a platform-specific installer component for Windows, macOS, or Linux. It is not required for the first local-first Core split. For now, operators and agents should inspect whether Core is running through the `hosty` CLI and Core health/status APIs.
+
+### Bootstrap CLI Responsibilities
+
+The `hosty` CLI is not the owner of Hosty domain behavior. It is a bootstrap wrapper around Core and a local API client.
+
+Bootstrap responsibilities:
+
+- install or repair the local Core bootstrap package;
+- locate Core configuration needed to start and contact Core;
+- start, stop, restart, and report health/status for Core where the current platform supports it;
+- after Core starts, call Core APIs to start the configured Shell runtime app when Shell autostart is enabled;
+- run self-update checks for the bootstrap CLI;
+- update the bootstrap CLI when a newer compatible bootstrap package is available;
+- check whether Core has an available update and apply it when requested;
+- check whether the default Hosty Shell runtime app has an available update and ask Core to apply it when requested.
+
+When `hosty update` runs, the intended order is:
+
+1. Check and update the bootstrap CLI.
+2. Check and update Hosty Core.
+3. Check and update Hosty Shell.
+
+Other operations should call Core APIs. If Core is not installed or not running, the CLI should report that bootstrap state and offer the relevant bootstrap action instead of reimplementing Core behavior locally.
 
 ### Hosty Shell
 
-Hosty Shell is the default browser UI client for Hosty Core. It is a system app, not a removable runtime app.
+Hosty Shell is the default browser UI client for Hosty Core. In the first split it remains a Next.js application, is built as a Docker image, and is launched by Core through the same runtime lifecycle used for other managed apps.
+
+Shell is optional. A Hosty installation can run without Shell when managed by CLI, Core API, or another client. By default, `hosty start` starts Core and then asks Core to start the configured Shell runtime app when Shell autostart is enabled.
 
 Shell responsibilities:
 
-- show system apps and runtime apps;
+- show Hosty-managed apps and runtime apps;
 - manage install/update/configuration flows;
 - embed runtime app UIs;
 - expose update and channel controls for Hosty itself;
 - later collect UI annotations and send agent change requests.
 
-Shell should be installed or available by default, but runtime apps should not depend on Shell to run. Apps can still be managed by CLI/API and opened by direct URLs when Shell is unavailable.
+Shell should be installed or available by default, but runtime apps should not depend on Shell to run. Apps can still be managed by CLI/API and opened by direct URLs when Shell is unavailable. Shell limits app discovery and launch affordances for the active Host user, but a launched Hosty-aware runtime app owns its own origin session after receiving an app-scoped launch code or completing the Core authorization flow.
+
+Shell has the same Core-managed lifecycle shape as other managed apps: start, stop, restart, update, runtime status, logs, and health where supported. The Shell UI should not expose a self-stop action for the active Shell instance because stopping the UI from itself is confusing, but CLI and Core API may still stop Shell.
 
 Shell is replaceable. A future web UI, macOS app, mobile app, or third-party management client can act as a Shell if it speaks Hosty Core APIs and follows the same authentication and authorization rules.
 
-### System Apps And Core Services
+### Default Hosty Apps And Core Services
 
-System apps and core services are Hosty-owned units that support the platform. Initial system app:
+Default Hosty-managed apps and core services are Hosty-owned units that support the platform. Initial default app:
 
 - Hosty Shell.
 
 Potential future core services:
 
-- gateway service;
+- gateway/proxy service for a future separate plan;
 - identity service;
 - scheduler;
 - agent bridge;
 - workflow runner;
 - update coordinator.
 
-System apps should be shown separately from user runtime apps. They can have actions such as `Open`, `Update`, and sometimes `Restart`. They must not expose ordinary user-app actions such as `Remove` or app-level `Stop` unless a specific core service explicitly supports them.
+Default Hosty-managed apps can be shown separately from user-installed runtime apps, but they should use the same Core lifecycle model unless a specific platform rule overrides an action. Shell should hide self-stop in its own UI, but the CLI and Core API can still stop it.
 
 ### Runtime Apps
 
-Runtime apps are user-installed applications. The current Docker modules become legacy runtime apps with `docker` runtime profiles.
+Runtime apps are user-installed Hosty-aware applications. The current Docker modules become legacy runtime apps with `docker` runtime profiles during migration.
 
 Runtime apps can be:
 
@@ -105,10 +139,11 @@ Runtime apps can be:
 - Docker images with an associated source repository;
 - repository-backed applications launched by configured local commands such as `npm run`, `dotnet run`, or a Python command;
 - local command apps whose runtime prerequisites are already installed on the host;
-- external URL apps managed only as registry entries;
 - CLI or command workloads used as dependencies by other apps.
 
 A runtime app can be a user-facing UI app, a service dependency, or both. For example, Redis can be represented as a runtime app with no source repository and only a Docker runtime profile. Other apps can depend on it through service endpoints.
+
+Wrapping arbitrary third-party web applications behind a Hosty gateway/proxy is out of scope for the current runtime app model. A browser runtime app should be written or adapted for Hosty: it can receive Core origin and app id configuration, exchange app-scoped launch codes or auth codes with Core, create its own app-origin session cookie, refresh or revalidate that session, and call scoped Core APIs such as user directory APIs when authorized.
 
 ## Manifest Contract
 
@@ -151,7 +186,7 @@ Hosty should make the app data directory available to runtime profiles consisten
 
 - Docker runtime: bind-mount the host data directory into the container path declared by the manifest and pass the resolved container path through an environment variable.
 - Local command runtime: pass the host data directory path through an environment variable.
-- External URL/API wrappers: normally do not receive a local data directory unless the manifest explicitly declares local state.
+- Stateless service definitions: normally do not receive a local data directory unless the manifest explicitly declares local state.
 
 Recommended standard environment variable:
 
@@ -159,7 +194,7 @@ Recommended standard environment variable:
 HOSTY_APP_DATA_DIR
 ```
 
-The manifest can declare whether the app expects local persistent data and how each runtime should receive it. Hosty may still create a data directory by default for first-party runtime apps, but external wrappers and stateless service definitions should be able to opt out of backup and data directory behavior.
+The manifest can declare whether the app expects local persistent data and how each runtime should receive it. Hosty may still create a data directory by default for first-party runtime apps, but stateless service definitions and apps with no local state should be able to opt out of backup and data directory behavior.
 
 Example:
 
@@ -297,7 +332,7 @@ Runtime switching must preserve compatible:
 - settings;
 - dependency contracts;
 - user assignments;
-- gateway exposure policy where possible.
+- endpoint and browser launch exposure policy where possible.
 
 If a target runtime profile changes storage, settings, endpoints, or dependencies, Hosty must show a plan before applying.
 
@@ -430,35 +465,13 @@ Rules:
 - The app validates the identity and can periodically refresh or revalidate access through Core.
 - The app should redirect to Core login when its app-origin session expires or Core says access is no longer valid.
 
-This mode does not require proxying every app request through Hosty Gateway.
+This mode does not require proxying app UI traffic through Hosty. Browser runtime apps are expected to implement the Hosty-aware auth exchange themselves.
 
-### Gateway Protected
+### Deferred Browser Proxy Mode
 
-Gateway-protected mode is an optional traffic wrapper, not the default requirement for Hosty-aware apps.
+Wrapping arbitrary third-party browser apps through a Hosty gateway/proxy is not part of the current runtime app model. If Hosty later needs to wrap no-auth apps, legacy tools, or third-party browser UIs, that work should be captured in a separate plan with explicit security, routing, cookie, and support boundaries.
 
-```text
-browser -> Hosty Gateway -> runtime app or external service
-```
-
-The gateway can:
-
-- require a Hosty session before traffic reaches the app;
-- check app assignment and exposure policy;
-- redirect unauthenticated users to Core login;
-- return `403` when the Hosty user has no access;
-- strip Hosty cookies and spoofable Hosty headers before forwarding;
-- inject an app-scoped identity header or token when configured;
-- optionally inject configured API keys or upstream credentials for external service wrappers.
-
-Gateway-protected mode is useful for:
-
-- apps that do not implement Hosty auth;
-- apps with no built-in auth;
-- legacy or third-party tools where changing code is not practical;
-- external URL or API wrappers described by a manifest;
-- dependency or service endpoints where Hosty should enforce a perimeter policy.
-
-Gateway-protected mode can be used even when the upstream app has its own authentication, but then Hosty only provides an outer access gate. The app still owns its internal auth model.
+Service/API endpoint exposure remains distinct from browser UI app launch. A runtime app can expose dependency endpoints or integration APIs without making Hosty responsible for proxying its browser UI.
 
 ### App-Owned Integrations
 
@@ -539,7 +552,7 @@ Open implementation details:
 - whether backup encryption is needed for secrets or sensitive local data;
 - how to verify archive integrity before restore.
 
-Apps that do not use local persistent data, external URL/API wrappers, and stateless dependency records can disable backups in the manifest.
+Apps that do not use local persistent data and stateless dependency records can disable backups in the manifest.
 
 ## Agent-Oriented Workflow
 
@@ -559,15 +572,15 @@ This workflow should work for Docker-backed apps when the app has a source repos
 
 ## UI Model
 
-The management UI should separate system apps and runtime apps.
+The management UI should distinguish default Hosty-managed apps from user-installed runtime apps, while keeping the lifecycle model consistent.
 
-System apps section:
+Default Hosty-managed apps section:
 
 - Hosty Shell.
 - Future gateway, scheduler, agent bridge, or update services.
-- Actions: `Open`, `Update`, maybe `Restart`.
+- Actions: `Open`, `Update`, `Restart`, and status/logs when supported.
 - No `Remove`.
-- No ordinary app `Stop` unless a specific system service supports controlled stop.
+- Hide `Stop` for the active Shell instance inside Shell UI, but allow Shell stop through CLI and Core API.
 
 Runtime apps section:
 
@@ -579,7 +592,7 @@ Runtime apps section:
 The current installed modules view can migrate incrementally:
 
 1. Keep existing Docker module rows.
-2. Add a separate system apps table above runtime apps.
+2. Add a separate default Hosty-managed apps table above user-installed runtime apps.
 3. Add summary fields such as `kind`, `system`, `capabilities`, `selectedChannel`, and `selectedRuntime`.
 4. Rename UI copy from modules to apps where it does not break the implemented Docker module behavior.
 
@@ -589,14 +602,14 @@ The current `modules.json` remains the implemented store. The target store shoul
 
 Target concepts:
 
-- `systemApps` or a synthesized system app registry for Hosty-owned apps.
+- synthesized default Hosty-managed app records for Hosty-owned apps when needed.
 - `apps` records in `apps.json` for new runtime apps.
 - legacy `modules` records in `modules.json` for compatibility.
 - `manifestUrl` as preferred source pointer.
 - `metadataUrl` retained for legacy records.
 - `manifestPath` as preferred local copy path.
 - `metadataPath` retained for legacy records.
-- `selectedChannel` for the chosen app or system app channel.
+- `selectedChannel` for the chosen app or default Hosty-managed app channel.
 - `selectedRuntime` for the active runtime profile.
 - `source` snapshot for repository-aware apps.
 - `accessMode` for `shellEmbedded`, `standaloneAuthRedirect`, `gatewayProtected`, or future access modes.
@@ -604,7 +617,7 @@ Target concepts:
 - `backups` index or discoverable backup records for app data snapshots.
 - `capabilities` for action availability.
 
-Hosty should not require every system app to be persisted in the same store as runtime apps. A synthesized system app registry is acceptable for Shell until Shell delivery separates from Hosty Core.
+Hosty Shell should be persisted as a managed runtime app once Shell delivery separates from Hosty Core. During migration, a synthesized default app registry is acceptable only as temporary compatibility behavior.
 
 During migration, Hosty should be able to build one management view from both `apps.json` and legacy `modules.json`, but new installs should create or update only `apps.json`.
 
@@ -722,7 +735,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 **Status**: Completed
 
-- Introduce Hosty, Hosty Core, Hosty Shell, system apps, runtime apps, manifests, channels, and runtime profiles.
+- Introduce Hosty, Hosty Core, Hosty Shell, default Hosty-managed apps, runtime apps, manifests, channels, and runtime profiles.
 - Document that `source` is optional.
 - Document that Docker is the first runtime adapter, not the product boundary.
 - Update channel planning to prefer manifest snapshots over metadata URLs.
@@ -748,10 +761,10 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 - Add app summary fields for `kind`, `system`, `capabilities`, `selectedChannel`, and `selectedRuntime`.
 - Add current app access summary fields for Shell-embedded apps: `accessMode`, `entryPath`, `embeddedUrl`, `origin`, `originScope`, and `identityTokenUrl`.
 - Keep legacy module summary fields for current screens.
-- Add a system app entry for Hosty Shell.
-- Show system apps separately from runtime apps in the management UI.
+- Add a default Hosty Shell app entry.
+- Show default Hosty-managed apps separately from user-installed runtime apps in the management UI.
 - Disable unsupported actions based on capabilities rather than hardcoded module ids.
-- Defer standalone auth redirect and gateway-protected availability summaries to Phase 8 because those access modes are not implemented yet.
+- Defer standalone auth redirect and split-origin availability summaries to Phase 8 because those access modes are not implemented yet.
 
 ### Phase 4 - Rename CLI surface
 
@@ -794,8 +807,8 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 The compatibility foundation is intentionally smaller than the long-term Hosty product model. Remaining work moved to focused planning documents so each subsystem can be implemented in a safer order:
 
-- [Runtime Profiles And Source Runtimes](runtime-profiles-and-source-runtimes.md) - app-native lifecycle state, demo/developer harness migration, runtime switching, repository source records, checkout cache, and local command runtime execution.
-- [App Auth And Origin Separation](app-auth-and-origin-separation.md) - standalone app auth, optional gateway-protected mode, and split Core/Shell public origins.
+- [Runtime Profiles And Source Runtimes](runtime-profiles-and-source-runtimes.md) - app-native lifecycle state, source/local command runtime execution, existing-user CLI identity helpers, legacy developer mode removal, and runtime switching.
+- [App Auth And Origin Separation](app-auth-and-origin-separation.md) - Hosty-aware app auth, standalone launch links, and split Core/Shell public origins.
 - [Agent Bridge Workflow](agent-bridge-workflow.md) - Shell annotations, agent requests, repository edits, pull request channels, and validation.
 - [App Data Backup Retention](app-data-backup-retention.md) - automatic retention, deletion APIs, scheduled cleanup, and UI/CLI controls for backups.
 
@@ -803,32 +816,43 @@ The compatibility foundation is intentionally smaller than the long-term Hosty p
 
 No open questions remain for this planning pass. The current accepted decisions are:
 
-- `source` is optional. Apps can be Docker-only, external, or otherwise runtime-only without a source repository known to Hosty.
-- Shell is a system app/client for Hosty Core, not a removable runtime app.
+- `source` is optional. Apps can be Docker-only, source-less, or otherwise runtime-only without a source repository known to Hosty.
+- Hosty Core is the local-first long-running API and runtime control process. It is launched and managed by the `hosty` bootstrap CLI and is not itself a runtime app.
+- The `hosty` CLI remains responsible for bootstrap operations and then performs ordinary operations through Hosty Core APIs.
+- `hosty update` should check and update the bootstrap CLI first, then Core, then the default Hosty Shell runtime app.
+- Core owns ordinary app lifecycle and domain operations. The CLI should not duplicate Core behavior except for bootstrap actions needed when Core is unavailable.
+- Native tray/menu-bar companions are deferred. The current Core running/stopped UX should be exposed through the `hosty` CLI and Core health/status APIs.
+- Shell is an optional Hosty-managed runtime app and default web client for Hosty Core. It currently remains a Next.js app built and run as a Docker container.
+- Shell uses the same Core-managed lifecycle shape as other managed apps, but Shell UI should hide self-stop for the active Shell instance. CLI and Core API may still stop Shell.
+- `hosty start` starts Core and then asks Core to start the configured Shell runtime app when Shell autostart is enabled. Shell autostart is enabled by default.
 - Core and Shell currently share one deployed public origin through `HOST_PUBLIC_ORIGIN`; a future phase must split Core API and Shell public origins explicitly.
-- System apps and runtime apps should be shown in separate UI sections, even if they share a backend summary shape.
+- Default Hosty-managed apps and user-installed runtime apps should be shown in separate UI sections, even if they share a backend summary shape.
+- Source/local command runtime workflows apply to default Hosty-managed apps too. The current combined Host app is the temporary local-source target until Core and Shell split.
+- Core or the combined Host cannot rely on its own in-process Core API to complete self runtime replacement after it exits; self-runtime switch/restart operations require the trusted CLI or another outer supervisor.
+- The existing Docker-hosted Next implementation is a migration state. In that state, Core must not execute localCommand apps by spawning child processes inside the Core container.
 - Channels are runtime-neutral. They select a manifest/source snapshot, not specifically a Docker image.
 - Channels may add, remove, or modify runtime profiles, but only through a reviewed update plan.
 - Channel switching must not implicitly switch the active runtime unless the current runtime no longer exists and the plan explicitly confirms the replacement.
 - Package-only app distribution, such as installing apps directly from npm packages, is out of scope. Runtime apps are installed from Docker images or repositories.
 - Repository-backed apps run through a generic local command runtime. Commands such as `npm run ...`, `dotnet run`, or Python commands are valid when the required toolchain is installed.
-- `metadata.json` files should not be renamed on disk until the app-native lifecycle refactor and first-party demo/developer harness migration are complete. New docs and APIs should prefer manifest terminology first, while preserving scoped compatibility during that transition.
-- Hosty Core can continue to run in Docker initially, while the domain model stops assuming Docker for every app.
+- `metadata.json` files should not be renamed on disk until the app-native lifecycle refactor is complete and first-party demo workflows use the app manifest contract. New docs and APIs should prefer manifest terminology first, while preserving scoped compatibility during that transition.
+- Hosty Core should move to a local-first ASP.NET Core single-file process before source/local command runtime execution becomes the primary development workflow.
+- Hosty Core should use ASP.NET Core Minimal APIs for the first Core implementation.
 - Redis-like dependencies are runtime apps with service endpoints, possibly without UI and without source.
 - Hosty CLI install and update should reconcile PATH, create or refresh the `hosty` command, and keep a deprecated `docker-host` compatibility shim while needed.
 - Hosty supports both `~/.hosty` and legacy `~/.docker-host` data roots. Explicit configuration wins; otherwise `~/.hosty` is preferred, `~/.docker-host` is used only when the new root does not exist, and if both exist Hosty uses `~/.hosty`.
 - Hosty should not silently merge `~/.docker-host` into `~/.hosty` when both roots exist.
 - New runtime app installs write to `apps.json` and `apps/<app-id>/`. Legacy `modules.json` and `modules/<module-id>/` remain readable through compatibility adapters.
 - Legacy modules discovered from `modules.json` update in place through the legacy path. Routine update must not migrate registry files or physical app data.
-- After app-native lifecycle state is implemented and the first-party demo/developer harness uses `app.0.1`, `modules.json` can be removed as a required lifecycle store and legacy module metadata support can be reduced to an explicit migration/import path if still needed.
+- After app-native lifecycle state is implemented, first-party demo workflows use `app.0.1`, and legacy developer mode is removed, `modules.json` can be removed as a required lifecycle store and legacy module metadata support can be reduced to an explicit migration/import path if still needed.
 - Physical data migration is manual or handled by a future explicit migration command; it is not part of install or update.
 - Compatibility code should be isolated in removable adapters and marked as temporary compatibility behavior.
-- Gateway-protected access is not the default browser mode. Hosty-aware apps should use standalone auth redirect or Shell embedded identity.
-- Gateway-protected access is reserved for legacy apps, apps with no auth, third-party tools, external URL/API wrappers, and service endpoints that need central enforcement.
-- Apps that do not implement Hosty auth are apps that cannot redirect to Core, exchange app-scoped auth codes, validate Hosty-signed identity, or create app-local sessions from Hosty identity.
+- Gateway/proxy wrapping for arbitrary third-party browser apps is out of scope for the current runtime app model.
+- Hosty-aware apps should use standalone auth redirect, Shell-provided launch codes, or app-scoped identity exchange with Core.
+- Apps that do not implement Hosty auth are apps that cannot redirect to Core, exchange app-scoped auth or launch codes, validate Hosty-signed identity, or create app-local sessions from Hosty identity.
 - Runtime apps must not receive the main Hosty session cookie. They receive only app-scoped codes or signed identity tokens.
 - Third-party integration credentials such as Azure DevOps PATs, OAuth grants, API keys, and service tokens are app-owned settings or secrets, not Hosty user auth.
-- Most first-party runtime apps receive a primary per-app `data/` directory exposed as `HOSTY_APP_DATA_DIR`; stateless apps and external wrappers may opt out.
+- Most first-party runtime apps receive a primary per-app `data/` directory exposed as `HOSTY_APP_DATA_DIR`; stateless apps and dependency records may opt out.
 - Apps with local persistent data should create a backup before update by default. If backup is required and cannot be created, update must stop before mutation.
 - Hosty-managed backups include only the app's primary per-app `data/` directory. External mounts and additional storage mappings are excluded.
 - Restore should not automatically restart the app. Stop or require stopping the runtime app, create a `pre-restore` backup, restore data, then offer restart as a separate action.

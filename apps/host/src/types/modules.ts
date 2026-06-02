@@ -96,6 +96,28 @@ export interface InstalledModuleContainerRecord {
   ports?: InstalledModulePortBinding[];
 }
 
+export interface InstalledAppSourceState {
+  mode: 'managedCheckout' | 'localOverride';
+  repository?: string;
+  ref?: string;
+  commit?: string;
+  path?: string;
+  localPath?: string;
+  updatedAt?: string;
+}
+
+export interface InstalledModuleProcessRecord {
+  key: string;
+  processName: string;
+  command: string;
+  workingDirectory: string;
+  pid?: number | null;
+  startedAt?: string | null;
+  stoppedAt?: string | null;
+  logPath?: string;
+  ports?: InstalledModulePortBinding[];
+}
+
 export interface InstalledModulePortBinding {
   key: string;
   endpointKey?: string;
@@ -114,9 +136,12 @@ export interface InstalledModuleRecord {
   manifestPath?: string;
   selectedChannel?: string;
   selectedRuntime?: string;
+  runtimeKind?: 'docker' | 'localCommand';
+  sourceState?: InstalledAppSourceState;
   metadataDigest?: string;
   planDigest?: string;
   containers: InstalledModuleContainerRecord[];
+  processes?: InstalledModuleProcessRecord[];
   operationStatus?: ModuleOperationStatus;
   settings?: Record<string, InstalledSettingValue>;
   storage?: {
@@ -597,6 +622,7 @@ export interface InstallPlanEndpointOrigin {
 export interface InstallPlanContainer {
   moduleId: string;
   key: string;
+  runtimeKind: 'docker' | 'localCommand';
   containerName: string;
   networkAlias: string;
   image: InstallPlanImage;

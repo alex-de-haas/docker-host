@@ -5,7 +5,9 @@ import { getHostRuntimeConfig, pathExists, syncPathOwnershipWithDataRoot } from 
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import type {
   InstalledExternalMountMapping,
+  InstalledAppSourceState,
   InstalledModuleContainerRecord,
+  InstalledModuleProcessRecord,
   InstalledSettingValue,
   InstalledStorageMapping,
   ModuleInstallExternalMountSelection,
@@ -24,9 +26,12 @@ export interface InstalledAppRecord {
   manifestPath?: string;
   selectedChannel?: string;
   selectedRuntime?: string;
+  runtimeKind?: 'docker' | 'localCommand';
+  sourceState?: InstalledAppSourceState;
   metadataDigest?: string;
   planDigest?: string;
   containers?: InstalledModuleContainerRecord[];
+  processes?: InstalledModuleProcessRecord[];
   operationStatus?: ModuleOperationStatus;
   settings?: Record<string, InstalledSettingValue>;
   storage?: {
@@ -171,9 +176,12 @@ function normalizeInstalledAppRecord(value: unknown): InstalledAppRecord | null 
   record.manifestPath = readString(value, 'manifestPath');
   record.selectedChannel = readString(value, 'selectedChannel');
   record.selectedRuntime = readString(value, 'selectedRuntime');
+  record.runtimeKind = readRuntimeKind(value);
+  record.sourceState = readSourceState(value);
   record.metadataDigest = readString(value, 'metadataDigest');
   record.planDigest = readString(value, 'planDigest');
   record.containers = readArray(value, 'containers') as InstalledModuleContainerRecord[] | undefined;
+  record.processes = readArray(value, 'processes') as InstalledModuleProcessRecord[] | undefined;
   record.operationStatus = readOperationStatus(value);
   record.settings = readRecord(value, 'settings') as Record<string, InstalledSettingValue> | undefined;
   record.storage = readStorage(value);
@@ -216,6 +224,51 @@ function readRecordOrArray(source: Record<string, unknown>, key: string) {
   }
 
   return undefined;
+}
+
+function readRuntimeKind(source: Record<string, unknown>): InstalledAppRecord['runtimeKind'] {
+  const value = readString(source, 'runtimeKind');
+  return value === 'docker' || value === 'localCommand' ? value : undefined;
+}
+
+function readSourceState(source: Record<string, unknown>): InstalledAppRecord['sourceState'] {
+  const value = readRecord(source, 'sourceState');
+  if (!value) {
+    return undefined;
+  }
+
+  const mode = readString(value, 'mode');
+  if (mode !== 'managedCheckout' && mode !== 'localOverride') {
+    return undefined;
+  }
+
+  const state: InstalledAppSourceState = { mode };
+  const repository = readString(value, 'repository');
+  const ref = readString(value, 'ref');
+  const commit = readString(value, 'commit');
+  const sourcePath = readString(value, 'path');
+  const localPath = readString(value, 'localPath');
+  const updatedAt = readString(value, 'updatedAt');
+  if (repository) {
+    state.repository = repository;
+  }
+  if (ref) {
+    state.ref = ref;
+  }
+  if (commit) {
+    state.commit = commit;
+  }
+  if (sourcePath) {
+    state.path = sourcePath;
+  }
+  if (localPath) {
+    state.localPath = localPath;
+  }
+  if (updatedAt) {
+    state.updatedAt = updatedAt;
+  }
+
+  return state;
 }
 
 function readOperationStatus(source: Record<string, unknown>): ModuleOperationStatus | undefined {
