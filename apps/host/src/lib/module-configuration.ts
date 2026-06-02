@@ -194,7 +194,7 @@ async function applyValidatedConfigurationRequest(
     if (!updatedModule) {
       return configurationEnvelopeResult(500, {
         code: 'module_configuration_summary_failed',
-        message: `Module "${moduleId}" was configured but could not be read back from modules.json.`,
+        message: `Module "${moduleId}" was configured but could not be read back from installed app state.`,
         validationErrors: [],
         conflicts: [],
       });
@@ -1126,7 +1126,7 @@ async function recreateConfiguredContainers({
 
     const updatedModule = await getConfiguredModuleSummary(nextModule.id);
     if (!updatedModule) {
-      throw new Error(`Module "${nextModule.id}" was configured but could not be read back from modules.json.`);
+      throw new Error(`Module "${nextModule.id}" was configured but could not be read back from installed app state.`);
     }
 
     return {

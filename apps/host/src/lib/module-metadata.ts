@@ -4,6 +4,7 @@ import {
   APP_MANIFEST_SCHEMA_VERSION,
   convertAppManifestToModuleMetadata,
 } from '@/lib/app-manifest';
+import type { AppManifestConversionOptions } from '@/lib/app-manifest';
 import type {
   InstallPlanValidationError,
   ModuleImagePullPolicy,
@@ -70,7 +71,8 @@ interface DependencyDeclaration {
 }
 
 export async function loadMetadataGraph(
-  metadataUrlInput: string
+  metadataUrlInput: string,
+  options: AppManifestConversionOptions = {}
 ): Promise<{
   graph: MetadataGraph | null;
   validationErrors: InstallPlanValidationError[];
@@ -91,6 +93,7 @@ export async function loadMetadataGraph(
     nodes,
     dependencyDeclarations,
     validationErrors,
+    options,
   });
 
   if (!rootId) {
@@ -124,6 +127,7 @@ async function loadNode({
   dependencyDeclarations,
   validationErrors,
   declaration,
+  options = {},
 }: {
   metadataUrl: string;
   path: string;
@@ -132,6 +136,7 @@ async function loadNode({
   dependencyDeclarations: Map<string, DependencyDeclaration>;
   validationErrors: InstallPlanValidationError[];
   declaration?: NormalizedModuleDependencyMetadata;
+  options?: AppManifestConversionOptions;
 }): Promise<string | null> {
   const downloaded = await downloadMetadataJson(metadataUrl, nodePath, validationErrors);
 
@@ -139,7 +144,7 @@ async function loadNode({
     return null;
   }
 
-  const validation = validateAndNormalizeMetadata(downloaded.json, nodePath);
+  const validation = validateAndNormalizeMetadata(downloaded.json, nodePath, stack.length === 0 ? options : {});
   validationErrors.push(...validation.validationErrors);
 
   if (!validation.metadata) {
@@ -247,6 +252,7 @@ async function loadNode({
       dependencyDeclarations,
       validationErrors,
       declaration: dependency,
+      options: {},
     });
 
     if (!dependencyId) {
@@ -400,7 +406,8 @@ async function readResponseBytes(
 
 export function validateAndNormalizeMetadata(
   value: unknown,
-  nodePath: string
+  nodePath: string,
+  options: AppManifestConversionOptions = {}
 ): {
   metadata: NormalizedModuleMetadata | null;
   validationErrors: InstallPlanValidationError[];
@@ -421,7 +428,7 @@ export function validateAndNormalizeMetadata(
   }
 
   if (value.schemaVersion === APP_MANIFEST_SCHEMA_VERSION) {
-    const converted = convertAppManifestToModuleMetadata(value, nodePath);
+    const converted = convertAppManifestToModuleMetadata(value, nodePath, options);
     if (!converted.metadata) {
       return {
         metadata: null,

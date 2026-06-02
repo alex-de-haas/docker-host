@@ -13,7 +13,7 @@ Hosty is the target product model for the current Docker Host implementation. Th
 - **Manifest** - the public contract name for app metadata. Legacy `metadata.json` remains a compatibility format.
 - **Runtime profile** - the way an app runs, such as Docker image or local command.
 
-The implementation is intentionally incremental. Docker remains the first runtime adapter and the legacy module engine still owns most lifecycle behavior. The app model is layered around it through compatibility adapters.
+The implementation is intentionally incremental. Docker remains the first runtime adapter and many control routes still use module-oriented names, but app-oriented lifecycle records are persisted in `apps.json` through compatibility adapters. Legacy `modules.json` records remain readable for already-installed legacy modules.
 
 ```mermaid
 flowchart LR
@@ -111,14 +111,16 @@ The legacy layout remains readable:
 Current implementation details:
 
 - `apps.json` is created and maintained as the app-oriented registry.
-- New installs still use the legacy module lifecycle engine, but they also upsert an app record into `apps.json`.
+- New app-oriented installs still use module-oriented lifecycle routes, but installed runtime state is written back into `apps.json`.
+- `modules.json` remains a compatibility fallback for already-installed legacy module records.
 - App manifest copies are written to `apps/<app-id>/manifest.json`.
+- Update planning and apply use the stored `selectedRuntime` when refreshing an app manifest, so a changed manifest default cannot silently switch the installed runtime profile.
 - Legacy Docker metadata copies remain in `modules/<module-id>/metadata.json` for legacy module records.
 - Records can contain both `manifestUrl` and legacy `metadataUrl`.
 - Records can contain both `manifestPath` and legacy `metadataPath`.
-- Compatibility code is isolated around root resolution, registry reading, manifest path resolution, and CLI aliases so it can be removed later.
+- Compatibility code is isolated around root resolution, registry reading/writing, manifest path resolution, lifecycle state projection, and CLI aliases so it can be removed later.
 
-Routine update does not migrate legacy data directories. Legacy modules discovered from `modules.json` continue updating in place through the legacy path.
+Routine update does not migrate legacy physical data directories. Legacy modules discovered only from `modules.json` remain readable through the compatibility path.
 
 ## System apps and runtime apps
 

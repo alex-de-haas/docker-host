@@ -176,6 +176,72 @@ test('normalizes app.0.1 local command runtime profiles for future runtime plann
   assert.equal(result.metadata?.containers[0]?.source.workingDirectory, '.');
 });
 
+test('normalizes app.0.1 manifests with an explicit selected runtime override', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: 'app.0.1',
+    id: 'com.example.notes',
+    name: 'Notes',
+    version: '1.0.0',
+    runtimeProfiles: [
+      {
+        key: 'docker',
+        type: 'docker',
+        default: true,
+      },
+      {
+        key: 'dev',
+        type: 'localCommand',
+      },
+    ],
+    services: [{
+      key: 'app',
+      runtimes: {
+        docker: {
+          type: 'docker',
+          image: 'ghcr.io/example/notes:1.0.0',
+        },
+        dev: {
+          type: 'localCommand',
+          command: 'npm run dev',
+        },
+      },
+    }],
+  }, '$', { selectedRuntime: 'dev' });
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.metadata?.selectedRuntime, 'dev');
+  assert.equal(result.metadata?.containers[0]?.source.type, 'process');
+});
+
+test('rejects app.0.1 selected runtime overrides that no longer exist', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: 'app.0.1',
+    id: 'com.example.notes',
+    name: 'Notes',
+    version: '1.0.0',
+    runtimeProfiles: [{
+      key: 'docker',
+      type: 'docker',
+      default: true,
+    }],
+    services: [{
+      key: 'app',
+      runtimes: {
+        docker: {
+          type: 'docker',
+          image: 'ghcr.io/example/notes:1.0.0',
+        },
+      },
+    }],
+  }, '$', { selectedRuntime: 'dev' });
+
+  assert.equal(result.metadata, null);
+  assert.equal(
+    result.validationErrors.some(error => error.code === 'app_manifest_selected_runtime_missing'),
+    true
+  );
+});
+
 test('rejects app.0.1 services missing a declared runtime profile', () => {
   const result = validateAndNormalizeMetadata({
     schemaVersion: 'app.0.1',

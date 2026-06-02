@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  readAppsStoreSnapshot,
+  writeAppsStore,
+} from './app-store.ts';
+import {
   readModuleMetadata,
+  readModulesStore,
   readModulesStoreSnapshot,
   writeModulesStore,
 } from './module-store.ts';
@@ -129,6 +134,114 @@ test('reads manifestPath as a metadataPath compatibility alias', async () => {
   assert.equal(metadata?.id, 'com.example.app');
 });
 
+test('projects app lifecycle records from apps.json into installed module records', async () => {
+  const config = await createModuleStoreTestConfig();
+  const appRoot = path.join(config.dataRootContainer, 'apps', 'com.example.app');
+  await fs.mkdir(appRoot, { recursive: true });
+  await fs.writeFile(path.join(appRoot, 'manifest.json'), `${JSON.stringify({
+    schemaVersion: 'app.0.1',
+    id: 'com.example.app',
+    name: 'Example App',
+    version: '1.0.0',
+    runtimeProfiles: [],
+    services: [],
+  })}\n`);
+  await writeAppsStore({
+    schemaVersion: 'app-store.0.1',
+    apps: [
+      {
+        id: 'com.example.app',
+        manifestUrl: 'https://apps.example.test/app/manifest.json',
+        manifestPath: 'apps/com.example.app/manifest.json',
+        selectedRuntime: 'docker',
+        containers: [
+          {
+            key: 'web',
+            containerName: 'mod-com-example-app-web',
+            networkAlias: 'mod-com-example-app-web',
+            image: {
+              repository: 'ghcr.io/example/app',
+              tag: '1.0.0',
+              reference: 'ghcr.io/example/app:1.0.0',
+            },
+          },
+        ],
+        operationStatus: 'failed',
+        lastOperation: 'update',
+        lastError: {
+          message: 'Update failed.',
+        },
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  }, config);
+
+  const store = await readModulesStoreSnapshot(config);
+  const app = store.modules.find(module => module.id === 'com.example.app');
+  const metadata = app ? await readModuleMetadata(app, config) : null;
+
+  assert.equal(app?.manifestPath, 'apps/com.example.app/manifest.json');
+  assert.equal(app?.metadataPath, path.join(config.dataRootContainer, 'apps/com.example.app/manifest.json'));
+  assert.equal(app?.containers[0]?.containerName, 'mod-com-example-app-web');
+  assert.equal(app?.operationStatus, 'failed');
+  assert.equal(app?.lastError?.message, 'Update failed.');
+  assert.equal(metadata?.id, 'com.example.app');
+});
+
+test('writes app lifecycle records back to apps.json instead of modules.json', async () => {
+  const config = await createModuleStoreTestConfig();
+  await writeAppsStore({
+    schemaVersion: 'app-store.0.1',
+    apps: [
+      {
+        id: 'com.example.app',
+        manifestUrl: 'https://apps.example.test/app/manifest.json',
+        manifestPath: 'apps/com.example.app/manifest.json',
+        selectedRuntime: 'docker',
+        containers: [],
+        operationStatus: 'installing',
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  }, config);
+
+  const store = await readModulesStore(config);
+  await writeModulesStore({
+    ...store,
+    modules: store.modules.map(module =>
+      module.id === 'com.example.app'
+        ? {
+            ...module,
+            operationStatus: 'installed',
+            lastOperation: 'install',
+            containers: [
+              {
+                key: 'web',
+                containerName: 'mod-com-example-app-web',
+                networkAlias: 'mod-com-example-app-web',
+                image: {
+                  repository: 'ghcr.io/example/app',
+                  tag: '1.0.0',
+                  reference: 'ghcr.io/example/app:1.0.0',
+                },
+              },
+            ],
+          }
+        : module
+    ),
+  }, config);
+
+  const appsStore = await readAppsStoreSnapshot(config);
+  const modulesStore = JSON.parse(await fs.readFile(config.modulesStorePath, 'utf-8')) as {
+    modules: Array<{ id: string }>;
+  };
+
+  assert.equal(appsStore.apps[0]?.operationStatus, 'installed');
+  assert.equal(appsStore.apps[0]?.lastOperation, 'install');
+  assert.equal(appsStore.apps[0]?.containers?.[0]?.containerName, 'mod-com-example-app-web');
+  assert.deepEqual(modulesStore.modules, []);
+});
+
 async function createModuleStoreTestConfig(): Promise<HostRuntimeConfig> {
   const dataRootContainer = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-host-store-'));
   const authRootContainer = path.join(dataRootContainer, 'auth');
@@ -137,6 +250,8 @@ async function createModuleStoreTestConfig(): Promise<HostRuntimeConfig> {
   return {
     dataRootHost: dataRootContainer,
     dataRootContainer,
+    appsRootContainer: path.join(dataRootContainer, 'apps'),
+    appsStorePath: path.join(dataRootContainer, 'apps.json'),
     modulesRootContainer: path.join(dataRootContainer, 'modules'),
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
     authRootContainer,

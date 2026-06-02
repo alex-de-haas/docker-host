@@ -95,7 +95,9 @@ export async function createModuleUpdatePlan(
     );
   }
 
-  const graphResult = await loadMetadataGraph(installedModule.metadataUrl);
+  const graphResult = await loadMetadataGraph(installedModule.metadataUrl, {
+    selectedRuntime: installedModule.selectedRuntime,
+  });
   if (!graphResult.graph || graphResult.validationErrors.length > 0) {
     return {
       status: 422,

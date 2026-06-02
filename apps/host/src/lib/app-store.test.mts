@@ -58,6 +58,86 @@ test('writes normalized app records to apps.json', async () => {
   assert.equal(store.apps[0]?.selectedRuntime, 'docker');
 });
 
+test('writes normalized app lifecycle records to apps.json', async () => {
+  const config = await createAppStoreTestConfig();
+
+  await writeAppsStore({
+    schemaVersion: 'app-store.0.1',
+    apps: [
+      {
+        id: 'com.example.notes',
+        manifestUrl: 'https://apps.example.test/notes/manifest.json',
+        manifestPath: 'apps/com.example.notes/manifest.json',
+        selectedRuntime: 'docker',
+        metadataDigest: 'sha256:metadata',
+        planDigest: 'sha256:plan',
+        containers: [
+          {
+            key: 'web',
+            containerName: 'mod-com-example-notes-web',
+            networkAlias: 'mod-com-example-notes-web',
+            image: {
+              repository: 'ghcr.io/example/notes',
+              tag: '1.0.0',
+              reference: 'ghcr.io/example/notes:1.0.0',
+            },
+            ports: [
+              {
+                key: 'http',
+                endpointKey: 'http',
+                containerPort: 3000,
+                hostPort: 3100,
+                protocol: 'http',
+                hostPublished: true,
+              },
+            ],
+          },
+        ],
+        operationStatus: 'failed',
+        settings: {
+          GREETING: 'Hello',
+        },
+        storageMappings: [
+          {
+            key: 'data',
+            container: 'web',
+            containerPath: '/data',
+            hostPath: path.join(config.dataRootContainer, 'apps/com.example.notes/data'),
+            required: true,
+            writable: true,
+          },
+        ],
+        externalMounts: [],
+        resolvedDependencies: [],
+        lastOperation: 'update',
+        updateAttempt: {
+          updatePlanDigest: 'sha256:update',
+          settings: [],
+          externalMounts: [],
+          attemptedAt: '2026-06-02T12:00:00.000Z',
+        },
+        lastError: {
+          message: 'Update failed.',
+        },
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  }, config);
+
+  const store = await readAppsStoreSnapshot(config);
+  const app = store.apps[0];
+
+  assert.equal(app?.metadataDigest, 'sha256:metadata');
+  assert.equal(app?.planDigest, 'sha256:plan');
+  assert.equal(app?.containers?.[0]?.containerName, 'mod-com-example-notes-web');
+  assert.equal(app?.operationStatus, 'failed');
+  assert.equal(app?.settings?.GREETING, 'Hello');
+  assert.equal(Array.isArray(app?.storageMappings), true);
+  assert.equal(app?.lastOperation, 'update');
+  assert.equal(app?.updateAttempt?.updatePlanDigest, 'sha256:update');
+  assert.equal(app?.lastError?.message, 'Update failed.');
+});
+
 test('upserts app records without removing install time', async () => {
   const config = await createAppStoreTestConfig();
 

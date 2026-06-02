@@ -3,6 +3,14 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { getHostRuntimeConfig, pathExists, syncPathOwnershipWithDataRoot } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
+import {
+  readAppsStoreSnapshot,
+  writeAppsStore,
+} from './app-store.ts';
+import type {
+  AppsStoreData,
+  InstalledAppRecord,
+} from './app-store.ts';
 import type {
   InstalledModuleContainerRecord,
   InstalledModuleRecord,
@@ -25,6 +33,20 @@ export interface ModulesStoreStatus {
 
 export async function readModulesStore(config = getHostRuntimeConfig()): Promise<ModulesStoreData> {
   await ensureModulesStore(config);
+  return readModulesStoreSnapshot(config);
+}
+
+async function readLegacyModulesStoreSnapshot(
+  config: HostRuntimeConfig
+): Promise<ModulesStoreData> {
+  if (!(await pathExists(config.modulesStorePath))) {
+    return {
+      schemaVersion: STORE_SCHEMA_VERSION,
+      hostSettings: {},
+      modules: [],
+      updatedAt: new Date().toISOString(),
+    };
+  }
 
   const raw = await fs.readFile(config.modulesStorePath, 'utf-8');
   const parsed = JSON.parse(raw) as unknown;
@@ -44,22 +66,26 @@ export async function readModulesStore(config = getHostRuntimeConfig()): Promise
 export async function readModulesStoreSnapshot(
   config = getHostRuntimeConfig()
 ): Promise<ModulesStoreData> {
-  if (!(await pathExists(config.modulesStorePath))) {
-    return {
-      schemaVersion: STORE_SCHEMA_VERSION,
-      hostSettings: {},
-      modules: [],
-      updatedAt: new Date().toISOString(),
-    };
-  }
+  const [legacyStore, appsStore] = await Promise.all([
+    readLegacyModulesStoreSnapshot(config),
+    readAppsStoreSnapshot(config),
+  ]);
 
-  const raw = await fs.readFile(config.modulesStorePath, 'utf-8');
-  return normalizeStore(JSON.parse(raw) as unknown);
+  return mergeLegacyModulesWithAppRecords(legacyStore, appsStore, config);
 }
 
 export async function writeModulesStore(
   store: ModulesStoreData,
   config = getHostRuntimeConfig()
+) {
+  const { legacyStore, appsStore } = splitMergedStore(store, config);
+  await writeLegacyModulesStore(legacyStore, config);
+  await writeAppsStore(appsStore, config);
+}
+
+async function writeLegacyModulesStore(
+  store: ModulesStoreData,
+  config: HostRuntimeConfig
 ) {
   await fs.mkdir(path.dirname(config.modulesStorePath), { recursive: true });
   const nextStore: ModulesStoreData = {
@@ -156,7 +182,7 @@ async function ensureModulesStore(config: HostRuntimeConfig) {
   await fs.mkdir(config.modulesRootContainer, { recursive: true });
 
   if (!(await pathExists(config.modulesStorePath))) {
-    await writeModulesStore(
+    await writeLegacyModulesStore(
       {
         schemaVersion: STORE_SCHEMA_VERSION,
         hostSettings: {},
@@ -193,6 +219,175 @@ function normalizeStore(parsed: unknown): ModulesStoreData {
       .filter((module): module is InstalledModuleRecord => module !== null),
     updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
   };
+}
+
+function mergeLegacyModulesWithAppRecords(
+  legacyStore: ModulesStoreData,
+  appsStore: AppsStoreData,
+  config: HostRuntimeConfig
+): ModulesStoreData {
+  const appRecordsById = new Map(appsStore.apps.map(app => [app.id, app]));
+  const legacyModuleIds = new Set(legacyStore.modules.map(module => module.id));
+  const mergedModules = legacyStore.modules.map(module => {
+    const app = appRecordsById.get(module.id);
+    if (!app) {
+      return module;
+    }
+
+    return {
+      ...module,
+      ...appRecordToInstalledModuleRecord(app, config),
+      containers: app.containers ?? module.containers,
+      operationStatus: app.operationStatus ?? module.operationStatus,
+      lastOperation: app.lastOperation ?? module.lastOperation,
+      lastError: app.lastError !== undefined ? app.lastError : module.lastError,
+      updateAttempt: app.updateAttempt ?? module.updateAttempt,
+      settings: app.settings ?? module.settings,
+      storage: app.storage ?? module.storage,
+      storageMappings: app.storageMappings ?? module.storageMappings,
+      externalMounts: app.externalMounts ?? module.externalMounts,
+      resolvedDependencies: app.resolvedDependencies ?? module.resolvedDependencies,
+      dependencies: app.dependencies ?? module.dependencies,
+    };
+  });
+  const appOnlyModules = appsStore.apps
+    .filter(app => !legacyModuleIds.has(app.id))
+    .map(app => appRecordToInstalledModuleRecord(app, config));
+
+  return {
+    ...legacyStore,
+    modules: [...mergedModules, ...appOnlyModules],
+    updatedAt: appsStore.apps.length > 0 && appsStore.updatedAt > legacyStore.updatedAt
+      ? appsStore.updatedAt
+      : legacyStore.updatedAt,
+  };
+}
+
+function splitMergedStore(
+  store: ModulesStoreData,
+  config: HostRuntimeConfig
+): {
+  legacyStore: ModulesStoreData;
+  appsStore: AppsStoreData;
+} {
+  const legacyModules: InstalledModuleRecord[] = [];
+  const appRecords: InstalledAppRecord[] = [];
+
+  for (const installedModule of store.modules ?? []) {
+    if (isAppLifecycleModuleRecord(installedModule, config)) {
+      appRecords.push(installedModuleRecordToAppRecord(installedModule));
+    } else {
+      legacyModules.push(installedModule);
+    }
+  }
+
+  return {
+    legacyStore: {
+      ...store,
+      schemaVersion: STORE_SCHEMA_VERSION,
+      modules: legacyModules,
+    },
+    appsStore: {
+      schemaVersion: 'app-store.0.1',
+      apps: appRecords,
+      updatedAt: store.updatedAt ?? new Date().toISOString(),
+    },
+  };
+}
+
+function appRecordToInstalledModuleRecord(
+  app: InstalledAppRecord,
+  config: HostRuntimeConfig
+): InstalledModuleRecord {
+  const manifestPath = app.manifestPath ?? path.posix.join('apps', app.id, 'manifest.json');
+  const resolvedManifestPath = resolveAppManifestPath(manifestPath, config);
+
+  return {
+    id: app.id,
+    metadataUrl: app.manifestUrl ?? manifestPath,
+    ...(app.manifestUrl ? { manifestUrl: app.manifestUrl } : {}),
+    metadataPath: resolvedManifestPath,
+    manifestPath,
+    ...(app.selectedChannel ? { selectedChannel: app.selectedChannel } : {}),
+    ...(app.selectedRuntime ? { selectedRuntime: app.selectedRuntime } : {}),
+    ...(app.metadataDigest ? { metadataDigest: app.metadataDigest } : {}),
+    ...(app.planDigest ? { planDigest: app.planDigest } : {}),
+    containers: app.containers ?? [],
+    operationStatus: app.operationStatus ?? 'installed',
+    ...(app.settings ? { settings: app.settings } : {}),
+    ...(app.storage ? { storage: app.storage } : {}),
+    ...(app.storageMappings ? { storageMappings: app.storageMappings } : {}),
+    ...(app.externalMounts ? { externalMounts: app.externalMounts } : {}),
+    ...(app.resolvedDependencies ? { resolvedDependencies: app.resolvedDependencies } : {}),
+    ...(app.dependencies ? { dependencies: app.dependencies } : {}),
+    installedAt: app.installedAt,
+    updatedAt: app.updatedAt,
+    ...(app.lastOperation ? { lastOperation: app.lastOperation } : {}),
+    ...(app.updateAttempt ? { updateAttempt: app.updateAttempt } : {}),
+    ...(app.lastError !== undefined ? { lastError: app.lastError } : {}),
+  };
+}
+
+function installedModuleRecordToAppRecord(module: InstalledModuleRecord): InstalledAppRecord {
+  const manifestUrl = module.manifestUrl ?? module.metadataUrl;
+  const manifestPath = getAppManifestPath(module);
+
+  return {
+    id: module.id,
+    ...(manifestUrl ? { manifestUrl } : {}),
+    ...(manifestPath ? { manifestPath } : {}),
+    ...(module.selectedChannel ? { selectedChannel: module.selectedChannel } : {}),
+    ...(module.selectedRuntime ? { selectedRuntime: module.selectedRuntime } : {}),
+    ...(module.metadataDigest ? { metadataDigest: module.metadataDigest } : {}),
+    ...(module.planDigest ? { planDigest: module.planDigest } : {}),
+    containers: module.containers ?? [],
+    ...(module.operationStatus ? { operationStatus: module.operationStatus } : {}),
+    ...(module.settings ? { settings: module.settings } : {}),
+    ...(module.storage ? { storage: module.storage } : {}),
+    ...(module.storageMappings ? { storageMappings: module.storageMappings } : {}),
+    ...(module.externalMounts ? { externalMounts: module.externalMounts } : {}),
+    ...(module.resolvedDependencies ? { resolvedDependencies: module.resolvedDependencies } : {}),
+    ...(module.dependencies ? { dependencies: module.dependencies } : {}),
+    installedAt: module.installedAt,
+    updatedAt: module.updatedAt,
+    ...(module.lastOperation ? { lastOperation: module.lastOperation } : {}),
+    ...(module.updateAttempt ? { updateAttempt: module.updateAttempt } : {}),
+    ...(module.lastError !== undefined ? { lastError: module.lastError } : {}),
+  };
+}
+
+function isAppLifecycleModuleRecord(
+  module: InstalledModuleRecord,
+  config: HostRuntimeConfig
+) {
+  const candidatePaths = [module.manifestPath, module.metadataPath].filter((value): value is string => Boolean(value));
+  return candidatePaths.some(candidate => isAppRelativeOrAbsolutePath(candidate, config));
+}
+
+function getAppManifestPath(module: InstalledModuleRecord) {
+  return module.manifestPath ?? (
+    module.metadataPath && module.metadataPath.includes(`${path.sep}apps${path.sep}`)
+      ? module.metadataPath
+      : undefined
+  );
+}
+
+function resolveAppManifestPath(manifestPath: string, config: HostRuntimeConfig) {
+  return path.isAbsolute(manifestPath)
+    ? manifestPath
+    : path.join(config.dataRootContainer, manifestPath);
+}
+
+function isAppRelativeOrAbsolutePath(candidate: string, config: HostRuntimeConfig) {
+  if (path.isAbsolute(candidate)) {
+    const appsRoot = config.appsRootContainer ?? path.join(config.dataRootContainer, 'apps');
+    const relative = path.relative(appsRoot, candidate);
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  }
+
+  return candidate === 'apps' ||
+    candidate.startsWith('apps/') ||
+    candidate.startsWith(`apps${path.sep}`);
 }
 
 function normalizeInstalledModuleRecord(value: unknown): InstalledModuleRecord | null {

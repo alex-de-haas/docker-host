@@ -201,10 +201,21 @@ function appRecordToInstalledModuleRecord(
     manifestPath: resolvedManifestPath,
     ...(app.selectedChannel ? { selectedChannel: app.selectedChannel } : {}),
     ...(app.selectedRuntime ? { selectedRuntime: app.selectedRuntime } : {}),
-    containers: [],
-    operationStatus: 'installed',
+    ...(app.metadataDigest ? { metadataDigest: app.metadataDigest } : {}),
+    ...(app.planDigest ? { planDigest: app.planDigest } : {}),
+    containers: app.containers ?? [],
+    operationStatus: app.operationStatus ?? 'installed',
+    ...(app.settings ? { settings: app.settings } : {}),
+    ...(app.storage ? { storage: app.storage } : {}),
+    ...(app.storageMappings ? { storageMappings: app.storageMappings } : {}),
+    ...(app.externalMounts ? { externalMounts: app.externalMounts } : {}),
+    ...(app.resolvedDependencies ? { resolvedDependencies: app.resolvedDependencies } : {}),
+    ...(app.dependencies ? { dependencies: app.dependencies } : {}),
     installedAt: app.installedAt,
     updatedAt: app.updatedAt,
+    ...(app.lastOperation ? { lastOperation: app.lastOperation } : {}),
+    ...(app.updateAttempt ? { updateAttempt: app.updateAttempt } : {}),
+    ...(app.lastError !== undefined ? { lastError: app.lastError } : {}),
   };
 }
 

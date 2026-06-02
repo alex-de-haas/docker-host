@@ -10,6 +10,7 @@ import {
   resolveGatewayTarget,
   upsertGatewayExposure,
 } from './gateway-service.ts';
+import { writeAppsStore } from './app-store.ts';
 import { createEmptyAuthState, writeAuthState } from './auth-store.ts';
 import {
   readExternalIngressStateSnapshot,
@@ -71,6 +72,29 @@ test('resolves gateway target for legacy single-container module records', async
 
   assert.equal(target?.targetBaseUrl, 'http://legacy-alias:8080');
   assert.equal(target?.networkAlias, 'legacy-alias');
+});
+
+test('resolves gateway target from app lifecycle records without legacy module records', async () => {
+  const config = await createGatewayTestConfig();
+  await writeInstalledApp(config, {
+    appId: 'com.example.project-manager',
+  });
+
+  await upsertGatewayExposure({
+    moduleId: 'com.example.project-manager',
+    hostname: 'project.example.test',
+    endpointKey: 'web',
+  }, 'user_admin', config);
+
+  const target = await resolveGatewayTarget(
+    'project.example.test',
+    { id: 'user_1', role: 'host.user', email: 'user@example.test' },
+    config
+  );
+
+  assert.equal(target?.targetBaseUrl, 'http://mod-com-example-project-manager-web:3000');
+  assert.equal(target?.networkAlias, 'mod-com-example-project-manager-web');
+  assert.equal(target?.containerPort, 3000);
 });
 
 test('rejects exposure for endpoints not marked public', async () => {
@@ -267,6 +291,8 @@ async function createGatewayTestConfig(): Promise<HostRuntimeConfig> {
   return {
     dataRootHost: dataRootContainer,
     dataRootContainer,
+    appsRootContainer: path.join(dataRootContainer, 'apps'),
+    appsStorePath: path.join(dataRootContainer, 'apps.json'),
     modulesRootContainer: path.join(dataRootContainer, 'modules'),
     modulesStorePath: path.join(dataRootContainer, 'modules.json'),
     authRootContainer,
@@ -280,6 +306,93 @@ async function createGatewayTestConfig(): Promise<HostRuntimeConfig> {
     dockerSocketPath: '/var/run/docker.sock',
     moduleNetwork: 'docker-host-modules',
   };
+}
+
+async function writeInstalledApp(
+  config: HostRuntimeConfig,
+  input: {
+    appId: string;
+  }
+) {
+  const appRoot = path.join(config.appsRootContainer as string, input.appId);
+  await fs.mkdir(appRoot, { recursive: true });
+  await fs.writeFile(path.join(appRoot, 'manifest.json'), `${JSON.stringify({
+    schemaVersion: 'app.0.1',
+    id: input.appId,
+    name: 'Project Manager',
+    version: '1.0.0',
+    runtimeProfiles: [
+      {
+        key: 'docker',
+        type: 'docker',
+        default: true,
+      },
+    ],
+    services: [
+      {
+        key: 'web',
+        runtimes: {
+          docker: {
+            type: 'docker',
+            image: 'ghcr.io/example/project-manager:1.0.0',
+            ports: [
+              {
+                key: 'http',
+                containerPort: 3000,
+                protocol: 'http',
+                public: true,
+              },
+            ],
+          },
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'web',
+        service: 'web',
+        port: 'http',
+        public: true,
+      },
+    ],
+  }, null, 2)}\n`, 'utf-8');
+  await writeAppsStore({
+    schemaVersion: 'app-store.0.1',
+    apps: [
+      {
+        id: input.appId,
+        manifestUrl: 'https://apps.example.test/project-manager/manifest.json',
+        manifestPath: `apps/${input.appId}/manifest.json`,
+        selectedRuntime: 'docker',
+        containers: [
+          {
+            key: 'web',
+            containerName: 'mod-com-example-project-manager-web',
+            networkAlias: 'mod-com-example-project-manager-web',
+            image: {
+              repository: 'ghcr.io/example/project-manager',
+              tag: '1.0.0',
+              reference: 'ghcr.io/example/project-manager:1.0.0',
+            },
+            ports: [
+              {
+                key: 'http',
+                endpointKey: 'web',
+                containerPort: 3000,
+                hostPort: 3102,
+                protocol: 'http',
+                hostPublished: true,
+              },
+            ],
+          },
+        ],
+        operationStatus: 'installed',
+        installedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  }, config);
 }
 
 async function writeInstalledModule(

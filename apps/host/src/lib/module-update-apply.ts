@@ -241,7 +241,9 @@ async function applyValidatedUpdateRequest(
     });
   }
 
-  const graphResult = await loadMetadataGraph(installedModule.metadataUrl);
+  const graphResult = await loadMetadataGraph(installedModule.metadataUrl, {
+    selectedRuntime: installedModule.selectedRuntime,
+  });
   if (!graphResult.graph || graphResult.validationErrors.length > 0) {
     return updateEnvelopeResult(422, {
       code: 'update_plan_validation_failed',
@@ -362,7 +364,7 @@ async function applyValidatedUpdateRequest(
     const modules = await listInstalledModules();
     const updatedModule = modules.find(candidate => candidate.id === moduleId);
     if (!updatedModule) {
-      throw new Error(`Module "${moduleId}" was updated but could not be read back from modules.json.`);
+      throw new Error(`Module "${moduleId}" was updated but could not be read back from installed app state.`);
     }
 
     return {

@@ -794,7 +794,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 The compatibility foundation is intentionally smaller than the long-term Hosty product model. Remaining work moved to focused planning documents so each subsystem can be implemented in a safer order:
 
-- [Runtime Profiles And Source Runtimes](runtime-profiles-and-source-runtimes.md) - runtime switching, repository source records, checkout cache, and local command runtime execution.
+- [Runtime Profiles And Source Runtimes](runtime-profiles-and-source-runtimes.md) - app-native lifecycle state, demo/developer harness migration, runtime switching, repository source records, checkout cache, and local command runtime execution.
 - [App Auth And Origin Separation](app-auth-and-origin-separation.md) - standalone app auth, optional gateway-protected mode, and split Core/Shell public origins.
 - [Agent Bridge Workflow](agent-bridge-workflow.md) - Shell annotations, agent requests, repository edits, pull request channels, and validation.
 - [App Data Backup Retention](app-data-backup-retention.md) - automatic retention, deletion APIs, scheduled cleanup, and UI/CLI controls for backups.
@@ -812,7 +812,7 @@ No open questions remain for this planning pass. The current accepted decisions 
 - Channel switching must not implicitly switch the active runtime unless the current runtime no longer exists and the plan explicitly confirms the replacement.
 - Package-only app distribution, such as installing apps directly from npm packages, is out of scope. Runtime apps are installed from Docker images or repositories.
 - Repository-backed apps run through a generic local command runtime. Commands such as `npm run ...`, `dotnet run`, or Python commands are valid when the required toolchain is installed.
-- `metadata.json` files should not be renamed on disk immediately. New docs and APIs should prefer manifest terminology first, while preserving legacy read/write compatibility.
+- `metadata.json` files should not be renamed on disk until the app-native lifecycle refactor and first-party demo/developer harness migration are complete. New docs and APIs should prefer manifest terminology first, while preserving scoped compatibility during that transition.
 - Hosty Core can continue to run in Docker initially, while the domain model stops assuming Docker for every app.
 - Redis-like dependencies are runtime apps with service endpoints, possibly without UI and without source.
 - Hosty CLI install and update should reconcile PATH, create or refresh the `hosty` command, and keep a deprecated `docker-host` compatibility shim while needed.
@@ -820,6 +820,7 @@ No open questions remain for this planning pass. The current accepted decisions 
 - Hosty should not silently merge `~/.docker-host` into `~/.hosty` when both roots exist.
 - New runtime app installs write to `apps.json` and `apps/<app-id>/`. Legacy `modules.json` and `modules/<module-id>/` remain readable through compatibility adapters.
 - Legacy modules discovered from `modules.json` update in place through the legacy path. Routine update must not migrate registry files or physical app data.
+- After app-native lifecycle state is implemented and the first-party demo/developer harness uses `app.0.1`, `modules.json` can be removed as a required lifecycle store and legacy module metadata support can be reduced to an explicit migration/import path if still needed.
 - Physical data migration is manual or handled by a future explicit migration command; it is not part of install or update.
 - Compatibility code should be isolated in removable adapters and marked as temporary compatibility behavior.
 - Gateway-protected access is not the default browser mode. Hosty-aware apps should use standalone auth redirect or Shell embedded identity.

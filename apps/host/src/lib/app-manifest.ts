@@ -49,9 +49,14 @@ export interface AppManifestConversionResult {
   validationErrors: InstallPlanValidationError[];
 }
 
+export interface AppManifestConversionOptions {
+  selectedRuntime?: string;
+}
+
 export function convertAppManifestToModuleMetadata(
   value: unknown,
-  nodePath: string
+  nodePath: string,
+  options: AppManifestConversionOptions = {}
 ): AppManifestConversionResult {
   const validationErrors: InstallPlanValidationError[] = [];
 
@@ -117,8 +122,8 @@ export function convertAppManifestToModuleMetadata(
   }
 
   return value.services !== undefined || value.runtimeProfiles !== undefined
-    ? convertServiceManifest(value, nodePath, { id, name, description, version }, validationErrors)
-    : convertLegacySingleServiceManifest(value, nodePath, { id, name, description, version }, validationErrors);
+    ? convertServiceManifest(value, nodePath, { id, name, description, version }, validationErrors, options)
+    : convertLegacySingleServiceManifest(value, nodePath, { id, name, description, version }, validationErrors, options);
 }
 
 function convertServiceManifest(
@@ -130,7 +135,8 @@ function convertServiceManifest(
     description?: string;
     version: string;
   },
-  validationErrors: InstallPlanValidationError[]
+  validationErrors: InstallPlanValidationError[],
+  options: AppManifestConversionOptions
 ): AppManifestConversionResult {
   if (value.runtimes !== undefined) {
     validationErrors.push({
@@ -149,6 +155,7 @@ function convertServiceManifest(
   );
   const selectedProfile = selectRuntimeProfileDeclaration(
     runtimeProfiles,
+    options.selectedRuntime,
     readOptionalString(value, 'defaultRuntime'),
     `${nodePath}.defaultRuntime`,
     validationErrors,
@@ -203,11 +210,13 @@ function convertLegacySingleServiceManifest(
     description?: string;
     version: string;
   },
-  validationErrors: InstallPlanValidationError[]
+  validationErrors: InstallPlanValidationError[],
+  options: AppManifestConversionOptions
 ): AppManifestConversionResult {
   const runtimes = readLegacyRuntimeProfiles(value.runtimes, `${nodePath}.runtimes`, validationErrors, base.id);
   const selectedRuntime = selectLegacyRuntimeProfile(
     runtimes,
+    options.selectedRuntime,
     readOptionalString(value, 'defaultRuntime'),
     `${nodePath}.defaultRuntime`,
     validationErrors,
@@ -356,6 +365,7 @@ function readRuntimeProfileDeclarations(
 
 function selectRuntimeProfileDeclaration(
   profiles: AppRuntimeProfileDeclaration[],
+  selectedRuntime: string | undefined,
   defaultRuntime: string | undefined,
   pathToDefaultRuntime: string,
   validationErrors: InstallPlanValidationError[],
@@ -363,6 +373,21 @@ function selectRuntimeProfileDeclaration(
 ) {
   if (profiles.length === 0) {
     return null;
+  }
+
+  if (selectedRuntime) {
+    const selected = profiles.find(profile => profile.key === selectedRuntime);
+    if (!selected) {
+      validationErrors.push({
+        code: 'app_manifest_selected_runtime_missing',
+        message: `Selected runtime "${selectedRuntime}" does not reference a runtime profile.`,
+        path: pathToDefaultRuntime,
+        node: appId,
+      });
+      return null;
+    }
+
+    return selected;
   }
 
   if (defaultRuntime) {
@@ -666,6 +691,7 @@ function readLegacyRuntimeProfiles(
 
 function selectLegacyRuntimeProfile(
   runtimes: Array<AppServiceRuntime & { dependsOn: string[] }>,
+  selectedRuntime: string | undefined,
   defaultRuntime: string | undefined,
   pathToDefaultRuntime: string,
   validationErrors: InstallPlanValidationError[],
@@ -673,6 +699,21 @@ function selectLegacyRuntimeProfile(
 ) {
   if (runtimes.length === 0) {
     return null;
+  }
+
+  if (selectedRuntime) {
+    const selected = runtimes.find(runtime => runtime.runtimeKey === selectedRuntime);
+    if (!selected) {
+      validationErrors.push({
+        code: 'app_manifest_selected_runtime_missing',
+        message: `Selected runtime "${selectedRuntime}" does not reference a runtime profile.`,
+        path: pathToDefaultRuntime,
+        node: appId,
+      });
+      return null;
+    }
+
+    return selected;
   }
 
   if (!defaultRuntime) {

@@ -278,8 +278,8 @@ async function applyValidatedInstallRequest(
     return applyFailureResult({
       operation: 'module.install.summary',
       httpStatus: 500,
-      message: `Module "${plan.module.id}" was installed but could not be read back from modules.json.`,
-      nextStep: 'Refresh the dashboard and inspect modules.json.',
+      message: `Module "${plan.module.id}" was installed but could not be read back from installed app state.`,
+      nextStep: 'Refresh the dashboard and inspect the installed app state files.',
       occurredAt: new Date().toISOString(),
     });
   }

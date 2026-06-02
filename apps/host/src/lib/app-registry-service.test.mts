@@ -108,6 +108,42 @@ test('returns app-oriented installs from apps.json without legacy module records
   assert.equal(runtimeStatusReads, 0);
 });
 
+test('uses app lifecycle runtime bindings from apps.json without legacy module records', async () => {
+  const config = await createAppRegistryTestConfig();
+  await writeInstalledApp(config, {
+    appId: 'com.example.project-manager',
+    name: 'Project Manager',
+    withRuntimeBindings: true,
+  });
+
+  let runtimeStatusReads = 0;
+  const runtimeStatusReader = async (): Promise<ModuleRuntimeStatus> => {
+    runtimeStatusReads += 1;
+    return {
+      state: 'running',
+      containerId: 'container_project_manager',
+      containerName: 'mod-com-example-project-manager-web',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+    };
+  };
+
+  const apps = await listHostApps(assignedUser, { config, runtimeStatusReader });
+
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].id, 'com.example.project-manager');
+  assert.equal(apps[0].source, 'installed');
+  assert.equal(apps[0].displayName, 'Project Manager');
+  assert.equal(apps[0].selectedRuntime, 'docker');
+  assert.equal(apps[0].operationStatus, 'installed');
+  assert.equal(apps[0].status, 'available');
+  assert.equal(apps[0].runtimeState, 'running');
+  assert.equal(apps[0].entryPath, '/apps/com.example.project-manager');
+  assert.equal(apps[0].embeddedUrl, 'http://localhost:3102/');
+  assert.equal(apps[0].origin, 'http://localhost:3102');
+  assert.equal(runtimeStatusReads, 1);
+});
+
 test('uses localhost for local fallback shell app origins', async () => {
   const config = await createAppRegistryTestConfig();
   await writeInstalledModule(config, {
@@ -787,6 +823,7 @@ async function writeInstalledApp(
   input: {
     appId: string;
     name: string;
+    withRuntimeBindings?: boolean;
   }
 ) {
   const appRoot = path.join(config.dataRootContainer, 'apps', input.appId);
@@ -847,6 +884,34 @@ async function writeInstalledApp(
         manifestUrl: 'https://apps.example.test/project-manager/manifest.json',
         manifestPath: `apps/${input.appId}/manifest.json`,
         selectedRuntime: 'docker',
+        ...(input.withRuntimeBindings
+          ? {
+              containers: [
+                {
+                  key: 'web',
+                  containerName: `mod-${input.appId.replace(/\./g, '-')}-web`,
+                  networkAlias: `mod-${input.appId.replace(/\./g, '-')}-web`,
+                  image: {
+                    repository: 'ghcr.io/example/project-manager',
+                    tag: '1.0.0',
+                    reference: 'ghcr.io/example/project-manager:1.0.0',
+                  },
+                  ports: [
+                    {
+                      key: 'http',
+                      endpointKey: 'web',
+                      containerPort: 3000,
+                      hostPort: 3102,
+                      protocol: 'http',
+                      hostPublished: true,
+                    },
+                  ],
+                },
+              ],
+              operationStatus: 'installed' as const,
+              lastOperation: 'install' as const,
+            }
+          : {}),
         installedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },

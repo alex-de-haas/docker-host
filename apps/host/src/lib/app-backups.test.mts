@@ -12,6 +12,7 @@ import {
   restoreAppDataBackup,
   resolveAppDataDirectory,
 } from './app-backups.ts';
+import { writeAppsStore } from './app-store.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
 test('creates, lists, and restores ZIP backups for an app data directory', async () => {
@@ -66,6 +67,35 @@ test('resolves legacy data mappings only inside the Host data root', async () =>
     await resolveAppDataDirectory('com.example.legacy', config),
     path.join(root, 'modules', 'com.example.legacy', 'data')
   );
+});
+
+test('resolves app data mappings from apps.json lifecycle records', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hosty-backups-'));
+  const config = createConfig(root);
+  const dataPath = path.join(root, 'apps', 'com.example.notes', 'custom-data');
+  await writeAppsStore({
+    schemaVersion: 'app-store.0.1',
+    apps: [
+      {
+        id: 'com.example.notes',
+        manifestPath: 'apps/com.example.notes/manifest.json',
+        selectedRuntime: 'docker',
+        containers: [],
+        storageMappings: [
+          {
+            key: 'data',
+            container: 'web',
+            containerPath: '/data',
+            hostPath: dataPath,
+            writable: true,
+          },
+        ],
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  }, config);
+
+  assert.equal(await resolveAppDataDirectory('com.example.notes', config), dataPath);
 });
 
 test('creates unique backup ids for rapid backups', async () => {

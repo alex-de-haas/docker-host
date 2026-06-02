@@ -6,6 +6,7 @@ import { appendAuthAuditEvent, readAuthStateSnapshot, updateAuthState } from './
 import { getHostRuntimeConfig } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 import { getDefaultModuleIdentityMode, isModuleIdentityMode } from './module-identity.mjs';
+import { validateAndNormalizeMetadata } from './module-metadata.ts';
 import { readModulesStoreSnapshot } from './module-store.ts';
 import {
   readGatewayExposureStateSnapshot,
@@ -21,8 +22,11 @@ import type {
 import type {
   InstalledModuleRecord,
   ModuleMetadata,
+  NormalizedModuleMetadata,
   ModuleRuntimePortMetadata,
 } from '../types/modules.ts';
+
+type GatewayModuleMetadata = ModuleMetadata | NormalizedModuleMetadata;
 
 export interface GatewayResolvedTarget {
   exposure: GatewayExposureRecord;
@@ -408,7 +412,7 @@ export async function validateGatewayExposureInput(
   };
 }
 
-function resolveEndpointTarget(metadata: ModuleMetadata, endpointKey: string) {
+function resolveEndpointTarget(metadata: GatewayModuleMetadata, endpointKey: string) {
   const endpoint = metadata.endpoints?.find(candidate => candidate.key === endpointKey);
   const container = metadata.containers.find(candidate => candidate.key === endpoint?.container);
   const port = container?.runtime?.ports?.find(candidate => candidate.key === endpoint?.port);
@@ -494,7 +498,7 @@ async function findInstalledModuleSnapshot(
 async function readInstalledModuleMetadata(
   module: InstalledModuleRecord,
   config: HostRuntimeConfig
-): Promise<ModuleMetadata | null> {
+): Promise<GatewayModuleMetadata | null> {
   const metadataPath = module.metadataPath
     ? path.isAbsolute(module.metadataPath)
       ? module.metadataPath
@@ -503,7 +507,8 @@ async function readInstalledModuleMetadata(
 
   try {
     const raw = await fs.readFile(metadataPath, 'utf-8');
-    return JSON.parse(raw) as ModuleMetadata;
+    const parsed = JSON.parse(raw) as unknown;
+    return validateAndNormalizeMetadata(parsed, '$').metadata ?? (parsed as ModuleMetadata);
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       return null;

@@ -3,6 +3,17 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { getHostRuntimeConfig, pathExists, syncPathOwnershipWithDataRoot } from './host-runtime.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
+import type {
+  InstalledExternalMountMapping,
+  InstalledModuleContainerRecord,
+  InstalledSettingValue,
+  InstalledStorageMapping,
+  ModuleInstallExternalMountSelection,
+  ModuleInstallSettingSelection,
+  ModuleOperationError,
+  ModuleOperationStatus,
+  ResolvedDependency,
+} from '../types/modules.ts';
 
 const APP_STORE_SCHEMA_VERSION = 'app-store.0.1';
 const PRIVATE_STORE_FILE_MODE = 0o600;
@@ -13,8 +24,28 @@ export interface InstalledAppRecord {
   manifestPath?: string;
   selectedChannel?: string;
   selectedRuntime?: string;
+  metadataDigest?: string;
+  planDigest?: string;
+  containers?: InstalledModuleContainerRecord[];
+  operationStatus?: ModuleOperationStatus;
+  settings?: Record<string, InstalledSettingValue>;
+  storage?: {
+    directories?: InstalledStorageMapping[];
+  };
+  storageMappings?: Record<string, InstalledStorageMapping> | InstalledStorageMapping[];
+  externalMounts?: InstalledExternalMountMapping[] | Record<string, InstalledExternalMountMapping[]>;
+  resolvedDependencies?: Record<string, ResolvedDependency> | ResolvedDependency[];
+  dependencies?: ResolvedDependency[];
   installedAt?: string;
   updatedAt?: string;
+  lastOperation?: 'install' | 'update' | 'configure' | 'remove' | 'lifecycle';
+  updateAttempt?: {
+    updatePlanDigest: string;
+    settings: ModuleInstallSettingSelection[];
+    externalMounts: ModuleInstallExternalMountSelection[];
+    attemptedAt: string;
+  };
+  lastError?: ModuleOperationError | null;
 }
 
 export interface AppsStoreData {
@@ -140,8 +171,21 @@ function normalizeInstalledAppRecord(value: unknown): InstalledAppRecord | null 
   record.manifestPath = readString(value, 'manifestPath');
   record.selectedChannel = readString(value, 'selectedChannel');
   record.selectedRuntime = readString(value, 'selectedRuntime');
+  record.metadataDigest = readString(value, 'metadataDigest');
+  record.planDigest = readString(value, 'planDigest');
+  record.containers = readArray(value, 'containers') as InstalledModuleContainerRecord[] | undefined;
+  record.operationStatus = readOperationStatus(value);
+  record.settings = readRecord(value, 'settings') as Record<string, InstalledSettingValue> | undefined;
+  record.storage = readStorage(value);
+  record.storageMappings = readRecordOrArray(value, 'storageMappings') as InstalledAppRecord['storageMappings'];
+  record.externalMounts = readRecordOrArray(value, 'externalMounts') as InstalledAppRecord['externalMounts'];
+  record.resolvedDependencies = readRecordOrArray(value, 'resolvedDependencies') as InstalledAppRecord['resolvedDependencies'];
+  record.dependencies = readArray(value, 'dependencies') as ResolvedDependency[] | undefined;
   record.installedAt = readString(value, 'installedAt');
   record.updatedAt = readString(value, 'updatedAt');
+  record.lastOperation = readLastOperation(value);
+  record.updateAttempt = readUpdateAttempt(value);
+  record.lastError = readLastError(value);
 
   return record;
 }
@@ -153,6 +197,90 @@ function readString(source: Record<string, unknown>, key: string) {
   }
 
   return undefined;
+}
+
+function readArray(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  return Array.isArray(value) ? value : undefined;
+}
+
+function readRecord(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  return isObject(value) ? value : undefined;
+}
+
+function readRecordOrArray(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  if (Array.isArray(value) || isObject(value)) {
+    return value;
+  }
+
+  return undefined;
+}
+
+function readOperationStatus(source: Record<string, unknown>): ModuleOperationStatus | undefined {
+  const value = readString(source, 'operationStatus');
+  return value === 'installed' ||
+    value === 'installing' ||
+    value === 'updating' ||
+    value === 'failed' ||
+    value === 'removing'
+    ? value
+    : undefined;
+}
+
+function readLastOperation(source: Record<string, unknown>): InstalledAppRecord['lastOperation'] {
+  const value = readString(source, 'lastOperation');
+  return value === 'install' ||
+    value === 'update' ||
+    value === 'configure' ||
+    value === 'remove' ||
+    value === 'lifecycle'
+    ? value
+    : undefined;
+}
+
+function readStorage(source: Record<string, unknown>): InstalledAppRecord['storage'] {
+  const storage = readRecord(source, 'storage');
+  if (!storage) {
+    return undefined;
+  }
+
+  const directories = Array.isArray(storage.directories)
+    ? storage.directories as InstalledStorageMapping[]
+    : undefined;
+
+  return directories ? { directories } : undefined;
+}
+
+function readUpdateAttempt(source: Record<string, unknown>): InstalledAppRecord['updateAttempt'] {
+  const value = readRecord(source, 'updateAttempt');
+  if (!value) {
+    return undefined;
+  }
+
+  const updatePlanDigest = readString(value, 'updatePlanDigest');
+  const settings = readArray(value, 'settings') as ModuleInstallSettingSelection[] | undefined;
+  const externalMounts = readArray(value, 'externalMounts') as ModuleInstallExternalMountSelection[] | undefined;
+  const attemptedAt = readString(value, 'attemptedAt');
+  if (!updatePlanDigest || !settings || !externalMounts || !attemptedAt) {
+    return undefined;
+  }
+
+  return {
+    updatePlanDigest,
+    settings,
+    externalMounts,
+    attemptedAt,
+  };
+}
+
+function readLastError(source: Record<string, unknown>): ModuleOperationError | null | undefined {
+  if (source.lastError === null) {
+    return null;
+  }
+
+  return readRecord(source, 'lastError') as ModuleOperationError | undefined;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
