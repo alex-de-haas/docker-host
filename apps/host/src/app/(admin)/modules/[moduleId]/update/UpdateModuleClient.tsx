@@ -224,7 +224,11 @@ export function UpdateModuleClient({ moduleId }: { moduleId: string }) {
                     <RefreshCw className="h-4 w-4" />
                     Preview request
                   </Button>
-                  <Button type="submit" disabled={plan.conflicts.length > 0 || isUpdating}>
+                  <Button
+                    type="submit"
+                    className="disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 disabled:shadow-none"
+                    disabled={plan.conflicts.length > 0 || isUpdating}
+                  >
                     {isUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                     Apply update
                   </Button>
