@@ -1,5 +1,7 @@
 # CLI Trusted Control and Dev Metadata
 
+> Final architecture note: trusted local control remains, but dev metadata and top-level `hosty dev` are pending removal. The final CLI is a Core bootstrap/API client, and local development flows use installed runtime apps with source/local command runtime profiles and existing Host users.
+
 Hosty treats the local `hosty` CLI as a trusted machine-control tool for the local Host installation. A person who can run the CLI with access to the Host data root already has local administrative control over that installation, so app lifecycle and local development commands no longer authenticate with Host user sessions or CLI bearer tokens. The deprecated `docker-host` command remains a compatibility alias during migration.
 
 The Host remains the owner of module state and side effects. The CLI resolves the running Host, discovers the local control channel, renders terminal plans and prompts, supervises local development processes, and submits confirmed requests. Install, update, remove, lifecycle, developer target registration, app registry state, assignments, directory policy, Docker container creation, gateway behavior, and audit records stay Host-owned.

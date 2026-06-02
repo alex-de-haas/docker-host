@@ -10,7 +10,7 @@ FROM base AS builder
 ENV NODE_ENV=production
 COPY --from=deps /repo/node_modules ./node_modules
 COPY . .
-RUN npm run demo-module:build
+RUN npm run build --workspace @haas/docker-host-demo-module
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app

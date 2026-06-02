@@ -158,7 +158,7 @@ Implemented so far:
 - Prefer a clean app id such as `com.haas.demo` if old demo/dev state does not need to be preserved; otherwise keep the current id only for an explicit migration boundary.
 - Give the demo app Docker and local command runtime profiles in the same app-level source repository.
 - Update repository scripts, Dockerfile fixture copies, tests, and docs that currently point at `modules/demo-module/metadata.json` or `modules/demo-module/metadata.dev.json`.
-- Replace `npm run host:dev:demo` or remove it after an equivalent installed source-runtime demo workflow exists.
+- Use explicit `npm run core:dev` plus `hosty dev up --host-url http://localhost:3001` while source-runtime demo orchestration is being finalized.
 - Keep the CLI relocation out of this phase. `apps/cli` may remain as a monorepo application package until a separate repository-layout cleanup moves it to `tools/cli` or another non-runtime-app location.
 - Remove `metadata.dev.json` from first-party workflows.
 - Remove the top-level `hosty dev up`, `status`, `identity`, `reset`, and `clean` command group and deprecated aliases.

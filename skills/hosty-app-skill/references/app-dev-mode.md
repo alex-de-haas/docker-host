@@ -15,10 +15,11 @@ Use this mode as the default feedback loop for Host-facing app behavior. Do not 
 For this repository's demo app:
 
 ```bash
-npm run host:dev:demo
+npm run core:dev
+hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001
 ```
 
-This wraps `hosty dev up --manifest modules/demo-module/metadata.dev.json`. It starts Hosty at `http://localhost:3000`, starts the demo app's public `frontend` process at `http://localhost:3100`, seeds development users through Hosty control, and links a developer target visible through Hosty Shell.
+This starts Hosty Core at `http://localhost:3001`, starts the demo app's public `frontend` process at `http://localhost:3100`, seeds development users through Hosty control, and links a developer target visible through Hosty Shell.
 
 The demo metadata also declares a `backend` process service for multi-service metadata validation. The current CLI supervisor starts the process behind the selected public endpoint; additional services remain in the metadata served to Hosty but are not launched as separate local processes yet.
 
@@ -124,10 +125,10 @@ hosty dev identity --format token
 hosty dev reset
 hosty dev clean metadata.dev.json
 hosty dev up --manifest modules/demo-module/metadata.dev.json
-hosty dev up --manifest path/to/metadata.dev.json --host-url http://localhost:3000
+hosty dev up --manifest path/to/metadata.dev.json --host-url http://localhost:3001
 ```
 
-Use `--host-url` when Hosty is already running locally in another terminal or debugger. The URL must be loopback, such as `http://localhost:3000` or `http://127.0.0.1:3000`, because the top-level dev harness serves metadata and process targets through the developer machine loopback interface. Without `--host-url`, configure `HOST_DEV_REPOSITORY_PATH` first; the top-level dev harness does not start or inspect the production Host container.
+Use `--host-url` when Hosty Core is already running locally in another terminal or debugger. The URL must be loopback, such as `http://localhost:3001` or `http://127.0.0.1:3001`, because the top-level dev harness serves metadata and process targets through the developer machine loopback interface. Without `--host-url`, configure `HOST_DEV_REPOSITORY_PATH` first; the top-level dev harness does not start or inspect the production Host container.
 
 After `dev up` prepares the target, use `hosty dev identity --format token` when a direct `curl` or test script needs an app identity JWT:
 

@@ -192,7 +192,7 @@ public sealed class DevCommandTests : IDisposable
         var exception = await Assert.ThrowsAsync<CommandUsageException>(
             () => new DevCommand(context).ExecuteAsync([command, "--manifest", WriteManifest(), "--host-url", "http://example.test:3000"]));
 
-        Assert.Contains("--host-url must point to a loopback Host origin", exception.Message);
+        Assert.Contains("--host-url must point to a loopback Core origin", exception.Message);
         Assert.Empty(transport.Requests);
     }
 
@@ -205,7 +205,7 @@ public sealed class DevCommandTests : IDisposable
         var exception = await Assert.ThrowsAsync<CommandUsageException>(
             () => new DevCommand(context).ExecuteAsync(["clean", "com.example.reports", "--host-url", "http://example.test:3000"]));
 
-        Assert.Contains("--host-url must point to a loopback Host origin", exception.Message);
+        Assert.Contains("--host-url must point to a loopback Core origin", exception.Message);
         Assert.Empty(transport.Requests);
     }
 

@@ -36,7 +36,7 @@ internal static class LaunchSettingDefinitions
         new(HostModuleNetwork, _ => "docker-host-modules", true, Required),
         new(HostModuleDevMode, _ => "disabled", true, ValidateEnabledDisabled),
         new(HostDevRepositoryPath, _ => "", true, ValidateOptionalHostPath),
-        new(HostDevPort, _ => "3000", true, ValidateTcpPort),
+        new(HostDevPort, _ => "3001", true, ValidateTcpPort),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);

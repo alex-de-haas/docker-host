@@ -9,7 +9,7 @@ using Spectre.Console;
 
 internal sealed class DevCommand(CommandContext context)
 {
-    private const string DefaultHostDevCommand = "npm run host:dev";
+    private const string DefaultCoreDevCommand = "npm run core:dev";
 
     public const string Usage = """
         Usage:
@@ -376,33 +376,34 @@ internal sealed class DevCommand(CommandContext context)
 
     private Process StartHostProcess(string repository, Uri origin, LaunchSettings settings)
     {
-        var command = DefaultHostDevCommand;
+        var command = DefaultCoreDevCommand;
         var startInfo = CreateShellStartInfo(command, repository);
-        foreach (var (key, value) in BuildHostEnvironment(origin, settings))
+        foreach (var (key, value) in BuildCoreEnvironment(origin, settings))
         {
             startInfo.Environment[key] = value;
         }
 
-        context.Console.MarkupLine($"[green]Starting Host command:[/] {Markup.Escape(command)}");
-        context.Console.MarkupLine($"[grey]Host origin:[/] {Markup.Escape(origin.ToString().TrimEnd('/'))}");
-        context.Console.MarkupLine($"[grey]Host working directory:[/] {Markup.Escape(repository)}");
+        context.Console.MarkupLine($"[green]Starting Core command:[/] {Markup.Escape(command)}");
+        context.Console.MarkupLine($"[grey]Core origin:[/] {Markup.Escape(origin.ToString().TrimEnd('/'))}");
+        context.Console.MarkupLine($"[grey]Core working directory:[/] {Markup.Escape(repository)}");
 
         try
         {
             return Process.Start(startInfo)
-                ?? throw new ConfigurationException("Unable to start Host command.");
+                ?? throw new ConfigurationException("Unable to start Core command.");
         }
         catch (Exception ex) when (ex is not ConfigurationException)
         {
-            throw new ConfigurationException($"Unable to start Host command: {ex.Message}", ex);
+            throw new ConfigurationException($"Unable to start Core command: {ex.Message}", ex);
         }
     }
 
-    private IReadOnlyDictionary<string, string> BuildHostEnvironment(Uri origin, LaunchSettings settings)
+    private IReadOnlyDictionary<string, string> BuildCoreEnvironment(Uri origin, LaunchSettings settings)
     {
         var dataRoot = settings.ResolveHostDataRoot(context.Environment);
         var values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
+            ["ASPNETCORE_URLS"] = origin.ToString().TrimEnd('/'),
             ["HOST_DATA_ROOT_HOST"] = dataRoot,
             ["HOST_DATA_ROOT_CONTAINER"] = dataRoot,
             ["HOST_INTERNAL_ORIGIN"] = origin.ToString().TrimEnd('/'),
@@ -441,7 +442,7 @@ internal sealed class DevCommand(CommandContext context)
         {
             if (process.HasExited)
             {
-                context.Console.MarkupLine($"[red]Local Host command exited before trusted control became ready.[/] Exit code: {process.ExitCode}");
+                context.Console.MarkupLine($"[red]Local Core command exited before trusted control became ready.[/] Exit code: {process.ExitCode}");
                 return false;
             }
 
@@ -776,7 +777,7 @@ internal sealed class DevCommand(CommandContext context)
                 var completed = await Task.WhenAny(moduleExit, hostExit);
                 if (completed == hostExit && ownedHostProcess is not null)
                 {
-                    context.Console.MarkupLine($"[red]Local Host command exited.[/] Exit code: {ownedHostProcess.ExitCode}");
+                    context.Console.MarkupLine($"[red]Local Core command exited.[/] Exit code: {ownedHostProcess.ExitCode}");
                     KillProcessTree(process);
                     await moduleExit;
                     return ownedHostProcess.ExitCode == 0 ? 1 : ownedHostProcess.ExitCode;
@@ -1182,7 +1183,7 @@ internal sealed class DevCommand(CommandContext context)
 
         if (!IsLoopbackHost(uri.Host))
         {
-            throw new CommandUsageException("--host-url must point to a loopback Host origin such as http://localhost:3000.", Usage);
+            throw new CommandUsageException("--host-url must point to a loopback Core origin such as http://localhost:3001.", Usage);
         }
 
         return new Uri(uri.GetLeftPart(UriPartial.Authority));

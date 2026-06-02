@@ -6,12 +6,12 @@
 - Use the integrated Hosty development harness for runtime app work that depends on Hosty identity:
   ```bash
   hosty config set HOST_DEV_REPOSITORY_PATH "<path-to-hosty-repository>"
-  hosty config set HOST_DEV_PORT 3000
+  hosty config set HOST_DEV_PORT 3001
   hosty dev up --manifest modules/demo-module/metadata.dev.json
   ```
 - If the Host is already running from another terminal or debugger, connect to it instead of starting another Host process:
   ```bash
-  hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
+  hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001
   ```
 - For direct API probes against the local app origin, request a real Hosty-signed development identity token after the developer target has been prepared:
   ```bash

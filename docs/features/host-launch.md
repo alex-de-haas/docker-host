@@ -1,5 +1,7 @@
 # Host launch model
 
+> Final architecture note: this document describes the current Docker-hosted launch model. The final architecture moves Hosty Core to a local-first ASP.NET Core process, extracts Shell into a Core-managed runtime app, and narrows the CLI to Core bootstrap plus Core API client behavior.
+
 This document describes the launch model for the Hosty Core process currently implemented by Docker Host. This is separate from launching runtime apps: the Host must be started reliably first, then apps/modules are managed through it.
 
 ## Decision

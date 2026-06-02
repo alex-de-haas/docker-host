@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.shell",
+  "name": "Hosty Shell",
+  "description": "Hosty browser management shell.",
+  "version": "0.1.0",
+  "runtimeProfiles": [
+    {
+      "key": "docker",
+      "type": "docker",
+      "default": true
+    }
+  ],
+  "defaultRuntime": "docker",
+  "services": [
+    {
+      "key": "web",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": {
+            "repository": "hosty-shell",
+            "tag": "local",
+            "pullPolicy": "never"
+          },
+          "environment": {
+            "PORT": "3000",
+            "HOSTNAME": "0.0.0.0"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "localPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "web",
+      "service": "web",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "capabilities": ["open", "update", "restart", "stop", "logs"]
+}

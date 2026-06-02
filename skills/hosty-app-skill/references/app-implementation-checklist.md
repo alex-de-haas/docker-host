@@ -61,9 +61,9 @@ Use this checklist before finishing a Hosty runtime app task.
 ## Development Validation
 
 - For manifest-only work, run targeted metadata/parser tests when available.
-- For Hosty behavior changes, run `npm run host:test`.
+- For Hosty behavior changes, run `npm run core:test`.
 - For app changes, run that app's lint/build/test scripts.
-- For Shell integration, identity, assigned-user behavior, scoped directory reads, redirects, WebSockets, or SSE, run `npm run host:dev:demo` or link a developer target.
+- For Shell integration, identity, assigned-user behavior, scoped directory reads, redirects, WebSockets, or SSE, run `hosty dev up` or link a developer target.
 - Integrated developer-target validation uses Hosty-seeded users and assignments; it does not rely on hand-written identity tokens.
 - For managed lifecycle behavior, build the app image locally and install the manifest through Hosty.
 - `hosty dev` is not a replacement for image install tests when Dockerfile, storage, lifecycle, or container networking changed.

@@ -21,7 +21,7 @@ public sealed class UpdateCommandTests
         var exception = await Assert.ThrowsAsync<CommandUsageException>(
             async () => await new UpdateCommand(context).ExecuteAsync(["--host-only"]));
 
-        Assert.Equal("Usage: hosty update", exception.Usage);
+        Assert.Contains("hosty update [--list-channels]", exception.Usage);
     }
 
     private static IAnsiConsole CreateConsole()

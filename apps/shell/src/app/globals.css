@@ -1,0 +1,419 @@
+:root {
+  color-scheme: light;
+  --background: #f7f8fa;
+  --panel: #ffffff;
+  --panel-muted: #f1f4f8;
+  --text: #172033;
+  --muted: #607086;
+  --border: #d9e0ea;
+  --accent: #0d6b57;
+  --accent-soft: #e2f3ee;
+  --danger: #b42318;
+  --danger-soft: #fee4e2;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--background);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  display: grid;
+  min-height: 100dvh;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  height: 100dvh;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: #111827;
+  color: #f8fafc;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+.brandMark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 8px;
+  background: #213148;
+}
+
+.brandMark svg,
+.nav svg,
+.button svg,
+.notice svg,
+.emptyState svg,
+.check svg,
+.openLink svg,
+.inlineError svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand strong {
+  font-size: 15px;
+}
+
+.brand span {
+  margin-top: 2px;
+  color: #b8c3d2;
+  font-size: 12px;
+}
+
+.nav {
+  display: grid;
+  gap: 4px;
+  padding: 14px 10px;
+}
+
+.nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 10px;
+  color: #dce4ef;
+  font-size: 14px;
+}
+
+.nav a:hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+.sidebarFooter {
+  margin-top: auto;
+  display: grid;
+  gap: 6px;
+  padding: 16px 20px;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+  color: #b8c3d2;
+  font-size: 12px;
+}
+
+.sidebarFooter code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f8fafc;
+}
+
+.content {
+  min-width: 0;
+  padding: 24px;
+}
+
+.topbar,
+.sectionHeader,
+.appHeader,
+.appActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.topbar {
+  margin-bottom: 18px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.topbar p,
+.appHeader p,
+.statusTile span,
+.appFacts dt,
+.sectionHeader span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 12px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.button.ghost {
+  background: transparent;
+  box-shadow: none;
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.statusTile,
+.appCard,
+.emptyList,
+.emptyState,
+.notice {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.statusTile {
+  min-width: 0;
+  padding: 14px;
+}
+
+.statusTile strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+}
+
+.notice.error {
+  border-color: #f8b4ad;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.section {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.sectionHeader h2 {
+  font-size: 16px;
+}
+
+.sectionHeader span {
+  display: inline-grid;
+  min-width: 28px;
+  min-height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--panel-muted);
+}
+
+.appGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.appCard {
+  display: grid;
+  min-height: 190px;
+  gap: 14px;
+  padding: 16px;
+}
+
+.appHeader {
+  align-items: flex-start;
+}
+
+.appHeader h3 {
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+
+.pill {
+  display: inline-grid;
+  min-height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--panel-muted);
+  color: var(--muted);
+  padding: 0 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pill.success {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.appFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.appFacts dd {
+  overflow: hidden;
+  margin: 3px 0 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.appActions {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  font-size: 13px;
+}
+
+.check,
+.openLink,
+.inlineError {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.check {
+  color: var(--accent);
+}
+
+.openLink {
+  color: var(--muted);
+}
+
+.openLink[aria-disabled="true"] {
+  pointer-events: none;
+  opacity: 0.58;
+}
+
+.inlineError {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.emptyList,
+.emptyState {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1100px) {
+  .statusGrid,
+  .appGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+  }
+
+  .nav,
+  .sidebarFooter {
+    display: none;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .statusGrid,
+  .appGrid,
+  .appFacts {
+    grid-template-columns: 1fr;
+  }
+}

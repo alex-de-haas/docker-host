@@ -4,20 +4,20 @@ This document defines how Docker Host should be run locally while developing and
 
 ## Decision
 
-Docker Host should support two local feedback loops:
+Hosty should support two local feedback loops:
 
-- direct host-run development through `npm run host:dev`;
+- direct source-run development through `npm run core:dev`, `npm run shell:dev`, and app-specific commands;
 - production-like local container testing through a locally built Docker image tag, for example `docker-host:dev`.
 
-The direct host-run mode is the default development loop. The production-like mode is used when validating Dockerfile behavior, container environment variables, Docker socket mounts, Host data root mounts, and `docker-host` CLI lifecycle behavior.
+The direct source-run mode is the default development loop. The production-like mode is used when validating Dockerfile behavior, container environment variables, Docker socket mounts, Host data root mounts, and `docker-host` CLI lifecycle behavior.
 
 ```mermaid
 flowchart LR
   A["Developer changes code"] --> B{"What needs testing?"}
   B --> C["Fast UI/API feedback"]
   B --> D["Container launch behavior"]
-  C --> E["npm run host:dev"]
-  E --> F["Host backend on developer machine"]
+  C --> E["npm run core:dev"]
+  E --> F["Hosty Core on developer machine"]
   F --> G["Docker daemon"]
   D --> H["docker build -f apps/host/Dockerfile -t docker-host:dev ."]
   H --> I["docker run docker-host:dev"]
@@ -25,16 +25,18 @@ flowchart LR
   J --> G
 ```
 
-## Direct host-run development
+## Direct source-run development
 
-Use this mode for normal UI and backend API development:
+Use this mode for normal Core, Shell, and app development:
 
 ```bash
 npm install
-npm run host:dev
+npm run core:dev
+npm run shell:dev
+npm run demo-app:dev
 ```
 
-The Next.js server runs directly on the developer machine. It connects to Docker using the existing Docker connection priority:
+Hosty Core runs directly on the developer machine and listens on `http://127.0.0.1:3001` by default. Shell runs separately on `http://localhost:3000`. Core connects to Docker using the existing Docker connection priority:
 
 1. `DOCKER_SOCKET_PATH`, if set;
 2. `DOCKER_HOST`, if set;
@@ -43,47 +45,48 @@ The Next.js server runs directly on the developer machine. It connects to Docker
 Examples:
 
 ```bash
-DOCKER_SOCKET_PATH=/var/run/docker.sock npm run host:dev
-DOCKER_HOST=unix:///var/run/docker.sock npm run host:dev
-DOCKER_HOST=tcp://127.0.0.1:2375 npm run host:dev
+DOCKER_SOCKET_PATH=/var/run/docker.sock npm run core:dev
+DOCKER_HOST=unix:///var/run/docker.sock npm run core:dev
+DOCKER_HOST=tcp://127.0.0.1:2375 npm run core:dev
 ```
 
-In this mode, local metadata test servers can usually be referenced as `http://localhost:<port>/...`, because the Host backend also runs on the developer machine.
+In this mode, local metadata test servers can usually be referenced as `http://localhost:<port>/...`, because Hosty Core also runs on the developer machine.
 
-The repository uses npm workspace scripts from the root. `npm run host:dev`, `npm run host:build`, and `npm run host:lint` execute the Host app in `apps/host`.
+The repository uses explicit root scripts per component. `npm run core:dev`, `npm run core:build`, and `npm run core:test` execute Hosty Core in `apps/core`. `npm run shell:dev` and `npm run shell:build` execute Hosty Shell in `apps/shell`. `npm run demo-app:dev` and `npm run demo-app:build` execute the demo runtime app in `apps/demo-app`.
 
-The installed CLI dev harness is dev-only. It starts the Host from `HOST_DEV_REPOSITORY_PATH` through `npm run host:dev`, or it can target an already running source Host with a loopback URL such as `--host-url http://localhost:3000`.
+The installed CLI dev harness is dev-only. It starts Hosty Core from `HOST_DEV_REPOSITORY_PATH` through `npm run core:dev`, or it can target an already running source Core with a loopback URL such as `--host-url http://localhost:3001`.
 
 Module dev server upstreams should usually be `http://127.0.0.1:<port>`. The metadata `runtime.ports[].localPort` value expands to that address for the top-level `hosty dev` harness.
 
-## Direct host-run development with a demo shell app
+## Direct source-run development with a demo app
 
 Use this mode for Host shell work, Apps sidebar work, account switching checks, nested app navigation, or direct-origin iframe transport against the demo module from the current repository checkout:
 
 ```bash
-npm run host:dev:demo
+npm run core:dev
+hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001
 ```
 
-This script configures an isolated CLI home and then delegates orchestration to `hosty dev up --manifest modules/demo-module/metadata.dev.json`. It starts both local development servers:
+This starts Hosty Core from source and delegates demo app orchestration to `hosty dev up --manifest modules/demo-module/metadata.dev.json`. It starts:
 
-- Hosty Core and Shell at `http://localhost:3000`;
+- Hosty Core at `http://localhost:3001`;
+- Hosty Shell at `http://localhost:3000` when Shell autostart is enabled or when `npm run shell:dev` is running separately;
 - the repository-local demo module at `http://localhost:3100`.
 
-The script sets:
+For a self-contained harness that starts Core itself, configure the repository path and Core dev port:
 
-- `HOSTY_HOME` to the repository-local `.hosty-dev-demo/` directory unless already provided. Legacy `DOCKER_HOST_HOME` remains accepted for older scripts;
-- `HOST_DEV_REPOSITORY_PATH` in the isolated CLI config to the current checkout;
-- `HOST_DEV_PORT` in the isolated CLI config to `3000` unless `HOST_DEV_PORT` or `PORT` is provided.
+```bash
+hosty config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
+hosty config set HOST_DEV_PORT 3001
+hosty dev up --manifest modules/demo-module/metadata.dev.json
+```
 
-The generic `hosty dev up` command sets the local Host process environment:
+The generic `hosty dev up` command sets the local Core process environment:
 
 - `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the active CLI Host data root;
+- `ASPNETCORE_URLS` to the selected loopback Core URL;
 - `HOST_DEV_AUTH=auto`, which enables development-only auto-login;
 - `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, which remembers development accounts in the browser account menu.
-
-The demo wrapper also sets:
-
-- `HOST_ENABLE_DEV_FIXTURES=true`, which enables the current-branch demo metadata fixture.
 
 When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only when the Host server observes the client socket as a loopback address such as `127.0.0.1` or `::1`.
 
@@ -97,7 +100,7 @@ The route does not disable authentication. It creates or updates normal local ac
 
 Override these values with `HOST_DEV_ADMIN_EMAIL`, `HOST_DEV_ADMIN_PASSWORD`, and `HOST_DEV_ADMIN_NAME` if a local test needs different credentials. The password still has to satisfy the normal local password policy.
 
-The demo script signs the first browser session in as the administrator account. It still creates and remembers a normal development user for account switching:
+The development harness signs the first browser session in as the administrator account. It still creates and remembers a normal development user for account switching:
 
 - email: `user@docker-host.local`;
 - password: `docker-host-dev-user`;
@@ -234,7 +237,7 @@ Example metadata container image reference for local module testing:
 }
 ```
 
-When the Host itself runs directly through `npm run host:dev`, local metadata URLs can point to `localhost`. When the Host runs as `docker-host:dev`, metadata URLs for services on the developer machine should use `host.docker.internal`.
+When Hosty Core runs directly through `npm run core:dev`, local metadata URLs can point to `localhost`. When the legacy Host container runs as `docker-host:dev`, metadata URLs for services on the developer machine should use `host.docker.internal`.
 
 ## Module developer mode
 
@@ -256,7 +259,7 @@ For the reusable installed-CLI workflow, prefer the metadata-driven harness:
 
 ```bash
 hosty config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
-hosty config set HOST_DEV_PORT 3000
+hosty config set HOST_DEV_PORT 3001
 hosty dev up --manifest modules/demo-module/metadata.dev.json
 hosty dev status --manifest modules/demo-module/metadata.dev.json
 hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token
@@ -266,7 +269,7 @@ hosty dev reset --manifest modules/demo-module/metadata.dev.json
 When iterating on Host source code, run the same harness against a local Host origin:
 
 ```bash
-hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
+hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001
 ```
 
 This skips Docker lifecycle operations and uses the running Host's local control channel for dev target registration, user seeding, assignments, and directory policy.
@@ -291,7 +294,7 @@ Use this mode when the smoke test must exercise a real managed module container 
 First build the local demo module image:
 
 ```bash
-npm run demo-module:docker:build:local
+docker build -f modules/demo-module/Dockerfile -t docker-host-demo-module:dev .
 ```
 
 That command tags the image as:
@@ -312,8 +315,8 @@ The fixture reads `modules/demo-module/metadata.json` from the current checkout 
 
 For a normal feature change:
 
-- run `npm run host:dev`;
-- for install/update request helper changes, run `npm run host:test`;
+- run `npm run core:dev`;
+- for Core request helper changes, run `npm run core:test`;
 - open the Web UI;
 - exercise the changed API/UI behavior;
 - check the Docker operation result in the UI or Docker Desktop.

@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "workspaces": [
+    "apps/demo-app",
     "apps/host",
+    "apps/shell",
     "modules/demo-module"
   ],
   "overrides": {
@@ -13,23 +15,20 @@
     }
   },
   "scripts": {
-    "dev": "npm run host:dev",
-    "build": "npm run host:build",
-    "lint": "npm run host:lint",
-    "host:dev": "npm run dev --workspace @haas/docker-host-app",
-    "host:dev:demo": "node scripts/dev-demo-shell.mjs",
-    "host:build": "npm run build --workspace @haas/docker-host-app",
-    "host:start": "npm run start --workspace @haas/docker-host-app",
-    "host:lint": "npm run lint --workspace @haas/docker-host-app",
-    "host:test": "npm run test --workspace @haas/docker-host-app",
-    "demo-module:dev": "npm run dev --workspace @haas/docker-host-demo-module",
-    "demo-module:build": "npm run build --workspace @haas/docker-host-demo-module",
-    "demo-module:start": "npm run start --workspace @haas/docker-host-demo-module",
-    "demo-module:lint": "npm run lint --workspace @haas/docker-host-demo-module",
-    "demo-module:docker:build": "docker build -f modules/demo-module/Dockerfile -t ghcr.io/alex-de-haas/demo-module:latest .",
-    "demo-module:docker:build:local": "docker build -f modules/demo-module/Dockerfile -t docker-host-demo-module:dev .",
+    "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
+    "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
+    "core:test": "dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj",
+    "shell:dev": "npm run dev --workspace @haas/hosty-shell",
+    "shell:build": "npm run build --workspace @haas/hosty-shell",
+    "shell:start": "npm run start --workspace @haas/hosty-shell",
+    "demo-app:dev": "npm run dev --workspace @haas/hosty-demo-app",
+    "demo-app:build": "npm run build --workspace @haas/hosty-demo-app",
+    "demo-app:start": "npm run start --workspace @haas/hosty-demo-app",
+    "demo-app:lint": "npm run lint --workspace @haas/hosty-demo-app",
+    "demo-app:docker:build": "docker build -f apps/demo-app/Dockerfile -t ghcr.io/alex-de-haas/demo-app:latest .",
+    "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev .",
     "cli:build": "dotnet build apps/cli/src/Haas.DockerHost.Cli/Haas.DockerHost.Cli.csproj",
     "cli:test": "dotnet test apps/cli/tests/Haas.DockerHost.Cli.Tests/Haas.DockerHost.Cli.Tests.csproj",
-    "ci": "npm run host:lint && npm run host:test && npm run host:build && npm run cli:build && npm run cli:test"
+    "ci": "npm run shell:build && npm run demo-app:build && npm run core:build && npm run core:test && npm run cli:build && npm run cli:test"
   }
 }

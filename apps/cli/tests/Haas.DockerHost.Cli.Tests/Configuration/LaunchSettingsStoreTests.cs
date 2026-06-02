@@ -40,7 +40,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal("test-host", settings.HostContainerName);
         Assert.Equal("ghcr.io/alex-de-haas/docker-host:latest", settings.HostImage);
         Assert.Equal("", settings.HostDevRepositoryPathRaw);
-        Assert.Equal(3000, settings.GetHostDevPort());
+        Assert.Equal(3001, settings.GetHostDevPort());
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }
 

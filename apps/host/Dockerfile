@@ -5,7 +5,7 @@ COPY apps/host/package.json apps/host/package.json
 RUN npm ci --no-audit --no-fund --workspace @haas/docker-host-app
 COPY . .
 ENV NODE_ENV=production
-RUN npm run host:build \
+RUN npm run build --workspace @haas/docker-host-app \
   && npm cache clean --force
 
 FROM node:22-bookworm-slim AS prod-deps

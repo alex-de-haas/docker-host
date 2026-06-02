@@ -62,7 +62,7 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
    - integrated developer target for Shell embedding, gateway policy, Hosty sessions, identity, scoped directory access, redirects, WebSockets, and SSE;
    - production-like local image install for Dockerfile, storage, lifecycle, install/update, and container runtime behavior.
 2. Use `hosty dev up --manifest <path-to-metadata.dev.json>` for metadata-driven local orchestration. It starts or connects to a loopback Hosty Core, seeds development users and assignments, links the developer target, and starts local app commands.
-3. For this repository's demo loop, use `npm run host:dev:demo`.
+3. For this repository's demo loop, run Hosty Core with `npm run core:dev`, then use `hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001`.
 4. For direct app-origin endpoint probes after the target is prepared, use `hosty dev identity --manifest <path-to-metadata.dev.json> --format token` and pass the token as `X-Docker-Host-Identity`. This is a diagnostic helper, not a replacement for Shell or gateway testing.
 5. Do not hand-inject fake identity tokens or validate Hosty identity by running the app only in standalone mode.
 
@@ -78,10 +78,10 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 
 Use focused validation based on what changed:
 
-- App manifest or metadata parser behavior: run targeted Host tests, commonly `npm run host:test`.
+- App manifest or metadata parser behavior: run targeted Core tests, commonly `npm run core:test`.
 - App code changes: run the app's lint/build/test commands.
-- Demo app changes: run `npm run demo-module:lint` and `npm run demo-module:build`.
-- Shell app, embedded transport, identity behavior, or scoped directory behavior: use `npm run host:dev:demo` or a linked developer target.
+- Demo app changes: run `npm run demo-app:lint` and `npm run demo-app:build`.
+- Shell app, embedded transport, identity behavior, or scoped directory behavior: use `hosty dev up` with a linked developer target.
 - Production-like container behavior: build the Host image and app image locally, then install the manifest through Hosty.
 
 Do not claim app security or identity work is complete without checking Hosty-issued token validation, cookie/header stripping assumptions, and audience validation.

@@ -55,18 +55,19 @@ flowchart LR
 Run the Next.js app directly:
 
 ```bash
-npm run demo-module:dev
+npm run dev --workspace @haas/docker-host-demo-module
 ```
 
 The development server listens on `http://localhost:3100`.
 
-Run the Host shell with this current checkout's demo module already linked as a developer app:
+Run Hosty Core with this current checkout's demo module linked as a developer app:
 
 ```bash
-npm run host:dev:demo
+npm run core:dev
+hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001
 ```
 
-This uses the local `hosty` CLI project to run `hosty dev up --manifest modules/demo-module/metadata.dev.json`. The wrapper keeps state in `.hosty-dev-demo/`, configures the Host dev repository path to the current checkout, enables local development auto-login, starts Hosty locally on port `3000`, starts the demo module locally on port `3100`, seeds development users, and links the demo developer target through Host trusted control.
+This uses the local `hosty` CLI project to link the demo developer target through Host trusted control, enables local development auto-login, starts the demo module locally on port `3100`, and seeds development users. Hosty Core listens on `http://localhost:3001` by default.
 
 Run the installed CLI harness against the demo dev metadata:
 
@@ -80,7 +81,7 @@ Run Docker Host from a built Host image and install the built demo module image 
 
 ```bash
 docker build -f apps/host/Dockerfile -t docker-host:dev .
-npm run demo-module:docker:build:local
+docker build -f modules/demo-module/Dockerfile -t docker-host-demo-module:dev .
 hosty config set HOST_IMAGE docker-host:dev
 hosty config set HOST_DATA_ROOT_HOST "$HOME/.hosty-dev"
 hosty start
@@ -94,7 +95,7 @@ Then install the fixture metadata from `/modules/install` using `http://localhos
 Build the local image from the repository root:
 
 ```bash
-npm run demo-module:docker:build
+docker build -f modules/demo-module/Dockerfile -t ghcr.io/alex-de-haas/demo-module:latest .
 ```
 
 The metadata uses:
@@ -106,7 +107,7 @@ ghcr.io/alex-de-haas/demo-module:latest
 For current-branch install testing, build the local development tag instead:
 
 ```bash
-npm run demo-module:docker:build:local
+docker build -f modules/demo-module/Dockerfile -t docker-host-demo-module:dev .
 ```
 
 Then install the Host fixture metadata at:

@@ -45,7 +45,7 @@ The CI image workflow publishes this image to GitHub Container Registry. Docker 
 From the repository root:
 
 ```bash
-npm run demo-module:docker:build
+docker build -f modules/demo-module/Dockerfile -t ghcr.io/alex-de-haas/demo-module:latest .
 ```
 
 Then install the module in Docker Host:
@@ -59,7 +59,7 @@ hosty modules install https://raw.githubusercontent.com/alex-de-haas/docker-host
 Run the frontend-compatible app process without Docker:
 
 ```bash
-npm run demo-module:dev
+npm run dev --workspace @haas/docker-host-demo-module
 ```
 
 The development server listens on `http://localhost:3100`.

@@ -1,0 +1,404 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using Microsoft.AspNetCore.HttpOverrides;
+
+namespace Haas.Hosty.Core;
+
+internal static class HostyCoreApplication
+{
+    private const string ControlSecretHeader = "X-Hosty-Control-Secret";
+
+    public static void ConfigureServices(WebApplicationBuilder builder)
+    {
+        var config = HostyCoreRuntimeConfig.FromEnvironment(builder.Environment);
+        builder.WebHost.UseUrls(config.ListenUrl);
+        builder.Services.AddSingleton(config);
+        builder.Services.AddSingleton(sp => CoreDataPaths.FromConfig(sp.GetRequiredService<HostyCoreRuntimeConfig>()));
+        builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
+        builder.Services.AddSingleton<AppRegistryStore>();
+        builder.Services.AddSingleton<UserDirectoryStore>();
+        builder.Services.AddSingleton<AuditStore>();
+        builder.Services.AddSingleton<AppAuthCodeStore>();
+        builder.Services.AddSingleton<AppIdentityService>();
+        builder.Services.AddSingleton<AppManifestService>();
+        builder.Services.AddSingleton<AppBackupService>();
+        builder.Services.AddSingleton<AppSourceService>();
+        builder.Services.AddSingleton<CoreLifecycleService>();
+        builder.Services.AddSingleton<LocalCommandProcessRegistry>();
+        builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
+        builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
+        builder.Services.AddSingleton<IClock, SystemClock>();
+        builder.Services.AddHostedService<ShellBootstrapService>();
+        builder.Services.AddCors(options =>
+        {
+            options.AddPolicy("HostyShell", policy =>
+            {
+                if (!string.IsNullOrWhiteSpace(config.ShellPublicOrigin))
+                {
+                    policy.WithOrigins(config.ShellPublicOrigin)
+                        .AllowCredentials()
+                        .AllowAnyHeader()
+                        .AllowAnyMethod();
+                }
+            });
+        });
+        builder.Services.Configure<ForwardedHeadersOptions>(options =>
+        {
+            options.ForwardedHeaders =
+                ForwardedHeaders.XForwardedFor |
+                ForwardedHeaders.XForwardedHost |
+                ForwardedHeaders.XForwardedProto;
+        });
+        builder.Services.AddHostedService<ControlDiscoveryWriter>();
+    }
+
+    public static void MapEndpoints(WebApplication app)
+    {
+        app.UseForwardedHeaders();
+        app.UseCors("HostyShell");
+
+        app.MapGet("/healthz", () => Results.Json(new HealthResponse("ok")));
+        app.MapGet("/api/core/status", (HostyCoreRuntimeConfig config) => Results.Json(CoreStatusResponse.From(config)));
+        app.MapGet("/control/v1/core/status", (HttpRequest request, HostyCoreRuntimeConfig config, ControlSecret secret) =>
+            RequireControlSecret(request, secret, () => Results.Json(CoreStatusResponse.From(config))));
+        app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime) =>
+            RequireControlSecret(request, secret, () =>
+            {
+                lifetime.StopApplication();
+                return Results.Json(new StopResponse("stopping"));
+            }));
+
+        app.MapGet("/login", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
+            "Hosty Core Login",
+            "Hosty Core owns login and session setup in the final architecture.",
+            config), "text/html"));
+        app.MapGet("/setup", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
+            "Hosty Core Setup",
+            "Hosty Core owns first administrator setup.",
+            config), "text/html"));
+        app.MapGet("/recovery", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
+            "Hosty Core Recovery",
+            "Hosty Core owns local administrator recovery.",
+            config), "text/html"));
+        app.MapGet("/logout", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
+            "Hosty Core Logout",
+            "Hosty Core owns logout and session cleanup.",
+            config), "text/html"));
+        app.MapGet("/api/auth/callback/oidc", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
+            "Hosty Core OIDC Callback",
+            "Hosty Core owns external auth callbacks.",
+            config), "text/html"));
+
+        DomainEndpoints.Map(app);
+        AuthEndpoints.Map(app);
+        LifecycleEndpoints.Map(app);
+        SourceEndpoints.Map(app);
+        ControlIdentityEndpoints.Map(app);
+    }
+
+    internal static IResult RequireControlSecret(HttpRequest request, ControlSecret secret, Func<IResult> action)
+    {
+        if (!request.Headers.TryGetValue(ControlSecretHeader, out var submitted) ||
+            !string.Equals(submitted.ToString(), secret.Value, StringComparison.Ordinal))
+        {
+            return Results.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        return action();
+    }
+
+    internal static async Task<IResult> RequireControlSecret(HttpRequest request, ControlSecret secret, Func<Task<IResult>> action)
+    {
+        if (!request.Headers.TryGetValue(ControlSecretHeader, out var submitted) ||
+            !string.Equals(submitted.ToString(), secret.Value, StringComparison.Ordinal))
+        {
+            return Results.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        return await action();
+    }
+
+    private static string CreateControlSecret()
+        => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+
+    private static string RenderCorePage(string title, string message, HostyCoreRuntimeConfig config)
+    {
+        var encodedTitle = HtmlEncoder.Default.Encode(title);
+        var encodedMessage = HtmlEncoder.Default.Encode(message);
+        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.CorePublicOrigin ?? config.ListenUrl);
+        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.ShellPublicOrigin ?? "not configured");
+
+        return $$"""
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>{{encodedTitle}}</title>
+            <style>
+              :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+              body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+              main { width: min(34rem, calc(100vw - 2rem)); border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 1.5rem; }
+              h1 { margin: 0 0 .75rem; font-size: 1.25rem; }
+              p { margin: .5rem 0; line-height: 1.5; }
+              code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>{{encodedTitle}}</h1>
+              <p>{{encodedMessage}}</p>
+              <p>Core origin: <code>{{encodedCoreOrigin}}</code></p>
+              <p>Shell origin: <code>{{encodedShellOrigin}}</code></p>
+            </main>
+          </body>
+          </html>
+          """;
+    }
+}
+
+internal sealed record HostyCoreRuntimeConfig(
+    string DataRoot,
+    string RunDirectory,
+    string ControlDiscoveryPath,
+    string ListenUrl,
+    string? CorePublicOrigin,
+    string? ShellPublicOrigin,
+    string? ShellManifestPath,
+    bool ShellBootstrapEnabled,
+    bool ShellAutostart)
+{
+    public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment)
+    {
+        var dataRoot = NormalizePath(
+            ReadFirst("HOSTY_CORE_DATA_ROOT", "HOST_DATA_ROOT_HOST", "HOSTY_HOME") ??
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".hosty"));
+        var coreRoot = Path.Combine(dataRoot, "core");
+        var runDirectory = Path.Combine(coreRoot, "run");
+        var listenUrl = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_URL")) ??
+            NormalizeOptional(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) ??
+            "http://127.0.0.1:3001";
+        var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_CORE_PUBLIC_ORIGIN")) ??
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOST_PUBLIC_ORIGIN"));
+        var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_SHELL_PUBLIC_ORIGIN"));
+        var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
+            ResolveDefaultShellManifestPath();
+
+        return new HostyCoreRuntimeConfig(
+            dataRoot,
+            runDirectory,
+            Path.Combine(runDirectory, "control.json"),
+            listenUrl,
+            corePublicOrigin,
+            shellPublicOrigin,
+            shellManifestPath,
+            ReadBoolean("HOSTY_SHELL_BOOTSTRAP_ENABLED", defaultValue: true),
+            ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true));
+    }
+
+    private static string? ReadFirst(params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var value = NormalizeOptional(Environment.GetEnvironmentVariable(name));
+            if (value is not null)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static string NormalizePath(string path)
+    {
+        if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal))
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            path = Path.Combine(home, path[2..]);
+        }
+
+        return Path.GetFullPath(path);
+    }
+
+    private static string? NormalizeOptional(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static bool ReadBoolean(string name, bool defaultValue)
+    {
+        var value = NormalizeOptional(Environment.GetEnvironmentVariable(name));
+        if (value is null)
+        {
+            return defaultValue;
+        }
+
+        return value is "1" ||
+            value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("enabled", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ResolveDefaultShellManifestPath()
+    {
+        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            var directory = new DirectoryInfo(start);
+            while (directory is not null)
+            {
+                var candidate = Path.Combine(directory.FullName, "apps", "shell", "manifest.json");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+
+                candidate = Path.Combine(directory.FullName, "shell", "manifest.json");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+
+                directory = directory.Parent;
+            }
+        }
+
+        return null;
+    }
+}
+
+internal sealed class ShellBootstrapService(
+    HostyCoreRuntimeConfig config,
+    AppRegistryStore apps,
+    CoreLifecycleService lifecycle,
+    ILogger<ShellBootstrapService> logger) : BackgroundService
+{
+    private const string ShellAppId = "hosty.shell";
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        if (!config.ShellBootstrapEnabled)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.ShellManifestPath) || !File.Exists(config.ShellManifestPath))
+        {
+            logger.LogWarning("Hosty Shell bootstrap skipped because the Shell manifest was not found.");
+            return;
+        }
+
+        try
+        {
+            var shell = await apps.GetAppAsync(ShellAppId, stoppingToken);
+            if (shell is null)
+            {
+                await lifecycle.InstallAsync(new AppInstallRequest(
+                    ManifestPath: config.ShellManifestPath,
+                    SelectedRuntime: "docker",
+                    SelectedChannel: "local",
+                    System: true), stoppingToken);
+                shell = await apps.GetAppAsync(ShellAppId, stoppingToken);
+            }
+
+            if (config.ShellAutostart && !string.Equals(shell?.RuntimeState, "running", StringComparison.Ordinal))
+            {
+                await lifecycle.StartAsync(ShellAppId, stoppingToken);
+            }
+        }
+        catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Hosty Shell bootstrap did not complete; Core remains available through CLI and control APIs.");
+        }
+    }
+}
+
+internal sealed class ControlDiscoveryWriter(
+    HostyCoreRuntimeConfig config,
+    ControlSecret secret,
+    ILogger<ControlDiscoveryWriter> logger) : IHostedService
+{
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(config.RunDirectory);
+        var discovery = new ControlDiscoveryDocument(
+            SchemaVersion: 1,
+            Component: "hosty-core",
+            Transport: "http-loopback",
+            Endpoint: config.ListenUrl,
+            ControlBaseUrl: $"{config.ListenUrl.TrimEnd('/')}/control/v1",
+            RequiredHeaders: new Dictionary<string, string>
+            {
+                ["X-Hosty-Control-Secret"] = secret.Value,
+            },
+            StartedAt: DateTimeOffset.UtcNow);
+
+        var json = JsonSerializer.Serialize(discovery, JsonOptions);
+        await File.WriteAllTextAsync(config.ControlDiscoveryPath, json, cancellationToken);
+        logger.LogInformation("Hosty Core control discovery written to {Path}", config.ControlDiscoveryPath);
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (File.Exists(config.ControlDiscoveryPath))
+            {
+                File.Delete(config.ControlDiscoveryPath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Unable to remove Hosty Core control discovery at {Path}", config.ControlDiscoveryPath);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+    };
+}
+
+internal sealed record ControlSecret(string Value);
+
+internal sealed record ControlDiscoveryDocument(
+    int SchemaVersion,
+    string Component,
+    string Transport,
+    string Endpoint,
+    string ControlBaseUrl,
+    IReadOnlyDictionary<string, string> RequiredHeaders,
+    DateTimeOffset StartedAt);
+
+internal sealed record HealthResponse(string Status);
+
+internal sealed record CoreStatusResponse(
+    string Status,
+    string Component,
+    string DataRoot,
+    string ListenUrl,
+    string? CorePublicOrigin,
+    string? ShellPublicOrigin,
+    string? ShellManifestPath,
+    bool ShellAutostart,
+    DateTimeOffset ServerTime)
+{
+    public static CoreStatusResponse From(HostyCoreRuntimeConfig config)
+        => new(
+            "running",
+            "hosty-core",
+            config.DataRoot,
+            config.ListenUrl,
+            config.CorePublicOrigin,
+            config.ShellPublicOrigin,
+            config.ShellManifestPath,
+            config.ShellAutostart,
+            DateTimeOffset.UtcNow);
+}
+
+internal sealed record StopResponse(string Status);
+
+internal sealed record ErrorResponse(string Code, string Message);

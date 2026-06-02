@@ -35,6 +35,14 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public async Task RunAsync_CoreHelpCommand_RoutesToCoreCommand()
+    {
+        var exitCode = await CommandLine.RunAsync(["core", "--help"]);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
     public async Task RunAsync_ModulesHelpCommand_RoutesToModulesCommand()
     {
         var exitCode = await CommandLine.RunAsync(["modules", "--help"]);
@@ -43,9 +51,17 @@ public sealed class CommandLineTests
     }
 
     [Fact]
-    public async Task RunAsync_AppsHelpCommand_RoutesToModulesCompatibilityCommand()
+    public async Task RunAsync_AppsHelpCommand_RoutesToCoreAppsCommand()
     {
         var exitCode = await CommandLine.RunAsync(["apps", "--help"]);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task RunAsync_UsersHelpCommand_RoutesToUsersCommand()
+    {
+        var exitCode = await CommandLine.RunAsync(["users", "--help"]);
 
         Assert.Equal(0, exitCode);
     }
@@ -59,11 +75,11 @@ public sealed class CommandLineTests
     }
 
     [Fact]
-    public async Task RunAsync_DevHelpCommand_RoutesToDevCommand()
+    public async Task RunAsync_DevCommand_IsNoLongerRouted()
     {
         var exitCode = await CommandLine.RunAsync(["dev", "--help"]);
 
-        Assert.Equal(0, exitCode);
+        Assert.Equal(2, exitCode);
     }
 
     [Fact]

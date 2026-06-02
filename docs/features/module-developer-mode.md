@@ -1,5 +1,7 @@
 # Module Developer Mode
 
+> Final architecture note: module developer mode is pending removal. The final workflow uses installed runtime apps, source state, local source overrides, local command runtime profiles, existing Host users, and Core-owned app identity/open helpers instead of local developer targets.
+
 Module developer mode lets app/module authors test a local development server through the Hosty gateway without running the full install flow for every code change.
 
 It is local-only operational state. It does not change production module metadata, installed module records, or production gateway exposure records.
@@ -32,9 +34,9 @@ Use three development loops with clear ownership:
 
 Do not inject fake module identity tokens into requests when validating Host integration. Seed Host development users and module assignments instead, then reach the module through the Host gateway or app shell so the module receives the same signed identity contract it receives in production-like runs.
 
-The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `hosty dev up` for reusable `metadata.dev.json` local module development, `npm run host:dev:demo` for the repository's host-side demo loop, or the lower-level `hosty apps dev link` commands when only target registration is needed. Legacy `docker-host modules dev ...` commands remain compatibility aliases.
+The generic installed-CLI harness for this workflow is documented in [Module Development Harness](module-development-harness.md). Use `hosty dev up` for reusable `metadata.dev.json` local module development, or the lower-level `hosty apps dev link` commands when only target registration is needed. Legacy `docker-host modules dev ...` commands remain compatibility aliases.
 
-For Host development, the harness can connect to a local Host process instead of the installed Host container. Use a loopback URL such as `--host-url http://localhost:3000` when the Host is already running in a debugger or another terminal.
+For Core development, the harness can connect to a local Hosty Core process instead of the installed Host container. Use a loopback URL such as `--host-url http://localhost:3001` when Core is already running in a debugger or another terminal.
 
 ## Decisions
 
@@ -144,10 +146,10 @@ hosty dev reset --manifest modules/demo-module/metadata.dev.json
 hosty dev clean modules/demo-module/metadata.dev.json
 ```
 
-`--host-url` makes the command connect to that already running loopback development Host origin instead of starting `npm run host:dev` from `HOST_DEV_REPOSITORY_PATH`:
+`--host-url` makes the command connect to that already running loopback development Core origin instead of starting `npm run core:dev` from `HOST_DEV_REPOSITORY_PATH`:
 
 ```bash
-hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
+hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3001
 ```
 
 Use `hosty dev identity` only for direct module-origin probes, for example checking `/api/auth/identity` on a local Next.js server with a real Host-signed JWT. It is not a substitute for validating shell iframe transport or gateway routing through Hosty.

@@ -37,17 +37,18 @@ public static class CommandLine
             {
                 "install" => await new InstallCommand(commandContext).ExecuteAsync(args[1..]),
                 "uninstall" => await new UninstallCommand(commandContext).ExecuteAsync(args[1..]),
-                "start" => await new StartCommand(commandContext).ExecuteAsync(args[1..]),
-                "stop" => await new StopCommand(commandContext).ExecuteAsync(args[1..]),
-                "restart" => await new RestartCommand(commandContext).ExecuteAsync(args[1..]),
+                "start" => await new CoreCommand(commandContext).ExecuteAsync(["start", .. args[1..]]),
+                "stop" => await new CoreCommand(commandContext).ExecuteAsync(["stop", .. args[1..]]),
+                "restart" => await new CoreCommand(commandContext).ExecuteAsync(["restart", .. args[1..]]),
                 "update" => await new UpdateCommand(commandContext).ExecuteAsync(args[1..]),
-                "status" => await new StatusCommand(commandContext).ExecuteAsync(args[1..]),
-                "logs" => await new LogsCommand(commandContext).ExecuteAsync(args[1..]),
+                "status" => await new CoreCommand(commandContext).ExecuteAsync(["status", .. args[1..]]),
+                "logs" => await new CoreCommand(commandContext).ExecuteAsync(["logs", .. args[1..]]),
                 "open" => await new OpenCommand(commandContext).ExecuteAsync(args[1..]),
+                "core" => await new CoreCommand(commandContext).ExecuteAsync(args[1..]),
                 "config" => await new ConfigCommand(commandContext).ExecuteAsync(args[1..]),
-                "apps" => await new ModulesCommand(commandContext, "apps").ExecuteAsync(args[1..]),
+                "apps" => await new AppsCommand(commandContext).ExecuteAsync(args[1..]),
+                "users" => await new UsersCommand(commandContext).ExecuteAsync(args[1..]),
                 "modules" => await new ModulesCommand(commandContext).ExecuteAsync(args[1..]),
-                "dev" => await new DevCommand(commandContext).ExecuteAsync(args[1..]),
                 "auth" => await new AuthCommand(commandContext).ExecuteAsync(args[1..]),
                 _ => UnknownCommand(console, args[0]),
             };
@@ -156,19 +157,21 @@ public static class CommandLine
           status
           logs
           open
+          core
           config
           apps
+          users
           modules
-          dev
           auth
 
         Compatibility:
           docker-host remains a deprecated command alias during migration.
-          modules remains a deprecated command alias for apps.
+          modules remains the deprecated legacy module workflow.
 
         Run hosty config --help for configuration commands.
+        Run hosty core --help for local Core process commands.
         Run hosty apps --help for app commands.
-        Run hosty dev --help for module development commands.
+        Run hosty users --help for user commands.
         Run hosty auth --help for authentication commands.
         """;
 }

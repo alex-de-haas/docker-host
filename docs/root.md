@@ -2,7 +2,7 @@
 
 ## Overview
 
-Docker Host Manager is evolving into Hosty: a local application orchestrator with a headless Core API, a browser Shell, system apps, and runtime apps. Docker-hosted modules remain the first runtime adapter and the implemented compatibility layer.
+Docker Host Manager is evolving into Hosty: a local application orchestrator with a headless Core API, a Core-managed browser Shell runtime app, and user runtime apps. Hosty Core is a local-first ASP.NET Core process, Hosty Shell is a Core-managed runtime app, and the CLI is a Core bootstrap/API client.
 
 A module is a Docker-hosted functional unit. Administrators add a module by providing a direct URL to a JSON metadata file. The Host downloads that JSON file, reads module container/image metadata, then prepares local storage and container configuration.
 
@@ -26,6 +26,7 @@ flowchart LR
 
 - [Host app shell](features/host-app-shell.md) - implemented admin shell foundation, navigation groups, persistent sidebar behavior, and protected page integration.
 - [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - implemented Hosty compatibility foundation: `hosty` CLI alias, `~/.hosty` root selection, system Shell app, app manifests, apps registry, data directory, and backups.
+- [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - target Core/Shell/CLI package boundaries, Core API ownership, Shell runtime app contract, final storage layout, backup policy, and legacy paths pending removal.
 - [Direct origin module UI](features/direct-origin-module-ui.md) - module UIs embedded from module-owned origins with Host-assigned ports, optional public origins, and identity token bridging.
 - [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
 - [Browser account switching](features/account-switching.md) - browser-scoped remembered Host accounts, sidebar switching, account-set persistence, logout behavior, and cookie hygiene.

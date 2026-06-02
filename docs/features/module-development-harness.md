@@ -1,5 +1,7 @@
 # Module Development Harness
 
+> Final architecture note: this is a legacy development workflow. Under the [Final Hosty architecture boundaries](final-hosty-architecture.md), `hosty dev`, `metadata.dev.json`, deterministic development users, and developer target state are replaced by installed runtime apps with source state, local command runtime profiles, existing Host users, and Core-owned app identity/open helpers.
+
 The module development harness is the installed-CLI workflow for running a local module process through Hosty. It keeps Hosty responsible for gateway authentication, module assignment checks, Host-signed module identity tokens, direct-origin shell embedding, scoped module directory behavior, and app registry visibility while the module application runs from the developer machine.
 
 ```mermaid
@@ -46,12 +48,12 @@ Use `--prepare-only` when another terminal or process manager owns the module de
 hosty dev up --prepare-only
 ```
 
-Use `--host-url` to connect to an already running local Host origin:
+Use `--host-url` to connect to an already running local Core origin:
 
 ```bash
-hosty dev up --host-url http://localhost:3000
-hosty dev status --host-url http://localhost:3000
-hosty dev reset --host-url http://localhost:3000
+hosty dev up --host-url http://localhost:3001
+hosty dev status --host-url http://localhost:3001
+hosty dev reset --host-url http://localhost:3001
 ```
 
 `hosty dev status` reports Host readiness, target link state, target URL reachability, app registry visibility, and identity mode:
@@ -199,23 +201,23 @@ The harness sets module directory policy to include email addresses so local mod
 
 ## Host Modes
 
-The top-level `hosty dev` harness is dev-only. It does not start, inspect, or require the production Host container. Without `--host-url`, it requires `HOST_DEV_REPOSITORY_PATH` in CLI config and starts `npm run host:dev` in that repository, waits for the configured Host origin to publish control discovery, then links module developer targets through that local Host. The Host process is stopped when the foreground module command exits or the dev harness is interrupted.
+The top-level `hosty dev` harness is dev-only. It does not start, inspect, or require the production Host container. Without `--host-url`, it requires `HOST_DEV_REPOSITORY_PATH` in CLI config and starts `npm run core:dev` in that repository, waits for the configured Core origin to publish control discovery, then links module developer targets through that local Core. The Core process is stopped when the foreground module command exits or the dev harness is interrupted.
 
 For repository-local Host development, the CLI can infer `local-process` mode from launch settings:
 
 ```bash
 hosty config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
-hosty config set HOST_DEV_PORT 3000
+hosty config set HOST_DEV_PORT 3001
 hosty dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
-When `HOST_DEV_REPOSITORY_PATH` is set, `hosty dev up` starts `npm run host:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Host origin. The CLI injects `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, `HOST_DEV_AUTH=auto`, `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, and `PORT` into the Host process so trusted control discovery and development browser sessions work without manual setup. Existing `HOST_DEV_AUTH` and `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS` environment values are preserved when they are already set.
+When `HOST_DEV_REPOSITORY_PATH` is set, `hosty dev up` starts `npm run core:dev` in that repository and uses `http://localhost:<HOST_DEV_PORT>` as the Core origin. The CLI injects `ASPNETCORE_URLS`, `HOST_DATA_ROOT_HOST`, `HOST_DATA_ROOT_CONTAINER`, `HOST_INTERNAL_ORIGIN`, `HOST_CONTROL_PUBLIC_PORT`, `HOST_DEV_AUTH=auto`, and `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled` into the Core process so trusted control discovery and development browser sessions work without manual setup. Existing `HOST_DEV_AUTH` and `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS` environment values are preserved when they are already set.
 
-If `HOST_DEV_REPOSITORY_PATH` is not configured, `hosty dev up` exits before reading module metadata or starting anything. Configure it first or pass a loopback `--host-url` for an already running development Host on the developer machine.
+If `HOST_DEV_REPOSITORY_PATH` is not configured, `hosty dev up` exits before reading module metadata or starting anything. Configure it first or pass a loopback `--host-url` for an already running development Core on the developer machine.
 
-`external` mode is for a development Host that is already running on the developer machine. The CLI accepts only loopback `--host-url` origins such as `http://localhost:3000` or `http://127.0.0.1:3000`, because it serves `metadata.dev.json` and maps module process services through `127.0.0.1` from the Host process. The CLI does not start, stop, inspect, or read logs from the Host process. It connects to `--host-url` and uses local control for Host-owned operations.
+`external` mode is for a development Core that is already running on the developer machine. The CLI accepts only loopback `--host-url` origins such as `http://localhost:3001` or `http://127.0.0.1:3001`, because it serves `metadata.dev.json` and maps module process services through `127.0.0.1` from the Core process. The CLI does not start, stop, inspect, or read logs from the Core process. It connects to `--host-url` and uses local control for Host-owned operations.
 
-In both modes, `runtime.ports[].localPort` maps the module target to `127.0.0.1:<port>` from the Host process.
+In both modes, `runtime.ports[].localPort` maps the module target to `127.0.0.1:<port>` from the Core process.
 
 ## Boundaries
 

@@ -73,27 +73,26 @@ curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scrip
 
 Detailed local testing guidance is documented in [Local development and testing](docs/features/local-development.md).
 
-Run the app directly on the host:
+Run Core and Shell directly from source:
 
 ```bash
 npm install
-npm run host:dev
+npm run core:dev
+npm run shell:dev
 ```
 
 For UI work with isolated development state, auto-login, a switchable normal
-user, and the repository demo app:
+user, and the repository demo app, start Core and then link the demo app through
+the installed-CLI development harness:
 
 ```bash
-npm run host:dev:demo
+npm run core:dev
+hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://127.0.0.1:3001
 ```
 
-This wraps the local `hosty` CLI project and runs `hosty dev up`
-against `modules/demo-module/metadata.dev.json`. The script uses
-`.docker-host-dev-demo/` as an isolated development root, configures the Host
-dev repository path to the current checkout, starts Hosty on
-`http://localhost:3000`, and starts the demo module on
-`http://localhost:3100`. It also enables local development auto-login and
-browser account seeding for the default development administrator and user.
+The Core process listens on `http://127.0.0.1:3001` by default. The harness
+starts the demo module on `http://localhost:3100`, enables local development
+auto-login, and seeds the default development administrator and user.
 
 The server connects to Docker using:
 
@@ -107,7 +106,7 @@ For the installed-CLI runtime app development harness, run:
 
 ```bash
 hosty config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
-hosty config set HOST_DEV_PORT 3000
+hosty config set HOST_DEV_PORT 3001
 hosty dev up --manifest modules/demo-module/metadata.dev.json
 ```
 
@@ -120,16 +119,16 @@ TOKEN="$(hosty dev identity --manifest modules/demo-module/metadata.dev.json --f
 curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
 ```
 
-Use `--user user@docker-host.local` to issue the token as the standard development user. This helper is for diagnostics against a local app origin; Shell and gateway integration should still be tested through the Host app URL printed by `hosty dev up`.
+Use `--user user@docker-host.local` to issue the token as the standard development user. This helper is for diagnostics against a local app origin; Shell and gateway integration should still be tested through the URLs printed by `hosty dev up`.
 
 When an agent is working on a Hosty runtime app, add the same rule to that repository's `AGENTS.md`: use `hosty dev up` for Hosty identity, assignments, Shell embedding, and scoped directory checks, and use `hosty dev identity --format token` only for direct endpoint probes. Do not treat standalone app runs as valid Hosty identity tests.
 
 Examples:
 
 ```bash
-DOCKER_SOCKET_PATH=/var/run/docker.sock npm run host:dev
-DOCKER_HOST=unix:///var/run/docker.sock npm run host:dev
-DOCKER_HOST=tcp://127.0.0.1:2375 npm run host:dev
+DOCKER_SOCKET_PATH=/var/run/docker.sock npm run core:dev
+DOCKER_HOST=unix:///var/run/docker.sock npm run core:dev
+DOCKER_HOST=tcp://127.0.0.1:2375 npm run core:dev
 ```
 
 ## Running in Docker Desktop
