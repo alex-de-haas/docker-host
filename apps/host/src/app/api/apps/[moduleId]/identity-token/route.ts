@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { canAccessModule } from '@/lib/auth-policy';
 import { getAppRegistryRequestOrigin, requireHostPrincipal } from '@/lib/auth-http';
 import { readAuthStateSnapshot } from '@/lib/auth-store';
+import { getInstalledUiEndpointKey } from '@/lib/app-identity';
 import { listHostApps } from '@/lib/app-registry-service';
 import { getHostRuntimeConfig } from '@/lib/host-runtime';
 import { readModuleMetadata, readModulesStoreSnapshot } from '@/lib/module-store';
@@ -10,7 +11,6 @@ import {
   createModuleIdentityToken,
 } from '@/lib/module-identity.mjs';
 import type { ModuleExposurePolicy } from '@/types/auth';
-import type { ModuleMetadata } from '@/types/modules';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -108,9 +108,4 @@ export async function POST(
       'Cache-Control': 'no-store',
     },
   });
-}
-
-function getInstalledUiEndpointKey(metadata: ModuleMetadata | null) {
-  const portKey = metadata?.ui?.entrypoint?.portKey;
-  return typeof portKey === 'string' && portKey.trim() ? portKey.trim() : null;
 }
