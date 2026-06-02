@@ -281,6 +281,117 @@ test('rejects app.0.1 non-array collection fields during manifest adaptation', (
   }
 });
 
+test('does not infer a public endpoint for multi-service apps without explicit exposure', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: 'app.0.1',
+    id: 'com.example.fullstack',
+    name: 'Fullstack',
+    version: '1.0.0',
+    runtimeProfiles: [{
+      key: 'docker',
+      type: 'docker',
+      default: true,
+    }],
+    services: [
+      {
+        key: 'api',
+        runtimes: {
+          docker: {
+            type: 'docker',
+            image: 'ghcr.io/example/fullstack-api:1.0.0',
+            ports: [{
+              key: 'http',
+              containerPort: 8080,
+              protocol: 'http',
+            }],
+          },
+        },
+      },
+      {
+        key: 'web',
+        runtimes: {
+          docker: {
+            type: 'docker',
+            image: 'ghcr.io/example/fullstack-web:1.0.0',
+            ports: [{
+              key: 'http',
+              containerPort: 3000,
+              protocol: 'http',
+            }],
+          },
+        },
+      },
+    ],
+    ui: {
+      entrypoint: {
+        endpoint: 'web-http',
+        path: '/',
+      },
+    },
+  }, '$');
+
+  assert.equal(result.metadata, null);
+  assert.equal(
+    result.validationErrors.some(error => error.code === 'module_ui_port_not_public'),
+    true
+  );
+});
+
+test('uses default app data mapping when targets do not match selected runtime profile', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: 'app.0.1',
+    id: 'com.example.notes',
+    name: 'Notes',
+    version: '1.0.0',
+    runtimeProfiles: [
+      {
+        key: 'docker',
+        type: 'docker',
+        default: true,
+      },
+      {
+        key: 'dev',
+        type: 'localCommand',
+      },
+    ],
+    services: [{
+      key: 'app',
+      runtimes: {
+        docker: {
+          type: 'docker',
+          image: 'ghcr.io/example/notes:1.0.0',
+          ports: [{
+            key: 'http',
+            containerPort: 3000,
+            protocol: 'http',
+          }],
+        },
+        dev: {
+          type: 'localCommand',
+          command: 'npm run dev',
+          ports: [{
+            key: 'http',
+            containerPort: 3000,
+            protocol: 'http',
+          }],
+        },
+      },
+    }],
+    data: {
+      enabled: true,
+      targets: [{
+        runtime: 'dev',
+        service: 'app',
+        containerPath: '/dev/data',
+      }],
+    },
+  }, '$');
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.metadata?.storage.directories[0]?.targets[0]?.container, 'app');
+  assert.equal(result.metadata?.storage.directories[0]?.targets[0]?.containerPath, '/app/data');
+});
+
 test('keeps legacy app.0.1 top-level runtimes as a single-service compatibility shape', () => {
   const result = validateAndNormalizeMetadata({
     schemaVersion: 'app.0.1',

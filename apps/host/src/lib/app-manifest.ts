@@ -791,11 +791,12 @@ function buildServiceEndpoints(
   const uiPresent = ui !== undefined;
   let firstPort = true;
   return services.flatMap(service => service.runtime.ports.map(port => {
+    const implicitPublic = services.length === 1 && uiPresent && firstPort;
     const endpoint = {
       key: services.length === 1 ? port.key : `${service.key}-${port.key}`,
       service: service.key,
       port: port.key,
-      public: port.public ?? (uiPresent && firstPort),
+      public: port.public ?? implicitPublic,
     };
     firstPort = false;
     return endpoint;
@@ -1019,6 +1020,11 @@ function readAppDataTargets(
   if (!defaultService) {
     return [];
   }
+  const defaultTarget = () => [{
+    container: defaultService.key,
+    containerPath: '/app/data',
+    writable: true,
+  }];
 
   if (value.targets !== undefined && !Array.isArray(value.targets)) {
     validationErrors.push({
@@ -1031,13 +1037,10 @@ function readAppDataTargets(
   }
 
   if (value.targets === undefined) {
-    return [{
-      container: defaultService.key,
-      containerPath: '/app/data',
-      writable: true,
-    }];
+    return defaultTarget();
   }
 
+  const initialErrorCount = validationErrors.length;
   const servicesByKey = new Map(services.map(service => [service.key, service]));
   const targets: ModuleStorageTargetMetadata = [];
   const seenServices = new Set<string>();
@@ -1093,7 +1096,9 @@ function readAppDataTargets(
     });
   });
 
-  return targets;
+  return targets.length > 0 || validationErrors.length > initialErrorCount
+    ? targets
+    : defaultTarget();
 }
 
 function buildSettings(

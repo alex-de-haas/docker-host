@@ -16,7 +16,6 @@
       "default": true
     }
   ],
-  "defaultRuntime": "docker",
   "services": [
     {
       "key": "app",
