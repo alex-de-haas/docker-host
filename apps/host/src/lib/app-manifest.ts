@@ -741,6 +741,16 @@ function buildServiceEndpoints(
 ): NonNullable<ModuleMetadata['endpoints']> {
   const servicesByKey = new Map(services.map(service => [service.key, service]));
 
+  if (value !== undefined && !Array.isArray(value)) {
+    validationErrors.push({
+      code: 'app_manifest_endpoints_invalid',
+      message: 'endpoints must be an array.',
+      path: pathToEndpoints,
+      node: appId,
+    });
+    return [];
+  }
+
   if (Array.isArray(value)) {
     return value.flatMap((item, index) => {
       const itemPath = `${pathToEndpoints}[${index}]`;
@@ -1010,7 +1020,17 @@ function readAppDataTargets(
     return [];
   }
 
-  if (!Array.isArray(value.targets)) {
+  if (value.targets !== undefined && !Array.isArray(value.targets)) {
+    validationErrors.push({
+      code: 'app_manifest_data_targets_invalid',
+      message: 'data.targets must be an array.',
+      path: '$.data.targets',
+      node: appId,
+    });
+    return [];
+  }
+
+  if (value.targets === undefined) {
     return [{
       container: defaultService.key,
       containerPath: '/app/data',
@@ -1082,7 +1102,17 @@ function buildSettings(
   validationErrors: InstallPlanValidationError[],
   appId?: string
 ): ModuleMetadata['settings'] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
   if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'app_manifest_settings_invalid',
+      message: 'settings must be an array.',
+      path: pathToSettings,
+      node: appId,
+    });
     return undefined;
   }
 
@@ -1104,7 +1134,17 @@ function buildConnections(
   validationErrors: InstallPlanValidationError[],
   appId?: string
 ): ModuleMetadata['connections'] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
   if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'app_manifest_connections_invalid',
+      message: 'connections must be an array.',
+      path: pathToConnections,
+      node: appId,
+    });
     return undefined;
   }
 
@@ -1126,7 +1166,17 @@ function buildDependencies(
   validationErrors: InstallPlanValidationError[],
   appId?: string
 ): ModuleMetadata['dependencies'] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
   if (!Array.isArray(value)) {
+    validationErrors.push({
+      code: 'app_manifest_dependencies_invalid',
+      message: 'dependencies must be an array.',
+      path: pathToDependencies,
+      node: appId,
+    });
     return undefined;
   }
 

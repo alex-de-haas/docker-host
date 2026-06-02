@@ -211,6 +211,76 @@ test('rejects app.0.1 services missing a declared runtime profile', () => {
   );
 });
 
+test('rejects app.0.1 non-array collection fields during manifest adaptation', () => {
+  const cases: Array<{ name: string; patch: Record<string, unknown>; code: string }> = [
+    {
+      name: 'endpoints',
+      patch: {
+        endpoints: {
+          key: 'http',
+        },
+      },
+      code: 'app_manifest_endpoints_invalid',
+    },
+    {
+      name: 'settings',
+      patch: {
+        settings: {
+          key: 'APP_URL',
+        },
+      },
+      code: 'app_manifest_settings_invalid',
+    },
+    {
+      name: 'connections',
+      patch: {
+        connections: {
+          source: {
+            type: 'endpoint',
+            key: 'http',
+          },
+        },
+      },
+      code: 'app_manifest_connections_invalid',
+    },
+    {
+      name: 'dependencies',
+      patch: {
+        dependencies: {
+          id: 'com.example.cache',
+        },
+      },
+      code: 'app_manifest_dependencies_invalid',
+    },
+    {
+      name: 'data targets',
+      patch: {
+        data: {
+          enabled: true,
+          targets: {
+            service: 'app',
+          },
+        },
+      },
+      code: 'app_manifest_data_targets_invalid',
+    },
+  ];
+
+  for (const scenario of cases) {
+    const result = validateAndNormalizeMetadata({
+      ...createMinimalAppManifest(),
+      ...scenario.patch,
+    }, '$');
+
+    assert.equal(result.metadata, null, scenario.name);
+    assert.equal(
+      result.validationErrors.some(error => error.code === scenario.code),
+      true,
+      scenario.name
+    );
+  }
+});
+
 test('keeps legacy app.0.1 top-level runtimes as a single-service compatibility shape', () => {
   const result = validateAndNormalizeMetadata({
     schemaVersion: 'app.0.1',
@@ -252,6 +322,34 @@ test('buildModulePaths stores app manifests and data under apps layout', () => {
   assert.equal(paths.metadataPathHost, '/host/.hosty/apps/com.example.notes/manifest.json');
   assert.equal(paths.metadataPathContainer, '/data/apps/com.example.notes/manifest.json');
 });
+
+function createMinimalAppManifest() {
+  return {
+    schemaVersion: 'app.0.1',
+    id: 'com.example.notes',
+    name: 'Notes',
+    version: '1.0.0',
+    runtimeProfiles: [{
+      key: 'docker',
+      type: 'docker',
+      default: true,
+    }],
+    services: [{
+      key: 'app',
+      runtimes: {
+        docker: {
+          type: 'docker',
+          image: 'ghcr.io/example/notes:1.0.0',
+          ports: [{
+            key: 'http',
+            containerPort: 3000,
+            protocol: 'http',
+          }],
+        },
+      },
+    }],
+  };
+}
 
 const configFixture: HostRuntimeConfig = {
   dataRootHost: '/host/.hosty',
