@@ -435,6 +435,7 @@ export function validateAndNormalizeMetadata(
         ? {
             ...normalized.metadata,
             sourceSchemaVersion: APP_MANIFEST_SCHEMA_VERSION,
+            ...(converted.selectedRuntime ? { selectedRuntime: converted.selectedRuntime } : {}),
           }
         : null,
       validationErrors: [

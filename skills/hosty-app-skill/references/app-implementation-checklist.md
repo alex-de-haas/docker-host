@@ -5,10 +5,12 @@ Use this checklist before finishing a Hosty runtime app task.
 ## Manifest
 
 - New app-oriented work uses `schemaVersion: "app.0.1"` when possible.
+- `app.0.1` manifests use app-level `runtimeProfiles[]` plus top-level `services[]`; image and command details live in `services[].runtimes.<profileKey>`.
 - Legacy Docker compatibility work may use `schemaVersion: "0.2"` with `containers[]` or schema `0.3` with image-backed `services[]`.
 - Development metadata uses `metadata.dev.json` with schema `0.3` process services when local process launch is needed.
 - The app id is stable and reverse-DNS-like.
 - Runtime profile keys, service/container keys, endpoint keys, setting keys, storage keys, and dependency ids are stable.
+- Every required service declares a runtime implementation for each supported runtime profile.
 - `source` is present only when there is useful repository metadata; it is not required for image-only apps.
 - Every endpoint references an existing service/container and port key.
 - `endpoints[].public` is used only as a gateway capability hint.
@@ -22,9 +24,9 @@ Use this checklist before finishing a Hosty runtime app task.
 
 ## Runtime
 
-- Docker runtime profiles declare an installable Linux container image.
-- Local command runtime profiles declare a command, but are not treated as production-installable until that runtime adapter is implemented.
-- The app listens on the declared container port.
+- Docker service runtimes declare an installable Linux container image.
+- Local command service runtimes declare a command, but are not treated as production-installable until that runtime adapter is implemented.
+- Each service listens on its declared container or local port.
 - The Docker image can run without local development-only files.
 - Health or readiness endpoints do not require Hosty browser cookies.
 - Runtime config comes from manifest settings or Hosty-injected variables.
@@ -51,7 +53,7 @@ Use this checklist before finishing a Hosty runtime app task.
 ## Data And Backups
 
 - The app has one primary Hosty-managed data directory: `apps/<app-id>/data/` for new app-oriented installs.
-- Docker runtime profiles receive `HOSTY_APP_DATA_DIR` when the primary data mapping exists.
+- Docker service runtimes receive `HOSTY_APP_DATA_DIR` when the primary data mapping exists.
 - App backups include only the primary data directory.
 - External mounts and additional storage mappings are excluded from Hosty-managed backups.
 - Update and restore behavior is reviewed when changing storage or data paths.

@@ -113,19 +113,25 @@ Supported adapter fields:
 - `id`, `name`, `description`, `version`;
 - optional `source` with `type: "git"`;
 - optional `channelsUrl`;
-- `runtimes`;
+- `runtimeProfiles`;
+- `services`;
 - `defaultRuntime`;
 - `ui`;
 - `data`;
 - `storage`;
 - `settings`;
 - `dependencies`;
+- `connections`;
 - `endpoints`.
 
 Supported runtime profile types:
 
 - `docker` - installable through the current Docker runtime engine;
 - `localCommand` - parsed and normalized for future runtime planning, but not yet installable by the production Docker install path.
+
+`runtimeProfiles[]` describes mutually exclusive app-level runtime profiles. `services[]` describes the runtime services that run together for the selected profile. Every non-optional service must declare a runtime entry for every declared profile under `services[].runtimes.<profileKey>`. During install and update, Hosty selects `defaultRuntime` or the first/default profile, maps those selected service runtimes into canonical legacy `0.3` `services[]`, and keeps the selected profile key in the app registry.
+
+The previous top-level `runtimes[]` adapter shape remains a single-service compatibility path, but it is no longer the preferred authoring shape.
 
 Example:
 
@@ -139,28 +145,52 @@ Example:
     "type": "git",
     "repository": "https://github.com/example/notes"
   },
-  "runtimes": [
+  "runtimeProfiles": [
     {
       "key": "docker",
       "type": "docker",
-      "image": "ghcr.io/example/notes:1.2.3",
-      "ports": [
-        {
-          "key": "http",
-          "containerPort": 3000,
-          "protocol": "http"
+      "default": true
+    }
+  ],
+  "services": [
+    {
+      "key": "app",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": "ghcr.io/example/notes:1.2.3",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
         }
-      ]
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "web",
+      "service": "app",
+      "port": "http",
+      "public": true
     }
   ],
   "ui": {
-    "entrypoint": "/"
+    "entrypoint": {
+      "endpoint": "web",
+      "path": "/"
+    }
   },
   "data": {
     "enabled": true,
     "targets": [
       {
         "runtime": "docker",
+        "service": "app",
         "containerPath": "/app/data"
       }
     ]

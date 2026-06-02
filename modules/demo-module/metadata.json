@@ -1,16 +1,19 @@
 {
-  "schemaVersion": "0.2",
+  "schemaVersion": "0.3",
   "id": "com.haas.demo-module",
   "name": "Demo Module",
-  "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, settings, storage, health, gateway authorization, identity propagation, module directory, and module-owned role flows.",
+  "description": "Small Next.js module for validating Docker Host module install, lifecycle, update, multi-service metadata, settings, storage, health, gateway authorization, identity propagation, module directory, and module-owned role flows.",
   "version": "0.2.1",
-  "containers": [
+  "services": [
     {
-      "key": "app",
-      "image": {
-        "repository": "ghcr.io/alex-de-haas/demo-module",
-        "tag": "latest",
-        "pullPolicy": "always"
+      "key": "backend",
+      "source": {
+        "type": "image",
+        "image": {
+          "repository": "ghcr.io/alex-de-haas/demo-module",
+          "tag": "latest",
+          "pullPolicy": "always"
+        }
       },
       "runtime": {
         "ports": [
@@ -20,24 +23,79 @@
             "protocol": "http"
           }
         ],
-        "healthcheck": {
-          "type": "http",
-          "path": "/api/health",
-          "expectedStatus": 200
-        },
         "resources": {
           "cpus": 0.25,
           "memory": "256m"
         }
+      },
+      "healthCheck": {
+        "type": "http",
+        "path": "/api/health",
+        "intervalSeconds": 10,
+        "timeoutSeconds": 2,
+        "successStatus": [200]
+      }
+    },
+    {
+      "key": "frontend",
+      "dependsOn": ["backend"],
+      "source": {
+        "type": "image",
+        "image": {
+          "repository": "ghcr.io/alex-de-haas/demo-module",
+          "tag": "latest",
+          "pullPolicy": "always"
+        }
+      },
+      "runtime": {
+        "ports": [
+          {
+            "key": "http",
+            "containerPort": 3000,
+            "protocol": "http"
+          }
+        ],
+        "resources": {
+          "cpus": 0.25,
+          "memory": "256m"
+        }
+      },
+      "healthCheck": {
+        "type": "http",
+        "path": "/api/health",
+        "intervalSeconds": 10,
+        "timeoutSeconds": 2,
+        "successStatus": [200]
       }
     }
   ],
   "endpoints": [
     {
+      "key": "api",
+      "service": "backend",
+      "port": "http",
+      "public": false
+    },
+    {
       "key": "http",
-      "container": "app",
+      "service": "frontend",
       "port": "http",
       "public": true
+    }
+  ],
+  "connections": [
+    {
+      "source": {
+        "type": "endpoint",
+        "key": "api"
+      },
+      "targets": [
+        {
+          "container": "frontend",
+          "type": "env",
+          "name": "DEMO_BACKEND_BASE_URL"
+        }
+      ]
     }
   ],
   "settings": [
@@ -48,7 +106,12 @@
       "default": "Hello from Docker Host",
       "targets": [
         {
-          "container": "app",
+          "container": "frontend",
+          "type": "env",
+          "name": "DEMO_GREETING"
+        },
+        {
+          "container": "backend",
           "type": "env",
           "name": "DEMO_GREETING"
         }
@@ -61,7 +124,12 @@
       "default": "local",
       "targets": [
         {
-          "container": "app",
+          "container": "frontend",
+          "type": "env",
+          "name": "DEMO_RELEASE_CHANNEL"
+        },
+        {
+          "container": "backend",
           "type": "env",
           "name": "DEMO_RELEASE_CHANNEL"
         }
@@ -74,7 +142,7 @@
       "default": 30,
       "targets": [
         {
-          "container": "app",
+          "container": "frontend",
           "type": "env",
           "name": "DEMO_REFRESH_SECONDS"
         }
@@ -87,7 +155,7 @@
       "default": true,
       "targets": [
         {
-          "container": "app",
+          "container": "frontend",
           "type": "env",
           "name": "DEMO_AUTH_PREVIEW"
         }
@@ -100,7 +168,7 @@
       "default": "http://localhost:3100",
       "targets": [
         {
-          "container": "app",
+          "container": "frontend",
           "type": "env",
           "name": "DEMO_PUBLIC_URL"
         }
@@ -117,7 +185,12 @@
         "required": true,
         "targets": [
           {
-            "container": "app",
+            "container": "backend",
+            "containerPath": "/app/data",
+            "writable": true
+          },
+          {
+            "container": "frontend",
             "containerPath": "/app/data",
             "writable": true
           }
@@ -136,7 +209,12 @@
         "required": false,
         "targets": [
           {
-            "container": "app",
+            "container": "backend",
+            "containerPath": "/app/logs",
+            "writable": true
+          },
+          {
+            "container": "frontend",
             "containerPath": "/app/logs",
             "writable": true
           }
@@ -159,7 +237,7 @@
         "maxItems": 4,
         "targets": [
           {
-            "container": "app",
+            "container": "frontend",
             "containerPathPrefix": "/mnt/sources",
             "itemContainerPathTemplate": "/mnt/sources/{key}",
             "writable": false

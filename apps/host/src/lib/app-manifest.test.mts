@@ -4,29 +4,101 @@ import { validateAndNormalizeMetadata } from './module-metadata.ts';
 import { buildModulePaths } from './module-install-plan.ts';
 import type { HostRuntimeConfig } from './host-runtime.ts';
 
-test('normalizes app.0.1 docker manifests through the legacy runtime adapter', () => {
+test('normalizes app.0.1 multi-service docker manifests through the legacy runtime adapter', () => {
   const result = validateAndNormalizeMetadata({
     schemaVersion: 'app.0.1',
-    id: 'com.example.notes',
-    name: 'Notes',
+    id: 'com.example.project-manager',
+    name: 'Project Manager',
     version: '1.2.3',
-    runtimes: [{
+    runtimeProfiles: [{
       key: 'docker',
       type: 'docker',
-      image: 'ghcr.io/example/notes:1.2.3',
-      ports: [{
-        key: 'http',
-        containerPort: 3000,
-        protocol: 'http',
+      default: true,
+    }],
+    services: [
+      {
+        key: 'api',
+        runtimes: {
+          docker: {
+            type: 'docker',
+            image: 'ghcr.io/example/project-manager-api:1.2.3',
+            ports: [{
+              key: 'http',
+              containerPort: 8080,
+              protocol: 'http',
+            }],
+            healthCheck: {
+              type: 'http',
+              path: '/health',
+              successStatus: [200],
+            },
+          },
+        },
+      },
+      {
+        key: 'web',
+        dependsOn: ['api'],
+        runtimes: {
+          docker: {
+            type: 'docker',
+            image: 'ghcr.io/example/project-manager-web:1.2.3',
+            ports: [{
+              key: 'http',
+              containerPort: 3000,
+              protocol: 'http',
+              public: true,
+            }],
+          },
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'web',
+        service: 'web',
+        port: 'http',
+        public: true,
+      },
+      {
+        key: 'api',
+        service: 'api',
+        port: 'http',
+        public: false,
+      },
+    ],
+    connections: [{
+      source: {
+        type: 'endpoint',
+        key: 'api',
+      },
+      targets: [{
+        service: 'web',
+        type: 'env',
+        name: 'API_BASE_URL',
+      }],
+    }],
+    settings: [{
+      key: 'APP_BASE_URL',
+      type: 'url',
+      required: false,
+      default: 'http://localhost:3000',
+      targets: [{
+        service: 'web',
+        type: 'env',
+        name: 'APP_BASE_URL',
       }],
     }],
     ui: {
-      entrypoint: '/',
+      entrypoint: {
+        endpoint: 'web',
+        path: '/',
+      },
     },
     data: {
       enabled: true,
       targets: [{
         runtime: 'docker',
+        service: 'api',
         containerPath: '/app/data',
       }],
     },
@@ -40,12 +112,20 @@ test('normalizes app.0.1 docker manifests through the legacy runtime adapter', (
 
   assert.deepEqual(result.validationErrors, []);
   assert.equal(result.metadata?.sourceSchemaVersion, 'app.0.1');
-  assert.equal(result.metadata?.id, 'com.example.notes');
-  assert.equal(result.metadata?.containers[0]?.image.reference, undefined);
-  assert.equal(result.metadata?.containers[0]?.image.repository, 'ghcr.io/example/notes');
-  assert.equal(result.metadata?.containers[0]?.image.tag, '1.2.3');
-  assert.equal(result.metadata?.ui?.entrypoint.portKey, 'http');
+  assert.equal(result.metadata?.selectedRuntime, 'docker');
+  assert.equal(result.metadata?.id, 'com.example.project-manager');
+  assert.equal(result.metadata?.containers.length, 2);
+  assert.equal(result.metadata?.containers[0]?.key, 'api');
+  assert.equal(result.metadata?.containers[0]?.image.repository, 'ghcr.io/example/project-manager-api');
+  assert.deepEqual(result.metadata?.containers[1]?.dependsOn, ['api']);
+  assert.equal(result.metadata?.containers[1]?.image.repository, 'ghcr.io/example/project-manager-web');
+  assert.equal(result.metadata?.ui?.entrypoint.portKey, 'web');
+  assert.equal(result.metadata?.endpoints[0]?.container, 'web');
+  assert.equal(result.metadata?.endpoints[1]?.container, 'api');
+  assert.equal(result.metadata?.connections[0]?.targets[0]?.container, 'web');
+  assert.equal(result.metadata?.settings[0]?.targets[0]?.container, 'web');
   assert.equal(result.metadata?.storage.directories[0]?.mount.modulePath, 'data');
+  assert.equal(result.metadata?.storage.directories[0]?.targets[0]?.container, 'api');
   assert.equal(result.metadata?.storage.directories[0]?.targets[0]?.containerPath, '/app/data');
   assert.equal(result.metadata?.dependencies[0]?.metadataUrl, 'https://apps.example.test/cache/manifest.json');
 });
@@ -56,20 +136,28 @@ test('normalizes app.0.1 local command runtime profiles for future runtime plann
     id: 'com.example.local',
     name: 'Local App',
     version: '0.1.0',
-    runtimes: [{
+    runtimeProfiles: [{
       key: 'dev',
       type: 'localCommand',
-      command: 'npm run dev',
-      workingDirectory: '.',
-      environment: {
-        NODE_ENV: 'development',
+    }],
+    services: [{
+      key: 'app',
+      runtimes: {
+        dev: {
+          type: 'localCommand',
+          command: 'npm run dev',
+          workingDirectory: '.',
+          environment: {
+            NODE_ENV: 'development',
+          },
+          ports: [{
+            key: 'http',
+            containerPort: 5173,
+            protocol: 'http',
+            public: true,
+          }],
+        },
       },
-      ports: [{
-        key: 'http',
-        containerPort: 5173,
-        protocol: 'http',
-        public: true,
-      }],
     }],
     defaultRuntime: 'dev',
     ui: {
@@ -82,9 +170,76 @@ test('normalizes app.0.1 local command runtime profiles for future runtime plann
 
   assert.deepEqual(result.validationErrors, []);
   assert.equal(result.metadata?.sourceSchemaVersion, 'app.0.1');
+  assert.equal(result.metadata?.selectedRuntime, 'dev');
   assert.equal(result.metadata?.containers[0]?.source.type, 'process');
   assert.equal(result.metadata?.containers[0]?.source.command, 'npm run dev');
   assert.equal(result.metadata?.containers[0]?.source.workingDirectory, '.');
+});
+
+test('rejects app.0.1 services missing a declared runtime profile', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: 'app.0.1',
+    id: 'com.example.partial',
+    name: 'Partial App',
+    version: '0.1.0',
+    runtimeProfiles: [
+      {
+        key: 'docker',
+        type: 'docker',
+      },
+      {
+        key: 'dev',
+        type: 'localCommand',
+      },
+    ],
+    defaultRuntime: 'docker',
+    services: [{
+      key: 'app',
+      runtimes: {
+        docker: {
+          type: 'docker',
+          image: 'ghcr.io/example/partial:0.1.0',
+        },
+      },
+    }],
+  }, '$');
+
+  assert.equal(result.metadata, null);
+  assert.equal(
+    result.validationErrors.some(error => error.code === 'app_manifest_service_runtime_missing'),
+    true
+  );
+});
+
+test('keeps legacy app.0.1 top-level runtimes as a single-service compatibility shape', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: 'app.0.1',
+    id: 'com.example.legacy-notes',
+    name: 'Legacy Notes',
+    version: '1.2.3',
+    runtimes: [{
+      key: 'docker',
+      type: 'docker',
+      image: 'ghcr.io/example/legacy-notes:1.2.3',
+      ports: [{
+        key: 'http',
+        containerPort: 3000,
+        protocol: 'http',
+        public: true,
+      }],
+    }],
+    defaultRuntime: 'docker',
+    ui: {
+      entrypoint: '/',
+    },
+  }, '$');
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.metadata?.sourceSchemaVersion, 'app.0.1');
+  assert.equal(result.metadata?.selectedRuntime, 'docker');
+  assert.equal(result.metadata?.containers[0]?.key, 'docker');
+  assert.equal(result.metadata?.containers[0]?.image.repository, 'ghcr.io/example/legacy-notes');
+  assert.equal(result.metadata?.ui?.entrypoint.portKey, 'http');
 });
 
 test('buildModulePaths stores app manifests and data under apps layout', () => {

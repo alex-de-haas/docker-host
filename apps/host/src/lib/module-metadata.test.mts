@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { validateAndNormalizeMetadata } from './module-metadata.ts';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
 test('accepts shell UI metadata with entrypoint and navigation', () => {
   const result = validateAndNormalizeMetadata(createMetadata({
@@ -171,6 +176,22 @@ test('accepts schema 0.3 service metadata with process source and health check',
   assert.deepEqual(result.metadata?.services[0]?.healthCheck?.successStatus, [200, 204]);
   assert.equal(result.metadata?.endpoints[0]?.container, 'app');
   assert.equal(result.metadata?.endpoints[0]?.service, 'app');
+});
+
+test('accepts demo module production and dev metadata as two-service fixtures', () => {
+  for (const fileName of ['metadata.json', 'metadata.dev.json']) {
+    const result = validateAndNormalizeMetadata(
+      JSON.parse(readFileSync(path.join(repoRoot, 'modules/demo-module', fileName), 'utf8')),
+      '$'
+    );
+
+    assert.deepEqual(result.validationErrors, []);
+    assert.deepEqual(result.metadata?.services.map(service => service.key), ['backend', 'frontend']);
+    assert.deepEqual(result.metadata?.endpoints.map(endpoint => endpoint.key), ['api', 'http']);
+    assert.equal(result.metadata?.ui?.entrypoint.portKey, 'http');
+    assert.equal(result.metadata?.connections[0]?.source.key, 'api');
+    assert.equal(result.metadata?.connections[0]?.targets[0]?.container, 'frontend');
+  }
 });
 
 function createMetadata(input: {

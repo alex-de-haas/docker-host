@@ -6,7 +6,7 @@ Before using `manifest.json` in a real app:
 
 - Replace `id`, `name`, `description`, and `version`.
 - Remove `source` when the app has no useful Git repository metadata.
-- Replace the image reference, pull policy if needed, and container port.
+- Replace service keys, runtime profiles, image references, pull policy if needed, and service ports.
 - Add only settings that the app actually consumes.
 - Keep primary persistent state under the `data` directory when Hosty should back it up.
 - Use external mount collections only for administrator-selected host folders that Hosty should not back up or delete.

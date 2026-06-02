@@ -6,8 +6,8 @@ The physical folder still uses `modules/demo-module` because it exercises the le
 
 ## What To Copy
 
-- Legacy metadata shape from `modules/demo-module/metadata.json` when working on `schemaVersion: "0.2"` compatibility.
-- Development metadata shape from `modules/demo-module/metadata.dev.json` when using `hosty dev`.
+- Legacy metadata shape from `modules/demo-module/metadata.json` when working on schema `0.3` multi-service compatibility.
+- Development metadata shape from `modules/demo-module/metadata.dev.json` when using `hosty dev` with process services.
 - Production image build pattern from `modules/demo-module/Dockerfile`.
 - Health endpoint pattern from `modules/demo-module/src/app/api/health/route.ts`.
 - Hosty identity validation pattern from `modules/demo-module/src/lib/host-auth.ts`.
@@ -46,6 +46,6 @@ npm run demo-module:docker:build:local
 
 Use `npm run host:dev:demo` for Shell app, Hosty identity, assigned-user, and scoped directory feedback. It wraps `hosty dev up --manifest modules/demo-module/metadata.dev.json`, seeds the development administrator and user accounts, and links the demo app as a developer target, so the app receives normal Hosty-issued identity instead of a mock token.
 
-The demo app's `metadata.dev.json` uses schema `0.3` process services with `runtime.ports[].localPort`. The CLI derives the local command, target, development users, assignments, and directory policy from the metadata-driven harness workflow.
+The demo app's metadata uses schema `0.3` services for a tightly related frontend and backend fixture. `metadata.dev.json` uses process services with `runtime.ports[].localPort`. The CLI derives the local command, target, development users, assignments, and directory policy from the metadata-driven harness workflow.
 
 Use the local Docker image path when testing managed install, start, stop, restart, update, app data backup, restore, and storage behavior.

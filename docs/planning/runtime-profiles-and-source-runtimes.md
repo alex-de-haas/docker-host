@@ -39,9 +39,9 @@ flowchart LR
 Implemented so far:
 
 - `apps.json` stores `selectedRuntime`.
-- `app.0.1` manifests can declare multiple runtime profiles.
-- Docker runtime profiles are normalized into the existing module install/update engine.
-- Local command runtime profiles are parsed and normalized for future planning.
+- `app.0.1` manifests can declare multiple app-level runtime profiles and multiple services per selected profile.
+- Docker service runtimes from the selected profile are normalized into the existing module install/update engine.
+- Local command service runtimes are parsed and normalized for future planning.
 
 Remaining:
 
@@ -116,4 +116,3 @@ Remaining:
 - Question: Should runtime switching also switch update channels?
   Answer: Current accepted decision says channel switching must not implicitly switch runtime unless the plan explicitly confirms it.
   Recommendation: Keep runtime switching and channel switching as separate commands first.
-

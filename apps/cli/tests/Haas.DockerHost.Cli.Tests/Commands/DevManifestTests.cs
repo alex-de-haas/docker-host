@@ -60,6 +60,72 @@ public sealed class DevManifestTests
     }
 
     [Fact]
+    public void Load_MetadataDevJson_SelectsPublicUiServiceFromMultiServiceMetadata()
+    {
+        var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;
+        var manifestPath = Path.Combine(root, "metadata.dev.json");
+        File.WriteAllText(manifestPath, """
+            {
+              "schemaVersion": "0.3",
+              "id": "com.example.fullstack",
+              "name": "Fullstack App",
+              "version": "1.0.0",
+              "services": [
+                {
+                  "key": "backend",
+                  "source": {
+                    "type": "process",
+                    "command": "npm run dev:backend",
+                    "environment": {
+                      "PORT": "3101"
+                    }
+                  },
+                  "runtime": {
+                    "ports": [
+                      { "key": "http", "containerPort": 3000, "localPort": 3101, "protocol": "http" }
+                    ]
+                  }
+                },
+                {
+                  "key": "frontend",
+                  "dependsOn": ["backend"],
+                  "source": {
+                    "type": "process",
+                    "command": "npm run dev:frontend",
+                    "environment": {
+                      "DEMO_BACKEND_BASE_URL": "http://localhost:3101"
+                    }
+                  },
+                  "runtime": {
+                    "ports": [
+                      { "key": "http", "containerPort": 3000, "localPort": 3100, "protocol": "http" }
+                    ]
+                  }
+                }
+              ],
+              "endpoints": [
+                { "key": "api", "service": "backend", "port": "http", "public": false },
+                { "key": "http", "service": "frontend", "port": "http", "public": true }
+              ],
+              "ui": {
+                "entrypoint": { "portKey": "http", "path": "/" }
+              }
+            }
+            """);
+
+        var manifest = DevManifest.Load(manifestPath);
+
+        Assert.Equal("npm run dev:frontend", manifest.ModuleCommand);
+        Assert.Equal("http", manifest.Target.PortKey);
+        Assert.Equal("http://127.0.0.1:3100", manifest.GetTargetBaseUrl());
+        Assert.Equal("3100", manifest.Environment["PORT"]);
+        Assert.Equal("http://localhost:3101", manifest.Environment["DEMO_BACKEND_BASE_URL"]);
+
+        using var hostMetadata = JsonDocument.Parse(manifest.HostMetadataBytes);
+        Assert.Equal(2, hostMetadata.RootElement.GetProperty("services").GetArrayLength());
+    }
+
+    [Fact]
     public void Load_MetadataDevJson_FallsBackToContainerPortWhenLocalPortIsMissing()
     {
         var root = Directory.CreateTempSubdirectory("docker-host-dev-metadata-").FullName;

@@ -103,14 +103,14 @@ The canonical development input is module metadata. The demo module metadata liv
 modules/demo-module/metadata.dev.json
 ```
 
-`metadata.dev.json` uses `schemaVersion: "0.3"` with canonical `services[]`. A local process service declares `source.type: "process"`:
+`metadata.dev.json` uses `schemaVersion: "0.3"` with canonical `services[]`. The demo file declares `backend` and `frontend` process services; the current CLI supervisor selects the process service behind the public UI endpoint. A local process service declares `source.type: "process"`:
 
 ```json
 {
   "schemaVersion": "0.3",
-  "id": "com.haas.demo-module",
-  "name": "Demo Module",
-  "version": "0.2.1",
+  "id": "com.example.app",
+  "name": "Example App",
+  "version": "1.0.0",
   "services": [
     {
       "key": "app",
@@ -150,7 +150,7 @@ modules/demo-module/metadata.dev.json
 }
 ```
 
-The CLI maps the selected public endpoint to a developer target. It uses `runtime.ports[].localPort` as the local process port when present and falls back to `containerPort`. Relative process working directories are resolved from the metadata file location.
+The CLI maps the selected public endpoint to a developer target. It uses `runtime.ports[].localPort` as the local process port when present and falls back to `containerPort`. Relative process working directories are resolved from the metadata file location. Additional process services remain part of the metadata served to Hosty and are validated normally, but they are not started by the current single-process dev supervisor.
 
 The CLI injects process environment values needed by Docker Host modules:
 

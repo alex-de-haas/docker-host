@@ -12,7 +12,7 @@ This page tracks small product and implementation ideas that are not yet large e
 
 ## Demo Module
 
-- Expand the demo module into a two-service frontend/backend module. The frontend should consume a backend API through the module connection model so Docker Host can dogfood multi-container module metadata, internal endpoint wiring, dependency order, per-service runtime status, and lifecycle testing against a realistic full-stack fixture.
+- Split the demo module into distinct frontend/backend runtime implementations, or make the current frontend consume the declared backend endpoint at runtime. The metadata already declares two services and connection wiring; the remaining work is to exercise a real cross-service request flow instead of using the same image for both services.
 
 ## External Ingress
 
