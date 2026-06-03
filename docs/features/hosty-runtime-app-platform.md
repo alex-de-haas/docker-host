@@ -13,7 +13,7 @@ Hosty is the target product model for the current Docker Host implementation. Th
 - **Manifest** - the public contract name for app metadata. Legacy `metadata.json` remains a compatibility format.
 - **Runtime profile** - the way an app runs, such as Docker image or local command.
 
-The implementation is intentionally incremental. Docker remains the first production-oriented runtime adapter and many compatibility routes still use module-oriented names. The local-first Core stores app-owned state under `apps/<app-id>/state.json`; the legacy Next compatibility layer persists app-oriented records in `apps.json`. Legacy `modules.json` records remain readable for already-installed legacy modules until the dedicated cleanup stage removes or migrates that dependency.
+The implementation is intentionally incremental. Docker remains the first production-oriented runtime adapter and many compatibility routes still use module-oriented names. The local-first Core stores app-owned state under `apps/<app-id>/state.json`; the legacy Next compatibility layer persists app-oriented records in `apps.json`. Legacy `modules.json` records remain readable for already-installed legacy modules and explicit compatibility imports, but app-only lifecycle reads and writes no longer create an empty `modules.json`.
 
 ```mermaid
 flowchart LR
@@ -115,7 +115,8 @@ Current implementation details:
 
 - `apps.json` is created and maintained as the app-oriented registry.
 - New app-oriented installs still use module-oriented lifecycle routes, but installed runtime state is written back into `apps.json`.
-- `modules.json` remains a compatibility fallback for already-installed legacy module records.
+- `modules.json` remains a compatibility fallback for already-installed legacy module records and explicit legacy imports.
+- App-only lifecycle reads and writes do not create or rewrite `modules.json`.
 - App manifest copies are written to `apps/<app-id>/manifest.json`.
 - Update planning and apply use the stored `selectedRuntime` when refreshing an app manifest, so a changed manifest default cannot silently switch the installed runtime profile.
 - Legacy Docker metadata copies remain in `modules/<module-id>/metadata.json` for legacy module records.
@@ -123,7 +124,7 @@ Current implementation details:
 - Records can contain both `manifestPath` and legacy `metadataPath`.
 - Compatibility code is isolated around root resolution, registry reading/writing, manifest path resolution, lifecycle state projection, and CLI aliases so it can be removed later.
 
-Routine update does not migrate legacy physical data directories. Legacy modules discovered only from `modules.json` remain readable through the compatibility path.
+Routine update does not migrate legacy physical data directories. Legacy modules discovered only from `modules.json` remain readable through the compatibility path. New first-party workflows use Demo App and `app.0.1` manifests.
 
 ## Runtime profile and lifecycle state
 
@@ -386,5 +387,5 @@ The following concepts remain planned or deferred:
 - generated product channel publishing, runtime app channel UI, pull request channels, and channel cleanup, deferred in [Update Channels](../planning/update-channels.md);
 - standalone auth redirect hardening, optional gateway-protected app mode, and complete separate public origin validation, tracked in [App Auth And Origin Separation](../planning/app-auth-and-origin-separation.md);
 - age-based backup retention and per-app retention overrides;
-- legacy Demo Module fixture removal and `modules.json` lifecycle compatibility cleanup, tracked in [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md);
+- legacy module data migration/import tooling beyond the retained compatibility reader and writer;
 - agent bridge annotations, repository edits, and pull request channel promotion, deferred in [Agent Bridge Workflow](../planning/agent-bridge-workflow.md).

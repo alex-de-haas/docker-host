@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 import { validateAndNormalizeMetadata } from './module-metadata.ts';
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
 test('accepts shell UI metadata with entrypoint and navigation', () => {
   const result = validateAndNormalizeMetadata(createMetadata({
@@ -178,11 +173,89 @@ test('accepts schema 0.3 service metadata with process source and health check',
   assert.equal(result.metadata?.endpoints[0]?.service, 'app');
 });
 
-test('accepts demo module production metadata as a two-service fixture', () => {
-  const result = validateAndNormalizeMetadata(
-    JSON.parse(readFileSync(path.join(repoRoot, 'modules/demo-module', 'metadata.json'), 'utf8')),
-    '$'
-  );
+test('accepts schema 0.3 production metadata as a two-service compatibility fixture', () => {
+  const result = validateAndNormalizeMetadata({
+    schemaVersion: '0.3',
+    id: 'com.example.compat',
+    name: 'Compatibility App',
+    version: '1.0.0',
+    services: [
+      {
+        key: 'backend',
+        source: {
+          type: 'image',
+          image: {
+            repository: 'ghcr.io/example/compat',
+            tag: 'latest',
+          },
+        },
+        runtime: {
+          ports: [
+            {
+              key: 'http',
+              containerPort: 3000,
+              protocol: 'http',
+            },
+          ],
+        },
+      },
+      {
+        key: 'frontend',
+        dependsOn: ['backend'],
+        source: {
+          type: 'image',
+          image: {
+            repository: 'ghcr.io/example/compat',
+            tag: 'latest',
+          },
+        },
+        runtime: {
+          ports: [
+            {
+              key: 'http',
+              containerPort: 3000,
+              protocol: 'http',
+            },
+          ],
+        },
+      },
+    ],
+    endpoints: [
+      {
+        key: 'api',
+        service: 'backend',
+        port: 'http',
+        public: false,
+      },
+      {
+        key: 'http',
+        service: 'frontend',
+        port: 'http',
+        public: true,
+      },
+    ],
+    connections: [
+      {
+        source: {
+          type: 'endpoint',
+          key: 'api',
+        },
+        targets: [
+          {
+            container: 'frontend',
+            type: 'env',
+            name: 'DEMO_BACKEND_BASE_URL',
+          },
+        ],
+      },
+    ],
+    ui: {
+      entrypoint: {
+        portKey: 'http',
+        path: '/',
+      },
+    },
+  }, '$');
 
   assert.deepEqual(result.validationErrors, []);
   assert.deepEqual(result.metadata?.services.map(service => service.key), ['backend', 'frontend']);

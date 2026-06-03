@@ -258,10 +258,7 @@ test('configuration updates app lifecycle records in apps.json without legacy mo
 
   const appsStore = await readAppsStoreSnapshot(config);
   assert.equal(appsStore.apps[0]?.containers?.[0]?.ports?.[0]?.publicOrigin, 'https://reports.example.test');
-  const modulesStore = JSON.parse(await fs.readFile(config.modulesStorePath, 'utf-8')) as {
-    modules: unknown[];
-  };
-  assert.deepEqual(modulesStore.modules, []);
+  await assert.rejects(fs.stat(config.modulesStorePath), { code: 'ENOENT' });
 });
 
 test('configuration accepts empty optional number and boolean settings', async t => {

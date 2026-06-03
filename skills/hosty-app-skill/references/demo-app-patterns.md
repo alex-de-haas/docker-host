@@ -2,12 +2,12 @@
 
 Use this reference when adapting or comparing against the repository-local demo app at `apps/demo-app`.
 
-The legacy `modules/demo-module` fixture remains useful when working on schema `0.3` metadata compatibility.
+The removed legacy Demo Module fixture should not be recreated. Use minimal inline test fixtures and the schema notes in `docs/features/module-metadata.md` when working on schema `0.3` metadata compatibility.
 
 ## What To Copy
 
 - App manifest shape from `apps/demo-app/manifest.json` when working on runtime app manifests.
-- Legacy metadata shape from `modules/demo-module/metadata.json` when working on schema `0.3` multi-service compatibility.
+- Legacy metadata shape from `docs/features/module-metadata.md` and parser tests when working on schema `0.3` multi-service compatibility.
 - Production image build pattern from `apps/demo-app/Dockerfile`.
 - Health endpoint pattern from `apps/demo-app/src/app/api/health/route.ts`.
 - Hosty identity validation pattern from `apps/demo-app/src/lib/host-auth.ts`.

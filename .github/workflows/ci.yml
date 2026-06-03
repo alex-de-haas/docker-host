@@ -10,7 +10,6 @@ on:
       - "apps/shell/**"
       - "apps/demo-app/**"
       - "apps/cli/**"
-      - "modules/demo-module/**"
       - "docs/features/host-api.md"
       - "scripts/install.sh"
       - "package.json"
@@ -18,7 +17,7 @@ on:
       - "global.json"
       - ".github/workflows/ci.yml"
       - ".github/workflows/host-image.yml"
-      - ".github/workflows/demo-module-image.yml"
+      - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
   push:
     branches:
@@ -29,7 +28,6 @@ on:
       - "apps/shell/**"
       - "apps/demo-app/**"
       - "apps/cli/**"
-      - "modules/demo-module/**"
       - "docs/features/host-api.md"
       - "scripts/install.sh"
       - "package.json"
@@ -37,7 +35,7 @@ on:
       - "global.json"
       - ".github/workflows/ci.yml"
       - ".github/workflows/host-image.yml"
-      - ".github/workflows/demo-module-image.yml"
+      - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
 
 jobs:
@@ -82,29 +80,6 @@ jobs:
 
       - name: Build Demo App
         run: npm run demo-app:build
-
-  legacy-demo-module:
-    name: Legacy Demo Module
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install Node dependencies
-        run: npm ci
-
-      - name: Lint Legacy Demo Module
-        if: github.event_name == 'push'
-        run: npm run lint --workspace @haas/docker-host-demo-module
-
-      - name: Build Legacy Demo Module
-        run: npm run build --workspace @haas/docker-host-demo-module
 
   core:
     name: Core

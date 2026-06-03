@@ -84,7 +84,7 @@ An app record owns the lifecycle and planning state for app-oriented workflows:
 - settings values, storage mappings, dependency contracts, and endpoint contracts;
 - source repository state, managed checkout path, local override path, resolved ref, immutable commit, and update timestamp.
 
-New Core lifecycle, source, identity, backup, and runtime switching operations should resolve app state from the app record. Legacy `modules.json` is only a compatibility source for installed legacy modules until the legacy cleanup stage removes or migrates that dependency.
+New Core lifecycle, source, identity, backup, and runtime switching operations should resolve app state from the app record. Legacy `modules.json` is only a compatibility source for already-installed legacy modules and explicit legacy imports.
 
 ### System app
 
@@ -92,7 +92,7 @@ A system app is Hosty-owned and supports the platform. Hosty Shell is currently 
 
 ### Installed module
 
-An installed module is a module metadata document plus Host-owned persistent state.
+An installed module is a legacy module metadata document plus Host-owned persistent state.
 
 The installed module record is stored in root-level `modules.json` and includes:
 
@@ -109,7 +109,7 @@ The installed module record is stored in root-level `modules.json` and includes:
 
 Docker runtime status is not persisted in the installed module record. The Host reads it from Docker daemon when serving API responses.
 
-`modules.json` is also the location for any Host backend-owned settings that are not CLI launch settings. There is no separate `host-settings.json` file.
+`modules.json` can also contain legacy Host backend-owned settings that are not CLI launch settings. New app-oriented lifecycle writes do not create `modules.json`.
 
 ### Module directory
 
@@ -179,7 +179,7 @@ The standalone `hosty` CLI reads this file for Host lifecycle commands. `docker-
 | `~/.hosty/apps/<app-id>/data/` | Host backend | Primary app data directory for new app-oriented installs. |
 | `~/.hosty/backups/<app-id>/` | Host backend | ZIP app data backups and JSON backup metadata. |
 | `~/.hosty/sources/<app-id>/` | Hosty Core | Managed source checkout/cache root for repository-backed runtime apps. |
-| `~/.hosty/modules.json` | Host backend | Legacy installed module registry, persistent module state, and Host-owned settings. |
+| `~/.hosty/modules.json` | Host backend | Optional legacy installed module registry, persistent module state, and Host-owned settings for compatibility imports. |
 | `~/.hosty/modules/<module-id>/metadata.json` | Host backend | Local copy of downloaded legacy module metadata. |
 | `~/.hosty/modules/<module-id>/<storage-key>/` | Host backend | Legacy bind-mount target for module-owned persistent storage. |
 
@@ -187,7 +187,7 @@ The same layout can live under `~/.docker-host` when the legacy data root is sel
 
 The Host backend creates and validates the Host data root structure at startup. The CLI creates the initial Host data root and `launch.env` during bootstrap.
 
-Private Host state files such as `modules.json` and `auth/state.json` are written with owner-only permissions. When the Host runs as root inside a container against a bind-mounted data root, it preserves those private permissions but synchronizes the file owner to the mounted data root owner after atomic writes so WSL and local editor access follow the data root ownership.
+Private Host state files such as `apps.json`, existing `modules.json`, and `auth/state.json` are written with owner-only permissions. When the Host runs as root inside a container against a bind-mounted data root, it preserves those private permissions but synchronizes the file owner to the mounted data root owner after atomic writes so WSL and local editor access follow the data root ownership.
 
 Initial `apps.json` shape:
 
@@ -321,7 +321,7 @@ The domain model separates persistent operation status from Docker runtime statu
 
 ### Persistent operation status
 
-Persistent operation status is stored in `modules.json` and describes Host-managed module operations:
+Persistent operation status is stored in app lifecycle state or a legacy module record and describes Host-managed module operations:
 
 | Status | Meaning |
 | --- | --- |
@@ -352,12 +352,12 @@ The MVP does not expose module health or readiness status. Future health support
 
 ## Settings
 
-Module settings are declared by metadata and stored as values in `modules.json`.
+Module settings are declared by metadata and stored as values in app lifecycle state or a legacy module record.
 
 Rules:
 
 - every setting target is treated as an environment variable scoped to one container;
-- setting values are stored as typed JSON values in `modules.json`;
+- setting values are stored as typed JSON values in app lifecycle state or a legacy module record;
 - Docker environment variables are stringified only when Host creates a module container;
 - secret values are write-only in API responses;
 - API responses may expose whether a secret value is set, but never the raw value;
@@ -365,7 +365,7 @@ Rules:
 
 ## Storage Mappings
 
-Storage declarations come from `metadata.json`. Computed or configured mappings are stored in `modules.json`.
+Storage declarations come from `manifest.json` or legacy `metadata.json`. Computed or configured mappings are stored in app lifecycle state or a legacy module record.
 
 Rules:
 

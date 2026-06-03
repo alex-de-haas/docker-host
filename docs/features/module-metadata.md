@@ -279,9 +279,14 @@ Example:
 
 ```text
 <host-data-root>/
+  apps.json
+  apps/
+    com.acme.reports/
+      manifest.json
+      data/
   modules.json
   modules/
-    com.acme.reports/
+    com.acme.legacy/
       metadata.json
       settings/
       data/
@@ -290,15 +295,17 @@ Example:
 
 File and folder responsibilities:
 
-- `modules.json` - root-level registry of installed modules, persistent module state, and Host-owned settings: module id, source metadata URL for install/update, settings values, install/update status, failure state, last error details, computed storage mappings, resolved dependency URLs, and Host backend settings that are not CLI launch settings;
-- `metadata.json` - local copy of the module metadata file fetched from the metadata URL;
-- `settings/`, `data/`, `cache/` - physical folders mapped to container paths from `storage.directories`.
+- `apps.json` - app-oriented registry for installed runtime apps created from `app.0.1` manifests;
+- `manifest.json` - local copy of the app manifest fetched from the manifest URL;
+- `modules.json` - optional legacy registry for installed module compatibility records and explicit legacy imports;
+- `metadata.json` - local copy of a legacy module metadata file fetched from a metadata URL;
+- `settings/`, `data/`, `cache/` - physical folders mapped to container paths from `storage.directories` for legacy modules.
 
-The Host uses `modules.json` as the installed module registry, the source of metadata URLs for update flow, and the storage location for install/update bookkeeping. Module runtime container status is not stored in `modules.json`: the Host reads current container state from Docker daemon.
+The Host uses `apps.json` and app state for app-oriented lifecycle bookkeeping. Existing `modules.json` files remain a compatibility source for legacy module update flow and legacy install/update bookkeeping. Runtime container status is not stored in either registry file: the Host reads current container state from Docker daemon.
 
-A separate `host-settings.json` is not created. Launch settings for the Host container itself remain in CLI-owned `config/launch.env`; settings owned by the Host backend are stored in root-level `modules.json` when needed.
+A separate `host-settings.json` is not created. Launch settings for the Host container itself remain in CLI-owned `config/launch.env`; legacy Host backend settings can remain in root-level `modules.json` when needed.
 
-Separate per-module `module-state.json`, `module-installation.json`, or `module-settings.json` files are not created. `metadata.json` and storage directories live together because they describe the installed configuration of one module. When moving or backing up a module, the Host must account for both the module directory and the corresponding root-level `modules.json` entry.
+Separate per-module `module-state.json`, `module-installation.json`, or `module-settings.json` files are not created for legacy module records. `metadata.json` and storage directories live together because they describe the installed configuration of one legacy module. When moving or backing up a legacy module, the Host must account for both the module directory and the corresponding root-level `modules.json` entry.
 
 External storage mounts can live outside `modules/<module-id>/`. In that case, only mapping configuration is stored inside the module directory, while the data itself remains in the physical folder selected by the administrator.
 
@@ -924,7 +931,7 @@ Resolved dependency base URLs must be internal Docker-network URLs only. The Hos
 
 If a dependency is required (`required: true`), the Host must install and start it before starting the consumer. If the Host cannot obtain the resolved base URL for a required dependency, consumer startup must be stopped with a clear error.
 
-If a dependency is already installed and the install plan marks it as reusable, the planner and install apply check `modules.json`, major compatibility of local `metadata.json`, and Docker container presence. Apply repeats these checks before mutating the new consumer module. If the reusable dependency container is missing, installing the consumer module is rejected as a conflict; automatic dependency repair remains a separate recovery flow.
+If a dependency is already installed and the install plan marks it as reusable, the planner and install apply check the merged app/legacy registry view, major compatibility of the local manifest or metadata copy, and Docker container presence. Apply repeats these checks before mutating the new consumer module. If the reusable dependency container is missing, installing the consumer module is rejected as a conflict; automatic dependency repair remains a separate recovery flow.
 
 Future optional dependency behavior: if a dependency is optional (`required: false`) and it is not installed or disabled, the Host should omit the target environment variable or pass an empty value. The consuming module should treat an empty or absent environment variable as "integration unavailable" and run without that dependency. This is outside the first implementation scope.
 
@@ -993,11 +1000,11 @@ Baseline types:
 - `url`;
 - `secret`.
 
-In the first implementation, setting values can be passed into one or more containers through `settings[].targets`. Values are stored in `modules.json` as key/value pairs inside the installed module record. The setting key matches `settings[].key` from metadata; specific environment variable names are defined in targets. If non-env targets appear later, the settings storage schema can be extended.
+In the first implementation, setting values can be passed into one or more containers through `settings[].targets`. App-oriented install values are stored in app lifecycle state; legacy module values are stored in `modules.json` as key/value pairs inside the installed module record. The setting key matches `settings[].key` from metadata; specific environment variable names are defined in targets. If non-env targets appear later, the settings storage schema can be extended.
 
 Secrets must not be stored in the metadata file. Metadata only declares that such a secret is required.
 
-Secret settings are stored in the same place as ordinary module settings: root-level `modules.json` inside the installed module record. `type: "secret"` does not mean separate secret storage; it is a value-handling rule at the Host API, Web UI, logs, and diagnostics boundary.
+Secret settings are stored in the same place as ordinary setting values for that installed app or legacy module. `type: "secret"` does not mean separate secret storage; it is a value-handling rule at the Host API, Web UI, logs, and diagnostics boundary.
 
 The Host must treat secret settings as write-only values at the UI/API boundary:
 
@@ -1121,7 +1128,7 @@ For that, metadata can declare `storage.mountCollections`. This is not a specifi
 }
 ```
 
-The administrator adds concrete mounts in the Host UI. These values do not come from the metadata URL; they are saved in root-level `modules.json` inside the installed module record.
+The administrator adds concrete mounts in the Host UI. These values do not come from the metadata URL; they are saved in app lifecycle state for app-oriented installs or in root-level `modules.json` for legacy module records.
 
 Resolved configuration example:
 

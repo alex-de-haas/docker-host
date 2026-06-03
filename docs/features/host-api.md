@@ -8,7 +8,7 @@ The Host API is implemented inside the full-stack Next.js Host application. The 
 
 - Host backend API is the owner of module management logic.
 - Runtime status is read from Docker daemon, not from persistent JSON files.
-- Persistent installed module registry is stored in root-level `modules.json`.
+- App-oriented lifecycle state is stored in `apps.json` and app state. Legacy installed module records remain readable from root-level `modules.json`.
 - Host API functionality requires Host-owned authentication and `host.admin` authorization unless an endpoint explicitly documents a narrower permission.
 - API responses must not expose raw secret setting values.
 - The API contract remains this Markdown endpoint catalog. There is no separate contracts package, generated OpenAPI artifact, or generated API client.
@@ -86,7 +86,7 @@ Returned by list and lifecycle endpoints.
 }
 ```
 
-`operationStatus` is persistent Host bookkeeping from `modules.json`. `containers[].runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state. Top-level `runtimeStatus` is an aggregate derived from the module containers.
+`operationStatus` is persistent Host bookkeeping from app lifecycle state or a legacy module record. `containers[].runtimeStatus` is read from Docker daemon for every request and must not be treated as stored state. Top-level `runtimeStatus` is an aggregate derived from the module containers.
 
 The API does not expose module health or readiness. `runtimeStatus` reports only Docker container state.
 
@@ -338,7 +338,7 @@ Returned by `GET /api/host/status`.
 }
 ```
 
-This endpoint creates the Host data root, `modules/` directory, `modules.json`, and shared module network if they are missing. It returns HTTP `200` when the Host runtime and Docker daemon are ready, and HTTP `503` when a dependency is unavailable.
+This endpoint creates the Host data root, app directories, legacy `modules/` directory, and shared module network if they are missing. It does not create an empty `modules.json` for app-only lifecycle state. It returns HTTP `200` when the Host runtime and Docker daemon are ready, and HTTP `503` when a dependency is unavailable.
 
 ## Endpoints
 
@@ -348,7 +348,7 @@ The endpoints in this section are implemented by the Host API.
 
 Returns installed modules known to Docker Host.
 
-The backend reads `modules.json` for installed module registry entries and persistent module state, reads each module's local `metadata.json` for display metadata, and asks Docker daemon for current runtime/container state. Persistent module state includes the source metadata URL, install/update status, failure state, last error details, computed storage mappings, and resolved dependency URLs. Docker runtime state is not stored in `modules.json`.
+The backend reads the merged compatibility view from `apps.json` and, when present, `modules.json`. App-oriented installs use local `manifest.json`; legacy module records use local `metadata.json`. The backend asks Docker daemon for current runtime/container state. Docker runtime state is not stored in the registry files.
 
 Response body:
 
@@ -366,7 +366,7 @@ Response should include, per module:
 - version;
 - source metadata URL;
 - Docker containers and image references;
-- lifecycle/install bookkeeping status from `modules.json`, if any;
+- lifecycle/install bookkeeping status from app lifecycle state or a legacy module record, if any;
 - Docker runtime status;
 - timestamps such as installed and last updated, if available;
 - last install/update error summary, if available.
@@ -377,7 +377,7 @@ Returns app navigation data for the current authenticated Host principal.
 
 This endpoint requires authentication but does not require `host.admin`. Unauthenticated callers receive HTTP `401` and no app discovery data. `host.admin` can see all shell-routable app entries, including unavailable entries with safe diagnostic status. `host.user` can see only available apps that are visible to all authenticated users or explicitly assigned to that user.
 
-The backend reads installed module records from `modules.json`, reads each module's local `metadata.json`, requires explicit `ui` metadata, applies Host-owned module assignments, and reads runtime state for availability. It does not infer shell Apps from gateway exposure records or from `runtime.ports[].public` alone.
+The backend reads installed runtime records from the merged app/legacy registry, reads each app's local `manifest.json` or legacy `metadata.json`, requires explicit `ui` metadata, applies Host-owned module assignments, and reads runtime state for availability. It does not infer shell Apps from gateway exposure records or from `runtime.ports[].public` alone.
 
 Response body:
 
@@ -454,7 +454,7 @@ Response should include:
 - settings schema from `metadata.json`;
 - indication of which secret settings are set, without raw secret values;
 - storage declarations from metadata;
-- computed or configured storage mappings stored in `modules.json`, if available;
+- computed or configured storage mappings stored in app lifecycle state or a legacy module record, if available;
 - dependency declarations and resolved dependency URLs, if available;
 - container details needed for status and logs links.
 
@@ -462,7 +462,7 @@ Response should include:
 
 Starts the Docker containers for an installed module.
 
-The backend resolves the module from `modules.json`, maps it to the corresponding Docker containers, and asks Docker daemon to start them.
+The backend resolves the module from the merged app/legacy registry, maps it to the corresponding Docker containers, and asks Docker daemon to start them.
 
 Response should include:
 
@@ -516,9 +516,9 @@ The install apply endpoint returns HTTP `201` on success:
 
 Apply request validation failures use HTTP `422` and the shared error envelope. Current-state conflicts, including reviewed plan digest mismatch, incompatible or missing-container reusable dependencies, and external mount conflicts, use HTTP `409`. Docker/runtime unavailability before mutation uses HTTP `503`. Failures after mutation has started use HTTP `500`, mark the affected module `failed`, and preserve created files, images, and containers for explicit recovery.
 
-Install apply persists each newly installed module in root-level `modules.json` and upserts an app-oriented record in `apps.json`.
+Install apply persists app-oriented installs in `apps.json` and writes `modules.json` only for legacy module records or when an existing legacy file must be preserved.
 
-`modules.json` stores:
+For legacy module records, `modules.json` stores:
 
 - source `metadataUrl`, preferred `manifestUrl`, local `metadataPath` or `manifestPath`, root or dependency `metadataDigest`, and reviewed `planDigest`;
 - Docker container image references, pull policies, container names, and operation status;
@@ -803,7 +803,7 @@ Installed modules can be reconfigured without reinstalling from metadata:
 - `POST /api/modules/{moduleId}/configure/plan` - read the installed local metadata and stored runtime decisions, then return configurable setting prompts, current public endpoint origins and Host ports, external mount collections, selected external mounts, warnings, and a `configurationDigest`;
 - `POST /api/modules/{moduleId}/configure` - accept the reviewed `configurationDigest`, setting values, endpoint origin selections, and external mounts, reject stale or conflicting decisions, then persist the configuration.
 
-Changing only a public origin updates `modules.json` and Host app discovery without recreating containers. Changing setting values, external mounts, or endpoint Host ports requires container recreation so environment variables, bind mounts, and published ports match the stored configuration. Partial failures after mutation has started mark the module `failed` with `lastOperation: "configure"` and preserve the stored configuration for retry or cleanup.
+Changing only a public origin updates the app lifecycle state or legacy module record and Host app discovery without recreating containers. Changing setting values, external mounts, or endpoint Host ports requires container recreation so environment variables, bind mounts, and published ports match the stored configuration. Partial failures after mutation has started mark the module `failed` with `lastOperation: "configure"` and preserve the stored configuration for retry or cleanup.
 
 ### Module recovery and removal
 

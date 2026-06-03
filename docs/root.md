@@ -4,11 +4,11 @@
 
 Docker Host Manager is evolving into Hosty: a local application orchestrator with a headless Core API, a Core-managed browser Shell runtime app, and user runtime apps. Hosty Core is a local-first ASP.NET Core process, Hosty Shell is a Core-managed runtime app, and the CLI is a Core bootstrap/API client.
 
-A module is a Docker-hosted functional unit. Administrators add a module by providing a direct URL to a JSON metadata file. The Host downloads that JSON file, reads module container/image metadata, then prepares local storage and container configuration.
+A runtime app is a Hosty-managed workload. Administrators add an app by providing a direct URL to an `app.0.1` manifest. The Host downloads that JSON file, reads runtime profile, service, image, settings, storage, and endpoint metadata, then prepares local state and runtime configuration. Legacy Docker module metadata remains a compatibility input for already-installed or explicitly imported legacy modules.
 
 The Host itself is expected to run as a Docker container in production-like usage. A standalone CLI executable bootstraps and manages the Host container lifecycle. The preferred command is `hosty`; `docker-host` remains a deprecated compatibility alias during migration.
 
-When one module depends on another service module, the consumer declares which dependency endpoint it needs and which target environment variables should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the requested consumer containers. Network aliases are derived from module ids and container keys, for example `com.modulis.storage` + `api` becomes `mod-com-modulis-storage-api`. This does not require Docker Compose, although Compose could be one possible implementation detail.
+When one runtime app depends on another service app, the consumer declares which dependency endpoint it needs and which target environment variables should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the requested consumer services. Network aliases are derived from app ids and service keys, for example `com.modulis.storage` + `api` becomes `mod-com-modulis-storage-api`. This does not require Docker Compose, although Compose could be one possible implementation detail.
 
 ```mermaid
 flowchart LR
@@ -19,7 +19,7 @@ flowchart LR
   C --> F["Settings schema"]
   C --> G["Data directory and backups"]
   E --> I["Dependency base URLs as env vars"]
-  B --> H["apps.json and modules.json"]
+  B --> H["apps.json and legacy modules.json import"]
 ```
 
 ## Documents
@@ -47,9 +47,9 @@ flowchart LR
 - [Docker Host domain model](features/domain-model.md) - shared vocabulary for Hosty runtime apps, legacy installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
 - [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
 - [Module metadata files](features/module-metadata.md) - supported legacy metadata and app manifest contracts for installing Docker-hosted runtime apps.
+- [Legacy compatibility](features/legacy-compatibility.md) - implemented boundary for schema `0.2`/`0.3` metadata and `modules.json` import compatibility after Demo Module removal.
 - [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.
 - [Demo App](features/demo-app.md) - repository-local Hosty runtime app for validating app lifecycle, source, local command, identity, storage, and role flows.
-- [Demo Module](features/demo-module.md) - legacy schema `0.3` compatibility fixture for Docker Host module operations.
 
 ## Planning
 
@@ -58,6 +58,5 @@ flowchart LR
 - [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation plan for Hosty Core, Shell/system apps, runtime apps, manifest contract, app registry, and backups.
 - [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - completed Stage 2 plan for runtime profile state, source records, checkout cache, local command runtime execution, and runtime switching.
 - [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - completed Stage 3 plan for standalone app auth, Hosty-aware app guidance, deferred gateway wrapping, and split Core/Shell public origins.
-- [Legacy Demo Module Removal](planning/legacy-demo-module-removal.md) - planned post-validation cleanup for the legacy Demo Module fixture and `modules.json` lifecycle compatibility.
 - [Update Channels](planning/update-channels.md) - deferred architecture plan for generated channel indexes, pull request validation channels, and optional CLI update channels.
 - [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - deferred Shell annotation to agent, branch/PR, and PR channel validation workflow.

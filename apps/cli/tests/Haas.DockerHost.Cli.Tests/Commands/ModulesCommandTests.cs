@@ -54,7 +54,7 @@ public sealed class ModulesCommandTests
         using var defaultJson = JsonDocument.Parse(JsonSerializer.Serialize(defaultValue));
         var setting = new InstallPlanSettingPrompt
         {
-            ModuleId = "com.haas.demo-module",
+            ModuleId = "com.example.legacy",
             Key = "SAMPLE_JSON",
             Type = "string",
             Required = false,

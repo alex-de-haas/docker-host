@@ -1,14 +1,14 @@
-name: Demo Module Image
+name: Demo App Image
 
 on:
   push:
     branches:
       - main
     paths:
-      - "modules/demo-module/**"
+      - "apps/demo-app/**"
       - "package.json"
       - "package-lock.json"
-      - ".github/workflows/demo-module-image.yml"
+      - ".github/workflows/demo-app-image.yml"
 
 env:
   REGISTRY: ghcr.io
@@ -27,7 +27,7 @@ jobs:
       - name: Compute image name
         id: image
         shell: bash
-        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/demo-module" >> "$GITHUB_OUTPUT"
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/demo-app" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -51,14 +51,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish Demo Module image
+      - name: Build and publish Demo App image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./modules/demo-module/Dockerfile
+          file: ./apps/demo-app/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=demo-module-image
-          cache-to: type=gha,scope=demo-module-image,mode=min
+          cache-from: type=gha,scope=demo-app-image
+          cache-to: type=gha,scope=demo-app-image,mode=min

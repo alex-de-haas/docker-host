@@ -179,7 +179,7 @@ The first-party demo app lives under `apps/demo-app` and uses the `app.0.1` mani
 - app-owned package scripts;
 - app-owned data directory support through `HOSTY_APP_DATA_DIR`.
 
-The legacy `modules/demo-module` fixture is not the final first-party demo contract.
+The legacy `modules/demo-module` fixture has been retired. Demo App is the first-party demo contract.
 
 ## Legacy paths pending removal
 

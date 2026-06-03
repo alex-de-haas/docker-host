@@ -8,6 +8,7 @@ on:
       - "host-v*"
     paths:
       - "apps/host/**"
+      - "apps/demo-app/manifest.json"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/host-image.yml"

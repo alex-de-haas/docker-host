@@ -8,6 +8,7 @@ import {
   writeAppsStore,
 } from './app-store.ts';
 import {
+  getModulesStoreStatus,
   readModuleMetadata,
   readModulesStore,
   readModulesStoreSnapshot,
@@ -232,14 +233,39 @@ test('writes app lifecycle records back to apps.json instead of modules.json', a
   }, config);
 
   const appsStore = await readAppsStoreSnapshot(config);
-  const modulesStore = JSON.parse(await fs.readFile(config.modulesStorePath, 'utf-8')) as {
-    modules: Array<{ id: string }>;
-  };
 
   assert.equal(appsStore.apps[0]?.operationStatus, 'installed');
   assert.equal(appsStore.apps[0]?.lastOperation, 'install');
   assert.equal(appsStore.apps[0]?.containers?.[0]?.containerName, 'mod-com-example-app-web');
-  assert.deepEqual(modulesStore.modules, []);
+  await assert.rejects(fs.stat(config.modulesStorePath), { code: 'ENOENT' });
+});
+
+test('does not create modules.json when reading app-only lifecycle state', async () => {
+  const config = await createModuleStoreTestConfig();
+  await writeAppsStore({
+    schemaVersion: 'app-store.0.1',
+    apps: [
+      {
+        id: 'com.example.app',
+        manifestUrl: 'https://apps.example.test/app/manifest.json',
+        manifestPath: 'apps/com.example.app/manifest.json',
+        containers: [],
+        operationStatus: 'installed',
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  }, config);
+
+  const store = await readModulesStore(config);
+  const status = await getModulesStoreStatus(config);
+
+  assert.equal(store.modules.length, 1);
+  assert.equal(store.modules[0]?.id, 'com.example.app');
+  assert.equal(status.exists, false);
+  assert.equal(status.readable, true);
+  assert.equal(status.writable, true);
+  assert.equal(status.moduleCount, 1);
+  await assert.rejects(fs.stat(config.modulesStorePath), { code: 'ENOENT' });
 });
 
 async function createModuleStoreTestConfig(): Promise<HostRuntimeConfig> {

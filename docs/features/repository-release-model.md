@@ -50,7 +50,7 @@ docs/
   workflows/
 ```
 
-Repository physically follows this skeleton: Hosty Core lives in `apps/core`, Hosty Shell lives in `apps/shell`, the CLI lives in `apps/cli`, the first-party Demo App lives in `apps/demo-app`, legacy module compatibility fixtures live in `modules`, and the Host API contract is documented in `docs/features/host-api.md`.
+Repository physically follows this skeleton: Hosty Core lives in `apps/core`, Hosty Shell lives in `apps/shell`, the CLI lives in `apps/cli`, the first-party Demo App lives in `apps/demo-app`, and the Host API contract is documented in `docs/features/host-api.md`. Legacy module compatibility uses parser tests and import paths, not a repository-local first-party package.
 
 The Host API contract between the Web UI, Host backend API, and CLI is defined in `docs/features/host-api.md`. A separate contracts package, generated OpenAPI artifact, and generated clients are not part of the repository contract.
 
@@ -77,7 +77,7 @@ Builds must be independent:
 
 - `ci.yml` - shared checks on pull requests and pushes;
 - `host-image.yml` - build and push the Host Docker image;
-- `demo-module-image.yml` - legacy compatibility workflow that builds and pushes the Demo Module Docker image until [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md);
+- `demo-app-image.yml` - build and push the first-party Demo App Docker image;
 - `cli-release.yml` - build and publish standalone CLI artifacts;
 - optional `docs.yml` - documentation checks.
 
@@ -97,11 +97,11 @@ Demo App build:
   package-lock.json
   .github/workflows/ci.yml
 
-Legacy Demo Module image build:
-  modules/demo-module/**
+Demo App image build:
+  apps/demo-app/**
   package.json
   package-lock.json
-  .github/workflows/demo-module-image.yml
+  .github/workflows/demo-app-image.yml
 
 CLI build:
   apps/cli/**
@@ -117,9 +117,9 @@ Docs-only changes:
 
 If only the CLI changes, the Host image should not be published. If only the Host UI changes without changing the API contract, CLI artifacts should not be published. If `docs/features/host-api.md` changes, CI should validate both Host and CLI.
 
-Full CI runs Shell build, Demo App lint/build, legacy Demo Module lint/build while the compatibility fixture remains, Core build/tests, installer syntax validation, CLI build, and CLI xUnit tests. The root `npm run ci` script mirrors the primary Shell, Demo App, Core, and CLI validation sequence for local validation.
+Full CI runs Shell build, Demo App lint/build, Core build/tests, installer syntax validation, CLI build, and CLI xUnit tests. The root `npm run ci` script mirrors the primary Shell, Demo App, Core, and CLI validation sequence for local validation.
 
-Pull request CI is intentionally lighter than default-branch CI. Pull requests run build-only checks for Shell, Demo App, the legacy Demo Module fixture, Core, and CLI so reviewers get a fast signal that changed code compiles without publishing artifacts or running release-grade image builds. Pushes to `main` run the full validation path, including lint and tests where configured.
+Pull request CI is intentionally lighter than default-branch CI. Pull requests run build-only checks for Shell, Demo App, Core, and CLI so reviewers get a fast signal that changed code compiles without publishing artifacts or running release-grade image builds. Pushes to `main` run the full validation path, including lint and tests where configured.
 
 ## Release artifacts
 
@@ -137,7 +137,7 @@ Immutable Host versions are created from `host-v*` git tags. The Host image work
 
 The Host image should be published as a multi-platform Linux image for `linux/amd64` and `linux/arm64`, so Docker Desktop users on Apple Silicon and standard x64 Linux hosts can pull the same image reference without local emulation setup.
 
-The Host image workflow runs only for pushes to `main` and `host-v*` tags. Pull requests do not run the Docker Buildx/QEMU image build; the lightweight CI build is the pull request compile gate. The Host, Demo App, and legacy Demo Module image workflows should use separate GitHub Actions Buildx cache scopes and `mode=min` cache export so their caches do not overwrite each other and cache upload does not dominate the build.
+The Host image workflow runs only for pushes to `main` and `host-v*` tags. Pull requests do not run the Docker Buildx/QEMU image build; the lightweight CI build is the pull request compile gate. Host and runtime app image workflows should use separate GitHub Actions Buildx cache scopes and `mode=min` cache export so their caches do not overwrite each other and cache upload does not dominate the build.
 
 Demo App image artifact:
 
@@ -146,16 +146,7 @@ ghcr.io/alex-de-haas/demo-app:latest
 ghcr.io/alex-de-haas/demo-app:sha-<commit>
 ```
 
-The Demo App image is the first-party runtime app artifact for app manifest workflows. Its source of truth is `apps/demo-app/manifest.json` and `apps/demo-app/Dockerfile`.
-
-Legacy Demo Module image artifact:
-
-```text
-ghcr.io/alex-de-haas/demo-module:latest
-ghcr.io/alex-de-haas/demo-module:sha-<commit>
-```
-
-The Demo Module image is still published to GitHub Container Registry from `demo-module-image.yml` as a legacy schema `0.3` compatibility fixture. It should not be presented as the primary first-party runtime app workflow. The workflow can be removed during [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md) when `modules/demo-module` is deleted.
+The Demo App image is the first-party runtime app artifact for app manifest workflows. Its source of truth is `apps/demo-app/manifest.json` and `apps/demo-app/Dockerfile`. The `demo-app-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry. The package is expected to be public so `docker pull ghcr.io/alex-de-haas/demo-app:latest` works without credentials.
 
 CLI release artifacts:
 

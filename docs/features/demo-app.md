@@ -48,6 +48,28 @@ hosty apps restart com.haas.demo-app
 
 This installed-app loop replaces the removed legacy developer harness. Local checks should use Core-managed app lifecycle, existing Host users, app assignments, source overrides, and `hosty apps identity` or `hosty apps open`; they should not seed deterministic development users or inject fake identity headers.
 
-## Legacy Fixture
+## Docker Image
 
-The legacy `modules/demo-module` package remains as a schema `0.3` metadata compatibility fixture until [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md). New first-party runtime app workflows should use `apps/demo-app/manifest.json`.
+Build the local image from the repository root:
+
+```bash
+docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev .
+```
+
+The published manifest image uses:
+
+```text
+ghcr.io/alex-de-haas/demo-app:latest
+```
+
+For legacy Host UI install testing, the dev-only fixture route is:
+
+```text
+http://localhost:3000/fixtures/apps/demo-app
+```
+
+That fixture returns the Demo App `app.0.1` manifest and rewrites Docker runtime image references to `hosty-demo-app:dev` with `pullPolicy: ifNotPresent`. It replaces the removed legacy Demo Module fixture.
+
+## Compatibility Boundary
+
+Demo App is the only first-party repository runtime app workflow. Legacy schema `0.2` and `0.3` metadata remains supported for compatibility and migration scenarios, but there is no repository-local Demo Module package or image workflow. See [Legacy compatibility](legacy-compatibility.md).

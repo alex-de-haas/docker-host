@@ -51,14 +51,14 @@ flowchart TD
   R --> K
   S --> K
   T --> K
-  K --> L["modules.json"]
+  K --> L["apps.json and legacy modules.json"]
   K --> M["local manifest/metadata"]
   K --> N["Docker daemon"]
 ```
 
 ## Empty and recovery states
 
-The empty state is shown when the Host modules store has no installed module records. The primary way to leave the empty state is the install route.
+The empty state is shown when the merged app/legacy registry has no installed runtime app records. The primary way to leave the empty state is the install route.
 
 Failed modules remain visible with their last operation error so administrators can choose the correct recovery path. Failed installs use install retry or cleanup. Failed updates use update retry or update review. Cleanup and remove previews list affected containers, metadata files, module directories, module-owned storage, external mount mappings, dependents, warnings, and conflicts before any destructive action runs.
 

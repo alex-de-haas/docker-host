@@ -32,7 +32,6 @@ export interface ModulesStoreStatus {
 }
 
 export async function readModulesStore(config = getHostRuntimeConfig()): Promise<ModulesStoreData> {
-  await ensureModulesStore(config);
   return readModulesStoreSnapshot(config);
 }
 
@@ -79,8 +78,11 @@ export async function writeModulesStore(
   config = getHostRuntimeConfig()
 ) {
   const { legacyStore, appsStore } = splitMergedStore(store, config);
-  await writeLegacyModulesStore(legacyStore, config);
   await writeAppsStore(appsStore, config);
+
+  if (await shouldWriteLegacyModulesStore(legacyStore, config)) {
+    await writeLegacyModulesStore(legacyStore, config);
+  }
 }
 
 async function writeLegacyModulesStore(
@@ -109,14 +111,18 @@ export async function getModulesStoreStatus(
   config = getHostRuntimeConfig()
 ): Promise<ModulesStoreStatus> {
   try {
-    await ensureModulesStore(config);
-    const store = await readModulesStore(config);
+    const [store, exists] = await Promise.all([
+      readModulesStoreSnapshot(config),
+      pathExists(config.modulesStorePath),
+    ]);
 
     return {
       path: config.modulesStorePath,
-      exists: true,
+      exists,
       readable: true,
-      writable: await isWritable(config.modulesStorePath),
+      writable: exists
+        ? await isWritable(config.modulesStorePath)
+        : await isDirectoryWritable(path.dirname(config.modulesStorePath)),
       moduleCount: store.modules.length,
       error: null,
     };
@@ -175,23 +181,6 @@ export function resolveModuleMetadataPath(
   }
 
   return path.join(config.modulesRootContainer, module.id, 'metadata.json');
-}
-
-async function ensureModulesStore(config: HostRuntimeConfig) {
-  await fs.mkdir(config.dataRootContainer, { recursive: true });
-  await fs.mkdir(config.modulesRootContainer, { recursive: true });
-
-  if (!(await pathExists(config.modulesStorePath))) {
-    await writeLegacyModulesStore(
-      {
-        schemaVersion: STORE_SCHEMA_VERSION,
-        hostSettings: {},
-        modules: [],
-        updatedAt: new Date().toISOString(),
-      },
-      config
-    );
-  }
 }
 
 function normalizeStore(parsed: unknown): ModulesStoreData {
@@ -296,6 +285,15 @@ function splitMergedStore(
       updatedAt: store.updatedAt ?? new Date().toISOString(),
     },
   };
+}
+
+async function shouldWriteLegacyModulesStore(
+  legacyStore: ModulesStoreData,
+  config: HostRuntimeConfig
+) {
+  return legacyStore.modules.length > 0 ||
+    Object.keys(legacyStore.hostSettings ?? {}).length > 0 ||
+    await pathExists(config.modulesStorePath);
 }
 
 function appRecordToInstalledModuleRecord(
@@ -498,6 +496,15 @@ function isObject(value: unknown): value is Record<string, unknown> {
 async function isWritable(targetPath: string) {
   try {
     await fs.access(targetPath, fs.constants.R_OK | fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isDirectoryWritable(targetPath: string) {
+  try {
+    await fs.access(targetPath, fs.constants.W_OK);
     return true;
   } catch {
     return false;

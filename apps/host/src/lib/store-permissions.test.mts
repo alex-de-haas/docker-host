@@ -14,7 +14,13 @@ test('writes sensitive Host stores with owner-only permissions', async () => {
   await writeModulesStore({
     schemaVersion: '0.2',
     hostSettings: {},
-    modules: [],
+    modules: [
+      {
+        id: 'com.example.legacy',
+        metadataUrl: 'https://modules.example.test/legacy.json',
+        containers: [],
+      },
+    ],
     updatedAt: new Date().toISOString(),
   }, config);
 

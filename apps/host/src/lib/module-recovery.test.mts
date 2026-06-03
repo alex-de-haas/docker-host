@@ -40,10 +40,7 @@ test('remove deletes app lifecycle records and app-owned data without legacy mod
   assert.equal(result.body.success, true);
   assert.equal((await readAppsStoreSnapshot(config)).apps.length, 0);
   await assert.rejects(() => fs.access(path.join(config.appsRootContainer as string, 'com.example.notes')));
-  const modulesStore = JSON.parse(await fs.readFile(config.modulesStorePath, 'utf-8')) as {
-    modules: unknown[];
-  };
-  assert.deepEqual(modulesStore.modules, []);
+  await assert.rejects(fs.stat(config.modulesStorePath), { code: 'ENOENT' });
 });
 
 test('retry failed install updates app lifecycle records without legacy module records', async () => {

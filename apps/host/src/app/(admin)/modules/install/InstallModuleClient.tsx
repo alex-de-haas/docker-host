@@ -114,7 +114,7 @@ export function InstallModuleClient() {
 
   function handleUseCurrentDemo() {
     const origin = window.location.origin;
-    setMetadataUrl(`${origin}/fixtures/modules/demo-module`);
+    setMetadataUrl(`${origin}/fixtures/apps/demo-app`);
   }
 
   function buildRequestFromForm(form: HTMLFormElement) {
@@ -185,8 +185,8 @@ export function InstallModuleClient() {
   return (
     <AdminShell contentClassName="space-y-6">
         <HostPageHeader
-          title="Install module"
-          description="Review metadata plan"
+          title="Install app"
+          description="Review manifest plan"
           actions={plan && (
             <Badge variant={plan.conflicts.length > 0 ? 'destructive' : 'outline'}>
               {plan.conflicts.length > 0 ? 'Blocked' : 'Ready'}
@@ -203,13 +203,13 @@ export function InstallModuleClient() {
                 type="url"
                 value={metadataUrl}
                 onChange={event => setMetadataUrl(event.target.value)}
-                placeholder="https://modules.example.com/reports.json"
+                placeholder="https://apps.example.com/reports/manifest.json"
                 required
               />
             </div>
             <Button type="button" variant="outline" onClick={handleUseCurrentDemo}>
               <GitBranch className="h-4 w-4" />
-              Current demo
+              Demo App
             </Button>
             <Button type="submit" disabled={isPlanning}>
               {isPlanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
@@ -253,7 +253,7 @@ export function InstallModuleClient() {
                   </Button>
                   <Button type="submit" disabled={plan.conflicts.length > 0 || isInstalling}>
                     {isInstalling ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    Install module
+                    Install app
                   </Button>
                 </div>
               </div>

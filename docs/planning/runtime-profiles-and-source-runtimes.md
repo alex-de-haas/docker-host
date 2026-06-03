@@ -28,7 +28,7 @@ Completed implementation order:
 10. Add Docker-to-source/localCommand switching.
 11. Validate and document runtime/source workflows.
 
-The legacy demo/module compatibility removal that was previously tracked as the final cleanup phase has moved to [Legacy Demo Module Removal](legacy-demo-module-removal.md). That cleanup is intentionally not a Stage 2 blocker because it depends on later auth/origin, backup, release, and live Docker validation.
+The legacy demo/module compatibility removal that was previously tracked as the final cleanup phase moved to Stage 5 and is now documented in [Legacy compatibility](../features/legacy-compatibility.md). That cleanup was intentionally not a Stage 2 blocker because it depended on later auth/origin, backup, release, and live Docker validation.
 
 This intentionally pulls source and local command execution ahead of Docker-to-Docker switching because the old developer harness is being removed instead of extended. The tradeoff is a larger source-runtime implementation earlier in the plan, but it avoids investing more work in soon-to-be-removed dev-only metadata and user seeding.
 
@@ -203,8 +203,8 @@ Completed in the Demo App migration pass:
 - First-party local runtime documentation uses `npm run core:dev` or `hosty core start` plus `hosty apps install apps/demo-app/manifest.json --runtime dev`.
 - Demo App user-facing defaults and UI copy use Demo App terminology instead of presenting the app as the legacy Demo Module.
 - Root documentation links to `docs/features/demo-app.md` as the primary first-party runtime app workflow.
-- CI uses current Stage 2 package scripts for Shell, Demo App, Core, and CLI, while keeping a separate legacy Demo Module compatibility job until removal.
-- `modules/demo-module` remains as a legacy schema `0.3` metadata compatibility fixture. Delete it only in [Legacy Demo Module Removal](legacy-demo-module-removal.md).
+- CI uses current Stage 2 package scripts for Shell, Demo App, Core, and CLI.
+- `modules/demo-module` was retired in Stage 5. Legacy schema `0.3` metadata compatibility remains covered by minimal parser fixtures.
 
 ### Phase 8 - Add default app source/local runtime workflows
 
@@ -273,7 +273,7 @@ Implemented so far:
 - Root `npm run ci` validates Shell build, Demo App build, Core build/tests, and CLI build/tests.
 - Runtime profile authoring guidance, source checkout storage/cleanup behavior, runtime switch reviews, self-runtime boundaries, and local command platform constraints are documented in feature docs.
 
-Live Docker daemon smoke tests for published image workflows should run before [Legacy Demo Module Removal](legacy-demo-module-removal.md), but they are not a Stage 2 code-path blocker.
+Live Docker daemon smoke tests for published image workflows were deferred out of Stage 2 and now target the Demo App workflow documented in [Demo App](../features/demo-app.md).
 
 ## Resolved Decisions
 

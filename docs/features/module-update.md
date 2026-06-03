@@ -149,7 +149,7 @@ The replacement strategy is explicit:
 - pull proposed images according to refreshed `pullPolicy`;
 - stop/remove existing module containers when runtime configuration must change;
 - create/start containers with deterministic container names;
-- save refreshed `manifest.json` or legacy `metadata.json`, update `apps.json` where applicable, and update `modules.json` only after successful apply.
+- save refreshed `manifest.json` or legacy `metadata.json`, update `apps.json` for app-oriented records, and update `modules.json` only for legacy records or when preserving an existing legacy store.
 
 If metadata-only changes do not affect images, environment, mounts, endpoints/ports, resources, or network aliases, the update may skip container replacement. If `pullPolicy` is `always`, update pulls and recreates affected containers even when an image reference is unchanged.
 

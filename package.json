@@ -5,8 +5,7 @@
   "workspaces": [
     "apps/demo-app",
     "apps/host",
-    "apps/shell",
-    "modules/demo-module"
+    "apps/shell"
   ],
   "overrides": {
     "next": {

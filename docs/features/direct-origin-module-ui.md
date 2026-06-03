@@ -63,13 +63,13 @@ The install apply step validates administrator edits before creating containers:
 - selected Host ports must not conflict with another planned public endpoint;
 - selected Host ports must not conflict with an already installed module outside the current install plan.
 
-Published Host port bindings are stored in `modules.json` with the installed container record. The installed app registry uses the stored binding to resolve the iframe URL.
+Published Host port bindings are stored with the installed runtime record: app-oriented installs use app lifecycle state, and legacy module records use `modules.json`. The installed app registry uses the stored binding to resolve the iframe URL.
 
 ### Upgrading Existing Modules
 
 Modules installed before direct-origin UI support do not have stored published Host port bindings, and their existing containers were not created with the Docker port bindings required for browser iframe loading. Those apps are hidden from non-admin users until they are upgraded. Administrators see the app as unavailable with a missing UI port status.
 
-Open the module update review to recreate affected containers with assigned Host ports. If an update cannot be applied, remove and reinstall the module so Docker Host can publish the UI endpoint and persist the binding in `modules.json`.
+Open the module update review to recreate affected containers with assigned Host ports. If an update cannot be applied, remove and reinstall the module so Docker Host can publish the UI endpoint and persist the binding in the app lifecycle state or legacy module record.
 
 ## App Registry
 

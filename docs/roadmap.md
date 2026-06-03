@@ -22,7 +22,7 @@ flowchart TD
 ## Current Direction
 
 - Hosty is moving from a Docker-first Host application toward a local-first Core, a Core-managed Shell runtime app, and user-installed runtime apps.
-- Existing Docker module compatibility remains supported during the migration.
+- Existing Docker module compatibility remains supported only for already-installed legacy records and explicit compatibility imports.
 - The active branch should prioritize Core/Shell stabilization before channel generation, pull request channels, or agent-driven app editing.
 - Source and local command runtimes should replace the old developer harness model. They must use normal installed apps, existing Host users, and trusted CLI identity helpers.
 
@@ -128,7 +128,7 @@ Existing behavior that must keep working:
 
 - Docker-only runtime apps with no source repository.
 - Existing app data paths, backup/restore behavior, storage mappings, settings, dependency URLs, and published ports.
-- Legacy Demo Module and `modules.json` compatibility fixtures until the dedicated cleanup stage removes them.
+- Existing legacy module records that are still present in `modules.json`.
 
 Conflicts and constraints:
 
@@ -136,7 +136,7 @@ Conflicts and constraints:
 - Do not seed deterministic development users for source runtime workflows.
 - Local command runtimes depend on a trustworthy Core/CLI supervision boundary; Core cannot safely complete its own replacement after it exits.
 - Multi-repository apps are out of scope for the first source runtime implementation.
-- Removing `modules/demo-module` and reducing `modules.json` compatibility are not Stage 2 blockers; they moved to Stage 5 after auth/origin and backup validation.
+- `modules/demo-module` and required app lifecycle writes to `modules.json` were removed in Stage 5.
 
 ### Stage 3 - Harden app auth and origin separation
 
@@ -204,30 +204,31 @@ Conflicts and constraints:
 
 ### Stage 5 - Retire legacy demo/module compatibility
 
-Status: Planned.
-
-Primary plan:
-
-- [Legacy Demo Module Removal](planning/legacy-demo-module-removal.md)
+Status: Implemented; blocked on published Demo App image access smoke.
 
 Key outcomes:
 
-- Remove `modules/demo-module` as the first-party legacy schema `0.3` compatibility fixture.
-- Remove Demo Module CI/image publishing and fixture routes after Demo App published image workflows are live-smoked.
-- Reduce `modules.json` from a required app lifecycle store to an explicit migration/import compatibility input where still needed.
-- Update feature docs so Demo App and `app.0.1` manifests are the only first-party runtime app workflow.
+- Removed `modules/demo-module` as the first-party legacy schema `0.3` compatibility fixture.
+- Removed Demo Module CI/image publishing and legacy fixture routes.
+- Added Demo App image publishing as the only first-party demo image workflow.
+- Added a Demo App manifest fixture route for local first-party install testing.
+- Reduced `modules.json` from a required app lifecycle store to explicit legacy compatibility input.
+- Kept schema `0.2` and `0.3` metadata parsing and existing `modules.json` records as compatibility paths.
+- Updated feature docs so Demo App and `app.0.1` manifests are the only first-party runtime app workflow.
 
-Prerequisites:
+Validation focus:
 
-- Stage 2 runtime/source workflows completed.
-- Stage 3 app auth and split-origin validation no longer depends on legacy Demo Module identity behavior.
-- Stage 4 backup retention validation no longer depends on legacy module storage layout.
-- Live Docker daemon smoke tests pass for published Demo App image workflows.
+- Stage 2 runtime/source workflows, Stage 3 app auth/origin work, and Stage 4 backup retention work are complete.
+- Parser compatibility for legacy schema `0.3` remains covered by minimal inline fixtures instead of a repository app package.
+- App-only lifecycle writes now update `apps.json` without creating empty `modules.json`.
+- Local Demo App and Host image builds are the release validation target before published image checks.
+- Published Demo App image smoke is still required before marking Stage 5 complete. On June 3, 2026, `docker pull ghcr.io/alex-de-haas/demo-app:latest` returned `denied`; the replacement `demo-app-image.yml` workflow must run on `main`, and the GHCR package must be public.
 
-Conflicts and constraints:
+Follow-up source of truth:
 
-- Do not delete compatibility behavior that is still needed for existing installations without an explicit migration/import path.
-- Do not keep Demo Module as a parallel first-party workflow after the cleanup starts.
+- [Demo App](features/demo-app.md)
+- [Legacy compatibility](features/legacy-compatibility.md)
+- [Repository and release model](features/repository-release-model.md)
 
 ### Stage 6 - Add update channels
 
@@ -291,7 +292,6 @@ Conflicts and constraints:
 - [Core Shell Stabilization](planning/core-shell-stabilization.md) - active implementation plan for Core/Shell local development, lifecycle UI, install/update review, auth, users, and backups.
 - [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - runtime profile state, app-native lifecycle records, Core/Shell split, source checkouts, local command runtimes, and runtime switching.
 - [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - app-scoped auth, standalone app launch, Shell launch, and Core/Shell public origin split.
-- [Legacy Demo Module Removal](planning/legacy-demo-module-removal.md) - post-validation cleanup for Demo Module, legacy fixture CI, and `modules.json` lifecycle compatibility.
 - [Update Channels](planning/update-channels.md) - generated channel indexes, product/runtime channel selection, pull request channels, and channel cleanup.
 - [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and PR channel validation.
 - [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation and accepted target model decisions.
@@ -311,12 +311,12 @@ Before completing a roadmap stage, validate the old features that interact with 
 ## Open Questions And Recommendations
 
 - Question: What should be implemented immediately after Core/Shell stabilization?
-  Answer: Runtime profiles/source runtimes, app auth/origin hardening, and backup retention are complete. The next practical workstream is legacy Demo Module compatibility retirement.
-  Recommendation: Start Stage 5 before update channels so update-channel validation no longer depends on legacy module fixtures.
+  Answer: Runtime profiles/source runtimes, app auth/origin hardening, and backup retention are complete. Legacy Demo Module retirement is implemented but still needs published Demo App image access smoke before Stage 5 is closed.
+  Recommendation: Resolve the GHCR access issue, run the published-image smoke, then start update channels.
 
 - Question: When should update channels move from deferred to active?
-  Answer: After Core/Shell management is stable, repository/source runtime state exists, app auth/open flows are validated, backup behavior is stable, and legacy Demo Module compatibility has been retired or explicitly isolated.
-  Recommendation: Start with generated `main` product channel validation before exposing user-facing runtime app channel switching.
+  Answer: After the Stage 5 published-image smoke passes. Core/Shell management is stable, repository/source runtime state exists, app auth/open flows are validated, backup behavior is stable, and legacy Demo Module compatibility has been retired to an explicit compatibility boundary.
+  Recommendation: Implement Stage 6 before Agent Bridge so pull request channels build on a stable product-channel model.
 
 - Question: When should small ideas from `docs/todo.md` become planning documents?
   Answer: When an idea starts affecting lifecycle, auth, storage, runtime, Shell UX, or release behavior across more than one component.
