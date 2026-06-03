@@ -23,6 +23,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AuditStore>();
         builder.Services.AddSingleton<AppAuthCodeStore>();
         builder.Services.AddSingleton<AppIdentityService>();
+        builder.Services.AddSingleton<UserManagementService>();
         builder.Services.AddSingleton<AppManifestService>();
         builder.Services.AddSingleton<AppBackupService>();
         builder.Services.AddSingleton<AppSourceService>();
@@ -119,6 +120,9 @@ internal static class HostyCoreApplication
             "Hosty Core Setup",
             "Hosty Core owns first administrator setup.",
             config), "text/html"));
+        app.MapGet("/setup/invite", (string? setupToken, HostyCoreRuntimeConfig config) => Results.Content(
+            RenderInvitationPage(config, setupToken),
+            "text/html"));
         app.MapGet("/recovery", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
             "Hosty Core Recovery",
             "Hosty Core owns local administrator recovery.",
@@ -141,6 +145,7 @@ internal static class HostyCoreApplication
 
         DomainEndpoints.Map(app);
         AuthEndpoints.Map(app);
+        UserManagementEndpoints.Map(app);
         LifecycleEndpoints.Map(app);
         SourceEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
@@ -269,6 +274,72 @@ internal static class HostyCoreApplication
           </html>
           """;
     }
+
+    private static string RenderInvitationPage(HostyCoreRuntimeConfig config, string? setupToken)
+    {
+        var encodedToken = HtmlEncoder.Default.Encode(setupToken ?? "");
+        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.ShellPublicOrigin ?? "/");
+
+        return $$"""
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Hosty Core Invitation</title>
+            <style>
+              :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+              body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+              main { width: min(34rem, calc(100vw - 2rem)); border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 1.5rem; }
+              h1 { margin: 0 0 .75rem; font-size: 1.25rem; }
+              p { margin: .5rem 0; line-height: 1.5; }
+              form { display: grid; gap: .75rem; margin-top: 1rem; }
+              label { font-weight: 650; }
+              input, button { border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; font: inherit; padding: .7rem .85rem; }
+              button { cursor: pointer; background: CanvasText; color: Canvas; }
+              .error { color: #b42318; font-weight: 650; }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>Hosty Core Invitation</h1>
+              <p>Core owns invitation acceptance and session creation.</p>
+              <p id="message"></p>
+              <form id="invite-form">
+                <input type="hidden" id="setup-token" value="{{encodedToken}}">
+                <label for="display-name">Display name</label>
+                <input id="display-name" name="displayName" autocomplete="name">
+                <button type="submit">Accept invitation</button>
+              </form>
+            </main>
+            <script>
+              const form = document.getElementById('invite-form');
+              const message = document.getElementById('message');
+              form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                message.className = '';
+                message.textContent = 'Accepting invitation...';
+                const response = await fetch('/api/auth/invitations/accept', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    setupToken: document.getElementById('setup-token').value,
+                    displayName: document.getElementById('display-name').value || undefined
+                  })
+                });
+                if (!response.ok) {
+                  const error = await response.json().catch(() => ({}));
+                  message.className = 'error';
+                  message.textContent = error.message || 'Invitation could not be accepted.';
+                  return;
+                }
+                window.location.href = '{{encodedShellOrigin}}';
+              });
+            </script>
+          </body>
+          </html>
+          """;
+    }
 }
 
 internal sealed record HostyCoreRuntimeConfig(
@@ -278,6 +349,7 @@ internal sealed record HostyCoreRuntimeConfig(
     string ListenUrl,
     string? CorePublicOrigin,
     string? ShellPublicOrigin,
+    string RuntimePublicHost,
     string? ShellManifestPath,
     bool ShellBootstrapEnabled,
     bool ShellAutostart)
@@ -298,6 +370,8 @@ internal sealed record HostyCoreRuntimeConfig(
             NormalizeOptional(Environment.GetEnvironmentVariable("HOST_PUBLIC_ORIGIN"));
         var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_SHELL_PUBLIC_ORIGIN")) ??
             ResolveDefaultShellPublicOrigin(environment);
+        var runtimePublicHost = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_RUNTIME_PUBLIC_HOST")) ??
+            "app.localhost";
         var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
             ResolveDefaultShellManifestPath();
 
@@ -308,6 +382,7 @@ internal sealed record HostyCoreRuntimeConfig(
             listenUrl,
             corePublicOrigin,
             shellPublicOrigin,
+            runtimePublicHost,
             shellManifestPath,
             ReadBoolean("HOSTY_SHELL_BOOTSTRAP_ENABLED", defaultValue: true),
             ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true));
@@ -500,6 +575,7 @@ internal sealed record CoreStatusResponse(
     string ListenUrl,
     string? CorePublicOrigin,
     string? ShellPublicOrigin,
+    string RuntimePublicHost,
     string? ShellManifestPath,
     bool ShellAutostart,
     DateTimeOffset ServerTime)
@@ -512,6 +588,7 @@ internal sealed record CoreStatusResponse(
             config.ListenUrl,
             config.CorePublicOrigin,
             config.ShellPublicOrigin,
+            config.RuntimePublicHost,
             config.ShellManifestPath,
             config.ShellAutostart,
             DateTimeOffset.UtcNow);

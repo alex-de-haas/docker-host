@@ -46,12 +46,24 @@ flowchart LR
 
 ### Phase 4 - Add UI and CLI controls
 
-**Status**: Not Started
+**Status**: Partially Implemented
 
 - Add `hosty apps backup delete <app-id> <backup-id>` or equivalent command.
 - Add `hosty apps backups prune <app-id>` or equivalent command.
 - Add Web UI actions for backup deletion and retention previews.
 - Document manual filesystem cleanup as a fallback, not the preferred path.
+
+Implemented in the Core/Shell stabilization branch:
+
+- Shell can list backups, create a manual backup, restore a stopped app from a backup, and delete one backup with confirmation.
+- Shell shows the current conservative retention behavior: manual backups remain explicit, pre-update and pre-restore backups keep the latest five per app, and scheduled retention is still deferred.
+- Core browser and trusted local control APIs expose delete-one backup behavior.
+
+Remaining:
+
+- Add cleanup preview/apply APIs with digest/path verification.
+- Add scheduled retention cleanup.
+- Add CLI prune/delete commands where they are needed for local recovery.
 
 ## Open Questions And Recommendations
 

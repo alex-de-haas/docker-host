@@ -48,7 +48,7 @@ Follow-up source of truth:
 
 ### Stage 1 - Stabilize Core and Shell management
 
-Status: Active.
+Status: Completed.
 
 Primary plan:
 
@@ -74,7 +74,10 @@ Implemented slice:
 - The active `hosty.shell` app hides self-start/self-stop/self-restart/self-remove controls, while CLI/local control APIs keep the full Shell management surface.
 - Browser smoke verified a Core control-installed runtime app, Shell configure/update/logs/backups/remove panels, manual backup creation, and local command start/stop state transitions.
 - Phase 3 install/update review simplification is complete: Shell now has an admin install review panel backed by Core install-plan/apply endpoints, and update review uses a concise version/runtime/digest/change surface.
-- Phase 4 authentication stabilization is in progress: Core `/logout` revokes the session cookie and redirects back to Shell; app-scoped identity and runtime cookie isolation validation remain.
+- Phase 4 authentication stabilization is complete in implementation: Core owns auth pages/sessions/invitation acceptance, Shell opens Core-owned auth surfaces, browser app launch codes use the active Core session user only, redirect URIs are checked against installed app endpoint origins, and local runtime browser endpoints use a separate `app.localhost` host so default Core cookies on `127.0.0.1` are not sent to runtime apps.
+- Phase 5 user management is complete in implementation: Shell exposes an admin Users view for users, invitations, role changes, disabled-user state, and app assignments, backed by Core authoritative user-management APIs and audit records.
+- Phase 6 backup management controls are complete in implementation: Shell exposes backup list/create/restore/delete controls with confirmation and clear retention behavior, while Core/control backup APIs remain available.
+- Combined browser smoke verified Core login, authenticated Shell loading, Users view, invitation generation, app assignment save, backup list/create controls, launch-code app open, and runtime cookie isolation on `app.localhost`.
 
 Existing behavior that must keep working:
 
@@ -88,6 +91,7 @@ Conflicts and constraints:
 - Do not implement update channel generation, product channel publishing, runtime channel UI, pull request channels, or Agent Bridge in this stage.
 - Shell must hide self-stop and remove actions for the active `hosty.shell` app, while CLI/Core APIs may still stop Shell.
 - Install and update review simplification must keep advanced diagnostics available for administrators when conflicts need investigation.
+- Authentication must remain Core-owned. Browser, desktop, mobile, and future Shells should redirect or open Core-owned login/authorize surfaces instead of embedding provider-specific auth logic.
 
 ### Stage 2 - Complete runtime profiles and source runtimes
 

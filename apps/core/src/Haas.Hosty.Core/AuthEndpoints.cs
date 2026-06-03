@@ -33,8 +33,19 @@ internal static class AuthEndpoints
             return Results.Json(new AuthSessionResponse(user is not null && !user.Disabled, user));
         });
 
-        app.MapPost("/api/auth/session", async (AuthSessionCreateRequest input, HttpResponse response, UserDirectoryStore users, IClock clock, CancellationToken cancellationToken) =>
+        app.MapPost("/api/auth/session", async (
+            AuthSessionCreateRequest input,
+            HttpResponse response,
+            IHostEnvironment environment,
+            UserDirectoryStore users,
+            IClock clock,
+            CancellationToken cancellationToken) =>
         {
+            if (!environment.IsDevelopment())
+            {
+                return Results.Json(new ErrorResponse("session_create_unavailable", "Direct session creation is available only in development."), statusCode: StatusCodes.Status404NotFound);
+            }
+
             var result = await CreateSessionAsync(input.UserId, input.SecureCookie, response, users, clock, cancellationToken);
             return result.Succeeded
                 ? Results.Json(new AuthSessionResponse(true, result.User))
@@ -61,8 +72,21 @@ internal static class AuthEndpoints
             return Results.Json(new LogoutResponse("logged_out"));
         });
 
-        app.MapPost("/api/auth/apps/authorize", async (AppAuthorizeRequest input, AppIdentityService identity, CancellationToken cancellationToken) =>
-            await HandleIdentityError(async () => Results.Json(await identity.CreateAuthorizationCodeAsync(input.AppId, input.UserId, input.RedirectUri, cancellationToken))));
+        app.MapPost("/api/auth/apps/authorize", async (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            AppAuthorizeRequest input,
+            AppIdentityService identity,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireSessionAsync(
+                request,
+                users,
+                clock,
+                async user => await HandleIdentityError(async () =>
+                    Results.Json(await identity.CreateAuthorizationCodeAsync(input.AppId, user.Id, input.RedirectUri, cancellationToken))),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
 
         app.MapPost("/api/auth/apps/token", async (AppTokenExchangeRequest input, AppIdentityService identity, CancellationToken cancellationToken) =>
             await HandleIdentityError(async () => Results.Json(await identity.ExchangeCodeAsync(input.Code, cancellationToken))));
@@ -70,8 +94,22 @@ internal static class AuthEndpoints
         app.MapPost("/api/auth/apps/revalidate", async (AppRevalidateRequest input, AppIdentityService identity, CancellationToken cancellationToken) =>
             await HandleIdentityError(async () => Results.Json(await identity.RevalidateAsync(input.AccessToken, cancellationToken))));
 
-        app.MapPost("/api/apps/{appId}/launch-code", async (string appId, AppLaunchCodeRequest input, AppIdentityService identity, CancellationToken cancellationToken) =>
-            await HandleIdentityError(async () => Results.Json(await identity.CreateAuthorizationCodeAsync(appId, input.UserId, input.RedirectUri, cancellationToken))));
+        app.MapPost("/api/apps/{appId}/launch-code", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            AppLaunchCodeRequest input,
+            AppIdentityService identity,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireSessionAsync(
+                request,
+                users,
+                clock,
+                async user => await HandleIdentityError(async () =>
+                    Results.Json(await identity.CreateAuthorizationCodeAsync(appId, user.Id, input.RedirectUri, cancellationToken))),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
     }
 
     private static async Task<IResult> HandleIdentityError(Func<Task<IResult>> action)
@@ -151,10 +189,10 @@ internal sealed record AuthSessionCreateResult(bool Succeeded, HostUserRecord? U
 
 internal sealed record LogoutResponse(string Status);
 
-internal sealed record AppAuthorizeRequest(string AppId, string UserId, string RedirectUri);
+internal sealed record AppAuthorizeRequest(string AppId, string RedirectUri);
 
 internal sealed record AppTokenExchangeRequest(string Code);
 
 internal sealed record AppRevalidateRequest(string AccessToken);
 
-internal sealed record AppLaunchCodeRequest(string UserId, string RedirectUri);
+internal sealed record AppLaunchCodeRequest(string RedirectUri);

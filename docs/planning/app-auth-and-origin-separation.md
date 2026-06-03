@@ -34,7 +34,7 @@ flowchart LR
 
 ### Phase 1 - Define app-scoped auth contract
 
-**Status**: Not Started
+**Status**: Partially Implemented
 
 - Define app audience, app id, origin, redirect URI, requested scopes, and token lifetime.
 - Define app-scoped signed identity token claims.
@@ -42,9 +42,16 @@ flowchart LR
 - Define revocation/revalidation behavior when Host access assignments change.
 - Keep Hosty browser session cookies scoped to Core/Shell only.
 
+Implemented in the Core/Shell stabilization branch:
+
+- Core app identity tokens use app id as audience, Host user id as subject, Host email/display name/role claims, and a five-minute lifetime.
+- App auth codes are one-time, expire after five minutes, and are rechecked against current disabled-user and assignment state before exchange.
+- Browser app launch-code issuance uses the active Core session user only. Trusted local control helpers remain the only surface that can request identity/open links for an explicitly selected existing user.
+- Redirect URIs are constrained to installed app endpoint origins before Core issues an app code.
+
 ### Phase 2 - Implement Shell launch and standalone auth redirect
 
-**Status**: Not Started
+**Status**: Partially Implemented
 
 - Add Core-owned app authorize endpoint.
 - Redirect unauthenticated users to Core login.
@@ -54,6 +61,12 @@ flowchart LR
 - Add a trusted local CLI/control helper that can create a short-lived, one-time app auth link for an existing enabled Host user when normal app access checks pass.
 - Add refresh or revalidation endpoint for app-origin sessions when needed.
 - Add tests for expired codes, one-time consumption, invalid redirect URIs, disabled users, assignment changes, and app session refresh/revalidation.
+
+Implemented in the Core/Shell stabilization branch:
+
+- Core exposes app authorize, token exchange, revalidate, and Shell launch-code APIs.
+- Shell runtime app open actions request launch codes from Core with CSRF and open the returned app-scoped redirect URI.
+- Trusted local control open-link helpers can create shell or standalone links for existing enabled Host users when access checks pass.
 
 ### Phase 3 - Add app integration guidance
 
@@ -98,8 +111,8 @@ flowchart LR
 ## Open Questions And Recommendations
 
 - Question: Should auth pages belong to Core or Shell after origins split?
-  Answer: Not implemented.
-  Recommendation: Keep auth pages Core-owned first. Shell should redirect to Core and resume after auth.
+  Answer: Core. Alternate Shells can be browser, desktop, mobile, or other clients, so provider-specific auth pages and session creation must stay Core-owned.
+  Recommendation: Shell clients should redirect or open a Core-owned webview for login, logout, invitation acceptance, and provider callbacks, then resume Shell state from Core session APIs.
 
 - Question: Should Hosty support gateway/proxy wrapping for browser apps in this plan?
   Answer: No. It is deferred.
@@ -108,3 +121,7 @@ flowchart LR
 - Question: Should runtime apps share Hosty browser cookies?
   Answer: No. This is already an accepted decision.
   Recommendation: Runtime apps should receive only app-scoped auth codes or signed identity tokens.
+
+- Question: Can a browser Shell select which Host user receives an app launch code?
+  Answer: No. Browser launch-code issuance uses the active Core session user. Explicit user selection is limited to trusted local control and CLI helpers.
+  Recommendation: Keep browser launch-code APIs session-bound and CSRF-protected.

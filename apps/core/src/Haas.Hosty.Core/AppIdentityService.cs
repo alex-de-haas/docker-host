@@ -7,6 +7,7 @@ namespace Haas.Hosty.Core;
 internal sealed class AppIdentityService(
     UserDirectoryStore users,
     AppAuthCodeStore codes,
+    AppRegistryStore apps,
     CoreDataPaths paths,
     IClock clock)
 {
@@ -19,7 +20,7 @@ internal sealed class AppIdentityService(
         string redirectUri,
         CancellationToken cancellationToken = default)
     {
-        ValidateRedirectUri(redirectUri);
+        await RequireAllowedRedirectUriAsync(appId, redirectUri, cancellationToken);
         var user = await RequireAccessibleUserAsync(appId, userId, cancellationToken);
         var now = clock.UtcNow;
         var code = CreateOpaqueToken();
@@ -161,6 +162,7 @@ internal sealed class AppIdentityService(
         CancellationToken cancellationToken)
     {
         var state = await users.ReadAsync(cancellationToken);
+        _ = await RequireInstalledAppAsync(appId, cancellationToken);
         var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal)) ??
             throw new AppIdentityException("user_not_found", "Host user was not found.");
         if (user.Disabled)
@@ -180,13 +182,36 @@ internal sealed class AppIdentityService(
         return user;
     }
 
+    private async Task<AppRecord> RequireInstalledAppAsync(string appId, CancellationToken cancellationToken)
+        => await apps.GetAppAsync(appId, cancellationToken) ??
+            throw new AppIdentityException("app_not_found", "Runtime app was not found.");
+
+    private async Task RequireAllowedRedirectUriAsync(
+        string appId,
+        string redirectUri,
+        CancellationToken cancellationToken)
+    {
+        var redirect = ValidateRedirectUri(redirectUri);
+        var app = await RequireInstalledAppAsync(appId, cancellationToken);
+        var allowed = app.Endpoints
+            .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.Url))
+            .Select(endpoint => Uri.TryCreate(endpoint.Url, UriKind.Absolute, out var uri) ? uri : null)
+            .OfType<Uri>()
+            .Any(endpointUri => SameOrigin(endpointUri, redirect));
+
+        if (!allowed)
+        {
+            throw new AppIdentityException("redirect_uri_denied", "Redirect URI must target an installed app endpoint origin.");
+        }
+    }
+
     private static string BuildRedirectUri(string redirectUri, string code)
     {
         var separator = redirectUri.Contains('?', StringComparison.Ordinal) ? '&' : '?';
         return $"{redirectUri}{separator}code={Uri.EscapeDataString(code)}";
     }
 
-    private static void ValidateRedirectUri(string redirectUri)
+    private static Uri ValidateRedirectUri(string redirectUri)
     {
         if (!Uri.TryCreate(redirectUri, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
@@ -194,7 +219,14 @@ internal sealed class AppIdentityService(
         {
             throw new AppIdentityException("redirect_uri_invalid", "Redirect URI must be an absolute http(s) URI without a fragment.");
         }
+
+        return uri;
     }
+
+    private static bool SameOrigin(Uri left, Uri right)
+        => string.Equals(left.Scheme, right.Scheme, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase) &&
+            left.Port == right.Port;
 
     private static string CreateOpaqueToken()
         => Base64UrlEncode(RandomNumberGenerator.GetBytes(32));

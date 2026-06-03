@@ -36,7 +36,7 @@ internal static class CoreSessionAuthorization
 
                 return action();
             },
-            cancellationToken);
+            cancellationToken: cancellationToken);
     }
 
     public static async Task<IResult> RequireSessionAsync(
@@ -44,8 +44,16 @@ internal static class CoreSessionAuthorization
         UserDirectoryStore users,
         IClock clock,
         Func<HostUserRecord, Task<IResult>> action,
+        bool requireCsrf = false,
         CancellationToken cancellationToken = default)
     {
+        if (requireCsrf && !HasValidCsrfToken(request))
+        {
+            return Results.Json(
+                new ErrorResponse("csrf_invalid", "CSRF token is missing or invalid."),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
         var authorization = await ResolveSessionAsync(request, users, clock, cancellationToken);
         if (authorization.Error is not null)
         {

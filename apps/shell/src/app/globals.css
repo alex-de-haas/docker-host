@@ -38,6 +38,10 @@ select {
   font: inherit;
 }
 
+button {
+  letter-spacing: 0;
+}
+
 .shell {
   display: grid;
   min-height: 100dvh;
@@ -107,17 +111,25 @@ select {
   padding: 14px 10px;
 }
 
-.nav a {
+.nav a,
+.nav button {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: 10px;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
   padding: 10px;
   color: #dce4ef;
+  cursor: pointer;
   font-size: 14px;
+  text-align: left;
 }
 
-.nav a:hover {
+.nav a:hover,
+.nav button:hover,
+.nav button.active {
   background: rgb(255 255 255 / 8%);
 }
 
@@ -205,6 +217,10 @@ h1 {
   opacity: 0.62;
 }
 
+.button[hidden] {
+  display: none;
+}
+
 .button.ghost {
   background: transparent;
   box-shadow: none;
@@ -212,13 +228,16 @@ h1 {
 
 .statusGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
 
 .statusTile,
 .appCard,
+.managementPanel,
+.userRow,
+.compactRow,
 .emptyList,
 .emptyState,
 .notice {
@@ -351,7 +370,12 @@ h1 {
 }
 
 .openLink {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
   color: var(--muted);
+  cursor: pointer;
+  padding: 0;
 }
 
 .lifecycleActions {
@@ -391,8 +415,8 @@ h1 {
   opacity: 0.62;
 }
 
-.openLink[aria-disabled="true"] {
-  pointer-events: none;
+.openLink:disabled {
+  cursor: not-allowed;
   opacity: 0.58;
 }
 
@@ -552,6 +576,7 @@ h1 {
 
 .settingsForm,
 .installForm,
+.managementPanel,
 .dangerZone {
   display: grid;
   gap: 12px;
@@ -559,13 +584,16 @@ h1 {
 
 .settingsForm label,
 .installForm label,
+.managementPanel label,
 .dangerZone label {
   display: grid;
   gap: 7px;
 }
 
 .settingsForm label span,
-.installForm label span {
+.installForm label span,
+.managementPanel label span,
+.copyField > span {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -581,7 +609,10 @@ h1 {
 }
 
 .settingsForm input,
-.installForm input {
+.installForm input,
+.managementPanel input,
+.managementPanel select,
+.copyField input {
   min-height: 38px;
   min-width: 0;
   border: 1px solid var(--border);
@@ -591,9 +622,167 @@ h1 {
   padding: 0 10px;
 }
 
+.usersView {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.managementGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.managementPanel {
+  align-content: start;
+  padding: 16px;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.panelHeader svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+.panelHeader h3 {
+  font-size: 15px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.compactList,
+.userList,
+.copyFields,
+.accessPicker {
+  display: grid;
+  gap: 10px;
+}
+
+.compactRow,
+.userRow {
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.compactRow {
+  display: flex;
+  gap: 12px;
+}
+
+.compactRow > div:first-child,
+.userRow > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.compactRow strong,
+.compactRow span,
+.userRow strong,
+.userRow span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compactRow span,
+.userRow span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.userRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(240px, 1fr) auto;
+  gap: 16px;
+}
+
+.userRow dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.userRow dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.userRow dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+}
+
+.accessPicker {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.accessPicker label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  padding: 9px 10px;
+}
+
+.accessPicker label:last-child {
+  border-bottom: 0;
+}
+
+.accessPicker input {
+  width: 16px;
+  height: 16px;
+}
+
+.accessPicker span {
+  display: grid;
+  min-width: 0;
+}
+
+.accessPicker small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copyField {
+  display: grid;
+  gap: 7px;
+}
+
+.copyField > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
 .mutedText {
   color: var(--muted);
   font-size: 13px;
+}
+
+.retentionNote {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .dangerZone {
@@ -643,8 +832,13 @@ h1 {
 @media (max-width: 1100px) {
   .statusGrid,
   .appGrid,
-  .planFacts {
+  .planFacts,
+  .managementGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .userRow {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -675,11 +869,15 @@ h1 {
   .statusGrid,
   .appGrid,
   .appFacts,
-  .planFacts {
+  .planFacts,
+  .managementGrid,
+  .formGrid,
+  .userRow dl {
     grid-template-columns: 1fr;
   }
 
-  .backupRow {
+  .backupRow,
+  .compactRow {
     align-items: flex-start;
     flex-direction: column;
   }

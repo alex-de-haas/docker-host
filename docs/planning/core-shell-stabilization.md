@@ -113,7 +113,7 @@ Completed browser smoke on 2026-06-03:
 
 ### Phase 4 - Stabilize Core/Shell authentication
 
-**Status**: In Progress
+**Status**: Completed
 
 - Keep Core-owned auth pages and sessions.
 - Ensure split-origin Shell-to-Core requests work with credentials, CSRF expectations, and CORS configuration.
@@ -121,35 +121,74 @@ Completed browser smoke on 2026-06-03:
 - Validate app-scoped identity, Shell launch links, and standalone open links with existing Host users.
 - Keep runtime apps from receiving Hosty browser cookies directly.
 
-Implemented so far:
+Completed implementation:
 
 - Core owns the development login helper and creates normal Core session cookies for local browser smoke tests.
+- Core remains authoritative for authentication pages and session creation. Shells redirect or open a Core-owned auth webview instead of owning provider logic.
 - Shell loads Core status and session state before requesting authenticated app data.
 - Core CORS and Shell development origins are validated for split-process local development.
 - Core `/logout` now revokes the active Core session cookie and redirects back to Shell, matching the Shell logout link.
+- Browser app authorization and launch-code endpoints issue app-scoped codes only for the active Core session user. Explicit user selection is limited to trusted local control/CLI endpoints.
+- Core validates app auth redirect URIs against installed app endpoint origins before issuing one-time codes.
+- Shell runtime `Open` uses Core `/api/apps/{appId}/launch-code` with CSRF instead of navigating directly to the raw app endpoint.
+- Runtime browser-facing local endpoints default to the `app.localhost` host while Core/Shell local auth stays on `127.0.0.1`, avoiding Hosty cookie leakage to runtime apps in the default local loop.
+- Core exposes invitation acceptance through a Core-owned `/setup/invite` page and API, keeping auth surface ownership in Core.
+
+Completed browser smoke on 2026-06-03:
+
 - Browser smoke verified Shell logout returns to `No active Core session` without surfacing an `/api/apps` 401 error.
-
-Remaining:
-
-- Validate app-scoped identity, Shell launch links, standalone app launch, and runtime app cookie isolation with existing Host users.
+- Shell opens a runtime app through Core `/api/apps/{appId}/launch-code`; the app receives a one-time `code` query parameter.
+- The smoke runtime app on `http://app.localhost:3199` rendered `cookies=none`, confirming default local Core cookies were not sent to the runtime app origin.
+- Shell stayed free of framework overlays and relevant console warnings while rendering the authenticated app list.
 
 ### Phase 5 - Restore user management in Shell
 
-**Status**: Not Started
+**Status**: Completed
 
 - Rebuild the user list, invitations, role changes, disabled-user state, account switching entry points, and app access assignments in Shell.
 - Keep Core authoritative for all user mutations and audit records.
 - Preserve existing user-management behavior while removing legacy UI coupling to the old combined Host app.
 - Test administrator and non-administrator access boundaries.
 
+Completed implementation:
+
+- Core exposes admin `/api/auth/users`, `/api/auth/invitations`, `/api/auth/users/{userId}`, and `/api/auth/users/{userId}/assignments` endpoints with Core session and CSRF protection for mutations.
+- Core invitation creation stores only a token hash, returns the raw setup token once, and creates Core-owned setup URLs under `/setup/invite`.
+- Core invitation acceptance creates a normal Core session after consuming a valid one-time setup token.
+- Core user mutations preserve the two-role model, prevent self-disable, prevent removing the last active administrator, revoke sessions on role changes/disable, remove assignments on disable, and append audit records.
+- Shell adds an administrator Users view for user list, pending invitations, invitation creation, role changes, disable, and runtime app access assignments.
+- Existing app assignment filtering continues to control non-admin Shell app visibility and app identity issuance.
+
+Completed unit coverage:
+
+- Core tests cover invitation token-hash storage, self-disable protection, last-admin protection, and assignment replacement.
+
+Completed browser smoke on 2026-06-03:
+
+- Shell rendered the administrator Users view after Core login.
+- The invitation form generated a Core-owned setup URL and one-time token.
+- The runtime app assignment editor saved access for an existing `host.user` account and Shell refreshed the assigned app count.
+
 ### Phase 6 - Add backup management controls
 
-**Status**: Not Started
+**Status**: Completed
 
 - Add Shell views for backup lists, manual backup creation, restore, and deletion.
 - Show retention behavior plainly: manual backups are explicit, pre-update backups are automatic, and scheduled retention remains deferred unless implemented.
 - Keep destructive backup actions behind confirmation.
 - Add CLI parity only where Core APIs already exist or where local recovery needs it.
+
+Completed implementation:
+
+- Shell backup details can list backups, create manual backups, restore stopped apps from a backup, and delete one backup.
+- Restore and delete actions require browser confirmation and Core CSRF validation.
+- Shell backup details show retention behavior plainly: manual backups are explicit, pre-update and pre-restore backups keep the latest five per app, and scheduled retention remains deferred.
+- Core and trusted local control APIs retain list/create/restore/delete backup parity for local recovery.
+
+Completed browser smoke on 2026-06-03:
+
+- Shell backup details rendered the retention note.
+- Manual backup creation through Shell created a visible `manual` backup row with restore and delete controls.
 
 ### Phase 7 - Keep channels and Agent Bridge deferred
 
@@ -173,3 +212,11 @@ Remaining:
 - Question: What old behavior must be protected while rebuilding Shell?
   Answer: Lifecycle operations, user management, app access assignment, identity/open helpers, legacy module compatibility, runtime apps, and backups.
   Recommendation: Add a smoke checklist for old CLI/control flows before each major Shell UI milestone.
+
+- Question: Where should authentication live after Core and Shell split?
+  Answer: Core owns authentication pages, provider logic, session creation, logout, invitation acceptance, and app-scoped authorization. Shell clients may redirect or open a Core-owned webview, but they should not implement provider-specific auth logic.
+  Recommendation: Keep Shell auth behavior to session display plus Core login/logout/authorize navigation for browser, desktop, mobile, and future alternate Shells.
+
+- Question: Can Shell request an app launch code for an arbitrary user?
+  Answer: No. Browser Shell launch uses the active Core session user only. Trusted local control and CLI helpers may select a specific existing user for diagnostics while still enforcing disabled-user and assignment checks.
+  Recommendation: Keep explicit user selection out of browser APIs and require CSRF for launch-code issuance.

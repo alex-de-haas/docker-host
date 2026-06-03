@@ -3,9 +3,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive,
-  Boxes,
   CheckCircle2,
   CircleAlert,
+  Copy,
   Database,
   ExternalLink,
   FileText,
@@ -19,9 +19,14 @@ import {
   RotateCw,
   Server,
   Settings,
+  ShieldCheck,
   Square,
   Trash2,
   Upload,
+  UserCog,
+  UserPlus,
+  Users,
+  UserX,
   X,
 } from "lucide-react";
 
@@ -32,6 +37,7 @@ type CoreStatus = {
   listenUrl: string;
   corePublicOrigin?: string | null;
   shellPublicOrigin?: string | null;
+  runtimePublicHost?: string | null;
   serverTime: string;
 };
 
@@ -138,6 +144,7 @@ type CoreError = {
 
 type AppAction = "start" | "stop" | "restart" | "backup";
 type DetailView = "logs" | "backups" | "configure" | "update" | "remove";
+type ShellView = "apps" | "users";
 
 type SessionResponse = {
   authenticated: boolean;
@@ -148,6 +155,60 @@ type SessionResponse = {
     role: string;
     disabled: boolean;
   } | null;
+};
+
+type AppLaunchResponse = {
+  code: string;
+  redirectUri: string;
+  expiresAt: string;
+};
+
+type HostUserSummary = {
+  id: string;
+  email?: string | null;
+  displayName?: string | null;
+  role: "host.admin" | "host.user";
+  authProvider?: string | null;
+  disabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  activeSessionCount: number;
+  assignedModuleIds: string[];
+  lastSeenAt?: string | null;
+};
+
+type UserInvitationSummary = {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  role: "host.admin" | "host.user";
+  assignedModuleIds: string[];
+  createdByUserId?: string | null;
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string | null;
+  revokedAt?: string | null;
+  status: "pending" | "expired" | "used" | "revoked";
+};
+
+type AssignableAppSummary = {
+  id: string;
+  name: string;
+  version: string;
+  operationStatus: string;
+};
+
+type InviteTtlOption = {
+  label: string;
+  ttlMs: number;
+};
+
+type UserManagementResponse = {
+  users: HostUserSummary[];
+  invitations: UserInvitationSummary[];
+  apps?: AssignableAppSummary[];
+  modules?: AssignableAppSummary[];
+  inviteTtlOptions: InviteTtlOption[];
 };
 
 type LoadState = {
@@ -199,6 +260,15 @@ const emptyInstallPanelState = (): InstallPanelState => ({
   plan: null,
 });
 
+async function readCoreError(response: Response) {
+  try {
+    const error = (await response.json()) as CoreError;
+    return error.message || error.code || `Core returned ${response.status}.`;
+  } catch {
+    return `Core returned ${response.status}.`;
+  }
+}
+
 export function ShellClient({
   coreOrigin,
   shellAppId,
@@ -219,6 +289,7 @@ export function ShellClient({
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
+  const [activeView, setActiveView] = useState<ShellView>("apps");
 
   const refresh = useCallback(async () => {
     setState((current) => ({ ...current, loading: true, error: null }));
@@ -270,15 +341,6 @@ export function ShellClient({
     return ((await response.json()) as { token: string }).token;
   }, [coreOrigin]);
 
-  const readCoreError = async (response: Response) => {
-    try {
-      const error = (await response.json()) as CoreError;
-      return error.message || error.code || `Core returned ${response.status}.`;
-    } catch {
-      return `Core returned ${response.status}.`;
-    }
-  };
-
   const sendCsrfJson = useCallback(
     async (endpoint: string, body?: unknown, method = "POST") => {
       const csrf = await loadCsrfToken();
@@ -304,6 +366,38 @@ export function ShellClient({
   const appEndpoint = useCallback(
     (app: CoreApp, suffix: string) => `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}${suffix}`,
     [coreOrigin],
+  );
+
+  const openApp = useCallback(
+    async (app: CoreApp) => {
+      if (app.id === shellAppId) {
+        window.location.href = "/";
+        return;
+      }
+
+      const openEndpoint = app.endpoints?.find((endpoint) => endpoint.public && endpoint.url) ?? app.endpoints?.find((endpoint) => endpoint.url);
+      if (!openEndpoint?.url || app.runtimeState !== "running") {
+        setState((current) => ({ ...current, error: "App must be running before it can be opened." }));
+        return;
+      }
+
+      const actionKey = `${app.id}:open`;
+      setBusyAction(actionKey);
+      setState((current) => ({ ...current, error: null }));
+      try {
+        const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: openEndpoint.url });
+        const launch = (await response.json()) as AppLaunchResponse;
+        window.open(launch.redirectUri, "_blank", "noreferrer");
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          error: error instanceof Error ? error.message : "Unable to create app launch link.",
+        }));
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [appEndpoint, sendCsrfJson, shellAppId],
   );
 
   const runAppAction = useCallback(
@@ -654,14 +748,31 @@ export function ShellClient({
         </div>
 
         <nav className="nav" aria-label="Shell sections">
-          <a href="#system">
+          <button
+            type="button"
+            className={activeView === "apps" ? "active" : undefined}
+            onClick={() => {
+              setActiveView("apps");
+              setActivePanel(null);
+            }}
+          >
             <LayoutGrid aria-hidden="true" />
-            System apps
-          </a>
-          <a href="#runtime">
-            <Boxes aria-hidden="true" />
-            Runtime apps
-          </a>
+            Apps
+          </button>
+          {canManageApps && (
+            <button
+              type="button"
+              className={activeView === "users" ? "active" : undefined}
+              onClick={() => {
+                setActiveView("users");
+                setActivePanel(null);
+                setInstallOpen(false);
+              }}
+            >
+              <Users aria-hidden="true" />
+              Users
+            </button>
+          )}
         </nav>
 
         <div className="sidebarFooter">
@@ -692,6 +803,7 @@ export function ShellClient({
               <button
                 className="button"
                 type="button"
+                hidden={activeView !== "apps"}
                 onClick={() => {
                   setInstallOpen(true);
                   setInstallPanel(emptyInstallPanelState());
@@ -712,6 +824,7 @@ export function ShellClient({
           <StatusTile label="Core status" value={state.status?.status || (state.loading ? "loading" : "unavailable")} />
           <StatusTile label="Core listen URL" value={state.status?.listenUrl || "unknown"} />
           <StatusTile label="Shell origin" value={state.status?.shellPublicOrigin || "not configured"} />
+          <StatusTile label="Runtime host" value={state.status?.runtimePublicHost || "unknown"} />
           <StatusTile label="Last refresh" value={state.updatedAt ? new Date(state.updatedAt).toLocaleTimeString() : "pending"} />
         </section>
 
@@ -729,56 +842,64 @@ export function ShellClient({
           </section>
         ) : (
           <>
-            {installOpen && (
-              <InstallReviewPanel
-                detail={installPanel}
-                busyAction={busyAction}
-                onClose={() => setInstallOpen(false)}
-                onReview={loadInstallPlan}
-                onApply={applyInstall}
-              />
-            )}
-            <AppSection
-              id="system"
-              title="System apps"
-              apps={systemApps}
-              shellAppId={shellAppId}
-              canManageApps={canManageApps}
-              busyAction={busyAction}
-              onAction={runAppAction}
-              onCreateBackup={createManualBackup}
-              onOpenPanel={openAppPanel}
-            />
-            <AppSection
-              id="runtime"
-              title="Runtime apps"
-              apps={runtimeApps}
-              shellAppId={shellAppId}
-              canManageApps={canManageApps}
-              busyAction={busyAction}
-              onAction={runAppAction}
-              onCreateBackup={createManualBackup}
-              onOpenPanel={openAppPanel}
-            />
-            {selectedApp && activePanel && (
-              <AppDetailsPanel
-                app={selectedApp}
-                view={activePanel.view}
-                isShell={selectedApp.id === shellAppId}
-                canManageApps={canManageApps}
-                busyAction={busyAction}
-                detail={detailPanel}
-                onClose={() => setActivePanel(null)}
-                onRefreshLogs={loadAppLogs}
-                onRefreshBackups={loadAppBackups}
-                onCreateBackup={createManualBackup}
-                onRestoreBackup={restoreBackup}
-                onDeleteBackup={deleteBackup}
-                onConfigure={configureApp}
-                onReloadUpdatePlan={loadUpdatePlan}
-                onApplyUpdate={applyUpdate}
-                onRemove={removeApp}
-              />
+            {activeView === "users" && canManageApps ? (
+              <UserManagementPanel coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />
+            ) : (
+              <>
+                {installOpen && (
+                  <InstallReviewPanel
+                    detail={installPanel}
+                    busyAction={busyAction}
+                    onClose={() => setInstallOpen(false)}
+                    onReview={loadInstallPlan}
+                    onApply={applyInstall}
+                  />
+                )}
+                <AppSection
+                  id="system"
+                  title="System apps"
+                  apps={systemApps}
+                  shellAppId={shellAppId}
+                  canManageApps={canManageApps}
+                  busyAction={busyAction}
+                  onAction={runAppAction}
+                  onCreateBackup={createManualBackup}
+                  onOpenPanel={openAppPanel}
+                  onOpenApp={openApp}
+                />
+                <AppSection
+                  id="runtime"
+                  title="Runtime apps"
+                  apps={runtimeApps}
+                  shellAppId={shellAppId}
+                  canManageApps={canManageApps}
+                  busyAction={busyAction}
+                  onAction={runAppAction}
+                  onCreateBackup={createManualBackup}
+                  onOpenPanel={openAppPanel}
+                  onOpenApp={openApp}
+                />
+                {selectedApp && activePanel && (
+                  <AppDetailsPanel
+                    app={selectedApp}
+                    view={activePanel.view}
+                    isShell={selectedApp.id === shellAppId}
+                    canManageApps={canManageApps}
+                    busyAction={busyAction}
+                    detail={detailPanel}
+                    onClose={() => setActivePanel(null)}
+                    onRefreshLogs={loadAppLogs}
+                    onRefreshBackups={loadAppBackups}
+                    onCreateBackup={createManualBackup}
+                    onRestoreBackup={restoreBackup}
+                    onDeleteBackup={deleteBackup}
+                    onConfigure={configureApp}
+                    onReloadUpdatePlan={loadUpdatePlan}
+                    onApplyUpdate={applyUpdate}
+                    onRemove={removeApp}
+                  />
+                )}
+              </>
             )}
           </>
         )}
@@ -806,6 +927,7 @@ function AppSection({
   onAction,
   onCreateBackup,
   onOpenPanel,
+  onOpenApp,
 }: {
   id: string;
   title: string;
@@ -816,6 +938,7 @@ function AppSection({
   onAction: (app: CoreApp, action: AppAction) => void;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
+  onOpenApp: (app: CoreApp) => void;
 }) {
   return (
     <section className="section" id={id}>
@@ -837,6 +960,7 @@ function AppSection({
               onAction={onAction}
               onCreateBackup={onCreateBackup}
               onOpenPanel={onOpenPanel}
+              onOpenApp={onOpenApp}
             />
           ))}
         </div>
@@ -853,6 +977,7 @@ function AppCard({
   onAction,
   onCreateBackup,
   onOpenPanel,
+  onOpenApp,
 }: {
   app: CoreApp;
   isShell: boolean;
@@ -861,10 +986,10 @@ function AppCard({
   onAction: (app: CoreApp, action: AppAction) => void;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
+  onOpenApp: (app: CoreApp) => void;
 }) {
   const running = app.runtimeState === "running";
   const openEndpoint = app.endpoints?.find((endpoint) => endpoint.public && endpoint.url) ?? app.endpoints?.find((endpoint) => endpoint.url);
-  const openHref = isShell ? "/" : openEndpoint?.url || "#";
   const canOpen = isShell || (running && Boolean(openEndpoint?.url));
   const canControl = canManageApps && !isShell;
   const canInspect = canManageApps;
@@ -963,10 +1088,10 @@ function AppCard({
               <span>Remove</span>
             </button>
           )}
-          <a className="openLink" href={openHref} aria-disabled={!canOpen} target={isShell ? undefined : "_blank"} rel={isShell ? undefined : "noreferrer"}>
+          <button className="openLink" type="button" onClick={() => onOpenApp(app)} disabled={!canOpen || isBusy("open")}>
             <ExternalLink aria-hidden="true" />
             Open
-          </a>
+          </button>
         </div>
       </div>
     </article>
@@ -1101,6 +1226,388 @@ function InstallReviewPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function UserManagementPanel({
+  coreOrigin,
+  sendCsrfJson,
+}: {
+  coreOrigin: string;
+  sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
+}) {
+  const [users, setUsers] = useState<HostUserSummary[]>([]);
+  const [invitations, setInvitations] = useState<UserInvitationSummary[]>([]);
+  const [apps, setApps] = useState<AssignableAppSummary[]>([]);
+  const [ttlOptions, setTtlOptions] = useState<InviteTtlOption[]>([
+    { label: "15 minutes", ttlMs: 15 * 60 * 1000 },
+    { label: "24 hours", ttlMs: 24 * 60 * 60 * 1000 },
+    { label: "7 days", ttlMs: 7 * 24 * 60 * 60 * 1000 },
+  ]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteDisplayName, setInviteDisplayName] = useState("");
+  const [inviteRole, setInviteRole] = useState<"host.admin" | "host.user">("host.user");
+  const [inviteTtlMs, setInviteTtlMs] = useState(24 * 60 * 60 * 1000);
+  const [inviteAppIds, setInviteAppIds] = useState<string[]>([]);
+  const [createdInvite, setCreatedInvite] = useState<{ setupUrl: string; token: string } | null>(null);
+  const [accessUserId, setAccessUserId] = useState<string | null>(null);
+  const [accessAppIds, setAccessAppIds] = useState<string[]>([]);
+
+  const pendingInvitations = invitations.filter((invitation) => invitation.status === "pending");
+  const accessUser = users.find((user) => user.id === accessUserId) ?? null;
+
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${coreOrigin}/api/auth/users`, { credentials: "include" });
+      if (!response.ok) {
+        throw new Error(await readCoreError(response));
+      }
+
+      const payload = (await response.json()) as UserManagementResponse;
+      setUsers(payload.users || []);
+      setInvitations(payload.invitations || []);
+      setApps(payload.apps || payload.modules || []);
+      if (payload.inviteTtlOptions?.length) {
+        setTtlOptions(payload.inviteTtlOptions);
+        setInviteTtlMs(payload.inviteTtlOptions[1]?.ttlMs ?? payload.inviteTtlOptions[0].ttlMs);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to load users.");
+    } finally {
+      setLoading(false);
+    }
+  }, [coreOrigin]);
+
+  useEffect(() => {
+    void loadUsers();
+  }, [loadUsers]);
+
+  const runUserAction = useCallback(
+    async (actionKey: string, action: () => Promise<void>) => {
+      setPendingAction(actionKey);
+      setError(null);
+      try {
+        await action();
+        await loadUsers();
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "User action failed.");
+      } finally {
+        setPendingAction(null);
+      }
+    },
+    [loadUsers],
+  );
+
+  const submitInvite = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runUserAction("invite", async () => {
+      const response = await sendCsrfJson(`${coreOrigin}/api/auth/invitations`, {
+        email: inviteEmail,
+        displayName: inviteDisplayName || null,
+        role: inviteRole,
+        ttlMs: inviteTtlMs,
+        assignedModuleIds: inviteRole === "host.user" ? inviteAppIds : [],
+      });
+      const payload = (await response.json()) as { setupUrl: string; token: string };
+      setCreatedInvite({ setupUrl: payload.setupUrl, token: payload.token });
+      setInviteEmail("");
+      setInviteDisplayName("");
+      setInviteRole("host.user");
+      setInviteAppIds([]);
+    });
+  };
+
+  const updateRole = (user: HostUserSummary) => {
+    const nextRole = user.role === "host.admin" ? "host.user" : "host.admin";
+    void runUserAction(`role:${user.id}`, async () => {
+      await sendCsrfJson(`${coreOrigin}/api/auth/users/${encodeURIComponent(user.id)}`, { role: nextRole }, "PATCH");
+    });
+  };
+
+  const disableUser = (user: HostUserSummary) => {
+    if (!window.confirm(`Disable ${user.displayName || user.email || user.id}?`)) {
+      return;
+    }
+
+    void runUserAction(`disable:${user.id}`, async () => {
+      await sendCsrfJson(`${coreOrigin}/api/auth/users/${encodeURIComponent(user.id)}`, undefined, "DELETE");
+    });
+  };
+
+  const revokeInvite = (invitation: UserInvitationSummary) => {
+    void runUserAction(`invite:${invitation.id}`, async () => {
+      await sendCsrfJson(`${coreOrigin}/api/auth/invitations/${encodeURIComponent(invitation.id)}`, undefined, "DELETE");
+    });
+  };
+
+  const openAccessEditor = (user: HostUserSummary) => {
+    setAccessUserId(user.id);
+    setAccessAppIds(user.assignedModuleIds);
+  };
+
+  const saveAccess = () => {
+    if (!accessUser) {
+      return;
+    }
+
+    void runUserAction(`access:${accessUser.id}`, async () => {
+      await sendCsrfJson(`${coreOrigin}/api/auth/users/${encodeURIComponent(accessUser.id)}/assignments`, { assignedModuleIds: accessAppIds }, "PUT");
+      setAccessUserId(null);
+    });
+  };
+
+  const toggleAppSelection = (appId: string, selected: boolean, source: "invite" | "access") => {
+    const setter = source === "invite" ? setInviteAppIds : setAccessAppIds;
+    setter((current) => selected ? Array.from(new Set([...current, appId])).sort() : current.filter((candidate) => candidate !== appId));
+  };
+
+  const copyInvite = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      setError("Clipboard access failed.");
+    }
+  };
+
+  return (
+    <section className="usersView" aria-label="User management">
+      <div className="sectionHeader">
+        <h2>Users</h2>
+        <button className="button ghost" type="button" onClick={() => void loadUsers()} disabled={loading}>
+          <RefreshCw aria-hidden="true" className={loading ? "spin" : ""} />
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          <CircleAlert aria-hidden="true" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <section className="managementGrid">
+        <form className="managementPanel" onSubmit={submitInvite}>
+          <div className="panelHeader">
+            <UserPlus aria-hidden="true" />
+            <h3>Invite user</h3>
+          </div>
+          <label>
+            <span>Email</span>
+            <input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required />
+          </label>
+          <label>
+            <span>Display name</span>
+            <input value={inviteDisplayName} onChange={(event) => setInviteDisplayName(event.target.value)} />
+          </label>
+          <div className="formGrid">
+            <label>
+              <span>Role</span>
+              <select
+                value={inviteRole}
+                onChange={(event) => {
+                  const role = event.target.value === "host.admin" ? "host.admin" : "host.user";
+                  setInviteRole(role);
+                  if (role === "host.admin") {
+                    setInviteAppIds([]);
+                  }
+                }}
+              >
+                <option value="host.user">User</option>
+                <option value="host.admin">Admin</option>
+              </select>
+            </label>
+            <label>
+              <span>Expires</span>
+              <select value={inviteTtlMs} onChange={(event) => setInviteTtlMs(Number(event.target.value))}>
+                {ttlOptions.map((option) => (
+                  <option key={option.ttlMs} value={option.ttlMs}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {inviteRole === "host.user" && (
+            <AppAccessPicker apps={apps} selectedAppIds={inviteAppIds} onToggle={(appId, selected) => toggleAppSelection(appId, selected, "invite")} />
+          )}
+          <button className="button" type="submit" disabled={pendingAction === "invite"}>
+            <UserPlus aria-hidden="true" />
+            Generate link
+          </button>
+        </form>
+
+        <section className="managementPanel">
+          <div className="panelHeader">
+            <ShieldCheck aria-hidden="true" />
+            <h3>Pending invitations</h3>
+          </div>
+          {pendingInvitations.length === 0 ? (
+            <div className="emptyList">No pending invitations</div>
+          ) : (
+            <div className="compactList">
+              {pendingInvitations.map((invitation) => (
+                <article className="compactRow" key={invitation.id}>
+                  <div>
+                    <strong>{invitation.displayName || invitation.email}</strong>
+                    <span>{invitation.role} · expires {new Date(invitation.expiresAt).toLocaleString()}</span>
+                  </div>
+                  <button className="iconButton danger" type="button" onClick={() => revokeInvite(invitation)} disabled={pendingAction === `invite:${invitation.id}`}>
+                    <Trash2 aria-hidden="true" />
+                    <span>Revoke</span>
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </section>
+
+      {createdInvite && (
+        <section className="detailPanel">
+          <div className="detailHeader">
+            <div>
+              <span>Invitation</span>
+              <h2>Setup link generated</h2>
+            </div>
+            <button className="iconOnly" type="button" onClick={() => setCreatedInvite(null)} aria-label="Close invitation">
+              <X aria-hidden="true" />
+            </button>
+          </div>
+          <div className="copyFields">
+            <CopyField label="Setup URL" value={createdInvite.setupUrl} onCopy={copyInvite} />
+            <CopyField label="Token" value={createdInvite.token} onCopy={copyInvite} />
+          </div>
+        </section>
+      )}
+
+      {loading ? (
+        <div className="emptyList">Loading users</div>
+      ) : (
+        <section className="userList">
+          {users.map((user) => (
+            <article className="userRow" key={user.id}>
+              <div>
+                <strong>{user.displayName || user.email || user.id}</strong>
+                <span>{user.email || user.id}</span>
+              </div>
+              <dl>
+                <div>
+                  <dt>Role</dt>
+                  <dd>{user.disabled ? "disabled" : user.role}</dd>
+                </div>
+                <div>
+                  <dt>Access</dt>
+                  <dd>{user.role === "host.admin" ? "all apps" : `${user.assignedModuleIds.length} apps`}</dd>
+                </div>
+                <div>
+                  <dt>Sessions</dt>
+                  <dd>{user.activeSessionCount}</dd>
+                </div>
+              </dl>
+              <div className="rowActions">
+                {user.role === "host.user" && (
+                  <button className="iconButton" type="button" onClick={() => openAccessEditor(user)} disabled={user.disabled}>
+                    <UserCog aria-hidden="true" />
+                    <span>Access</span>
+                  </button>
+                )}
+                <button className="iconButton" type="button" onClick={() => updateRole(user)} disabled={user.disabled || pendingAction === `role:${user.id}`}>
+                  <ShieldCheck aria-hidden="true" />
+                  <span>{user.role === "host.admin" ? "Make user" : "Make admin"}</span>
+                </button>
+                <button className="iconButton danger" type="button" onClick={() => disableUser(user)} disabled={user.disabled || pendingAction === `disable:${user.id}`}>
+                  <UserX aria-hidden="true" />
+                  <span>Disable</span>
+                </button>
+              </div>
+            </article>
+          ))}
+          {users.length === 0 && <div className="emptyList">No users</div>}
+        </section>
+      )}
+
+      {accessUser && (
+        <section className="detailPanel">
+          <div className="detailHeader">
+            <div>
+              <span>App access</span>
+              <h2>{accessUser.displayName || accessUser.email || accessUser.id}</h2>
+            </div>
+            <button className="iconOnly" type="button" onClick={() => setAccessUserId(null)} aria-label="Close access">
+              <X aria-hidden="true" />
+            </button>
+          </div>
+          <AppAccessPicker apps={apps} selectedAppIds={accessAppIds} onToggle={(appId, selected) => toggleAppSelection(appId, selected, "access")} />
+          <div className="detailToolbar">
+            <button className="button" type="button" onClick={saveAccess} disabled={pendingAction === `access:${accessUser.id}`}>
+              <CheckCircle2 aria-hidden="true" />
+              Save access
+            </button>
+          </div>
+        </section>
+      )}
+    </section>
+  );
+}
+
+function AppAccessPicker({
+  apps,
+  selectedAppIds,
+  onToggle,
+}: {
+  apps: AssignableAppSummary[];
+  selectedAppIds: string[];
+  onToggle: (appId: string, selected: boolean) => void;
+}) {
+  const knownIds = new Set(apps.map((app) => app.id));
+  const options = [
+    ...apps,
+    ...selectedAppIds
+      .filter((appId) => !knownIds.has(appId))
+      .map((appId) => ({ id: appId, name: appId, version: "", operationStatus: "unavailable" })),
+  ];
+  const selected = new Set(selectedAppIds);
+
+  return (
+    <div className="accessPicker">
+      {options.map((app) => (
+        <label key={app.id}>
+          <input type="checkbox" checked={selected.has(app.id)} onChange={(event) => onToggle(app.id, event.target.checked)} />
+          <span>
+            <strong>{app.name}</strong>
+            <small>{app.id}</small>
+          </span>
+        </label>
+      ))}
+      {options.length === 0 && <div className="emptyList">No runtime apps</div>}
+    </div>
+  );
+}
+
+function CopyField({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: (value: string) => void;
+}) {
+  return (
+    <label className="copyField">
+      <span>{label}</span>
+      <div>
+        <input value={value} readOnly />
+        <button className="iconButton" type="button" onClick={() => onCopy(value)}>
+          <Copy aria-hidden="true" />
+          <span>Copy</span>
+        </button>
+      </div>
+    </label>
   );
 }
 
@@ -1239,6 +1746,7 @@ function BackupsPanel({
           Refresh
         </button>
       </div>
+      <p className="retentionNote">Manual backups are kept until deleted. Pre-update and pre-restore backups keep the latest five per app.</p>
       {detail.loading ? (
         <div className="emptyList">Loading backups</div>
       ) : backups.length === 0 ? (

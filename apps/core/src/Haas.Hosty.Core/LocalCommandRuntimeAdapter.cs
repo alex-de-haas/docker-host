@@ -184,7 +184,7 @@ internal sealed class LocalCommandRuntimeAdapter(
             endpoints.Add(new AppEndpointContract(
                 Key: $"{service.Key}.{key}",
                 Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
-                Url: $"{(string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol)}://127.0.0.1:{hostPort}",
+                Url: $"{(string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol)}://{config.RuntimePublicHost}:{hostPort}",
                 Public: port.Public ?? false));
         }
     }

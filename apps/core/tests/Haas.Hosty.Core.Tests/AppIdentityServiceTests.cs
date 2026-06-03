@@ -108,15 +108,42 @@ public sealed class AppIdentityServiceTests
                 AuthRoot: Path.Combine(root, "core", "auth"),
                 AuditLogPath: Path.Combine(root, "core", "audit", "audit.ndjson"));
             var users = new UserDirectoryStore(paths);
+            var apps = new AppRegistryStore(paths);
             var codes = new AppAuthCodeStore(paths);
             var clock = new FakeClock(DateTimeOffset.UtcNow);
-            var service = new AppIdentityService(users, codes, paths, clock);
+            var service = new AppIdentityService(users, codes, apps, paths, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
+            await apps.UpsertAppAsync(CreateApp());
             return new IdentityFixture(users, service, clock);
         }
 
         public async Task WriteUsersAsync(IReadOnlyList<HostUserRecord> users, IReadOnlyList<AppAssignmentRecord> assignments)
             => await Users.WriteAsync(new UserDirectoryState(1, users, [], assignments, []));
+
+        private static AppRecord CreateApp()
+            => new(
+                Id: "com.example.notes",
+                DisplayName: "Notes",
+                Description: null,
+                Version: "1.0.0",
+                Kind: "runtime",
+                System: false,
+                Source: "manifest",
+                ManifestPath: "/tmp/notes/manifest.json",
+                ManifestUrl: null,
+                SelectedChannel: null,
+                SelectedRuntime: "dev",
+                OperationStatus: "installed",
+                RuntimeState: "running",
+                LastOperation: null,
+                LastError: null,
+                Capabilities: ["open"],
+                Settings: new Dictionary<string, AppSettingValue>(),
+                StorageMappings: [],
+                Dependencies: [],
+                Endpoints: [new AppEndpointContract("app.http", "https", "https://notes.example", Public: true)],
+                InstalledAt: DateTimeOffset.UtcNow,
+                UpdatedAt: DateTimeOffset.UtcNow);
     }
 
     private sealed class FakeClock(DateTimeOffset now) : IClock

@@ -310,6 +310,7 @@ public sealed class CoreLifecycleServiceTests
                 ListenUrl: "http://127.0.0.1:3001",
                 CorePublicOrigin: "http://127.0.0.1:3001",
                 ShellPublicOrigin: null,
+                RuntimePublicHost: "localhost",
                 ShellManifestPath: null,
                 ShellBootstrapEnabled: false,
                 ShellAutostart: false);

@@ -20,17 +20,27 @@ internal static class DomainEndpoints
                     var apps = await store.ListAppsAsync(cancellationToken);
                     return Results.Json(new AppsResponse(FilterAppsForUser(apps, state, user)));
                 },
-                cancellationToken));
+                cancellationToken: cancellationToken));
 
         app.MapGet("/control/v1/apps", async (HttpRequest request, ControlSecret secret, AppRegistryStore store, CancellationToken cancellationToken) =>
             HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 Results.Json(new AppsResponse(await store.ListAppsAsync(cancellationToken)))));
 
-        app.MapGet("/api/users", async (UserDirectoryStore store, CancellationToken cancellationToken) =>
-        {
-            var state = await store.ReadAsync(cancellationToken);
-            return Results.Json(new UsersResponse(state.Users, state.Invitations, state.Assignments, state.Sessions));
-        });
+        app.MapGet("/api/users", async (
+            HttpRequest request,
+            UserDirectoryStore store,
+            IClock clock,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                store,
+                clock,
+                async () =>
+                {
+                    var state = await store.ReadAsync(cancellationToken);
+                    return Results.Json(new UsersResponse(state.Users, state.Invitations, state.Assignments, state.Sessions));
+                },
+                cancellationToken: cancellationToken));
 
         app.MapGet("/control/v1/users", async (HttpRequest request, ControlSecret secret, UserDirectoryStore store, CancellationToken cancellationToken) =>
             HostyCoreApplication.RequireControlSecret(request, secret, async () =>

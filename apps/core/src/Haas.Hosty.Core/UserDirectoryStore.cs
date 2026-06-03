@@ -34,7 +34,13 @@ internal sealed record HostInvitationRecord(
     string Role,
     string Status,
     DateTimeOffset ExpiresAt,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? DisplayName = null,
+    IReadOnlyList<string>? AssignedAppIds = null,
+    string? TokenHash = null,
+    string? CreatedByUserId = null,
+    DateTimeOffset? UsedAt = null,
+    DateTimeOffset? RevokedAt = null);
 
 internal sealed record AppAssignmentRecord(string AppId, string UserId, DateTimeOffset CreatedAt);
 
