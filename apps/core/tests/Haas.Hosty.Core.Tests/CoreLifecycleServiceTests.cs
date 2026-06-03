@@ -57,6 +57,76 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyRuntimeSwitchAsync_CreatesPreRuntimeSwitchBackupAndPreservesData()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteSwitchableDockerManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var dataPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data", "notes.db");
+        await File.WriteAllTextAsync(dataPath, "local-data");
+
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync(
+            "com.example.notes",
+            new AppRuntimeSwitchPlanRequest("docker-alt"));
+        var result = await fixture.Service.ApplyRuntimeSwitchAsync(
+            "com.example.notes",
+            new AppRuntimeSwitchApplyRequest("docker-alt", plan.PlanDigest));
+
+        Assert.True(plan.AutomaticBackup);
+        Assert.Equal("runtime-switched", result.Status);
+        Assert.Equal("docker-alt", result.App?.SelectedRuntime);
+        Assert.Equal("stopped", result.App?.RuntimeState);
+        Assert.Equal("pre-runtime-switch", result.Backup?.Reason);
+        Assert.Equal("local-data", await File.ReadAllTextAsync(dataPath));
+        var backup = Assert.Single(await fixture.Backups.ListBackupsAsync("com.example.notes"));
+        Assert.Equal("pre-runtime-switch", backup.Reason);
+    }
+
+    [Fact]
+    public async Task ApplyRuntimeSwitchAsync_RestartsRunningAppAndReturnsBackup()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteSwitchableDockerManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data", "notes.db"),
+            "local-data");
+        await fixture.Service.StartAsync("com.example.notes");
+
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync(
+            "com.example.notes",
+            new AppRuntimeSwitchPlanRequest("docker-alt"));
+        var result = await fixture.Service.ApplyRuntimeSwitchAsync(
+            "com.example.notes",
+            new AppRuntimeSwitchApplyRequest("docker-alt", plan.PlanDigest));
+
+        Assert.Equal("runtime-switched", result.Status);
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("docker-alt", result.App?.SelectedRuntime);
+        Assert.Equal("pre-runtime-switch", result.Backup?.Reason);
+        Assert.Equal(2, fixture.Adapter.StartCount);
+        Assert.Equal(1, fixture.Adapter.StopCount);
+    }
+
+    [Fact]
+    public async Task CreateRuntimeSwitchPlanAsync_RejectsTargetRuntimeWithoutCompatibleDataTarget()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteDataIncompatibleLocalSwitchManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data", "notes.db"),
+            "local-data");
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.CreateRuntimeSwitchPlanAsync(
+                "com.example.notes",
+                new AppRuntimeSwitchPlanRequest("dev")));
+
+        Assert.Equal("runtime_switch_data_incompatible", error.Code);
+    }
+
+    [Fact]
     public async Task StartAsync_UsesRuntimeAdapterAndStoresRuntimeEndpoint()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -241,6 +311,21 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("stopped", app?.RuntimeState);
     }
 
+    [Fact]
+    public async Task StartAsync_LocalCommandFailureStopsPreviouslyStartedServices()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteFailingLocalCommandManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.StartAsync("com.example.local-fail"));
+
+        Assert.Equal("local_command_start_failed", error.Code);
+        Assert.Null(fixture.LocalProcesses.Get("com.example.local-fail", "first"));
+        Assert.Null(fixture.LocalProcesses.Get("com.example.local-fail", "second"));
+    }
+
 
     private sealed class LifecycleFixture
     {
@@ -253,6 +338,7 @@ public sealed class CoreLifecycleServiceTests
             AppSourceService sources,
             CoreLifecycleService service,
             RecordingRuntimeAdapter adapter,
+            LocalCommandProcessRegistry localProcesses,
             FakeClock clock)
         {
             Root = root;
@@ -263,6 +349,7 @@ public sealed class CoreLifecycleServiceTests
             Sources = sources;
             Service = service;
             Adapter = adapter;
+            LocalProcesses = localProcesses;
             Clock = clock;
         }
 
@@ -281,6 +368,8 @@ public sealed class CoreLifecycleServiceTests
         public CoreLifecycleService Service { get; }
 
         public RecordingRuntimeAdapter Adapter { get; }
+
+        public LocalCommandProcessRegistry LocalProcesses { get; }
 
         public FakeClock Clock { get; }
 
@@ -314,9 +403,10 @@ public sealed class CoreLifecycleServiceTests
                 ShellManifestPath: null,
                 ShellBootstrapEnabled: false,
                 ShellAutostart: false);
-            var localAdapter = new LocalCommandRuntimeAdapter(runtimeConfig, new LocalCommandProcessRegistry());
+            var localProcesses = new LocalCommandProcessRegistry();
+            var localAdapter = new LocalCommandRuntimeAdapter(runtimeConfig, localProcesses);
             var service = new CoreLifecycleService(paths, apps, manifests, backups, [adapter, localAdapter]);
-            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, clock);
+            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }
 
         public async Task<string> WriteManifestAsync(string version, bool includeDependency = false, string? sourceRepository = null)
@@ -392,6 +482,130 @@ public sealed class CoreLifecycleServiceTests
             return path;
         }
 
+        public async Task<string> WriteSwitchableDockerManifestAsync()
+        {
+            var path = Path.Combine(Root, "notes-switchable.json");
+            await File.WriteAllTextAsync(path, """
+                {
+                  "schemaVersion": "app.0.1",
+                  "id": "com.example.notes",
+                  "name": "Notes",
+                  "description": "Personal notes.",
+                  "version": "1.0.0",
+                  "runtimeProfiles": [
+                    { "key": "docker", "type": "docker", "default": true },
+                    { "key": "docker-alt", "type": "docker" }
+                  ],
+                  "defaultRuntime": "docker",
+                  "services": [{
+                    "key": "app",
+                    "runtimes": {
+                      "docker": {
+                        "type": "docker",
+                        "image": "ghcr.io/example/notes:1.0.0",
+                        "ports": [{
+                          "key": "http",
+                          "containerPort": 3000,
+                          "protocol": "http",
+                          "public": true
+                        }]
+                      },
+                      "docker-alt": {
+                        "type": "docker",
+                        "image": "ghcr.io/example/notes:1.0.1",
+                        "ports": [{
+                          "key": "http",
+                          "containerPort": 3000,
+                          "protocol": "http",
+                          "public": true
+                        }]
+                      }
+                    }
+                  }],
+                  "endpoints": [{
+                    "key": "app.http",
+                    "service": "app",
+                    "port": "http",
+                    "protocol": "http",
+                    "public": true
+                  }],
+                  "data": {
+                    "enabled": true,
+                    "targets": [
+                      {
+                        "runtime": "docker",
+                        "service": "app",
+                        "containerPath": "/app/data",
+                        "environment": "HOSTY_APP_DATA_DIR"
+                      },
+                      {
+                        "runtime": "docker-alt",
+                        "service": "app",
+                        "containerPath": "/app/data",
+                        "environment": "HOSTY_APP_DATA_DIR"
+                      }
+                    ]
+                  }
+                }
+                """);
+            return path;
+        }
+
+        public async Task<string> WriteDataIncompatibleLocalSwitchManifestAsync()
+        {
+            var path = Path.Combine(Root, "notes-data-incompatible.json");
+            await File.WriteAllTextAsync(path, """
+                {
+                  "schemaVersion": "app.0.1",
+                  "id": "com.example.notes",
+                  "name": "Notes",
+                  "description": "Personal notes.",
+                  "version": "1.0.0",
+                  "runtimeProfiles": [
+                    { "key": "docker", "type": "docker", "default": true },
+                    { "key": "dev", "type": "localCommand" }
+                  ],
+                  "defaultRuntime": "docker",
+                  "services": [{
+                    "key": "app",
+                    "runtimes": {
+                      "docker": {
+                        "type": "docker",
+                        "image": "ghcr.io/example/notes:1.0.0",
+                        "ports": [{
+                          "key": "http",
+                          "containerPort": 3000,
+                          "protocol": "http",
+                          "public": true
+                        }]
+                      },
+                      "dev": {
+                        "type": "localCommand",
+                        "command": "sleep 5",
+                        "workingDirectory": ".",
+                        "ports": [{
+                          "key": "http",
+                          "containerPort": 3000,
+                          "protocol": "http",
+                          "public": true
+                        }]
+                      }
+                    }
+                  }],
+                  "data": {
+                    "enabled": true,
+                    "targets": [{
+                      "runtime": "docker",
+                      "service": "app",
+                      "containerPath": "/app/data",
+                      "environment": "HOSTY_APP_DATA_DIR"
+                    }]
+                  }
+                }
+                """);
+            return path;
+        }
+
         public async Task<string> WriteLocalCommandManifestAsync()
         {
             var path = Path.Combine(Root, "local-command.json");
@@ -440,6 +654,44 @@ public sealed class CoreLifecycleServiceTests
                 """);
             return path;
         }
+
+        public async Task<string> WriteFailingLocalCommandManifestAsync()
+        {
+            var path = Path.Combine(Root, "local-command-fail.json");
+            await File.WriteAllTextAsync(path, """
+                {
+                  "schemaVersion": "app.0.1",
+                  "id": "com.example.local-fail",
+                  "name": "Failing Local App",
+                  "version": "1.0.0",
+                  "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+                  "defaultRuntime": "dev",
+                  "services": [
+                    {
+                      "key": "first",
+                      "runtimes": {
+                        "dev": {
+                          "type": "localCommand",
+                          "command": "sleep 5",
+                          "workingDirectory": "."
+                        }
+                      }
+                    },
+                    {
+                      "key": "second",
+                      "runtimes": {
+                        "dev": {
+                          "type": "localCommand",
+                          "command": "exit 9",
+                          "workingDirectory": "."
+                        }
+                      }
+                    }
+                  ]
+                }
+                """);
+            return path;
+        }
     }
 
     private sealed class RecordingRuntimeAdapter : IAppRuntimeAdapter
@@ -447,6 +699,8 @@ public sealed class CoreLifecycleServiceTests
         public string Type => "docker";
 
         public int StartCount { get; private set; }
+
+        public int StopCount { get; private set; }
 
         public RuntimeLifecycleContext? LastContext { get; private set; }
 
@@ -460,7 +714,10 @@ public sealed class CoreLifecycleServiceTests
         }
 
         public Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
-            => Task.FromResult(new AppRuntimeOperationResult("stopped"));
+        {
+            StopCount++;
+            return Task.FromResult(new AppRuntimeOperationResult("stopped"));
+        }
 
         public Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeOperationResult("removed"));

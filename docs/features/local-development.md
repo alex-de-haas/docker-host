@@ -47,6 +47,16 @@ Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a se
 
 When validating runtime lifecycle behavior, prefer installing Shell through Core like any other runtime app.
 
+For Shell-only runtime work through Core, use the Shell manifest's `dev` runtime profile:
+
+```bash
+hosty apps source-override hosty.shell --path "$PWD"
+hosty apps switch-runtime-plan hosty.shell --runtime dev
+hosty apps switch-runtime hosty.shell --runtime dev --plan-digest <digest>
+```
+
+Do not use this pattern for Core itself. Core or the temporary combined Host cannot finish its own replacement after it exits; those operations need the trusted CLI or another outer supervisor.
+
 ## Local Runtime Apps
 
 Local app development uses an app manifest runtime profile, not a separate local target command group.

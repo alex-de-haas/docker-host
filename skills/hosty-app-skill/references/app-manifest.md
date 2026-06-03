@@ -195,6 +195,7 @@ Strict validation still applies to supported schemas. Unknown fields are rejecte
 - External mounts and additional storage mappings are intentionally excluded.
 - Backup reasons include `pre-update`, `manual`, `pre-restore`, `pre-runtime-switch`, and `scheduled`.
 - Update apply creates a `pre-update` backup when the app data directory exists.
+- Runtime switch apply creates a `pre-runtime-switch` backup when the app data directory exists.
 - Restore verifies archive digest and per-entry CRC, stops the app by default, creates a `pre-restore` backup by default, replaces the data directory, and does not automatically restart the app.
 - Automatic backup retention and backup deletion APIs are planned, not implemented.
 
@@ -204,4 +205,4 @@ Strict validation still applies to supported schemas. Unknown fields are rejecte
 - Do not model a public URL or gateway access policy with `endpoints[].public`; it only marks an endpoint suitable for exposure.
 - Do not put secrets in manifest defaults.
 - Do not use external mounts for data that Hosty is expected to back up or restore.
-- Do not assume `localCommand` production execution exists yet.
+- Do not switch an app with existing primary data to a runtime profile that lacks a compatible `data.targets[]` entry.

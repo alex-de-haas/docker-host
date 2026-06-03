@@ -127,7 +127,7 @@ Supported adapter fields:
 Supported runtime profile types:
 
 - `docker` - installable through the current Docker runtime engine;
-- `localCommand` - parsed and normalized for future runtime planning, but not yet installable by the production Docker install path.
+- `localCommand` - executable through Hosty Core's local command runtime adapter for installed runtime apps. The legacy Docker install adapter still treats it as app-oriented runtime state rather than a Docker container.
 
 `runtimeProfiles[]` describes mutually exclusive app-level runtime profiles. `services[]` describes the runtime services that run together for the selected profile. Every non-optional service must declare a runtime entry for every declared profile under `services[].runtimes.<profileKey>`. During install and update, Hosty selects `defaultRuntime` or the first/default profile, maps those selected service runtimes into canonical legacy `0.3` `services[]`, and keeps the selected profile key in the app registry.
 

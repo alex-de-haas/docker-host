@@ -221,7 +221,7 @@ Storage and data behavior:
 - `data.targets[].service` selects which service receives the primary data mount.
 - `data.targets[].containerPath` controls the Docker container path for the primary app data directory. The default is `/app/data`.
 - The Docker runtime injects `HOSTY_APP_DATA_DIR` when a primary data mapping exists.
-- For local command runtime profiles, the manifest can declare data intent, but production local process execution and environment injection are future runtime-adapter work.
+- For local command runtime profiles, Core injects `HOSTY_APP_DATA_DIR` when the profile declares a compatible primary data target. Runtime switching rejects an app with existing primary data when the target runtime cannot preserve that data mapping.
 
 Example minimal app manifest:
 
@@ -336,6 +336,7 @@ Implemented backup reasons:
 Current behavior:
 
 - `module update` apply creates a `pre-update` backup when the app data directory exists.
+- Runtime switch apply creates a `pre-runtime-switch` backup when the app data directory exists.
 - Manual backup is available through `POST /control/v1/apps/{appId}/backups`.
 - Backup listing is available through `GET /control/v1/apps/{appId}/backups`.
 - Restore is available through `POST /control/v1/apps/{appId}/backups/{backupId}/restore`.

@@ -13,68 +13,82 @@ internal sealed class LocalCommandRuntimeAdapter(
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
         var endpoints = new List<AppEndpointContract>();
-        foreach (var service in context.Manifest.Services)
+        var startedServices = new List<string>();
+        try
         {
-            if (string.IsNullOrWhiteSpace(service.Runtime.Command))
+            foreach (var service in context.Manifest.Services)
             {
-                throw new AppLifecycleException("local_command_missing", $"Local command service '{service.Key}' does not declare command.");
-            }
+                if (string.IsNullOrWhiteSpace(service.Runtime.Command))
+                {
+                    throw new AppLifecycleException("local_command_missing", $"Local command service '{service.Key}' does not declare command.");
+                }
 
-            await StopServiceAsync(context.App.Id, service.Key, cancellationToken);
-            var workingDirectory = ResolveWorkingDirectory(context, service);
-            Directory.CreateDirectory(workingDirectory);
-            Directory.CreateDirectory(Path.Combine(context.AppRoot, "logs"));
-            var logPath = Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
-            var logWriter = new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
-            {
-                AutoFlush = true,
-            };
+                await StopServiceAsync(context.App.Id, service.Key, cancellationToken);
+                var workingDirectory = ResolveWorkingDirectory(context, service);
+                Directory.CreateDirectory(workingDirectory);
+                Directory.CreateDirectory(Path.Combine(context.AppRoot, "logs"));
+                var logPath = Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
+                var logWriter = new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                {
+                    AutoFlush = true,
+                };
 
-            var startInfo = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
-            InjectEnvironment(startInfo, context, service, endpoints);
-            var process = new System.Diagnostics.Process
-            {
-                StartInfo = startInfo,
-                EnableRaisingEvents = true,
-            };
-            process.OutputDataReceived += (_, args) =>
-            {
-                if (args.Data is not null)
+                var startInfo = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
+                InjectEnvironment(startInfo, context, service, endpoints);
+                var process = new System.Diagnostics.Process
+                {
+                    StartInfo = startInfo,
+                    EnableRaisingEvents = true,
+                };
+                process.OutputDataReceived += (_, args) =>
+                {
+                    if (args.Data is not null)
+                    {
+                        lock (logWriter)
+                        {
+                            logWriter.WriteLine(args.Data);
+                        }
+                    }
+                };
+                process.ErrorDataReceived += (_, args) =>
+                {
+                    if (args.Data is not null)
+                    {
+                        lock (logWriter)
+                        {
+                            logWriter.WriteLine(args.Data);
+                        }
+                    }
+                };
+                process.Exited += (_, _) =>
                 {
                     lock (logWriter)
                     {
-                        logWriter.WriteLine(args.Data);
+                        logWriter.WriteLine($"[hosty] process exited with code {process.ExitCode}");
+                        logWriter.Dispose();
                     }
-                }
-            };
-            process.ErrorDataReceived += (_, args) =>
-            {
-                if (args.Data is not null)
-                {
-                    lock (logWriter)
-                    {
-                        logWriter.WriteLine(args.Data);
-                    }
-                }
-            };
-            process.Exited += (_, _) =>
-            {
-                lock (logWriter)
-                {
-                    logWriter.WriteLine($"[hosty] process exited with code {process.ExitCode}");
-                    logWriter.Dispose();
-                }
-            };
+                };
 
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            registry.Set(context.App.Id, service.Key, new LocalCommandProcess(process, logPath, workingDirectory));
-            await Task.Delay(250, cancellationToken);
-            if (process.HasExited)
-            {
-                throw new AppLifecycleException("local_command_start_failed", $"Local command service '{service.Key}' exited with code {process.ExitCode}.");
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                registry.Set(context.App.Id, service.Key, new LocalCommandProcess(process, logPath, workingDirectory));
+                startedServices.Add(service.Key);
+                await Task.Delay(250, cancellationToken);
+                if (process.HasExited)
+                {
+                    throw new AppLifecycleException("local_command_start_failed", $"Local command service '{service.Key}' exited with code {process.ExitCode}.");
+                }
             }
+        }
+        catch
+        {
+            foreach (var serviceKey in startedServices.AsEnumerable().Reverse())
+            {
+                await StopServiceAsync(context.App.Id, serviceKey, CancellationToken.None);
+            }
+
+            throw;
         }
 
         return new AppRuntimeStartResult("running", endpoints);

@@ -253,6 +253,16 @@ internal sealed class CoreLifecycleService(
         }
 
         var selection = await manifests.LoadAsync(app.ManifestPath, request.TargetRuntime, cancellationToken);
+        var willCreateBackup = Directory.Exists(GetAppDataPath(appId));
+        if (willCreateBackup &&
+            app.StorageMappings.Any(mapping => string.Equals(mapping.Key, "data", StringComparison.Ordinal)) &&
+            selection.DataTarget is null)
+        {
+            throw new AppLifecycleException(
+                "runtime_switch_data_incompatible",
+                $"Target runtime '{selection.RuntimeProfile.Key}' does not declare a compatible primary data directory target.");
+        }
+
         var seed = new
         {
             appId,
@@ -260,7 +270,7 @@ internal sealed class CoreLifecycleService(
             targetRuntime = selection.RuntimeProfile.Key,
             app.Version,
             selection.ManifestDigest,
-            automaticBackup = false,
+            automaticBackup = willCreateBackup,
         };
         return new AppRuntimeSwitchPlan(
             AppId: appId,
@@ -268,7 +278,7 @@ internal sealed class CoreLifecycleService(
             TargetRuntime: selection.RuntimeProfile.Key,
             TargetRuntimeType: selection.RuntimeProfile.Type,
             PlanDigest: HashPlanSeed(seed),
-            AutomaticBackup: false,
+            AutomaticBackup: willCreateBackup,
             Changes: BuildRuntimeSwitchChanges(app, selection));
     }
 
@@ -284,6 +294,9 @@ internal sealed class CoreLifecycleService(
         }
 
         var app = await RequireAppAsync(appId, cancellationToken);
+        var backup = plan.AutomaticBackup
+            ? await backups.CreateBackupAsync(appId, "pre-runtime-switch", cancellationToken)
+            : null;
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
         {
@@ -308,11 +321,12 @@ internal sealed class CoreLifecycleService(
 
         if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
         {
-            return await StartAsync(appId, cancellationToken);
+            var restarted = await StartAsync(appId, cancellationToken);
+            return new AppLifecycleResponse(restarted.App, backup, "runtime-switched");
         }
 
         var document = await apps.GetAppAsync(appId, cancellationToken);
-        return new AppLifecycleResponse(document is null ? null : AppSummary.From(document), null, "runtime-switched");
+        return new AppLifecycleResponse(document is null ? null : AppSummary.From(document), backup, "runtime-switched");
     }
 
     public async Task<AppChannelsResponse> ListChannelsAsync(

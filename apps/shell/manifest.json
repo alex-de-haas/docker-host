@@ -4,11 +4,20 @@
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
   "version": "0.1.0",
+  "source": {
+    "type": "git",
+    "repository": ".",
+    "branch": "main"
+  },
   "runtimeProfiles": [
     {
       "key": "docker",
       "type": "docker",
       "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand"
     }
   ],
   "defaultRuntime": "docker",
@@ -23,6 +32,24 @@
             "tag": "local",
             "pullPolicy": "never"
           },
+          "environment": {
+            "PORT": "3000",
+            "HOSTNAME": "0.0.0.0"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "localPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/shell",
+          "command": "npm run dev",
           "environment": {
             "PORT": "3000",
             "HOSTNAME": "0.0.0.0"

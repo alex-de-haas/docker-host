@@ -787,7 +787,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 - Add parser and validator for `schemaVersion: "app.0.1"`.
 - Map legacy Docker module metadata into an app manifest compatibility model.
 - Store new app manifest copies as `apps/<app-id>/manifest.json`, with legacy `modules/<module-id>/metadata.json` retained for legacy module records.
-- Defer active access-mode behavior, capability overrides, and production local-command runtime execution to later phases.
+- Defer active access-mode behavior and capability overrides to later phases. Production local-command runtime execution is tracked in the runtime profiles/source runtimes plan.
 
 ### Phase 6 - Add app data backup and restore
 
@@ -795,7 +795,7 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 
 - Create a standard primary app data directory convention.
 - Inject `HOSTY_APP_DATA_DIR` into Docker runtime profiles that have a primary data mapping.
-- Document local command `HOSTY_APP_DATA_DIR` injection as future runtime-adapter work.
+- Document local command `HOSTY_APP_DATA_DIR` injection in the runtime profiles/source runtimes plan.
 - Add backup records and ZIP archive creation for app data directories.
 - Add pre-update backups for apps with a primary data directory.
 - Add manual backup and restore APIs.

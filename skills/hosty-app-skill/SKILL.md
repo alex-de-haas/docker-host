@@ -34,7 +34,7 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 
 1. Choose a stable reverse-DNS app id, display name, version, and whether the app is user-facing, service-only, or both.
 2. Prefer an `app.0.1` manifest. Start from `assets/app-template/manifest.json`, then replace ids, service keys, runtime profiles, image references, ports, settings, storage, UI, and dependencies.
-3. Declare one or more app-level runtime profiles, then add per-service runtime implementations under `services[].runtimes.<profileKey>`. Docker service runtimes are installable today. `localCommand` service runtimes are parsed and normalized for future runtime switching and are useful for development planning, but production local-command supervision is still planned.
+3. Declare one or more app-level runtime profiles, then add per-service runtime implementations under `services[].runtimes.<profileKey>`. Docker service runtimes run through the Docker adapter. `localCommand` service runtimes run through Hosty Core from a managed checkout, local source override, or app root fallback and should be used only for trusted local or explicitly configured administrator workflows.
 4. Treat `source` as optional Git metadata. Some apps, such as Redis-like service dependencies, may have only a Docker image and no source repository.
 5. Use `data.enabled: true` when the app needs a primary Hosty-managed data directory. Hosty backs up only that primary `data/` directory, not external mounts or additional storage.
 6. Add `ui` only when the app should appear in Hosty Shell. Service-only apps can omit UI and still be managed as runtime apps or dependencies.

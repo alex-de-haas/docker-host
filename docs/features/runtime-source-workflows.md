@@ -26,3 +26,15 @@ Only one of `--branch`, `--tag`, or `--commit` may be passed to `source-resolve`
 Local command runtime profiles start from the local override path when one is configured. Otherwise they use the managed checkout path, then fall back to the app root. Source override state is not public manifest metadata; it belongs to the local Hosty installation.
 
 Docker-only apps remain valid without source metadata. Resolving source for an app with no source repository returns a Core validation error instead of changing the app.
+
+## Default Hosty Apps
+
+Hosty Shell is also a runtime app. Its manifest declares Docker and `dev` local command runtime profiles, so administrators can use the same source commands for Shell-only local runtime work:
+
+```bash
+hosty apps source-override hosty.shell --path "$PWD"
+hosty apps switch-runtime-plan hosty.shell --runtime dev
+hosty apps switch-runtime hosty.shell --runtime dev --plan-digest <digest>
+```
+
+Core and combined-Host self-runtime changes are different from Shell-only changes. Core cannot complete its own replacement after it stops, so Core runtime switching still requires the trusted CLI or another outer supervisor.
