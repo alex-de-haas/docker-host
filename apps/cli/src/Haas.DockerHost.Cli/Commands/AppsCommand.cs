@@ -1,6 +1,7 @@
 namespace Haas.DockerHost.Cli.Commands;
 
 using System.Text.Json;
+using Haas.DockerHost.Cli.Configuration;
 using Spectre.Console;
 
 internal sealed class AppsCommand(CommandContext context)
@@ -31,6 +32,10 @@ internal sealed class AppsCommand(CommandContext context)
                 "backups" => await BackupsAsync(args[1..]),
                 "restore" => await RestoreAsync(args[1..]),
                 "logs" => await LogsAsync(args[1..]),
+                "source" => await SourceAsync(args[1..]),
+                "source-resolve" => await SourceResolveAsync(args[1..]),
+                "source-override" => await SourceOverrideAsync(args[1..]),
+                "source-clear-override" => await SourceClearOverrideAsync(args[1..]),
                 "identity" => await IdentityAsync(args[1..]),
                 "open" => await OpenAsync(args[1..]),
                 _ => throw new CommandUsageException($"Unknown apps command '{args[0]}'.", Usage),
@@ -184,6 +189,46 @@ internal sealed class AppsCommand(CommandContext context)
         using var core = await OpenCoreAsync();
         var response = await core.GetAsync<AppLogsResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/logs?tail={options.Tail}");
         context.Console.WriteLine(response?.Text ?? "");
+        return 0;
+    }
+
+    private async Task<int> SourceAsync(string[] args)
+    {
+        var options = ParseSourceOptions(args, "source");
+        using var core = await OpenCoreAsync();
+        var response = await core.GetAsync<AppSourceResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/source");
+        RenderSource(response, options.Format);
+        return 0;
+    }
+
+    private async Task<int> SourceResolveAsync(string[] args)
+    {
+        var options = ParseSourceResolveOptions(args);
+        using var core = await OpenCoreAsync();
+        var response = await core.PostAsync<AppSourceResponse>(
+            $"apps/{Uri.EscapeDataString(options.AppId)}/source/resolve",
+            new AppSourceResolveRequest(options.Branch, options.Tag, options.Commit, options.Fetch));
+        RenderSource(response, options.Format);
+        return 0;
+    }
+
+    private async Task<int> SourceOverrideAsync(string[] args)
+    {
+        var options = ParseSourceOverrideOptions(args, context.Environment);
+        using var core = await OpenCoreAsync();
+        var response = await core.PostAsync<AppSourceResponse>(
+            $"apps/{Uri.EscapeDataString(options.AppId)}/source/override",
+            new AppSourceOverrideRequest(options.Path, options.Commit));
+        RenderSource(response, options.Format);
+        return 0;
+    }
+
+    private async Task<int> SourceClearOverrideAsync(string[] args)
+    {
+        var options = ParseSourceOptions(args, "source-clear-override");
+        using var core = await OpenCoreAsync();
+        var response = await core.DeleteAsync<AppSourceResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/source/override");
+        RenderSource(response, options.Format);
         return 0;
     }
 
@@ -346,6 +391,40 @@ internal sealed class AppsCommand(CommandContext context)
                 backup.ArchiveSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
+        context.Console.Write(table);
+    }
+
+    private void RenderSource(AppSourceResponse? response, string format)
+    {
+        if (format == "json")
+        {
+            context.Console.WriteLine(JsonSerializer.Serialize(response ?? new AppSourceResponse("", null), JsonOptions));
+            return;
+        }
+
+        if (format != "table")
+        {
+            throw new CommandUsageException("apps source --format must be table or json.", Usage);
+        }
+
+        if (response?.Source is null)
+        {
+            context.Console.MarkupLine($"[yellow]No source state for {Markup.Escape(response?.AppId ?? "app")}.[/]");
+            return;
+        }
+
+        var source = response.Source;
+        var table = new Table();
+        table.AddColumn("Field");
+        table.AddColumn("Value");
+        table.AddRow("App", Markup.Escape(response.AppId));
+        table.AddRow("Type", Markup.Escape(source.Type ?? ""));
+        table.AddRow("Repository", Markup.Escape(source.Repository ?? ""));
+        table.AddRow("Resolved ref", Markup.Escape(source.ResolvedRef ?? ""));
+        table.AddRow("Commit", Markup.Escape(source.Commit ?? ""));
+        table.AddRow("Managed checkout", Markup.Escape(source.ManagedCheckoutPath ?? ""));
+        table.AddRow("Local override", Markup.Escape(source.LocalOverridePath ?? ""));
+        table.AddRow("Updated", Markup.Escape(source.UpdatedAt?.ToString("u") ?? ""));
         context.Console.Write(table);
     }
 
@@ -610,6 +689,124 @@ internal sealed class AppsCommand(CommandContext context)
         return new LogsOptions(args[0], tail);
     }
 
+    private static SourceOptions ParseSourceOptions(string[] args, string commandName)
+    {
+        if (args.Length == 0)
+        {
+            throw new CommandUsageException($"apps {commandName} requires an app id.", Usage);
+        }
+
+        var appId = args[0];
+        var format = "table";
+        for (var index = 1; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--format":
+                    format = RequireOptionValue(args, ref index, "--format");
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown apps {commandName} argument '{args[index]}'.", Usage);
+            }
+        }
+
+        ValidateSourceFormat(format);
+        return new SourceOptions(appId, format);
+    }
+
+    private static SourceResolveOptions ParseSourceResolveOptions(string[] args)
+    {
+        if (args.Length == 0)
+        {
+            throw new CommandUsageException("apps source-resolve requires an app id.", Usage);
+        }
+
+        var appId = args[0];
+        string? branch = null;
+        string? tag = null;
+        string? commit = null;
+        var fetch = false;
+        var format = "table";
+        for (var index = 1; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--branch":
+                    branch = RequireOptionValue(args, ref index, "--branch");
+                    break;
+                case "--tag":
+                    tag = RequireOptionValue(args, ref index, "--tag");
+                    break;
+                case "--commit":
+                    commit = RequireOptionValue(args, ref index, "--commit");
+                    break;
+                case "--fetch":
+                    fetch = true;
+                    break;
+                case "--format":
+                    format = RequireOptionValue(args, ref index, "--format");
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown apps source-resolve argument '{args[index]}'.", Usage);
+            }
+        }
+
+        var refCount = new[] { branch, tag, commit }.Count(value => !string.IsNullOrWhiteSpace(value));
+        if (refCount > 1)
+        {
+            throw new CommandUsageException("apps source-resolve accepts only one of --branch, --tag, or --commit.", Usage);
+        }
+
+        ValidateSourceFormat(format);
+        return new SourceResolveOptions(appId, branch, tag, commit, fetch, format);
+    }
+
+    private static SourceOverrideOptions ParseSourceOverrideOptions(string[] args, DockerHostEnvironment environment)
+    {
+        if (args.Length == 0)
+        {
+            throw new CommandUsageException("apps source-override requires an app id.", Usage);
+        }
+
+        var appId = args[0];
+        string? overridePath = null;
+        string? commit = null;
+        var format = "table";
+        for (var index = 1; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--path":
+                    overridePath = RequireOptionValue(args, ref index, "--path");
+                    break;
+                case "--commit":
+                    commit = RequireOptionValue(args, ref index, "--commit");
+                    break;
+                case "--format":
+                    format = RequireOptionValue(args, ref index, "--format");
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown apps source-override argument '{args[index]}'.", Usage);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(overridePath))
+        {
+            throw new CommandUsageException("apps source-override requires --path <worktree>.", Usage);
+        }
+
+        ValidateSourceFormat(format);
+        return new SourceOverrideOptions(appId, environment.ResolvePath(overridePath), commit, format);
+    }
+
+    private static void ValidateSourceFormat(string format)
+    {
+        if (format is not "table" and not "json")
+        {
+            throw new CommandUsageException("apps source --format must be table or json.", Usage);
+        }
+    }
+
     private static IdentityOptions ParseIdentityOptions(string[] args)
     {
         if (args.Length == 0)
@@ -724,6 +921,12 @@ internal sealed class AppsCommand(CommandContext context)
 
     private sealed record LogsOptions(string AppId, int Tail);
 
+    private sealed record SourceOptions(string AppId, string Format);
+
+    private sealed record SourceResolveOptions(string AppId, string? Branch, string? Tag, string? Commit, bool Fetch, string Format);
+
+    private sealed record SourceOverrideOptions(string AppId, string Path, string? Commit, string Format);
+
     private sealed record IdentityOptions(string AppId, string User, string Format);
 
     private sealed record OpenOptions(string AppId, string User, string Mode, string? RedirectUri, string Format);
@@ -803,6 +1006,21 @@ internal sealed class AppsCommand(CommandContext context)
 
     private sealed record AppLogsResponse(string AppId, string Text);
 
+    private sealed record AppSourceResolveRequest(string? Branch, string? Tag, string? Commit, bool Fetch);
+
+    private sealed record AppSourceOverrideRequest(string Path, string? Commit);
+
+    private sealed record AppSourceResponse(string AppId, AppSourceState? Source);
+
+    private sealed record AppSourceState(
+        string? Type,
+        string? Repository,
+        string? ResolvedRef,
+        string? Commit,
+        string? ManagedCheckoutPath,
+        string? LocalOverridePath,
+        DateTimeOffset? UpdatedAt);
+
     private sealed record AppIdentityIssueRequest(string User);
 
     private sealed record AppIdentityIssueResponse(string AppId, string UserId, AppIdentityTokenResult Token);
@@ -836,6 +1054,10 @@ internal sealed class AppsCommand(CommandContext context)
           backups <app-id>
           restore <app-id> <backup-id> [--pre-restore-backup]
           logs <app-id> [--tail <count>]
+          source <app-id> [--format table|json]
+          source-resolve <app-id> [--branch <name>|--tag <tag>|--commit <sha>] [--fetch] [--format table|json]
+          source-override <app-id> --path <worktree> [--commit <sha>] [--format table|json]
+          source-clear-override <app-id> [--format table|json]
           identity <app-id> --user <email-or-id> [--format token|header|env|json]
           open <app-id> --user <email-or-id> [--mode shell|standalone] [--redirect-uri <uri>] [--format url|json]
 

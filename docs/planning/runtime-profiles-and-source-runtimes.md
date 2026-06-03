@@ -111,7 +111,7 @@ Implemented so far:
 
 ### Phase 4 - Add source state and local source overrides
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Store optional source repository metadata and source runtime state in app records.
 - Add a Host-managed source checkout/cache root under `<hosty-data-root>/sources/<app-id>/`, alongside `<hosty-data-root>/apps/<app-id>/` and `<hosty-data-root>/backups/<app-id>/`.
@@ -122,6 +122,18 @@ Implemented so far:
 - Keep direct Docker-only apps valid when no source exists.
 - Keep multi-repository apps out of scope for the first source runtime implementation. If a service is owned by a separate repository, model it as a separate runtime app dependency or defer support for an explicit future `source.repositories[]` contract.
 - Add cleanup rules for abandoned source checkouts.
+- Add private repository credential handling through app-owned secrets or a future credential provider.
+
+Implemented so far:
+
+- Core stores app source state, including repository metadata, resolved refs, immutable commit SHAs, managed checkout paths, local override paths, and update timestamps.
+- Core exposes local control source routes for inspection, managed checkout resolution, local override configuration, and local override clearing.
+- The CLI exposes `hosty apps source`, `source-resolve`, `source-override`, and `source-clear-override` commands with table and JSON output.
+- Local command runtime profiles prefer local overrides, then managed checkouts, then the app root when resolving their working directory.
+
+Remaining:
+
+- Add cleanup rules for abandoned managed source checkouts.
 - Add private repository credential handling through app-owned secrets or a future credential provider.
 
 ### Phase 5 - Add local command runtime adapter

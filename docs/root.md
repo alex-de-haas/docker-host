@@ -33,6 +33,7 @@ flowchart LR
 - [Browser account switching](features/account-switching.md) - browser-scoped remembered Host accounts, sidebar switching, account-set persistence, logout behavior, and cookie hygiene.
 - [User Management](features/user-management.md) - administrator user directory, local invitation links, role changes, soft-disable, and app access assignment.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
+- [Runtime source workflows](features/runtime-source-workflows.md) - Core-managed source checkout and local override commands for installed runtime apps.
 - [Multi-container modules](features/multi-container-modules.md) - module-owned containers, per-container runtime state, endpoint resolution, storage targets, lifecycle behavior, and Web UI service display.
 - [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped Codex skill for agents that wrap apps as Hosty runtime apps or update legacy Docker module compatibility manifests.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.

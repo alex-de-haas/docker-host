@@ -1,0 +1,355 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using Haas.DockerHost.Cli;
+using Spectre.Console;
+
+namespace Haas.DockerHost.Cli.Tests.Commands;
+
+public sealed class AppsCommandTests : IDisposable
+{
+    private const string RootVariable = "HOSTY_HOME";
+    private const string LegacyRootVariable = "DOCKER_HOST_HOME";
+    private readonly string? previousRoot;
+    private readonly string? previousLegacyRoot;
+    private readonly string rootDirectory;
+
+    public AppsCommandTests()
+    {
+        previousRoot = Environment.GetEnvironmentVariable(RootVariable);
+        previousLegacyRoot = Environment.GetEnvironmentVariable(LegacyRootVariable);
+        rootDirectory = Path.Combine(Path.GetTempPath(), $"hosty-apps-command-tests-{Guid.NewGuid():N}");
+        Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
+        Environment.SetEnvironmentVariable(LegacyRootVariable, null);
+    }
+
+    [Fact]
+    public async Task SourceResolveAsync_SendsExpectedControlRequest()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "appId": "com.haas.demo-app",
+              "source": {
+                "type": "git",
+                "repository": ".",
+                "resolvedRef": "main",
+                "commit": "abc123",
+                "managedCheckoutPath": "/tmp/hosty/sources/com.haas.demo-app",
+                "updatedAt": "2026-06-03T12:00:00Z"
+              }
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "source-resolve",
+            "com.haas.demo-app",
+            "--branch",
+            "main",
+            "--fetch",
+            "--format",
+            "json",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/source/resolve", server.PathAndQuery);
+        Assert.Equal("test-secret", server.Headers["X-Hosty-Test-Control"]);
+        using var body = JsonDocument.Parse(server.Body);
+        Assert.Equal("main", body.RootElement.GetProperty("branch").GetString());
+        Assert.True(body.RootElement.GetProperty("fetch").GetBoolean());
+        Assert.Contains("\"commit\":\"abc123\"", output.ToString());
+    }
+
+    [Fact]
+    public async Task SourceOverrideAsync_ResolvesPathAndSendsExpectedControlRequest()
+    {
+        var overridePath = Path.Combine(rootDirectory, "worktree");
+        Directory.CreateDirectory(overridePath);
+        using var server = new FakeCoreServer($$"""
+            {
+              "appId": "com.haas.demo-app",
+              "source": {
+                "type": "git",
+                "repository": ".",
+                "commit": "def456",
+                "managedCheckoutPath": "{{JsonEscape(Path.Combine(rootDirectory, "sources", "com.haas.demo-app"))}}",
+                "localOverridePath": "{{JsonEscape(overridePath)}}",
+                "updatedAt": "2026-06-03T12:00:00Z"
+              }
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "source-override",
+            "com.haas.demo-app",
+            "--path",
+            overridePath,
+            "--commit",
+            "def456",
+            "--format",
+            "json",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/source/override", server.PathAndQuery);
+        using var body = JsonDocument.Parse(server.Body);
+        Assert.Equal(overridePath, body.RootElement.GetProperty("path").GetString());
+        Assert.Equal("def456", body.RootElement.GetProperty("commit").GetString());
+        Assert.Contains("\"commit\":\"def456\"", output.ToString());
+    }
+
+    [Fact]
+    public async Task SourceClearOverrideAsync_UsesDeleteControlRoute()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "appId": "com.haas.demo-app",
+              "source": {
+                "type": "git",
+                "repository": ".",
+                "resolvedRef": "main",
+                "commit": "abc123",
+                "managedCheckoutPath": "/tmp/hosty/sources/com.haas.demo-app",
+                "updatedAt": "2026-06-03T12:00:00Z"
+              }
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, _) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "source-clear-override",
+            "com.haas.demo-app",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("DELETE", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/source/override", server.PathAndQuery);
+        Assert.Equal("", server.Body);
+    }
+
+    [Fact]
+    public async Task SourceResolveAsync_RejectsAmbiguousRefsBeforeCallingCore()
+    {
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "source-resolve",
+            "com.haas.demo-app",
+            "--branch",
+            "main",
+            "--tag",
+            "v1.0.0",
+        ], console);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("accepts only one of --branch, --tag, or --commit", output.ToString());
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable(RootVariable, previousRoot);
+        Environment.SetEnvironmentVariable(LegacyRootVariable, previousLegacyRoot);
+
+        if (Directory.Exists(rootDirectory))
+        {
+            Directory.Delete(rootDirectory, recursive: true);
+        }
+    }
+
+    private void WriteCoreDiscovery(FakeCoreServer server)
+    {
+        var runDirectory = Path.Combine(rootDirectory, "core", "run");
+        Directory.CreateDirectory(runDirectory);
+        File.WriteAllText(
+            Path.Combine(runDirectory, "control.json"),
+            JsonSerializer.Serialize(new
+            {
+                controlBaseUrl = server.ControlBaseUrl,
+                requiredHeaders = new Dictionary<string, string>
+                {
+                    ["X-Hosty-Test-Control"] = "test-secret",
+                },
+            }));
+    }
+
+    private static (IAnsiConsole Console, StringWriter Output) CreateConsole()
+    {
+        var output = new StringWriter();
+        var console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Out = new AnsiConsoleOutput(output),
+            Interactive = InteractionSupport.No,
+        });
+        return (console, output);
+    }
+
+    private static string JsonEscape(string value)
+        => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+
+    private sealed class FakeCoreServer : IDisposable
+    {
+        private readonly TcpListener listener;
+        private readonly Task serverTask;
+        private readonly string responseBody;
+
+        public FakeCoreServer(string responseBody)
+        {
+            this.responseBody = responseBody;
+            listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            ControlBaseUrl = $"http://127.0.0.1:{port}/control/v1";
+            serverTask = Task.Run(HandleOneRequestAsync);
+        }
+
+        public string ControlBaseUrl { get; }
+
+        public string Method { get; private set; } = "";
+
+        public string PathAndQuery { get; private set; } = "";
+
+        public string Body { get; private set; } = "";
+
+        public Dictionary<string, string> Headers { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public async Task WaitForRequestAsync()
+        {
+            var completed = await Task.WhenAny(serverTask, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(serverTask, completed);
+            await serverTask;
+        }
+
+        public void Dispose()
+        {
+            listener.Stop();
+        }
+
+        private async Task HandleOneRequestAsync()
+        {
+            try
+            {
+                using var client = await listener.AcceptTcpClientAsync();
+                await using var stream = client.GetStream();
+                using var reader = new StreamReader(
+                    stream,
+                    Encoding.UTF8,
+                    detectEncodingFromByteOrderMarks: false,
+                    bufferSize: 4096,
+                    leaveOpen: true);
+                var requestLine = await reader.ReadLineAsync() ?? "";
+                var requestParts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                Method = requestParts.ElementAtOrDefault(0) ?? "";
+                PathAndQuery = requestParts.ElementAtOrDefault(1) ?? "";
+
+                var contentLength = 0;
+                var isChunked = false;
+                string? line;
+                while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync()))
+                {
+                    var separator = line.IndexOf(':', StringComparison.Ordinal);
+                    if (separator <= 0)
+                    {
+                        continue;
+                    }
+
+                    var key = line[..separator].Trim();
+                    var value = line[(separator + 1)..].Trim();
+                    Headers[key] = value;
+                    if (string.Equals(key, "Content-Length", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _ = int.TryParse(value, out contentLength);
+                    }
+                    else if (
+                        string.Equals(key, "Transfer-Encoding", StringComparison.OrdinalIgnoreCase) &&
+                        value.Contains("chunked", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isChunked = true;
+                    }
+                }
+
+                if (contentLength > 0)
+                {
+                    var buffer = new char[contentLength];
+                    var offset = 0;
+                    while (offset < contentLength)
+                    {
+                        var read = await reader.ReadAsync(buffer.AsMemory(offset, contentLength - offset));
+                        if (read == 0)
+                        {
+                            break;
+                        }
+
+                        offset += read;
+                    }
+
+                    Body = new string(buffer, 0, offset);
+                }
+                else if (isChunked)
+                {
+                    var body = new StringBuilder();
+                    while (true)
+                    {
+                        var chunkSizeLine = await reader.ReadLineAsync();
+                        if (chunkSizeLine is null)
+                        {
+                            break;
+                        }
+
+                        var sizeToken = chunkSizeLine.Split(';', 2)[0];
+                        if (!int.TryParse(sizeToken, System.Globalization.NumberStyles.HexNumber, null, out var chunkSize))
+                        {
+                            break;
+                        }
+
+                        if (chunkSize == 0)
+                        {
+                            _ = await reader.ReadLineAsync();
+                            break;
+                        }
+
+                        var chunk = new char[chunkSize];
+                        var offset = 0;
+                        while (offset < chunkSize)
+                        {
+                            var read = await reader.ReadAsync(chunk.AsMemory(offset, chunkSize - offset));
+                            if (read == 0)
+                            {
+                                break;
+                            }
+
+                            offset += read;
+                        }
+
+                        body.Append(chunk, 0, offset);
+                        _ = await reader.ReadLineAsync();
+                    }
+
+                    Body = body.ToString();
+                }
+
+                var payload = Encoding.UTF8.GetBytes(responseBody);
+                var responseHeader = Encoding.ASCII.GetBytes(
+                    $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(responseHeader);
+                await stream.WriteAsync(payload);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+    }
+}

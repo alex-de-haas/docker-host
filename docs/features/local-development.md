@@ -70,9 +70,14 @@ Use normal app lifecycle commands while iterating:
 hosty apps list
 hosty apps logs com.haas.demo-app
 hosty apps restart com.haas.demo-app
+hosty apps source com.haas.demo-app
+hosty apps source-override com.haas.demo-app --path "$PWD"
+hosty apps source-clear-override com.haas.demo-app
 hosty apps switch-runtime-plan com.haas.demo-app --runtime docker
 hosty apps switch-runtime com.haas.demo-app --runtime docker --plan-digest <digest>
 ```
+
+Use `hosty apps source-resolve <app-id> --branch <name> --fetch` when the app should run from a Core-managed checkout. Use `source-override` when a specific local worktree should be used instead. Local override state is stored in the Hosty installation record and is not written back to the public app manifest.
 
 ## Identity Checks
 
