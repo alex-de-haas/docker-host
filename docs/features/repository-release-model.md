@@ -77,7 +77,7 @@ Builds must be independent:
 
 - `ci.yml` - shared checks on pull requests and pushes;
 - `host-image.yml` - build and push the Host Docker image;
-- `demo-module-image.yml` - legacy compatibility workflow that builds and pushes the Demo Module Docker image until the post-validation removal phase;
+- `demo-module-image.yml` - legacy compatibility workflow that builds and pushes the Demo Module Docker image until [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md);
 - `cli-release.yml` - build and publish standalone CLI artifacts;
 - optional `docs.yml` - documentation checks.
 
@@ -155,7 +155,7 @@ ghcr.io/alex-de-haas/demo-module:latest
 ghcr.io/alex-de-haas/demo-module:sha-<commit>
 ```
 
-The Demo Module image is still published to GitHub Container Registry from `demo-module-image.yml` as a legacy schema `0.3` compatibility fixture. It should not be presented as the primary first-party runtime app workflow. The workflow can be removed in the post-validation removal phase when `modules/demo-module` is deleted.
+The Demo Module image is still published to GitHub Container Registry from `demo-module-image.yml` as a legacy schema `0.3` compatibility fixture. It should not be presented as the primary first-party runtime app workflow. The workflow can be removed during [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md) when `modules/demo-module` is deleted.
 
 CLI release artifacts:
 

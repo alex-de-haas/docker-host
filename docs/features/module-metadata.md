@@ -63,7 +63,7 @@ The Host does not apply special security restrictions to metadata URLs. The admi
 
 Metadata installation does not require a trusted domain allow-list, metadata signatures, SSRF protection, special redirect handling, or warnings for common image tags such as `latest`.
 
-For `app.0.1` source metadata, Stage 2 managed source checkouts support public-readable `http`/`https` Git repositories and local filesystem repositories only. Do not put credentials in `source.repository`; Core rejects embedded credentials and SSH-style repository URLs. Private repositories should use an administrator-managed local checkout with source override until a future credential provider exists.
+For `app.0.1` source metadata, managed source checkouts support public-readable `http`/`https` Git repositories and local filesystem repositories only. Do not put credentials in `source.repository`; Core rejects embedded credentials and SSH-style repository URLs. Private repositories should use an administrator-managed local checkout with source override until a future credential provider exists.
 
 Metadata downloader reliability limits:
 

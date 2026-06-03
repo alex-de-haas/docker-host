@@ -2,7 +2,7 @@
 
 ## Description
 
-Demo Module is a repository-local Docker Host module under `modules/demo-module`. It is a small Next.js application that gives Docker Host a stable target for validating module operations during development.
+Demo Module is a legacy repository-local Docker Host module under `modules/demo-module`. It remains only as a schema `0.3` compatibility fixture until [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md). The primary first-party runtime app workflow is [Demo App](demo-app.md).
 
 The module is intentionally small but covers the module contracts Docker Host needs to validate: it exposes a dashboard, assigned Host user data from the scoped module directory, module-owned role assignments, sanitized runtime configuration, storage probes, Host gateway identity diagnostics, direct-origin shell identity bootstrap, module directory access, and a health endpoint. The metadata file exercises the current module schema with settings, module-owned storage directories, an optional external mount collection, a public HTTP runtime port, health-check metadata, resource hints, and shell UI metadata. The UI uses the same Tailwind v4, shadcn `new-york` component style, semantic theme tokens, and lucide icon library as the Host app so embedded module screens keep the Host visual language. The image is published to GitHub Container Registry as `ghcr.io/alex-de-haas/demo-module`.
 
@@ -67,7 +67,7 @@ hosty apps install apps/demo-app/manifest.json --runtime dev
 hosty apps start com.haas.demo-app
 ```
 
-The legacy `modules/demo-module` fixture remains for production metadata compatibility checks.
+The legacy `modules/demo-module` fixture remains for production metadata compatibility checks until the dedicated cleanup stage removes or replaces those checks.
 
 Run Docker Host from a built Host image and install the built demo module image as a real managed module:
 

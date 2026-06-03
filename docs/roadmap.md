@@ -12,9 +12,10 @@ flowchart TD
   B --> C["Runtime profiles and source runtimes"]
   B --> D["App auth and origin separation"]
   B --> E["Backup retention management"]
-  C --> F["Update channels"]
-  D --> F
-  E --> F
+  C --> L["Legacy demo/module removal"]
+  D --> L
+  E --> L
+  L --> F["Update channels"]
   F --> G["Agent Bridge workflow"]
 ```
 
@@ -95,32 +96,39 @@ Conflicts and constraints:
 
 ### Stage 2 - Complete runtime profiles and source runtimes
 
-Status: Partially complete, with active demo migration work.
+Status: Completed.
 
 Primary plan:
 
 - [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md)
 
-Completed foundation:
+Feature source of truth:
 
-- Installed app records store selected runtime profile state.
-- App-native lifecycle state can live in `apps.json`.
-- Legacy `modules.json` remains a compatibility fallback.
+- [Hosty runtime app platform](features/hosty-runtime-app-platform.md)
+- [Final Hosty architecture boundaries](features/final-hosty-architecture.md)
+- [Runtime source workflows](features/runtime-source-workflows.md)
+- [Local development and testing](features/local-development.md)
+- [CLI app and module commands](features/cli-module-commands.md)
+- [Docker Host domain model](features/domain-model.md)
+- [Demo App](features/demo-app.md)
 
-Next outcomes:
+Completed outcomes:
 
-- Split local-first Core and optional Shell runtime app boundaries.
-- Add source repository state and local source overrides.
-- Add a local command runtime adapter for installed apps.
-- Add existing-user CLI identity and open helpers.
-- Migrate the repository demo from legacy Demo Module workflows to an installed Demo App workflow.
-- Add runtime switching plans, starting with Docker-to-Docker and then Docker-to-source/local command switching.
+- Installed app records store selected runtime profile state and app-native lifecycle fields in app-owned records.
+- Legacy `modules.json` remains readable only as a compatibility fallback for already-installed legacy module records.
+- Hosty Core is a local-first ASP.NET Core process, Hosty Shell is a Core-managed runtime app, and the CLI is the Core bootstrap/API client.
+- Runtime apps can declare app-level source metadata; Core stores managed checkout state, immutable resolved commits, and administrator-selected local source overrides.
+- Local command runtime profiles run under Core supervision from a managed checkout, local override, or app root fallback.
+- Trusted CLI helpers can list existing Host users, issue app identity tokens, and create Shell or standalone app open links while enforcing normal access checks.
+- The primary repository demo workflow is `apps/demo-app` with an `app.0.1` manifest, Docker runtime profile, and `dev` local command runtime profile.
+- Runtime switching has reviewed plan/apply endpoints and CLI commands for Docker-to-Docker, Docker-to-localCommand, and localCommand-to-Docker switching.
+- Runtime switch apply preserves reviewed digest semantics, creates `pre-runtime-switch` backups when primary app data exists, and restores selected runtime state if restart fails.
 
 Existing behavior that must keep working:
 
 - Docker-only runtime apps with no source repository.
 - Existing app data paths, backup/restore behavior, storage mappings, settings, dependency URLs, and published ports.
-- First-party and legacy demo fixtures until they are intentionally migrated.
+- Legacy Demo Module and `modules.json` compatibility fixtures until the dedicated cleanup stage removes them.
 
 Conflicts and constraints:
 
@@ -128,6 +136,7 @@ Conflicts and constraints:
 - Do not seed deterministic development users for source runtime workflows.
 - Local command runtimes depend on a trustworthy Core/CLI supervision boundary; Core cannot safely complete its own replacement after it exits.
 - Multi-repository apps are out of scope for the first source runtime implementation.
+- Removing `modules/demo-module` and reducing `modules.json` compatibility are not Stage 2 blockers; they moved to Stage 5 after auth/origin and backup validation.
 
 ### Stage 3 - Harden app auth and origin separation
 
@@ -185,7 +194,34 @@ Conflicts and constraints:
 - Destructive backup actions need confirmation.
 - Manual filesystem cleanup should remain a documented fallback, not the primary workflow.
 
-### Stage 5 - Add update channels
+### Stage 5 - Retire legacy demo/module compatibility
+
+Status: Planned.
+
+Primary plan:
+
+- [Legacy Demo Module Removal](planning/legacy-demo-module-removal.md)
+
+Key outcomes:
+
+- Remove `modules/demo-module` as the first-party legacy schema `0.3` compatibility fixture.
+- Remove Demo Module CI/image publishing and fixture routes after Demo App published image workflows are live-smoked.
+- Reduce `modules.json` from a required app lifecycle store to an explicit migration/import compatibility input where still needed.
+- Update feature docs so Demo App and `app.0.1` manifests are the only first-party runtime app workflow.
+
+Prerequisites:
+
+- Stage 2 runtime/source workflows completed.
+- Stage 3 app auth and split-origin validation no longer depends on legacy Demo Module identity behavior.
+- Stage 4 backup retention validation no longer depends on legacy module storage layout.
+- Live Docker daemon smoke tests pass for published Demo App image workflows.
+
+Conflicts and constraints:
+
+- Do not delete compatibility behavior that is still needed for existing installations without an explicit migration/import path.
+- Do not keep Demo Module as a parallel first-party workflow after the cleanup starts.
+
+### Stage 6 - Add update channels
 
 Status: Deferred.
 
@@ -214,7 +250,7 @@ Conflicts and constraints:
 - Runtime profile switching and channel switching are separate axes unless a reviewed plan explicitly combines them.
 - A `stable` channel is intentionally deferred until there is a promotion process separate from `main`.
 
-### Stage 6 - Add Agent Bridge workflows
+### Stage 7 - Add Agent Bridge workflows
 
 Status: Deferred.
 
@@ -248,6 +284,7 @@ Conflicts and constraints:
 - [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - runtime profile state, app-native lifecycle records, Core/Shell split, source checkouts, local command runtimes, and runtime switching.
 - [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - app-scoped auth, standalone app launch, Shell launch, and Core/Shell public origin split.
 - [App Data Backup Retention](planning/app-data-backup-retention.md) - retention policy, cleanup previews, scheduled cleanup, and Shell/CLI backup management controls.
+- [Legacy Demo Module Removal](planning/legacy-demo-module-removal.md) - post-validation cleanup for Demo Module, legacy fixture CI, and `modules.json` lifecycle compatibility.
 - [Update Channels](planning/update-channels.md) - generated channel indexes, product/runtime channel selection, pull request channels, and channel cleanup.
 - [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and PR channel validation.
 - [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation and accepted target model decisions.
@@ -267,11 +304,11 @@ Before completing a roadmap stage, validate the old features that interact with 
 ## Open Questions And Recommendations
 
 - Question: What should be implemented immediately after Core/Shell stabilization?
-  Answer: The planning docs point to runtime profiles/source runtimes, app auth hardening, and backup retention as the next practical workstreams.
-  Recommendation: Finish Shell lifecycle, auth, users, and backup controls first, then split follow-up work by subsystem instead of mixing channels or Agent Bridge into the stabilization branch.
+  Answer: Runtime profiles/source runtimes are complete. The next practical workstreams are app auth/origin hardening and backup retention.
+  Recommendation: Finish Stage 3 and Stage 4 validation, then retire legacy Demo Module compatibility before update channels.
 
 - Question: When should update channels move from deferred to active?
-  Answer: After Core/Shell management is stable and repository/source runtime state exists for apps that need branch or pull request validation.
+  Answer: After Core/Shell management is stable, repository/source runtime state exists, app auth/open flows are validated, backup behavior is stable, and legacy Demo Module compatibility has been retired or explicitly isolated.
   Recommendation: Start with generated `main` product channel validation before exposing user-facing runtime app channel switching.
 
 - Question: When should small ideas from `docs/todo.md` become planning documents?

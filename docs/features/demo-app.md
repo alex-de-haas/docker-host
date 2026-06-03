@@ -1,6 +1,6 @@
 # Demo App
 
-Demo App is the repository-local Hosty runtime app under `apps/demo-app`. It is the primary first-party app used to validate runtime app lifecycle work, source overrides, local command runtime profiles, Hosty identity, scoped app directory access, storage probes, and app-owned roles.
+Demo App is the repository-local Hosty runtime app under `apps/demo-app`. It is the primary first-party app used to validate runtime app lifecycle work, source overrides, local command runtime profiles, runtime switching, Hosty identity, scoped app directory access, storage probes, and app-owned roles.
 
 ```mermaid
 flowchart LR
@@ -46,6 +46,8 @@ hosty apps source-override com.haas.demo-app --path "$PWD"
 hosty apps restart com.haas.demo-app
 ```
 
+This installed-app loop replaces the removed legacy developer harness. Local checks should use Core-managed app lifecycle, existing Host users, app assignments, source overrides, and `hosty apps identity` or `hosty apps open`; they should not seed deterministic development users or inject fake identity headers.
+
 ## Legacy Fixture
 
-The legacy `modules/demo-module` package remains as a schema `0.3` metadata compatibility fixture until the post-validation removal phase. New first-party runtime app workflows should use `apps/demo-app/manifest.json`.
+The legacy `modules/demo-module` package remains as a schema `0.3` metadata compatibility fixture until [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md). New first-party runtime app workflows should use `apps/demo-app/manifest.json`.

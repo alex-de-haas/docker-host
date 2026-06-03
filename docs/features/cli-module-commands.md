@@ -48,11 +48,22 @@ hosty apps start <app-id>
 hosty apps stop <app-id>
 hosty apps restart <app-id>
 hosty apps update <app-id>
+hosty apps switch-runtime-plan <app-id> --runtime <key>
+hosty apps switch-runtime <app-id> --runtime <key> --plan-digest <digest>
+hosty apps source <app-id>
+hosty apps source-resolve <app-id>
+hosty apps source-override <app-id> --path <worktree>
+hosty apps source-clear-override <app-id>
+hosty apps health <app-id>
+hosty apps identity <app-id> --user <email-or-id>
+hosty apps open <app-id> --user <email-or-id> --mode shell|standalone
 hosty apps backup <app-id>
 hosty apps backups <app-id>
 hosty apps restore <app-id> <backup-id>
 hosty apps remove <app-id> [--delete-data]
 ```
+
+Source, health, runtime switching, identity, and open commands call Core trusted-control APIs. The CLI renders plans and summaries, but Core owns source policy, selected-runtime mutation, local command process supervision, identity issuance, and access checks.
 
 Compatibility aliases remain:
 

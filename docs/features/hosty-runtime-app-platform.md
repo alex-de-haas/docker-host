@@ -1,6 +1,6 @@
 # Hosty runtime app platform
 
-This document describes the implemented Hosty compatibility foundation that broadens Docker Host from Docker-only modules toward a Hosty Core, Shell, and runtime app model.
+This document describes the implemented Hosty compatibility and runtime foundation that broadens Docker Host from Docker-only modules toward a Hosty Core, Shell, and runtime app model.
 
 ## Description
 
@@ -13,7 +13,7 @@ Hosty is the target product model for the current Docker Host implementation. Th
 - **Manifest** - the public contract name for app metadata. Legacy `metadata.json` remains a compatibility format.
 - **Runtime profile** - the way an app runs, such as Docker image or local command.
 
-The implementation is intentionally incremental. Docker remains the first runtime adapter and many control routes still use module-oriented names, but app-oriented lifecycle records are persisted in `apps.json` through compatibility adapters. Legacy `modules.json` records remain readable for already-installed legacy modules.
+The implementation is intentionally incremental. Docker remains the first production-oriented runtime adapter and many compatibility routes still use module-oriented names. The local-first Core stores app-owned state under `apps/<app-id>/state.json`; the legacy Next compatibility layer persists app-oriented records in `apps.json`. Legacy `modules.json` records remain readable for already-installed legacy modules until the dedicated cleanup stage removes or migrates that dependency.
 
 ```mermaid
 flowchart LR
@@ -92,9 +92,12 @@ The target app layout for new app-oriented records is:
   apps.json
   apps/
     <app-id>/
+      state.json
       manifest.json
       data/
   backups/
+    <app-id>/
+  sources/
     <app-id>/
 ```
 
@@ -121,6 +124,22 @@ Current implementation details:
 - Compatibility code is isolated around root resolution, registry reading/writing, manifest path resolution, lifecycle state projection, and CLI aliases so it can be removed later.
 
 Routine update does not migrate legacy physical data directories. Legacy modules discovered only from `modules.json` remain readable through the compatibility path.
+
+## Runtime profile and lifecycle state
+
+Runtime app manifests declare mutually exclusive runtime profiles. Hosty stores the selected runtime instead of reselecting the manifest default during update or runtime refresh. If a refreshed manifest no longer contains the installed selected runtime, planning fails with a validation error instead of silently switching the app.
+
+The local-first Core app record owns the runtime lifecycle fields needed by ordinary app operations:
+
+- selected runtime and selected channel;
+- operation status, runtime state, last operation, and last error;
+- settings values, with secret values treated as write-only at API and UI boundaries;
+- storage mappings and primary app data location;
+- dependency contracts and resolved endpoint URLs;
+- endpoint contracts and public/browser URLs;
+- source state, including repository metadata, resolved ref, immutable commit, managed checkout path, local override path, and update timestamp.
+
+Compatibility stores keep legacy modules readable while new app-oriented workflows move to app-owned state. New Core runtime app operations should resolve lifecycle state through the app record first and use legacy module records only when explicitly handling installed legacy modules.
 
 ## System apps and runtime apps
 
@@ -361,8 +380,8 @@ hosty apps restore <app-id> <backup-id>
 
 The following concepts remain planned or deferred:
 
-- remaining Shell lifecycle management UI, simplified install/update review, Core/Shell auth hardening, user management, and backup controls, tracked in [Core Shell Stabilization](../planning/core-shell-stabilization.md);
 - generated product channel publishing, runtime app channel UI, pull request channels, and channel cleanup, deferred in [Update Channels](../planning/update-channels.md);
 - standalone auth redirect hardening, optional gateway-protected app mode, and complete separate public origin validation, tracked in [App Auth And Origin Separation](../planning/app-auth-and-origin-separation.md);
-- scheduled backup retention, backup retention previews, and Shell/CLI backup management controls, tracked in [App Data Backup Retention](../planning/app-data-backup-retention.md);
+- scheduled backup retention, backup retention previews, and CLI prune/delete commands, tracked in [App Data Backup Retention](../planning/app-data-backup-retention.md);
+- legacy Demo Module fixture removal and `modules.json` lifecycle compatibility cleanup, tracked in [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md);
 - agent bridge annotations, repository edits, and pull request channel promotion, deferred in [Agent Bridge Workflow](../planning/agent-bridge-workflow.md).

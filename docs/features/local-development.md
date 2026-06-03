@@ -120,6 +120,8 @@ hosty apps open com.haas.demo-app --user user@docker-host.local --mode shell
 hosty apps open com.haas.demo-app --user user@docker-host.local --mode standalone
 ```
 
+The CLI helpers use existing enabled Host users and normal app access checks. Disabled users, missing app assignments, incompatible exposure policy, and unavailable runtime state fail instead of silently issuing app identity. There is no deterministic development-user seeding or default bypass flag in the local source runtime workflow.
+
 Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
 
 ## Production-Like Container Testing

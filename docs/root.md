@@ -34,6 +34,7 @@ flowchart LR
 - [User Management](features/user-management.md) - administrator user directory, local invitation links, role changes, soft-disable, and app access assignment.
 - [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
 - [Runtime source workflows](features/runtime-source-workflows.md) - Core-managed source checkout and local override commands for installed runtime apps.
+- [Runtime profile switching](features/runtime-source-workflows.md#runtime-switch-reviews) - reviewed Docker/local command runtime switching, selected-runtime state, pre-switch backups, and rollback behavior.
 - [Multi-container modules](features/multi-container-modules.md) - module-owned containers, per-container runtime state, endpoint resolution, storage targets, lifecycle behavior, and Web UI service display.
 - [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped Codex skill for agents that wrap apps as Hosty runtime apps or update legacy Docker module compatibility manifests.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
@@ -51,10 +52,11 @@ flowchart LR
 ## Planning
 
 - For the high-level sequence, dependencies, and conflicts across planning documents, see [Roadmap](roadmap.md).
-- [Core Shell Stabilization](planning/core-shell-stabilization.md) - active implementation plan for local Core/Shell development, Shell lifecycle UI, simplified install/update reviews, auth, user management, and backup controls.
+- [Core Shell Stabilization](planning/core-shell-stabilization.md) - completed implementation plan for local Core/Shell development, Shell lifecycle UI, simplified install/update reviews, auth, user management, and backup controls.
 - [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation plan for Hosty Core, Shell/system apps, runtime apps, manifest contract, app registry, and backups.
-- [Update Channels](planning/update-channels.md) - deferred architecture plan for generated channel indexes, pull request validation channels, and optional CLI update channels.
-- [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - planned runtime switching, repository source records, checkout cache, and local command runtime execution.
+- [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - completed Stage 2 plan for runtime profile state, source records, checkout cache, local command runtime execution, and runtime switching.
 - [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - planned standalone app auth, optional gateway protection, and split Core/Shell public origins.
-- [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - deferred Shell annotation to agent, branch/PR, and PR channel validation workflow.
 - [App Data Backup Retention](planning/app-data-backup-retention.md) - remaining backup retention previews, scheduled cleanup, and Shell/CLI backup management controls.
+- [Legacy Demo Module Removal](planning/legacy-demo-module-removal.md) - planned post-validation cleanup for the legacy Demo Module fixture and `modules.json` lifecycle compatibility.
+- [Update Channels](planning/update-channels.md) - deferred architecture plan for generated channel indexes, pull request validation channels, and optional CLI update channels.
+- [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - deferred Shell annotation to agent, branch/PR, and PR channel validation workflow.

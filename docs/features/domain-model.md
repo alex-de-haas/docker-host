@@ -72,6 +72,20 @@ Runtime app summaries include:
 - capabilities;
 - browser entrypoint when the app has UI.
 
+### App record
+
+The local-first Core stores installed runtime app state under `apps/<app-id>/state.json`. The legacy Next compatibility layer can still project app-oriented records through root-level `apps.json`.
+
+An app record owns the lifecycle and planning state for app-oriented workflows:
+
+- selected runtime and selected channel;
+- operation status, runtime state, last operation, and last error;
+- manifest source and local manifest copy path;
+- settings values, storage mappings, dependency contracts, and endpoint contracts;
+- source repository state, managed checkout path, local override path, resolved ref, immutable commit, and update timestamp.
+
+New Core lifecycle, source, identity, backup, and runtime switching operations should resolve app state from the app record. Legacy `modules.json` is only a compatibility source for installed legacy modules until the legacy cleanup stage removes or migrates that dependency.
+
 ### System app
 
 A system app is Hosty-owned and supports the platform. Hosty Shell is currently synthesized as a non-removable system app with `id: "hosty.shell"`.
@@ -107,6 +121,7 @@ Each new app-oriented install has a directory under:
 
 The directory contains:
 
+- `state.json` - local-first Core app record for installed runtime app lifecycle and source state;
 - `manifest.json` - local copy of the source manifest document;
 - `data/` - primary app data directory when the app uses local persistent data.
 
@@ -158,10 +173,12 @@ The standalone `hosty` CLI reads this file for Host lifecycle commands. `docker-
 | Path | Owner | Responsibility |
 | --- | --- | --- |
 | `~/.hosty/config/launch.env` | CLI | Host container launch settings. |
-| `~/.hosty/apps.json` | Host backend | App-oriented registry with manifest source, selected runtime, selected channel, and timestamps. |
+| `~/.hosty/apps.json` | Host backend | Legacy Next compatibility registry with manifest source, selected runtime, selected channel, and timestamps. |
+| `~/.hosty/apps/<app-id>/state.json` | Hosty Core | App-owned lifecycle, selected runtime, source state, settings, storage, dependency, endpoint, and error state. |
 | `~/.hosty/apps/<app-id>/manifest.json` | Host backend | Local copy of downloaded app manifest. |
 | `~/.hosty/apps/<app-id>/data/` | Host backend | Primary app data directory for new app-oriented installs. |
 | `~/.hosty/backups/<app-id>/` | Host backend | ZIP app data backups and JSON backup metadata. |
+| `~/.hosty/sources/<app-id>/` | Hosty Core | Managed source checkout/cache root for repository-backed runtime apps. |
 | `~/.hosty/modules.json` | Host backend | Legacy installed module registry, persistent module state, and Host-owned settings. |
 | `~/.hosty/modules/<module-id>/metadata.json` | Host backend | Local copy of downloaded legacy module metadata. |
 | `~/.hosty/modules/<module-id>/<storage-key>/` | Host backend | Legacy bind-mount target for module-owned persistent storage. |

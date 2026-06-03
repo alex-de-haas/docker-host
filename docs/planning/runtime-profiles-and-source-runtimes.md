@@ -2,17 +2,19 @@
 
 ## Description
 
-This plan covers the next runtime layer after the Hosty compatibility foundation. The current implementation can parse `app.0.1` Docker and local command runtime profiles, stores `selectedRuntime` in `apps.json`, and installs Docker runtime profiles through the legacy module engine. It does not yet switch runtime profiles after install, execute repository/local command runtime profiles in production, or maintain source checkouts.
+This completed Stage 2 plan covers the runtime layer after the Hosty compatibility foundation. The implementation parses `app.0.1` Docker and local command runtime profiles, stores `selectedRuntime` and app-native lifecycle state in app-owned records, maintains app source state and managed checkouts, executes local command runtime profiles through Core, and supports reviewed runtime switching between Docker and local command profiles.
+
+This document is now historical planning context. The implemented behavior is documented in [Hosty runtime app platform](../features/hosty-runtime-app-platform.md), [Final Hosty architecture boundaries](../features/final-hosty-architecture.md), [Runtime source workflows](../features/runtime-source-workflows.md), [Local development and testing](../features/local-development.md), [CLI app and module commands](../features/cli-module-commands.md), [Docker Host domain model](../features/domain-model.md), and [Demo App](../features/demo-app.md).
 
 Accepted planning change: the legacy developer harness is not migrating to a new app-manifest dev mode. Hosty should remove the separate developer harness workflow, dev-only metadata, deterministic dev-user seeding, and separate local target state. Local app development should instead use a normal installed runtime app with a source/local command runtime, optional local source override state, existing Host users, and trusted CLI helpers that can list users and issue short-lived app identity for those users.
 
-The same source/local command runtime model applies to default Hosty-managed apps. Today the repository has one combined Host app that contains the future Core and Shell. After the split, Core is the local platform process and Shell is a default optional Hosty-managed runtime app. Shell can use managed source checkouts or local source overrides like other managed apps. The self-hosting boundary is explicit: Core or the currently combined Host cannot fully supervise its own runtime replacement after it stops, so switching or restarting Core requires the trusted CLI or another outer supervisor. Shell-only runtime changes can be managed by Core after Shell is split out.
+The same source/local command runtime model applies to default Hosty-managed apps. Stage 2 split the combined Host direction into a local platform process, Hosty Core, and a default optional Hosty-managed runtime app, Hosty Shell. Shell can use managed source checkouts or local source overrides like other managed apps. The self-hosting boundary is explicit: Core cannot fully supervise its own runtime replacement after it stops, so switching or restarting Core requires the trusted CLI or another outer supervisor. Shell-only runtime changes can be managed by Core.
 
-The target Core launch model is local-first. The current Docker-hosted Next implementation should split into Hosty Core as a long-running ASP.NET Core single-file process using Minimal APIs and Hosty Shell as an optional Next.js Docker runtime app before local command execution becomes the main runtime workflow. Core owns runtime state, planning, access checks, user state, settings, identity, and control APIs. The CLI is the Core bootstrap wrapper and local API client.
+The Stage 2 Core launch model is local-first. Hosty Core is a long-running ASP.NET Core process using Minimal APIs, and Hosty Shell is an optional Next.js runtime app. Core owns runtime state, planning, access checks, user state, settings, identity, and control APIs. The CLI is the Core bootstrap wrapper and local API client.
 
 A native tray/menu-bar companion is deferred. The first local-first Core implementation should expose running/stopped state and control through the `hosty` CLI and Core health/status APIs instead of requiring a platform-specific desktop companion.
 
-Recommended implementation order:
+Completed implementation order:
 
 1. Make runtime profile state explicit and stable.
 2. Refactor lifecycle state into the app-oriented store.
@@ -25,7 +27,8 @@ Recommended implementation order:
 9. Add Docker-to-Docker runtime switching.
 10. Add Docker-to-source/localCommand switching.
 11. Validate and document runtime/source workflows.
-12. Remove legacy demo/module compatibility after validation proves it is no longer needed.
+
+The legacy demo/module compatibility removal that was previously tracked as the final cleanup phase has moved to [Legacy Demo Module Removal](legacy-demo-module-removal.md). That cleanup is intentionally not a Stage 2 blocker because it depends on later auth/origin, backup, release, and live Docker validation.
 
 This intentionally pulls source and local command execution ahead of Docker-to-Docker switching because the old developer harness is being removed instead of extended. The tradeoff is a larger source-runtime implementation earlier in the plan, but it avoids investing more work in soon-to-be-removed dev-only metadata and user seeding.
 
@@ -44,7 +47,6 @@ flowchart LR
   D --> E["Docker runtime switching"]
   D --> H["Docker/source switching"]
   H --> V["Validation and docs"]
-  V --> R["Legacy removal phase"]
 ```
 
 ## Milestones
@@ -53,7 +55,7 @@ flowchart LR
 
 **Status**: Completed
 
-- Keep `selectedRuntime` in `apps.json` for app-oriented installs.
+- Keep `selectedRuntime` in app-owned records for app-oriented installs.
 - Preserve the original app manifest enough to re-plan other runtime profiles later.
 - Return selected runtime in app summaries and CLI app list output.
 - Add validation that installed records point to a runtime profile still present in the refreshed manifest.
@@ -61,7 +63,7 @@ flowchart LR
 
 Implemented so far:
 
-- `apps.json` stores `selectedRuntime`.
+- App-owned records store `selectedRuntime`.
 - `app.0.1` manifests can declare multiple app-level runtime profiles and multiple services per selected profile.
 - Docker service runtimes from the selected profile are normalized into the existing module install/update engine.
 - Local command service runtimes are parsed and normalized for future planning.
@@ -111,7 +113,7 @@ Implemented so far:
 - Defer arbitrary third-party web app wrapping, gateway-protected browser UI mode, and reverse-proxy page wrapping to a separate future plan.
 - Keep service/API endpoint exposure distinct from browser UI launch.
 - Define migration boundaries for current Next routes: Core-owned API/state/auth/lifecycle routes move to Core, while Shell-owned pages/components move to the Shell runtime app.
-- Keep the current Docker-hosted Next implementation only as a migration compatibility state until local-first Core can own runtime execution.
+- Keep the legacy Docker-hosted Next implementation only as a migration compatibility state until local-first Core can own runtime execution.
 
 Implemented so far:
 
@@ -202,7 +204,7 @@ Completed in the Demo App migration pass:
 - Demo App user-facing defaults and UI copy use Demo App terminology instead of presenting the app as the legacy Demo Module.
 - Root documentation links to `docs/features/demo-app.md` as the primary first-party runtime app workflow.
 - CI uses current Stage 2 package scripts for Shell, Demo App, Core, and CLI, while keeping a separate legacy Demo Module compatibility job until removal.
-- `modules/demo-module` remains as a legacy schema `0.3` metadata compatibility fixture. Delete it only in the dedicated post-validation removal phase.
+- `modules/demo-module` remains as a legacy schema `0.3` metadata compatibility fixture. Delete it only in [Legacy Demo Module Removal](legacy-demo-module-removal.md).
 
 ### Phase 8 - Add default app source/local runtime workflows
 
@@ -271,16 +273,7 @@ Implemented so far:
 - Root `npm run ci` validates Shell build, Demo App build, Core build/tests, and CLI build/tests.
 - Runtime profile authoring guidance, source checkout storage/cleanup behavior, runtime switch reviews, self-runtime boundaries, and local command platform constraints are documented in feature docs.
 
-Live Docker daemon smoke tests for published image workflows should run before Phase 12 removal, but they are not a Stage 2 code-path blocker.
-
-### Phase 12 - Remove legacy demo/module compatibility
-
-**Status**: Deferred to a dedicated removal pass after Stage 2
-
-- Remove `modules/demo-module` only after first-party demo workflows, release docs, fixture routes, and tests no longer depend on legacy `schemaVersion: "0.3"` metadata.
-- Remove legacy `modules.json` as a required app lifecycle store only after app-native lifecycle records and first-party `app.0.1` demo workflows cover install, update, start, stop, restart, configure, remove, recovery, gateway routing, identity, assignments, backup, restore, and delete-data behavior.
-- Keep an explicit migration/import path for already-installed legacy modules if backward compatibility is still required.
-- Remove any remaining docs that present legacy Demo Module as the primary first-party workflow.
+Live Docker daemon smoke tests for published image workflows should run before [Legacy Demo Module Removal](legacy-demo-module-removal.md), but they are not a Stage 2 code-path blocker.
 
 ## Resolved Decisions
 
@@ -316,6 +309,7 @@ Live Docker daemon smoke tests for published image workflows should run before P
 - Local command runtimes are allowed by the manifest model, but production execution should allow them only when the working directory is Hosty-managed or explicitly configured by an administrator.
 - Runtime switching and channel switching remain separate commands first; channel switching must not implicitly switch runtime unless a reviewed plan explicitly confirms it.
 - Managed source checkouts in Stage 2 support public-readable `http`/`https` repositories and local filesystem repositories only. Core rejects embedded credentials and SSH-style repository URLs, and git subprocesses run with interactive credential prompts disabled. Private repositories are handled through administrator-managed local source overrides until a future Core-owned credential provider is designed.
+- Legacy demo/module compatibility removal is a later cleanup stage, not a Stage 2 completion criterion.
 
 ## Open Questions And Recommendations
 

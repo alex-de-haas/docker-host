@@ -108,7 +108,7 @@ Core includes two runtime adapters:
   - writes stdout/stderr logs under `apps/<app-id>/logs/`;
   - injects the same app data, settings, dependency URL, port, and Core identity/config environment as Docker runtimes.
 
-Runtime switching uses reviewed plan digests and does not create automatic backups.
+Runtime switching uses reviewed plan digests. When the app has a primary data directory, switch apply creates a `pre-runtime-switch` backup before mutation. If a running app fails to start after switching, Core restores the previous selected runtime in app state, leaves the app stopped, records the error, and keeps the backup available for normal restore workflows.
 
 ## Source and channels
 
@@ -161,7 +161,8 @@ Backup rules are global in the current final plan:
 - Core creates an automatic backup before runtime app update when the app has a primary data directory.
 - Core keeps the last 5 automatic pre-update backups per app.
 - Core keeps all manual backups until explicit deletion.
-- Start, stop, restart, configure, open, and runtime switch operations do not create automatic backups.
+- Start, stop, restart, configure, and open operations do not create automatic backups.
+- Runtime switch apply creates a `pre-runtime-switch` backup when the app has a primary data directory.
 - Scheduled backups, age-based cleanup, and per-app retention overrides are deferred.
 
 Runtime app update planning does not mutate app data schemas. The runtime app owns its own data migration behavior when it starts after an update.
