@@ -123,10 +123,17 @@ internal static class HostyCoreApplication
             "Hosty Core Recovery",
             "Hosty Core owns local administrator recovery.",
             config), "text/html"));
-        app.MapGet("/logout", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
-            "Hosty Core Logout",
-            "Hosty Core owns logout and session cleanup.",
-            config), "text/html"));
+        app.MapGet("/logout", async (
+            HttpRequest request,
+            HttpResponse response,
+            HostyCoreRuntimeConfig config,
+            UserDirectoryStore users,
+            IClock clock,
+            CancellationToken cancellationToken) =>
+        {
+            await AuthEndpoints.LogoutAsync(request, response, users, clock, cancellationToken);
+            return Results.Redirect(config.ShellPublicOrigin ?? "/login");
+        });
         app.MapGet("/api/auth/callback/oidc", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
             "Hosty Core OIDC Callback",
             "Hosty Core owns external auth callbacks.",

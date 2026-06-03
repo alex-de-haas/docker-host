@@ -57,19 +57,7 @@ internal static class AuthEndpoints
 
         app.MapPost("/api/auth/logout", async (HttpRequest request, HttpResponse response, UserDirectoryStore users, IClock clock, CancellationToken cancellationToken) =>
         {
-            var state = await users.ReadAsync(cancellationToken);
-            var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
-            if (!string.IsNullOrWhiteSpace(sessionId))
-            {
-                var sessions = state.Sessions
-                    .Select(session => string.Equals(session.Id, sessionId, StringComparison.Ordinal)
-                        ? session with { RevokedAt = clock.UtcNow }
-                        : session)
-                    .ToArray();
-                await users.WriteAsync(state with { Sessions = sessions }, cancellationToken);
-            }
-
-            response.Cookies.Delete(CoreSessionAuthorization.SessionCookieName);
+            await LogoutAsync(request, response, users, clock, cancellationToken);
             return Results.Json(new LogoutResponse("logged_out"));
         });
 
@@ -128,6 +116,28 @@ internal static class AuthEndpoints
         });
 
         return new AuthSessionCreateResult(true, user);
+    }
+
+    internal static async Task LogoutAsync(
+        HttpRequest request,
+        HttpResponse response,
+        UserDirectoryStore users,
+        IClock clock,
+        CancellationToken cancellationToken)
+    {
+        var state = await users.ReadAsync(cancellationToken);
+        var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            var sessions = state.Sessions
+                .Select(session => string.Equals(session.Id, sessionId, StringComparison.Ordinal)
+                    ? session with { RevokedAt = clock.UtcNow }
+                    : session)
+                .ToArray();
+            await users.WriteAsync(state with { Sessions = sessions }, cancellationToken);
+        }
+
+        response.Cookies.Delete(CoreSessionAuthorization.SessionCookieName);
     }
 }
 

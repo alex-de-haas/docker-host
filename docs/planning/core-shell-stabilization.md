@@ -54,7 +54,7 @@ Notes:
 
 ### Phase 2 - Restore Shell lifecycle management
 
-**Status**: In Progress
+**Status**: Completed
 
 - Show system apps and runtime apps with current runtime state, operation status, selected runtime, version, and last error.
 - Add Shell actions for start, stop, restart, open, update, logs, backup, restore, configure, and remove where each action is allowed.
@@ -62,22 +62,33 @@ Notes:
 - Keep legacy module and app-native runtime app management flows covered by the new Shell UI.
 - Test old CLI/control lifecycle flows against the new Shell-visible app state.
 
-Implemented so far:
+Completed implementation:
 
 - Core exposes public browser lifecycle endpoints for Shell under `/api/apps/{appId}/start`, `/api/apps/{appId}/stop`, `/api/apps/{appId}/restart`, `/api/apps/{appId}/logs`, and `/api/apps/{appId}/backups`.
+- Core exposes Shell-facing browser endpoints for configure, update plan/apply, remove, backup restore, and backup delete with the same Core session, admin, CORS, and CSRF rules as lifecycle mutations.
 - Core `/api/apps` now requires an active Core session and filters system/runtime app summaries by role and app assignment.
+- Core app summaries include safe setting metadata for Shell configure forms. Secret setting values are not returned.
 - Public browser lifecycle mutations require an active Core session, `host.admin`, and a matching `X-Hosty-CSRF` token.
-- Shell app cards can start, stop, restart, open, and create manual backups for manageable runtime apps.
-- Shell hides lifecycle mutation controls for the active `hosty.shell` app while Core control APIs can still manage Shell from CLI/local control.
+- Shell app cards can start, stop, restart, open, create manual backups, open logs, list backups, configure settings, review update plans, and open remove controls for manageable runtime apps.
+- Shell backup details can create, list, restore, and delete backups. Restore is disabled while the app is running.
+- Shell hides self-stop, self-restart, and self-remove controls for the active `hosty.shell` app while leaving safe diagnostics such as logs visible.
+- Shell update details show the app identity, version change, runtime change, backup behavior, plan digest, and changes before applying an update.
 
-Remaining:
+Completed browser smoke on 2026-06-03:
 
-- Add Shell update, configure, restore, remove, log viewing, and backup list/restore/delete views.
-- Add focused browser smoke coverage for Shell lifecycle controls against Core public APIs.
+- Installed the repository demo app through the Core control install endpoint and verified it appeared in Shell app state.
+- Verified Shell unauthenticated loading, Core login, authenticated `/api/apps`, and runtime app action rendering.
+- Opened logs, backups, configure, update, and remove details for a runtime app without framework overlay or console errors.
+- Created a manual backup through Shell and verified the backup row, restore control, and delete control.
+- Saved demo app settings through Shell configure and verified Core returned the updated app state.
+- Loaded an update plan through Shell and verified digest/change rendering without applying the destructive update.
+- Installed a temporary local command smoke app through Core control and verified Shell start and stop switched runtime state between `stopped` and `running`.
+- Verified logs for the smoke app included process output after Shell start/stop.
+- Confirmed `hosty.shell` exposes logs/open only and does not expose self-start, self-stop, self-restart, or self-remove controls.
 
 ### Phase 3 - Simplify install and update review
 
-**Status**: Not Started
+**Status**: Completed
 
 - Replace highly technical install/update plan views with a concise review surface.
 - Show the app/package identity, current digest, target digest, selected runtime, version change, and primary action.
@@ -85,15 +96,42 @@ Remaining:
 - Hide storage mappings, mount details, dependency internals, and endpoint internals unless the target app declares user-configurable storage or a real conflict needs attention.
 - Preserve technical details behind diagnostics or an expandable advanced section for administrators.
 
+Completed implementation:
+
+- Core exposes `/api/apps/install/plan` for admin Shell review before install. The plan returns app identity, action, current and target versions, selected runtime, runtime type, manifest path, current and target manifest digests, selected channel, and safe setting defaults.
+- Core exposes `/api/apps/install` for admin Shell install apply with CSRF validation.
+- Install apply accepts reviewed setting values and stores them in the installed app state.
+- Shell exposes an `Install app` review panel for administrators.
+- Shell install review shows identity, version, runtime, digest, and a settings form only when the manifest declares settings.
+- Shell update review uses the same concise surface pattern: version/runtime changes, backup behavior, digest, and changes.
+- Existing low-level storage mappings, dependency internals, endpoint internals, and advanced runtime details stay out of the primary Shell review surface.
+
+Completed browser smoke on 2026-06-03:
+
+- Reviewed a temporary install manifest through Shell and verified identity, digest, runtime, and settings rendering.
+- Applied the install through Shell and verified the new runtime app appeared in the app list without framework overlay or console errors.
+
 ### Phase 4 - Stabilize Core/Shell authentication
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Keep Core-owned auth pages and sessions.
 - Ensure split-origin Shell-to-Core requests work with credentials, CSRF expectations, and CORS configuration.
 - Make Shell display active session state and redirect to Core login/logout flows cleanly.
 - Validate app-scoped identity, Shell launch links, and standalone open links with existing Host users.
 - Keep runtime apps from receiving Hosty browser cookies directly.
+
+Implemented so far:
+
+- Core owns the development login helper and creates normal Core session cookies for local browser smoke tests.
+- Shell loads Core status and session state before requesting authenticated app data.
+- Core CORS and Shell development origins are validated for split-process local development.
+- Core `/logout` now revokes the active Core session cookie and redirects back to Shell, matching the Shell logout link.
+- Browser smoke verified Shell logout returns to `No active Core session` without surfacing an `/api/apps` 401 error.
+
+Remaining:
+
+- Validate app-scoped identity, Shell launch links, standalone app launch, and runtime app cookie isolation with existing Host users.
 
 ### Phase 5 - Restore user management in Shell
 

@@ -126,6 +126,7 @@ internal sealed record AppSummary(
     string? LastOperation,
     string? LastError,
     IReadOnlyList<string> Capabilities,
+    IReadOnlyList<AppSettingSummary> Settings,
     IReadOnlyList<AppEndpointContract> Endpoints)
 {
     public static AppSummary From(AppRecord app)
@@ -144,5 +145,11 @@ internal sealed record AppSummary(
             app.LastOperation,
             app.LastError,
             app.Capabilities,
+            app.Settings.Values
+                .OrderBy(setting => setting.Key, StringComparer.Ordinal)
+                .Select(setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret))
+                .ToArray(),
             app.Endpoints);
 }
+
+internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret);

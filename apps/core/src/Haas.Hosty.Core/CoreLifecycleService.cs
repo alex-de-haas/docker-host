@@ -10,6 +10,42 @@ internal sealed class CoreLifecycleService(
     AppBackupService backups,
     IEnumerable<IAppRuntimeAdapter> adapters)
 {
+    public async Task<AppInstallPlan> CreateInstallPlanAsync(AppInstallPlanRequest request, CancellationToken cancellationToken = default)
+    {
+        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
+        var existing = await apps.GetAppAsync(selection.Manifest.Id!, cancellationToken);
+        string? currentManifestDigest = null;
+        if (!string.IsNullOrWhiteSpace(existing?.ManifestPath) && File.Exists(existing.ManifestPath))
+        {
+            try
+            {
+                currentManifestDigest = (await manifests.LoadAsync(existing.ManifestPath, existing.SelectedRuntime, cancellationToken)).ManifestDigest;
+            }
+            catch (AppManifestException)
+            {
+                currentManifestDigest = null;
+            }
+        }
+
+        return new AppInstallPlan(
+            AppId: selection.Manifest.Id!,
+            DisplayName: selection.Manifest.Name!,
+            Description: selection.Manifest.Description,
+            Action: existing is null ? "install" : "already-installed",
+            CurrentVersion: existing?.Version,
+            TargetVersion: selection.Manifest.Version!,
+            CurrentRuntime: existing?.SelectedRuntime,
+            TargetRuntime: selection.RuntimeProfile.Key,
+            TargetRuntimeType: selection.RuntimeProfile.Type,
+            ManifestPath: selection.ManifestPath,
+            CurrentManifestDigest: currentManifestDigest,
+            TargetManifestDigest: selection.ManifestDigest,
+            SelectedChannel: request.SelectedChannel,
+            Settings: selection.Manifest.Settings
+                .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret))
+                .ToArray());
+    }
+
     public async Task<AppLifecycleResponse> InstallAsync(AppInstallRequest request, CancellationToken cancellationToken = default)
     {
         var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
@@ -33,6 +69,11 @@ internal sealed class CoreLifecycleService(
             RuntimeState = "stopped",
             LastOperation = "install",
         };
+        if (request.Settings is { Count: > 0 })
+        {
+            record = record with { Settings = MergeSettings(record.Settings, request.Settings) };
+        }
+
         var document = await apps.UpsertAppAsync(record, cancellationToken);
         return new AppLifecycleResponse(AppSummary.From(document.App), null, "installed");
     }
@@ -41,22 +82,9 @@ internal sealed class CoreLifecycleService(
     {
         var document = await apps.UpdateAppAsync(appId, app =>
         {
-            var settings = app.Settings.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-            foreach (var (key, value) in request.Settings)
-            {
-                if (settings.TryGetValue(key, out var existing))
-                {
-                    settings[key] = existing with { Value = value };
-                }
-                else
-                {
-                    settings[key] = new AppSettingValue(key, "string", value, Secret: false);
-                }
-            }
-
             return app with
             {
-                Settings = settings,
+                Settings = MergeSettings(app.Settings, request.Settings),
                 OperationStatus = "configured",
                 LastOperation = "configure",
                 LastError = null,
@@ -623,6 +651,26 @@ internal sealed class CoreLifecycleService(
         return changes;
     }
 
+    private static IReadOnlyDictionary<string, AppSettingValue> MergeSettings(
+        IReadOnlyDictionary<string, AppSettingValue> current,
+        IReadOnlyDictionary<string, string?> incoming)
+    {
+        var settings = current.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        foreach (var (key, value) in incoming)
+        {
+            if (settings.TryGetValue(key, out var existing))
+            {
+                settings[key] = existing with { Value = value };
+            }
+            else
+            {
+                settings[key] = new AppSettingValue(key, "string", value, Secret: false);
+            }
+        }
+
+        return settings;
+    }
+
     private async Task<AppChannelIndex> LoadChannelIndexAsync(
         AppRecord app,
         string? channelsPath,
@@ -728,11 +776,18 @@ internal sealed class CoreLifecycleService(
     private static readonly string[] DefaultCapabilities = ["open", "update", "restart", "stop", "remove", "backup", "restore", "logs"];
 }
 
-internal sealed record AppInstallRequest(
+internal sealed record AppInstallPlanRequest(
     string ManifestPath,
     string? SelectedRuntime = null,
     string? SelectedChannel = null,
     bool System = false);
+
+internal sealed record AppInstallRequest(
+    string ManifestPath,
+    string? SelectedRuntime = null,
+    string? SelectedChannel = null,
+    bool System = false,
+    IReadOnlyDictionary<string, string?>? Settings = null);
 
 internal sealed record AppConfigureRequest(IReadOnlyDictionary<string, string?> Settings);
 
@@ -769,6 +824,24 @@ internal sealed record AppChannelSwitchPlanRequest(string Channel, string? Chann
 internal sealed record AppChannelSwitchApplyRequest(string Channel, string PlanDigest, string? ChannelsPath = null, string? SelectedRuntime = null);
 
 internal sealed record AppLifecycleResponse(AppSummary? App, AppBackupRecord? Backup, string Status);
+
+internal sealed record AppInstallPlan(
+    string AppId,
+    string DisplayName,
+    string? Description,
+    string Action,
+    string? CurrentVersion,
+    string TargetVersion,
+    string? CurrentRuntime,
+    string TargetRuntime,
+    string TargetRuntimeType,
+    string ManifestPath,
+    string? CurrentManifestDigest,
+    string TargetManifestDigest,
+    string? SelectedChannel,
+    IReadOnlyList<AppInstallSetting> Settings);
+
+internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret);
 
 internal sealed record AppUpdatePlan(
     string AppId,

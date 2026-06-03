@@ -4,6 +4,35 @@ internal static class LifecycleEndpoints
 {
     public static void Map(WebApplication app)
     {
+        app.MapPost("/api/apps/install/plan", async (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppInstallPlanRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.CreateInstallPlanAsync(input, cancellationToken)),
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/install", async (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppInstallRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.InstallAsync(input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapPost("/api/apps/{appId}/start", async (
             string appId,
             HttpRequest request,
@@ -49,6 +78,69 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        app.MapPost("/api/apps/{appId}/configure", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppConfigureRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.ConfigureAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/update/plan", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppUpdatePlanRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.CreateUpdatePlanAsync(appId, input, cancellationToken)),
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/update", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppUpdateApplyRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.ApplyUpdateAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/remove", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppRemoveRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/apps/{appId}/logs", async (
             string appId,
             int? tail,
@@ -91,6 +183,39 @@ internal static class LifecycleEndpoints
                 users,
                 clock,
                 async () => await HandleLifecycleError(() => lifecycle.CreateManualBackupAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/backups/{backupId}/restore", async (
+            string appId,
+            string backupId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppRestoreBackupRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.RestoreBackupAsync(appId, backupId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapDelete("/api/apps/{appId}/backups/{backupId}", async (
+            string appId,
+            string backupId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.DeleteBackupAsync(appId, backupId, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 

@@ -68,10 +68,13 @@ Implemented slice:
 - Phase 1 local Core/Shell development is complete: Core starts locally, Shell origin defaults and overrides are documented and browser-smoked, Shell session loading works before and after Core login, and authenticated Shell app loading reaches `/api/apps`.
 - Core has a development-only login helper for local browser smoke tests against existing enabled Host users; production authentication remains deferred to the auth stabilization phase.
 - Shell Next.js development config allows loopback dev resources for `127.0.0.1` and `localhost`, matching the local Core/Shell cookie and CORS workflow.
-- Shell can call Core public browser endpoints to start, stop, restart, open, and manually back up manageable runtime apps.
+- Phase 2 Shell lifecycle management is complete: Shell can call Core public browser endpoints to start, stop, restart, open, update, configure, inspect logs, create/list/restore/delete backups, and remove manageable runtime apps.
 - Core app summaries are authenticated and principal-filtered before Shell renders lifecycle controls.
-- Public lifecycle mutations require Core session authentication, `host.admin`, and CSRF validation.
-- The active `hosty.shell` app hides self-stop/restart controls, while CLI/local control APIs keep the full Shell management surface.
+- Public lifecycle mutations require Core session authentication, `host.admin`, and CSRF validation, while read-only diagnostics still require an admin Core session.
+- The active `hosty.shell` app hides self-start/self-stop/self-restart/self-remove controls, while CLI/local control APIs keep the full Shell management surface.
+- Browser smoke verified a Core control-installed runtime app, Shell configure/update/logs/backups/remove panels, manual backup creation, and local command start/stop state transitions.
+- Phase 3 install/update review simplification is complete: Shell now has an admin install review panel backed by Core install-plan/apply endpoints, and update review uses a concise version/runtime/digest/change surface.
+- Phase 4 authentication stabilization is in progress: Core `/logout` revokes the session cookie and redirects back to Shell; app-scoped identity and runtime cookie isolation validation remain.
 
 Existing behavior that must keep working:
 
