@@ -59,6 +59,8 @@ export default async function SettingsPage() {
         >
           <DetailList
             items={[
+              { label: "Core origin", value: config.host.coreOrigin },
+              { label: "App id", value: config.host.appId },
               { label: "Internal origin", value: config.host.internalOrigin },
               { label: "Identity audience", value: config.host.moduleId },
             ]}

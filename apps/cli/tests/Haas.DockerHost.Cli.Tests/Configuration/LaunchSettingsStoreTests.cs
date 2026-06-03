@@ -39,7 +39,23 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal("4321", settings.HostUiPort);
         Assert.Equal("test-host", settings.HostContainerName);
         Assert.Equal("ghcr.io/alex-de-haas/docker-host:latest", settings.HostImage);
+        Assert.Equal("", settings.HostCorePublicOrigin);
+        Assert.Equal("", settings.HostShellPublicOrigin);
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
+    }
+
+    [Theory]
+    [InlineData("HOST_CORE_PUBLIC_ORIGIN", "https://core.example")]
+    [InlineData("HOST_SHELL_PUBLIC_ORIGIN", "https://shell.example")]
+    public void Set_ExplicitPublicOrigin_AcceptsHttpOriginsWithoutPaths(string key, string origin)
+    {
+        var environment = DockerHostEnvironment.Current();
+        var store = new LaunchSettingsStore(environment);
+        store.EnsureInstalled();
+
+        store.Set(key, origin);
+
+        Assert.Equal(origin, store.Load()[key]);
     }
 
     [Fact]

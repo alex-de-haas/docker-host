@@ -41,7 +41,9 @@ Shell can be run directly during UI work:
 npm run shell:dev
 ```
 
-Use `HOST_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently instead of mixing `localhost` and `127.0.0.1`.
+Use `HOST_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that differs from its listen URL. Use `HOST_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently instead of mixing `localhost` and `127.0.0.1`.
+
+`HOST_PUBLIC_ORIGIN` remains a compatibility alias for combined Core/Shell deployments. Prefer explicit Core/Shell origin variables for split-origin testing.
 
 Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should not try to start the Docker-managed `hosty.shell` runtime app. Use Core-managed Shell only when validating runtime lifecycle behavior.
 
@@ -73,6 +75,8 @@ The `dev` runtime profile in `apps/demo-app/manifest.json` starts local command 
 
 - frontend on `http://localhost:3100`;
 - backend on `http://localhost:3101`.
+
+When Shell opens the Demo App, Core issues a one-time app authorization code. The Demo App exchanges that code through `HOSTY_CORE_ORIGIN`, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`. This is the preferred Hosty-aware app identity path. The older gateway/iframe identity diagnostics remain in the Demo App for compatibility checks.
 
 Use normal app lifecycle commands while iterating:
 

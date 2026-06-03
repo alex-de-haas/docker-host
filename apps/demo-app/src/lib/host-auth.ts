@@ -9,6 +9,7 @@ import {
 
 const identityHeaderName = "x-docker-host-identity";
 export const moduleIdentityCookieName = "docker_host_module_identity";
+export const appIdentityCookieName = "hosty_demo_app_identity";
 const hostSessionCookieName = "docker_host_session";
 const discoveryPath = "/.well-known/docker-host/module-identity.json";
 const directoryTimeoutMs = 1_500;
@@ -21,6 +22,7 @@ export type HeaderReader = {
 
 export interface DemoAuthSnapshot {
   generatedAt: string;
+  appSession: AppSessionSnapshot;
   gateway: GatewayRequestSnapshot;
   identity: ModuleIdentitySnapshot;
   directory: ModuleDirectorySnapshot;
@@ -37,6 +39,22 @@ export interface GatewayRequestSnapshot {
 }
 
 export type ModuleIdentityStatus = "not-present" | "verified" | "invalid" | "not-configured";
+
+export type AppSessionStatus = "not-present" | "active" | "expired" | "forbidden" | "unavailable" | "error";
+
+export interface AppSessionSnapshot {
+  status: AppSessionStatus;
+  tokenPresent: boolean;
+  coreOrigin: string;
+  appId: string;
+  userId: string | null;
+  expiresAt: string | null;
+  error: {
+    status: number | null;
+    code: string;
+    message: string;
+  } | null;
+}
 
 export interface ModuleIdentitySnapshot {
   status: ModuleIdentityStatus;
@@ -112,7 +130,8 @@ interface ModuleIdentityDiscovery {
 const remoteJwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<DemoAuthSnapshot> {
-  const [identity, directory, roleAssignments] = await Promise.all([
+  const [appSession, identity, directory, roleAssignments] = await Promise.all([
+    getAppSessionSnapshot(headersList),
     getModuleIdentitySnapshot(headersList),
     getModuleDirectorySnapshot(),
     readDemoModuleRoleAssignments(),
@@ -120,11 +139,95 @@ export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<De
 
   return {
     generatedAt: new Date().toISOString(),
+    appSession,
     gateway: getGatewayRequestSnapshot(headersList),
     identity,
     directory,
     modulePermissions: resolveDemoModulePermissions(identity, roleAssignments),
   };
+}
+
+async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSessionSnapshot> {
+  const config = getDemoConfig();
+  const token = readCookie(headersList.get("cookie"), appIdentityCookieName);
+  const baseSnapshot = {
+    tokenPresent: Boolean(token),
+    coreOrigin: config.host.coreOrigin,
+    appId: config.host.appId,
+  };
+
+  if (!token) {
+    return {
+      ...baseSnapshot,
+      status: "not-present",
+      userId: null,
+      expiresAt: null,
+      error: null,
+    };
+  }
+
+  const endpoint = buildCoreEndpoint(config.host.coreOrigin, "/api/auth/apps/revalidate");
+  if (!endpoint) {
+    return {
+      ...baseSnapshot,
+      status: "error",
+      userId: null,
+      expiresAt: null,
+      error: {
+        status: null,
+        code: "core_origin_invalid",
+        message: "HOSTY_CORE_ORIGIN is not a valid URL.",
+      },
+    };
+  }
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ accessToken: token }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(identityTimeoutMs),
+    });
+    const body = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      return {
+        ...baseSnapshot,
+        status: response.status === 403 ? "forbidden" : "error",
+        userId: null,
+        expiresAt: null,
+        error: {
+          status: response.status,
+          code: readErrorCode(body) || "app_session_revalidation_failed",
+          message: readErrorMessage(body) || `Core revalidation returned HTTP ${response.status}.`,
+        },
+      };
+    }
+
+    const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    return {
+      ...baseSnapshot,
+      status: readBooleanField(record.active) ? "active" : "expired",
+      userId: readString(record.userId),
+      expiresAt: readString(record.expiresAt),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      ...baseSnapshot,
+      status: isAbortError(error) ? "unavailable" : "error",
+      userId: null,
+      expiresAt: null,
+      error: {
+        status: null,
+        code: isAbortError(error) ? "core_revalidation_timeout" : "app_session_revalidation_error",
+        message: sanitizeError(error),
+      },
+    };
+  }
 }
 
 async function getModuleIdentitySnapshot(headersList: HeaderReader): Promise<ModuleIdentitySnapshot> {
@@ -393,6 +496,14 @@ function buildDirectoryEndpoint(internalOrigin: string, moduleId: string) {
   }
 }
 
+function buildCoreEndpoint(coreOrigin: string, path: string) {
+  try {
+    return new URL(path, coreOrigin).toString();
+  } catch {
+    return null;
+  }
+}
+
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) {
@@ -509,8 +620,33 @@ function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function readBooleanField(value: unknown) {
+  return value === true;
+}
+
 function readNumber(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readErrorCode(payload: unknown) {
+  return readErrorField(payload, "code");
+}
+
+function readErrorMessage(payload: unknown) {
+  return readErrorField(payload, "message");
+}
+
+function readErrorField(payload: unknown, field: "code" | "message") {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const error = (payload as Record<string, unknown>).error;
+  if (error && typeof error === "object") {
+    return readString((error as Record<string, unknown>)[field]);
+  }
+
+  return readString((payload as Record<string, unknown>)[field]);
 }
 
 function readCookie(cookieHeader: string | null, name: string) {
@@ -534,6 +670,10 @@ function readCookie(cookieHeader: string | null, name: string) {
 
 function secondsToIso(value: number | undefined) {
   return typeof value === "number" ? new Date(value * 1000).toISOString() : null;
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
 function sanitizeError(error: unknown) {

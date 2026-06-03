@@ -9,6 +9,8 @@ public sealed class HostyCoreRuntimeConfigTests
     public void FromEnvironment_DefaultsShellPublicOriginInDevelopment()
     {
         using var env = TemporaryEnvironment.With("HOST_SHELL_PUBLIC_ORIGIN", null);
+        using var coreEnv = TemporaryEnvironment.With("HOST_CORE_PUBLIC_ORIGIN", null);
+        using var combinedEnv = TemporaryEnvironment.With("HOST_PUBLIC_ORIGIN", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
 
@@ -19,6 +21,8 @@ public sealed class HostyCoreRuntimeConfigTests
     public void FromEnvironment_LeavesShellPublicOriginUnsetOutsideDevelopment()
     {
         using var env = TemporaryEnvironment.With("HOST_SHELL_PUBLIC_ORIGIN", null);
+        using var coreEnv = TemporaryEnvironment.With("HOST_CORE_PUBLIC_ORIGIN", null);
+        using var combinedEnv = TemporaryEnvironment.With("HOST_PUBLIC_ORIGIN", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
@@ -29,10 +33,51 @@ public sealed class HostyCoreRuntimeConfigTests
     public void FromEnvironment_UsesExplicitShellPublicOrigin()
     {
         using var env = TemporaryEnvironment.With("HOST_SHELL_PUBLIC_ORIGIN", " http://localhost:3100/ ");
+        using var coreEnv = TemporaryEnvironment.With("HOST_CORE_PUBLIC_ORIGIN", null);
+        using var combinedEnv = TemporaryEnvironment.With("HOST_PUBLIC_ORIGIN", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
 
         Assert.Equal("http://localhost:3100/", config.ShellPublicOrigin);
+    }
+
+    [Fact]
+    public void FromEnvironment_UsesCombinedPublicOriginForCoreAndShell()
+    {
+        using var env = TemporaryEnvironment.With("HOST_PUBLIC_ORIGIN", "https://hosty.example");
+        using var coreEnv = TemporaryEnvironment.With("HOST_CORE_PUBLIC_ORIGIN", null);
+        using var shellEnv = TemporaryEnvironment.With("HOST_SHELL_PUBLIC_ORIGIN", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.Equal("https://hosty.example", config.CorePublicOrigin);
+        Assert.Equal("https://hosty.example", config.ShellPublicOrigin);
+    }
+
+    [Fact]
+    public void FromEnvironment_ExplicitOriginsOverrideCombinedPublicOrigin()
+    {
+        using var env = TemporaryEnvironment.With("HOST_PUBLIC_ORIGIN", "https://hosty.example");
+        using var coreEnv = TemporaryEnvironment.With("HOST_CORE_PUBLIC_ORIGIN", "https://core.example");
+        using var shellEnv = TemporaryEnvironment.With("HOST_SHELL_PUBLIC_ORIGIN", "https://shell.example");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.Equal("https://core.example", config.CorePublicOrigin);
+        Assert.Equal("https://shell.example", config.ShellPublicOrigin);
+    }
+
+    [Fact]
+    public void BuildPublicOriginWarnings_WarnsForInsecureNonLoopbackOrigins()
+    {
+        using var coreEnv = TemporaryEnvironment.With("HOST_CORE_PUBLIC_ORIGIN", "http://core.example");
+        using var shellEnv = TemporaryEnvironment.With("HOST_SHELL_PUBLIC_ORIGIN", "http://127.0.0.1:3000");
+        using var combinedEnv = TemporaryEnvironment.With("HOST_PUBLIC_ORIGIN", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        var warning = Assert.Single(config.BuildPublicOriginWarnings());
+        Assert.Contains("Core public origin uses insecure HTTP", warning);
     }
 
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment

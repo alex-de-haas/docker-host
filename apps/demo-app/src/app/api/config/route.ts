@@ -22,7 +22,9 @@ export async function GET() {
       publicUrl: config.publicUrl,
     },
     hostIntegration: {
+      coreOrigin: config.host.coreOrigin,
       internalOrigin: config.host.internalOrigin,
+      appId: config.host.appId,
       moduleId: config.host.moduleId,
       moduleServiceTokenConfigured: config.host.moduleServiceTokenConfigured,
     },

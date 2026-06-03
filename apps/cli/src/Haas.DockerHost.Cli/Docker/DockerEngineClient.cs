@@ -131,6 +131,16 @@ internal sealed class DockerEngineClient(IDockerEngineTransport transport) : IDi
             env.Add($"HOST_PUBLIC_ORIGIN={plan.HostPublicOrigin}");
         }
 
+        if (!string.IsNullOrWhiteSpace(plan.HostCorePublicOrigin))
+        {
+            env.Add($"HOST_CORE_PUBLIC_ORIGIN={plan.HostCorePublicOrigin}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(plan.HostShellPublicOrigin))
+        {
+            env.Add($"HOST_SHELL_PUBLIC_ORIGIN={plan.HostShellPublicOrigin}");
+        }
+
         if (!string.IsNullOrWhiteSpace(plan.HostGatewayBaseDomain))
         {
             env.Add($"HOST_GATEWAY_BASE_DOMAIN={plan.HostGatewayBaseDomain}");

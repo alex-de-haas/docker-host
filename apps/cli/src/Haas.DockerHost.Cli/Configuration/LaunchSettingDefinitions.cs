@@ -11,6 +11,8 @@ internal static class LaunchSettingDefinitions
     public const string HostUiPort = "HOST_UI_PORT";
     public const string HostBindAddress = "HOST_BIND_ADDRESS";
     public const string HostPublicOrigin = "HOST_PUBLIC_ORIGIN";
+    public const string HostCorePublicOrigin = "HOST_CORE_PUBLIC_ORIGIN";
+    public const string HostShellPublicOrigin = "HOST_SHELL_PUBLIC_ORIGIN";
     public const string HostGatewayBaseDomain = "HOST_GATEWAY_BASE_DOMAIN";
     public const string HostRestartPolicy = "HOST_RESTART_POLICY";
     public const string HostDockerEndpoint = "HOST_DOCKER_ENDPOINT";
@@ -26,6 +28,8 @@ internal static class LaunchSettingDefinitions
         new(HostUiPort, _ => "auto", true, ValidateHostPort),
         new(HostBindAddress, _ => "127.0.0.1", true, ValidateBindAddress),
         new(HostPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
+        new(HostCorePublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
+        new(HostShellPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
         new(HostGatewayBaseDomain, _ => "", true, ValidateOptionalDnsName),
         new(HostRestartPolicy, _ => "unless-stopped", true, ValidateRestartPolicy),
         new(HostDockerEndpoint, env => env.IsWindows ? "npipe:////./pipe/docker_engine" : "unix:///var/run/docker.sock", true, ValidateDockerEndpoint),

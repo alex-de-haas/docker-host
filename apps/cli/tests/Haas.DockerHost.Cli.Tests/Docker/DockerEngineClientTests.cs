@@ -23,6 +23,8 @@ public sealed class DockerEngineClientTests
             "unless-stopped",
             "127.0.0.1",
             "",
+            "https://core.example",
+            "https://shell.example",
             "",
             "root_test",
             3000);
@@ -43,6 +45,8 @@ public sealed class DockerEngineClientTests
             .GetString();
 
         Assert.Contains("HOST_BIND_ADDRESS=127.0.0.1", env);
+        Assert.Contains("HOST_CORE_PUBLIC_ORIGIN=https://core.example", env);
+        Assert.Contains("HOST_SHELL_PUBLIC_ORIGIN=https://shell.example", env);
         Assert.Contains("HOST_DATA_ROOT_MARKER=root_test", env);
         Assert.Equal("127.0.0.1", hostIp);
     }

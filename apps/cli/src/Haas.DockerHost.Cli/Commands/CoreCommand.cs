@@ -1,5 +1,6 @@
 namespace Haas.DockerHost.Cli.Commands;
 
+using Haas.DockerHost.Cli.Configuration;
 using System.Diagnostics;
 using System.Text.Json;
 using Spectre.Console;
@@ -46,16 +47,18 @@ internal sealed class CoreCommand(CommandContext context)
 
         Directory.CreateDirectory(context.Environment.RootDirectory);
         var url = options.Url ?? DefaultCoreUrl;
+        var settings = context.SettingsStore.Load();
+        settings.Validate(context.Environment);
 
         if (options.Foreground)
         {
-            var process = StartForeground(projectPath, url);
+            var process = StartForeground(projectPath, url, settings);
             context.Console.MarkupLine($"[green]Hosty Core starting.[/] PID {process.Id}, URL {Markup.Escape(url)}");
             await process.WaitForExitAsync();
             return process.ExitCode;
         }
 
-        var logPath = StartBackground(projectPath, url);
+        var logPath = StartBackground(projectPath, url, settings);
         context.Console.MarkupLine($"[green]Hosty Core starting.[/] URL {Markup.Escape(url)}");
         context.Console.MarkupLine($"[grey]Log:[/] {Markup.Escape(logPath)}");
 
@@ -71,14 +74,14 @@ internal sealed class CoreCommand(CommandContext context)
         return 0;
     }
 
-    private Process StartForeground(string projectPath, string url)
+    private Process StartForeground(string projectPath, string url, LaunchSettings settings)
     {
-        var startInfo = CreateCoreStartInfo(projectPath, url);
+        var startInfo = CreateCoreStartInfo(projectPath, url, settings);
         startInfo.CreateNoWindow = false;
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start Hosty Core process.");
     }
 
-    private string StartBackground(string projectPath, string url)
+    private string StartBackground(string projectPath, string url, LaunchSettings settings)
     {
         var logDirectory = Path.Combine(context.Environment.RootDirectory, "core", "logs");
         Directory.CreateDirectory(logDirectory);
@@ -86,16 +89,16 @@ internal sealed class CoreCommand(CommandContext context)
 
         if (OperatingSystem.IsWindows())
         {
-            var windowsStartInfo = CreateCoreStartInfo(projectPath, url);
+            var windowsStartInfo = CreateCoreStartInfo(projectPath, url, settings);
             windowsStartInfo.CreateNoWindow = true;
             Process.Start(windowsStartInfo);
             return logPath;
         }
 
+        var environment = BuildCoreEnvironment(url, settings)
+            .Select(pair => $"{pair.Key}={ShellQuote(pair.Value)}");
         var command = string.Join(" ", [
-            $"HOSTY_CORE_DATA_ROOT={ShellQuote(context.Environment.RootDirectory)}",
-            $"HOSTY_CORE_URL={ShellQuote(url)}",
-            $"ASPNETCORE_URLS={ShellQuote(url)}",
+            .. environment,
             "nohup",
             "dotnet",
             "run",
@@ -127,7 +130,7 @@ internal sealed class CoreCommand(CommandContext context)
         return logPath;
     }
 
-    private ProcessStartInfo CreateCoreStartInfo(string projectPath, string url)
+    private ProcessStartInfo CreateCoreStartInfo(string projectPath, string url, LaunchSettings settings)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -139,11 +142,35 @@ internal sealed class CoreCommand(CommandContext context)
         startInfo.ArgumentList.Add("--project");
         startInfo.ArgumentList.Add(projectPath);
         startInfo.ArgumentList.Add("--no-launch-profile");
-        startInfo.Environment["HOSTY_CORE_DATA_ROOT"] = context.Environment.RootDirectory;
-        startInfo.Environment["HOSTY_CORE_URL"] = url;
-        startInfo.Environment["ASPNETCORE_URLS"] = url;
+        foreach (var pair in BuildCoreEnvironment(url, settings))
+        {
+            startInfo.Environment[pair.Key] = pair.Value;
+        }
 
         return startInfo;
+    }
+
+    private IReadOnlyDictionary<string, string> BuildCoreEnvironment(string url, LaunchSettings settings)
+    {
+        var environment = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["HOSTY_CORE_DATA_ROOT"] = context.Environment.RootDirectory,
+            ["HOSTY_CORE_URL"] = url,
+            ["ASPNETCORE_URLS"] = url,
+        };
+
+        AddOptional(environment, LaunchSettingDefinitions.HostPublicOrigin, settings.HostPublicOrigin);
+        AddOptional(environment, LaunchSettingDefinitions.HostCorePublicOrigin, settings.HostCorePublicOrigin);
+        AddOptional(environment, LaunchSettingDefinitions.HostShellPublicOrigin, settings.HostShellPublicOrigin);
+        return environment;
+    }
+
+    private static void AddOptional(IDictionary<string, string> environment, string key, string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            environment[key] = value;
+        }
     }
 
     private async Task<int> StatusAsync(string[] args)
@@ -414,6 +441,11 @@ internal sealed class CoreCommand(CommandContext context)
         table.AddRow("Core origin", Markup.Escape(status.CorePublicOrigin ?? "not configured"));
         table.AddRow("Shell origin", Markup.Escape(status.ShellPublicOrigin ?? "not configured"));
         context.Console.Write(table);
+
+        foreach (var warning in status.Warnings ?? [])
+        {
+            context.Console.MarkupLine($"[yellow]Warning:[/] {Markup.Escape(warning)}");
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -430,7 +462,8 @@ internal sealed class CoreCommand(CommandContext context)
         string? DataRoot,
         string? ListenUrl,
         string? CorePublicOrigin,
-        string? ShellPublicOrigin);
+        string? ShellPublicOrigin,
+        IReadOnlyList<string> Warnings);
 
     private const string Usage = """
         hosty core

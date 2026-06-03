@@ -38,6 +38,7 @@ type CoreStatus = {
   corePublicOrigin?: string | null;
   shellPublicOrigin?: string | null;
   runtimePublicHost?: string | null;
+  warnings?: string[];
   serverTime: string;
 };
 
@@ -823,10 +824,22 @@ export function ShellClient({
         <section className="statusGrid" aria-label="Core status">
           <StatusTile label="Core status" value={state.status?.status || (state.loading ? "loading" : "unavailable")} />
           <StatusTile label="Core listen URL" value={state.status?.listenUrl || "unknown"} />
+          <StatusTile label="Core origin" value={state.status?.corePublicOrigin || "not configured"} />
           <StatusTile label="Shell origin" value={state.status?.shellPublicOrigin || "not configured"} />
           <StatusTile label="Runtime host" value={state.status?.runtimePublicHost || "unknown"} />
           <StatusTile label="Last refresh" value={state.updatedAt ? new Date(state.updatedAt).toLocaleTimeString() : "pending"} />
         </section>
+
+        {state.status?.warnings?.length ? (
+          <section className="notice warning">
+            <CircleAlert aria-hidden="true" />
+            <div>
+              {state.status.warnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {state.error && (
           <section className="notice error">

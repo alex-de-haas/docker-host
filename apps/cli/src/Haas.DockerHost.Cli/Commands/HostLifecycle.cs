@@ -119,6 +119,8 @@ internal sealed class HostLifecycle(CommandContext context)
             settings.HostRestartPolicy,
             settings.HostBindAddress,
             settings.HostPublicOrigin,
+            settings.HostCorePublicOrigin,
+            settings.HostShellPublicOrigin,
             settings.HostGatewayBaseDomain,
             dataRootMarker.Id,
             hostPort);

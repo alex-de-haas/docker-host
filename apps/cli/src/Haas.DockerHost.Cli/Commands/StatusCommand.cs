@@ -33,6 +33,8 @@ internal sealed class StatusCommand(CommandContext context)
         table.AddRow("Module network", Markup.Escape(settings.HostModuleNetwork));
         table.AddRow("Bind address", Markup.Escape(settings.HostBindAddress));
         table.AddRow("Public origin", Markup.Escape(string.IsNullOrWhiteSpace(settings.HostPublicOrigin) ? "(not set)" : settings.HostPublicOrigin));
+        table.AddRow("Core public origin", Markup.Escape(string.IsNullOrWhiteSpace(settings.HostCorePublicOrigin) ? "(not set)" : settings.HostCorePublicOrigin));
+        table.AddRow("Shell public origin", Markup.Escape(string.IsNullOrWhiteSpace(settings.HostShellPublicOrigin) ? "(not set)" : settings.HostShellPublicOrigin));
         table.AddRow("Gateway base domain", Markup.Escape(string.IsNullOrWhiteSpace(settings.HostGatewayBaseDomain) ? "(not set)" : settings.HostGatewayBaseDomain));
         table.AddRow("Docker endpoint", Markup.Escape(settings.HostDockerEndpoint));
 

@@ -71,7 +71,7 @@ Gateway launch settings:
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `HOST_BIND_ADDRESS` | `127.0.0.1` | Host-side address used by Docker port publishing. Set to `0.0.0.0` only when an administrator intentionally exposes the Host beyond loopback or places it behind a trusted ingress. The Host container also receives this value so loopback-only `http://localhost:<port>` sessions can use HTTP cookies despite Docker bridge remote addresses. |
-| `HOST_PUBLIC_ORIGIN` | empty | Canonical external Host UI origin, for example `https://host.example.com`. Used for gateway login redirects. |
+| `HOST_PUBLIC_ORIGIN` | empty | Compatibility external Host UI origin for combined deployments, for example `https://host.example.com`. Split Core/Shell deployments should prefer `HOST_CORE_PUBLIC_ORIGIN` and `HOST_SHELL_PUBLIC_ORIGIN`. |
 | `HOST_GATEWAY_BASE_DOMAIN` | empty | Base domain for module subdomains, for example `example.com`. When set, Host session cookies can be scoped to this parent domain and unknown subdomains under it are rejected. |
 | `HOST_INTERNAL_ORIGIN` | `http://docker-host:3000` | Internal Host origin that module containers can use to fetch Host-published metadata such as JWKS. The CLI attaches the Host container to the module network with the stable `docker-host` alias. |
 
@@ -541,7 +541,7 @@ Manual setup instructions are generated per exposure and include DNS target guid
 Readiness checks are intentionally Host-side only:
 
 - `HOST_GATEWAY_BASE_DOMAIN` is configured;
-- `HOST_PUBLIC_ORIGIN` is configured;
+- `HOST_PUBLIC_ORIGIN` or the explicit Core/Shell public origins are configured;
 - the gateway exposure is enabled;
 - non-loopback public origins use HTTPS;
 - manual DNS, reverse proxy, TLS, and websocket checklist items are marked complete;

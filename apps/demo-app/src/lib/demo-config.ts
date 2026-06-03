@@ -12,7 +12,9 @@ export interface DemoConfig {
   authPreview: boolean;
   publicUrl: string;
   host: {
+    coreOrigin: string;
     internalOrigin: string;
+    appId: string;
     moduleId: string;
     moduleServiceTokenConfigured: boolean;
   };
@@ -38,6 +40,7 @@ const defaultModuleVersion = "0.2.1";
 
 export function getDemoConfig(): DemoConfig {
   const moduleId = process.env.DOCKER_HOST_MODULE_ID || process.env.MODULE_ID || defaultModuleId;
+  const coreOrigin = process.env.HOSTY_CORE_ORIGIN || process.env.HOST_CORE_PUBLIC_ORIGIN || "http://127.0.0.1:3001";
 
   return {
     moduleId,
@@ -48,7 +51,9 @@ export function getDemoConfig(): DemoConfig {
     authPreview: readBoolean(process.env.DEMO_AUTH_PREVIEW, false),
     publicUrl: process.env.DEMO_PUBLIC_URL || "http://localhost:3100",
     host: {
+      coreOrigin,
       internalOrigin: process.env.DOCKER_HOST_INTERNAL_ORIGIN || "http://docker-host:3000",
+      appId: process.env.HOSTY_APP_ID || moduleId,
       moduleId,
       moduleServiceTokenConfigured: Boolean(process.env.DOCKER_HOST_MODULE_SERVICE_TOKEN),
     },

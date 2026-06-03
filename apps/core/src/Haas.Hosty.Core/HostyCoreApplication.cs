@@ -366,9 +366,11 @@ internal sealed record HostyCoreRuntimeConfig(
         var listenUrl = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_URL")) ??
             NormalizeOptional(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) ??
             "http://127.0.0.1:3001";
+        var combinedPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_PUBLIC_ORIGIN"));
         var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_CORE_PUBLIC_ORIGIN")) ??
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOST_PUBLIC_ORIGIN"));
+            combinedPublicOrigin;
         var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_SHELL_PUBLIC_ORIGIN")) ??
+            combinedPublicOrigin ??
             ResolveDefaultShellPublicOrigin(environment);
         var runtimePublicHost = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_RUNTIME_PUBLIC_HOST")) ??
             "app.localhost";
@@ -431,6 +433,45 @@ internal sealed record HostyCoreRuntimeConfig(
             value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
             value.Equals("enabled", StringComparison.OrdinalIgnoreCase) ||
             value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public IReadOnlyList<string> BuildPublicOriginWarnings()
+    {
+        var warnings = new List<string>();
+        AddPublicOriginWarnings(warnings, "Core", CorePublicOrigin);
+        AddPublicOriginWarnings(warnings, "Shell", ShellPublicOrigin);
+        return warnings;
+    }
+
+    private static void AddPublicOriginWarnings(List<string> warnings, string label, string? origin)
+    {
+        if (string.IsNullOrWhiteSpace(origin))
+        {
+            return;
+        }
+
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+            !string.IsNullOrEmpty(uri.PathAndQuery.Trim('/')))
+        {
+            warnings.Add($"{label} public origin should be an absolute http(s) origin without a path.");
+            return;
+        }
+
+        if (uri.Scheme == Uri.UriSchemeHttp && !IsLoopbackHost(uri.Host))
+        {
+            warnings.Add($"{label} public origin uses insecure HTTP on a non-loopback host. Use HTTPS before exposing it beyond local development.");
+        }
+    }
+
+    private static bool IsLoopbackHost(string host)
+    {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
     }
 
     private static string? ResolveDefaultShellManifestPath()
@@ -578,6 +619,7 @@ internal sealed record CoreStatusResponse(
     string RuntimePublicHost,
     string? ShellManifestPath,
     bool ShellAutostart,
+    IReadOnlyList<string> Warnings,
     DateTimeOffset ServerTime)
 {
     public static CoreStatusResponse From(HostyCoreRuntimeConfig config)
@@ -591,6 +633,7 @@ internal sealed record CoreStatusResponse(
             config.RuntimePublicHost,
             config.ShellManifestPath,
             config.ShellAutostart,
+            config.BuildPublicOriginWarnings(),
             DateTimeOffset.UtcNow);
 }
 

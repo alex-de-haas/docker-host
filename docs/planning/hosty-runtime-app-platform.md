@@ -825,7 +825,7 @@ No open questions remain for this planning pass. The current accepted decisions 
 - Shell is an optional Hosty-managed runtime app and default web client for Hosty Core. It currently remains a Next.js app built and run as a Docker container.
 - Shell uses the same Core-managed lifecycle shape as other managed apps, but Shell UI should hide self-stop for the active Shell instance. CLI and Core API may still stop Shell.
 - `hosty start` starts Core and then asks Core to start the configured Shell runtime app when Shell autostart is enabled. Shell autostart is enabled by default.
-- Core and Shell currently share one deployed public origin through `HOST_PUBLIC_ORIGIN`; a future phase must split Core API and Shell public origins explicitly.
+- Core and Shell public origins are split through `HOST_CORE_PUBLIC_ORIGIN` and `HOST_SHELL_PUBLIC_ORIGIN`; `HOST_PUBLIC_ORIGIN` remains a compatibility alias for combined deployments.
 - Default Hosty-managed apps and user-installed runtime apps should be shown in separate UI sections, even if they share a backend summary shape.
 - Source/local command runtime workflows apply to default Hosty-managed apps too. The current combined Host app is the temporary local-source target until Core and Shell split.
 - Core or the combined Host cannot rely on its own in-process Core API to complete self runtime replacement after it exits; self-runtime switch/restart operations require the trusted CLI or another outer supervisor.

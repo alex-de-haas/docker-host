@@ -10,6 +10,8 @@ internal sealed record HostContainerPlan(
     string RestartPolicy,
     string HostBindAddress,
     string HostPublicOrigin,
+    string HostCorePublicOrigin,
+    string HostShellPublicOrigin,
     string HostGatewayBaseDomain,
     string DataRootMarker,
     int HostUiPort)

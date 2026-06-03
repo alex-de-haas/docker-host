@@ -35,7 +35,7 @@ import {
 import { getDemoConfig, inspectStorage, moduleStartedAt } from "@/lib/demo-config";
 import { getDemoAuthSnapshot } from "@/lib/host-auth";
 import { roleSourceLabel } from "@/lib/module-roles";
-import type { ModuleDirectoryStatus, ModuleIdentityStatus } from "@/lib/host-auth";
+import type { AppSessionStatus, ModuleDirectoryStatus, ModuleIdentityStatus } from "@/lib/host-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +118,8 @@ export default async function Home() {
             items={[
               { label: "Public URL", value: config.publicUrl },
               { label: "Auth preview", value: config.authPreview ? "Enabled" : "Disabled" },
+              { label: "App id", value: config.host.appId },
+              { label: "Core origin", value: config.host.coreOrigin },
               { label: "Identity audience", value: config.host.moduleId },
               { label: "Host internal origin", value: config.host.internalOrigin },
               {
@@ -140,7 +142,28 @@ export default async function Home() {
         </SectionCard>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2" aria-label="Host authorization">
+      <section className="grid gap-4 lg:grid-cols-3" aria-label="Host authorization">
+        <SectionCard
+          title="App session"
+          action={<StateBadge tone={appSessionStateTone(auth.appSession.status)}>{formatAppSessionStatus(auth.appSession.status)}</StateBadge>}
+        >
+          <div className="flex flex-col gap-4">
+            <DetailList
+              items={[
+                { label: "App", value: auth.appSession.appId },
+                { label: "Core", value: auth.appSession.coreOrigin },
+                { label: "User", value: auth.appSession.userId || "Unavailable" },
+                { label: "Expires", value: auth.appSession.expiresAt || "Unavailable" },
+              ]}
+            />
+            {auth.appSession.error ? (
+              <p className="text-sm leading-6 text-muted-foreground">
+                {auth.appSession.error.message}
+              </p>
+            ) : null}
+          </div>
+        </SectionCard>
+
         <SectionCard title="Host identity" action={<JsonButton href="/api/auth/identity" />}>
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -286,6 +309,23 @@ function formatIdentityStatus(status: ModuleIdentityStatus) {
   }
 }
 
+function formatAppSessionStatus(status: AppSessionStatus) {
+  switch (status) {
+    case "active":
+      return "Active";
+    case "expired":
+      return "Expired";
+    case "forbidden":
+      return "Forbidden";
+    case "unavailable":
+      return "Unavailable";
+    case "error":
+      return "Error";
+    case "not-present":
+      return "Not present";
+  }
+}
+
 function formatDirectoryStatus(status: ModuleDirectoryStatus) {
   switch (status) {
     case "ok":
@@ -299,6 +339,14 @@ function formatDirectoryStatus(status: ModuleDirectoryStatus) {
     case "not-configured":
       return "Not configured";
   }
+}
+
+function appSessionStateTone(status: AppSessionStatus): StateTone {
+  if (status === "active") {
+    return "success";
+  }
+
+  return status === "not-present" ? "warning" : "danger";
 }
 
 function identityStateTone(status: ModuleIdentityStatus): StateTone {

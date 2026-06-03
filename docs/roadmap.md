@@ -140,7 +140,7 @@ Conflicts and constraints:
 
 ### Stage 3 - Harden app auth and origin separation
 
-Status: Planned, with split-origin work in progress.
+Status: Completed in implementation and documentation.
 
 Primary plan:
 
@@ -153,6 +153,14 @@ Key outcomes:
 - Shell launch-code issuance and standalone app auth redirect.
 - Explicit Core and Shell public origins with migration support for the existing combined `HOST_PUBLIC_ORIGIN`.
 - SDK or middleware guidance for Hosty-aware apps.
+
+Completed notes:
+
+- Core issues one-time app auth/launch codes, exchanges them for app-scoped identity tokens, and revalidates app sessions against current user/app access state.
+- Demo App now implements a Next.js app-code exchange route and app-local session revalidation example.
+- CLI launch config exposes explicit Core/Shell public origins and still supports `HOST_PUBLIC_ORIGIN` as a combined-deployment alias.
+- Core status, Shell status, and `hosty core status` surface public-origin warnings for invalid values and insecure non-loopback HTTP.
+- Gateway/proxy browser wrapping remains deferred and is documented as separate future scope.
 
 Existing behavior that must keep working:
 
@@ -304,8 +312,8 @@ Before completing a roadmap stage, validate the old features that interact with 
 ## Open Questions And Recommendations
 
 - Question: What should be implemented immediately after Core/Shell stabilization?
-  Answer: Runtime profiles/source runtimes are complete. The next practical workstreams are app auth/origin hardening and backup retention.
-  Recommendation: Finish Stage 3 and Stage 4 validation, then retire legacy Demo Module compatibility before update channels.
+  Answer: Runtime profiles/source runtimes and app auth/origin hardening are complete. The next practical workstream is backup retention.
+  Recommendation: Finish Stage 4 validation, then retire legacy Demo Module compatibility before update channels.
 
 - Question: When should update channels move from deferred to active?
   Answer: After Core/Shell management is stable, repository/source runtime state exists, app auth/open flows are validated, backup behavior is stable, and legacy Demo Module compatibility has been retired or explicitly isolated.

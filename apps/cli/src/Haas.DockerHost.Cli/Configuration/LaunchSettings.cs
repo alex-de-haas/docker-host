@@ -29,6 +29,10 @@ internal sealed class LaunchSettings
 
     public string HostPublicOrigin => this[LaunchSettingDefinitions.HostPublicOrigin];
 
+    public string HostCorePublicOrigin => this[LaunchSettingDefinitions.HostCorePublicOrigin];
+
+    public string HostShellPublicOrigin => this[LaunchSettingDefinitions.HostShellPublicOrigin];
+
     public string HostGatewayBaseDomain => this[LaunchSettingDefinitions.HostGatewayBaseDomain];
 
     public string HostRestartPolicy => this[LaunchSettingDefinitions.HostRestartPolicy];

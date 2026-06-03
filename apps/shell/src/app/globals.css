@@ -10,6 +10,8 @@
   --accent-soft: #e2f3ee;
   --danger: #b42318;
   --danger-soft: #fee4e2;
+  --warning: #8a4b0f;
+  --warning-soft: #fff3cd;
   --shadow: 0 1px 2px rgb(16 24 40 / 6%);
 }
 
@@ -273,6 +275,20 @@ h1 {
   border-color: #f8b4ad;
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.notice.warning {
+  border-color: #f6d58b;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.notice p {
+  margin: 0;
+}
+
+.notice p + p {
+  margin-top: 4px;
 }
 
 .section {

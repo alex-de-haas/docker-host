@@ -251,6 +251,8 @@ HOST_DATA_ROOT_CONTAINER=/data
 HOST_UI_PORT=auto
 HOST_BIND_ADDRESS=127.0.0.1
 HOST_PUBLIC_ORIGIN=
+HOST_CORE_PUBLIC_ORIGIN=
+HOST_SHELL_PUBLIC_ORIGIN=
 HOST_GATEWAY_BASE_DOMAIN=
 HOST_RESTART_POLICY=unless-stopped
 HOST_DOCKER_ENDPOINT=unix:///var/run/docker.sock
@@ -274,10 +276,12 @@ The CLI must pass both data-root values into the Host container:
 
 `HOST_IMAGE` should default to the Host image published by the current repository workflow. This value must be overrideable through `hosty config`.
 
-Gateway-related launch settings:
+Origin and gateway-related launch settings:
 
 - `HOST_BIND_ADDRESS` defaults to `127.0.0.1`; administrators can set `0.0.0.0` when placing the Host behind external ingress.
-- `HOST_PUBLIC_ORIGIN` is the canonical external Host UI origin, for example `https://host.example.com`.
+- `HOST_PUBLIC_ORIGIN` is the compatibility external Host UI origin for combined Core/Shell deployments, for example `https://host.example.com`.
+- `HOST_CORE_PUBLIC_ORIGIN` is the explicit Core public origin for split-origin deployments.
+- `HOST_SHELL_PUBLIC_ORIGIN` is the explicit Shell public origin for split-origin deployments and Core credentialed Shell CORS.
 - `HOST_GATEWAY_BASE_DOMAIN` is the parent domain for module subdomains, for example `example.com`.
 - `HOST_INTERNAL_ORIGIN` defaults inside the Host container to `http://docker-host:3000`. The CLI injects that value and attaches the Host container to the shared module network with the stable `docker-host` alias so module containers can fetch Host-published metadata such as JWKS.
 
@@ -298,7 +302,7 @@ hosty config reset HOST_IMAGE
 
 `config list` prints all launch settings with current values. `config get <KEY>` prints one value. `config set <KEY> <VALUE>` and the convenience form `config set <KEY>=<VALUE>` write the value to `launch.env`. `config reset <KEY>` restores the setting to its default value.
 
-The CLI must validate known keys before writing. Unknown keys must return a clear error. `HOST_UI_PORT` must accept `auto` or a valid TCP port number. `HOST_BIND_ADDRESS` must accept `127.0.0.1` or `0.0.0.0`. `HOST_PUBLIC_ORIGIN` must be an absolute `http`/`https` origin without a path. `HOST_GATEWAY_BASE_DOMAIN` must be a valid DNS name or an empty value. `HOST_DOCKER_ENDPOINT` must accept only supported local endpoints for the current platform: Unix socket on macOS/Linux/WSL or Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` and `HOST_DOCKER_SOCKET` must remain `/data` and `/var/run/docker.sock` and must not be changed through the normal config flow.
+The CLI must validate known keys before writing. Unknown keys must return a clear error. `HOST_UI_PORT` must accept `auto` or a valid TCP port number. `HOST_BIND_ADDRESS` must accept `127.0.0.1` or `0.0.0.0`. `HOST_PUBLIC_ORIGIN`, `HOST_CORE_PUBLIC_ORIGIN`, and `HOST_SHELL_PUBLIC_ORIGIN` must be absolute `http`/`https` origins without paths. `HOST_GATEWAY_BASE_DOMAIN` must be a valid DNS name or an empty value. `HOST_DOCKER_ENDPOINT` must accept only supported local endpoints for the current platform: Unix socket on macOS/Linux/WSL or Docker Desktop named pipe on native Windows. `HOST_DATA_ROOT_CONTAINER` and `HOST_DOCKER_SOCKET` must remain `/data` and `/var/run/docker.sock` and must not be changed through the normal config flow.
 
 If `~/.hosty/bin` is not in `PATH`, the install script should add an idempotent PATH block to the shell profile. For `zsh`, it uses `~/.zshrc`; for `bash`, it uses the typical bash profile for the current platform; for `sh`, it uses `~/.profile`. If the profile cannot be detected or writing is disabled with `HOSTY_INSTALL_SKIP_PATH_UPDATE=1`, the script should print this instruction:
 
