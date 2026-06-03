@@ -41,6 +41,22 @@ internal static class SourceEndpoints
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleSourceError(() => sources.ClearLocalOverrideAsync(appId, cancellationToken))));
+
+        app.MapGet("/control/v1/sources/cleanup/plan", async (
+            HttpRequest request,
+            ControlSecret secret,
+            AppSourceService sources,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleSourceError(() => sources.CreateCleanupPlanAsync(cancellationToken))));
+
+        app.MapPost("/control/v1/sources/cleanup", async (
+            HttpRequest request,
+            ControlSecret secret,
+            AppSourceService sources,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleSourceError(() => sources.ApplyCleanupAsync(cancellationToken))));
     }
 
     private static async Task<IResult> HandleSourceError<T>(Func<Task<T>> action)

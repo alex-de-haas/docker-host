@@ -21,10 +21,10 @@ hosty start
 hosty open
 ```
 
-Install the repository demo module:
+From a local checkout, install the repository Demo App:
 
 ```bash
-hosty apps install https://raw.githubusercontent.com/alex-de-haas/docker-host/main/modules/demo-module/metadata.json
+hosty apps install apps/demo-app/manifest.json
 ```
 
 ## Install Hosty App Skill

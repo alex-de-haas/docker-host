@@ -23,8 +23,8 @@ export default async function RolesPage() {
     <DemoShell>
       <DemoPageHeader
         eyebrow={config.moduleId}
-        title="Module Roles"
-        description="Module-owned role assignments persisted in the demo module data directory."
+        title="App Roles"
+        description="App-owned role assignments persisted in the demo app data directory."
         actions={<JsonButton href="/api/roles" />}
       />
       <DemoNavigation active="roles" />
@@ -41,7 +41,7 @@ export default async function RolesPage() {
             icon={ShieldCheck}
             label="Stored roles"
             value={snapshot.assignments.length}
-            description="Explicit module assignments in module-roles.json."
+            description="Explicit app assignments in module-roles.json."
           />
         </div>
 

@@ -83,6 +83,24 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateRuntimeSwitchPlanAsync_ReportsRuntimeContractChanges()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteSwitchableDockerManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync(
+            "com.example.notes",
+            new AppRuntimeSwitchPlanRequest("docker-alt"));
+
+        Assert.Contains("runtime:docker->docker-alt", plan.Changes);
+        Assert.Contains("runtimeType:docker", plan.Changes);
+        Assert.Contains("image:app:ghcr.io/example/notes:1.0.0->ghcr.io/example/notes:1.0.1", plan.Changes);
+        Assert.Contains("container:app:preserved:hosty-com-example-notes-app", plan.Changes);
+        Assert.Contains("data:compatible", plan.Changes);
+    }
+
+    [Fact]
     public async Task ApplyRuntimeSwitchAsync_RestartsRunningAppAndReturnsBackup()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -104,6 +122,39 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("running", result.App?.RuntimeState);
         Assert.Equal("docker-alt", result.App?.SelectedRuntime);
         Assert.Equal("pre-runtime-switch", result.Backup?.Reason);
+        Assert.Equal(2, fixture.Adapter.StartCount);
+        Assert.Equal(1, fixture.Adapter.StopCount);
+    }
+
+    [Fact]
+    public async Task ApplyRuntimeSwitchAsync_RollsBackSelectedRuntimeWhenRestartFails()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteSwitchableDockerManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data", "notes.db"),
+            "local-data");
+        await fixture.Service.StartAsync("com.example.notes");
+        fixture.Adapter.FailOnStartCount = 2;
+
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync(
+            "com.example.notes",
+            new AppRuntimeSwitchPlanRequest("docker-alt"));
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ApplyRuntimeSwitchAsync(
+                "com.example.notes",
+                new AppRuntimeSwitchApplyRequest("docker-alt", plan.PlanDigest)));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var backup = Assert.Single(await fixture.Backups.ListBackupsAsync("com.example.notes"));
+
+        Assert.Equal("runtime_switch_restart_failed", error.Code);
+        Assert.Equal("docker", app?.SelectedRuntime);
+        Assert.Equal("stopped", app?.RuntimeState);
+        Assert.Equal("runtime-switch-rollback", app?.OperationStatus);
+        Assert.Equal("switch-runtime", app?.LastOperation);
+        Assert.Contains("Runtime failed to start", app?.LastError);
+        Assert.Equal("pre-runtime-switch", backup.Reason);
         Assert.Equal(2, fixture.Adapter.StartCount);
         Assert.Equal(1, fixture.Adapter.StopCount);
     }
@@ -241,6 +292,54 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("source_not_configured", error.Code);
     }
 
+    [Theory]
+    [InlineData("https://user:token@example.test/acme/app.git", "source_repository_credentials_unsupported")]
+    [InlineData("ssh://git@example.test/acme/app.git", "source_repository_scheme_unsupported")]
+    [InlineData("git@example.test:acme/app.git", "source_repository_scheme_unsupported")]
+    public void ValidateManagedRepository_RejectsCredentialOrSshSources(string repository, string expectedCode)
+    {
+        var error = Assert.Throws<AppLifecycleException>(() => AppSourceService.ValidateManagedRepository(repository));
+
+        Assert.Equal(expectedCode, error.Code);
+    }
+
+    [Theory]
+    [InlineData("https://example.test/acme/app.git")]
+    [InlineData("http://example.test/acme/app.git")]
+    [InlineData("./apps/demo-app")]
+    public void ValidateManagedRepository_AllowsPublicReadableAndLocalSources(string repository)
+    {
+        var error = Record.Exception(() => AppSourceService.ValidateManagedRepository(repository));
+
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public void CreateGitStartInfo_DisablesInteractiveCredentialPrompts()
+    {
+        var startInfo = AppSourceService.CreateGitStartInfo("/tmp", ["fetch"]);
+
+        Assert.Equal("0", startInfo.Environment["GIT_TERMINAL_PROMPT"]);
+        Assert.Equal("", startInfo.Environment["GIT_ASKPASS"]);
+        Assert.Equal("", startInfo.Environment["SSH_ASKPASS"]);
+        Assert.Equal("never", startInfo.Environment["GCM_INTERACTIVE"]);
+    }
+
+    [Fact]
+    public async Task ResolveManagedAsync_RejectsRepositoryWithEmbeddedCredentials()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync(
+            "1.0.0",
+            sourceRepository: "https://user:token@example.test/acme/notes.git");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Sources.ResolveManagedAsync("com.example.notes", new AppSourceResolveRequest()));
+
+        Assert.Equal("source_repository_credentials_unsupported", error.Code);
+    }
+
     [Fact]
     public async Task ResolveManagedAsync_ClonesLocalRepositoryAndStoresImmutableCommit()
     {
@@ -281,6 +380,31 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyCleanupAsync_RemovesOnlyAbandonedManagedSourceCheckouts()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        _ = await fixture.Sources.ResolveManagedAsync("com.example.notes", new AppSourceResolveRequest(Branch: "main"));
+        var managedPath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.notes");
+        var orphanPath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.orphan");
+        Directory.CreateDirectory(orphanPath);
+        await File.WriteAllTextAsync(Path.Combine(orphanPath, "README.md"), "orphan");
+
+        var plan = await fixture.Sources.CreateCleanupPlanAsync();
+        var result = await fixture.Sources.ApplyCleanupAsync();
+
+        var candidate = Assert.Single(plan.Candidates);
+        Assert.Equal("com.example.orphan", candidate.AppId);
+        Assert.Equal("app-not-installed", candidate.Reason);
+        var deleted = Assert.Single(result.Deleted);
+        Assert.Equal(orphanPath, deleted.Path);
+        Assert.True(Directory.Exists(managedPath));
+        Assert.False(Directory.Exists(orphanPath));
+    }
+
+    [Fact]
     public async Task StartAsync_RunsLocalCommandRuntimeFromLocalOverrideWithInjectedEnvironment()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -309,6 +433,39 @@ public sealed class CoreLifecycleServiceTests
 
         var app = await fixture.Apps.GetAppAsync("com.example.local");
         Assert.Equal("stopped", app?.RuntimeState);
+    }
+
+    [Fact]
+    public async Task GetHealthAsync_ReportsLocalCommandProcessState()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var overridePath = Path.Combine(fixture.Root, "local-app");
+        Directory.CreateDirectory(overridePath);
+        var manifest = await fixture.WriteLocalCommandManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
+        _ = await fixture.Sources.SetLocalOverrideAsync("com.example.local", new AppSourceOverrideRequest(overridePath));
+
+        try
+        {
+            _ = await fixture.Service.StartAsync("com.example.local");
+            var running = await fixture.Service.GetHealthAsync("com.example.local");
+
+            Assert.Equal("healthy", running.Status);
+            var service = Assert.Single(running.Services);
+            Assert.Equal("app", service.Service);
+            Assert.Equal("running", service.Status);
+            Assert.NotNull(service.ProcessId);
+            Assert.Equal(overridePath, service.WorkingDirectory);
+            Assert.EndsWith(Path.Combine("logs", "app.log"), service.LogPath);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.local");
+        }
+
+        var stopped = await fixture.Service.GetHealthAsync("com.example.local");
+        Assert.Equal("stopped", stopped.Status);
+        Assert.Equal("stopped", Assert.Single(stopped.Services).Status);
     }
 
     [Fact]
@@ -702,12 +859,19 @@ public sealed class CoreLifecycleServiceTests
 
         public int StopCount { get; private set; }
 
+        public int? FailOnStartCount { get; set; }
+
         public RuntimeLifecycleContext? LastContext { get; private set; }
 
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             StartCount++;
             LastContext = context;
+            if (FailOnStartCount == StartCount)
+            {
+                throw new AppLifecycleException("runtime_start_failed", "Runtime failed to start.");
+            }
+
             return Task.FromResult(new AppRuntimeStartResult("running", [
                 new AppEndpointContract("app.http", "http", "http://127.0.0.1:3100", Public: true),
             ]));
@@ -724,6 +888,9 @@ public sealed class CoreLifecycleServiceTests
 
         public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeLogsResult("log line"));
+
+        public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AppRuntimeHealthResult("unknown", []));
     }
 
     private sealed class FakeClock(DateTimeOffset now) : IClock

@@ -78,6 +78,7 @@ Use normal app lifecycle commands while iterating:
 
 ```bash
 hosty apps list
+hosty apps health com.haas.demo-app
 hosty apps logs com.haas.demo-app
 hosty apps restart com.haas.demo-app
 hosty apps source com.haas.demo-app
@@ -88,6 +89,20 @@ hosty apps switch-runtime com.haas.demo-app --runtime docker --plan-digest <dige
 ```
 
 Use `hosty apps source-resolve <app-id> --branch <name> --fetch` when the app should run from a Core-managed checkout. Use `source-override` when a specific local worktree should be used instead. Local override state is stored in the Hosty installation record and is not written back to the public app manifest.
+
+## Local Command Constraints
+
+`localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`.
+
+Production installers should treat `localCommand` as platform-specific unless the command is known to be portable. Prefer commands that:
+
+- run in the foreground and let Core own stop/restart behavior;
+- write diagnostics to stdout/stderr instead of daemonizing into a separate logger;
+- read `HOSTY_APP_DATA_DIR`, `HOSTY_PORT_<KEY>`, `HOSTY_CORE_ORIGIN`, and dependency URL environment variables instead of hard-coding local paths or ports;
+- avoid shell features that only exist on one target platform unless the runtime profile key or installer target makes that platform explicit;
+- keep package installation outside runtime start commands so app start is repeatable and does not require network access.
+
+Docker runtime profiles remain the production-oriented default for app distribution. `localCommand` is the local-first runtime path for source workflows and for apps that are intentionally supervised as local processes.
 
 ## Identity Checks
 

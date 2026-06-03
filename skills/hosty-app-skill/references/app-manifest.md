@@ -16,6 +16,7 @@ Repository source of truth:
 - Legacy Docker module metadata with `schemaVersion: "0.2"` or `"0.3"` remains valid.
 - The file name is not important. New docs should say `manifest.json`; legacy docs may still say `metadata.json`.
 - A source repository is optional. Some runtime apps may only declare a Docker image and no source.
+- Stage 2 managed source checkouts support public-readable `http`/`https` Git repositories and local filesystem repositories only. Do not put credentials in `source.repository`; Core rejects embedded credentials and SSH-style repository URLs. Private repositories should use a local source override until a future credential provider exists.
 - Manifest and metadata URLs must be absolute `http` or `https` URLs. Each response is limited to 1 MiB and 10 seconds.
 - Dependency graphs are limited to the root plus 32 unique dependency nodes. Cycles are rejected.
 - Recommended app ids use reverse-DNS format, for example `com.acme.reports`.

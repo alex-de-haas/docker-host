@@ -77,7 +77,7 @@ export function DemoPageHeader({
 
 export function DemoNavigation({ active }: { active: DemoRoute }) {
   return (
-    <nav aria-label="Demo module navigation" className="rounded-lg border bg-card p-1 shadow-sm">
+    <nav aria-label="Demo app navigation" className="rounded-lg border bg-card p-1 shadow-sm">
       <div className="flex flex-col gap-1 sm:flex-row">
         {demoNavigationItems.map(item => {
           const isActive = item.id === active;

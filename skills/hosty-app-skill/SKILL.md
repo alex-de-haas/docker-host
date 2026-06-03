@@ -14,7 +14,7 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 ## First Pass
 
 1. Identify whether the user wants to create a new runtime app, wrap an existing app, update an app manifest, migrate legacy module metadata, add Hosty identity/roles, configure data/backups, or validate an app.
-2. Treat `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, `docs/features/domain-model.md`, `docs/features/auth-gateway.md`, `apps/host/src/lib/app-manifest.ts`, `apps/host/src/lib/module-metadata.ts`, and `modules/demo-module` as source of truth when implementation details matter.
+2. Treat `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, `docs/features/domain-model.md`, `docs/features/auth-gateway.md`, `apps/host/src/lib/app-manifest.ts`, `apps/host/src/lib/module-metadata.ts`, and `apps/demo-app` as source of truth when implementation details matter. Use `modules/demo-module` only for legacy schema `0.3` compatibility examples.
 3. Prefer `hosty` commands and Hosty terminology. Use `docker-host` only as a deprecated compatibility alias or when referring to legacy behavior already implemented under that name.
 4. Keep Hosty Core access decisions separate from app-owned domain authorization. Hosty decides whether a Hosty user can reach the app; the app owns its internal roles and permissions.
 5. For Host-facing behavior, validate through a Core-managed runtime app using a local runtime profile before rebuilding images. Use existing Hosty users and assignments, then let Core issue the normal signed app identity token.
@@ -25,7 +25,7 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 - Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, legacy `metadata.json`, app-level runtime profiles, service runtime implementations, settings, storage, dependencies, endpoints, install/update behavior, or backups.
 - Read `references/app-auth-and-users.md` when working with Shell embedding, standalone app auth, gateway protection, `X-Docker-Host-Identity`, scoped user directory APIs, app-owned roles, external providers, or third-party integration credentials.
 - Read `references/app-dev-mode.md` when validating a local app through Hosty Core with a local command runtime profile.
-- Read `references/demo-app-patterns.md` when copying repo-local examples from `modules/demo-module`.
+- Read `references/demo-app-patterns.md` when copying repo-local examples from `apps/demo-app`.
 - Read `references/app-implementation-checklist.md` before finishing an app implementation or review.
 
 ## Workflows
@@ -35,7 +35,7 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 1. Choose a stable reverse-DNS app id, display name, version, and whether the app is user-facing, service-only, or both.
 2. Prefer an `app.0.1` manifest. Start from `assets/app-template/manifest.json`, then replace ids, service keys, runtime profiles, image references, ports, settings, storage, UI, and dependencies.
 3. Declare one or more app-level runtime profiles, then add per-service runtime implementations under `services[].runtimes.<profileKey>`. Docker service runtimes run through the Docker adapter. `localCommand` service runtimes run through Hosty Core from a managed checkout, local source override, or app root fallback and should be used only for trusted local or explicitly configured administrator workflows.
-4. Treat `source` as optional Git metadata. Some apps, such as Redis-like service dependencies, may have only a Docker image and no source repository.
+4. Treat `source` as optional Git metadata. Some apps, such as Redis-like service dependencies, may have only a Docker image and no source repository. Managed source checkouts are public-readable or local-only in Stage 2; never put credentials in `source.repository`.
 5. Use `data.enabled: true` when the app needs a primary Hosty-managed data directory. Hosty backs up only that primary `data/` directory, not external mounts or additional storage.
 6. Add `ui` only when the app should appear in Hosty Shell. Service-only apps can omit UI and still be managed as runtime apps or dependencies.
 

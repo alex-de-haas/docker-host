@@ -129,6 +129,21 @@ internal sealed class LocalCommandRuntimeAdapter(
         return Task.FromResult(new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines)));
     }
 
+    public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+    {
+        var services = context.Manifest.Services
+            .Select(service => BuildServiceHealth(context, service))
+            .ToArray();
+        var status = services.Length == 0
+            ? "unknown"
+            : services.All(service => string.Equals(service.Status, "running", StringComparison.Ordinal))
+                ? "healthy"
+                : services.All(service => string.Equals(service.Status, "stopped", StringComparison.Ordinal))
+                    ? "stopped"
+                    : "unhealthy";
+        return Task.FromResult(new AppRuntimeHealthResult(status, services));
+    }
+
     private static System.Diagnostics.ProcessStartInfo CreateShellStartInfo(string command, string workingDirectory)
     {
         var startInfo = new System.Diagnostics.ProcessStartInfo
@@ -228,6 +243,32 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
 
         running.Process.Dispose();
+    }
+
+    private AppRuntimeServiceHealth BuildServiceHealth(RuntimeLifecycleContext context, RuntimeSelectedService service)
+    {
+        var process = registry.Get(context.App.Id, service.Key);
+        if (process is null)
+        {
+            return new AppRuntimeServiceHealth(
+                Service: service.Key,
+                Status: "stopped",
+                ProcessId: null,
+                ExitCode: null,
+                LogPath: Path.Combine(context.AppRoot, "logs", $"{service.Key}.log"),
+                WorkingDirectory: ResolveWorkingDirectory(context, service),
+                Message: "No local command process is registered.");
+        }
+
+        var hasExited = process.Process.HasExited;
+        return new AppRuntimeServiceHealth(
+            Service: service.Key,
+            Status: hasExited ? "exited" : "running",
+            ProcessId: hasExited ? null : process.Process.Id,
+            ExitCode: hasExited ? process.Process.ExitCode : null,
+            LogPath: process.LogPath,
+            WorkingDirectory: process.WorkingDirectory,
+            Message: hasExited ? "Local command process exited." : null);
     }
 
     private static int AllocateLoopbackPort()

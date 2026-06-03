@@ -141,6 +141,142 @@ public sealed class AppsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task SourceCleanupPlanAsync_UsesCleanupPlanRoute()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "candidates": [
+                {
+                  "appId": "com.haas.old-app",
+                  "path": "/tmp/hosty/sources/com.haas.old-app",
+                  "reason": "app-not-installed"
+                }
+              ]
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "source-cleanup-plan",
+            "--format",
+            "json",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("GET", server.Method);
+        Assert.Equal("/control/v1/sources/cleanup/plan", server.PathAndQuery);
+        Assert.Contains("com.haas.old-app", output.ToString());
+    }
+
+    [Fact]
+    public async Task SourceCleanupAsync_UsesCleanupApplyRoute()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "deleted": [
+                {
+                  "appId": "com.haas.old-app",
+                  "path": "/tmp/hosty/sources/com.haas.old-app",
+                  "reason": "app-not-installed"
+                }
+              ]
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "source-cleanup",
+            "--format",
+            "json",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/sources/cleanup", server.PathAndQuery);
+        Assert.Contains("com.haas.old-app", output.ToString());
+    }
+
+    [Fact]
+    public async Task SwitchRuntimePlanAsync_RendersPlanChanges()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "appId": "com.haas.demo-app",
+              "currentRuntime": "docker",
+              "targetRuntime": "dev",
+              "targetRuntimeType": "localCommand",
+              "planDigest": "abc123",
+              "automaticBackup": true,
+              "changes": [
+                "runtime:docker->dev",
+                "image:web:ghcr.io/example/demo:1.0.0->none"
+              ]
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "switch-runtime-plan",
+            "com.haas.demo-app",
+            "--runtime",
+            "dev",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/switch-runtime/plan", server.PathAndQuery);
+        using var body = JsonDocument.Parse(server.Body);
+        Assert.Equal("dev", body.RootElement.GetProperty("targetRuntime").GetString());
+        Assert.Contains("image:web:ghcr.io/example/demo:1.0.0->none", output.ToString());
+    }
+
+    [Fact]
+    public async Task HealthAsync_UsesHealthRouteAndRendersServices()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "appId": "com.haas.demo-app",
+              "runtime": "dev",
+              "runtimeType": "localCommand",
+              "status": "healthy",
+              "services": [
+                {
+                  "service": "web",
+                  "status": "running",
+                  "processId": 1234,
+                  "logPath": "/tmp/hosty/apps/com.haas.demo-app/logs/web.log",
+                  "workingDirectory": "/tmp/demo"
+                }
+              ]
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "health",
+            "com.haas.demo-app",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("GET", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/health", server.PathAndQuery);
+        Assert.Contains("healthy", output.ToString());
+        Assert.Contains("web", output.ToString());
+    }
+
+    [Fact]
     public async Task SourceResolveAsync_RejectsAmbiguousRefsBeforeCallingCore()
     {
         var (console, output) = CreateConsole();

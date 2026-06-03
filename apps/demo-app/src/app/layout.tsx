@@ -3,8 +3,8 @@ import { HostIdentityBridge } from "@/components/HostIdentityBridge";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Docker Host Demo Module",
-  description: "A small Next.js module for Docker Host lifecycle testing.",
+  title: "Hosty Demo App",
+  description: "A small Next.js runtime app for Hosty lifecycle testing.",
 };
 
 export default function RootLayout({

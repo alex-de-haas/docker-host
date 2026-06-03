@@ -20,6 +20,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             throw new AppLifecycleException("source_not_configured", $"Runtime app '{appId}' does not declare a source repository.");
         }
 
+        ValidateManagedRepository(source.Repository);
         var checkoutPath = source.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, appId);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
         if (request.Fetch)
@@ -93,9 +94,95 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         return new AppSourceResponse(appId, state);
     }
 
+    public async Task<AppSourceCleanupPlan> CreateCleanupPlanAsync(CancellationToken cancellationToken = default)
+    {
+        if (!Directory.Exists(paths.SourcesRoot))
+        {
+            return new AppSourceCleanupPlan([]);
+        }
+
+        var candidates = new List<AppSourceCleanupCandidate>();
+        foreach (var sourceDirectory in Directory.EnumerateDirectories(paths.SourcesRoot).Order(StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var appId = Path.GetFileName(sourceDirectory);
+            if (string.IsNullOrWhiteSpace(appId))
+            {
+                continue;
+            }
+
+            var app = await apps.GetAppAsync(appId, cancellationToken);
+            var reason = GetCleanupReason(app, sourceDirectory);
+            if (reason is not null)
+            {
+                candidates.Add(new AppSourceCleanupCandidate(appId, Path.GetFullPath(sourceDirectory), reason));
+            }
+        }
+
+        return new AppSourceCleanupPlan(candidates);
+    }
+
+    public async Task<AppSourceCleanupApplyResponse> ApplyCleanupAsync(CancellationToken cancellationToken = default)
+    {
+        var plan = await CreateCleanupPlanAsync(cancellationToken);
+        var deleted = new List<AppSourceCleanupCandidate>();
+        foreach (var candidate in plan.Candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsManagedSourceRootChild(candidate.Path))
+            {
+                continue;
+            }
+
+            if (Directory.Exists(candidate.Path))
+            {
+                Directory.Delete(candidate.Path, recursive: true);
+                deleted.Add(candidate);
+            }
+        }
+
+        return new AppSourceCleanupApplyResponse(deleted);
+    }
+
     private async Task<AppRecord> RequireAppAsync(string appId, CancellationToken cancellationToken)
         => await apps.GetAppAsync(appId, cancellationToken) ??
             throw new AppLifecycleException("app_not_found", $"Runtime app '{appId}' was not found.");
+
+    private string? GetCleanupReason(AppRecord? app, string sourceDirectory)
+    {
+        if (app is null)
+        {
+            return "app-not-installed";
+        }
+
+        var source = app.SourceState;
+        if (source is null || string.IsNullOrWhiteSpace(source.Repository))
+        {
+            return "source-not-configured";
+        }
+
+        var fullSourceDirectory = Path.GetFullPath(sourceDirectory);
+        if (!string.IsNullOrWhiteSpace(source.LocalOverridePath) &&
+            string.Equals(Path.GetFullPath(source.LocalOverridePath), fullSourceDirectory, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var managedCheckoutPath = source.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, app.Id);
+        if (!string.Equals(Path.GetFullPath(managedCheckoutPath), fullSourceDirectory, StringComparison.Ordinal))
+        {
+            return "managed-checkout-path-changed";
+        }
+
+        return null;
+    }
+
+    private bool IsManagedSourceRootChild(string candidatePath)
+    {
+        var root = Path.GetFullPath(paths.SourcesRoot);
+        var candidate = Path.GetFullPath(candidatePath);
+        return string.Equals(Path.GetDirectoryName(candidate), root, StringComparison.Ordinal);
+    }
 
     private static async Task EnsureCheckoutAsync(string repository, string checkoutPath, CancellationToken cancellationToken)
     {
@@ -111,6 +198,46 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         }
 
         _ = await RunGitProcessAsync(null, ["clone", repository, checkoutPath], cancellationToken);
+    }
+
+    internal static void ValidateManagedRepository(string repository)
+    {
+        if (string.IsNullOrWhiteSpace(repository))
+        {
+            throw new AppLifecycleException("source_repository_required", "Source repository is required.");
+        }
+
+        var trimmed = repository.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            if (uri.Scheme is "http" or "https")
+            {
+                if (!string.IsNullOrWhiteSpace(uri.UserInfo))
+                {
+                    throw new AppLifecycleException(
+                        "source_repository_credentials_unsupported",
+                        "Managed source checkouts support public-readable repositories only. Do not include credentials in source.repository.");
+                }
+
+                return;
+            }
+
+            if (uri.Scheme == "file")
+            {
+                return;
+            }
+
+            throw new AppLifecycleException(
+                "source_repository_scheme_unsupported",
+                $"Managed source checkouts support public-readable http/https repositories and local paths, not '{uri.Scheme}' repositories.");
+        }
+
+        if (LooksLikeScpStyleSshRepository(trimmed))
+        {
+            throw new AppLifecycleException(
+                "source_repository_scheme_unsupported",
+                "Managed source checkouts support public-readable http/https repositories and local paths, not SSH repository syntax.");
+        }
     }
 
     private static async Task<string> ResolveCommitAsync(
@@ -151,19 +278,8 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
     {
         var process = new System.Diagnostics.Process
         {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "git",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = workingDirectory ?? Directory.GetCurrentDirectory(),
-            },
+            StartInfo = CreateGitStartInfo(workingDirectory, args),
         };
-        foreach (var arg in args)
-        {
-            process.StartInfo.ArgumentList.Add(arg);
-        }
 
         try
         {
@@ -184,6 +300,41 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
 
         return stdout.Trim();
     }
+
+    internal static System.Diagnostics.ProcessStartInfo CreateGitStartInfo(string? workingDirectory, IReadOnlyList<string> args)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            WorkingDirectory = workingDirectory ?? Directory.GetCurrentDirectory(),
+        };
+        startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        startInfo.Environment["GIT_ASKPASS"] = "";
+        startInfo.Environment["SSH_ASKPASS"] = "";
+        startInfo.Environment["GCM_INTERACTIVE"] = "never";
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        return startInfo;
+    }
+
+    private static bool LooksLikeScpStyleSshRepository(string value)
+    {
+        var colonIndex = value.IndexOf(':', StringComparison.Ordinal);
+        if (colonIndex <= 0)
+        {
+            return false;
+        }
+
+        var slashIndex = value.IndexOfAny(['/', '\\']);
+        return value[..colonIndex].Contains('@', StringComparison.Ordinal) &&
+            (slashIndex < 0 || colonIndex < slashIndex);
+    }
 }
 
 internal sealed record AppSourceResolveRequest(
@@ -195,3 +346,9 @@ internal sealed record AppSourceResolveRequest(
 internal sealed record AppSourceOverrideRequest(string Path, string? Commit = null);
 
 internal sealed record AppSourceResponse(string AppId, AppSourceState? Source);
+
+internal sealed record AppSourceCleanupPlan(IReadOnlyList<AppSourceCleanupCandidate> Candidates);
+
+internal sealed record AppSourceCleanupCandidate(string AppId, string Path, string Reason);
+
+internal sealed record AppSourceCleanupApplyResponse(IReadOnlyList<AppSourceCleanupCandidate> Deleted);

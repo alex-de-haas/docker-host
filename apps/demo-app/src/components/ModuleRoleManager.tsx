@@ -90,7 +90,7 @@ export function ModuleRoleManager({
 
       {!snapshot.canManage && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          Current module permissions do not include demo.roles.manage.
+          Current app permissions do not include demo.roles.manage.
         </div>
       )}
 

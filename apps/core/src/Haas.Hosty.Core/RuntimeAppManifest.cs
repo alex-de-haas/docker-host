@@ -332,6 +332,8 @@ internal interface IAppRuntimeAdapter
     Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default);
 
     Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default);
+
+    Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default);
 }
 
 internal sealed class DockerRuntimeAdapter(HostyCoreRuntimeConfig config) : IAppRuntimeAdapter
@@ -494,6 +496,20 @@ internal sealed class DockerRuntimeAdapter(HostyCoreRuntimeConfig config) : IApp
         return new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines));
     }
 
+    public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+        => Task.FromResult(new AppRuntimeHealthResult(
+            "unknown",
+            context.Manifest.Services
+                .Select(service => new AppRuntimeServiceHealth(
+                    Service: service.Key,
+                    Status: "unknown",
+                    ProcessId: null,
+                    ExitCode: null,
+                    LogPath: null,
+                    WorkingDirectory: null,
+                    Message: "Docker runtime health inspection is not implemented."))
+                .ToArray()));
+
     private static IReadOnlyList<RuntimeSelectedService> OrderServices(IReadOnlyList<RuntimeSelectedService> services)
     {
         var remaining = services.ToDictionary(service => service.Key, StringComparer.Ordinal);
@@ -561,7 +577,7 @@ internal sealed class DockerRuntimeAdapter(HostyCoreRuntimeConfig config) : IApp
         return stdout;
     }
 
-    private static string BuildContainerName(string appId, string serviceKey)
+    internal static string BuildContainerName(string appId, string serviceKey)
         => $"hosty-{NormalizeDockerName(appId)}-{NormalizeDockerName(serviceKey)}";
 
     private static string NormalizeDockerName(string value)
@@ -710,6 +726,17 @@ internal sealed record AppRuntimeStartResult(string RuntimeState, IReadOnlyList<
 internal sealed record AppRuntimeOperationResult(string RuntimeState);
 
 internal sealed record AppRuntimeLogsResult(string Text);
+
+internal sealed record AppRuntimeHealthResult(string Status, IReadOnlyList<AppRuntimeServiceHealth> Services);
+
+internal sealed record AppRuntimeServiceHealth(
+    string Service,
+    string Status,
+    int? ProcessId,
+    int? ExitCode,
+    string? LogPath,
+    string? WorkingDirectory,
+    string? Message);
 
 internal sealed record AppManifestValidationError(string Code, string Message, string Path);
 

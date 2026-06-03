@@ -46,7 +46,7 @@ flowchart LR
 - `skills/hosty-app-skill/references/app-manifest.md` - compact app manifest, legacy metadata, runtime profile, install/update, storage, and backup guidance.
 - `skills/hosty-app-skill/references/app-auth-and-users.md` - Hosty roles, Shell access, gateway policies, identity modes, identity tokens, scoped directory, external providers, third-party credentials, and app-owned roles.
 - `skills/hosty-app-skill/references/app-dev-mode.md` - local runtime profile workflow, Core app identity helpers, and validation boundaries.
-- `skills/hosty-app-skill/references/demo-app-patterns.md` - practical patterns from `modules/demo-module`.
+- `skills/hosty-app-skill/references/demo-app-patterns.md` - practical patterns from `apps/demo-app`.
 - `skills/hosty-app-skill/references/app-implementation-checklist.md` - final implementation and validation checklist.
 - `skills/hosty-app-skill/assets/app-template/manifest.json` - minimal `app.0.1` manifest skeleton.
 
@@ -109,7 +109,7 @@ Keep the skill aligned with the source documentation:
 - update `references/app-manifest.md` when `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, or `apps/host/src/lib/app-manifest.ts` changes;
 - update `references/app-auth-and-users.md` when `docs/features/auth-gateway.md` or `docs/features/user-management.md` changes;
 - update `references/app-dev-mode.md` when `docs/features/local-development.md` or Core local runtime behavior changes;
-- update `references/demo-app-patterns.md` when `modules/demo-module` changes in a way agents should copy;
+- update `references/demo-app-patterns.md` when `apps/demo-app` changes in a way agents should copy;
 - update `references/app-implementation-checklist.md` when app validation, gateway publishing, backup, or security review expectations change.
 
 Run the skill validator after changes:

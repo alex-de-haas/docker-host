@@ -252,6 +252,7 @@ internal sealed class CoreLifecycleService(
             throw new AppLifecycleException("manifest_path_required", $"Runtime app '{appId}' has no manifest path.");
         }
 
+        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         var selection = await manifests.LoadAsync(app.ManifestPath, request.TargetRuntime, cancellationToken);
         var willCreateBackup = Directory.Exists(GetAppDataPath(appId));
         if (willCreateBackup &&
@@ -263,6 +264,7 @@ internal sealed class CoreLifecycleService(
                 $"Target runtime '{selection.RuntimeProfile.Key}' does not declare a compatible primary data directory target.");
         }
 
+        var changes = BuildRuntimeSwitchChanges(app, currentSelection, selection);
         var seed = new
         {
             appId,
@@ -271,6 +273,7 @@ internal sealed class CoreLifecycleService(
             app.Version,
             selection.ManifestDigest,
             automaticBackup = willCreateBackup,
+            changes,
         };
         return new AppRuntimeSwitchPlan(
             AppId: appId,
@@ -279,7 +282,7 @@ internal sealed class CoreLifecycleService(
             TargetRuntimeType: selection.RuntimeProfile.Type,
             PlanDigest: HashPlanSeed(seed),
             AutomaticBackup: willCreateBackup,
-            Changes: BuildRuntimeSwitchChanges(app, selection));
+            Changes: changes);
     }
 
     public async Task<AppLifecycleResponse> ApplyRuntimeSwitchAsync(
@@ -321,8 +324,18 @@ internal sealed class CoreLifecycleService(
 
         if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
         {
-            var restarted = await StartAsync(appId, cancellationToken);
-            return new AppLifecycleResponse(restarted.App, backup, "runtime-switched");
+            try
+            {
+                var restarted = await StartAsync(appId, cancellationToken);
+                return new AppLifecycleResponse(restarted.App, backup, "runtime-switched");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await RollBackRuntimeSwitchStateAsync(app, currentSelection, ex, cancellationToken);
+                throw new AppLifecycleException(
+                    "runtime_switch_restart_failed",
+                    $"Runtime switch to '{targetSelection.RuntimeProfile.Key}' failed while restarting. Selected runtime was restored to '{currentSelection.RuntimeProfile.Key}' and the app was left stopped. {ex.Message}");
+            }
         }
 
         var document = await apps.GetAppAsync(appId, cancellationToken);
@@ -468,6 +481,21 @@ internal sealed class CoreLifecycleService(
         return new AppLogsResponse(appId, logs.Text);
     }
 
+    public async Task<AppRuntimeHealthResponse> GetHealthAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+        var health = await ResolveAdapter(selection.RuntimeProfile.Type).GetHealthAsync(
+            await CreateRuntimeContextAsync(app, selection, cancellationToken),
+            cancellationToken);
+        return new AppRuntimeHealthResponse(
+            AppId: appId,
+            Runtime: selection.RuntimeProfile.Key,
+            RuntimeType: selection.RuntimeProfile.Type,
+            Status: health.Status,
+            Services: health.Services);
+    }
+
     private AppRecord BuildAppRecord(
         RuntimeAppManifestSelection selection,
         string manifestPath,
@@ -575,6 +603,28 @@ internal sealed class CoreLifecycleService(
             : endpoint).Concat(started.Where(endpoint => current.All(existing => !string.Equals(existing.Key, endpoint.Key, StringComparison.Ordinal)))).ToArray();
     }
 
+    private async Task RollBackRuntimeSwitchStateAsync(
+        AppRecord app,
+        RuntimeAppManifestSelection currentSelection,
+        Exception error,
+        CancellationToken cancellationToken)
+    {
+        var rolledBack = BuildAppRecord(
+            currentSelection,
+            app.ManifestPath!,
+            selectedChannel: app.SelectedChannel,
+            system: app.System,
+            existing: app) with
+        {
+            SelectedRuntime = currentSelection.RuntimeProfile.Key,
+            RuntimeState = "stopped",
+            OperationStatus = "runtime-switch-rollback",
+            LastOperation = "switch-runtime",
+            LastError = $"Target runtime failed to start: {error.Message}",
+        };
+        await apps.UpsertAppAsync(rolledBack, cancellationToken);
+    }
+
     private async Task<RuntimeLifecycleContext> CreateRuntimeContextAsync(
         AppRecord app,
         RuntimeAppManifestSelection selection,
@@ -650,19 +700,336 @@ internal sealed class CoreLifecycleService(
         return changes;
     }
 
-    private static IReadOnlyList<string> BuildRuntimeSwitchChanges(AppRecord app, RuntimeAppManifestSelection selection)
+    private IReadOnlyList<string> BuildRuntimeSwitchChanges(
+        AppRecord app,
+        RuntimeAppManifestSelection currentSelection,
+        RuntimeAppManifestSelection targetSelection)
     {
         var changes = new List<string>
         {
-            $"runtime:{app.SelectedRuntime}->{selection.RuntimeProfile.Key}",
-            $"runtimeType:{selection.RuntimeProfile.Type}",
+            $"runtime:{app.SelectedRuntime}->{targetSelection.RuntimeProfile.Key}",
         };
-        if (selection.DataTarget is not null)
+
+        changes.Add(string.Equals(currentSelection.RuntimeProfile.Type, targetSelection.RuntimeProfile.Type, StringComparison.Ordinal)
+            ? $"runtimeType:{targetSelection.RuntimeProfile.Type}"
+            : $"runtimeType:{currentSelection.RuntimeProfile.Type}->{targetSelection.RuntimeProfile.Type}");
+
+        AddServiceChanges(changes, app.Id, currentSelection, targetSelection);
+        AddSettingChanges(changes, app.Settings, targetSelection.Manifest.Settings);
+        AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
+        AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
+        AddDataTargetChanges(changes, app, targetSelection);
+
+        return changes;
+    }
+
+    private static void AddServiceChanges(
+        List<string> changes,
+        string appId,
+        RuntimeAppManifestSelection currentSelection,
+        RuntimeAppManifestSelection targetSelection)
+    {
+        var currentServices = currentSelection.Services.ToDictionary(service => service.Key, StringComparer.Ordinal);
+        var targetServices = targetSelection.Services.ToDictionary(service => service.Key, StringComparer.Ordinal);
+        foreach (var key in currentServices.Keys.Concat(targetServices.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var hasCurrent = currentServices.TryGetValue(key, out var current);
+            var hasTarget = targetServices.TryGetValue(key, out var target);
+            if (!hasCurrent)
+            {
+                changes.Add($"service:{key}:added:{target!.Runtime.Type}");
+            }
+            else if (!hasTarget)
+            {
+                changes.Add($"service:{key}:removed:{current!.Runtime.Type}");
+            }
+            else
+            {
+                AddImageChange(changes, key, current!, target!);
+                AddCommandChanges(changes, key, current!, target!);
+                AddPortChanges(changes, key, current!.Runtime.Ports, target!.Runtime.Ports);
+                AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
+            }
+
+            AddContainerNameChanges(changes, appId, key, current, target);
+        }
+    }
+
+    private static void AddImageChange(
+        List<string> changes,
+        string serviceKey,
+        RuntimeSelectedService current,
+        RuntimeSelectedService target)
+    {
+        var currentImage = current.Image?.Reference;
+        var targetImage = target.Image?.Reference;
+        if (!string.Equals(currentImage, targetImage, StringComparison.Ordinal))
+        {
+            changes.Add($"image:{serviceKey}:{currentImage ?? "none"}->{targetImage ?? "none"}");
+        }
+    }
+
+    private static void AddCommandChanges(
+        List<string> changes,
+        string serviceKey,
+        RuntimeSelectedService current,
+        RuntimeSelectedService target)
+    {
+        if (!string.Equals(current.Runtime.Command, target.Runtime.Command, StringComparison.Ordinal))
+        {
+            changes.Add($"command:{serviceKey}:changed");
+        }
+
+        if (!string.Equals(current.Runtime.WorkingDirectory, target.Runtime.WorkingDirectory, StringComparison.Ordinal))
+        {
+            changes.Add($"workingDirectory:{serviceKey}:{current.Runtime.WorkingDirectory ?? "."}->{target.Runtime.WorkingDirectory ?? "."}");
+        }
+    }
+
+    private static void AddPortChanges(
+        List<string> changes,
+        string serviceKey,
+        IReadOnlyList<RuntimePortManifest> currentPorts,
+        IReadOnlyList<RuntimePortManifest> targetPorts)
+    {
+        var current = BuildPortMap(currentPorts);
+        var target = BuildPortMap(targetPorts);
+        foreach (var key in current.Keys.Concat(target.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var hasCurrent = current.TryGetValue(key, out var currentSignature);
+            var hasTarget = target.TryGetValue(key, out var targetSignature);
+            if (!hasCurrent)
+            {
+                changes.Add($"port:{serviceKey}.{key}:added:{targetSignature}");
+            }
+            else if (!hasTarget)
+            {
+                changes.Add($"port:{serviceKey}.{key}:removed:{currentSignature}");
+            }
+            else if (!string.Equals(currentSignature, targetSignature, StringComparison.Ordinal))
+            {
+                changes.Add($"port:{serviceKey}.{key}:{currentSignature}->{targetSignature}");
+            }
+        }
+    }
+
+    private static void AddEnvironmentChanges(
+        List<string> changes,
+        string serviceKey,
+        IReadOnlyDictionary<string, string> current,
+        IReadOnlyDictionary<string, string> target)
+    {
+        foreach (var key in current.Keys.Concat(target.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var hasCurrent = current.ContainsKey(key);
+            var hasTarget = target.ContainsKey(key);
+            if (!hasCurrent)
+            {
+                changes.Add($"environment:{serviceKey}.{key}:added");
+            }
+            else if (!hasTarget)
+            {
+                changes.Add($"environment:{serviceKey}.{key}:removed");
+            }
+            else if (!string.Equals(current[key], target[key], StringComparison.Ordinal))
+            {
+                changes.Add($"environment:{serviceKey}.{key}:changed");
+            }
+        }
+    }
+
+    private static void AddContainerNameChanges(
+        List<string> changes,
+        string appId,
+        string serviceKey,
+        RuntimeSelectedService? current,
+        RuntimeSelectedService? target)
+    {
+        var currentIsDocker = string.Equals(current?.Runtime.Type, "docker", StringComparison.Ordinal);
+        var targetIsDocker = string.Equals(target?.Runtime.Type, "docker", StringComparison.Ordinal);
+        if (!currentIsDocker && !targetIsDocker)
+        {
+            return;
+        }
+
+        var containerName = DockerRuntimeAdapter.BuildContainerName(appId, serviceKey);
+        if (currentIsDocker && targetIsDocker)
+        {
+            changes.Add($"container:{serviceKey}:preserved:{containerName}");
+        }
+        else if (targetIsDocker)
+        {
+            changes.Add($"container:{serviceKey}:added:{containerName}");
+        }
+        else
+        {
+            changes.Add($"container:{serviceKey}:removed:{containerName}");
+        }
+    }
+
+    private static void AddSettingChanges(
+        List<string> changes,
+        IReadOnlyDictionary<string, AppSettingValue> currentSettings,
+        IReadOnlyList<RuntimeAppSettingManifest> targetSettings)
+    {
+        var targetByKey = targetSettings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
+        foreach (var key in currentSettings.Keys.Concat(targetByKey.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var hasCurrent = currentSettings.TryGetValue(key, out var current);
+            var hasTarget = targetByKey.TryGetValue(key, out var target);
+            if (!hasCurrent)
+            {
+                changes.Add($"setting:{key}:added");
+            }
+            else if (!hasTarget)
+            {
+                changes.Add($"setting:{key}:removed");
+            }
+            else
+            {
+                if (!string.Equals(current!.Type, target!.Type, StringComparison.Ordinal))
+                {
+                    changes.Add($"setting:{key}:type:{current.Type}->{target.Type}");
+                }
+
+                if (current.Secret != target.Secret)
+                {
+                    changes.Add($"setting:{key}:secret:{current.Secret}->{target.Secret}");
+                }
+            }
+        }
+    }
+
+    private static void AddDependencyChanges(
+        List<string> changes,
+        IReadOnlyList<AppDependencyContract> currentDependencies,
+        IReadOnlyList<RuntimeAppDependencyManifest> targetDependencies)
+    {
+        var current = currentDependencies.ToDictionary(dependency => dependency.Key, StringComparer.Ordinal);
+        var target = targetDependencies
+            .Select(dependency => new AppDependencyContract(dependency.Id, dependency.Id, "default"))
+            .ToDictionary(dependency => dependency.Key, StringComparer.Ordinal);
+        foreach (var key in current.Keys.Concat(target.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var hasCurrent = current.TryGetValue(key, out var currentDependency);
+            var hasTarget = target.TryGetValue(key, out var targetDependency);
+            if (!hasCurrent)
+            {
+                changes.Add($"dependency:{key}:added");
+            }
+            else if (!hasTarget)
+            {
+                changes.Add($"dependency:{key}:removed");
+            }
+            else if (!string.Equals(DependencySignature(currentDependency!), DependencySignature(targetDependency!), StringComparison.Ordinal))
+            {
+                changes.Add($"dependency:{key}:{DependencySignature(currentDependency!)}->{DependencySignature(targetDependency!)}");
+            }
+        }
+    }
+
+    private static void AddEndpointChanges(
+        List<string> changes,
+        IReadOnlyList<AppEndpointContract> currentEndpoints,
+        IReadOnlyList<AppEndpointContract> targetEndpoints)
+    {
+        var current = currentEndpoints.ToDictionary(endpoint => endpoint.Key, StringComparer.Ordinal);
+        var target = targetEndpoints.ToDictionary(endpoint => endpoint.Key, StringComparer.Ordinal);
+        foreach (var key in current.Keys.Concat(target.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var hasCurrent = current.TryGetValue(key, out var currentEndpoint);
+            var hasTarget = target.TryGetValue(key, out var targetEndpoint);
+            if (!hasCurrent)
+            {
+                changes.Add($"endpoint:{key}:added:{EndpointSignature(targetEndpoint!)}");
+            }
+            else if (!hasTarget)
+            {
+                changes.Add($"endpoint:{key}:removed:{EndpointSignature(currentEndpoint!)}");
+            }
+            else if (!string.Equals(EndpointSignature(currentEndpoint!), EndpointSignature(targetEndpoint!), StringComparison.Ordinal))
+            {
+                changes.Add($"endpoint:{key}:{EndpointSignature(currentEndpoint!)}->{EndpointSignature(targetEndpoint!)}");
+            }
+        }
+    }
+
+    private void AddDataTargetChanges(List<string> changes, AppRecord app, RuntimeAppManifestSelection targetSelection)
+    {
+        var currentData = app.StorageMappings.FirstOrDefault(mapping => string.Equals(mapping.Key, "data", StringComparison.Ordinal));
+        var targetPath = targetSelection.DataTarget is null
+            ? null
+            : targetSelection.DataTarget.ContainerPath ?? GetAppDataPath(app.Id);
+        if (currentData is null && targetPath is null)
+        {
+            return;
+        }
+
+        if (currentData is null)
+        {
+            changes.Add($"data:added:{targetPath}");
+        }
+        else if (targetPath is null)
+        {
+            changes.Add($"data:removed:{currentData.TargetPath}");
+        }
+        else if (!string.Equals(currentData.TargetPath, targetPath, StringComparison.Ordinal))
+        {
+            changes.Add($"data:target:{currentData.TargetPath}->{targetPath}");
+        }
+        else
         {
             changes.Add("data:compatible");
         }
+    }
 
-        return changes;
+    private static IReadOnlyDictionary<string, string> BuildPortMap(IReadOnlyList<RuntimePortManifest> ports)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var index = 0; index < ports.Count; index++)
+        {
+            var port = ports[index];
+            var key = port.Key ??
+                port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ??
+                $"index-{index}";
+            map[key] = PortSignature(port);
+        }
+
+        return map;
+    }
+
+    private static string PortSignature(RuntimePortManifest port)
+    {
+        var protocol = string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol;
+        var containerPort = port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none";
+        var hostPort = port.LocalPort ?? port.HostPort;
+        var host = hostPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "auto";
+        var isPublic = port.Public ?? false;
+        return $"{protocol}:{host}->{containerPort}:public={isPublic}";
+    }
+
+    private static string EndpointSignature(AppEndpointContract endpoint)
+        => $"{endpoint.Protocol}:public={endpoint.Public}";
+
+    private static string DependencySignature(AppDependencyContract dependency)
+        => $"{dependency.AppId}:{dependency.Endpoint}";
+
+    private static IReadOnlyList<AppEndpointContract> BuildEndpointContracts(RuntimeAppManifestSelection selection)
+    {
+        if (selection.Manifest.Endpoints.Count > 0)
+        {
+            return selection.Manifest.Endpoints.Select(endpoint => new AppEndpointContract(
+                Key: endpoint.Key,
+                Protocol: endpoint.Protocol ?? "http",
+                Url: null,
+                Public: endpoint.Public)).ToArray();
+        }
+
+        return selection.Services.SelectMany(service => service.Runtime.Ports.Select(port => new AppEndpointContract(
+            Key: $"{service.Key}.{port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"}",
+            Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
+            Url: null,
+            Public: port.Public ?? false))).ToArray();
     }
 
     private static IReadOnlyDictionary<string, AppSettingValue> MergeSettings(
@@ -903,3 +1270,10 @@ internal sealed record AppBackupResponse(AppBackupRecord? Backup);
 internal sealed record AppBackupDeleteResponse(bool Deleted);
 
 internal sealed record AppLogsResponse(string AppId, string Text);
+
+internal sealed record AppRuntimeHealthResponse(
+    string AppId,
+    string Runtime,
+    string RuntimeType,
+    string Status,
+    IReadOnlyList<AppRuntimeServiceHealth> Services);

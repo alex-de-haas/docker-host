@@ -33,7 +33,7 @@ export interface StorageInspection {
   error: string | null;
 }
 
-const defaultModuleId = "com.haas.demo-module";
+const defaultModuleId = "com.haas.demo-app";
 const defaultModuleVersion = "0.2.1";
 
 export function getDemoConfig(): DemoConfig {
@@ -42,7 +42,7 @@ export function getDemoConfig(): DemoConfig {
   return {
     moduleId,
     moduleVersion: process.env.MODULE_VERSION || defaultModuleVersion,
-    greeting: process.env.DEMO_GREETING || "Hello from Docker Host",
+    greeting: process.env.DEMO_GREETING || "Hello from Hosty",
     releaseChannel: process.env.DEMO_RELEASE_CHANNEL || "local",
     refreshSeconds: readNumber(process.env.DEMO_REFRESH_SECONDS, 30),
     authPreview: readBoolean(process.env.DEMO_AUTH_PREVIEW, false),
@@ -130,7 +130,7 @@ async function inspectDirectory({
     if (writeProbe && writable) {
       await mkdir(directoryPath, { recursive: true });
       await writeFile(
-        path.join(directoryPath, ".demo-module-health"),
+        path.join(directoryPath, ".demo-app-health"),
         JSON.stringify({ checkedAt: new Date().toISOString() }, null, 2)
       );
     }

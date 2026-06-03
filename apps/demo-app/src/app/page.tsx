@@ -48,8 +48,8 @@ export default async function Home() {
     <DemoShell>
       <DemoPageHeader
         eyebrow={config.moduleId}
-        title="Docker Host Demo Module"
-        description="Runtime diagnostics for Docker Host module lifecycle development."
+        title="Hosty Demo App"
+        description="Runtime diagnostics for Hosty app lifecycle development."
         actions={
           <Status status="online">
             <StatusIndicator />
@@ -64,13 +64,13 @@ export default async function Home() {
           <CardHeader>
             <CardDescription>{config.greeting}</CardDescription>
             <CardTitle className="max-w-3xl text-2xl font-semibold leading-tight sm:text-3xl">
-              Module operations test surface
+              App operations test surface
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
             <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-              A compact module that exposes runtime config, storage probes, assigned
-              Host directory data, and health endpoints for Docker Host development.
+              A compact runtime app that exposes runtime config, storage probes, assigned
+              Host directory data, and health endpoints for Hosty development.
             </p>
           </CardContent>
         </Card>
@@ -164,7 +164,7 @@ export default async function Home() {
                   },
                   { label: "Host role", value: auth.identity.claims.hostRole || "Unknown" },
                   {
-                    label: "Module access",
+                    label: "App access",
                     value: auth.identity.claims.moduleAccess || "Unknown",
                   },
                   {
@@ -183,7 +183,7 @@ export default async function Home() {
         </SectionCard>
 
         <SectionCard
-          title="Module directory"
+          title="App directory"
           action={
             <StateBadge tone={directoryStateTone(auth.directory.status)}>
               {formatDirectoryStatus(auth.directory.status)}
@@ -213,10 +213,10 @@ export default async function Home() {
 
       <section
         className="grid gap-4 lg:grid-cols-2"
-        aria-label="Module-owned authorization"
+        aria-label="App-owned authorization"
       >
         <SectionCard
-          title="Module permissions"
+          title="App permissions"
           action={<StateBadge tone="success">{auth.modulePermissions.roleLabel}</StateBadge>}
         >
           <DetailList
@@ -262,7 +262,7 @@ export default async function Home() {
           <div className="min-w-0 space-y-1">
             <h2 className="text-xl font-semibold leading-7">Storage probes</h2>
             <p className="text-sm text-muted-foreground">
-              Module-owned data, log, and external source mount checks.
+              App-owned data, log, and external source mount checks.
             </p>
           </div>
           <JsonButton href="/api/health" />

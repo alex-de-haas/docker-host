@@ -32,10 +32,13 @@ internal sealed class AppsCommand(CommandContext context)
                 "backups" => await BackupsAsync(args[1..]),
                 "restore" => await RestoreAsync(args[1..]),
                 "logs" => await LogsAsync(args[1..]),
+                "health" => await HealthAsync(args[1..]),
                 "source" => await SourceAsync(args[1..]),
                 "source-resolve" => await SourceResolveAsync(args[1..]),
                 "source-override" => await SourceOverrideAsync(args[1..]),
                 "source-clear-override" => await SourceClearOverrideAsync(args[1..]),
+                "source-cleanup-plan" => await SourceCleanupPlanAsync(args[1..]),
+                "source-cleanup" => await SourceCleanupAsync(args[1..]),
                 "identity" => await IdentityAsync(args[1..]),
                 "open" => await OpenAsync(args[1..]),
                 _ => throw new CommandUsageException($"Unknown apps command '{args[0]}'.", Usage),
@@ -192,6 +195,15 @@ internal sealed class AppsCommand(CommandContext context)
         return 0;
     }
 
+    private async Task<int> HealthAsync(string[] args)
+    {
+        var options = ParseSourceOptions(args, "health");
+        using var core = await OpenCoreAsync();
+        var response = await core.GetAsync<AppRuntimeHealthResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/health");
+        RenderHealth(response, options.Format);
+        return 0;
+    }
+
     private async Task<int> SourceAsync(string[] args)
     {
         var options = ParseSourceOptions(args, "source");
@@ -229,6 +241,24 @@ internal sealed class AppsCommand(CommandContext context)
         using var core = await OpenCoreAsync();
         var response = await core.DeleteAsync<AppSourceResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/source/override");
         RenderSource(response, options.Format);
+        return 0;
+    }
+
+    private async Task<int> SourceCleanupPlanAsync(string[] args)
+    {
+        var options = ParseSourceCleanupOptions(args, "source-cleanup-plan");
+        using var core = await OpenCoreAsync();
+        var response = await core.GetAsync<AppSourceCleanupPlan>("sources/cleanup/plan");
+        RenderSourceCleanup(response?.Candidates ?? [], "Candidates", options.Format);
+        return 0;
+    }
+
+    private async Task<int> SourceCleanupAsync(string[] args)
+    {
+        var options = ParseSourceCleanupOptions(args, "source-cleanup");
+        using var core = await OpenCoreAsync();
+        var response = await core.PostAsync<AppSourceCleanupApplyResponse>("sources/cleanup");
+        RenderSourceCleanup(response?.Deleted ?? [], "Deleted", options.Format);
         return 0;
     }
 
@@ -358,6 +388,11 @@ internal sealed class AppsCommand(CommandContext context)
         table.AddRow("Runtime", Markup.Escape($"{plan.CurrentRuntime ?? "none"} -> {plan.TargetRuntime}"));
         table.AddRow("Runtime type", Markup.Escape(plan.TargetRuntimeType));
         table.AddRow("Automatic backup", plan.AutomaticBackup ? "yes" : "no");
+        if (plan.Changes.Count > 0)
+        {
+            table.AddRow("Changes", Markup.Escape(string.Join(Environment.NewLine, plan.Changes)));
+        }
+
         table.AddRow("Plan digest", Markup.Escape(plan.PlanDigest));
         context.Console.Write(table);
     }
@@ -425,6 +460,76 @@ internal sealed class AppsCommand(CommandContext context)
         table.AddRow("Managed checkout", Markup.Escape(source.ManagedCheckoutPath ?? ""));
         table.AddRow("Local override", Markup.Escape(source.LocalOverridePath ?? ""));
         table.AddRow("Updated", Markup.Escape(source.UpdatedAt?.ToString("u") ?? ""));
+        context.Console.Write(table);
+    }
+
+    private void RenderHealth(AppRuntimeHealthResponse? response, string format)
+    {
+        if (format == "json")
+        {
+            context.Console.WriteLine(JsonSerializer.Serialize(response ?? new AppRuntimeHealthResponse("", "", "", "unknown", []), JsonOptions));
+            return;
+        }
+
+        if (format != "table")
+        {
+            throw new CommandUsageException("apps health --format must be table or json.", Usage);
+        }
+
+        if (response is null)
+        {
+            context.Console.MarkupLine("[yellow]No runtime health returned.[/]");
+            return;
+        }
+
+        context.Console.MarkupLine($"[green]{Markup.Escape(response.Status)}:[/] {Markup.Escape(response.AppId)}");
+        context.Console.MarkupLine($"[grey]Runtime:[/] {Markup.Escape(response.Runtime)} / {Markup.Escape(response.RuntimeType)}");
+        var table = new Table();
+        table.AddColumn("Service");
+        table.AddColumn("Status");
+        table.AddColumn("PID");
+        table.AddColumn("Exit");
+        table.AddColumn("Log");
+        table.AddColumn("Working directory");
+        foreach (var service in response.Services)
+        {
+            table.AddRow(
+                Markup.Escape(service.Service),
+                Markup.Escape(service.Status),
+                Markup.Escape(service.ProcessId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
+                Markup.Escape(service.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
+                Markup.Escape(service.LogPath ?? ""),
+                Markup.Escape(service.WorkingDirectory ?? ""));
+        }
+
+        context.Console.Write(table);
+    }
+
+    private void RenderSourceCleanup(IReadOnlyList<AppSourceCleanupCandidate> candidates, string title, string format)
+    {
+        if (format == "json")
+        {
+            context.Console.WriteLine(JsonSerializer.Serialize(new AppSourceCleanupOutput(candidates), JsonOptions));
+            return;
+        }
+
+        if (format != "table")
+        {
+            throw new CommandUsageException("apps source cleanup --format must be table or json.", Usage);
+        }
+
+        var table = new Table();
+        table.AddColumn(title);
+        table.AddColumn("Path");
+        table.AddColumn("Reason");
+        foreach (var candidate in candidates)
+        {
+            table.AddRow(
+                Markup.Escape(candidate.AppId),
+                Markup.Escape(candidate.Path),
+                Markup.Escape(candidate.Reason));
+        }
+
         context.Console.Write(table);
     }
 
@@ -799,6 +904,25 @@ internal sealed class AppsCommand(CommandContext context)
         return new SourceOverrideOptions(appId, environment.ResolvePath(overridePath), commit, format);
     }
 
+    private static SourceCleanupOptions ParseSourceCleanupOptions(string[] args, string commandName)
+    {
+        var format = "table";
+        for (var index = 0; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--format":
+                    format = RequireOptionValue(args, ref index, "--format");
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown apps {commandName} argument '{args[index]}'.", Usage);
+            }
+        }
+
+        ValidateSourceFormat(format);
+        return new SourceCleanupOptions(format);
+    }
+
     private static void ValidateSourceFormat(string format)
     {
         if (format is not "table" and not "json")
@@ -927,6 +1051,8 @@ internal sealed class AppsCommand(CommandContext context)
 
     private sealed record SourceOverrideOptions(string AppId, string Path, string? Commit, string Format);
 
+    private sealed record SourceCleanupOptions(string Format);
+
     private sealed record IdentityOptions(string AppId, string User, string Format);
 
     private sealed record OpenOptions(string AppId, string User, string Mode, string? RedirectUri, string Format);
@@ -1006,6 +1132,22 @@ internal sealed class AppsCommand(CommandContext context)
 
     private sealed record AppLogsResponse(string AppId, string Text);
 
+    private sealed record AppRuntimeHealthResponse(
+        string AppId,
+        string Runtime,
+        string RuntimeType,
+        string Status,
+        IReadOnlyList<AppRuntimeServiceHealth> Services);
+
+    private sealed record AppRuntimeServiceHealth(
+        string Service,
+        string Status,
+        int? ProcessId,
+        int? ExitCode,
+        string? LogPath,
+        string? WorkingDirectory,
+        string? Message);
+
     private sealed record AppSourceResolveRequest(string? Branch, string? Tag, string? Commit, bool Fetch);
 
     private sealed record AppSourceOverrideRequest(string Path, string? Commit);
@@ -1020,6 +1162,14 @@ internal sealed class AppsCommand(CommandContext context)
         string? ManagedCheckoutPath,
         string? LocalOverridePath,
         DateTimeOffset? UpdatedAt);
+
+    private sealed record AppSourceCleanupPlan(IReadOnlyList<AppSourceCleanupCandidate> Candidates);
+
+    private sealed record AppSourceCleanupApplyResponse(IReadOnlyList<AppSourceCleanupCandidate> Deleted);
+
+    private sealed record AppSourceCleanupCandidate(string AppId, string Path, string Reason);
+
+    private sealed record AppSourceCleanupOutput(IReadOnlyList<AppSourceCleanupCandidate> Items);
 
     private sealed record AppIdentityIssueRequest(string User);
 
@@ -1054,10 +1204,13 @@ internal sealed class AppsCommand(CommandContext context)
           backups <app-id>
           restore <app-id> <backup-id> [--pre-restore-backup]
           logs <app-id> [--tail <count>]
+          health <app-id> [--format table|json]
           source <app-id> [--format table|json]
           source-resolve <app-id> [--branch <name>|--tag <tag>|--commit <sha>] [--fetch] [--format table|json]
           source-override <app-id> --path <worktree> [--commit <sha>] [--format table|json]
           source-clear-override <app-id> [--format table|json]
+          source-cleanup-plan [--format table|json]
+          source-cleanup [--format table|json]
           identity <app-id> --user <email-or-id> [--format token|header|env|json]
           open <app-id> --user <email-or-id> [--mode shell|standalone] [--redirect-uri <uri>] [--format url|json]
 

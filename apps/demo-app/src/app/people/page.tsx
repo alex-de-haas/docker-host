@@ -35,12 +35,12 @@ export default async function PeoplePage() {
           icon={Users}
           label="Records"
           value={userCount}
-          description={`Module directory is ${formatDirectoryStatus(directory.status).toLowerCase()}.`}
+          description={`App directory is ${formatDirectoryStatus(directory.status).toLowerCase()}.`}
         />
 
         <SectionCard
           title="Assigned Host users"
-          description="This list is loaded from the Host module directory using the module service token."
+          description="This list is loaded from the Host app directory using the app service token."
           action={
             <StateBadge tone={directoryStateTone(directory.status)}>
               {formatDirectoryStatus(directory.status)}

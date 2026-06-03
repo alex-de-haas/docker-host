@@ -411,7 +411,7 @@ function readApiError(payload: unknown, status: number): ModuleDirectorySnapshot
     return {
       status,
       code: "module_directory_error",
-      message: `Module directory returned HTTP ${status}.`,
+      message: `App directory returned HTTP ${status}.`,
     };
   }
 
@@ -420,7 +420,7 @@ function readApiError(payload: unknown, status: number): ModuleDirectorySnapshot
     return {
       status,
       code: "module_directory_error",
-      message: `Module directory returned HTTP ${status}.`,
+      message: `App directory returned HTTP ${status}.`,
     };
   }
 
@@ -428,7 +428,7 @@ function readApiError(payload: unknown, status: number): ModuleDirectorySnapshot
   return {
     status,
     code: readString(errorRecord.code) || "module_directory_error",
-    message: readString(errorRecord.message) || `Module directory returned HTTP ${status}.`,
+    message: readString(errorRecord.message) || `App directory returned HTTP ${status}.`,
   };
 }
 

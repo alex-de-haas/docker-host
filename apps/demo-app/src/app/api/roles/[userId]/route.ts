@@ -17,7 +17,7 @@ export async function PUT(
   try {
     const snapshot = await getDemoRoleManagementSnapshot(request.headers);
     if (!snapshot.canManage) {
-      return roleError("module_role_forbidden", "Current module role cannot manage roles.", 403);
+      return roleError("module_role_forbidden", "Current app role cannot manage roles.", 403);
     }
 
     const { userId } = await params;
@@ -51,7 +51,7 @@ export async function DELETE(
   try {
     const snapshot = await getDemoRoleManagementSnapshot(request.headers);
     if (!snapshot.canManage) {
-      return roleError("module_role_forbidden", "Current module role cannot manage roles.", 403);
+      return roleError("module_role_forbidden", "Current app role cannot manage roles.", 403);
     }
 
     const { userId } = await params;

@@ -33,7 +33,7 @@ export default async function SettingsPage() {
           icon={Route}
           label="Channel"
           value={config.releaseChannel}
-          description="Current module release channel."
+          description="Current app release channel."
         />
 
         <SectionCard title="Runtime config">
