@@ -89,10 +89,43 @@ type CoreBackup = {
   archiveSha256: string;
   archiveSize: number;
   fileCount: number;
+  retention?: CoreBackupRetentionStatus | null;
 };
 
 type BackupsResponse = {
   backups: CoreBackup[];
+};
+
+type CoreBackupRetentionStatus = {
+  eligible: boolean;
+  reason: string;
+  wouldDeleteInCurrentPlan: boolean;
+};
+
+type CoreBackupCleanupCandidate = {
+  appId: string;
+  backupId: string;
+  reason: string;
+  cleanupReason: string;
+  createdAt: string;
+  archivePath?: string | null;
+  metadataPath?: string | null;
+  archiveSha256?: string | null;
+  archiveSize?: number | null;
+  automatic: boolean;
+};
+
+type CoreBackupCleanupPlan = {
+  appId?: string | null;
+  planDigest: string;
+  createdAt: string;
+  candidates: CoreBackupCleanupCandidate[];
+};
+
+type CoreBackupCleanupApplyResponse = {
+  planDigest: string;
+  deleted: CoreBackupCleanupCandidate[];
+  skipped: CoreBackupCleanupCandidate[];
 };
 
 type LogsResponse = {
@@ -226,6 +259,7 @@ type DetailPanelState = {
   error: string | null;
   logs: string | null;
   backups: CoreBackup[] | null;
+  backupCleanupPlan: CoreBackupCleanupPlan | null;
   updatePlan: CoreUpdatePlan | null;
 };
 
@@ -252,6 +286,7 @@ const emptyDetailPanelState = (): DetailPanelState => ({
   error: null,
   logs: null,
   backups: null,
+  backupCleanupPlan: null,
   updatePlan: null,
 });
 
@@ -425,7 +460,7 @@ export function ShellClient({
   const loadAppLogs = useCallback(
     async (app: CoreApp) => {
       setActivePanel({ appId: app.id, view: "logs" });
-      setDetailPanel({ loading: true, error: null, logs: null, backups: null, updatePlan: null });
+      setDetailPanel({ loading: true, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
         const response = await fetch(`${appEndpoint(app, "/logs")}?tail=200`, { credentials: "include" });
         if (!response.ok) {
@@ -433,9 +468,9 @@ export function ShellClient({
         }
 
         const payload = (await response.json()) as LogsResponse;
-        setDetailPanel({ loading: false, error: null, logs: payload.text || "", backups: null, updatePlan: null });
+        setDetailPanel({ loading: false, error: null, logs: payload.text || "", backups: null, backupCleanupPlan: null, updatePlan: null });
       } catch (error) {
-        setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Core logs are unavailable.", logs: null, backups: null, updatePlan: null });
+        setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Core logs are unavailable.", logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       }
     },
     [appEndpoint],
@@ -446,7 +481,7 @@ export function ShellClient({
       if (activate) {
         setActivePanel({ appId: app.id, view: "backups" });
       }
-      setDetailPanel({ loading: true, error: null, logs: null, backups: null, updatePlan: null });
+      setDetailPanel({ loading: true, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
         const response = await fetch(appEndpoint(app, "/backups"), { credentials: "include" });
         if (!response.ok) {
@@ -454,9 +489,9 @@ export function ShellClient({
         }
 
         const payload = (await response.json()) as BackupsResponse;
-        setDetailPanel({ loading: false, error: null, logs: null, backups: payload.backups, updatePlan: null });
+        setDetailPanel({ loading: false, error: null, logs: null, backups: payload.backups, backupCleanupPlan: null, updatePlan: null });
       } catch (error) {
-        setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Core backups are unavailable.", logs: null, backups: null, updatePlan: null });
+        setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Core backups are unavailable.", logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       }
     },
     [appEndpoint],
@@ -465,7 +500,7 @@ export function ShellClient({
   const loadUpdatePlan = useCallback(
     async (app: CoreApp) => {
       setActivePanel({ appId: app.id, view: "update" });
-      setDetailPanel({ loading: true, error: null, logs: null, backups: null, updatePlan: null });
+      setDetailPanel({ loading: true, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
         const response = await fetch(appEndpoint(app, "/update/plan"), {
           method: "POST",
@@ -478,9 +513,9 @@ export function ShellClient({
         }
 
         const payload = (await response.json()) as CoreUpdatePlan;
-        setDetailPanel({ loading: false, error: null, logs: null, backups: null, updatePlan: payload });
+        setDetailPanel({ loading: false, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: payload });
       } catch (error) {
-        setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Update plan is unavailable.", logs: null, backups: null, updatePlan: null });
+        setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Update plan is unavailable.", logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       }
     },
     [appEndpoint],
@@ -573,6 +608,69 @@ export function ShellClient({
           ...current,
           loading: false,
           error: error instanceof Error ? error.message : "Backup delete failed.",
+        }));
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [appEndpoint, loadAppBackups, sendCsrfJson],
+  );
+
+  const previewBackupCleanup = useCallback(
+    async (app: CoreApp) => {
+      const actionKey = `${app.id}:backup-cleanup-plan`;
+      setBusyAction(actionKey);
+      try {
+        const response = await fetch(appEndpoint(app, "/backups/cleanup/plan"), { credentials: "include" });
+        if (!response.ok) {
+          throw new Error(await readCoreError(response));
+        }
+
+        const payload = (await response.json()) as CoreBackupCleanupPlan;
+        setDetailPanel((current) => ({
+          ...current,
+          loading: false,
+          error: null,
+          backupCleanupPlan: payload,
+        }));
+      } catch (error) {
+        setDetailPanel((current) => ({
+          ...current,
+          loading: false,
+          error: error instanceof Error ? error.message : "Backup cleanup preview failed.",
+        }));
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [appEndpoint],
+  );
+
+  const applyBackupCleanup = useCallback(
+    async (app: CoreApp, plan: CoreBackupCleanupPlan) => {
+      if (!window.confirm(`Delete ${plan.candidates.length} backup cleanup candidates?`)) {
+        return;
+      }
+
+      const actionKey = `${app.id}:backup-cleanup`;
+      setBusyAction(actionKey);
+      try {
+        const response = await sendCsrfJson(appEndpoint(app, "/backups/cleanup"), { planDigest: plan.planDigest });
+        const result = (await response.json()) as CoreBackupCleanupApplyResponse;
+        await loadAppBackups(app, false);
+        if (result.skipped.length > 0) {
+          setDetailPanel((current) => ({
+            ...current,
+            loading: false,
+            error: `${result.skipped.length} backup cleanup candidates were skipped; refresh and preview again.`,
+            backupCleanupPlan: null,
+          }));
+        }
+      } catch (error) {
+        setDetailPanel((current) => ({
+          ...current,
+          loading: false,
+          error: error instanceof Error ? error.message : "Backup cleanup failed.",
         }));
       } finally {
         setBusyAction(null);
@@ -906,6 +1004,8 @@ export function ShellClient({
                     onCreateBackup={createManualBackup}
                     onRestoreBackup={restoreBackup}
                     onDeleteBackup={deleteBackup}
+                    onPreviewBackupCleanup={previewBackupCleanup}
+                    onApplyBackupCleanup={applyBackupCleanup}
                     onConfigure={configureApp}
                     onReloadUpdatePlan={loadUpdatePlan}
                     onApplyUpdate={applyUpdate}
@@ -1637,6 +1737,8 @@ function AppDetailsPanel({
   onCreateBackup,
   onRestoreBackup,
   onDeleteBackup,
+  onPreviewBackupCleanup,
+  onApplyBackupCleanup,
   onConfigure,
   onReloadUpdatePlan,
   onApplyUpdate,
@@ -1654,6 +1756,8 @@ function AppDetailsPanel({
   onCreateBackup: (app: CoreApp) => void;
   onRestoreBackup: (app: CoreApp, backup: CoreBackup) => void;
   onDeleteBackup: (app: CoreApp, backup: CoreBackup) => void;
+  onPreviewBackupCleanup: (app: CoreApp) => void;
+  onApplyBackupCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>) => void;
   onReloadUpdatePlan: (app: CoreApp) => void;
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan) => void;
@@ -1690,6 +1794,8 @@ function AppDetailsPanel({
           onCreateBackup={onCreateBackup}
           onRestoreBackup={onRestoreBackup}
           onDeleteBackup={onDeleteBackup}
+          onPreviewCleanup={onPreviewBackupCleanup}
+          onApplyCleanup={onApplyBackupCleanup}
         />
       )}
       {view === "configure" && (
@@ -1735,6 +1841,8 @@ function BackupsPanel({
   onCreateBackup,
   onRestoreBackup,
   onDeleteBackup,
+  onPreviewCleanup,
+  onApplyCleanup,
 }: {
   app: CoreApp;
   detail: DetailPanelState;
@@ -1743,9 +1851,12 @@ function BackupsPanel({
   onCreateBackup: (app: CoreApp) => void;
   onRestoreBackup: (app: CoreApp, backup: CoreBackup) => void;
   onDeleteBackup: (app: CoreApp, backup: CoreBackup) => void;
+  onPreviewCleanup: (app: CoreApp) => void;
+  onApplyCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
 }) {
   const backups = detail.backups || [];
   const isRunning = app.runtimeState === "running";
+  const cleanupPlan = detail.backupCleanupPlan;
 
   return (
     <div className="detailBody">
@@ -1758,8 +1869,42 @@ function BackupsPanel({
           <RefreshCw aria-hidden="true" className={detail.loading ? "spin" : ""} />
           Refresh
         </button>
+        <button className="button ghost" type="button" onClick={() => onPreviewCleanup(app)} disabled={busyAction === `${app.id}:backup-cleanup-plan`}>
+          <FileText aria-hidden="true" />
+          Preview prune
+        </button>
       </div>
-      <p className="retentionNote">Manual backups are kept until deleted. Pre-update and pre-restore backups keep the latest five per app.</p>
+      <p className="retentionNote">Manual backups are kept until deleted. Pre-update, pre-restore, pre-runtime-switch, and scheduled backups keep the latest five per app.</p>
+      {cleanupPlan && (
+        <section className="cleanupPreview" aria-label="Backup cleanup preview">
+          <div className="cleanupHeader">
+            <div>
+              <strong>{cleanupPlan.candidates.length} prune candidates</strong>
+              <code>{cleanupPlan.planDigest}</code>
+            </div>
+            <button
+              className="button danger"
+              type="button"
+              onClick={() => onApplyCleanup(app, cleanupPlan)}
+              disabled={cleanupPlan.candidates.length === 0 || busyAction === `${app.id}:backup-cleanup`}
+            >
+              <Trash2 aria-hidden="true" />
+              Apply prune
+            </button>
+          </div>
+          {cleanupPlan.candidates.length > 0 && (
+            <div className="cleanupList">
+              {cleanupPlan.candidates.map((candidate) => (
+                <div className="cleanupCandidate" key={`${candidate.appId}:${candidate.backupId}:${candidate.cleanupReason}`}>
+                  <span>{candidate.cleanupReason}</span>
+                  <code>{candidate.backupId}</code>
+                  <small>{candidate.archivePath || candidate.metadataPath}</small>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       {detail.loading ? (
         <div className="emptyList">Loading backups</div>
       ) : backups.length === 0 ? (
@@ -1781,6 +1926,10 @@ function BackupsPanel({
                 <div>
                   <dt>Size</dt>
                   <dd>{formatBytes(backup.archiveSize)}</dd>
+                </div>
+                <div>
+                  <dt>Retention</dt>
+                  <dd>{backup.retention?.reason || "unknown"}</dd>
                 </div>
               </dl>
               <div className="rowActions">

@@ -174,7 +174,7 @@ Completed browser smoke on 2026-06-03:
 **Status**: Completed
 
 - Add Shell views for backup lists, manual backup creation, restore, and deletion.
-- Show retention behavior plainly: manual backups are explicit, pre-update backups are automatic, and scheduled retention remains deferred unless implemented.
+- Show retention behavior plainly: manual backups are explicit and automatic backups are policy-managed.
 - Keep destructive backup actions behind confirmation.
 - Add CLI parity only where Core APIs already exist or where local recovery needs it.
 
@@ -182,7 +182,7 @@ Completed implementation:
 
 - Shell backup details can list backups, create manual backups, restore stopped apps from a backup, and delete one backup.
 - Restore and delete actions require browser confirmation and Core CSRF validation.
-- Shell backup details show retention behavior plainly: manual backups are explicit, pre-update and pre-restore backups keep the latest five per app, and scheduled retention remains deferred.
+- Shell backup details show retention behavior plainly. Stage 4 later added cleanup preview/apply and scheduled retention.
 - Core and trusted local control APIs retain list/create/restore/delete backup parity for local recovery.
 
 Completed browser smoke on 2026-06-03:

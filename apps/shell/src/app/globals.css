@@ -570,7 +570,7 @@ h1 {
 }
 
 .backupRow dl {
-  grid-template-columns: repeat(2, minmax(76px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
 }
 
 .backupRow dt,
@@ -799,6 +799,65 @@ h1 {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.cleanupPreview {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.cleanupHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cleanupHeader > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.cleanupHeader code,
+.cleanupCandidate code,
+.cleanupCandidate small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cleanupHeader code {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cleanupList {
+  display: grid;
+  gap: 8px;
+}
+
+.cleanupCandidate {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.cleanupCandidate span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.cleanupCandidate code,
+.cleanupCandidate small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .dangerZone {

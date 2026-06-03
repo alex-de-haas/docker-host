@@ -176,18 +176,18 @@ Conflicts and constraints:
 
 ### Stage 4 - Finish backup retention management
 
-Status: Partially implemented.
+Status: Completed.
 
-Primary plan:
+Primary feature:
 
-- [App Data Backup Retention](planning/app-data-backup-retention.md)
+- [App Data Backup Retention](features/app-data-backup-retention.md)
 
 Key outcomes:
 
-- Retention policy model for manual, pre-update, pre-restore, scheduled, and pre-runtime-switch backups.
-- Cleanup preview and apply APIs with digest/path verification.
-- Scheduled cleanup through a Host-owned scheduler or maintenance hook.
-- Shell and CLI controls for backup deletion and retention preview.
+- Retention policy model for manual, pre-update, pre-restore, scheduled, and pre-runtime-switch backups is implemented.
+- Cleanup preview and apply APIs use plan digest and path verification.
+- Scheduled cleanup runs through a Host-owned maintenance service.
+- Shell and CLI controls cover backup deletion, retention preview, and confirmed prune apply.
 
 Existing behavior that must keep working:
 
@@ -291,7 +291,6 @@ Conflicts and constraints:
 - [Core Shell Stabilization](planning/core-shell-stabilization.md) - active implementation plan for Core/Shell local development, lifecycle UI, install/update review, auth, users, and backups.
 - [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - runtime profile state, app-native lifecycle records, Core/Shell split, source checkouts, local command runtimes, and runtime switching.
 - [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - app-scoped auth, standalone app launch, Shell launch, and Core/Shell public origin split.
-- [App Data Backup Retention](planning/app-data-backup-retention.md) - retention policy, cleanup previews, scheduled cleanup, and Shell/CLI backup management controls.
 - [Legacy Demo Module Removal](planning/legacy-demo-module-removal.md) - post-validation cleanup for Demo Module, legacy fixture CI, and `modules.json` lifecycle compatibility.
 - [Update Channels](planning/update-channels.md) - generated channel indexes, product/runtime channel selection, pull request channels, and channel cleanup.
 - [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and PR channel validation.
@@ -312,8 +311,8 @@ Before completing a roadmap stage, validate the old features that interact with 
 ## Open Questions And Recommendations
 
 - Question: What should be implemented immediately after Core/Shell stabilization?
-  Answer: Runtime profiles/source runtimes and app auth/origin hardening are complete. The next practical workstream is backup retention.
-  Recommendation: Finish Stage 4 validation, then retire legacy Demo Module compatibility before update channels.
+  Answer: Runtime profiles/source runtimes, app auth/origin hardening, and backup retention are complete. The next practical workstream is legacy Demo Module compatibility retirement.
+  Recommendation: Start Stage 5 before update channels so update-channel validation no longer depends on legacy module fixtures.
 
 - Question: When should update channels move from deferred to active?
   Answer: After Core/Shell management is stable, repository/source runtime state exists, app auth/open flows are validated, backup behavior is stable, and legacy Demo Module compatibility has been retired or explicitly isolated.

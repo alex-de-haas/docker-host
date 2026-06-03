@@ -448,9 +448,9 @@ internal sealed class CoreLifecycleService(
     {
         _ = await RequireAppAsync(appId, cancellationToken);
         var reason = string.IsNullOrWhiteSpace(request.Reason) ? "manual" : request.Reason.Trim();
-        if (string.Equals(reason, "pre-update", StringComparison.Ordinal))
+        if (AppBackupService.IsAutomaticReason(reason))
         {
-            throw new AppLifecycleException("backup_reason_reserved", "pre-update backup reason is reserved for Core update apply.");
+            throw new AppLifecycleException("backup_reason_reserved", $"{reason} backup reason is reserved for Core lifecycle operations.");
         }
 
         return new AppBackupResponse(await backups.CreateBackupAsync(appId, reason, cancellationToken));
@@ -471,6 +471,21 @@ internal sealed class CoreLifecycleService(
     {
         _ = await RequireAppAsync(appId, cancellationToken);
         return new AppBackupDeleteResponse(await backups.DeleteBackupAsync(appId, backupId, cancellationToken));
+    }
+
+    public async Task<AppBackupCleanupPlan> CreateBackupCleanupPlanAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        _ = await RequireAppAsync(appId, cancellationToken);
+        return await backups.CreateCleanupPlanAsync(appId, cancellationToken);
+    }
+
+    public async Task<AppBackupCleanupApplyResponse> ApplyBackupCleanupAsync(
+        string appId,
+        AppBackupCleanupApplyRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        _ = await RequireAppAsync(appId, cancellationToken);
+        return await backups.ApplyCleanupAsync(appId, request, cancellationToken);
     }
 
     public async Task<AppLogsResponse> GetLogsAsync(string appId, int tail, CancellationToken cancellationToken = default)

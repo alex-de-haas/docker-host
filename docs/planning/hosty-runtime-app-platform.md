@@ -799,9 +799,8 @@ The migration should avoid a large rewrite of install/update behavior. The legac
 - Add backup records and ZIP archive creation for app data directories.
 - Add pre-update backups for apps with a primary data directory.
 - Add manual backup and restore APIs.
-- Add restore safety behavior, including stop-before-restore and optional `pre-restore` backup.
-- Verify archive digest and per-entry CRC before restore.
-- Document the retention boundary: automatic backup retention and backup deletion APIs are not implemented yet, so backups are retained until manual cleanup or future retention work.
+- Add restore safety behavior: Core requires the runtime app to be stopped before restore and can create an optional `pre-restore` backup.
+- Document the Stage 4 retention follow-up boundary.
 
 ## Follow-up Planning
 
@@ -810,7 +809,7 @@ The compatibility foundation is intentionally smaller than the long-term Hosty p
 - [Runtime Profiles And Source Runtimes](runtime-profiles-and-source-runtimes.md) - app-native lifecycle state, source/local command runtime execution, existing-user CLI identity helpers, legacy developer mode removal, and runtime switching.
 - [App Auth And Origin Separation](app-auth-and-origin-separation.md) - Hosty-aware app auth, standalone launch links, and split Core/Shell public origins.
 - [Agent Bridge Workflow](agent-bridge-workflow.md) - Shell annotations, agent requests, repository edits, pull request channels, and validation.
-- [App Data Backup Retention](app-data-backup-retention.md) - automatic retention, deletion APIs, scheduled cleanup, and UI/CLI controls for backups.
+- [App Data Backup Retention](../features/app-data-backup-retention.md) - completed automatic retention, deletion APIs, scheduled cleanup, and UI/CLI controls for backups.
 
 ## Resolved Decisions
 

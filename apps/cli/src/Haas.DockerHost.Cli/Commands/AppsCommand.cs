@@ -159,6 +159,11 @@ internal sealed class AppsCommand(CommandContext context)
 
     private async Task<int> BackupAsync(string[] args)
     {
+        if (args is ["delete", ..])
+        {
+            return await DeleteBackupAsync(args[1..]);
+        }
+
         var options = ParseBackupOptions(args);
         using var core = await OpenCoreAsync();
         var response = await core.PostAsync<AppBackupResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/backups", new AppManualBackupRequest(options.Reason));
@@ -168,6 +173,16 @@ internal sealed class AppsCommand(CommandContext context)
 
     private async Task<int> BackupsAsync(string[] args)
     {
+        if (args is ["prune-plan", ..])
+        {
+            return await BackupCleanupPlanAsync(args[1..]);
+        }
+
+        if (args is ["prune", ..])
+        {
+            return await BackupCleanupAsync(args[1..]);
+        }
+
         var appId = RequireSingleAppId(args, "apps backups");
         using var core = await OpenCoreAsync();
         var response = await core.GetAsync<AppBackupsResponse>($"apps/{Uri.EscapeDataString(appId)}/backups");
@@ -183,6 +198,39 @@ internal sealed class AppsCommand(CommandContext context)
             $"apps/{Uri.EscapeDataString(options.AppId)}/backups/{Uri.EscapeDataString(options.BackupId)}/restore",
             new AppRestoreBackupRequest(options.CreatePreRestoreBackup));
         RenderBackup(response?.Backup);
+        return 0;
+    }
+
+    private async Task<int> DeleteBackupAsync(string[] args)
+    {
+        var options = ParseDeleteBackupOptions(args);
+        using var core = await OpenCoreAsync();
+        var response = await core.DeleteAsync<AppBackupDeleteResponse>(
+            $"apps/{Uri.EscapeDataString(options.AppId)}/backups/{Uri.EscapeDataString(options.BackupId)}");
+        context.Console.MarkupLine(response?.Deleted == true
+            ? $"[green]Deleted backup:[/] {Markup.Escape(options.BackupId)}"
+            : $"[yellow]Backup not found:[/] {Markup.Escape(options.BackupId)}");
+        return response?.Deleted == true ? 0 : 1;
+    }
+
+    private async Task<int> BackupCleanupPlanAsync(string[] args)
+    {
+        var options = ParseBackupCleanupPlanOptions(args, "backups prune-plan");
+        using var core = await OpenCoreAsync();
+        var response = await core.GetAsync<AppBackupCleanupPlan>(
+            $"apps/{Uri.EscapeDataString(options.AppId)}/backups/cleanup/plan");
+        RenderBackupCleanupPlan(response, options.Format);
+        return 0;
+    }
+
+    private async Task<int> BackupCleanupAsync(string[] args)
+    {
+        var options = ParseBackupCleanupOptions(args);
+        using var core = await OpenCoreAsync();
+        var response = await core.PostAsync<AppBackupCleanupApplyResponse>(
+            $"apps/{Uri.EscapeDataString(options.AppId)}/backups/cleanup",
+            new AppBackupCleanupApplyRequest(options.PlanDigest));
+        RenderBackupCleanupResult(response, options.Format);
         return 0;
     }
 
@@ -417,13 +465,85 @@ internal sealed class AppsCommand(CommandContext context)
         table.AddColumn("Reason");
         table.AddColumn("Created");
         table.AddColumn("Size");
+        table.AddColumn("Retention");
         foreach (var backup in backups)
         {
             table.AddRow(
                 Markup.Escape(backup.BackupId),
                 Markup.Escape(backup.Reason),
                 Markup.Escape(backup.CreatedAt.ToString("u")),
-                backup.ArchiveSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                backup.ArchiveSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Markup.Escape(backup.Retention?.Reason ?? ""));
+        }
+
+        context.Console.Write(table);
+    }
+
+    private void RenderBackupCleanupPlan(AppBackupCleanupPlan? plan, string format)
+    {
+        if (format == "json")
+        {
+            context.Console.WriteLine(JsonSerializer.Serialize(plan, JsonOptions));
+            return;
+        }
+
+        if (format != "table")
+        {
+            throw new CommandUsageException("apps backups prune-plan --format must be table or json.", Usage);
+        }
+
+        if (plan is null)
+        {
+            context.Console.MarkupLine("[yellow]No backup cleanup plan returned.[/]");
+            return;
+        }
+
+        context.Console.MarkupLine($"[grey]Plan digest:[/] {Markup.Escape(plan.PlanDigest)}");
+        RenderBackupCleanupCandidates(plan.Candidates, "Candidates");
+    }
+
+    private void RenderBackupCleanupResult(AppBackupCleanupApplyResponse? response, string format)
+    {
+        if (format == "json")
+        {
+            context.Console.WriteLine(JsonSerializer.Serialize(response, JsonOptions));
+            return;
+        }
+
+        if (format != "table")
+        {
+            throw new CommandUsageException("apps backups prune --format must be table or json.", Usage);
+        }
+
+        if (response is null)
+        {
+            context.Console.MarkupLine("[yellow]No backup cleanup response returned.[/]");
+            return;
+        }
+
+        context.Console.MarkupLine($"[green]Deleted:[/] {response.Deleted.Count}");
+        RenderBackupCleanupCandidates(response.Deleted, "Deleted");
+        if (response.Skipped.Count > 0)
+        {
+            context.Console.MarkupLine($"[yellow]Skipped:[/] {response.Skipped.Count}");
+            RenderBackupCleanupCandidates(response.Skipped, "Skipped");
+        }
+    }
+
+    private void RenderBackupCleanupCandidates(IReadOnlyList<AppBackupCleanupCandidate> candidates, string title)
+    {
+        var table = new Table();
+        table.AddColumn(title);
+        table.AddColumn("Reason");
+        table.AddColumn("Cleanup");
+        table.AddColumn("Path");
+        foreach (var candidate in candidates)
+        {
+            table.AddRow(
+                Markup.Escape(candidate.BackupId),
+                Markup.Escape(candidate.Reason),
+                Markup.Escape(candidate.CleanupReason),
+                Markup.Escape(candidate.ArchivePath ?? candidate.MetadataPath ?? ""));
         }
 
         context.Console.Write(table);
@@ -768,6 +888,102 @@ internal sealed class AppsCommand(CommandContext context)
         return new RestoreOptions(args[0], args[1], createPreRestoreBackup);
     }
 
+    private static DeleteBackupOptions ParseDeleteBackupOptions(string[] args)
+    {
+        if (args.Length < 2)
+        {
+            throw new CommandUsageException("apps backup delete requires an app id and backup id.", Usage);
+        }
+
+        var confirmed = false;
+        for (var index = 2; index < args.Length; index++)
+        {
+            if (args[index] == "--yes")
+            {
+                confirmed = true;
+            }
+            else
+            {
+                throw new CommandUsageException($"Unknown apps backup delete argument '{args[index]}'.", Usage);
+            }
+        }
+
+        if (!confirmed)
+        {
+            throw new CommandUsageException("apps backup delete requires --yes to confirm deletion.", Usage);
+        }
+
+        return new DeleteBackupOptions(args[0], args[1]);
+    }
+
+    private static BackupCleanupPlanOptions ParseBackupCleanupPlanOptions(string[] args, string commandName)
+    {
+        if (args.Length == 0)
+        {
+            throw new CommandUsageException($"apps {commandName} requires an app id.", Usage);
+        }
+
+        var appId = args[0];
+        var format = "table";
+        for (var index = 1; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--format":
+                    format = RequireOptionValue(args, ref index, "--format");
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown apps {commandName} argument '{args[index]}'.", Usage);
+            }
+        }
+
+        ValidateBackupFormat(format, commandName);
+        return new BackupCleanupPlanOptions(appId, format);
+    }
+
+    private static BackupCleanupOptions ParseBackupCleanupOptions(string[] args)
+    {
+        if (args.Length == 0)
+        {
+            throw new CommandUsageException("apps backups prune requires an app id.", Usage);
+        }
+
+        var appId = args[0];
+        string? planDigest = null;
+        var confirmed = false;
+        var format = "table";
+        for (var index = 1; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--plan-digest":
+                    planDigest = RequireOptionValue(args, ref index, "--plan-digest");
+                    break;
+                case "--yes":
+                    confirmed = true;
+                    break;
+                case "--format":
+                    format = RequireOptionValue(args, ref index, "--format");
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown apps backups prune argument '{args[index]}'.", Usage);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(planDigest))
+        {
+            throw new CommandUsageException("apps backups prune requires --plan-digest. Run `hosty apps backups prune-plan <app-id>` first.", Usage);
+        }
+
+        if (!confirmed)
+        {
+            throw new CommandUsageException("apps backups prune requires --yes to confirm deletion.", Usage);
+        }
+
+        ValidateBackupFormat(format, "backups prune");
+        return new BackupCleanupOptions(appId, planDigest, format);
+    }
+
     private static LogsOptions ParseLogsOptions(string[] args)
     {
         if (args.Length == 0)
@@ -931,6 +1147,14 @@ internal sealed class AppsCommand(CommandContext context)
         }
     }
 
+    private static void ValidateBackupFormat(string format, string commandName)
+    {
+        if (format is not "table" and not "json")
+        {
+            throw new CommandUsageException($"apps {commandName} --format must be table or json.", Usage);
+        }
+    }
+
     private static IdentityOptions ParseIdentityOptions(string[] args)
     {
         if (args.Length == 0)
@@ -1043,6 +1267,12 @@ internal sealed class AppsCommand(CommandContext context)
 
     private sealed record RestoreOptions(string AppId, string BackupId, bool CreatePreRestoreBackup);
 
+    private sealed record DeleteBackupOptions(string AppId, string BackupId);
+
+    private sealed record BackupCleanupPlanOptions(string AppId, string Format);
+
+    private sealed record BackupCleanupOptions(string AppId, string PlanDigest, string Format);
+
     private sealed record LogsOptions(string AppId, int Tail);
 
     private sealed record SourceOptions(string AppId, string Format);
@@ -1119,6 +1349,8 @@ internal sealed class AppsCommand(CommandContext context)
 
     private sealed record AppBackupResponse(AppBackupRecord? Backup);
 
+    private sealed record AppBackupDeleteResponse(bool Deleted);
+
     private sealed record AppBackupRecord(
         string AppId,
         string BackupId,
@@ -1128,7 +1360,47 @@ internal sealed class AppsCommand(CommandContext context)
         string ArchivePath,
         string ArchiveSha256,
         long ArchiveSize,
-        int FileCount);
+        int FileCount,
+        AppBackupRetentionStatus? Retention = null);
+
+    private sealed record AppBackupRetentionStatus(
+        bool Eligible,
+        string Reason,
+        bool WouldDeleteInCurrentPlan);
+
+    private sealed record AppBackupCleanupPlan(
+        string? AppId,
+        string PlanDigest,
+        DateTimeOffset CreatedAt,
+        AppBackupRetentionPolicy Policy,
+        IReadOnlyList<AppBackupCleanupCandidate> Candidates);
+
+    private sealed record AppBackupRetentionPolicy(
+        IReadOnlyDictionary<string, AppBackupRetentionRule> Rules,
+        bool DeleteOnlyKnownBackup);
+
+    private sealed record AppBackupRetentionRule(
+        int? KeepLast,
+        int? MaxAgeDays);
+
+    private sealed record AppBackupCleanupCandidate(
+        string AppId,
+        string BackupId,
+        string Reason,
+        string CleanupReason,
+        DateTimeOffset CreatedAt,
+        string? ArchivePath,
+        string? MetadataPath,
+        string? ArchiveSha256,
+        long? ArchiveSize,
+        bool Automatic);
+
+    private sealed record AppBackupCleanupApplyRequest(string PlanDigest);
+
+    private sealed record AppBackupCleanupApplyResponse(
+        string PlanDigest,
+        IReadOnlyList<AppBackupCleanupCandidate> Deleted,
+        IReadOnlyList<AppBackupCleanupCandidate> Skipped);
 
     private sealed record AppLogsResponse(string AppId, string Text);
 
@@ -1201,7 +1473,10 @@ internal sealed class AppsCommand(CommandContext context)
           switch-runtime <app-id> --runtime <key> --plan-digest <digest>
           remove <app-id> [--delete-data] [--delete-backups] [--delete-source] [--keep-state] [--ignore-runtime-errors]
           backup <app-id> [--reason <reason>]
+          backup delete <app-id> <backup-id> --yes
           backups <app-id>
+          backups prune-plan <app-id> [--format table|json]
+          backups prune <app-id> --plan-digest <digest> --yes [--format table|json]
           restore <app-id> <backup-id> [--pre-restore-backup]
           logs <app-id> [--tail <count>]
           health <app-id> [--format table|json]

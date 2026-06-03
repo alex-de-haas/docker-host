@@ -203,6 +203,147 @@ public sealed class AppsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task BackupDeleteAsync_UsesDeleteControlRoute()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "deleted": true
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "backup",
+            "delete",
+            "com.haas.demo-app",
+            "backup-one",
+            "--yes",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("DELETE", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/backups/backup-one", server.PathAndQuery);
+        Assert.Contains("backup-one", output.ToString());
+    }
+
+    [Fact]
+    public async Task BackupDeleteAsync_RequiresConfirmationBeforeCallingCore()
+    {
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "backup",
+            "delete",
+            "com.haas.demo-app",
+            "backup-one",
+        ], console);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("requires --yes", output.ToString());
+    }
+
+    [Fact]
+    public async Task BackupCleanupPlanAsync_UsesCleanupPlanRoute()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "appId": "com.haas.demo-app",
+              "planDigest": "digest-one",
+              "createdAt": "2026-06-03T12:00:00Z",
+              "policy": {
+                "rules": {
+                  "pre-update": {
+                    "keepLast": 5
+                  }
+                },
+                "deleteOnlyKnownBackup": false
+              },
+              "candidates": [
+                {
+                  "appId": "com.haas.demo-app",
+                  "backupId": "old-pre-update",
+                  "reason": "pre-update",
+                  "cleanupReason": "retention-keep-last-5",
+                  "createdAt": "2026-06-01T12:00:00Z",
+                  "archivePath": "/tmp/backups/old-pre-update.zip",
+                  "metadataPath": "/tmp/backups/old-pre-update.json",
+                  "archiveSha256": "abc123",
+                  "archiveSize": 123,
+                  "automatic": true
+                }
+              ]
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "backups",
+            "prune-plan",
+            "com.haas.demo-app",
+            "--format",
+            "json",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("GET", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/backups/cleanup/plan", server.PathAndQuery);
+        Assert.Contains("digest-one", output.ToString());
+    }
+
+    [Fact]
+    public async Task BackupCleanupAsync_UsesCleanupApplyRoute()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "planDigest": "digest-one",
+              "deleted": [
+                {
+                  "appId": "com.haas.demo-app",
+                  "backupId": "old-pre-update",
+                  "reason": "pre-update",
+                  "cleanupReason": "retention-keep-last-5",
+                  "createdAt": "2026-06-01T12:00:00Z",
+                  "archivePath": "/tmp/backups/old-pre-update.zip",
+                  "metadataPath": "/tmp/backups/old-pre-update.json",
+                  "archiveSha256": "abc123",
+                  "archiveSize": 123,
+                  "automatic": true
+                }
+              ],
+              "skipped": []
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "backups",
+            "prune",
+            "com.haas.demo-app",
+            "--plan-digest",
+            "digest-one",
+            "--yes",
+            "--format",
+            "json",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/backups/cleanup", server.PathAndQuery);
+        Assert.Contains("\"planDigest\":\"digest-one\"", server.Body);
+        Assert.Contains("old-pre-update", output.ToString());
+    }
+
+    [Fact]
     public async Task SwitchRuntimePlanAsync_RendersPlanChanges()
     {
         using var server = new FakeCoreServer("""

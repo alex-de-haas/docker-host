@@ -36,6 +36,7 @@ flowchart LR
 - [Runtime source workflows](features/runtime-source-workflows.md) - Core-managed source checkout and local override commands for installed runtime apps.
 - [Runtime profile switching](features/runtime-source-workflows.md#runtime-switch-reviews) - reviewed Docker/local command runtime switching, selected-runtime state, pre-switch backups, and rollback behavior.
 - [App Auth And Origin Separation](features/app-auth-origin-separation.md) - Core-owned app auth code exchange, app-local runtime sessions, split Core/Shell public origins, and migration guidance.
+- [App Data Backup Retention](features/app-data-backup-retention.md) - completed retention policy, cleanup preview/apply APIs, scheduled cleanup, and Shell/CLI backup deletion and prune controls.
 - [Multi-container modules](features/multi-container-modules.md) - module-owned containers, per-container runtime state, endpoint resolution, storage targets, lifecycle behavior, and Web UI service display.
 - [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped Codex skill for agents that wrap apps as Hosty runtime apps or update legacy Docker module compatibility manifests.
 - [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
@@ -57,7 +58,6 @@ flowchart LR
 - [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation plan for Hosty Core, Shell/system apps, runtime apps, manifest contract, app registry, and backups.
 - [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - completed Stage 2 plan for runtime profile state, source records, checkout cache, local command runtime execution, and runtime switching.
 - [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - completed Stage 3 plan for standalone app auth, Hosty-aware app guidance, deferred gateway wrapping, and split Core/Shell public origins.
-- [App Data Backup Retention](planning/app-data-backup-retention.md) - remaining backup retention previews, scheduled cleanup, and Shell/CLI backup management controls.
 - [Legacy Demo Module Removal](planning/legacy-demo-module-removal.md) - planned post-validation cleanup for the legacy Demo Module fixture and `modules.json` lifecycle compatibility.
 - [Update Channels](planning/update-channels.md) - deferred architecture plan for generated channel indexes, pull request validation channels, and optional CLI update channels.
 - [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - deferred Shell annotation to agent, branch/PR, and PR channel validation workflow.

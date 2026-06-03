@@ -33,6 +33,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();
         builder.Services.AddHostedService<ShellBootstrapService>();
+        builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("HostyShell", policy =>
@@ -606,6 +607,67 @@ internal sealed record ControlDiscoveryDocument(
     string ControlBaseUrl,
     IReadOnlyDictionary<string, string> RequiredHeaders,
     DateTimeOffset StartedAt);
+
+internal sealed class AppBackupRetentionScheduler(
+    AppBackupService backups,
+    AuditStore audit,
+    IClock clock,
+    ILogger<AppBackupRetentionScheduler> logger) : BackgroundService
+{
+    private static readonly TimeSpan CleanupInterval = TimeSpan.FromHours(6);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        await RunCleanupAsync(stoppingToken);
+
+        using var timer = new PeriodicTimer(CleanupInterval);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            await RunCleanupAsync(stoppingToken);
+        }
+    }
+
+    private async Task RunCleanupAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await backups.ApplyScheduledCleanupAsync(cancellationToken);
+            if (result.Deleted.Count == 0 && result.Skipped.Count == 0)
+            {
+                logger.LogDebug("Hosty backup retention cleanup found no candidates.");
+                return;
+            }
+
+            await audit.AppendAsync(new AuditRecord(
+                Id: $"audit_{Guid.NewGuid():N}",
+                Action: "backup.retention.cleanup",
+                ResourceType: "backup.retention",
+                ResourceId: null,
+                Outcome: result.Skipped.Count == 0 ? "succeeded" : "partial",
+                ActorUserId: null,
+                CreatedAt: clock.UtcNow,
+                Details: new Dictionary<string, string>
+                {
+                    ["planDigest"] = result.PlanDigest,
+                    ["deleted"] = result.Deleted.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["skipped"] = result.Skipped.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                }),
+                cancellationToken);
+            logger.LogInformation(
+                "Hosty backup retention cleanup deleted {DeletedCount} candidates and skipped {SkippedCount}.",
+                result.Deleted.Count,
+                result.Skipped.Count);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Hosty backup retention cleanup did not complete.");
+        }
+    }
+}
 
 internal sealed record HealthResponse(string Status);
 

@@ -359,21 +359,24 @@ Current behavior:
 - Manual backup is available through `POST /control/v1/apps/{appId}/backups`.
 - Backup listing is available through `GET /control/v1/apps/{appId}/backups`.
 - Restore is available through `POST /control/v1/apps/{appId}/backups/{backupId}/restore`.
-- Restore requires `confirmed=true`.
-- Restore stops the app first by default.
-- Restore creates a `pre-restore` backup by default.
-- Restore verifies archive digest and per-entry CRC before replacing data.
+- Restore requires the runtime app to be stopped before Core replaces app data.
+- Shell asks for restore confirmation and requests a `pre-restore` backup before restore. CLI restore can request the same behavior with `--pre-restore-backup`.
+- Restore extracts the ZIP archive into the app data directory and fails before completing if archive extraction fails.
 - Restore does not automatically restart the app.
-- Current ZIP creation is in-memory and rejects app data above 256 MiB until a streaming archive writer is implemented.
-- Core keeps the last 5 automatic `pre-update` backups per app and keeps manual backups until explicit deletion.
-- Delete-one backup is available through Core control APIs. Shell/CLI backup deletion controls, retention previews, scheduled cleanup, age-based retention, and per-app retention overrides remain planned.
+- Core keeps the last 5 `pre-update`, `pre-restore`, `pre-runtime-switch`, and `scheduled` backups per app and keeps manual backups until explicit deletion.
+- Backup cleanup preview and apply APIs are available through browser and trusted local control routes. Apply requires a current plan digest and verifies candidate paths and archive SHA-256 before deletion.
+- Core runs scheduled retention cleanup for automatic-safe candidates. Archive-only candidates without metadata are exposed in previews and require explicit apply.
+- Shell can list backups with retention status, create manual backups, restore stopped apps, delete one backup with confirmation, preview cleanup, and apply cleanup with confirmation.
 
 CLI commands:
 
 ```text
-hosty apps backup <app-id>
+hosty apps backup <app-id> [--reason <reason>]
+hosty apps backup delete <app-id> <backup-id> --yes
 hosty apps backups <app-id>
-hosty apps restore <app-id> <backup-id>
+hosty apps backups prune-plan <app-id> [--format table|json]
+hosty apps backups prune <app-id> --plan-digest <digest> --yes [--format table|json]
+hosty apps restore <app-id> <backup-id> [--pre-restore-backup]
 ```
 
 ## Not implemented yet
@@ -382,6 +385,6 @@ The following concepts remain planned or deferred:
 
 - generated product channel publishing, runtime app channel UI, pull request channels, and channel cleanup, deferred in [Update Channels](../planning/update-channels.md);
 - standalone auth redirect hardening, optional gateway-protected app mode, and complete separate public origin validation, tracked in [App Auth And Origin Separation](../planning/app-auth-and-origin-separation.md);
-- scheduled backup retention, backup retention previews, and CLI prune/delete commands, tracked in [App Data Backup Retention](../planning/app-data-backup-retention.md);
+- age-based backup retention and per-app retention overrides;
 - legacy Demo Module fixture removal and `modules.json` lifecycle compatibility cleanup, tracked in [Legacy Demo Module Removal](../planning/legacy-demo-module-removal.md);
 - agent bridge annotations, repository edits, and pull request channel promotion, deferred in [Agent Bridge Workflow](../planning/agent-bridge-workflow.md).

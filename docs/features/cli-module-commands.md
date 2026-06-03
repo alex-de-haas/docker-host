@@ -58,7 +58,10 @@ hosty apps health <app-id>
 hosty apps identity <app-id> --user <email-or-id>
 hosty apps open <app-id> --user <email-or-id> --mode shell|standalone
 hosty apps backup <app-id>
+hosty apps backup delete <app-id> <backup-id> --yes
 hosty apps backups <app-id>
+hosty apps backups prune-plan <app-id>
+hosty apps backups prune <app-id> --plan-digest <digest> --yes
 hosty apps restore <app-id> <backup-id>
 hosty apps remove <app-id> [--delete-data]
 ```
@@ -319,9 +322,12 @@ Before applying an update, the Host backend creates a `pre-update` app data back
 ## `apps backup`, `apps backups`, and `apps restore`
 
 ```text
-hosty apps backup <app-id>
+hosty apps backup <app-id> [--reason <reason>]
+hosty apps backup delete <app-id> <backup-id> --yes
 hosty apps backups <app-id>
-hosty apps restore <app-id> <backup-id>
+hosty apps backups prune-plan <app-id> [--format table|json]
+hosty apps backups prune <app-id> --plan-digest <digest> --yes [--format table|json]
+hosty apps restore <app-id> <backup-id> [--pre-restore-backup]
 ```
 
 Backup commands use the app data backup control API:
@@ -329,24 +335,29 @@ Backup commands use the app data backup control API:
 ```text
 POST /control/v1/apps/{appId}/backups
 GET /control/v1/apps/{appId}/backups
+DELETE /control/v1/apps/{appId}/backups/{backupId}
+GET /control/v1/apps/{appId}/backups/cleanup/plan
+POST /control/v1/apps/{appId}/backups/cleanup
 POST /control/v1/apps/{appId}/backups/{backupId}/restore
 ```
 
-`backup` creates a manual ZIP backup of the app's primary `data/` directory. If the app has no data directory, the backend returns `404`.
+`backup` creates a manual ZIP backup of the app's primary `data/` directory. If the app has no data directory, the backend returns a response with no backup record.
 
-`backups` lists backup id, reason, creation time, file count, and archive size.
+`backup delete` deletes one backup and requires `--yes`.
 
-`restore` asks for confirmation, then submits:
+`backups` lists backup id, reason, creation time, archive size, and retention status.
+
+`backups prune-plan` previews retention cleanup candidates and prints the plan digest. `backups prune` requires that digest and `--yes`; Core recomputes the plan and rejects stale digests before deleting files.
+
+`restore` submits:
 
 ```json
 {
-  "confirmed": true,
-  "stopBeforeRestore": true,
   "createPreRestoreBackup": true
 }
 ```
 
-Restore stops the app first by default, creates a `pre-restore` backup by default, verifies archive integrity, replaces the data directory, and does not restart the app automatically.
+The `createPreRestoreBackup` field is `true` only when `--pre-restore-backup` is passed. Core requires the app to be stopped before restore, replaces the data directory from the ZIP archive, and does not restart the app automatically.
 
 ## `apps remove`
 

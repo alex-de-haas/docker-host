@@ -49,7 +49,7 @@ Core exposes local control APIs under `/control/v1` and public browser/app APIs 
 - Core process: status, stop, health, local control discovery.
 - App registry: authenticated, principal-filtered app summaries and app-native state under `apps/<app-id>/state.json`.
 - Lifecycle: install, configure, start, stop, restart, update-plan, update, remove, logs. Browser Shell can call public start, stop, restart, logs, and backup endpoints; local control endpoints keep the complete lifecycle surface.
-- Backups: list, manual backup, restore, delete; update apply creates automatic pre-update backups. Browser Shell can create manual backups through the public API, while restore/delete remain local-control only until their Shell review flows are implemented.
+- Backups: list, manual backup, restore, delete, cleanup preview, and cleanup apply; update apply creates automatic pre-update backups. Browser Shell can use backup restore, delete, and cleanup routes with Core session, CSRF, and confirmation UX.
 - Runtime switching: `switch-runtime/plan` and `switch-runtime` with plan digest review.
 - Runtime app channels: channel list, `switch-channel/plan`, and `switch-channel` exist as low-level placeholders, but channel generation and Shell channel UI are deferred.
 - Source state: managed checkout resolution, immutable commit storage, local source override set/clear.
@@ -159,11 +159,11 @@ Legacy module stores are not part of the final architecture. Any required preser
 Backup rules are global in the current final plan:
 
 - Core creates an automatic backup before runtime app update when the app has a primary data directory.
-- Core keeps the last 5 automatic pre-update backups per app.
+- Core keeps the last 5 automatic `pre-update`, `pre-restore`, `pre-runtime-switch`, and `scheduled` backups per app.
 - Core keeps all manual backups until explicit deletion.
 - Start, stop, restart, configure, and open operations do not create automatic backups.
 - Runtime switch apply creates a `pre-runtime-switch` backup when the app has a primary data directory.
-- Scheduled backups, age-based cleanup, and per-app retention overrides are deferred.
+- Scheduled retention cleanup runs in Core. Age-based cleanup and per-app retention overrides are deferred.
 
 Runtime app update planning does not mutate app data schemas. The runtime app owns its own data migration behavior when it starts after an update.
 

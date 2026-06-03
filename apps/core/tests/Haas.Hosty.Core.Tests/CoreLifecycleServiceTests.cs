@@ -4,8 +4,12 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class CoreLifecycleServiceTests
 {
-    [Fact]
-    public async Task CreateBackupAsync_KeepsLastFivePreUpdateBackupsAndAllManualBackups()
+    [Theory]
+    [InlineData("pre-update")]
+    [InlineData("pre-restore")]
+    [InlineData("pre-runtime-switch")]
+    [InlineData("scheduled")]
+    public async Task CreateBackupAsync_KeepsLastFiveAutomaticBackupsAndAllManualBackups(string automaticReason)
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var dataDir = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data");
@@ -18,21 +22,104 @@ public sealed class CoreLifecycleServiceTests
             _ = await fixture.Backups.CreateBackupAsync("com.example.notes", "manual");
         }
 
-        AppBackupRecord? oldestPreUpdate = null;
+        AppBackupRecord? oldestAutomatic = null;
         for (var index = 0; index < 6; index++)
         {
             fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddSeconds(1);
-            await File.WriteAllTextAsync(Path.Combine(dataDir, "notes.db"), $"pre-update-{index}");
-            var backup = await fixture.Backups.CreateBackupAsync("com.example.notes", "pre-update");
-            oldestPreUpdate ??= backup;
+            await File.WriteAllTextAsync(Path.Combine(dataDir, "notes.db"), $"{automaticReason}-{index}");
+            var backup = await fixture.Backups.CreateBackupAsync("com.example.notes", automaticReason);
+            oldestAutomatic ??= backup;
         }
 
         var backups = await fixture.Backups.ListBackupsAsync("com.example.notes");
 
         Assert.Equal(7, backups.Count);
-        Assert.Equal(5, backups.Count(backup => backup.Reason == "pre-update"));
+        Assert.Equal(5, backups.Count(backup => backup.Reason == automaticReason));
         Assert.Equal(2, backups.Count(backup => backup.Reason == "manual"));
-        Assert.DoesNotContain(backups, backup => backup.BackupId == oldestPreUpdate!.BackupId);
+        Assert.DoesNotContain(backups, backup => backup.BackupId == oldestAutomatic!.BackupId);
+    }
+
+    [Fact]
+    public async Task ListBackupsAsync_IncludesRetentionStatus()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var dataDir = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data");
+        Directory.CreateDirectory(dataDir);
+        await File.WriteAllTextAsync(Path.Combine(dataDir, "notes.db"), "manual");
+        _ = await fixture.Backups.CreateBackupAsync("com.example.notes", "manual");
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddSeconds(1);
+        await File.WriteAllTextAsync(Path.Combine(dataDir, "notes.db"), "pre-update");
+        _ = await fixture.Backups.CreateBackupAsync("com.example.notes", "pre-update");
+
+        var backups = await fixture.Backups.ListBackupsAsync("com.example.notes");
+
+        Assert.Contains(backups, backup => backup.Reason == "manual" && backup.Retention?.Reason == "manual-kept");
+        Assert.Contains(backups, backup => backup.Reason == "pre-update" && backup.Retention?.Reason == "retained-by-policy");
+    }
+
+    [Fact]
+    public async Task ApplyCleanupAsync_DeletesDigestVerifiedMissingMetadataCandidates()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var backupRoot = Path.Combine(fixture.Paths.BackupsRoot, "com.example.notes");
+        Directory.CreateDirectory(backupRoot);
+        var firstArchive = Path.Combine(backupRoot, "orphan-one.zip");
+        var secondArchive = Path.Combine(backupRoot, "orphan-two.zip");
+        await File.WriteAllTextAsync(firstArchive, "one");
+        await File.WriteAllTextAsync(secondArchive, "two");
+
+        var plan = await fixture.Backups.CreateCleanupPlanAsync("com.example.notes");
+        var result = await fixture.Backups.ApplyCleanupAsync(
+            "com.example.notes",
+            new AppBackupCleanupApplyRequest(plan.PlanDigest));
+
+        Assert.Equal(2, plan.Candidates.Count);
+        Assert.Equal(2, result.Deleted.Count);
+        Assert.All(result.Deleted, candidate => Assert.Equal("missing-metadata", candidate.CleanupReason));
+        Assert.False(File.Exists(firstArchive));
+        Assert.False(File.Exists(secondArchive));
+    }
+
+    [Fact]
+    public async Task ApplyCleanupAsync_RejectsStalePlanDigest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var backupRoot = Path.Combine(fixture.Paths.BackupsRoot, "com.example.notes");
+        Directory.CreateDirectory(backupRoot);
+        var firstArchive = Path.Combine(backupRoot, "orphan-one.zip");
+        var secondArchive = Path.Combine(backupRoot, "orphan-two.zip");
+        await File.WriteAllTextAsync(firstArchive, "one");
+        await File.WriteAllTextAsync(secondArchive, "two");
+        var plan = await fixture.Backups.CreateCleanupPlanAsync("com.example.notes");
+        await File.WriteAllTextAsync(firstArchive, "changed");
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Backups.ApplyCleanupAsync("com.example.notes", new AppBackupCleanupApplyRequest(plan.PlanDigest)));
+
+        Assert.Equal("backup_cleanup_plan_digest_mismatch", error.Code);
+        Assert.True(File.Exists(firstArchive));
+        Assert.True(File.Exists(secondArchive));
+    }
+
+    [Fact]
+    public async Task ApplyScheduledCleanupAsync_RemovesMissingArchiveMetadataButKeepsExplicitOnlyCandidates()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var dataDir = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data");
+        Directory.CreateDirectory(dataDir);
+        await File.WriteAllTextAsync(Path.Combine(dataDir, "notes.db"), "manual");
+        var backup = await fixture.Backups.CreateBackupAsync("com.example.notes", "manual");
+        File.Delete(backup!.ArchivePath);
+        var backupRoot = Path.Combine(fixture.Paths.BackupsRoot, "com.example.notes");
+        var orphanArchive = Path.Combine(backupRoot, "orphan.zip");
+        await File.WriteAllTextAsync(orphanArchive, "orphan");
+
+        var result = await fixture.Backups.ApplyScheduledCleanupAsync();
+
+        var deleted = Assert.Single(result.Deleted);
+        Assert.Equal("missing-archive", deleted.CleanupReason);
+        Assert.False(File.Exists(Path.Combine(backupRoot, $"{backup.BackupId}.json")));
+        Assert.True(File.Exists(orphanArchive));
     }
 
     [Fact]
@@ -54,6 +141,23 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("local-data", await File.ReadAllTextAsync(dataPath));
         var backup = Assert.Single(await fixture.Backups.ListBackupsAsync("com.example.notes"));
         Assert.Equal("pre-update", backup.Reason);
+    }
+
+    [Theory]
+    [InlineData("pre-update")]
+    [InlineData("pre-restore")]
+    [InlineData("pre-runtime-switch")]
+    [InlineData("scheduled")]
+    public async Task CreateManualBackupAsync_RejectsReservedLifecycleReasons(string reason)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.CreateManualBackupAsync("com.example.notes", new AppManualBackupRequest(reason)));
+
+        Assert.Equal("backup_reason_reserved", error.Code);
     }
 
     [Fact]
