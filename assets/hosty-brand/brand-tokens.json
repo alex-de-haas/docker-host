@@ -1,0 +1,39 @@
+{
+  "brand": "Hosty",
+  "assetsVersion": "2.0.0-png",
+  "format": "PNG + ICO",
+  "iconSizesPx": [
+    16,
+    20,
+    24,
+    32,
+    48,
+    64,
+    96,
+    128,
+    256,
+    512
+  ],
+  "faviconSizesPx": [
+    16,
+    32,
+    48,
+    64,
+    128,
+    256
+  ],
+  "colors": {
+    "ink": "#071221",
+    "offWhite": "#F8FAFC",
+    "white": "#FFFFFF",
+    "blue": "#1C68FF",
+    "cyan": "#28D5E5",
+    "darkSurface": "#0B1118"
+  },
+  "usage": {
+    "icons/light": "Dark PNG icons with transparent negative-space details for light backgrounds.",
+    "icons/dark": "Light PNG icons with transparent negative-space details for dark backgrounds.",
+    "logos/hosty-logo-color-large-1024.png": "Primary large color logo on white background.",
+    "favicon.ico": "Multi-size ICO: 16, 32, 48, 64, 128, 256 px."
+  }
+}
