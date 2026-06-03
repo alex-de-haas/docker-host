@@ -24,6 +24,7 @@ flowchart LR
 
 ## Documents
 
+- [Roadmap](roadmap.md) - high-level product sequence, active and deferred workstreams, dependencies, conflicts, and links to detailed planning documents.
 - [Host app shell](features/host-app-shell.md) - implemented admin shell foundation, navigation groups, persistent sidebar behavior, and protected page integration.
 - [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - implemented Hosty compatibility foundation: `hosty` CLI alias, `~/.hosty` root selection, system Shell app, app manifests, apps registry, data directory, and backups.
 - [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - target Core/Shell/CLI package boundaries, Core API ownership, Shell runtime app contract, final storage layout, backup policy, and legacy paths pending removal.
@@ -47,6 +48,7 @@ flowchart LR
 
 ## Planning
 
+- For the high-level sequence, dependencies, and conflicts across planning documents, see [Roadmap](roadmap.md).
 - [Core Shell Stabilization](planning/core-shell-stabilization.md) - active implementation plan for local Core/Shell development, Shell lifecycle UI, simplified install/update reviews, auth, user management, and backup controls.
 - [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation plan for Hosty Core, Shell/system apps, runtime apps, manifest contract, app registry, and backups.
 - [Update Channels](planning/update-channels.md) - deferred architecture plan for generated channel indexes, pull request validation channels, and optional CLI update channels.
