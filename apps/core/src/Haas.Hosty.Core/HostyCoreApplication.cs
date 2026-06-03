@@ -170,6 +170,8 @@ internal sealed record HostyCoreRuntimeConfig(
     bool ShellBootstrapEnabled,
     bool ShellAutostart)
 {
+    private const string DefaultDevelopmentShellPublicOrigin = "http://127.0.0.1:3000";
+
     public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment)
     {
         var dataRoot = NormalizePath(
@@ -182,7 +184,8 @@ internal sealed record HostyCoreRuntimeConfig(
             "http://127.0.0.1:3001";
         var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_CORE_PUBLIC_ORIGIN")) ??
             NormalizeOptional(Environment.GetEnvironmentVariable("HOST_PUBLIC_ORIGIN"));
-        var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_SHELL_PUBLIC_ORIGIN"));
+        var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_SHELL_PUBLIC_ORIGIN")) ??
+            ResolveDefaultShellPublicOrigin(environment);
         var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
             ResolveDefaultShellManifestPath();
 
@@ -225,6 +228,9 @@ internal sealed record HostyCoreRuntimeConfig(
 
     private static string? NormalizeOptional(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? ResolveDefaultShellPublicOrigin(IHostEnvironment environment)
+        => environment.IsDevelopment() ? DefaultDevelopmentShellPublicOrigin : null;
 
     private static bool ReadBoolean(string name, bool defaultValue)
     {

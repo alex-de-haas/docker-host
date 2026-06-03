@@ -33,11 +33,17 @@ npm install
 npm run core:dev
 ```
 
-Core listens on `http://127.0.0.1:3001` by default. Shell can be run directly during UI work:
+`npm run core:dev` starts Core in the development environment. Core listens on `http://127.0.0.1:3001` by default and allows the default local Shell origin `http://127.0.0.1:3000` for credentialed Shell API calls.
+
+Shell can be run directly during UI work:
 
 ```bash
 npm run shell:dev
 ```
+
+Use `HOST_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently instead of mixing `localhost` and `127.0.0.1`.
+
+Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should not try to start the Docker-managed `hosty.shell` runtime app. Use Core-managed Shell only when validating runtime lifecycle behavior.
 
 When validating runtime lifecycle behavior, prefer installing Shell through Core like any other runtime app.
 

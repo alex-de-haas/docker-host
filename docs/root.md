@@ -47,9 +47,10 @@ flowchart LR
 
 ## Planning
 
+- [Core Shell Stabilization](planning/core-shell-stabilization.md) - active implementation plan for local Core/Shell development, Shell lifecycle UI, simplified install/update reviews, auth, user management, and backup controls.
 - [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation plan for Hosty Core, Shell/system apps, runtime apps, manifest contract, app registry, and backups.
-- [Update Channels](planning/update-channels.md) - planned generated channel indexes for Shell, runtime app, and optional CLI updates from `main` and pull request builds.
+- [Update Channels](planning/update-channels.md) - deferred architecture plan for generated channel indexes, pull request validation channels, and optional CLI update channels.
 - [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - planned runtime switching, repository source records, checkout cache, and local command runtime execution.
 - [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - planned standalone app auth, optional gateway protection, and split Core/Shell public origins.
-- [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - planned Shell annotation to agent, branch/PR, and PR channel validation workflow.
-- [App Data Backup Retention](planning/app-data-backup-retention.md) - planned automatic backup retention, deletion APIs, scheduled cleanup, and backup UI/CLI controls.
+- [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - deferred Shell annotation to agent, branch/PR, and PR channel validation workflow.
+- [App Data Backup Retention](planning/app-data-backup-retention.md) - remaining backup retention previews, scheduled cleanup, and Shell/CLI backup management controls.

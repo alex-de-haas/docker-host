@@ -2,9 +2,9 @@
 
 ## Description
 
-The Hosty compatibility foundation implements manual app data backups, pre-update backups, pre-restore backups, ZIP archive metadata, digest verification, and per-entry CRC validation before restore. Backups are currently retained until manual filesystem cleanup.
+The Hosty compatibility foundation implements manual app data backups, pre-update backups, pre-restore backups, ZIP archive metadata, digest verification, per-entry CRC validation before restore, delete-one Core APIs, and conservative automatic retention for pre-update backups. Shell/CLI backup management controls, scheduled retention cleanup, and retention previews remain planned.
 
-This plan covers automatic retention, deletion APIs, and scheduled cleanup for app data backups.
+This plan covers the remaining backup management work: retention previews, scheduled cleanup, Shell and CLI controls, and documentation for safe deletion.
 
 ```mermaid
 flowchart LR
@@ -18,7 +18,7 @@ flowchart LR
 
 ### Phase 1 - Define retention policy model
 
-**Status**: Not Started
+**Status**: Partially Implemented
 
 - Add default retention settings for manual, pre-update, pre-restore, scheduled, and pre-runtime-switch backups.
 - Support keep-last-N per app.
@@ -27,10 +27,11 @@ flowchart LR
 
 ### Phase 2 - Add backup deletion APIs
 
-**Status**: Not Started
+**Status**: Partially Implemented
 
 - Add list details that show retention eligibility.
 - Add delete-one backup API with confirmation.
+- Existing Core control APIs can delete one backup by id; Shell/CLI confirmation UX remains planned.
 - Add cleanup plan API that previews which archives and metadata files will be removed.
 - Add cleanup apply API with digest/path verification.
 
@@ -61,4 +62,3 @@ flowchart LR
 - Question: Should retention be global or per app?
   Answer: Not implemented.
   Recommendation: Support global defaults with per-app override later.
-

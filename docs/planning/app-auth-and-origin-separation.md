@@ -10,13 +10,14 @@ The source-runtime developer workflow should use existing Host users rather than
 
 Gateway/proxy wrapping for arbitrary third-party browser applications is out of scope for this plan. Browser runtime apps are expected to be written or adapted for Hosty, receive Core origin/app identity configuration, and exchange app-scoped codes with Core.
 
-The recommended order is:
+The current stabilization branch implements Shell lifecycle management before broadening auth behavior. The recommended order for this plan after Shell management is usable is:
 
-1. Define app-scoped identity and authorize/token exchange.
-2. Implement Shell launch and standalone auth redirect for Hosty-aware apps.
-3. Add SDK/middleware guidance.
-4. Split Core and Shell public origins after the auth contract exists.
-5. Defer gateway/proxy wrapping until a separate future plan.
+1. Stabilize split-origin Core/Shell browser requests, credentials, and login/logout navigation.
+2. Define app-scoped identity and authorize/token exchange.
+3. Implement Shell launch and standalone auth redirect for Hosty-aware apps.
+4. Add SDK/middleware guidance.
+5. Keep auth pages Core-owned unless a later UI split requires a dedicated auth surface.
+6. Defer gateway/proxy wrapping until a separate future plan.
 
 ```mermaid
 flowchart LR
@@ -66,13 +67,14 @@ flowchart LR
 
 ### Phase 4 - Split Core and Shell public origins
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Add explicit configuration for Core and Shell public origins, such as `HOST_CORE_PUBLIC_ORIGIN` and `HOST_SHELL_PUBLIC_ORIGIN`.
 - Keep `HOST_PUBLIC_ORIGIN` as a compatibility alias for combined deployments during migration.
 - Decide whether Core-owned auth pages live on the Core origin, Shell origin, or a dedicated auth system-app origin.
 - Update Shell API calls to use the configured Core origin instead of same-origin `/api`.
 - Add CORS, CSRF, cookie, account switching, logout, OIDC callback, and trusted forwarded-header behavior for cross-origin Shell-to-Core requests.
+- During local development, Core should allow the default Shell origin `http://127.0.0.1:3000` when running in the development environment, while retaining `HOST_SHELL_PUBLIC_ORIGIN` for explicit split-origin deployments.
 - Document reverse proxy and TLS requirements for Core/Shell deployment frontends, not for runtime app browser UI wrapping.
 
 ### Phase 5 - Defer gateway/proxy wrapping

@@ -2,7 +2,9 @@
 
 ## Description
 
-This plan covers future Shell-to-agent workflows for changing runtime apps from in-context feedback. It depends on repository-backed app source support and update channels. Without a source checkout and a way to publish pull request channels, the agent bridge has nowhere safe to apply and validate changes.
+This deferred plan covers future Shell-to-agent workflows for changing runtime apps from in-context feedback. It depends on repository-backed app source support and update channels. Without a source checkout and a way to publish pull request channels, the agent bridge has nowhere safe to apply and validate changes.
+
+Agent Bridge should not be implemented in the current Core/Shell stabilization branch. The active branch should only preserve architectural room for future agent workflows while focusing on Shell lifecycle management, authentication, user management, and backup controls.
 
 The target workflow is that a user can open a runtime app, annotate a UI element or route in Hosty Shell, describe a desired change, and let an agent create a branch or pull request. Hosty can then expose a pull request channel so the app can be validated against the same app data before promotion.
 
@@ -79,4 +81,3 @@ flowchart LR
 - Question: Should every runtime app be agent-editable?
   Answer: No. Docker-only and source-less apps can still be managed by Hosty, but they cannot receive source edits.
   Recommendation: Expose agent actions only when source metadata and permissions are present.
-

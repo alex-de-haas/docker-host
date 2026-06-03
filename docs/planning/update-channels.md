@@ -4,6 +4,10 @@
 
 Update Channels define how Hosty discovers, displays, and applies alternate builds for Hosty Shell, system apps, runtime apps, and the bootstrap CLI.
 
+This plan is deferred. The current implementation branch focuses on Core/Shell stabilization, lifecycle management UI, simplified install/update reviews, authentication, user management, and backup management. Channel generation, product channel publishing, runtime channel UI, switch-channel UI, pull request channels, and channel cleanup should not be implemented in this branch.
+
+Existing channel-related Core and CLI code may remain as narrow placeholders. Future channel work should happen as a separate feature after the main Core/Shell management experience is stable.
+
 The original channel idea started as a CLI self-update source. The broader target model is runtime-oriented:
 
 - Hosty Shell should be visible in management surfaces as a system app, even though it is currently bundled into the Host application;
@@ -340,7 +344,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 2 - Show Shell as a managed system app
 
-**Status**: In Progress
+**Status**: Deferred
 
 - Add a Hosty Shell entry to a system apps management section.
 - Label Shell as a system app with non-removable behavior.
@@ -350,7 +354,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 3 - Generate and publish the main product channel
 
-**Status**: Not Started
+**Status**: Deferred
 
 - Publish the `main` channel entry for the current Host image, mapped to Hosty Core/Shell until packaging is split.
 - Rename or replace the current rolling `cli-dev` behavior with `cli-main` if CLI channel publishing remains useful.
@@ -359,7 +363,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 4 - Add product channel selection
 
-**Status**: Not Started
+**Status**: Partially Implemented, Deferred
 
 - Add product channel index download and schema validation.
 - Add interactive product channel selection to `hosty update`.
@@ -371,7 +375,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 5 - Add runtime app channel discovery
 
-**Status**: Not Started
+**Status**: Partially Implemented, Deferred
 
 - Add optional app manifest support for a channel index pointer such as `channelsUrl`.
 - Keep legacy module metadata support for the same pointer.
@@ -381,7 +385,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 6 - Add runtime app channel switching
 
-**Status**: Not Started
+**Status**: Partially Implemented, Deferred
 
 - Add a `Switch channel` action for runtime apps with available channels.
 - Resolve the selected channel to a manifest before planning.
@@ -391,7 +395,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 7 - Add runtime profile switching
 
-**Status**: Not Started
+**Status**: Deferred
 
 - Add selected runtime profile state for runtime apps.
 - Add `Switch runtime` planning and apply APIs.
@@ -401,7 +405,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 8 - Add pull request channels and cleanup
 
-**Status**: Not Started
+**Status**: Deferred
 
 - Add an opt-in trigger for PR product channels, preferably a label such as `update-channel`.
 - Generate PR-safe slugs using `pr-<number>-<branch-slug>`.
@@ -414,7 +418,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 ### Phase 9 - Validate end-to-end delivery
 
-**Status**: Not Started
+**Status**: Deferred
 
 - Validate switching Shell to `main`.
 - Validate switching Shell to `pr-<number>-<branch-slug>`.
@@ -446,3 +450,4 @@ No open questions remain for this planning pass. The current accepted decisions 
 - Pull request cleanup must not delete the source branch.
 - Pull request cleanup removes the channel entry immediately. Generated releases, tags, images, and package assets are deleted best-effort when permissions allow.
 - Cleanup logs must stay explicit, and channel index cleanup must not be blocked by package/image deletion failures.
+- Channel generation, channel UI, pull request channels, and Agent Bridge validation channels are deferred until Core/Shell lifecycle management, authentication, user management, and backup management are stable.

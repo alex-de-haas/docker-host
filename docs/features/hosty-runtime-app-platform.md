@@ -204,7 +204,7 @@ Supported `app.0.1` fields in the compatibility adapter:
 
 `runtimeProfiles[]` are mutually exclusive app-level ways to run the app. `services[]` are the runtime services that run together for the selected profile, such as `web`, `api`, and `worker`. The compatibility adapter selects `defaultRuntime` or the first/default profile, then maps every `services[].runtimes[defaultRuntime]` entry into canonical legacy `0.3` services before install/update planning.
 
-Docker runtime profiles can be installed through the existing Docker module engine. Local command runtime profiles can be parsed and normalized, but production local-process runtime execution is not implemented yet.
+Docker runtime profiles run through the Docker runtime adapter. Local command runtime profiles run through Core from a local source override, managed checkout, or app root fallback, and are intended for trusted local development or explicitly configured administrator workflows.
 
 The earlier top-level `runtimes[]` shape is still accepted as a single-service compatibility path, but new `app.0.1` manifests should use `runtimeProfiles[]` and `services[]`.
 
@@ -345,7 +345,8 @@ Current behavior:
 - Restore verifies archive digest and per-entry CRC before replacing data.
 - Restore does not automatically restart the app.
 - Current ZIP creation is in-memory and rejects app data above 256 MiB until a streaming archive writer is implemented.
-- Automatic backup retention and backup deletion APIs are not implemented yet. Backups are retained until manual filesystem cleanup or a future retention feature removes them.
+- Core keeps the last 5 automatic `pre-update` backups per app and keeps manual backups until explicit deletion.
+- Delete-one backup is available through Core control APIs. Shell/CLI backup deletion controls, retention previews, scheduled cleanup, age-based retention, and per-app retention overrides remain planned.
 
 CLI commands:
 
@@ -357,11 +358,10 @@ hosty apps restore <app-id> <backup-id>
 
 ## Not implemented yet
 
-The following concepts remain planned, not implemented:
+The following concepts remain planned or deferred:
 
-- product channel index download and `hosty update --channel`, tracked in [Update Channels](../planning/update-channels.md);
-- runtime app channel discovery and switching, tracked in [Update Channels](../planning/update-channels.md);
-- runtime profile switch planning, repository checkout/cache, and local command runtime supervision, tracked in [Runtime Profiles And Source Runtimes](../planning/runtime-profiles-and-source-runtimes.md);
-- standalone auth redirect, optional gateway-protected app mode, and separate public origins for Hosty Core API and Hosty Shell, tracked in [App Auth And Origin Separation](../planning/app-auth-and-origin-separation.md);
-- automatic backup retention and backup deletion APIs, tracked in [App Data Backup Retention](../planning/app-data-backup-retention.md);
-- agent bridge annotations, repository edits, and pull request channel promotion, tracked in [Agent Bridge Workflow](../planning/agent-bridge-workflow.md).
+- Shell lifecycle management UI, simplified install/update review, Core/Shell auth hardening, user management, and backup controls, tracked in [Core Shell Stabilization](../planning/core-shell-stabilization.md);
+- generated product channel publishing, runtime app channel UI, pull request channels, and channel cleanup, deferred in [Update Channels](../planning/update-channels.md);
+- standalone auth redirect hardening, optional gateway-protected app mode, and complete separate public origin validation, tracked in [App Auth And Origin Separation](../planning/app-auth-and-origin-separation.md);
+- scheduled backup retention, backup retention previews, and Shell/CLI backup management controls, tracked in [App Data Backup Retention](../planning/app-data-backup-retention.md);
+- agent bridge annotations, repository edits, and pull request channel promotion, deferred in [Agent Bridge Workflow](../planning/agent-bridge-workflow.md).
