@@ -125,7 +125,8 @@ internal sealed record AppSummary(
     string RuntimeState,
     string? LastOperation,
     string? LastError,
-    IReadOnlyList<string> Capabilities)
+    IReadOnlyList<string> Capabilities,
+    IReadOnlyList<AppEndpointContract> Endpoints)
 {
     public static AppSummary From(AppRecord app)
         => new(
@@ -142,5 +143,6 @@ internal sealed record AppSummary(
             app.RuntimeState,
             app.LastOperation,
             app.LastError,
-            app.Capabilities);
+            app.Capabilities,
+            app.Endpoints);
 }

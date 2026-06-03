@@ -74,6 +74,7 @@ input {
 .brandMark svg,
 .nav svg,
 .button svg,
+.iconButton svg,
 .notice svg,
 .emptyState svg,
 .check svg,
@@ -330,12 +331,14 @@ h1 {
 .appActions {
   align-items: center;
   border-top: 1px solid var(--border);
+  flex-wrap: wrap;
   padding-top: 12px;
   font-size: 13px;
 }
 
 .check,
 .openLink,
+.iconButton,
 .inlineError {
   display: inline-flex;
   align-items: center;
@@ -348,6 +351,33 @@ h1 {
 
 .openLink {
   color: var(--muted);
+}
+
+.lifecycleActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.iconButton {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+  border-color: #b7c2d0;
+  background: var(--panel-muted);
+}
+
+.iconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 .openLink[aria-disabled="true"] {

@@ -47,16 +47,16 @@ The CLI should call Core APIs for ordinary operations. It may keep recovery beha
 Core exposes local control APIs under `/control/v1` and public browser/app APIs under `/api`:
 
 - Core process: status, stop, health, local control discovery.
-- App registry: app summaries and app-native state under `apps/<app-id>/state.json`.
-- Lifecycle: install, configure, start, stop, restart, update-plan, update, remove, logs.
-- Backups: list, manual backup, restore, delete; update apply creates automatic pre-update backups.
+- App registry: authenticated, principal-filtered app summaries and app-native state under `apps/<app-id>/state.json`.
+- Lifecycle: install, configure, start, stop, restart, update-plan, update, remove, logs. Browser Shell can call public start, stop, restart, logs, and backup endpoints; local control endpoints keep the complete lifecycle surface.
+- Backups: list, manual backup, restore, delete; update apply creates automatic pre-update backups. Browser Shell can create manual backups through the public API, while restore/delete remain local-control only until their Shell review flows are implemented.
 - Runtime switching: `switch-runtime/plan` and `switch-runtime` with plan digest review.
 - Runtime app channels: channel list, `switch-channel/plan`, and `switch-channel` exist as low-level placeholders, but channel generation and Shell channel UI are deferred.
 - Source state: managed checkout resolution, immutable commit storage, local source override set/clear.
 - Identity helpers: sanitized user summaries, app-scoped identity token issuance, Shell/standalone open links.
 - Auth: Core-owned session, CSRF, trusted proxy session, logout, app auth code, token exchange, and app session revalidation.
 
-Control APIs require the local control secret from `core/run/control.json`.
+Control APIs require the local control secret from `core/run/control.json`. Browser lifecycle mutations require an active Core session, `host.admin`, and a matching `X-Hosty-CSRF` token.
 
 ## Shell runtime app contract
 

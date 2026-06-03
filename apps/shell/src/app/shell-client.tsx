@@ -6,12 +6,16 @@ import {
   CheckCircle2,
   CircleAlert,
   ExternalLink,
+  Archive,
   LayoutGrid,
   LoaderCircle,
   LogIn,
   LogOut,
+  Play,
   RefreshCw,
+  RotateCw,
   Server,
+  Square,
 } from "lucide-react";
 
 type CoreStatus = {
@@ -39,11 +43,26 @@ type CoreApp = {
   lastOperation?: string | null;
   lastError?: string | null;
   capabilities: string[];
+  endpoints?: CoreEndpoint[];
 };
 
 type AppsResponse = {
   apps: CoreApp[];
 };
+
+type CoreEndpoint = {
+  key: string;
+  protocol: string;
+  url?: string | null;
+  public: boolean;
+};
+
+type CoreError = {
+  code?: string;
+  message?: string;
+};
+
+type AppAction = "start" | "stop" | "restart" | "backup";
 
 type SessionResponse = {
   authenticated: boolean;
@@ -80,26 +99,32 @@ export function ShellClient({
     session: null,
     updatedAt: null,
   });
+  const [busyAction, setBusyAction] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
-      const [statusResponse, appsResponse, sessionResponse] = await Promise.all([
+      const [statusResponse, sessionResponse] = await Promise.all([
         fetch(`${coreOrigin}/api/core/status`, { credentials: "include" }),
-        fetch(`${coreOrigin}/api/apps`, { credentials: "include" }),
         fetch(`${coreOrigin}/api/auth/session`, { credentials: "include" }),
       ]);
 
       if (!statusResponse.ok) {
         throw new Error(`Core status returned ${statusResponse.status}.`);
       }
-      if (!appsResponse.ok) {
-        throw new Error(`Apps API returned ${appsResponse.status}.`);
-      }
 
       const status = (await statusResponse.json()) as CoreStatus;
-      const apps = (await appsResponse.json()) as AppsResponse;
       const session = sessionResponse.ok ? ((await sessionResponse.json()) as SessionResponse) : null;
+      let apps: AppsResponse = { apps: [] };
+      if (session?.authenticated) {
+        const appsResponse = await fetch(`${coreOrigin}/api/apps`, { credentials: "include" });
+        if (!appsResponse.ok) {
+          throw new Error(`Apps API returned ${appsResponse.status}.`);
+        }
+
+        apps = (await appsResponse.json()) as AppsResponse;
+      }
+
       setState({
         loading: false,
         error: null,
@@ -117,6 +142,62 @@ export function ShellClient({
     }
   }, [coreOrigin]);
 
+  const loadCsrfToken = useCallback(async () => {
+    const response = await fetch(`${coreOrigin}/api/auth/csrf`, { credentials: "include" });
+    if (!response.ok) {
+      throw new Error(`CSRF endpoint returned ${response.status}.`);
+    }
+
+    return ((await response.json()) as { token: string }).token;
+  }, [coreOrigin]);
+
+  const readCoreError = async (response: Response) => {
+    try {
+      const error = (await response.json()) as CoreError;
+      return error.message || error.code || `Core returned ${response.status}.`;
+    } catch {
+      return `Core returned ${response.status}.`;
+    }
+  };
+
+  const runAppAction = useCallback(
+    async (app: CoreApp, action: AppAction) => {
+      const actionKey = `${app.id}:${action}`;
+      setBusyAction(actionKey);
+      setState((current) => ({ ...current, error: null }));
+      try {
+        const csrf = await loadCsrfToken();
+        const endpoint =
+          action === "backup"
+            ? `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/backups`
+            : `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/${action}`;
+        const response = await fetch(endpoint, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hosty-CSRF": csrf,
+          },
+          body: action === "backup" ? JSON.stringify({ reason: "manual" }) : "{}",
+        });
+
+        if (!response.ok) {
+          throw new Error(await readCoreError(response));
+        }
+
+        await refresh();
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          error: error instanceof Error ? error.message : "Core lifecycle action failed.",
+        }));
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [coreOrigin, loadCsrfToken, refresh],
+  );
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -124,6 +205,7 @@ export function ShellClient({
   const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
   const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
   const activeUser = state.session?.authenticated ? state.session.user : null;
+  const canManageApps = activeUser?.role === "host.admin";
 
   return (
     <main className="shell">
@@ -201,8 +283,24 @@ export function ShellClient({
           </section>
         ) : (
           <>
-            <AppSection id="system" title="System apps" apps={systemApps} shellAppId={shellAppId} />
-            <AppSection id="runtime" title="Runtime apps" apps={runtimeApps} shellAppId={shellAppId} />
+            <AppSection
+              id="system"
+              title="System apps"
+              apps={systemApps}
+              shellAppId={shellAppId}
+              canManageApps={canManageApps}
+              busyAction={busyAction}
+              onAction={runAppAction}
+            />
+            <AppSection
+              id="runtime"
+              title="Runtime apps"
+              apps={runtimeApps}
+              shellAppId={shellAppId}
+              canManageApps={canManageApps}
+              busyAction={busyAction}
+              onAction={runAppAction}
+            />
           </>
         )}
       </section>
@@ -224,11 +322,17 @@ function AppSection({
   title,
   apps,
   shellAppId,
+  canManageApps,
+  busyAction,
+  onAction,
 }: {
   id: string;
   title: string;
   apps: CoreApp[];
   shellAppId: string;
+  canManageApps: boolean;
+  busyAction: string | null;
+  onAction: (app: CoreApp, action: AppAction) => void;
 }) {
   return (
     <section className="section" id={id}>
@@ -241,7 +345,14 @@ function AppSection({
       ) : (
         <div className="appGrid">
           {apps.map((app) => (
-            <AppCard key={app.id} app={app} isShell={app.id === shellAppId} />
+            <AppCard
+              key={app.id}
+              app={app}
+              isShell={app.id === shellAppId}
+              canManageApps={canManageApps}
+              busyAction={busyAction}
+              onAction={onAction}
+            />
           ))}
         </div>
       )}
@@ -249,8 +360,26 @@ function AppSection({
   );
 }
 
-function AppCard({ app, isShell }: { app: CoreApp; isShell: boolean }) {
+function AppCard({
+  app,
+  isShell,
+  canManageApps,
+  busyAction,
+  onAction,
+}: {
+  app: CoreApp;
+  isShell: boolean;
+  canManageApps: boolean;
+  busyAction: string | null;
+  onAction: (app: CoreApp, action: AppAction) => void;
+}) {
   const running = app.runtimeState === "running";
+  const openEndpoint = app.endpoints?.find((endpoint) => endpoint.public && endpoint.url) ?? app.endpoints?.find((endpoint) => endpoint.url);
+  const openHref = isShell ? "/" : openEndpoint?.url || "#";
+  const canOpen = isShell || (running && Boolean(openEndpoint?.url));
+  const canControl = canManageApps && !isShell;
+  const canBackup = canControl && app.capabilities.includes("backup");
+  const isBusy = (action: AppAction) => busyAction === `${app.id}:${action}`;
 
   return (
     <article className="appCard">
@@ -286,10 +415,36 @@ function AppCard({ app, isShell }: { app: CoreApp; isShell: boolean }) {
           <CheckCircle2 aria-hidden="true" />
           {isShell ? "Shell" : app.kind}
         </span>
-        <a className="openLink" href={`${app.id === "hosty.shell" ? "/" : "#"}`} aria-disabled={!running || isShell}>
-          <ExternalLink aria-hidden="true" />
-          Open
-        </a>
+        <div className="lifecycleActions">
+          {canControl &&
+            (running ? (
+              <>
+                <button className="iconButton" type="button" onClick={() => onAction(app, "stop")} disabled={isBusy("stop")}>
+                  <Square aria-hidden="true" />
+                  <span>Stop</span>
+                </button>
+                <button className="iconButton" type="button" onClick={() => onAction(app, "restart")} disabled={isBusy("restart")}>
+                  <RotateCw aria-hidden="true" className={isBusy("restart") ? "spin" : ""} />
+                  <span>Restart</span>
+                </button>
+              </>
+            ) : (
+              <button className="iconButton" type="button" onClick={() => onAction(app, "start")} disabled={isBusy("start")}>
+                <Play aria-hidden="true" />
+                <span>Start</span>
+              </button>
+            ))}
+          {canBackup && (
+            <button className="iconButton" type="button" onClick={() => onAction(app, "backup")} disabled={isBusy("backup")}>
+              <Archive aria-hidden="true" />
+              <span>Backup</span>
+            </button>
+          )}
+          <a className="openLink" href={openHref} aria-disabled={!canOpen} target={isShell ? undefined : "_blank"} rel={isShell ? undefined : "noreferrer"}>
+            <ExternalLink aria-hidden="true" />
+            Open
+          </a>
+        </div>
       </div>
     </article>
   );

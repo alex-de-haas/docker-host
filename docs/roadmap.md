@@ -63,6 +63,16 @@ Key outcomes:
 - Restored user management in Shell.
 - Backup management controls after Shell and auth are usable.
 
+Implemented slice:
+
+- Phase 1 local Core/Shell development is complete: Core starts locally, Shell origin defaults and overrides are documented and browser-smoked, Shell session loading works before and after Core login, and authenticated Shell app loading reaches `/api/apps`.
+- Core has a development-only login helper for local browser smoke tests against existing enabled Host users; production authentication remains deferred to the auth stabilization phase.
+- Shell Next.js development config allows loopback dev resources for `127.0.0.1` and `localhost`, matching the local Core/Shell cookie and CORS workflow.
+- Shell can call Core public browser endpoints to start, stop, restart, open, and manually back up manageable runtime apps.
+- Core app summaries are authenticated and principal-filtered before Shell renders lifecycle controls.
+- Public lifecycle mutations require Core session authentication, `host.admin`, and CSRF validation.
+- The active `hosty.shell` app hides self-stop/restart controls, while CLI/local control APIs keep the full Shell management surface.
+
 Existing behavior that must keep working:
 
 - Legacy Docker module install, update, start, stop, restart, configure, remove, recovery, and backup flows.

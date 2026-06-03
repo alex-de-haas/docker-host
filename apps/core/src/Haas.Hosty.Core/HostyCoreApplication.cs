@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -70,10 +71,50 @@ internal static class HostyCoreApplication
                 return Results.Json(new StopResponse("stopping"));
             }));
 
-        app.MapGet("/login", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
-            "Hosty Core Login",
-            "Hosty Core owns login and session setup in the final architecture.",
-            config), "text/html"));
+        if (app.Environment.IsDevelopment())
+        {
+            app.MapGet("/login", async (HostyCoreRuntimeConfig config, UserDirectoryStore users, CancellationToken cancellationToken) =>
+            {
+                var state = await users.ReadAsync(cancellationToken);
+                return Results.Content(RenderDevelopmentLoginPage(config, state.Users), "text/html");
+            });
+            app.MapPost("/login", async (
+                HttpRequest request,
+                HttpResponse response,
+                HostyCoreRuntimeConfig config,
+                UserDirectoryStore users,
+                IClock clock,
+                CancellationToken cancellationToken) =>
+            {
+                var form = await request.ReadFormAsync(cancellationToken);
+                var result = await AuthEndpoints.CreateSessionAsync(
+                    form["userId"].ToString(),
+                    secureCookie: false,
+                    response,
+                    users,
+                    clock,
+                    cancellationToken);
+
+                if (result.Succeeded)
+                {
+                    return Results.Redirect(config.ShellPublicOrigin ?? "/");
+                }
+
+                var state = await users.ReadAsync(cancellationToken);
+                return Results.Content(
+                    RenderDevelopmentLoginPage(config, state.Users, "Select an enabled local Hosty user."),
+                    "text/html",
+                    Encoding.UTF8,
+                    StatusCodes.Status403Forbidden);
+            });
+        }
+        else
+        {
+            app.MapGet("/login", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
+                "Hosty Core Login",
+                "Hosty Core owns login and session setup in the final architecture.",
+                config), "text/html"));
+        }
         app.MapGet("/setup", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
             "Hosty Core Setup",
             "Hosty Core owns first administrator setup.",
@@ -152,6 +193,70 @@ internal static class HostyCoreApplication
               <p>{{encodedMessage}}</p>
               <p>Core origin: <code>{{encodedCoreOrigin}}</code></p>
               <p>Shell origin: <code>{{encodedShellOrigin}}</code></p>
+            </main>
+          </body>
+          </html>
+          """;
+    }
+
+    private static string RenderDevelopmentLoginPage(
+        HostyCoreRuntimeConfig config,
+        IReadOnlyList<HostUserRecord> users,
+        string? error = null)
+    {
+        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.CorePublicOrigin ?? config.ListenUrl);
+        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.ShellPublicOrigin ?? "not configured");
+        var enabledUsers = users.Where(user => !user.Disabled).ToArray();
+        var options = string.Join(Environment.NewLine, enabledUsers.Select(user =>
+        {
+            var encodedId = HtmlEncoder.Default.Encode(user.Id);
+            var encodedLabel = HtmlEncoder.Default.Encode($"{user.DisplayName} - {user.Email} - {user.Role}");
+            return $"""<option value="{encodedId}">{encodedLabel}</option>""";
+        }));
+        var encodedError = error is null
+            ? string.Empty
+            : $"""<p class="error">{HtmlEncoder.Default.Encode(error)}</p>""";
+        var form = enabledUsers.Length == 0
+            ? """<p>No enabled local Hosty users are available.</p>"""
+            : $$"""
+              <form method="post" action="/login">
+                <label for="userId">Development user</label>
+                <select id="userId" name="userId">{{options}}</select>
+                <button type="submit">Start development session</button>
+              </form>
+              """;
+
+        return $$"""
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Hosty Core Login</title>
+            <style>
+              :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+              body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+              main { width: min(34rem, calc(100vw - 2rem)); border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 1.5rem; }
+              h1 { margin: 0 0 .75rem; font-size: 1.25rem; }
+              p { margin: .5rem 0; line-height: 1.5; }
+              form { display: grid; gap: .75rem; margin: 1rem 0; }
+              label { font-weight: 650; }
+              select, button { border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; font: inherit; padding: .7rem .85rem; }
+              button { cursor: pointer; background: CanvasText; color: Canvas; }
+              code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+              .error { color: #b42318; font-weight: 650; }
+              .hint { color: color-mix(in srgb, CanvasText 70%, transparent); }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>Hosty Core Login</h1>
+              <p>Development-only local session helper.</p>
+              {{encodedError}}
+              {{form}}
+              <p>Core origin: <code>{{encodedCoreOrigin}}</code></p>
+              <p>Shell origin: <code>{{encodedShellOrigin}}</code></p>
+              <p class="hint">Production authentication remains owned by Core auth providers.</p>
             </main>
           </body>
           </html>

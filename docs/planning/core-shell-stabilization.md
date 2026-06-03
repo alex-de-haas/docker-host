@@ -30,7 +30,7 @@ flowchart LR
 
 ### Phase 1 - Stabilize local Core and Shell development
 
-**Status**: In Progress
+**Status**: Completed
 
 - Make `npm run core:dev` start Core in the development environment.
 - Allow the default local Shell origin `http://127.0.0.1:3000` in Core CORS during development.
@@ -38,15 +38,42 @@ flowchart LR
 - Document the split-process workflow: Core on `http://127.0.0.1:3001`, Shell on `http://127.0.0.1:3000`.
 - Validate `/api/core/status`, `/api/apps`, Shell session loading, and the Core login link in the browser.
 
+Completed browser smoke on 2026-06-03:
+
+- Core dev starts through `npm run core:dev` with `Development` hosting and listens on `http://127.0.0.1:3001`.
+- Core status reports the default local Shell origin and honors `HOST_SHELL_PUBLIC_ORIGIN` for an alternate Shell origin.
+- Shell loads Core status and unauthenticated session state without calling `/api/apps` before a Core session exists.
+- Core exposes a development-only `/login` form that creates a normal Core session cookie for existing enabled local users and redirects back to Shell.
+- Authenticated Shell loading calls `/api/apps`, shows the active `host.admin` session, and renders the Core-managed `hosty.shell` system app.
+- Shell Next.js development config allows loopback dev resources for `127.0.0.1` and `localhost`, so browser hydration works on the loopback host required by Core cookies.
+
+Notes:
+
+- Browser credentialed auth must keep Core and Shell on the same loopback host in local HTTP development. `localhost` Shell with `127.0.0.1` Core can validate CORS/status, but the Core `SameSite=Lax` session cookie is not sent on cross-site browser fetches.
+- The development login helper is local development plumbing only. Production authentication remains Core-owned and belongs to Phase 4.
+
 ### Phase 2 - Restore Shell lifecycle management
 
-**Status**: Not Started
+**Status**: In Progress
 
 - Show system apps and runtime apps with current runtime state, operation status, selected runtime, version, and last error.
 - Add Shell actions for start, stop, restart, open, update, logs, backup, restore, configure, and remove where each action is allowed.
 - Hide self-stop and remove actions for the active `hosty.shell` app.
 - Keep legacy module and app-native runtime app management flows covered by the new Shell UI.
 - Test old CLI/control lifecycle flows against the new Shell-visible app state.
+
+Implemented so far:
+
+- Core exposes public browser lifecycle endpoints for Shell under `/api/apps/{appId}/start`, `/api/apps/{appId}/stop`, `/api/apps/{appId}/restart`, `/api/apps/{appId}/logs`, and `/api/apps/{appId}/backups`.
+- Core `/api/apps` now requires an active Core session and filters system/runtime app summaries by role and app assignment.
+- Public browser lifecycle mutations require an active Core session, `host.admin`, and a matching `X-Hosty-CSRF` token.
+- Shell app cards can start, stop, restart, open, and create manual backups for manageable runtime apps.
+- Shell hides lifecycle mutation controls for the active `hosty.shell` app while Core control APIs can still manage Shell from CLI/local control.
+
+Remaining:
+
+- Add Shell update, configure, restore, remove, log viewing, and backup list/restore/delete views.
+- Add focused browser smoke coverage for Shell lifecycle controls against Core public APIs.
 
 ### Phase 3 - Simplify install and update review
 

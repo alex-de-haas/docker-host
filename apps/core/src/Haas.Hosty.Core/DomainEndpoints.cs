@@ -4,8 +4,23 @@ internal static class DomainEndpoints
 {
     public static void Map(WebApplication app)
     {
-        app.MapGet("/api/apps", async (AppRegistryStore store, CancellationToken cancellationToken) =>
-            Results.Json(new AppsResponse(await store.ListAppsAsync(cancellationToken))));
+        app.MapGet("/api/apps", async (
+            HttpRequest request,
+            AppRegistryStore store,
+            UserDirectoryStore users,
+            IClock clock,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireSessionAsync(
+                request,
+                users,
+                clock,
+                async user =>
+                {
+                    var state = await users.ReadAsync(cancellationToken);
+                    var apps = await store.ListAppsAsync(cancellationToken);
+                    return Results.Json(new AppsResponse(FilterAppsForUser(apps, state, user)));
+                },
+                cancellationToken));
 
         app.MapGet("/control/v1/apps", async (HttpRequest request, ControlSecret secret, AppRegistryStore store, CancellationToken cancellationToken) =>
             HostyCoreApplication.RequireControlSecret(request, secret, async () =>
@@ -27,6 +42,28 @@ internal static class DomainEndpoints
         app.MapGet("/control/v1/audit/recent", async (HttpRequest request, ControlSecret secret, AuditStore store, CancellationToken cancellationToken) =>
             HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 Results.Json(new AuditResponse(await store.ReadRecentAsync(cancellationToken: cancellationToken)))));
+    }
+
+    private static IReadOnlyList<AppSummary> FilterAppsForUser(
+        IReadOnlyList<AppSummary> apps,
+        UserDirectoryState state,
+        HostUserRecord user)
+    {
+        if (string.Equals(user.Role, "host.admin", StringComparison.Ordinal))
+        {
+            return apps;
+        }
+
+        return apps
+            .Where(app => !app.System && IsUserAssignedToAppOrUnrestricted(state, user, app.Id))
+            .ToArray();
+    }
+
+    private static bool IsUserAssignedToAppOrUnrestricted(UserDirectoryState state, HostUserRecord user, string appId)
+    {
+        var appAssignments = state.Assignments.Where(assignment => string.Equals(assignment.AppId, appId, StringComparison.Ordinal)).ToArray();
+        return appAssignments.Length == 0 ||
+            appAssignments.Any(assignment => string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal));
     }
 }
 

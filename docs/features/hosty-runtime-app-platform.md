@@ -360,7 +360,7 @@ hosty apps restore <app-id> <backup-id>
 
 The following concepts remain planned or deferred:
 
-- Shell lifecycle management UI, simplified install/update review, Core/Shell auth hardening, user management, and backup controls, tracked in [Core Shell Stabilization](../planning/core-shell-stabilization.md);
+- remaining Shell lifecycle management UI, simplified install/update review, Core/Shell auth hardening, user management, and backup controls, tracked in [Core Shell Stabilization](../planning/core-shell-stabilization.md);
 - generated product channel publishing, runtime app channel UI, pull request channels, and channel cleanup, deferred in [Update Channels](../planning/update-channels.md);
 - standalone auth redirect hardening, optional gateway-protected app mode, and complete separate public origin validation, tracked in [App Auth And Origin Separation](../planning/app-auth-and-origin-separation.md);
 - scheduled backup retention, backup retention previews, and Shell/CLI backup management controls, tracked in [App Data Backup Retention](../planning/app-data-backup-retention.md);

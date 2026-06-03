@@ -4,6 +4,96 @@ internal static class LifecycleEndpoints
 {
     public static void Map(WebApplication app)
     {
+        app.MapPost("/api/apps/{appId}/start", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.StartAsync(appId, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/stop", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.StopAsync(appId, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/restart", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.RestartAsync(appId, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapGet("/api/apps/{appId}/logs", async (
+            string appId,
+            int? tail,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetLogsAsync(appId, tail ?? 200, cancellationToken)),
+                cancellationToken: cancellationToken));
+
+        app.MapGet("/api/apps/{appId}/backups", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.ListBackupsAsync(appId, cancellationToken)),
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/backups", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppManualBackupRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.CreateManualBackupAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapPost("/control/v1/apps/install", async (
             HttpRequest request,
             ControlSecret secret,

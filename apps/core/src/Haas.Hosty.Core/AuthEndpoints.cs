@@ -2,15 +2,12 @@ namespace Haas.Hosty.Core;
 
 internal static class AuthEndpoints
 {
-    private const string SessionCookieName = "hosty_session";
-    private const string CsrfCookieName = "hosty_csrf";
-
     public static void Map(WebApplication app)
     {
         app.MapGet("/api/auth/csrf", (HttpResponse response) =>
         {
             var token = CreateSessionId();
-            response.Cookies.Append(CsrfCookieName, token, new CookieOptions
+            response.Cookies.Append(CoreSessionAuthorization.CsrfCookieName, token, new CookieOptions
             {
                 HttpOnly = false,
                 SameSite = SameSiteMode.Lax,
@@ -23,7 +20,7 @@ internal static class AuthEndpoints
         app.MapGet("/api/auth/session", async (HttpRequest request, UserDirectoryStore users, CancellationToken cancellationToken) =>
         {
             var state = await users.ReadAsync(cancellationToken);
-            var sessionId = request.Cookies[SessionCookieName];
+            var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
             var now = DateTimeOffset.UtcNow;
             var session = state.Sessions.FirstOrDefault(candidate =>
                 string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
@@ -38,7 +35,10 @@ internal static class AuthEndpoints
 
         app.MapPost("/api/auth/session", async (AuthSessionCreateRequest input, HttpResponse response, UserDirectoryStore users, IClock clock, CancellationToken cancellationToken) =>
         {
-            return await CreateSessionAsync(input.UserId, input.SecureCookie, response, users, clock, cancellationToken);
+            var result = await CreateSessionAsync(input.UserId, input.SecureCookie, response, users, clock, cancellationToken);
+            return result.Succeeded
+                ? Results.Json(new AuthSessionResponse(true, result.User))
+                : Results.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
         });
 
         app.MapPost("/api/auth/trusted-proxy/session", async (HttpRequest request, HttpResponse response, UserDirectoryStore users, IClock clock, CancellationToken cancellationToken) =>
@@ -49,13 +49,16 @@ internal static class AuthEndpoints
                 return Results.Json(new ErrorResponse("trusted_proxy_user_missing", "Trusted proxy user id header is missing."), statusCode: StatusCodes.Status400BadRequest);
             }
 
-            return await CreateSessionAsync(userId, secureCookie: true, response, users, clock, cancellationToken);
+            var result = await CreateSessionAsync(userId, secureCookie: true, response, users, clock, cancellationToken);
+            return result.Succeeded
+                ? Results.Json(new AuthSessionResponse(true, result.User))
+                : Results.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
         });
 
         app.MapPost("/api/auth/logout", async (HttpRequest request, HttpResponse response, UserDirectoryStore users, IClock clock, CancellationToken cancellationToken) =>
         {
             var state = await users.ReadAsync(cancellationToken);
-            var sessionId = request.Cookies[SessionCookieName];
+            var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
             if (!string.IsNullOrWhiteSpace(sessionId))
             {
                 var sessions = state.Sessions
@@ -66,7 +69,7 @@ internal static class AuthEndpoints
                 await users.WriteAsync(state with { Sessions = sessions }, cancellationToken);
             }
 
-            response.Cookies.Delete(SessionCookieName);
+            response.Cookies.Delete(CoreSessionAuthorization.SessionCookieName);
             return Results.Json(new LogoutResponse("logged_out"));
         });
 
@@ -98,7 +101,7 @@ internal static class AuthEndpoints
     private static string CreateSessionId()
         => Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
-    private static async Task<IResult> CreateSessionAsync(
+    internal static async Task<AuthSessionCreateResult> CreateSessionAsync(
         string userId,
         bool secureCookie,
         HttpResponse response,
@@ -110,13 +113,13 @@ internal static class AuthEndpoints
         var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal));
         if (user is null || user.Disabled)
         {
-            return Results.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
+            return new AuthSessionCreateResult(false, null);
         }
 
         var now = clock.UtcNow;
         var session = new AuthSessionRecord(CreateSessionId(), user.Id, now, now.AddHours(12), null);
         await users.WriteAsync(state with { Sessions = state.Sessions.Append(session).ToArray() }, cancellationToken);
-        response.Cookies.Append(SessionCookieName, session.Id, new CookieOptions
+        response.Cookies.Append(CoreSessionAuthorization.SessionCookieName, session.Id, new CookieOptions
         {
             HttpOnly = true,
             SameSite = SameSiteMode.Lax,
@@ -124,7 +127,7 @@ internal static class AuthEndpoints
             Expires = session.ExpiresAt,
         });
 
-        return Results.Json(new AuthSessionResponse(true, user));
+        return new AuthSessionCreateResult(true, user);
     }
 }
 
@@ -133,6 +136,8 @@ internal sealed record CsrfResponse(string Token);
 internal sealed record AuthSessionCreateRequest(string UserId, bool SecureCookie = false);
 
 internal sealed record AuthSessionResponse(bool Authenticated, HostUserRecord? User);
+
+internal sealed record AuthSessionCreateResult(bool Succeeded, HostUserRecord? User);
 
 internal sealed record LogoutResponse(string Status);
 
