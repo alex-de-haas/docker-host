@@ -19,7 +19,8 @@ flowchart LR
 - `modules/demo-module` has been removed from the repository.
 - The Demo Module image publishing workflow has been removed.
 - The Demo App image publishing workflow is the only first-party demo image workflow and targets public pulls from `ghcr.io/alex-de-haas/demo-app:latest`.
-- The Host dev fixture route for first-party install testing is `/fixtures/apps/demo-app`; it returns the Demo App `app.0.1` manifest and rewrites Docker image references to a local dev tag when fixtures are enabled.
+- Local first-party install testing uses direct `apps/demo-app/manifest.json` installation through Core-managed app lifecycle.
+- The removed Legacy Host fixture route at `/fixtures/apps/demo-app` is not available in the current Core/Shell workflow.
 - `modules.json` is no longer created or rewritten for app-only lifecycle reads and writes.
 - Existing `modules.json` files remain readable as legacy compatibility input.
 - Legacy module writes still update `modules.json` when a legacy module record exists, legacy host settings exist, or the file already exists.

@@ -8,221 +8,37 @@ Detailed implementation tasks remain in `docs/planning/*.md`. Small ideas that a
 
 ```mermaid
 flowchart TD
-  A["Completed compatibility foundation"] --> B["Core and Shell stabilization"]
-  B --> C["Runtime profiles and source runtimes"]
-  B --> D["App auth and origin separation"]
-  B --> E["Backup retention management"]
-  C --> L["Legacy demo/module removal"]
-  D --> L
-  E --> L
-  L --> F["Update channels"]
-  F --> G["Agent Bridge workflow"]
+  A["Stage 0: close implemented cleanup on main"] --> B["Stage 1: update channels"]
+  B --> C["Stage 2: Agent Bridge workflow"]
 ```
 
 ## Current Direction
 
 - Hosty is moving from a Docker-first Host application toward a local-first Core, a Core-managed Shell runtime app, and user-installed runtime apps.
 - Existing Docker module compatibility remains supported only for already-installed legacy records and explicit compatibility imports.
-- The active branch should prioritize Core/Shell stabilization before channel generation, pull request channels, or agent-driven app editing.
-- Source and local command runtimes should replace the old developer harness model. They must use normal installed apps, existing Host users, and trusted CLI identity helpers.
+- Core/Shell stabilization, runtime profiles/source runtimes, app auth/origin separation, backup retention, and legacy Demo Module retirement are implemented in the current workstream.
+- Before new feature work starts, merge the implemented cleanup branch into `main`, publish the Demo App image from `main`, and verify public GHCR image access.
+- After that release gate, update channels are the next product stage. Agent Bridge workflows remain deferred until update channels exist.
 
 ## Roadmap Stages
 
-### Stage 0 - Completed compatibility foundation
+### Stage 0 - Close implemented cleanup on main
 
-Status: Completed.
+Status: Pending merge and published Demo App image smoke.
 
-Primary plan:
+Scope:
 
-- [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md)
+- The legacy Demo Module retirement work is implemented in the current branch, but cannot be marked complete until it lands on `main`.
+- The current first-party Demo App workflow uses direct `apps/demo-app/manifest.json` installation through Core-managed app lifecycle. The removed Legacy Host fixture route at `/fixtures/apps/demo-app` is not part of the current workflow.
+- No new feature work should be added to this stage beyond merge, release workflow, GHCR package visibility, or smoke-test fixes.
 
-Outcome:
+Completion checklist:
 
-- `hosty` CLI naming and compatibility behavior are established.
-- `app.0.1` manifests can be mapped into the legacy Docker module engine.
-- Runtime apps, system apps, app registry records, selected runtime state, app data directories, manual backups, pre-update backups, and restore behavior have a documented compatibility foundation.
-
-Follow-up source of truth:
-
-- [Hosty runtime app platform](features/hosty-runtime-app-platform.md)
-- [Final Hosty architecture boundaries](features/final-hosty-architecture.md)
-
-### Stage 1 - Stabilize Core and Shell management
-
-Status: Completed.
-
-Primary plan:
-
-- [Core Shell Stabilization](planning/core-shell-stabilization.md)
-
-Key outcomes:
-
-- Reliable split-process local development for Core and Shell.
-- Shell lifecycle management for system apps and runtime apps.
-- Simpler install and update review screens.
-- Stabilized Core/Shell authentication behavior.
-- Restored user management in Shell.
-- Backup management controls after Shell and auth are usable.
-
-Implemented slice:
-
-- Phase 1 local Core/Shell development is complete: Core starts locally, Shell origin defaults and overrides are documented and browser-smoked, Shell session loading works before and after Core login, and authenticated Shell app loading reaches `/api/apps`.
-- Core has a development-only login helper for local browser smoke tests against existing enabled Host users; production authentication remains deferred to the auth stabilization phase.
-- Shell Next.js development config allows loopback dev resources for `127.0.0.1` and `localhost`, matching the local Core/Shell cookie and CORS workflow.
-- Phase 2 Shell lifecycle management is complete: Shell can call Core public browser endpoints to start, stop, restart, open, update, configure, inspect logs, create/list/restore/delete backups, and remove manageable runtime apps.
-- Core app summaries are authenticated and principal-filtered before Shell renders lifecycle controls.
-- Public lifecycle mutations require Core session authentication, `host.admin`, and CSRF validation, while read-only diagnostics still require an admin Core session.
-- The active `hosty.shell` app hides self-start/self-stop/self-restart/self-remove controls, while CLI/local control APIs keep the full Shell management surface.
-- Browser smoke verified a Core control-installed runtime app, Shell configure/update/logs/backups/remove panels, manual backup creation, and local command start/stop state transitions.
-- Phase 3 install/update review simplification is complete: Shell now has an admin install review panel backed by Core install-plan/apply endpoints, and update review uses a concise version/runtime/digest/change surface.
-- Phase 4 authentication stabilization is complete in implementation: Core owns auth pages/sessions/invitation acceptance, Shell opens Core-owned auth surfaces, browser app launch codes use the active Core session user only, redirect URIs are checked against installed app endpoint origins, and local runtime browser endpoints use a separate `app.localhost` host so default Core cookies on `127.0.0.1` are not sent to runtime apps.
-- Phase 5 user management is complete in implementation: Shell exposes an admin Users view for users, invitations, role changes, disabled-user state, and app assignments, backed by Core authoritative user-management APIs and audit records.
-- Phase 6 backup management controls are complete in implementation: Shell exposes backup list/create/restore/delete controls with confirmation and clear retention behavior, while Core/control backup APIs remain available.
-- Combined browser smoke verified Core login, authenticated Shell loading, Users view, invitation generation, app assignment save, backup list/create controls, launch-code app open, and runtime cookie isolation on `app.localhost`.
-
-Existing behavior that must keep working:
-
-- Legacy Docker module install, update, start, stop, restart, configure, remove, recovery, and backup flows.
-- CLI/control lifecycle routes used by existing scripts and local diagnostics.
-- User assignments, role boundaries, disabled-user handling, account switching, and app identity helpers.
-- Direct-origin runtime app UI embedding and Hosty identity checks through Core-managed app lifecycle.
-
-Conflicts and constraints:
-
-- Do not implement update channel generation, product channel publishing, runtime channel UI, pull request channels, or Agent Bridge in this stage.
-- Shell must hide self-stop and remove actions for the active `hosty.shell` app, while CLI/Core APIs may still stop Shell.
-- Install and update review simplification must keep advanced diagnostics available for administrators when conflicts need investigation.
-- Authentication must remain Core-owned. Browser, desktop, mobile, and future Shells should redirect or open Core-owned login/authorize surfaces instead of embedding provider-specific auth logic.
-
-### Stage 2 - Complete runtime profiles and source runtimes
-
-Status: Completed.
-
-Primary plan:
-
-- [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md)
-
-Feature source of truth:
-
-- [Hosty runtime app platform](features/hosty-runtime-app-platform.md)
-- [Final Hosty architecture boundaries](features/final-hosty-architecture.md)
-- [Runtime source workflows](features/runtime-source-workflows.md)
-- [Local development and testing](features/local-development.md)
-- [CLI app and module commands](features/cli-module-commands.md)
-- [Docker Host domain model](features/domain-model.md)
-- [Demo App](features/demo-app.md)
-
-Completed outcomes:
-
-- Installed app records store selected runtime profile state and app-native lifecycle fields in app-owned records.
-- Legacy `modules.json` remains readable only as a compatibility fallback for already-installed legacy module records.
-- Hosty Core is a local-first ASP.NET Core process, Hosty Shell is a Core-managed runtime app, and the CLI is the Core bootstrap/API client.
-- Runtime apps can declare app-level source metadata; Core stores managed checkout state, immutable resolved commits, and administrator-selected local source overrides.
-- Local command runtime profiles run under Core supervision from a managed checkout, local override, or app root fallback.
-- Trusted CLI helpers can list existing Host users, issue app identity tokens, and create Shell or standalone app open links while enforcing normal access checks.
-- The primary repository demo workflow is `apps/demo-app` with an `app.0.1` manifest, Docker runtime profile, and `dev` local command runtime profile.
-- Runtime switching has reviewed plan/apply endpoints and CLI commands for Docker-to-Docker, Docker-to-localCommand, and localCommand-to-Docker switching.
-- Runtime switch apply preserves reviewed digest semantics, creates `pre-runtime-switch` backups when primary app data exists, and restores selected runtime state if restart fails.
-
-Existing behavior that must keep working:
-
-- Docker-only runtime apps with no source repository.
-- Existing app data paths, backup/restore behavior, storage mappings, settings, dependency URLs, and published ports.
-- Existing legacy module records that are still present in `modules.json`.
-
-Conflicts and constraints:
-
-- Do not rebuild the removed developer harness as a new dev-only manifest mode.
-- Do not seed deterministic development users for source runtime workflows.
-- Local command runtimes depend on a trustworthy Core/CLI supervision boundary; Core cannot safely complete its own replacement after it exits.
-- Multi-repository apps are out of scope for the first source runtime implementation.
-- `modules/demo-module` and required app lifecycle writes to `modules.json` were removed in Stage 5.
-
-### Stage 3 - Harden app auth and origin separation
-
-Status: Completed in implementation and documentation.
-
-Primary plan:
-
-- [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md)
-
-Key outcomes:
-
-- App-scoped authorization contract for Hosty-aware runtime apps.
-- Core-owned app authorize and token exchange endpoints.
-- Shell launch-code issuance and standalone app auth redirect.
-- Explicit Core and Shell public origins with migration support for the existing combined `HOST_PUBLIC_ORIGIN`.
-- SDK or middleware guidance for Hosty-aware apps.
-
-Completed notes:
-
-- Core issues one-time app auth/launch codes, exchanges them for app-scoped identity tokens, and revalidates app sessions against current user/app access state.
-- Demo App now implements a Next.js app-code exchange route and app-local session revalidation example.
-- CLI launch config exposes explicit Core/Shell public origins and still supports `HOST_PUBLIC_ORIGIN` as a combined-deployment alias.
-- Core status, Shell status, and `hosty core status` surface public-origin warnings for invalid values and insecure non-loopback HTTP.
-- Gateway/proxy browser wrapping remains deferred and is documented as separate future scope.
-
-Existing behavior that must keep working:
-
-- Same-origin deployments during migration.
-- Core-owned login/logout flows, OIDC callback behavior, CSRF expectations, and account switching.
-- Existing Host users and app assignments for identity checks.
-
-Conflicts and constraints:
-
-- Runtime apps must not receive Hosty browser session cookies directly.
-- Gateway/proxy wrapping for arbitrary third-party browser apps is deferred and should not be treated as the fallback auth model.
-- Split-origin deployments must validate CORS, credentials, cookies, logout, and trusted forwarded-header behavior before being considered complete.
-
-### Stage 4 - Finish backup retention management
-
-Status: Completed.
-
-Primary feature:
-
-- [App Data Backup Retention](features/app-data-backup-retention.md)
-
-Key outcomes:
-
-- Retention policy model for manual, pre-update, pre-restore, scheduled, and pre-runtime-switch backups is implemented.
-- Cleanup preview and apply APIs use plan digest and path verification.
-- Scheduled cleanup runs through a Host-owned maintenance service.
-- Shell and CLI controls cover backup deletion, retention preview, and confirmed prune apply.
-
-Existing behavior that must keep working:
-
-- Manual backup creation.
-- Pre-update and pre-restore backups.
-- ZIP metadata, digest verification, CRC validation, and stop-before-restore behavior.
-- Conservative behavior that avoids deleting the only known backup unless explicitly configured.
-
-Conflicts and constraints:
-
-- Retention cleanup must not delete external mount data.
-- Destructive backup actions need confirmation.
-- Manual filesystem cleanup should remain a documented fallback, not the primary workflow.
-
-### Stage 5 - Retire legacy demo/module compatibility
-
-Status: Implemented; blocked on published Demo App image access smoke.
-
-Key outcomes:
-
-- Removed `modules/demo-module` as the first-party legacy schema `0.3` compatibility fixture.
-- Removed Demo Module CI/image publishing and legacy fixture routes.
-- Added Demo App image publishing as the only first-party demo image workflow.
-- Added a Demo App manifest fixture route for local first-party install testing.
-- Reduced `modules.json` from a required app lifecycle store to explicit legacy compatibility input.
-- Kept schema `0.2` and `0.3` metadata parsing and existing `modules.json` records as compatibility paths.
-- Updated feature docs so Demo App and `app.0.1` manifests are the only first-party runtime app workflow.
-
-Validation focus:
-
-- Stage 2 runtime/source workflows, Stage 3 app auth/origin work, and Stage 4 backup retention work are complete.
-- Parser compatibility for legacy schema `0.3` remains covered by minimal inline fixtures instead of a repository app package.
-- App-only lifecycle writes now update `apps.json` without creating empty `modules.json`.
-- Local Demo App image, Core, Shell, and CLI builds are the release validation target before published Demo App image checks.
-- Published Demo App image smoke is still required before marking Stage 5 complete. On June 3, 2026, `docker pull ghcr.io/alex-de-haas/demo-app:latest` returned `denied`; the replacement `demo-app-image.yml` workflow must run on `main`, and the GHCR package must be public.
+- Merge the branch or pull request containing the implemented legacy cleanup into `main`.
+- Ensure `.github/workflows/demo-app-image.yml` exists and runs on `main`.
+- Ensure obsolete Demo Module image publishing is no longer active on the default branch.
+- Ensure the GHCR package for `ghcr.io/alex-de-haas/demo-app` is public.
+- Verify `docker pull ghcr.io/alex-de-haas/demo-app:latest` succeeds.
 
 Follow-up source of truth:
 
@@ -230,7 +46,7 @@ Follow-up source of truth:
 - [Legacy compatibility](features/legacy-compatibility.md)
 - [Repository and release model](features/repository-release-model.md)
 
-### Stage 6 - Add update channels
+### Stage 1 - Add update channels
 
 Status: Deferred.
 
@@ -247,6 +63,7 @@ Key outcomes:
 
 Prerequisites:
 
+- Stage 0 merge and published Demo App image smoke.
 - Stable Core/Shell management experience.
 - App-oriented runtime lifecycle state.
 - Source repository state for repository-backed apps.
@@ -259,7 +76,7 @@ Conflicts and constraints:
 - Runtime profile switching and channel switching are separate axes unless a reviewed plan explicitly combines them.
 - A `stable` channel is intentionally deferred until there is a promotion process separate from `main`.
 
-### Stage 7 - Add Agent Bridge workflows
+### Stage 2 - Add Agent Bridge workflows
 
 Status: Deferred.
 
@@ -289,12 +106,18 @@ Conflicts and constraints:
 
 ## Planning Documents
 
-- [Core Shell Stabilization](planning/core-shell-stabilization.md) - active implementation plan for Core/Shell local development, lifecycle UI, install/update review, auth, users, and backups.
-- [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - runtime profile state, app-native lifecycle records, Core/Shell split, source checkouts, local command runtimes, and runtime switching.
-- [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - app-scoped auth, standalone app launch, Shell launch, and Core/Shell public origin split.
+Active and deferred plans:
+
 - [Update Channels](planning/update-channels.md) - generated channel indexes, product/runtime channel selection, pull request channels, and channel cleanup.
 - [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and PR channel validation.
+
+Implemented reference plans and feature docs:
+
 - [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation and accepted target model decisions.
+- [Core Shell Stabilization](planning/core-shell-stabilization.md) - completed Core/Shell local development, lifecycle UI, install/update review, auth, users, and backups.
+- [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - completed runtime profile state, app-native lifecycle records, Core/Shell split, source checkouts, local command runtimes, and runtime switching.
+- [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - completed app-scoped auth, standalone app launch, Shell launch, and Core/Shell public origin split.
+- [Demo App](features/demo-app.md), [Legacy compatibility](features/legacy-compatibility.md), and [Repository and release model](features/repository-release-model.md) - implemented Demo Module retirement and current Demo App release workflow.
 
 ## Regression Focus
 
@@ -310,13 +133,17 @@ Before completing a roadmap stage, validate the old features that interact with 
 
 ## Open Questions And Recommendations
 
-- Question: What should be implemented immediately after Core/Shell stabilization?
-  Answer: Runtime profiles/source runtimes, app auth/origin hardening, and backup retention are complete. Legacy Demo Module retirement is implemented but still needs published Demo App image access smoke before Stage 5 is closed.
-  Recommendation: Resolve the GHCR access issue, run the published-image smoke, then start update channels.
+- Question: What blocks Stage 0 completion?
+  Answer: The cleanup is implemented locally, but it still needs to be merged into `main`, published through `demo-app-image.yml`, and verified with a public `docker pull ghcr.io/alex-de-haas/demo-app:latest`.
+  Recommendation: Treat merge, workflow execution, GHCR package visibility, and published-image smoke as release-gate work rather than new feature scope.
 
 - Question: When should update channels move from deferred to active?
-  Answer: After the Stage 5 published-image smoke passes. Core/Shell management is stable, repository/source runtime state exists, app auth/open flows are validated, backup behavior is stable, and legacy Demo Module compatibility has been retired to an explicit compatibility boundary.
-  Recommendation: Implement Stage 6 before Agent Bridge so pull request channels build on a stable product-channel model.
+  Answer: After Stage 0 is complete. Core/Shell management is stable, repository/source runtime state exists, app auth/open flows are validated, backup behavior is stable, and legacy Demo Module compatibility has been retired to an explicit compatibility boundary.
+  Recommendation: Start Stage 1 before Agent Bridge so pull request channels build on a stable product-channel model.
+
+- Question: When should Agent Bridge work start?
+  Answer: After Stage 1 defines channel generation, pull request channels, and cleanup behavior.
+  Recommendation: Keep Agent Bridge deferred until there is a concrete channel model for validating agent-created branches or pull requests against existing app data.
 
 - Question: When should small ideas from `docs/todo.md` become planning documents?
   Answer: When an idea starts affecting lifecycle, auth, storage, runtime, Shell UX, or release behavior across more than one component.
