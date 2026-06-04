@@ -90,11 +90,11 @@ The Demo App image is the first-party runtime app artifact for app manifest work
 CLI release artifacts:
 
 ```text
-docker-host-darwin-arm64
-docker-host-darwin-x64
-docker-host-linux-arm64
-docker-host-linux-x64
-docker-host-windows-x64.exe
+hosty-darwin-arm64
+hosty-darwin-x64
+hosty-linux-arm64
+hosty-linux-x64
+hosty-windows-x64.exe
 SHA256SUMS
 ```
 
@@ -108,9 +108,9 @@ curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scrip
 
 Stable CLI versions use immutable GitHub releases such as `cli-v0.2.1` when that channel is enabled.
 
-`install.sh` detects OS/architecture, downloads the right `cli-dev` artifact, verifies checksums when available, installs the preferred executable to `~/.hosty/bin/hosty`, creates or refreshes the deprecated `docker-host` alias in the same directory, marks executables as runnable, and adds the install directory to a detected shell profile. Existing installations under `~/.docker-host` remain supported as a legacy active root when `~/.hosty` does not exist.
+`install.sh` detects OS/architecture, downloads the right `cli-dev` artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
 
-`hosty update` updates the managed CLI executable and synchronizes both command aliases. It does not pull a Host image or recreate a Host container. Runtime app updates are separate app commands, for example `hosty apps update <app-id>`.
+`hosty update` updates the managed CLI executable. It does not pull a Host image or recreate a Host container. Runtime app updates are separate app commands, for example `hosty apps update <app-id>`.
 
 ## Release-Ready Validation
 

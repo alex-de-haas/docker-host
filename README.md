@@ -1,6 +1,6 @@
 # Hosty
 
-Monorepo for Hosty, including the local-first Hosty Core API, the Hosty Shell browser client, the first-party Demo App, and the standalone `hosty` CLI. The `docker-host` command remains a deprecated compatibility alias during migration.
+Monorepo for Hosty, including the local-first Hosty Core API, the Hosty Shell browser client, the first-party Demo App, and the standalone `hosty` CLI.
 
 ## Concepts
 
@@ -8,7 +8,7 @@ Monorepo for Hosty, including the local-first Hosty Core API, the Hosty Shell br
 
 ## Install Current CLI Build
 
-The Unix installer downloads the rolling `cli-dev` CLI release, verifies `SHA256SUMS` when available, installs `hosty` under `~/.hosty/bin`, refreshes the deprecated `docker-host` alias, adds that directory to your shell profile when possible, and prepares the local Hosty directories:
+The Unix installer downloads the rolling `cli-dev` CLI release, verifies `SHA256SUMS` when available, installs `hosty` under `~/.hosty/bin`, adds that directory to your shell profile when possible, and prepares the local Hosty directories:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
@@ -123,11 +123,11 @@ For direct app API probes that need Hosty identity, ask Core to issue a real
 app identity token instead of inventing one:
 
 ```bash
-TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
+TOKEN="$(hosty apps identity com.haas.demo-app --user user@hosty.local --format token)"
 curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
 ```
 
-Use `hosty apps open com.haas.demo-app --user user@docker-host.local` for
+Use `hosty apps open com.haas.demo-app --user user@hosty.local` for
 Shell or standalone launch links. Do not treat standalone app runs as valid
 Hosty identity tests.
 

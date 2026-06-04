@@ -1,0 +1,102 @@
+namespace Haas.Hosty.Cli.Commands;
+
+using Haas.Hosty.Cli.Configuration;
+using Spectre.Console;
+
+internal sealed class ConfigCommand(CommandContext context)
+{
+    private const string Usage = """
+        Usage:
+          hosty config list
+          hosty config get <KEY>
+          hosty config set <KEY> <VALUE>
+          hosty config set <KEY>=<VALUE>
+          hosty config reset <KEY>
+        """;
+
+    public Task<int> ExecuteAsync(string[] args)
+    {
+        if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"])
+        {
+            context.Console.WriteLine(Usage);
+            return Task.FromResult(0);
+        }
+
+        return args[0] switch
+        {
+            "list" => Task.FromResult(List()),
+            "get" => Task.FromResult(Get(args[1..])),
+            "set" => Task.FromResult(Set(args[1..])),
+            "reset" => Task.FromResult(Reset(args[1..])),
+            _ => throw new CommandUsageException($"Unknown config command '{args[0]}'.", Usage),
+        };
+    }
+
+    private int List()
+    {
+        var settings = context.SettingsStore.EnsureInstalled();
+        var table = new Table()
+            .RoundedBorder()
+            .AddColumn("Key")
+            .AddColumn("Value")
+            .AddColumn("Editable");
+
+        foreach (var definition in LaunchSettingDefinitions.All)
+        {
+            table.AddRow(
+                Markup.Escape(definition.Key),
+                Markup.Escape(settings[definition.Key]),
+                definition.IsEditable ? "yes" : "no");
+        }
+
+        context.Console.Write(table);
+        return 0;
+    }
+
+    private int Get(string[] args)
+    {
+        if (args.Length != 1)
+        {
+            throw new CommandUsageException("config get requires exactly one KEY.", Usage);
+        }
+
+        var key = args[0];
+        LaunchSettingDefinitions.Get(key);
+        context.Console.WriteLine(context.SettingsStore.Load()[key]);
+        return 0;
+    }
+
+    private int Set(string[] args)
+    {
+        if (args.Length == 1)
+        {
+            var separator = args[0].IndexOf('=', StringComparison.Ordinal);
+            if (separator <= 0)
+            {
+                throw new CommandUsageException("config set requires KEY VALUE or KEY=VALUE.", Usage);
+            }
+
+            context.SettingsStore.Set(args[0][..separator], args[0][(separator + 1)..]);
+            return 0;
+        }
+
+        if (args.Length != 2)
+        {
+            throw new CommandUsageException("config set requires KEY VALUE or KEY=VALUE.", Usage);
+        }
+
+        context.SettingsStore.Set(args[0], args[1]);
+        return 0;
+    }
+
+    private int Reset(string[] args)
+    {
+        if (args.Length != 1)
+        {
+            throw new CommandUsageException("config reset requires exactly one KEY.", Usage);
+        }
+
+        context.SettingsStore.Reset(args[0]);
+        return 0;
+    }
+}

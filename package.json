@@ -1,5 +1,5 @@
 {
-  "name": "docker-host-monorepo",
+  "name": "hosty-monorepo",
   "version": "0.1.0",
   "private": true,
   "workspaces": [
@@ -28,8 +28,8 @@
     "demo-app:lint": "npm run lint --workspace @haas/hosty-demo-app",
     "demo-app:docker:build": "docker build -f apps/demo-app/Dockerfile -t ghcr.io/alex-de-haas/demo-app:latest .",
     "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev .",
-    "cli:build": "dotnet build apps/cli/src/Haas.DockerHost.Cli/Haas.DockerHost.Cli.csproj",
-    "cli:test": "dotnet test apps/cli/tests/Haas.DockerHost.Cli.Tests/Haas.DockerHost.Cli.Tests.csproj",
+    "cli:build": "dotnet build apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj",
+    "cli:test": "dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj",
     "ci": "npm run shell:build && npm run demo-app:build && npm run core:build && npm run core:test && npm run cli:build && npm run cli:test"
   }
 }

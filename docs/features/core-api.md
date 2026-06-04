@@ -1,0 +1,45 @@
+# Core API
+
+## Description
+
+Hosty Core exposes browser APIs for Shell and app auth, plus a local control API for the CLI. The current lifecycle surface is runtime-app oriented.
+
+## Browser APIs
+
+- `GET /api/core/status` - public Core status.
+- `GET /api/apps` - apps visible to the active Host session.
+- `GET /api/users` - admin user directory state.
+- `POST /api/auth/apps/authorize` - create an app authorization code for an authenticated Host user.
+- `POST /api/auth/apps/token` - exchange an app authorization code for an app identity token.
+- `POST /api/auth/apps/revalidate` - validate an app identity token.
+- `GET /api/internal/apps/{appId}/directory/users` - scoped app directory for runtime apps with `HOSTY_APP_SERVICE_TOKEN`.
+
+## Control APIs
+
+The CLI discovers Core control information from the local run directory and sends `X-Hosty-Control-Secret` to `/control/v1`.
+
+- `GET /control/v1/apps`
+- `POST /control/v1/apps/install`
+- `POST /control/v1/apps/{appId}/start`
+- `POST /control/v1/apps/{appId}/stop`
+- `POST /control/v1/apps/{appId}/restart`
+- `POST /control/v1/apps/{appId}/update/plan`
+- `POST /control/v1/apps/{appId}/update`
+- `POST /control/v1/apps/{appId}/switch-runtime/plan`
+- `POST /control/v1/apps/{appId}/switch-runtime`
+- `POST /control/v1/apps/{appId}/remove`
+- `GET /control/v1/apps/{appId}/health`
+- `GET /control/v1/apps/{appId}/logs`
+- `GET /control/v1/users/summaries?appId={appId}`
+- `POST /control/v1/apps/{appId}/identity`
+- `POST /control/v1/apps/{appId}/open-link`
+
+## Backups
+
+App backups cover the primary app data directory only:
+
+```text
+<HOSTY_HOME>/apps/<app-id>/data/
+```
+
+External mounts are excluded.

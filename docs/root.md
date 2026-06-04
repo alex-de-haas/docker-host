@@ -2,7 +2,7 @@
 
 ## Overview
 
-Docker Host Manager is evolving into Hosty: a local application orchestrator with a headless Core API, a Core-managed Shell runtime app, and user runtime apps. New local development and testing use runtime apps installed from `app.0.1` manifests.
+Hosty is a local application orchestrator with a headless Core API, a Core-managed Shell runtime app, and user runtime apps. New local development and testing use runtime apps installed from `app.0.1` manifests.
 
 ```mermaid
 flowchart LR
@@ -17,7 +17,7 @@ flowchart LR
 ## Documents
 
 - [Roadmap](roadmap.md) - active and deferred product stages.
-- [Host app shell](features/host-app-shell.md) - Shell foundation and navigation.
+- [Core app shell](features/core-app-shell.md) - Shell foundation and navigation.
 - [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - current runtime app lifecycle platform.
 - [Runtime app manifest](features/runtime-app-manifest.md) - `app.0.1` manifest contract.
 - [Runtime app update](features/runtime-app-update.md) - update plan and apply behavior.
@@ -30,7 +30,7 @@ flowchart LR
 - [App Data Backup Retention](features/app-data-backup-retention.md) - backup cleanup and retention.
 - [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command setup and Core control discovery.
 - [CLI app commands](features/cli-app-commands.md) - runtime app CLI commands.
-- [Hosty Core API](features/host-api.md) - current Core browser and control APIs.
+- [Core API](features/core-api.md) - current Core browser and control APIs.
 - [Domain model](features/domain-model.md) - shared app-oriented vocabulary.
 - [Repository and release model](features/repository-release-model.md) - monorepo and release workflows.
 - [Demo App](features/demo-app.md) - repository-local runtime app used for validation.
