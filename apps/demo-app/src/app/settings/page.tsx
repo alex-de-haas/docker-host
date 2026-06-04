@@ -9,7 +9,7 @@ import {
   SectionCard,
   StateBadge,
   StorageGrid,
-} from "@/components/DemoModuleUi";
+} from "@/components/DemoAppUi";
 import { getDemoConfig, inspectStorage } from "@/lib/demo-config";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +21,7 @@ export default async function SettingsPage() {
   return (
     <DemoShell>
       <DemoPageHeader
-        eyebrow={config.moduleId}
+        eyebrow={config.appId}
         title="Settings"
         description="Runtime configuration, Host integration, and storage mounts."
         actions={<JsonButton href="/api/config" />}
@@ -52,8 +52,8 @@ export default async function SettingsPage() {
         <SectionCard
           title="Host integration"
           action={
-            <StateBadge tone={config.host.moduleServiceTokenConfigured ? "success" : "danger"}>
-              Service token {config.host.moduleServiceTokenConfigured ? "configured" : "missing"}
+            <StateBadge tone={config.host.appServiceTokenConfigured ? "success" : "danger"}>
+              Service token {config.host.appServiceTokenConfigured ? "configured" : "missing"}
             </StateBadge>
           }
         >
@@ -61,8 +61,7 @@ export default async function SettingsPage() {
             items={[
               { label: "Core origin", value: config.host.coreOrigin },
               { label: "App id", value: config.host.appId },
-              { label: "Internal origin", value: config.host.internalOrigin },
-              { label: "Identity audience", value: config.host.moduleId },
+              { label: "Identity audience", value: config.host.appId },
             ]}
           />
         </SectionCard>

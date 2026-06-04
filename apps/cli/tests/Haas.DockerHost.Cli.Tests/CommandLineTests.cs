@@ -43,14 +43,6 @@ public sealed class CommandLineTests
     }
 
     [Fact]
-    public async Task RunAsync_ModulesHelpCommand_RoutesToModulesCommand()
-    {
-        var exitCode = await CommandLine.RunAsync(["modules", "--help"]);
-
-        Assert.Equal(0, exitCode);
-    }
-
-    [Fact]
     public async Task RunAsync_AppsHelpCommand_RoutesToCoreAppsCommand()
     {
         var exitCode = await CommandLine.RunAsync(["apps", "--help"]);
@@ -82,11 +74,4 @@ public sealed class CommandLineTests
         Assert.Equal(2, exitCode);
     }
 
-    [Fact]
-    public async Task RunAsync_ModulesUnknownCommand_ReturnsUsageError()
-    {
-        var exitCode = await CommandLine.RunAsync(["modules", "unknown"]);
-
-        Assert.Equal(2, exitCode);
-    }
 }

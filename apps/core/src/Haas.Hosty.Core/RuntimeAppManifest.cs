@@ -452,7 +452,9 @@ internal interface IAppRuntimeAdapter
     Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default);
 }
 
-internal sealed class DockerRuntimeAdapter(HostyCoreRuntimeConfig config) : IAppRuntimeAdapter
+internal sealed class DockerRuntimeAdapter(
+    HostyCoreRuntimeConfig config,
+    AppServiceTokenService serviceTokens) : IAppRuntimeAdapter
 {
     public string Type => "docker";
 
@@ -509,6 +511,9 @@ internal sealed class DockerRuntimeAdapter(HostyCoreRuntimeConfig config) : IApp
                 runArgs.Add("-e");
                 runArgs.Add($"{environment.Key}={environment.Value}");
             }
+
+            runArgs.Add("-e");
+            runArgs.Add($"HOSTY_APP_SERVICE_TOKEN={serviceTokens.CreateToken(context.App.Id)}");
 
             foreach (var dependency in context.DependencyUrls)
             {

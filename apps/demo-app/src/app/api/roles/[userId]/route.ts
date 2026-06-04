@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { getDemoRoleManagementSnapshot } from "@/lib/module-role-management";
+import { getDemoRoleManagementSnapshot } from "@/lib/app-role-management";
 import {
-  deleteDemoModuleRoleAssignment,
-  isDemoModuleRole,
-  isDemoModuleRoleError,
-  setDemoModuleRoleAssignment,
-} from "@/lib/module-roles";
+  deleteDemoAppRoleAssignment,
+  isDemoAppRole,
+  isDemoAppRoleError,
+  setDemoAppRoleAssignment,
+} from "@/lib/app-roles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,21 +17,21 @@ export async function PUT(
   try {
     const snapshot = await getDemoRoleManagementSnapshot(request.headers);
     if (!snapshot.canManage) {
-      return roleError("module_role_forbidden", "Current app role cannot manage roles.", 403);
+      return roleError("app_role_forbidden", "Current app role cannot manage roles.", 403);
     }
 
     const { userId } = await params;
     if (!snapshot.users.some(user => user.id === userId)) {
-      return roleError("module_user_not_found", "User is not in this module directory.", 404);
+      return roleError("app_user_not_found", "User is not in this app directory.", 404);
     }
 
     const input = await readJson(request);
     const role = isRecord(input) ? input.role : null;
-    if (!isDemoModuleRole(role)) {
-      return roleError("invalid_module_role", "Role must be viewer, operator, or admin.", 400);
+    if (!isDemoAppRole(role)) {
+      return roleError("invalid_app_role", "Role must be viewer, operator, or admin.", 400);
     }
 
-    const assignment = await setDemoModuleRoleAssignment({
+    const assignment = await setDemoAppRoleAssignment({
       userId,
       role,
       updatedBy: snapshot.current.principal,
@@ -51,15 +51,15 @@ export async function DELETE(
   try {
     const snapshot = await getDemoRoleManagementSnapshot(request.headers);
     if (!snapshot.canManage) {
-      return roleError("module_role_forbidden", "Current app role cannot manage roles.", 403);
+      return roleError("app_role_forbidden", "Current app role cannot manage roles.", 403);
     }
 
     const { userId } = await params;
     if (!snapshot.users.some(user => user.id === userId)) {
-      return roleError("module_user_not_found", "User is not in this module directory.", 404);
+      return roleError("app_user_not_found", "User is not in this app directory.", 404);
     }
 
-    const removedUserId = await deleteDemoModuleRoleAssignment(userId);
+    const removedUserId = await deleteDemoAppRoleAssignment(userId);
     const nextSnapshot = await getDemoRoleManagementSnapshot(request.headers);
 
     return NextResponse.json({ removedUserId, snapshot: nextSnapshot });
@@ -77,14 +77,14 @@ async function readJson(request: Request) {
 }
 
 function roleExceptionResponse(error: unknown) {
-  if (isDemoModuleRoleError(error)) {
+  if (isDemoAppRoleError(error)) {
     return roleError(error.code, error.message, error.status);
   }
 
-  console.error("Error updating demo module role:", error);
+  console.error("Error updating demo app role:", error);
   return roleError(
-    "module_role_update_failed",
-    error instanceof Error ? error.message : "Unknown module role update error.",
+    "app_role_update_failed",
+    error instanceof Error ? error.message : "Unknown app role update error.",
     500
   );
 }

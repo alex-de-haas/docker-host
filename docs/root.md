@@ -2,60 +2,47 @@
 
 ## Overview
 
-Docker Host Manager is evolving into Hosty: a local application orchestrator with a headless Core API, a Core-managed browser Shell runtime app, and user runtime apps. Hosty Core is a local-first ASP.NET Core process, Hosty Shell is a Core-managed runtime app, and the CLI is a Core bootstrap/API client.
-
-A runtime app is a Hosty-managed workload. Administrators add an app by providing a direct URL to an `app.0.1` manifest. The Host downloads that JSON file, reads runtime profile, service, image, settings, storage, and endpoint metadata, then prepares local state and runtime configuration. Legacy Docker module metadata remains a compatibility input for already-installed or explicitly imported legacy modules.
-
-The preferred command is `hosty`; `docker-host` remains a deprecated compatibility alias during migration. Legacy Docker module metadata remains a compatibility input for existing records and explicit imports, but the old combined Host UI/API package is retired.
-
-When one runtime app depends on another service app, the consumer declares which dependency endpoint it needs and which target environment variables should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the requested consumer services. Network aliases are derived from app ids and service keys, for example `com.modulis.storage` + `api` becomes `mod-com-modulis-storage-api`. This does not require Docker Compose, although Compose could be one possible implementation detail.
+Docker Host Manager is evolving into Hosty: a local application orchestrator with a headless Core API, a Core-managed Shell runtime app, and user runtime apps. New local development and testing use runtime apps installed from `app.0.1` manifests.
 
 ```mermaid
 flowchart LR
-  A["Manifest or metadata URL"] --> B["Hosty Core"]
-  B --> C["Runtime app manifest"]
-  C --> D["Docker containers/images"]
-  C --> E["Dependencies"]
-  C --> F["Settings schema"]
-  C --> G["Data directory and backups"]
-  E --> I["Dependency base URLs as env vars"]
-  B --> H["apps.json and legacy modules.json import"]
+  A["app.0.1 manifest"] --> B["Hosty Core"]
+  B --> C["App registry"]
+  B --> D["Docker or localCommand runtime"]
+  B --> E["Shell"]
+  B --> F["App auth and directory"]
+  D --> G["Runtime app services"]
 ```
 
 ## Documents
 
-- [Roadmap](roadmap.md) - high-level product sequence, active and deferred workstreams, dependencies, conflicts, and links to detailed planning documents.
-- [Host app shell](features/host-app-shell.md) - implemented admin shell foundation, navigation groups, persistent sidebar behavior, and protected page integration.
-- [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - implemented Hosty compatibility foundation: `hosty` CLI alias, `~/.hosty` root selection, system Shell app, app manifests, apps registry, data directory, and backups.
-- [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - target Core/Shell/CLI package boundaries, Core API ownership, Shell runtime app contract, final storage layout, backup policy, and legacy paths pending removal.
-- [Direct origin module UI](features/direct-origin-module-ui.md) - module UIs embedded from module-owned origins with Host-assigned ports, optional public origins, and identity token bridging.
-- [Auth And Gateway Model](features/auth-gateway.md) - current Core-owned authentication, authorization, app identity, and target gateway/ingress model after the Legacy Host gateway was retired.
-- [Browser account switching](features/account-switching.md) - retired Legacy Host behavior and future Core/Shell restoration boundary.
-- [User Management](features/user-management.md) - administrator user directory, local invitation links, role changes, soft-disable, and app access assignment.
-- [Local development and testing](features/local-development.md) - local Core, Shell, and runtime app feedback loops.
-- [Runtime source workflows](features/runtime-source-workflows.md) - Core-managed source checkout and local override commands for installed runtime apps.
-- [Runtime profile switching](features/runtime-source-workflows.md#runtime-switch-reviews) - reviewed Docker/local command runtime switching, selected-runtime state, pre-switch backups, and rollback behavior.
-- [App Auth And Origin Separation](features/app-auth-origin-separation.md) - Core-owned app auth code exchange, app-local runtime sessions, split Core/Shell public origins, and migration guidance.
-- [App Data Backup Retention](features/app-data-backup-retention.md) - completed retention policy, cleanup preview/apply APIs, scheduled cleanup, and Shell/CLI backup deletion and prune controls.
-- [Multi-container modules](features/multi-container-modules.md) - module-owned containers, per-container runtime state, endpoint resolution, storage targets, lifecycle behavior, and Web UI service display.
-- [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped Codex skill for agents that wrap apps as Hosty runtime apps or update legacy Docker module compatibility manifests.
-- [Web UI dashboard](features/web-ui-dashboard.md) - current Shell dashboard, Installed Apps management surface, and Core app lifecycle/API boundaries.
-- [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command surface, compatibility `docker-host` alias, local Core bootstrap, and control discovery.
-- [CLI module commands](features/cli-module-commands.md) - terminal module management commands using the Host local control channel.
-- [Docker Host API](features/host-api.md) - legacy Host API endpoint catalog and compatibility context.
-- [Docker Host domain model](features/domain-model.md) - shared vocabulary for Hosty runtime apps, legacy installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
-- [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for CLI and runtime app images.
-- [Module metadata files](features/module-metadata.md) - supported legacy metadata and app manifest contracts for installing Docker-hosted runtime apps.
-- [Legacy compatibility](features/legacy-compatibility.md) - implemented boundary for schema `0.2`/`0.3` metadata and `modules.json` import compatibility after Demo Module removal.
-- [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.
-- [Demo App](features/demo-app.md) - repository-local Hosty runtime app for validating app lifecycle, source, local command, identity, storage, and role flows.
+- [Roadmap](roadmap.md) - active and deferred product stages.
+- [Host app shell](features/host-app-shell.md) - Shell foundation and navigation.
+- [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - current runtime app lifecycle platform.
+- [Runtime app manifest](features/runtime-app-manifest.md) - `app.0.1` manifest contract.
+- [Runtime app update](features/runtime-app-update.md) - update plan and apply behavior.
+- [Runtime source workflows](features/runtime-source-workflows.md) - source checkout, local override, and runtime switching.
+- [Multi-service runtime apps](features/multi-service-runtime-apps.md) - multiple services per app.
+- [Direct origin runtime app UI](features/direct-origin-runtime-app-ui.md) - app-origin UI and auth code exchange.
+- [App Auth And Origin Separation](features/app-auth-origin-separation.md) - Core-owned app auth and app-local sessions.
+- [Auth And Gateway Model](features/auth-gateway.md) - current app auth, assignments, and scoped app directory.
+- [User Management](features/user-management.md) - users, invitations, roles, and app access assignment.
+- [App Data Backup Retention](features/app-data-backup-retention.md) - backup cleanup and retention.
+- [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command setup and Core control discovery.
+- [CLI app commands](features/cli-app-commands.md) - runtime app CLI commands.
+- [Hosty Core API](features/host-api.md) - current Core browser and control APIs.
+- [Domain model](features/domain-model.md) - shared app-oriented vocabulary.
+- [Repository and release model](features/repository-release-model.md) - monorepo and release workflows.
+- [Demo App](features/demo-app.md) - repository-local runtime app used for validation.
+- [Local development and testing](features/local-development.md) - Core-managed local workflows.
+- [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped agent skill.
+- [Web UI dashboard](features/web-ui-dashboard.md) - Shell dashboard and app management surface.
+- [Browser account switching](features/account-switching.md) - retired behavior and future restoration boundary.
+- [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - Core/Shell/CLI ownership boundaries.
 
 ## Planning
 
-- For the high-level sequence, dependencies, and conflicts across planning documents, see [Roadmap](roadmap.md).
-- [Core Shell Stabilization](planning/core-shell-stabilization.md) - completed implementation plan for local Core/Shell development, Shell lifecycle UI, simplified install/update reviews, auth, user management, and backup controls.
-- [Hosty Runtime App Platform](planning/hosty-runtime-app-platform.md) - completed compatibility foundation plan for Hosty Core, Shell/system apps, runtime apps, manifest contract, app registry, and backups.
-- [Runtime Profiles And Source Runtimes](planning/runtime-profiles-and-source-runtimes.md) - completed Stage 2 plan for runtime profile state, source records, checkout cache, local command runtime execution, and runtime switching.
-- [App Auth And Origin Separation](planning/app-auth-and-origin-separation.md) - completed Stage 3 plan for standalone app auth, Hosty-aware app guidance, deferred gateway wrapping, and split Core/Shell public origins.
-- [Update Channels](planning/update-channels.md) - deferred architecture plan for generated channel indexes, pull request validation channels, and optional CLI update channels.
-- [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - deferred Shell annotation to agent, branch/PR, and PR channel validation workflow.
+Active and deferred plans:
+
+- [Update Channels](planning/update-channels.md) - generated channel indexes, product/runtime channel selection, pull request channels, and channel cleanup.
+- [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and PR channel validation.

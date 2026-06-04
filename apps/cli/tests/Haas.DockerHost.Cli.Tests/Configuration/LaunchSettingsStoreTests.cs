@@ -28,8 +28,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
             environment.LaunchConfigPath,
             """
             # docker-host launch settings
-            HOST_UI_PORT=4321
-            HOST_CONTAINER_NAME=test-host
             HOST_IMAGE=ignored-old-image
             UNKNOWN_SETTING=ignored
             """);
@@ -37,8 +35,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
 
         var settings = store.Load();
 
-        Assert.Equal("4321", settings.HostUiPort);
-        Assert.Equal("test-host", settings.HostContainerName);
         Assert.Equal("", settings.HostCorePublicOrigin);
         Assert.Equal("", settings.HostShellPublicOrigin);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
@@ -67,27 +63,11 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         store.EnsureInstalled();
 
         Assert.True(Directory.Exists(environment.AppsDirectory));
-        Assert.True(Directory.Exists(environment.ModulesDirectory));
 
         var exception = Assert.Throws<ConfigurationException>(
             () => store.Set("HOST_IMAGE", "docker-host:dev"));
 
         Assert.Contains("Unknown launch setting", exception.Message);
-    }
-
-    [Theory]
-    [InlineData("auto", null)]
-    [InlineData("3000", 3000)]
-    public void Load_HostUiPortValue_ResolvesFixedPort(string hostUiPort, int? expectedPort)
-    {
-        var environment = DockerHostEnvironment.Current();
-        Directory.CreateDirectory(environment.ConfigDirectory);
-        File.WriteAllText(environment.LaunchConfigPath, $"HOST_UI_PORT={hostUiPort}{Environment.NewLine}");
-        var store = new LaunchSettingsStore(environment);
-
-        var settings = store.Load();
-
-        Assert.Equal(expectedPort, settings.GetFixedHostPort());
     }
 
     public void Dispose()

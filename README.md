@@ -4,7 +4,7 @@ Monorepo for Hosty, including the local-first Hosty Core API, the Hosty Shell br
 
 ## Concepts
 
-- [Project documentation](docs/root.md) contains the current module model, feature notes, and follow-up backlog.
+- [Project documentation](docs/root.md) contains the current runtime app model, feature notes, and follow-up backlog.
 
 ## Install Current CLI Build
 

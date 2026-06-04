@@ -1,25 +1,25 @@
-import { getDemoAuthSnapshot, type HeaderReader, type ModuleDirectoryUser } from "@/lib/host-auth";
+import { getDemoAuthSnapshot, type AppDirectoryUser, type HeaderReader } from "@/lib/host-auth";
 import {
-  getDemoModuleRoleCatalog,
-  readDemoModuleRoleAssignments,
+  getDemoAppRoleCatalog,
+  readDemoAppRoleAssignments,
   resolveDemoDirectoryUserRole,
   roleSourceLabel,
+  type DemoAppPermissionSnapshot,
+  type DemoAppRoleAssignment,
+  type DemoAppRoleDefinition,
   type DemoDirectoryUserRoleSnapshot,
-  type DemoModuleRoleAssignment,
-  type DemoModuleRoleDefinition,
-  type DemoModulePermissionSnapshot,
-} from "@/lib/module-roles";
+} from "@/lib/app-roles";
 
-export interface DemoRoleManagementUser extends ModuleDirectoryUser {
-  moduleRole: DemoDirectoryUserRoleSnapshot;
+export interface DemoRoleManagementUser extends AppDirectoryUser {
+  appRole: DemoDirectoryUserRoleSnapshot;
 }
 
 export interface DemoRoleManagementSnapshot {
   generatedAt: string;
   canManage: boolean;
-  current: DemoModulePermissionSnapshot;
-  roles: DemoModuleRoleDefinition[];
-  assignments: DemoModuleRoleAssignment[];
+  current: DemoAppPermissionSnapshot;
+  roles: DemoAppRoleDefinition[];
+  assignments: DemoAppRoleAssignment[];
   users: DemoRoleManagementUser[];
   roleSourceLabels: Record<string, string>;
   directory: {
@@ -36,18 +36,18 @@ export async function getDemoRoleManagementSnapshot(
 ): Promise<DemoRoleManagementSnapshot> {
   const [auth, assignments] = await Promise.all([
     getDemoAuthSnapshot(headersList),
-    readDemoModuleRoleAssignments(),
+    readDemoAppRoleAssignments(),
   ]);
 
   return {
     generatedAt: new Date().toISOString(),
-    canManage: auth.modulePermissions.canManageRoles,
-    current: auth.modulePermissions,
-    roles: getDemoModuleRoleCatalog(),
+    canManage: auth.appPermissions.canManageRoles,
+    current: auth.appPermissions,
+    roles: getDemoAppRoleCatalog(),
     assignments,
     users: auth.directory.users.map(user => ({
       ...user,
-      moduleRole: resolveDemoDirectoryUserRole(user, assignments),
+      appRole: resolveDemoDirectoryUserRole(user, assignments),
     })),
     roleSourceLabels: {
       stored: roleSourceLabel("stored"),

@@ -25,7 +25,6 @@ internal sealed class DockerHostEnvironment
         ConfigDirectory = Path.Combine(rootDirectory, "config");
         BinDirectory = Path.Combine(rootDirectory, "bin");
         AppsDirectory = Path.Combine(rootDirectory, "apps");
-        ModulesDirectory = Path.Combine(rootDirectory, "modules");
         LaunchConfigPath = Path.Combine(ConfigDirectory, "launch.env");
         AuthConfigPath = Path.Combine(ConfigDirectory, "auth.json");
         IsWindows = isWindows;
@@ -46,8 +45,6 @@ internal sealed class DockerHostEnvironment
     public string BinDirectory { get; }
 
     public string AppsDirectory { get; }
-
-    public string ModulesDirectory { get; }
 
     public string LaunchConfigPath { get; }
 

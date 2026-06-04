@@ -2,66 +2,63 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getDemoConfig } from "@/lib/demo-config";
 
-export type DemoModuleRole = "viewer" | "operator" | "admin";
-export type DemoModuleResolvedRole = "anonymous" | DemoModuleRole;
-export type DemoModuleRoleSource =
+export type DemoAppRole = "viewer" | "operator" | "admin";
+export type DemoAppResolvedRole = "anonymous" | DemoAppRole;
+export type DemoAppRoleSource =
   | "anonymous"
   | "stored"
   | "host-admin-bootstrap"
   | "host-assignment"
   | "host-authenticated";
 
-export interface DemoModuleRoleDefinition {
-  role: DemoModuleRole;
+export interface DemoAppRoleDefinition {
+  role: DemoAppRole;
   label: string;
   description: string;
   permissions: string[];
 }
 
-export interface DemoModuleRoleAssignment {
+export interface DemoAppRoleAssignment {
   userId: string;
-  role: DemoModuleRole;
+  role: DemoAppRole;
   updatedAt: string;
   updatedBy: string;
 }
 
-export interface DemoModuleRoleStore {
+export interface DemoAppRoleStore {
   schemaVersion: "0.1";
-  assignments: DemoModuleRoleAssignment[];
+  assignments: DemoAppRoleAssignment[];
   updatedAt: string;
 }
 
 export interface DemoRoleIdentityInput {
   status: string;
-  claims: {
-    subject: string;
-    hostRole: string | null;
-    moduleAccess: string | null;
-  } | null;
+  userId: string | null;
+  hostRole: string | null;
 }
 
-export interface DemoModulePermissionSnapshot {
+export interface DemoAppPermissionSnapshot {
   principal: string;
-  role: DemoModuleResolvedRole;
+  role: DemoAppResolvedRole;
   roleLabel: string;
-  source: DemoModuleRoleSource;
-  assignment: DemoModuleRoleAssignment | null;
+  source: DemoAppRoleSource;
+  assignment: DemoAppRoleAssignment | null;
   permissions: string[];
   canManageRoles: boolean;
 }
 
 export interface DemoDirectoryUserRoleSnapshot {
   userId: string;
-  role: DemoModuleRole;
+  role: DemoAppRole;
   roleLabel: string;
-  source: Exclude<DemoModuleRoleSource, "anonymous" | "host-authenticated">;
-  assignment: DemoModuleRoleAssignment | null;
+  source: Exclude<DemoAppRoleSource, "anonymous" | "host-authenticated">;
+  assignment: DemoAppRoleAssignment | null;
   permissions: string[];
 }
 
-const roleStoreFileName = "module-roles.json";
+const roleStoreFileName = "app-roles.json";
 
-const roleDefinitions: Record<DemoModuleRole, DemoModuleRoleDefinition> = {
+const roleDefinitions: Record<DemoAppRole, DemoAppRoleDefinition> = {
   viewer: {
     role: "viewer",
     label: "Viewer",
@@ -89,7 +86,7 @@ const roleDefinitions: Record<DemoModuleRole, DemoModuleRoleDefinition> = {
   admin: {
     role: "admin",
     label: "Admin",
-    description: "Can manage module-owned demo roles.",
+    description: "Can manage app-owned demo roles.",
     permissions: [
       "demo.health.read",
       "demo.config.read",
@@ -104,15 +101,15 @@ const roleDefinitions: Record<DemoModuleRole, DemoModuleRoleDefinition> = {
 
 const anonymousPermissions = ["demo.health.read", "demo.config.read"];
 
-export function getDemoModuleRoleCatalog() {
+export function getDemoAppRoleCatalog() {
   return [roleDefinitions.viewer, roleDefinitions.operator, roleDefinitions.admin];
 }
 
-export function isDemoModuleRole(value: unknown): value is DemoModuleRole {
+export function isDemoAppRole(value: unknown): value is DemoAppRole {
   return value === "viewer" || value === "operator" || value === "admin";
 }
 
-export async function readDemoModuleRoleStore(): Promise<DemoModuleRoleStore> {
+export async function readDemoAppRoleStore(): Promise<DemoAppRoleStore> {
   const filePath = getRoleStorePath();
 
   try {
@@ -127,30 +124,30 @@ export async function readDemoModuleRoleStore(): Promise<DemoModuleRoleStore> {
   }
 }
 
-export async function readDemoModuleRoleAssignments() {
-  return (await readDemoModuleRoleStore()).assignments;
+export async function readDemoAppRoleAssignments() {
+  return (await readDemoAppRoleStore()).assignments;
 }
 
-export async function setDemoModuleRoleAssignment(input: {
+export async function setDemoAppRoleAssignment(input: {
   userId: string;
-  role: DemoModuleRole;
+  role: DemoAppRole;
   updatedBy: string;
 }) {
   const userId = input.userId.trim();
   if (!userId) {
-    throw new DemoModuleRoleError("invalid_user", "User id is required.", 400);
+    throw new DemoAppRoleError("invalid_user", "User id is required.", 400);
   }
 
   const now = new Date().toISOString();
-  const assignment: DemoModuleRoleAssignment = {
+  const assignment: DemoAppRoleAssignment = {
     userId,
     role: input.role,
     updatedAt: now,
     updatedBy: input.updatedBy,
   };
 
-  const store = await readDemoModuleRoleStore();
-  const nextStore: DemoModuleRoleStore = {
+  const store = await readDemoAppRoleStore();
+  const nextStore: DemoAppRoleStore = {
     schemaVersion: "0.1",
     assignments: [
       ...store.assignments.filter(candidate => candidate.userId !== userId),
@@ -159,17 +156,17 @@ export async function setDemoModuleRoleAssignment(input: {
     updatedAt: now,
   };
 
-  await writeDemoModuleRoleStore(nextStore);
+  await writeDemoAppRoleStore(nextStore);
   return assignment;
 }
 
-export async function deleteDemoModuleRoleAssignment(userId: string) {
+export async function deleteDemoAppRoleAssignment(userId: string) {
   const normalizedUserId = userId.trim();
   if (!normalizedUserId) {
-    throw new DemoModuleRoleError("invalid_user", "User id is required.", 400);
+    throw new DemoAppRoleError("invalid_user", "User id is required.", 400);
   }
 
-  const store = await readDemoModuleRoleStore();
+  const store = await readDemoAppRoleStore();
   const nextAssignments = store.assignments.filter(
     assignment => assignment.userId !== normalizedUserId
   );
@@ -178,21 +175,21 @@ export async function deleteDemoModuleRoleAssignment(userId: string) {
     return null;
   }
 
-  const nextStore: DemoModuleRoleStore = {
+  const nextStore: DemoAppRoleStore = {
     schemaVersion: "0.1",
     assignments: nextAssignments,
     updatedAt: new Date().toISOString(),
   };
 
-  await writeDemoModuleRoleStore(nextStore);
+  await writeDemoAppRoleStore(nextStore);
   return normalizedUserId;
 }
 
-export function resolveDemoModulePermissions(
+export function resolveDemoAppPermissions(
   identity: DemoRoleIdentityInput,
-  assignments: DemoModuleRoleAssignment[]
-): DemoModulePermissionSnapshot {
-  if (identity.status !== "verified" || !identity.claims) {
+  assignments: DemoAppRoleAssignment[]
+): DemoAppPermissionSnapshot {
+  if (identity.status !== "active" || !identity.userId) {
     return {
       principal: "anonymous",
       role: "anonymous",
@@ -204,27 +201,26 @@ export function resolveDemoModulePermissions(
     };
   }
 
-  const assignment = findRoleAssignment(assignments, identity.claims.subject);
-  const role = assignment?.role ?? getDefaultRoleForIdentity(identity.claims);
+  const assignment = findRoleAssignment(assignments, identity.userId);
+  const role = assignment?.role ?? getDefaultRoleForIdentity(identity);
   const permissions = roleDefinitions[role].permissions;
 
   return {
-    principal: identity.claims.subject,
+    principal: identity.userId,
     role,
     roleLabel: roleDefinitions[role].label,
-    source: assignment ? "stored" : getDefaultRoleSourceForIdentity(identity.claims),
+    source: assignment ? "stored" : getDefaultRoleSourceForIdentity(identity),
     assignment,
     permissions,
     canManageRoles:
       permissions.includes("demo.roles.manage") ||
-      identity.claims.hostRole === "host.admin" ||
-      identity.claims.moduleAccess === "hostAdmin",
+      identity.hostRole === "host.admin",
   };
 }
 
 export function resolveDemoDirectoryUserRole(
   user: { id: string; hostRole: string },
-  assignments: DemoModuleRoleAssignment[]
+  assignments: DemoAppRoleAssignment[]
 ): DemoDirectoryUserRoleSnapshot {
   const assignment = findRoleAssignment(assignments, user.id);
   const role = assignment?.role ?? (user.hostRole === "host.admin" ? "admin" : "operator");
@@ -239,18 +235,18 @@ export function resolveDemoDirectoryUserRole(
   };
 }
 
-export function getDemoRoleLabel(role: DemoModuleResolvedRole) {
+export function getDemoRoleLabel(role: DemoAppResolvedRole) {
   return role === "anonymous" ? "Anonymous" : roleDefinitions[role].label;
 }
 
-export function getDemoRolePermissions(role: DemoModuleResolvedRole) {
+export function getDemoRolePermissions(role: DemoAppResolvedRole) {
   return role === "anonymous" ? anonymousPermissions : roleDefinitions[role].permissions;
 }
 
-export function roleSourceLabel(source: DemoModuleRoleSource) {
+export function roleSourceLabel(source: DemoAppRoleSource) {
   switch (source) {
     case "stored":
-      return "Module store";
+      return "App store";
     case "host-admin-bootstrap":
       return "Host admin bootstrap";
     case "host-assignment":
@@ -262,23 +258,23 @@ export function roleSourceLabel(source: DemoModuleRoleSource) {
   }
 }
 
-export function isDemoModuleRoleError(error: unknown): error is DemoModuleRoleError {
-  return error instanceof DemoModuleRoleError;
+export function isDemoAppRoleError(error: unknown): error is DemoAppRoleError {
+  return error instanceof DemoAppRoleError;
 }
 
-export class DemoModuleRoleError extends Error {
+export class DemoAppRoleError extends Error {
   public readonly code: string;
   public readonly status: number;
 
   public constructor(code: string, message: string, status: number) {
     super(message);
-    this.name = "DemoModuleRoleError";
+    this.name = "DemoAppRoleError";
     this.code = code;
     this.status = status;
   }
 }
 
-async function writeDemoModuleRoleStore(store: DemoModuleRoleStore) {
+async function writeDemoAppRoleStore(store: DemoAppRoleStore) {
   const filePath = getRoleStorePath();
   await mkdir(path.dirname(filePath), { recursive: true });
 
@@ -291,7 +287,7 @@ function getRoleStorePath() {
   return path.join(getDemoConfig().paths.data, roleStoreFileName);
 }
 
-function emptyRoleStore(): DemoModuleRoleStore {
+function emptyRoleStore(): DemoAppRoleStore {
   return {
     schemaVersion: "0.1",
     assignments: [],
@@ -299,15 +295,15 @@ function emptyRoleStore(): DemoModuleRoleStore {
   };
 }
 
-function normalizeRoleStore(value: unknown): DemoModuleRoleStore {
+function normalizeRoleStore(value: unknown): DemoAppRoleStore {
   if (!isRecord(value)) {
-    throw new DemoModuleRoleError("invalid_role_store", "Module role store must be an object.", 500);
+    throw new DemoAppRoleError("invalid_role_store", "App role store must be an object.", 500);
   }
 
   const assignments = Array.isArray(value.assignments)
     ? value.assignments
         .map(normalizeRoleAssignment)
-        .filter((assignment): assignment is DemoModuleRoleAssignment => Boolean(assignment))
+        .filter((assignment): assignment is DemoAppRoleAssignment => Boolean(assignment))
     : [];
 
   return {
@@ -323,7 +319,7 @@ function normalizeRoleAssignment(value: unknown) {
   }
 
   const userId = typeof value.userId === "string" ? value.userId.trim() : "";
-  if (!userId || !isDemoModuleRole(value.role)) {
+  if (!userId || !isDemoAppRole(value.role)) {
     return null;
   }
 
@@ -332,40 +328,30 @@ function normalizeRoleAssignment(value: unknown) {
     role: value.role,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : new Date(0).toISOString(),
     updatedBy: typeof value.updatedBy === "string" ? value.updatedBy : "unknown",
-  } satisfies DemoModuleRoleAssignment;
+  } satisfies DemoAppRoleAssignment;
 }
 
-function getDefaultRoleForIdentity(claims: NonNullable<DemoRoleIdentityInput["claims"]>): DemoModuleRole {
-  if (claims.hostRole === "host.admin" || claims.moduleAccess === "hostAdmin") {
+function getDefaultRoleForIdentity(identity: DemoRoleIdentityInput): DemoAppRole {
+  if (identity.hostRole === "host.admin") {
     return "admin";
-  }
-
-  if (claims.moduleAccess === "assigned") {
-    return "operator";
   }
 
   return "viewer";
 }
 
-function getDefaultRoleSourceForIdentity(
-  claims: NonNullable<DemoRoleIdentityInput["claims"]>
-): DemoModuleRoleSource {
-  if (claims.hostRole === "host.admin" || claims.moduleAccess === "hostAdmin") {
+function getDefaultRoleSourceForIdentity(identity: DemoRoleIdentityInput): DemoAppRoleSource {
+  if (identity.hostRole === "host.admin") {
     return "host-admin-bootstrap";
-  }
-
-  if (claims.moduleAccess === "assigned") {
-    return "host-assignment";
   }
 
   return "host-authenticated";
 }
 
-function findRoleAssignment(assignments: DemoModuleRoleAssignment[], userId: string) {
+function findRoleAssignment(assignments: DemoAppRoleAssignment[], userId: string) {
   return assignments.find(assignment => assignment.userId === userId) ?? null;
 }
 
-function compareAssignments(left: DemoModuleRoleAssignment, right: DemoModuleRoleAssignment) {
+function compareAssignments(left: DemoAppRoleAssignment, right: DemoAppRoleAssignment) {
   return left.userId.localeCompare(right.userId);
 }
 

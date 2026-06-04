@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { HostIdentityBridge } from "@/components/HostIdentityBridge";
+import { AppIdentityBridge } from "@/components/AppIdentityBridge";
 import { HostThemeBridge } from "@/components/HostThemeBridge";
 import "./globals.css";
 
@@ -39,7 +39,7 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <script dangerouslySetInnerHTML={{ __html: hostThemeBootstrapScript }} />
         <HostThemeBridge />
-        <HostIdentityBridge />
+        <AppIdentityBridge />
         {children}
       </body>
     </html>

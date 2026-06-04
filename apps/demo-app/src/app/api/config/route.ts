@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDemoConfig, inspectStorage, moduleStartedAt } from "@/lib/demo-config";
+import { getDemoConfig, inspectStorage, appStartedAt } from "@/lib/demo-config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,10 +9,10 @@ export async function GET() {
   const storage = await inspectStorage();
 
   return NextResponse.json({
-    module: {
-      id: config.moduleId,
-      version: config.moduleVersion,
-      startedAt: moduleStartedAt,
+    app: {
+      id: config.appId,
+      version: config.appVersion,
+      startedAt: appStartedAt,
     },
     settings: {
       greeting: config.greeting,
@@ -23,10 +23,8 @@ export async function GET() {
     },
     hostIntegration: {
       coreOrigin: config.host.coreOrigin,
-      internalOrigin: config.host.internalOrigin,
       appId: config.host.appId,
-      moduleId: config.host.moduleId,
-      moduleServiceTokenConfigured: config.host.moduleServiceTokenConfigured,
+      appServiceTokenConfigured: config.host.appServiceTokenConfigured,
     },
     storage,
   });

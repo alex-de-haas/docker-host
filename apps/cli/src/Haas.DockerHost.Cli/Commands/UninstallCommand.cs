@@ -75,7 +75,6 @@ internal static class HostUninstallFileCleanup
             else
             {
                 DeletePath(environment.ConfigDirectory, deletedPaths);
-                DeletePath(environment.ModulesDirectory, deletedPaths);
                 DeleteDataRoot(environment, dataRootDirectory, deletedPaths, skippedPaths);
             }
 
@@ -108,8 +107,6 @@ internal static class HostUninstallFileCleanup
             return;
         }
 
-        DeletePath(Path.Combine(dataRoot, "modules.json"), deletedPaths);
-        DeletePath(Path.Combine(dataRoot, "modules"), deletedPaths);
         DeletePath(Path.Combine(dataRoot, "apps.json"), deletedPaths);
         DeletePath(Path.Combine(dataRoot, "apps"), deletedPaths);
         DeletePath(Path.Combine(dataRoot, "backups"), deletedPaths);

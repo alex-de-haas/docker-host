@@ -4,13 +4,13 @@ import { useMemo, useState } from "react";
 import { Check, LoaderCircle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { DemoRoleManagementSnapshot } from "@/lib/module-role-management";
-import type { DemoModuleRole } from "@/lib/module-roles";
-import { StateBadge } from "./DemoModuleUi";
+import type { DemoRoleManagementSnapshot } from "@/lib/app-role-management";
+import type { DemoAppRole } from "@/lib/app-roles";
+import { StateBadge } from "./DemoAppUi";
 
-type DraftRoles = Record<string, DemoModuleRole | "">;
+type DraftRoles = Record<string, DemoAppRole | "">;
 
-export function ModuleRoleManager({
+export function AppRoleManager({
   initialSnapshot,
 }: {
   initialSnapshot: DemoRoleManagementSnapshot;
@@ -22,7 +22,7 @@ export function ModuleRoleManager({
 
   const roleOptions = useMemo(() => snapshot.roles, [snapshot.roles]);
 
-  async function updateRole(userId: string, overrideRole?: DemoModuleRole | "") {
+  async function updateRole(userId: string, overrideRole?: DemoAppRole | "") {
     const role = overrideRole ?? drafts[userId] ?? "";
     setPendingUserId(userId);
     setMessage(null);
@@ -41,7 +41,7 @@ export function ModuleRoleManager({
 
       setSnapshot(payload.snapshot);
       setDrafts(createDrafts(payload.snapshot));
-      setMessage({ tone: "success", text: "Module role assignment saved." });
+      setMessage({ tone: "success", text: "App role assignment saved." });
     } catch (error) {
       setMessage({
         tone: "danger",
@@ -52,7 +52,7 @@ export function ModuleRoleManager({
     }
   }
 
-  function setDraft(userId: string, role: DemoModuleRole | "") {
+  function setDraft(userId: string, role: DemoAppRole | "") {
     setDrafts(previous => ({
       ...previous,
       [userId]: role,
@@ -112,9 +112,9 @@ export function ModuleRoleManager({
           snapshot.users.map(user => {
             const pending = pendingUserId === user.id;
             const draft = drafts[user.id] ?? "";
-            const dirty = draft !== (user.moduleRole.assignment?.role ?? "");
+            const dirty = draft !== (user.appRole.assignment?.role ?? "");
             const sourceLabel =
-              snapshot.roleSourceLabels[user.moduleRole.source] ?? user.moduleRole.source;
+              snapshot.roleSourceLabels[user.appRole.source] ?? user.appRole.source;
 
             return (
               <div
@@ -132,22 +132,22 @@ export function ModuleRoleManager({
                     <StateBadge tone={user.hostRole === "host.admin" ? "success" : "neutral"}>
                       {user.hostRole}
                     </StateBadge>
-                    <StateBadge tone={user.moduleRole.role === "admin" ? "success" : "neutral"}>
-                      {user.moduleRole.roleLabel}
+                    <StateBadge tone={user.appRole.role === "admin" ? "success" : "neutral"}>
+                      {user.appRole.roleLabel}
                     </StateBadge>
                     <StateBadge tone="neutral">{sourceLabel}</StateBadge>
                   </div>
                 </div>
 
                 <label className="grid gap-2 text-sm font-medium">
-                  Module role
+                  App role
                   <select
                     className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={!snapshot.canManage || pending}
-                    onChange={event => setDraft(user.id, event.target.value as DemoModuleRole | "")}
+                    onChange={event => setDraft(user.id, event.target.value as DemoAppRole | "")}
                     value={draft}
                   >
-                    <option value="">Default ({user.moduleRole.roleLabel})</option>
+                    <option value="">Default ({user.appRole.roleLabel})</option>
                     {roleOptions.map(role => (
                       <option key={role.role} value={role.role}>
                         {role.label}
@@ -167,7 +167,7 @@ export function ModuleRoleManager({
                     Save
                   </Button>
                   <Button
-                    disabled={!snapshot.canManage || pending || !user.moduleRole.assignment}
+                    disabled={!snapshot.canManage || pending || !user.appRole.assignment}
                     onClick={() => {
                       setDraft(user.id, "");
                       void updateRole(user.id, "");
@@ -221,6 +221,6 @@ interface RoleMutationResponse {
 
 function createDrafts(snapshot: DemoRoleManagementSnapshot): DraftRoles {
   return Object.fromEntries(
-    snapshot.users.map(user => [user.id, user.moduleRole.assignment?.role ?? ""])
+    snapshot.users.map(user => [user.id, user.appRole.assignment?.role ?? ""])
   );
 }

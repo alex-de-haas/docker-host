@@ -899,7 +899,8 @@ public sealed class CoreLifecycleServiceTests
                 ShellBootstrapEnabled: false,
                 ShellAutostart: false);
             var localProcesses = new LocalCommandProcessRegistry();
-            var localAdapter = new LocalCommandRuntimeAdapter(runtimeConfig, localProcesses);
+            var appServiceTokens = new AppServiceTokenService(new ControlSecret("test-control-secret"));
+            var localAdapter = new LocalCommandRuntimeAdapter(runtimeConfig, localProcesses, appServiceTokens);
             var service = new CoreLifecycleService(paths, apps, manifests, backups, [adapter, localAdapter]);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }

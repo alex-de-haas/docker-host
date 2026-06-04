@@ -32,7 +32,6 @@ internal sealed class LaunchSettingsStore(DockerHostEnvironment environment)
             Directory.CreateDirectory(environment.ConfigDirectory);
             Directory.CreateDirectory(environment.BinDirectory);
             Directory.CreateDirectory(environment.AppsDirectory);
-            Directory.CreateDirectory(environment.ModulesDirectory);
 
             var settings = Load();
             settings.Validate(environment);
@@ -44,7 +43,7 @@ internal sealed class LaunchSettingsStore(DockerHostEnvironment environment)
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new ConfigurationException($"Unable to prepare docker-host directories: {ex.Message}");
+            throw new ConfigurationException($"Unable to prepare Hosty directories: {ex.Message}");
         }
     }
 

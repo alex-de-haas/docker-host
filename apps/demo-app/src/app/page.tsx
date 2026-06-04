@@ -19,7 +19,7 @@ import {
   StateBadge,
   StorageGrid,
   type StateTone,
-} from "@/components/DemoModuleUi";
+} from "@/components/DemoAppUi";
 import {
   Card,
   CardContent,
@@ -32,10 +32,10 @@ import {
   StatusIndicator,
   StatusLabel,
 } from "@/components/ui/status";
-import { getDemoConfig, inspectStorage, moduleStartedAt } from "@/lib/demo-config";
+import { getDemoConfig, inspectStorage, appStartedAt } from "@/lib/demo-config";
 import { getDemoAuthSnapshot } from "@/lib/host-auth";
-import { roleSourceLabel } from "@/lib/module-roles";
-import type { AppSessionStatus, ModuleDirectoryStatus, ModuleIdentityStatus } from "@/lib/host-auth";
+import { roleSourceLabel } from "@/lib/app-roles";
+import type { AppDirectoryStatus, AppSessionStatus } from "@/lib/host-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +47,7 @@ export default async function Home() {
   return (
     <DemoShell>
       <DemoPageHeader
-        eyebrow={config.moduleId}
+        eyebrow={config.appId}
         title="Hosty Demo App"
         description="Runtime diagnostics for Hosty app lifecycle development."
         actions={
@@ -79,7 +79,7 @@ export default async function Home() {
           <MetricCard
             icon={Activity}
             label="Version"
-            value={config.moduleVersion}
+            value={config.appVersion}
           />
           <MetricCard
             icon={Route}
@@ -94,15 +94,15 @@ export default async function Home() {
           <MetricCard
             icon={HardDrive}
             label="Started"
-            value={new Date(moduleStartedAt).toLocaleTimeString("en", {
+            value={new Date(appStartedAt).toLocaleTimeString("en", {
               hour: "2-digit",
               minute: "2-digit",
             })}
           />
           <MetricCard
             icon={Fingerprint}
-            label="Identity"
-            value={formatIdentityStatus(auth.identity.status)}
+            label="Session"
+            value={formatAppSessionStatus(auth.appSession.status)}
           />
           <MetricCard
             icon={Database}
@@ -120,11 +120,10 @@ export default async function Home() {
               { label: "Auth preview", value: config.authPreview ? "Enabled" : "Disabled" },
               { label: "App id", value: config.host.appId },
               { label: "Core origin", value: config.host.coreOrigin },
-              { label: "Identity audience", value: config.host.moduleId },
-              { label: "Host internal origin", value: config.host.internalOrigin },
+              { label: "Identity audience", value: config.host.appId },
               {
                 label: "Service token",
-                value: config.host.moduleServiceTokenConfigured ? "Configured" : "Missing",
+                value: config.host.appServiceTokenConfigured ? "Configured" : "Missing",
               },
               { label: "Health endpoint", value: "/api/health" },
             ]}
@@ -164,42 +163,35 @@ export default async function Home() {
           </div>
         </SectionCard>
 
-        <SectionCard title="Host identity" action={<JsonButton href="/api/auth/identity" />}>
+        <SectionCard title="Current Host user" action={<JsonButton href="/api/auth/identity" />}>
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <StateBadge tone={identityStateTone(auth.identity.status)}>
-                {formatIdentityStatus(auth.identity.status)}
+              <StateBadge tone={appSessionStateTone(auth.appSession.status)}>
+                {formatAppSessionStatus(auth.appSession.status)}
               </StateBadge>
               <span className="break-all text-xs text-muted-foreground">
-                {auth.identity.headerName}
+                {auth.appSession.tokenSource || "no token"}
               </span>
             </div>
-            {auth.identity.claims ? (
+            {auth.appSession.userId ? (
               <DetailList
                 items={[
-                  { label: "Subject", value: auth.identity.claims.subject },
+                  { label: "Subject", value: auth.appSession.userId },
                   {
                     label: "User",
                     value:
-                      auth.identity.claims.name ||
-                      auth.identity.claims.email ||
+                      auth.appSession.displayName ||
+                      auth.appSession.email ||
                       "Unnamed Host user",
                   },
-                  { label: "Host role", value: auth.identity.claims.hostRole || "Unknown" },
-                  {
-                    label: "App access",
-                    value: auth.identity.claims.moduleAccess || "Unknown",
-                  },
-                  {
-                    label: "Exposure policy",
-                    value: auth.identity.claims.moduleExposurePolicy || "Unknown",
-                  },
-                  { label: "Expires", value: auth.identity.claims.expiresAt || "Unknown" },
+                  { label: "Host role", value: auth.appSession.hostRole || "Unknown" },
+                  { label: "App", value: auth.appSession.appId },
+                  { label: "Expires", value: auth.appSession.expiresAt || "Unknown" },
                 ]}
               />
             ) : (
               <p className="text-sm leading-6 text-muted-foreground">
-                {auth.identity.error || "No Host identity token was received."}
+                {auth.appSession.error?.message || "No app identity token was received."}
               </p>
             )}
           </div>
@@ -240,17 +232,17 @@ export default async function Home() {
       >
         <SectionCard
           title="App permissions"
-          action={<StateBadge tone="success">{auth.modulePermissions.roleLabel}</StateBadge>}
+          action={<StateBadge tone="success">{auth.appPermissions.roleLabel}</StateBadge>}
         >
           <DetailList
             items={[
-              { label: "Principal", value: auth.modulePermissions.principal },
-              { label: "Role source", value: roleSourceLabel(auth.modulePermissions.source) },
+              { label: "Principal", value: auth.appPermissions.principal },
+              { label: "Role source", value: roleSourceLabel(auth.appPermissions.source) },
               {
                 label: "Can manage roles",
-                value: auth.modulePermissions.canManageRoles ? "Yes" : "No",
+                value: auth.appPermissions.canManageRoles ? "Yes" : "No",
               },
-              { label: "Permissions", value: auth.modulePermissions.permissions.join(", ") },
+              { label: "Permissions", value: auth.appPermissions.permissions.join(", ") },
             ]}
           />
         </SectionCard>
@@ -296,19 +288,6 @@ export default async function Home() {
   );
 }
 
-function formatIdentityStatus(status: ModuleIdentityStatus) {
-  switch (status) {
-    case "verified":
-      return "Verified";
-    case "invalid":
-      return "Invalid";
-    case "not-configured":
-      return "Not configured";
-    case "not-present":
-      return "Not present";
-  }
-}
-
 function formatAppSessionStatus(status: AppSessionStatus) {
   switch (status) {
     case "active":
@@ -326,7 +305,7 @@ function formatAppSessionStatus(status: AppSessionStatus) {
   }
 }
 
-function formatDirectoryStatus(status: ModuleDirectoryStatus) {
+function formatDirectoryStatus(status: AppDirectoryStatus) {
   switch (status) {
     case "ok":
       return "Ready";
@@ -349,15 +328,7 @@ function appSessionStateTone(status: AppSessionStatus): StateTone {
   return status === "not-present" ? "warning" : "danger";
 }
 
-function identityStateTone(status: ModuleIdentityStatus): StateTone {
-  if (status === "verified") {
-    return "success";
-  }
-
-  return status === "not-present" ? "warning" : "danger";
-}
-
-function directoryStateTone(status: ModuleDirectoryStatus): StateTone {
+function directoryStateTone(status: AppDirectoryStatus): StateTone {
   if (status === "ok") {
     return "success";
   }

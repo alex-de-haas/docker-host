@@ -1,7 +1,5 @@
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
-using Haas.DockerHost.Cli.Docker;
-using Haas.DockerHost.Cli.HostApi;
 using Spectre.Console;
 
 namespace Haas.DockerHost.Cli.Tests.Commands;
@@ -14,9 +12,7 @@ public sealed class UpdateCommandTests
         var context = new CommandContext(
             CreateConsole(),
             DockerHostEnvironment.Current(),
-            new LaunchSettingsStore(DockerHostEnvironment.Current()),
-            new DockerEngineClientFactory(),
-            new HostControlClientFactory());
+            new LaunchSettingsStore(DockerHostEnvironment.Current()));
 
         var exception = await Assert.ThrowsAsync<CommandUsageException>(
             async () => await new UpdateCommand(context).ExecuteAsync(["--host-only"]));

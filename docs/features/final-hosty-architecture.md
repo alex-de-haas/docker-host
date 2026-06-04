@@ -24,7 +24,7 @@ flowchart LR
 
 ## Core API ownership
 
-Core owns the public and local API surface. API groups are organized around app-domain concepts, not legacy module naming:
+Core owns the public and local API surface. API groups are organized around app-domain concepts:
 
 - bootstrap, health, status, and local control discovery;
 - auth pages, sessions, setup, recovery, logout, OIDC callback, trusted proxy, CSRF, and account switching;
@@ -155,8 +155,6 @@ The final Hosty data root uses app-native storage. The target layout is:
 
 Core-owned state lives under `core/`. Runtime app state lives under `apps/<app-id>/`. Managed source checkouts live under `sources/<app-id>/`. App data backups live under `backups/<app-id>/`.
 
-Legacy module stores are not part of the final architecture. Any required preservation from `modules.json`, `modules/<module-id>/`, or `metadata.json` should happen through explicit migration/import tooling rather than an ongoing compatibility runtime path.
-
 ## Backup policy
 
 Backup rules are global in the current final plan:
@@ -182,31 +180,10 @@ The first-party demo app lives under `apps/demo-app` and uses the `app.0.1` mani
 - app-owned package scripts;
 - app-owned data directory support through `HOSTY_APP_DATA_DIR`.
 
-The legacy `modules/demo-module` fixture has been retired. Demo App is the first-party demo contract.
-
-## Legacy paths pending removal
-
-The following paths and behaviors are current implementation details only. They remain valid while the final architecture is being built, but they are pending removal under the consolidated plan:
-
-- `modules/<module-id>/` as a first-party app location;
-- `modules.json` as a required lifecycle store;
-- legacy module metadata as the first-party demo contract;
-- separate dev metadata files;
-- deterministic development user blocks;
-- top-level developer harness commands;
-- separate local target state and local-target control routes;
-- deterministic development user seeding;
-- browser development account seeding tied to the dev harness;
-- legacy combined `apps/host` package, removed from the repository.
-
-The replacement is an installed runtime app workflow: app manifests, source state, local source overrides, local command runtime profiles, existing Host users, app-scoped identity helpers, and normal Core lifecycle APIs.
+Demo App is the first-party demo contract.
 
 ## Open Questions And Answers
 
 - Question: Should Agent Bridge live in this architecture document?
   Answer: Only as deferred context.
   Recommendation: Plan Agent Bridge after Shell management, auth, user management, backups, source state, pull request channels, and runtime validation are stable.
-
-- Question: Should compatibility adapters remain after Core and Shell are split?
-  Answer: No, not as a target architecture.
-  Recommendation: Build explicit migration/import paths for preserved legacy data instead of adding permanent compatibility fallbacks.

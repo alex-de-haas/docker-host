@@ -1,7 +1,5 @@
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
-using Haas.DockerHost.Cli.Docker;
-using Haas.DockerHost.Cli.HostApi;
 using Spectre.Console;
 
 namespace Haas.DockerHost.Cli.Tests.Commands;
@@ -59,9 +57,7 @@ public sealed class InstallCommandTests : IDisposable
         => new(
             CreateConsole(),
             environment,
-            new LaunchSettingsStore(environment),
-            new DockerEngineClientFactory(),
-            new HostControlClientFactory());
+            new LaunchSettingsStore(environment));
 
     private static IAnsiConsole CreateConsole()
     {

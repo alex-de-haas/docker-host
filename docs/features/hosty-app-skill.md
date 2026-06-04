@@ -2,118 +2,23 @@
 
 ## Description
 
-The repository ships a Codex skill for agents that implement Hosty runtime apps. The skill lives under `skills/hosty-app-skill` and packages the app workflow, compact references, and a minimal `app.0.1` manifest template.
+The repository ships a Codex skill for creating, wrapping, updating, and validating Hosty runtime apps that use `schemaVersion: "app.0.1"`.
 
-The skill helps agents:
+## Skill Sources
 
-- wrap an existing application as a Hosty runtime app;
-- create new `schemaVersion: "app.0.1"` manifests;
-- migrate or update legacy Docker module metadata with `schemaVersion: "0.2"` or `"0.3"`;
-- configure Docker runtime profiles and planned local command runtime profiles;
-- declare optional source repository metadata;
-- configure Hosty-managed app data directories and understand backup boundaries;
-- add Shell UI metadata;
-- integrate Hosty Core identity and scoped user directory access;
-- implement app-owned roles;
-- distinguish Shell UI access from gateway-protected service/API exposure;
-- validate apps with Core-managed local runtime profiles before falling back to slower image rebuilds.
+- `skills/hosty-app-skill/SKILL.md`
+- `skills/hosty-app-skill/references/app-manifest.md`
+- `skills/hosty-app-skill/references/app-auth-and-users.md`
+- `skills/hosty-app-skill/references/app-implementation-checklist.md`
+- `skills/hosty-app-skill/references/demo-app-patterns.md`
 
-The skill is intentionally not a copy of the full documentation. `SKILL.md` is a short workflow guide, while `references/` contains focused topic documents that agents load only when needed.
+## Current Contract
 
-For Host-facing app behavior, the skill points agents at the Core-managed local runtime loop: install the app manifest with a local runtime profile, start the app through Core, use existing Hosty users and assignments, and let Core issue the normal signed app identity token. For direct local endpoint probes, agents can use `hosty apps identity --format token` to request a real Hosty-signed token. Directly injecting fake identity headers is not considered a valid Hosty integration check.
+The skill should guide agents toward:
 
-The skill also distinguishes the Hosty Core API origin from app runtime origins. Agents should start or connect to Hosty Core first, then use normal `hosty apps` commands for local runtime profiles.
-
-```mermaid
-flowchart LR
-  A["Agent task"] --> B["skills/hosty-app-skill/SKILL.md"]
-  B --> C["App manifest reference"]
-  B --> D["Auth and users reference"]
-  B --> E["Local runtime reference"]
-  B --> F["Checklist"]
-  B --> G["App manifest template"]
-  C --> H["Hosty runtime app implementation"]
-  D --> H
-  E --> H
-  F --> H
-  G --> H
-```
-
-## Files
-
-- `skills/hosty-app-skill/SKILL.md` - trigger metadata and core workflow.
-- `skills/hosty-app-skill/agents/openai.yaml` - UI-facing skill metadata.
-- `skills/hosty-app-skill/references/app-manifest.md` - compact app manifest, legacy metadata, runtime profile, install/update, storage, and backup guidance.
-- `skills/hosty-app-skill/references/app-auth-and-users.md` - Hosty roles, Shell access, gateway policies, identity modes, identity tokens, scoped directory, external providers, third-party credentials, and app-owned roles.
-- `skills/hosty-app-skill/references/app-dev-mode.md` - local runtime profile workflow, Core app identity helpers, and validation boundaries.
-- `skills/hosty-app-skill/references/demo-app-patterns.md` - practical patterns from `apps/demo-app`.
-- `skills/hosty-app-skill/references/app-implementation-checklist.md` - final implementation and validation checklist.
-- `skills/hosty-app-skill/assets/app-template/manifest.json` - minimal `app.0.1` manifest skeleton.
-
-## Installation And Updates
-
-The repository copy is usable by agents that receive this checkout as context.
-
-Inside the Codex app, install it by asking Codex:
-
-```text
-Use $skill-installer to install the skill from alex-de-haas/docker-host at skills/hosty-app-skill.
-```
-
-The built-in Codex skill installer installs the GitHub path into `$CODEX_HOME/skills`. It is the preferred first-install path when working inside Codex.
-
-For repeatable command-line updates, run:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-hosty-app-skill.sh | sh
-```
-
-The installer downloads `skills/hosty-app-skill` from GitHub and atomically installs it into:
-
-```text
-${CODEX_HOME:-$HOME/.codex}/skills/hosty-app-skill
-```
-
-Run the same command again to update the global skill. Restart Codex after installing or updating so the skill registry is reloaded.
-
-The command-line installer is intentionally kept even though Codex has a built-in installer, because the built-in installer does not overwrite an existing skill directory. The script is the simple update path for Codex and for other agents or machines that do not have the Codex app helper available.
-
-Install from a local checkout while developing the skill:
-
-```bash
-sh scripts/install-hosty-app-skill.sh --source-dir skills/hosty-app-skill
-```
-
-Install a specific branch, tag, or commit:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-hosty-app-skill.sh | sh -s -- --ref main
-```
-
-For private forks, set `GITHUB_TOKEN` or `GH_TOKEN`, or pass `--repo OWNER/REPO`.
-
-## Usage From Other Repositories
-
-After installation and Codex restart, open any application repository and invoke the skill explicitly:
-
-```text
-Use $hosty-app-skill to wrap this app as a Hosty runtime app.
-```
-
-The skill may also trigger implicitly for runtime-app-related work, but explicit invocation is preferred when converting external application repositories.
-
-## Maintenance
-
-Keep the skill aligned with the source documentation:
-
-- update `references/app-manifest.md` when `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, or `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs` changes;
-- update `references/app-auth-and-users.md` when `docs/features/auth-gateway.md` or `docs/features/user-management.md` changes;
-- update `references/app-dev-mode.md` when `docs/features/local-development.md` or Core local runtime behavior changes;
-- update `references/demo-app-patterns.md` when `apps/demo-app` changes in a way agents should copy;
-- update `references/app-implementation-checklist.md` when app validation, gateway publishing, backup, or security review expectations change.
-
-Run the skill validator after changes:
-
-```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/hosty-app-skill
-```
+- `apps/{app}/manifest.json`
+- Core-managed local runs through `hosty apps install ... --runtime dev`
+- app auth code exchange and app-origin sessions
+- scoped app directory access through `HOSTY_APP_SERVICE_TOKEN`
+- app-owned role storage under the app data directory
+- app data backups through Core

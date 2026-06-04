@@ -6,10 +6,9 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class AppRegistryStoreTests
 {
     [Fact]
-    public async Task ListAppsAsync_ReadsAppNativeRecordsWithoutLegacyModules()
+    public async Task ListAppsAsync_ReadsAppNativeRecords()
     {
         var root = await CreateTempRootAsync();
-        await File.WriteAllTextAsync(Path.Combine(root, "modules.json"), """{"modules":[{"id":"legacy.module"}]}""");
         var paths = CreatePaths(root);
         var store = new AppRegistryStore(paths);
         await store.UpsertAppAsync(CreateApp("com.example.notes"));

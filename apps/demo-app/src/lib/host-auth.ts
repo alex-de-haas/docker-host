@@ -1,20 +1,16 @@
-import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
-import type { JWTPayload } from "jose";
 import { getDemoConfig } from "@/lib/demo-config";
 import {
-  readDemoModuleRoleAssignments,
-  resolveDemoModulePermissions,
-  type DemoModulePermissionSnapshot,
-} from "@/lib/module-roles";
+  readDemoAppRoleAssignments,
+  resolveDemoAppPermissions,
+  type DemoAppPermissionSnapshot,
+} from "@/lib/app-roles";
 
 const identityHeaderName = "x-docker-host-identity";
-export const moduleIdentityCookieName = "docker_host_module_identity";
-export const appIdentityCookieName = "hosty_demo_app_identity";
 const hostSessionCookieName = "docker_host_session";
-const discoveryPath = "/.well-known/docker-host/module-identity.json";
 const directoryTimeoutMs = 1_500;
 const identityTimeoutMs = 1_500;
-const defaultIssuer = "docker-host";
+
+export const appIdentityCookieName = "hosty_demo_app_identity";
 
 export type HeaderReader = {
   get(name: string): string | null;
@@ -24,9 +20,8 @@ export interface DemoAuthSnapshot {
   generatedAt: string;
   appSession: AppSessionSnapshot;
   gateway: GatewayRequestSnapshot;
-  identity: ModuleIdentitySnapshot;
-  directory: ModuleDirectorySnapshot;
-  modulePermissions: DemoModulePermissionSnapshot;
+  directory: AppDirectorySnapshot;
+  appPermissions: DemoAppPermissionSnapshot;
 }
 
 export interface GatewayRequestSnapshot {
@@ -38,16 +33,20 @@ export interface GatewayRequestSnapshot {
   dockerHostHeaders: string[];
 }
 
-export type ModuleIdentityStatus = "not-present" | "verified" | "invalid" | "not-configured";
-
 export type AppSessionStatus = "not-present" | "active" | "expired" | "forbidden" | "unavailable" | "error";
+
+export type AppIdentityTokenSource = "cookie" | "authorization-header" | "identity-header";
 
 export interface AppSessionSnapshot {
   status: AppSessionStatus;
   tokenPresent: boolean;
+  tokenSource: AppIdentityTokenSource | null;
   coreOrigin: string;
   appId: string;
   userId: string | null;
+  email: string | null;
+  displayName: string | null;
+  hostRole: string | null;
   expiresAt: string | null;
   error: {
     status: number | null;
@@ -56,50 +55,14 @@ export interface AppSessionSnapshot {
   } | null;
 }
 
-export interface ModuleIdentitySnapshot {
-  status: ModuleIdentityStatus;
-  tokenPresent: boolean;
-  headerName: string;
-  audience: string;
-  protectedHeader: {
-    alg: string | null;
-    kid: string | null;
-    typ: string | null;
-  } | null;
-  discovery: {
-    issuer: string;
-    jwksUri: string;
-    tokenTtlSeconds: number | null;
-  } | null;
-  claims: NormalizedModuleIdentityClaims | null;
-  error: string | null;
-}
+export type AppDirectoryStatus = "not-configured" | "ok" | "unavailable" | "forbidden" | "error";
 
-export interface NormalizedModuleIdentityClaims {
-  subject: string;
-  issuer: string;
-  audience: string;
-  expiresAt: string | null;
-  issuedAt: string | null;
-  jwtId: string | null;
-  email: string | null;
-  name: string | null;
-  hostRole: string | null;
-  moduleAccess: string | null;
-  moduleExposurePolicy: string | null;
-  gatewayExposureId: string | null;
-  hostname: string | null;
-  portKey: string | null;
-}
-
-export type ModuleDirectoryStatus = "not-configured" | "ok" | "unavailable" | "forbidden" | "error";
-
-export interface ModuleDirectorySnapshot {
-  status: ModuleDirectoryStatus;
+export interface AppDirectorySnapshot {
+  status: AppDirectoryStatus;
   endpoint: string | null;
-  internalOrigin: string;
+  coreOrigin: string;
   serviceTokenConfigured: boolean;
-  users: ModuleDirectoryUser[];
+  users: AppDirectoryUser[];
   pagination: {
     limit: number;
     offset: number;
@@ -113,54 +76,47 @@ export interface ModuleDirectorySnapshot {
   } | null;
 }
 
-export interface ModuleDirectoryUser {
+export interface AppDirectoryUser {
   id: string;
   displayName: string | null;
   email: string | null;
   hostRole: string;
 }
 
-interface ModuleIdentityDiscovery {
-  issuer?: unknown;
-  jwks_uri?: unknown;
-  token_ttl_seconds?: unknown;
-  algorithms?: unknown;
-}
-
-const remoteJwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
-
 export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<DemoAuthSnapshot> {
-  const [appSession, identity, directory, roleAssignments] = await Promise.all([
+  const [appSession, directory, roleAssignments] = await Promise.all([
     getAppSessionSnapshot(headersList),
-    getModuleIdentitySnapshot(headersList),
-    getModuleDirectorySnapshot(),
-    readDemoModuleRoleAssignments(),
+    getAppDirectorySnapshot(),
+    readDemoAppRoleAssignments(),
   ]);
 
   return {
     generatedAt: new Date().toISOString(),
     appSession,
     gateway: getGatewayRequestSnapshot(headersList),
-    identity,
     directory,
-    modulePermissions: resolveDemoModulePermissions(identity, roleAssignments),
+    appPermissions: resolveDemoAppPermissions(appSession, roleAssignments),
   };
 }
 
 async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSessionSnapshot> {
   const config = getDemoConfig();
-  const token = readCookie(headersList.get("cookie"), appIdentityCookieName);
+  const tokenInput = readAppIdentityToken(headersList);
   const baseSnapshot = {
-    tokenPresent: Boolean(token),
+    tokenPresent: Boolean(tokenInput.token),
+    tokenSource: tokenInput.source,
     coreOrigin: config.host.coreOrigin,
     appId: config.host.appId,
   };
 
-  if (!token) {
+  if (!tokenInput.token) {
     return {
       ...baseSnapshot,
       status: "not-present",
       userId: null,
+      email: null,
+      displayName: null,
+      hostRole: null,
       expiresAt: null,
       error: null,
     };
@@ -172,6 +128,9 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
       ...baseSnapshot,
       status: "error",
       userId: null,
+      email: null,
+      displayName: null,
+      hostRole: null,
       expiresAt: null,
       error: {
         status: null,
@@ -187,7 +146,7 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ accessToken: token }),
+      body: JSON.stringify({ accessToken: tokenInput.token }),
       cache: "no-store",
       signal: AbortSignal.timeout(identityTimeoutMs),
     });
@@ -198,6 +157,9 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
         ...baseSnapshot,
         status: response.status === 403 ? "forbidden" : "error",
         userId: null,
+        email: null,
+        displayName: null,
+        hostRole: null,
         expiresAt: null,
         error: {
           status: response.status,
@@ -212,6 +174,9 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
       ...baseSnapshot,
       status: readBooleanField(record.active) ? "active" : "expired",
       userId: readString(record.userId),
+      email: readString(record.email),
+      displayName: readString(record.displayName),
+      hostRole: readString(record.hostRole),
       expiresAt: readString(record.expiresAt),
       error: null,
     };
@@ -220,6 +185,9 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
       ...baseSnapshot,
       status: isAbortError(error) ? "unavailable" : "error",
       userId: null,
+      email: null,
+      displayName: null,
+      hostRole: null,
       expiresAt: null,
       error: {
         status: null,
@@ -230,94 +198,26 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
   }
 }
 
-async function getModuleIdentitySnapshot(headersList: HeaderReader): Promise<ModuleIdentitySnapshot> {
+export async function getAppDirectorySnapshot(): Promise<AppDirectorySnapshot> {
   const config = getDemoConfig();
-  const token = headersList.get(identityHeaderName) ?? readCookie(headersList.get("cookie"), moduleIdentityCookieName);
-  const baseSnapshot = {
-    tokenPresent: Boolean(token),
-    headerName: "X-Docker-Host-Identity",
-    audience: config.host.moduleId,
-  };
-
-  if (!token) {
-    return {
-      ...baseSnapshot,
-      status: "not-present",
-      protectedHeader: null,
-      discovery: null,
-      claims: null,
-      error: null,
-    };
-  }
-
-  const protectedHeader = decodeIdentityHeader(token);
-  const discovery = await readModuleIdentityDiscovery(config.host.internalOrigin);
-  if (!discovery.ok) {
-    return {
-      ...baseSnapshot,
-      status: "not-configured",
-      protectedHeader,
-      discovery: null,
-      claims: null,
-      error: discovery.error,
-    };
-  }
-
-  try {
-    const verified = await jwtVerify(token, getRemoteJwks(discovery.value.jwksUri), {
-      issuer: discovery.value.issuer,
-      audience: config.host.moduleId,
-      algorithms: discovery.value.algorithms,
-    });
-
-    return {
-      ...baseSnapshot,
-      status: "verified",
-      protectedHeader,
-      discovery: {
-        issuer: discovery.value.issuer,
-        jwksUri: discovery.value.jwksUri,
-        tokenTtlSeconds: discovery.value.tokenTtlSeconds,
-      },
-      claims: normalizeIdentityClaims(verified.payload),
-      error: null,
-    };
-  } catch (error) {
-    return {
-      ...baseSnapshot,
-      status: "invalid",
-      protectedHeader,
-      discovery: {
-        issuer: discovery.value.issuer,
-        jwksUri: discovery.value.jwksUri,
-        tokenTtlSeconds: discovery.value.tokenTtlSeconds,
-      },
-      claims: null,
-      error: sanitizeError(error),
-    };
-  }
-}
-
-export async function getModuleDirectorySnapshot(): Promise<ModuleDirectorySnapshot> {
-  const config = getDemoConfig();
-  const endpoint = buildDirectoryEndpoint(config.host.internalOrigin, config.host.moduleId);
-  const serviceToken = process.env.DOCKER_HOST_MODULE_SERVICE_TOKEN;
+  const endpoint = buildAppDirectoryEndpoint(config.host.coreOrigin, config.host.appId);
+  const serviceToken = process.env.HOSTY_APP_SERVICE_TOKEN;
 
   if (!endpoint || !serviceToken) {
     return {
       status: "not-configured",
       endpoint,
-      internalOrigin: config.host.internalOrigin,
+      coreOrigin: config.host.coreOrigin,
       serviceTokenConfigured: Boolean(serviceToken),
       users: [],
       pagination: null,
       updatedAt: null,
       error: {
         status: null,
-        code: "module_directory_not_configured",
+        code: "app_directory_not_configured",
         message: endpoint
-          ? "DOCKER_HOST_MODULE_SERVICE_TOKEN is not configured."
-          : "DOCKER_HOST_INTERNAL_ORIGIN is not a valid URL.",
+          ? "HOSTY_APP_SERVICE_TOKEN is not configured."
+          : "HOSTY_CORE_ORIGIN is not a valid URL.",
       },
     };
   }
@@ -338,7 +238,7 @@ export async function getModuleDirectorySnapshot(): Promise<ModuleDirectorySnaps
       return {
         status: response.status === 403 ? "forbidden" : "error",
         endpoint,
-        internalOrigin: config.host.internalOrigin,
+        coreOrigin: config.host.coreOrigin,
         serviceTokenConfigured: true,
         users: [],
         pagination: null,
@@ -350,7 +250,7 @@ export async function getModuleDirectorySnapshot(): Promise<ModuleDirectorySnaps
     return {
       status: "ok",
       endpoint,
-      internalOrigin: config.host.internalOrigin,
+      coreOrigin: config.host.coreOrigin,
       serviceTokenConfigured: true,
       users: normalizeDirectoryUsers(payload),
       pagination: normalizePagination(payload),
@@ -361,14 +261,14 @@ export async function getModuleDirectorySnapshot(): Promise<ModuleDirectorySnaps
     return {
       status: "unavailable",
       endpoint,
-      internalOrigin: config.host.internalOrigin,
+      coreOrigin: config.host.coreOrigin,
       serviceTokenConfigured: true,
       users: [],
       pagination: null,
       updatedAt: null,
       error: {
         status: null,
-        code: "module_directory_unavailable",
+        code: "app_directory_unavailable",
         message: sanitizeError(error),
       },
     };
@@ -391,106 +291,31 @@ function getGatewayRequestSnapshot(headersList: HeaderReader): GatewayRequestSna
   };
 }
 
-async function readModuleIdentityDiscovery(internalOrigin: string) {
-  let discoveryUrl: URL;
-  try {
-    discoveryUrl = new URL(discoveryPath, internalOrigin);
-  } catch {
-    return {
-      ok: false as const,
-      error: "DOCKER_HOST_INTERNAL_ORIGIN is not a valid URL.",
-    };
+function readAppIdentityToken(headersList: HeaderReader): {
+  token: string | null;
+  source: AppIdentityTokenSource | null;
+} {
+  const cookieToken = readCookie(headersList.get("cookie"), appIdentityCookieName);
+  if (cookieToken) {
+    return { token: cookieToken, source: "cookie" };
   }
 
-  try {
-    const response = await fetch(discoveryUrl, {
-      cache: "no-store",
-      headers: {
-        Accept: "application/json",
-      },
-      signal: AbortSignal.timeout(identityTimeoutMs),
-    });
-    if (!response.ok) {
-      return {
-        ok: false as const,
-        error: `Module identity discovery returned HTTP ${response.status}.`,
-      };
-    }
-
-    const payload = await readJson(response) as ModuleIdentityDiscovery;
-    const jwksUri = typeof payload.jwks_uri === "string" ? payload.jwks_uri : null;
-    if (!jwksUri) {
-      return {
-        ok: false as const,
-        error: "Module identity discovery did not include jwks_uri.",
-      };
-    }
-
-    return {
-      ok: true as const,
-      value: {
-        issuer: typeof payload.issuer === "string" ? payload.issuer : defaultIssuer,
-        jwksUri,
-        algorithms: normalizeAlgorithms(payload.algorithms),
-        tokenTtlSeconds: typeof payload.token_ttl_seconds === "number" ? payload.token_ttl_seconds : null,
-      },
-    };
-  } catch (error) {
-    return {
-      ok: false as const,
-      error: sanitizeError(error),
-    };
-  }
-}
-
-function getRemoteJwks(jwksUri: string) {
-  const existing = remoteJwksCache.get(jwksUri);
-  if (existing) {
-    return existing;
+  const authorization = headersList.get("authorization");
+  if (authorization?.startsWith("Bearer ")) {
+    return { token: authorization.slice("Bearer ".length).trim(), source: "authorization-header" };
   }
 
-  const jwks = createRemoteJWKSet(new URL(jwksUri), {
-    timeoutDuration: identityTimeoutMs,
-  });
-  remoteJwksCache.set(jwksUri, jwks);
-  return jwks;
-}
-
-function decodeIdentityHeader(token: string): ModuleIdentitySnapshot["protectedHeader"] {
-  try {
-    const header = decodeProtectedHeader(token);
-    return {
-      alg: typeof header.alg === "string" ? header.alg : null,
-      kid: typeof header.kid === "string" ? header.kid : null,
-      typ: typeof header.typ === "string" ? header.typ : null,
-    };
-  } catch {
-    return null;
+  const identityHeader = headersList.get(identityHeaderName);
+  if (identityHeader) {
+    return { token: identityHeader, source: "identity-header" };
   }
+
+  return { token: null, source: null };
 }
 
-function normalizeIdentityClaims(payload: JWTPayload): NormalizedModuleIdentityClaims {
-  return {
-    subject: payload.sub || "",
-    issuer: payload.iss || "",
-    audience: Array.isArray(payload.aud) ? payload.aud.join(", ") : payload.aud || "",
-    expiresAt: secondsToIso(payload.exp),
-    issuedAt: secondsToIso(payload.iat),
-    jwtId: payload.jti || null,
-    email: readString(payload.email),
-    name: readString(payload.name),
-    hostRole: readString(payload.hostRole),
-    moduleAccess: readString(payload.moduleAccess),
-    moduleExposurePolicy: readString(payload.moduleExposurePolicy),
-    gatewayExposureId: readString(payload.gatewayExposureId),
-    hostname: readString(payload.hostname),
-    portKey: readString(payload.portKey),
-  };
-}
-
-function buildDirectoryEndpoint(internalOrigin: string, moduleId: string) {
+function buildAppDirectoryEndpoint(coreOrigin: string, appId: string) {
   try {
-    return new URL(`/api/internal/modules/${encodeURIComponent(moduleId)}/directory/users`, internalOrigin).toString();
+    return new URL(`/api/internal/apps/${encodeURIComponent(appId)}/directory/users`, coreOrigin).toString();
   } catch {
     return null;
   }
@@ -517,11 +342,11 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-function readApiError(payload: unknown, status: number): ModuleDirectorySnapshot["error"] {
+function readApiError(payload: unknown, status: number): AppDirectorySnapshot["error"] {
   if (!payload || typeof payload !== "object") {
     return {
       status,
-      code: "module_directory_error",
+      code: "app_directory_error",
       message: `App directory returned HTTP ${status}.`,
     };
   }
@@ -530,7 +355,7 @@ function readApiError(payload: unknown, status: number): ModuleDirectorySnapshot
   if (!error || typeof error !== "object") {
     return {
       status,
-      code: "module_directory_error",
+      code: "app_directory_error",
       message: `App directory returned HTTP ${status}.`,
     };
   }
@@ -538,12 +363,12 @@ function readApiError(payload: unknown, status: number): ModuleDirectorySnapshot
   const errorRecord = error as Record<string, unknown>;
   return {
     status,
-    code: readString(errorRecord.code) || "module_directory_error",
+    code: readString(errorRecord.code) || "app_directory_error",
     message: readString(errorRecord.message) || `App directory returned HTTP ${status}.`,
   };
 }
 
-function normalizeDirectoryUsers(payload: unknown): ModuleDirectoryUser[] {
+function normalizeDirectoryUsers(payload: unknown): AppDirectoryUser[] {
   if (!payload || typeof payload !== "object") {
     return [];
   }
@@ -573,10 +398,10 @@ function normalizeDirectoryUsers(payload: unknown): ModuleDirectoryUser[] {
         hostRole,
       };
     })
-    .filter((user): user is ModuleDirectoryUser => user !== null);
+    .filter((user): user is AppDirectoryUser => user !== null);
 }
 
-function normalizePagination(payload: unknown): ModuleDirectorySnapshot["pagination"] {
+function normalizePagination(payload: unknown): AppDirectorySnapshot["pagination"] {
   if (!payload || typeof payload !== "object") {
     return null;
   }
@@ -592,15 +417,6 @@ function normalizePagination(payload: unknown): ModuleDirectorySnapshot["paginat
     offset: readNumber(record.offset, 0),
     total: readNumber(record.total, 0),
   };
-}
-
-function normalizeAlgorithms(value: unknown) {
-  if (!Array.isArray(value)) {
-    return ["ES256"];
-  }
-
-  const algorithms = value.filter((algorithm): algorithm is string => typeof algorithm === "string");
-  return algorithms.length > 0 ? algorithms : ["ES256"];
 }
 
 function getHeaderNames(headersList: HeaderReader) {
@@ -620,12 +436,24 @@ function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function readBooleanField(value: unknown) {
-  return value === true;
-}
-
 function readNumber(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readBooleanField(value: unknown) {
+  return typeof value === "boolean" ? value : false;
+}
+
+function readCookie(cookieHeader: string | null, name: string) {
+  if (!cookieHeader) {
+    return null;
+  }
+
+  const cookie = cookieHeader
+    .split(";")
+    .map(part => part.trim())
+    .find(part => part.startsWith(`${name}=`));
+  return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : null;
 }
 
 function readErrorCode(payload: unknown) {
@@ -649,41 +477,10 @@ function readErrorField(payload: unknown, field: "code" | "message") {
   return readString((payload as Record<string, unknown>)[field]);
 }
 
-function readCookie(cookieHeader: string | null, name: string) {
-  if (!cookieHeader) {
-    return null;
-  }
-
-  for (const part of cookieHeader.split(";")) {
-    const [rawName, ...rawValue] = part.trim().split("=");
-    if (rawName === name) {
-      try {
-        return decodeURIComponent(rawValue.join("="));
-      } catch {
-        return null;
-      }
-    }
-  }
-
-  return null;
-}
-
-function secondsToIso(value: number | undefined) {
-  return typeof value === "number" ? new Date(value * 1000).toISOString() : null;
+function sanitizeError(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error.";
 }
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError");
-}
-
-function sanitizeError(error: unknown) {
-  if (error instanceof Error && error.name === "TimeoutError") {
-    return "Request timed out.";
-  }
-
-  if (error instanceof Error && error.name === "AbortError") {
-    return "Request was aborted.";
-  }
-
-  return error instanceof Error ? error.message : "Unknown error.";
 }

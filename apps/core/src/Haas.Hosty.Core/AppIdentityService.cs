@@ -79,8 +79,15 @@ internal sealed class AppIdentityService(
         CancellationToken cancellationToken = default)
     {
         var claims = await ValidateTokenAsync(token, cancellationToken);
-        _ = await RequireAccessibleUserAsync(claims.Audience, claims.Subject, cancellationToken);
-        return new AppSessionValidationResult(true, claims.Audience, claims.Subject, claims.ExpiresAt);
+        var user = await RequireAccessibleUserAsync(claims.Audience, claims.Subject, cancellationToken);
+        return new AppSessionValidationResult(
+            true,
+            claims.Audience,
+            user.Id,
+            user.Email,
+            user.DisplayName,
+            user.Role,
+            claims.ExpiresAt);
     }
 
     private async Task<AppIdentityTokenResult> CreateIdentityTokenAsync(
@@ -262,7 +269,14 @@ internal sealed record AppAuthorizeResult(string Code, string RedirectUri, DateT
 
 internal sealed record AppIdentityTokenResult(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, int ExpiresInSeconds);
 
-internal sealed record AppSessionValidationResult(bool Active, string AppId, string UserId, DateTimeOffset ExpiresAt);
+internal sealed record AppSessionValidationResult(
+    bool Active,
+    string AppId,
+    string UserId,
+    string? Email,
+    string? DisplayName,
+    string HostRole,
+    DateTimeOffset ExpiresAt);
 
 internal sealed class AppIdentityException(string code, string message) : Exception(message)
 {

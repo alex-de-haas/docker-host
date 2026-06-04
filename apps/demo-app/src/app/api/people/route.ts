@@ -1,23 +1,23 @@
 import { NextResponse } from "next/server";
-import { getModuleDirectorySnapshot } from "@/lib/host-auth";
+import { getAppDirectorySnapshot } from "@/lib/host-auth";
 import {
-  readDemoModuleRoleAssignments,
+  readDemoAppRoleAssignments,
   resolveDemoDirectoryUserRole,
-} from "@/lib/module-roles";
+} from "@/lib/app-roles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
   const [directory, assignments] = await Promise.all([
-    getModuleDirectorySnapshot(),
-    readDemoModuleRoleAssignments(),
+    getAppDirectorySnapshot(),
+    readDemoAppRoleAssignments(),
   ]);
 
   return NextResponse.json({
     people: directory.users.map(user => ({
       ...user,
-      moduleRole: resolveDemoDirectoryUserRole(user, assignments),
+      appRole: resolveDemoDirectoryUserRole(user, assignments),
     })),
     directory,
   }, {

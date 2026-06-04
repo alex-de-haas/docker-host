@@ -1,8 +1,6 @@
 using Haas.DockerHost.Cli;
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
-using Haas.DockerHost.Cli.Docker;
-using Haas.DockerHost.Cli.HostApi;
 using Spectre.Console;
 
 namespace Haas.DockerHost.Cli.Tests.Commands;
@@ -38,23 +36,19 @@ public sealed class UninstallCommandTests : IDisposable
         Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "apps"));
         Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "backups"));
         Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "sources"));
-        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "modules"));
         File.WriteAllText(Path.Combine(environment.BinDirectory, "hosty"), "binary");
         File.WriteAllText(Path.Combine(environment.RootDirectory, "apps.json"), "{}");
-        File.WriteAllText(Path.Combine(environment.RootDirectory, "modules.json"), "{}");
         File.WriteAllText(Path.Combine(environment.RootDirectory, "host-cache.txt"), "cache");
 
         var result = HostUninstallFileCleanup.Delete(environment, environment.RootDirectory);
 
         Assert.Contains(Path.Combine(environment.RootDirectory, "apps.json"), result.DeletedPaths);
-        Assert.Contains(Path.Combine(environment.RootDirectory, "modules.json"), result.DeletedPaths);
         Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "hosty")));
         Assert.False(Directory.Exists(environment.ConfigDirectory));
         Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "core")));
         Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "apps")));
         Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "backups")));
         Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "sources")));
-        Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "modules")));
         Assert.False(File.Exists(Path.Combine(environment.RootDirectory, "host-cache.txt")));
     }
 
@@ -69,10 +63,8 @@ public sealed class UninstallCommandTests : IDisposable
         Directory.CreateDirectory(Path.Combine(externalDataRoot, "apps"));
         Directory.CreateDirectory(Path.Combine(externalDataRoot, "backups"));
         Directory.CreateDirectory(Path.Combine(externalDataRoot, "sources"));
-        Directory.CreateDirectory(Path.Combine(externalDataRoot, "modules"));
         File.WriteAllText(Path.Combine(environment.BinDirectory, "hosty"), "binary");
         File.WriteAllText(Path.Combine(externalDataRoot, "apps.json"), "{}");
-        File.WriteAllText(Path.Combine(externalDataRoot, "modules.json"), "{}");
         File.WriteAllText(Path.Combine(externalDataRoot, "keep.txt"), "not owned by hosty");
 
         try
@@ -82,12 +74,10 @@ public sealed class UninstallCommandTests : IDisposable
             Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "hosty")));
             Assert.False(Directory.Exists(environment.ConfigDirectory));
             Assert.False(File.Exists(Path.Combine(externalDataRoot, "apps.json")));
-            Assert.False(File.Exists(Path.Combine(externalDataRoot, "modules.json")));
             Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "core")));
             Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "apps")));
             Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "backups")));
             Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "sources")));
-            Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "modules")));
             Assert.True(File.Exists(Path.Combine(externalDataRoot, "keep.txt")));
         }
         finally
@@ -129,9 +119,7 @@ public sealed class UninstallCommandTests : IDisposable
         => new(
             CreateConsole(),
             environment,
-            new LaunchSettingsStore(environment),
-            new DockerEngineClientFactory(),
-            new HostControlClientFactory());
+            new LaunchSettingsStore(environment));
 
     private static IAnsiConsole CreateConsole()
     {

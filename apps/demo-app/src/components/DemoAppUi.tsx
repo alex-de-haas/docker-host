@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { StorageInspection } from "@/lib/demo-config";
-import type { ModuleDirectoryUser } from "@/lib/host-auth";
+import type { AppDirectoryUser } from "@/lib/host-auth";
 
 export type DetailItem = {
   label: string;
@@ -204,7 +204,7 @@ export function StateBadge({
   );
 }
 
-export function PeopleList({ users }: { users: ModuleDirectoryUser[] }) {
+export function PeopleList({ users }: { users: AppDirectoryUser[] }) {
   return (
     <div className="grid gap-1">
       {users.map(user => (

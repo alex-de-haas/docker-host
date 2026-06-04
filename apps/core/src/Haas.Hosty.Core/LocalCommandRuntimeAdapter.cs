@@ -6,7 +6,8 @@ namespace Haas.Hosty.Core;
 
 internal sealed class LocalCommandRuntimeAdapter(
     HostyCoreRuntimeConfig config,
-    LocalCommandProcessRegistry registry) : IAppRuntimeAdapter
+    LocalCommandProcessRegistry registry,
+    AppServiceTokenService serviceTokens) : IAppRuntimeAdapter
 {
     public string Type => "localCommand";
 
@@ -194,6 +195,8 @@ internal sealed class LocalCommandRuntimeAdapter(
         {
             startInfo.Environment[environment.Key] = environment.Value;
         }
+
+        startInfo.Environment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
 
         foreach (var dependency in context.DependencyUrls)
         {

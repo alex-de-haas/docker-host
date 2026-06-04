@@ -22,7 +22,7 @@ flowchart LR
 - `apps/demo-app/src/app/roles/page.tsx` - app-owned role assignment test page.
 - `apps/demo-app/src/app/settings/page.tsx` - runtime configuration and storage inspection page.
 - `apps/demo-app/src/app/api/health/route.ts` - health and writable-storage probe.
-- `apps/demo-app/src/app/api/auth/identity/route.ts` - Host identity, request-header, app directory, and app-owned permission diagnostics.
+- `apps/demo-app/src/app/api/auth/identity/route.ts` - app identity, request-header, app directory, and app-owned permission diagnostics.
 
 ## Local Runtime Loop
 
@@ -69,7 +69,3 @@ hosty apps install apps/demo-app/manifest.json --runtime dev
 ```
 
 The removed Legacy Host fixture route at `http://localhost:3000/fixtures/apps/demo-app` is no longer available. Local Docker image testing should use `hosty-demo-app:dev` together with a manifest or channel entry that selects the local image and `pullPolicy: ifNotPresent`.
-
-## Compatibility Boundary
-
-Demo App is the only first-party repository runtime app workflow. Legacy schema `0.2` and `0.3` metadata remains supported for compatibility and migration scenarios, but there is no repository-local Demo Module package or image workflow. See [Legacy compatibility](legacy-compatibility.md).

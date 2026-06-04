@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDemoRoleManagementSnapshot } from "@/lib/module-role-management";
+import { getDemoRoleManagementSnapshot } from "@/lib/app-role-management";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

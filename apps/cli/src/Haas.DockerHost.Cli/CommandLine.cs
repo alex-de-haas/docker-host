@@ -2,8 +2,6 @@ namespace Haas.DockerHost.Cli;
 
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
-using Haas.DockerHost.Cli.Docker;
-using Haas.DockerHost.Cli.HostApi;
 using Spectre.Console;
 
 public static class CommandLine
@@ -27,9 +25,7 @@ public static class CommandLine
 
         var environment = DockerHostEnvironment.Current();
         var settingsStore = new LaunchSettingsStore(environment);
-        var dockerFactory = new DockerEngineClientFactory();
-        var controlFactory = new HostControlClientFactory();
-        var commandContext = new CommandContext(console, environment, settingsStore, dockerFactory, controlFactory);
+        var commandContext = new CommandContext(console, environment, settingsStore);
 
         try
         {
@@ -48,7 +44,6 @@ public static class CommandLine
                 "config" => await new ConfigCommand(commandContext).ExecuteAsync(args[1..]),
                 "apps" => await new AppsCommand(commandContext).ExecuteAsync(args[1..]),
                 "users" => await new UsersCommand(commandContext).ExecuteAsync(args[1..]),
-                "modules" => await new ModulesCommand(commandContext).ExecuteAsync(args[1..]),
                 "auth" => await new AuthCommand(commandContext).ExecuteAsync(args[1..]),
                 _ => UnknownCommand(console, args[0]),
             };
@@ -68,16 +63,6 @@ public static class CommandLine
             console.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
             return 2;
         }
-        catch (DockerEngineException ex)
-        {
-            WriteDockerError(console, ex);
-            return 1;
-        }
-        catch (HostApiException ex)
-        {
-            WriteHostApiError(console, ex);
-            return 1;
-        }
         catch (OperationCanceledException)
         {
             console.MarkupLine("[yellow]Operation cancelled.[/]");
@@ -92,48 +77,6 @@ public static class CommandLine
         console.MarkupLine($"[red]Unknown command:[/] {Markup.Escape(command)}");
         WriteHelp(console);
         return 2;
-    }
-
-    private static void WriteDockerError(IAnsiConsole console, DockerEngineException ex)
-    {
-        console.MarkupLine($"[red]Docker operation failed:[/] {Markup.Escape(ex.Operation)}");
-        console.MarkupLine($"[grey]Error:[/] {Markup.Escape(ex.Message)}");
-
-        if (ex.StatusCode is not null)
-        {
-            console.MarkupLine($"[grey]HTTP status:[/] {(int)ex.StatusCode} {ex.StatusCode}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(ex.DockerMessage))
-        {
-            console.MarkupLine($"[grey]Docker message:[/] {Markup.Escape(ex.DockerMessage)}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(ex.NextStep))
-        {
-            console.MarkupLine($"[grey]Next step:[/] {Markup.Escape(ex.NextStep)}");
-        }
-    }
-
-    private static void WriteHostApiError(IAnsiConsole console, HostApiException ex)
-    {
-        console.MarkupLine($"[red]Host API operation failed:[/] {Markup.Escape(ex.Operation)}");
-        console.MarkupLine($"[grey]Error:[/] {Markup.Escape(ex.Message)}");
-
-        if (ex.StatusCode is not null)
-        {
-            console.MarkupLine($"[grey]HTTP status:[/] {(int)ex.StatusCode} {ex.StatusCode}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(ex.ResponseBody))
-        {
-            console.MarkupLine($"[grey]Response:[/] {Markup.Escape(ex.ResponseBody)}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(ex.NextStep))
-        {
-            console.MarkupLine($"[grey]Next step:[/] {Markup.Escape(ex.NextStep)}");
-        }
     }
 
     private static void WriteHelp(IAnsiConsole console)
@@ -161,12 +104,10 @@ public static class CommandLine
           config
           apps
           users
-          modules
           auth
 
         Compatibility:
           docker-host remains a deprecated command alias during migration.
-          modules remains the deprecated legacy module workflow.
 
         Run hosty config --help for configuration commands.
         Run hosty core --help for local Core process commands.

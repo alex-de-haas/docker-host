@@ -1,11 +1,11 @@
 import { access, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export const moduleStartedAt = new Date().toISOString();
+export const appStartedAt = new Date().toISOString();
 
 export interface DemoConfig {
-  moduleId: string;
-  moduleVersion: string;
+  appId: string;
+  appVersion: string;
   greeting: string;
   releaseChannel: string;
   refreshSeconds: number;
@@ -13,10 +13,8 @@ export interface DemoConfig {
   publicUrl: string;
   host: {
     coreOrigin: string;
-    internalOrigin: string;
     appId: string;
-    moduleId: string;
-    moduleServiceTokenConfigured: boolean;
+    appServiceTokenConfigured: boolean;
   };
   paths: {
     data: string;
@@ -35,16 +33,16 @@ export interface StorageInspection {
   error: string | null;
 }
 
-const defaultModuleId = "com.haas.demo-app";
-const defaultModuleVersion = "0.2.1";
+const defaultAppId = "com.haas.demo-app";
+const defaultAppVersion = "0.2.1";
 
 export function getDemoConfig(): DemoConfig {
-  const moduleId = process.env.DOCKER_HOST_MODULE_ID || process.env.MODULE_ID || defaultModuleId;
+  const appId = process.env.HOSTY_APP_ID || defaultAppId;
   const coreOrigin = process.env.HOSTY_CORE_ORIGIN || process.env.HOST_CORE_PUBLIC_ORIGIN || "http://127.0.0.1:3001";
 
   return {
-    moduleId,
-    moduleVersion: process.env.MODULE_VERSION || defaultModuleVersion,
+    appId,
+    appVersion: process.env.HOSTY_APP_VERSION || process.env.APP_VERSION || defaultAppVersion,
     greeting: process.env.DEMO_GREETING || "Hello from Hosty",
     releaseChannel: process.env.DEMO_RELEASE_CHANNEL || "local",
     refreshSeconds: readNumber(process.env.DEMO_REFRESH_SECONDS, 30),
@@ -52,10 +50,8 @@ export function getDemoConfig(): DemoConfig {
     publicUrl: process.env.DEMO_PUBLIC_URL || "http://localhost:3100",
     host: {
       coreOrigin,
-      internalOrigin: process.env.DOCKER_HOST_INTERNAL_ORIGIN || "http://docker-host:3000",
-      appId: process.env.HOSTY_APP_ID || moduleId,
-      moduleId,
-      moduleServiceTokenConfigured: Boolean(process.env.DOCKER_HOST_MODULE_SERVICE_TOKEN),
+      appId,
+      appServiceTokenConfigured: Boolean(process.env.HOSTY_APP_SERVICE_TOKEN),
     },
     paths: {
       data: process.env.DEMO_DATA_DIR || defaultRuntimePath("data"),

@@ -8,10 +8,10 @@ import {
   MetricCard,
   SectionCard,
   StateBadge,
-} from "@/components/DemoModuleUi";
-import { ModuleRoleManager } from "@/components/ModuleRoleManager";
+} from "@/components/DemoAppUi";
+import { AppRoleManager } from "@/components/AppRoleManager";
 import { getDemoConfig } from "@/lib/demo-config";
-import { getDemoRoleManagementSnapshot } from "@/lib/module-role-management";
+import { getDemoRoleManagementSnapshot } from "@/lib/app-role-management";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,7 @@ export default async function RolesPage() {
   return (
     <DemoShell>
       <DemoPageHeader
-        eyebrow={config.moduleId}
+        eyebrow={config.appId}
         title="App Roles"
         description="App-owned role assignments persisted in the demo app data directory."
         actions={<JsonButton href="/api/roles" />}
@@ -41,7 +41,7 @@ export default async function RolesPage() {
             icon={ShieldCheck}
             label="Stored roles"
             value={snapshot.assignments.length}
-            description="Explicit app assignments in module-roles.json."
+            description="Explicit app assignments in app-roles.json."
           />
         </div>
 
@@ -53,7 +53,7 @@ export default async function RolesPage() {
             </StateBadge>
           }
         >
-          <ModuleRoleManager initialSnapshot={snapshot} />
+          <AppRoleManager initialSnapshot={snapshot} />
         </SectionCard>
       </section>
     </DemoShell>

@@ -34,7 +34,6 @@ internal sealed class UserManagementService(
                 .Select(invitation => SummarizeInvitation(invitation, now))
                 .ToArray(),
             Apps: appSummaries,
-            Modules: appSummaries,
             InviteTtlOptions:
             [
                 new InviteTtlOption("15 minutes", InviteMinTtlMs),
@@ -79,7 +78,7 @@ internal sealed class UserManagementService(
             ExpiresAt: now.AddMilliseconds(ttl),
             CreatedAt: now,
             DisplayName: NormalizeOptional(request.DisplayName),
-            AssignedAppIds: role == "host.admin" ? [] : NormalizeIds(request.AssignedModuleIds ?? request.AssignedAppIds ?? []),
+            AssignedAppIds: role == "host.admin" ? [] : NormalizeIds(request.AssignedAppIds ?? []),
             TokenHash: HashToken(token),
             CreatedByUserId: actor.Id);
 
@@ -287,7 +286,7 @@ internal sealed class UserManagementService(
         var state = await users.ReadAsync(cancellationToken);
         var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal) && !candidate.Disabled) ??
             throw new UserManagementException("user_not_found", "The Host user is disabled or does not exist.", StatusCodes.Status404NotFound);
-        var assignedAppIds = user.Role == "host.admin" ? [] : NormalizeIds(request.AssignedModuleIds ?? request.AssignedAppIds ?? []);
+        var assignedAppIds = user.Role == "host.admin" ? [] : NormalizeIds(request.AssignedAppIds ?? []);
         var assignments = state.Assignments
             .Where(assignment => !string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal))
             .Concat(assignedAppIds.Select(appId => new AppAssignmentRecord(appId, user.Id, now)))
@@ -453,7 +452,6 @@ internal sealed record UserManagementStateResponse(
     IReadOnlyList<UserManagementHostUserSummary> Users,
     IReadOnlyList<UserInvitationSummary> Invitations,
     IReadOnlyList<AssignableAppSummary> Apps,
-    IReadOnlyList<AssignableAppSummary> Modules,
     IReadOnlyList<InviteTtlOption> InviteTtlOptions);
 
 internal sealed record UserManagementHostUserSummary(
@@ -466,7 +464,7 @@ internal sealed record UserManagementHostUserSummary(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     int ActiveSessionCount,
-    IReadOnlyList<string> AssignedModuleIds,
+    IReadOnlyList<string> AssignedAppIds,
     DateTimeOffset? LastSeenAt);
 
 internal sealed record UserInvitationSummary(
@@ -474,7 +472,7 @@ internal sealed record UserInvitationSummary(
     string Email,
     string? DisplayName,
     string Role,
-    IReadOnlyList<string> AssignedModuleIds,
+    IReadOnlyList<string> AssignedAppIds,
     string? CreatedByUserId,
     DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt,
@@ -491,7 +489,6 @@ internal sealed record UserInvitationCreateRequest(
     string? DisplayName = null,
     string Role = "host.user",
     long? TtlMs = null,
-    IReadOnlyList<string>? AssignedModuleIds = null,
     IReadOnlyList<string>? AssignedAppIds = null);
 
 internal sealed record UserInvitationCreateResponse(UserInvitationSummary Invitation, string Token, string SetupUrl);
@@ -500,7 +497,7 @@ internal sealed record UserInvitationPreview(
     string Email,
     string? DisplayName,
     string Role,
-    IReadOnlyList<string> AssignedModuleIds,
+    IReadOnlyList<string> AssignedAppIds,
     DateTimeOffset ExpiresAt);
 
 internal sealed record UserInvitationAcceptRequest(string SetupToken, string? DisplayName = null, string? Password = null);
@@ -516,7 +513,6 @@ internal sealed record HostUserUpdateResponse(UserManagementHostUserSummary User
 internal sealed record HostUserDisableResponse(UserManagementHostUserSummary User, bool Disabled);
 
 internal sealed record HostUserAssignmentsRequest(
-    IReadOnlyList<string>? AssignedModuleIds = null,
     IReadOnlyList<string>? AssignedAppIds = null);
 
 internal sealed record HostUserAssignmentsResponse(IReadOnlyList<AppAssignmentRecord> Assignments);

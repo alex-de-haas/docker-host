@@ -1,6 +1,6 @@
 # Web UI Dashboard
 
-The Hosty Web UI is the Core-managed Shell runtime app. The dashboard is a lightweight overview surface; app lifecycle, updates, backups, configuration, and removal now live in the Shell Installed Apps view instead of the retired Legacy Host `/modules` routes.
+The Hosty Web UI is the Core-managed Shell runtime app. The dashboard is a lightweight overview surface; app lifecycle, updates, backups, configuration, and removal live in the Shell Installed Apps view.
 
 ## Scope
 
@@ -14,7 +14,7 @@ The dashboard shows aggregate runtime app counts, running state, attention indic
 
 ## Installed Apps Management
 
-The Installed Apps view is the implemented management surface for runtime apps. It uses Core app APIs, not the old module API routes:
+The Installed Apps view is the implemented management surface for runtime apps. It uses Core app APIs:
 
 - `POST /api/apps/install/plan`
 - `POST /api/apps/install`
@@ -53,7 +53,7 @@ flowchart TD
 
 The empty state is shown when Core has no non-system runtime apps. The primary way to leave the empty state is the Installed Apps install dialog.
 
-Failed apps remain visible with their last operation and error so administrators can choose the correct recovery path. Shell does not duplicate old Legacy Host recovery routes; it delegates retry, update, backup, and remove behavior to Core app endpoints.
+Failed apps remain visible with their last operation and error so administrators can choose the correct recovery path. Shell delegates retry, update, backup, and remove behavior to Core app endpoints.
 
 ## Gateway Boundary
 

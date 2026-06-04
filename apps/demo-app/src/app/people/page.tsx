@@ -9,21 +9,21 @@ import {
   SectionCard,
   StateBadge,
   type StateTone,
-} from "@/components/DemoModuleUi";
+} from "@/components/DemoAppUi";
 import { getDemoConfig } from "@/lib/demo-config";
-import { getModuleDirectorySnapshot, type ModuleDirectoryStatus } from "@/lib/host-auth";
+import { getAppDirectorySnapshot, type AppDirectoryStatus } from "@/lib/host-auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function PeoplePage() {
   const config = getDemoConfig();
-  const directory = await getModuleDirectorySnapshot();
+  const directory = await getAppDirectorySnapshot();
   const userCount = directory.pagination?.total ?? directory.users.length;
 
   return (
     <DemoShell>
       <DemoPageHeader
-        eyebrow={config.moduleId}
+        eyebrow={config.appId}
         title="People"
         description="Host users explicitly assigned to this app through Docker Host access management."
         actions={<JsonButton href="/api/people" />}
@@ -60,7 +60,7 @@ export default async function PeoplePage() {
   );
 }
 
-function formatDirectoryStatus(status: ModuleDirectoryStatus) {
+function formatDirectoryStatus(status: AppDirectoryStatus) {
   switch (status) {
     case "ok":
       return "Ready";
@@ -75,7 +75,7 @@ function formatDirectoryStatus(status: ModuleDirectoryStatus) {
   }
 }
 
-function directoryStateTone(status: ModuleDirectoryStatus): StateTone {
+function directoryStateTone(status: AppDirectoryStatus): StateTone {
   if (status === "ok") {
     return "success";
   }

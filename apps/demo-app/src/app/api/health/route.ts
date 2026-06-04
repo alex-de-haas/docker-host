@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDemoConfig, inspectStorage, moduleStartedAt } from "@/lib/demo-config";
+import { getDemoConfig, inspectStorage, appStartedAt } from "@/lib/demo-config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,11 +15,11 @@ export async function GET() {
     {
       status: requiredStorageReady ? "ok" : "degraded",
       checkedAt: new Date().toISOString(),
-      startedAt: moduleStartedAt,
+      startedAt: appStartedAt,
       uptimeSeconds: Math.round(process.uptime()),
-      module: {
-        id: config.moduleId,
-        version: config.moduleVersion,
+      app: {
+        id: config.appId,
+        version: config.appVersion,
         releaseChannel: config.releaseChannel,
       },
       checks: {

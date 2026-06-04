@@ -1,7 +1,5 @@
 namespace Haas.DockerHost.Cli.Configuration;
 
-using System.Globalization;
-
 internal sealed class LaunchSettings
 {
     private readonly Dictionary<string, string> values;
@@ -15,11 +13,7 @@ internal sealed class LaunchSettings
 
     public string this[string key] => values[key];
 
-    public string HostContainerName => this[LaunchSettingDefinitions.HostContainerName];
-
     public string HostDataRootHostRaw => this[LaunchSettingDefinitions.HostDataRootHost];
-
-    public string HostUiPort => this[LaunchSettingDefinitions.HostUiPort];
 
     public string HostPublicOrigin => this[LaunchSettingDefinitions.HostPublicOrigin];
 
@@ -27,20 +21,8 @@ internal sealed class LaunchSettings
 
     public string HostShellPublicOrigin => this[LaunchSettingDefinitions.HostShellPublicOrigin];
 
-    public string HostDockerEndpoint => this[LaunchSettingDefinitions.HostDockerEndpoint];
-
     public string ResolveHostDataRoot(DockerHostEnvironment environment)
         => environment.ResolvePath(HostDataRootHostRaw);
-
-    public int? GetFixedHostPort()
-    {
-        if (string.Equals(HostUiPort, "auto", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        return int.Parse(HostUiPort, CultureInfo.InvariantCulture);
-    }
 
     public void Validate(DockerHostEnvironment environment)
     {

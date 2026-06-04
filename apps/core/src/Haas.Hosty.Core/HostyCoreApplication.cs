@@ -18,6 +18,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton(config);
         builder.Services.AddSingleton(sp => CoreDataPaths.FromConfig(sp.GetRequiredService<HostyCoreRuntimeConfig>()));
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
+        builder.Services.AddSingleton<AppServiceTokenService>();
         builder.Services.AddSingleton<AppRegistryStore>();
         builder.Services.AddSingleton<UserDirectoryStore>();
         builder.Services.AddSingleton<AuthBootstrapTokenStore>();
@@ -151,6 +152,7 @@ internal static class HostyCoreApplication
         LifecycleEndpoints.Map(app);
         SourceEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
+        AppDirectoryEndpoints.Map(app);
     }
 
     internal static IResult RequireControlSecret(HttpRequest request, ControlSecret secret, Func<IResult> action)

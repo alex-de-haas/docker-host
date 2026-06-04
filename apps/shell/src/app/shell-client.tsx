@@ -285,7 +285,7 @@ type HostUserSummary = {
   createdAt: string;
   updatedAt: string;
   activeSessionCount: number;
-  assignedModuleIds: string[];
+  assignedAppIds: string[];
   lastSeenAt?: string | null;
 };
 
@@ -294,7 +294,7 @@ type UserInvitationSummary = {
   email: string;
   displayName?: string | null;
   role: "host.admin" | "host.user";
-  assignedModuleIds: string[];
+  assignedAppIds: string[];
   createdByUserId?: string | null;
   createdAt: string;
   expiresAt: string;
@@ -319,7 +319,6 @@ type UserManagementResponse = {
   users: HostUserSummary[];
   invitations: UserInvitationSummary[];
   apps?: AssignableAppSummary[];
-  modules?: AssignableAppSummary[];
   inviteTtlOptions: InviteTtlOption[];
 };
 
@@ -2179,7 +2178,7 @@ function UserManagementPanel({
       const payload = (await response.json()) as UserManagementResponse;
       setUsers(payload.users || []);
       setInvitations(payload.invitations || []);
-      setApps(payload.apps || payload.modules || []);
+      setApps(payload.apps || []);
       if (payload.inviteTtlOptions?.length) {
         setTtlOptions(payload.inviteTtlOptions);
         setInviteTtlMs(payload.inviteTtlOptions[1]?.ttlMs ?? payload.inviteTtlOptions[0].ttlMs);
@@ -2267,7 +2266,7 @@ function UserManagementPanel({
 
   function openAccessEditor(user: HostUserSummary) {
     setAccessUserId(user.id);
-    setAccessAppIds(user.assignedModuleIds);
+    setAccessAppIds(user.assignedAppIds);
   }
 
   function saveAccess() {
@@ -2347,7 +2346,7 @@ function UserManagementPanel({
                   </TableCell>
                   <TableCell><RoleBadge role={user.role} disabled={user.disabled} /></TableCell>
                   <TableCell>{user.authProvider || "Local"}</TableCell>
-                  <TableCell>{user.role === "host.admin" ? "All apps" : `${user.assignedModuleIds.length} apps`}</TableCell>
+                  <TableCell>{user.role === "host.admin" ? "All apps" : `${user.assignedAppIds.length} apps`}</TableCell>
                   <TableCell>{user.activeSessionCount}</TableCell>
                   <TableCell>{formatDateTime(user.lastSeenAt)}</TableCell>
                   <TableCell className="text-right">
@@ -2390,7 +2389,7 @@ function UserManagementPanel({
                 <TableRow key={invitation.id}>
                   <TableCell>{invitation.email}</TableCell>
                   <TableCell><RoleBadge role={invitation.role} /></TableCell>
-                  <TableCell>{invitation.role === "host.admin" ? "All apps" : `${invitation.assignedModuleIds.length} apps`}</TableCell>
+                  <TableCell>{invitation.role === "host.admin" ? "All apps" : `${invitation.assignedAppIds.length} apps`}</TableCell>
                   <TableCell>{new Date(invitation.expiresAt).toLocaleString()}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="outline" size="sm" onClick={() => revokeInvite(invitation)} disabled={pendingAction === `invite:${invitation.id}`}>

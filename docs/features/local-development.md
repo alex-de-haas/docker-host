@@ -83,7 +83,7 @@ The `dev` runtime profile in `apps/demo-app/manifest.json` starts local command 
 - frontend on `http://localhost:3100`;
 - backend on `http://localhost:3101`.
 
-When Shell opens the Demo App, Core issues a one-time app authorization code. The Demo App exchanges that code through `HOSTY_CORE_ORIGIN`, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`. This is the preferred Hosty-aware app identity path. The older gateway/iframe identity diagnostics remain in the Demo App for compatibility checks.
+When Shell opens the Demo App, Core issues a one-time app authorization code. The Demo App exchanges that code through `HOSTY_CORE_ORIGIN`, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`.
 
 Use normal app lifecycle commands while iterating:
 

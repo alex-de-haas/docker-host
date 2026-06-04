@@ -15,7 +15,7 @@ public sealed class UserManagementServiceTests
             Email: "user@example.test",
             DisplayName: "User",
             Role: "host.user",
-            AssignedModuleIds: ["com.example.notes"]), actor);
+            AssignedAppIds: ["com.example.notes"]), actor);
         var state = await fixture.Users.ReadAsync();
         var invitation = Assert.Single(state.Invitations);
 
@@ -84,7 +84,7 @@ public sealed class UserManagementServiceTests
             []));
 
         _ = await fixture.Service.ReplaceAssignmentsAsync(user.Id, new HostUserAssignmentsRequest(
-            AssignedModuleIds: ["com.example.notes"]), actor);
+            AssignedAppIds: ["com.example.notes"]), actor);
         var state = await fixture.Users.ReadAsync();
 
         Assert.Contains(state.Assignments, assignment => assignment.AppId == "com.example.notes" && assignment.UserId == user.Id);

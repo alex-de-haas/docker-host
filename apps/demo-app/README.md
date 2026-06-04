@@ -1,116 +1,51 @@
 # Hosty Demo App
 
-Demo App is a small Next.js runtime app used to validate Hosty app operations:
+The Demo App is the repository-local Hosty runtime app used to validate app lifecycle, local command runtime profiles, app auth, scoped app directory access, app-owned roles, storage probes, and health endpoints.
 
-- install and remove through `manifest.json`;
-- start, stop, restart, and update lifecycle actions;
-- two-service frontend/backend manifest shape with startup dependency and internal endpoint wiring;
-- setting injection through environment variables;
-- app-owned storage mounts under `/app/data` and `/app/logs`;
-- optional external mount collections under `/mnt/sources/{key}`;
-- Hosty app launch-code exchange and app-local session revalidation;
-- optional Hosty Shell theme handoff with standalone system-theme fallback;
-- Host gateway identity token propagation and validation;
-- provider-neutral external ingress readiness checks;
-- shell app discovery metadata with stable overview, people, roles, and settings routes;
-- scoped app directory access through the app service token;
-- assigned Host user rendering from the scoped app directory;
-- app-owned role assignment and permission mapping from Host identity claims;
-- health-check and inspection endpoints for Host features.
-
-The app UI uses the same Tailwind v4, shadcn `new-york` primitives, semantic theme tokens, and lucide icon library as the Host app. This keeps the standalone demo routes and embedded Shell surface visually consistent.
-
-## Manifest
-
-The app manifest lives at:
-
-```text
-apps/demo-app/manifest.json
-```
-
-The manifest declares two services:
-
-- `backend` exposes the non-public `api` endpoint;
-- `frontend` depends on `backend`, exposes the public `http` endpoint, and receives `DEMO_BACKEND_BASE_URL` from the `api` endpoint connection.
-
-Both services currently use the same GitHub Container Registry image reference:
-
-```text
-ghcr.io/alex-de-haas/demo-app:latest
-```
-
-Hosty pulls it on install and update because the manifest uses `pullPolicy: always`.
-
-## Build The App Image
-
-From the repository root:
+## Local Core-Managed Run
 
 ```bash
-npm run demo-app:docker:build
+hosty core start
+hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps start com.haas.demo-app
+hosty apps open com.haas.demo-app --user user@docker-host.local
 ```
 
-Then install the app in Hosty:
+If Core is already running from another terminal or debugger, run the `hosty apps ...` commands against that process.
+
+## Runtime Environment
+
+Core injects:
+
+- `HOSTY_APP_ID`
+- `HOSTY_APP_SERVICE_KEY`
+- `HOSTY_APP_SERVICE_TOKEN`
+- `HOSTY_CORE_ORIGIN`
+- `HOSTY_APP_DATA_DIR`
+- `HOSTY_PORT_HTTP`
+
+The app also reads demo settings from the manifest:
+
+- `DEMO_GREETING`
+- `DEMO_RELEASE_CHANNEL`
+- `DEMO_REFRESH_SECONDS`
+- `DEMO_AUTH_PREVIEW`
+- `DEMO_PUBLIC_URL`
+
+## API Routes
+
+- `/api/health` - storage write probe and runtime health.
+- `/api/config` - sanitized runtime configuration and storage paths.
+- `/api/auth/app-code` - app authorization code exchange.
+- `/api/auth/identity` - app identity and scoped directory diagnostics.
+- `/api/people` - assigned Host users from the scoped app directory.
+- `/api/roles` - app-owned role catalog and assignments.
+
+## Direct Identity Probe
 
 ```bash
-hosty apps install apps/demo-app/manifest.json
+TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
+curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
 ```
 
-## Local App Development
-
-Run the frontend-compatible app process without Docker:
-
-```bash
-npm run demo-app:dev
-```
-
-The development server listens on `http://localhost:3100`.
-
-Useful endpoints:
-
-- `/` - demo dashboard;
-- `/people` - stable people page for shell app navigation;
-- `/roles` - app-owned role assignment page;
-- `/settings` - stable runtime settings page for shell app navigation;
-- `/api/health` - health and storage probe;
-- `/api/config` - sanitized runtime config;
-- `/api/people` - assigned Host users from the scoped app directory;
-- `/api/roles` - assigned Host users with effective app roles;
-- `/api/auth/app-code` - app-owned exchange endpoint for one-time Hosty app authorization codes;
-- `/api/auth/identity` - Host identity, gateway header, app directory, and app-owned permission diagnostics.
-
-## Hosty App Session Testing
-
-When Shell opens the app through Core, Core returns an app redirect URI with a short-lived `code` query parameter. The Demo App client removes that code from the URL, posts it to `/api/auth/app-code`, and stores the returned app-scoped identity token in an HttpOnly app-origin cookie. The cookie uses `SameSite=None; Secure` so the app session is sent when the app is embedded by Shell from a different local origin such as `localhost` to `app.localhost`. `/api/auth/identity` revalidates that app session against `HOSTY_CORE_ORIGIN` and reports the app id, Host user id, expiry, and any Core error without exposing the raw token.
-
-The app reads:
-
-- `HOSTY_APP_ID` as the installed app id;
-- `HOSTY_CORE_ORIGIN` as the Core origin for token exchange and revalidation.
-
-## Theme Handoff
-
-When Shell opens the app, it may pass `hosty_theme=light|dark` and `hosty_theme_preference=light|dark|system` on the launch URL and then keep the iframe synchronized with `postMessage` messages of type `hosty:shell-theme`.
-
-The app treats this as optional context. Standalone launches work without Shell by using the URL theme when present, the current tab session theme when available, and otherwise `prefers-color-scheme`.
-
-## Auth Gateway Testing
-
-When the app is installed by Hosty, each service container receives:
-
-- `DOCKER_HOST_INTERNAL_ORIGIN` for Host discovery and internal APIs;
-- `DOCKER_HOST_MODULE_ID` as the expected JWT audience;
-- `DOCKER_HOST_MODULE_SERVICE_TOKEN` for the scoped app directory API.
-
-Requests routed through a Host gateway exposure may include `X-Docker-Host-Identity`. The demo app validates that ES256 JWT against Host discovery and JWKS endpoints, shows the normalized claims on the dashboard, and exposes the same sanitized data through `/api/auth/identity`. The endpoint never returns raw bearer tokens, service tokens, session cookies, or raw identity JWTs.
-
-## Future External Ingress Readiness Testing
-
-The demo app is suitable as the first manual external ingress readiness target because its `frontend` service manifest declares a public HTTP endpoint and a health endpoint:
-
-```text
-endpoints[].key = http
-endpoints[].service = frontend
-services[].healthCheck.path = /api/health
-```
-
-The retired Legacy Host external ingress readiness panel is no longer available in the current Core/Shell split. When gateway and ingress readiness return as Core-backed features, use the Demo App `http` endpoint as the first validation target. Once an external route is configured, use the demo dashboard and `/api/auth/identity` to verify that Hosty identity headers, forwarded request headers, and app directory access still behave the same through the external hostname.
+The endpoint revalidates the app identity token through Core and never returns raw tokens or cookies.
