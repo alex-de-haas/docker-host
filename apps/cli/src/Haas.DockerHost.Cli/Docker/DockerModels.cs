@@ -16,9 +16,6 @@ internal sealed record DockerContainerInspect(
     [property: JsonPropertyName("State")] DockerContainerState? State,
     [property: JsonPropertyName("NetworkSettings")] DockerNetworkSettings? NetworkSettings);
 
-internal sealed record DockerImageInspect(
-    [property: JsonPropertyName("Id")] string? Id);
-
 internal sealed record DockerContainerConfig(
     [property: JsonPropertyName("Image")] string? Image,
     [property: JsonPropertyName("Env")] string[]? Env);

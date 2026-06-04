@@ -24,7 +24,7 @@ flowchart LR
 - Reuse the same Host module-management logic as the Web UI.
 - Keep CLI output readable for administrators and useful in CI logs.
 - Support interactive review for install and update plans.
-- Keep direct Docker Engine access limited to Host container lifecycle and Host URL discovery.
+- Keep direct Docker Engine access limited to legacy Host URL discovery while this compatibility command exists.
 - Keep the command surface interactive and human-readable.
 
 ## Non-goals
@@ -33,7 +33,7 @@ flowchart LR
 - CLI must not directly create module containers, volumes, networks, directories, or `modules.json` records.
 - CLI must not bypass reviewed digest semantics for install or update.
 - CLI must not expose raw secret values in normal output, errors, diagnostics, or JSON previews.
-- CLI module commands do not replace Host recovery commands for the Host container itself.
+- CLI module commands do not replace current `hosty apps` workflows or Core lifecycle commands.
 - Remote Host management, authentication setup, TLS, SSH, and multi-user authorization are not part of CLI module commands.
 - CLI bearer tokens and Host user sessions are not part of module command authentication.
 
@@ -97,8 +97,8 @@ hosty apps add <manifest-url>
 Every module command should:
 
 1. Load `launch.env` through the existing launch settings store.
-2. Inspect the Host container through Docker Engine only to resolve the local Host URL, using the same model as `hosty open`.
-3. Exit with a clear message if the Host container is missing or stopped, suggesting `hosty start`.
+2. Inspect the legacy Host container through Docker Engine only to resolve the local legacy Host URL.
+3. Exit with a clear message if the legacy Host container is missing or stopped, suggesting `hosty apps` for current runtime app workflows.
 4. Read `<HOST_DATA_ROOT_HOST>/run/control.json` and use `/control/v1` for module operations.
 5. Preserve Host API error boundaries and diagnostics.
 
@@ -372,7 +372,7 @@ CLI module commands use interactive human-readable output. Automation flags, JSO
 
 - `install` is the canonical command. `add` is supported as an alias.
 - `apps` is the preferred command group. `modules` remains a compatibility alias for legacy scripts.
-- App commands do not auto-start the Host container. If Host is stopped, CLI prints `hosty start` as the next step.
+- App commands do not auto-start Core. If Core is stopped, CLI prints `hosty start` as the next step.
 - Install, update, and remove call `GET /control/v1/host/status` before requesting a plan.
 - Module commands are interactive-first.
 - Interactive install and update always ask for final confirmation before apply.
@@ -396,7 +396,7 @@ CLI should preserve the Host API error boundary:
 
 When an API response includes `validationErrors[]`, `conflicts[]`, or `ModuleOperationError`, CLI should print them as structured terminal tables. It should not collapse backend diagnostics into a single generic error string.
 
-If the Host URL cannot be resolved from the container, CLI should suggest `hosty status` and `hosty start`.
+If the legacy Host URL cannot be resolved from the container, CLI should suggest migrating to `hosty apps` unless the user is intentionally operating an old compatibility install.
 
 ## Trusted Control Compatibility
 
@@ -406,11 +406,11 @@ CLI module commands should send:
 - expected control contract version;
 - the per-start local control secret read from `<HOST_DATA_ROOT_HOST>/run/control.json`.
 
-The Host should return a clear incompatibility error when the running Host image does not support the requested CLI module command contract. This is especially important because CLI artifacts and Host images are released independently.
+The Host should return a clear incompatibility error when the running legacy Host API does not support the requested CLI module command contract.
 
 ## Implementation notes
 
-The CLI implementation has a Host control client layer separate from the Docker Engine adapter. The Docker adapter remains only for Host container lifecycle and Host URL discovery.
+The CLI implementation has a Host control client layer separate from the Docker Engine adapter. The Docker adapter remains only for legacy Host URL discovery.
 
 Suggested CLI namespaces:
 

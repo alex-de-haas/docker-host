@@ -122,7 +122,7 @@ Implemented so far:
 - Hosty Shell exists as `apps/shell`, a Core-managed `hosty.shell` runtime app with a Docker runtime profile.
 - Core bootstraps the Shell manifest as a system runtime app and autostarts Shell when configured.
 - Shell UI hides self-stop, self-restart, and self-remove controls for the active `hosty.shell` instance while CLI and Core control APIs keep those operations available.
-- The legacy `apps/host` Next implementation remains only as a migration compatibility surface.
+- The legacy `apps/host` Next implementation has been removed; compatibility now means explicit legacy metadata/module-store boundaries, not a repository-local Host package.
 
 ### Phase 4 - Add source state and local source overrides
 
@@ -211,18 +211,18 @@ Completed in the Demo App migration pass:
 **Status**: Completed for the Stage 2 Shell/Core split boundary
 
 - Apply source state, local source overrides, and local command runtime profiles to default Hosty-managed apps as well as user-installed runtime apps.
-- Treat the current combined Host app as the temporary default-app target until Core and Shell are split.
-- Support local source override workflows for the combined Host app so developers and agents can run changed Host/Core/Shell code from a selected worktree.
-- Keep the self-hosting boundary explicit: Core or the combined Host must not rely on an in-process Core API call to complete its own stop/restart/switch after it exits.
-- Use the trusted CLI or another outer supervisor for combined Host/Core runtime switching and restart.
-- Allow Shell-only local runtime switching to be Core-managed after Shell becomes a separate runtime app.
-- Document the difference between ordinary user-installed runtime apps, default Shell runtime changes, and Core/combined-Host self-runtime changes.
+- Treat Shell as the default managed app target after the Core/Shell split.
+- Support local source override workflows for Shell so developers and agents can run changed Shell code from a selected worktree.
+- Keep the self-hosting boundary explicit: Core must not rely on an in-process Core API call to complete its own stop/restart/switch after it exits.
+- Use the trusted CLI or another outer supervisor for Core runtime switching and restart.
+- Allow Shell-only local runtime switching to be Core-managed as a separate runtime app.
+- Document the difference between ordinary user-installed runtime apps, default Shell runtime changes, and Core self-runtime changes.
 
 Implemented so far:
 
 - `apps/shell/manifest.json` now declares app-level source metadata and both Docker and `dev` local command runtime profiles.
 - Shell local runtime changes can use the same Core source override and runtime switch commands as user-installed runtime apps.
-- The difference between user-installed runtime apps, Shell-only runtime changes, and Core/combined-Host self-runtime changes is documented in `docs/features/runtime-source-workflows.md` and `docs/features/local-development.md`.
+- The difference between user-installed runtime apps, Shell-only runtime changes, and Core self-runtime changes is documented in `docs/features/runtime-source-workflows.md` and `docs/features/local-development.md`.
 
 ### Phase 9 - Add Docker-to-Docker runtime switching
 
@@ -295,9 +295,9 @@ Live Docker daemon smoke tests for published image workflows were deferred out o
 - Core owns source/local command runtime state and policy, but local command execution location depends on Core launch mode.
 - When Core runs in Docker, local command execution must be delegated to a trusted host-side runtime supervisor so apps run on the host machine, not inside the Core container.
 - When Core runs as a trusted local process, Core may directly supervise local command apps.
-- The current combined Host app is the temporary default-app target for local source override workflows until Core and Shell are split.
-- Core or the combined Host cannot fully supervise its own runtime replacement after it stops; those runtime switch/restart operations require the trusted CLI or another outer supervisor.
-- After Shell is split into its own runtime app, Shell local runtime changes can be managed by Core like other runtime apps.
+- Shell is the default app target for local source override workflows after the Core/Shell split.
+- Core cannot fully supervise its own runtime replacement after it stops; those runtime switch/restart operations require the trusted CLI or another outer supervisor.
+- Shell local runtime changes can be managed by Core like other runtime apps.
 - One runtime app has one app-level source repository in the first source runtime implementation.
 - Multi-service apps should keep their app manifest, service source, and local command runtime implementations in that repository.
 - Services owned by independent repositories should be modeled as separate runtime app dependencies until a future multi-source contract is intentionally designed.

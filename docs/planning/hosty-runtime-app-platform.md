@@ -821,14 +821,14 @@ No open questions remain for this planning pass. The current accepted decisions 
 - `hosty update` should check and update the bootstrap CLI first, then Core, then the default Hosty Shell runtime app.
 - Core owns ordinary app lifecycle and domain operations. The CLI should not duplicate Core behavior except for bootstrap actions needed when Core is unavailable.
 - Native tray/menu-bar companions are deferred. The current Core running/stopped UX should be exposed through the `hosty` CLI and Core health/status APIs.
-- Shell is an optional Hosty-managed runtime app and default web client for Hosty Core. It currently remains a Next.js app built and run as a Docker container.
+- Shell is an optional Hosty-managed runtime app and default web client for Hosty Core. It is a separate Next.js app under `apps/shell`.
 - Shell uses the same Core-managed lifecycle shape as other managed apps, but Shell UI should hide self-stop for the active Shell instance. CLI and Core API may still stop Shell.
 - `hosty start` starts Core and then asks Core to start the configured Shell runtime app when Shell autostart is enabled. Shell autostart is enabled by default.
 - Core and Shell public origins are split through `HOST_CORE_PUBLIC_ORIGIN` and `HOST_SHELL_PUBLIC_ORIGIN`; `HOST_PUBLIC_ORIGIN` remains a compatibility alias for combined deployments.
 - Default Hosty-managed apps and user-installed runtime apps should be shown in separate UI sections, even if they share a backend summary shape.
-- Source/local command runtime workflows apply to default Hosty-managed apps too. The current combined Host app is the temporary local-source target until Core and Shell split.
-- Core or the combined Host cannot rely on its own in-process Core API to complete self runtime replacement after it exits; self-runtime switch/restart operations require the trusted CLI or another outer supervisor.
-- The existing Docker-hosted Next implementation is a migration state. In that state, Core must not execute localCommand apps by spawning child processes inside the Core container.
+- Source/local command runtime workflows apply to default Hosty-managed apps too. The former combined Host target has been split into local-first Core and the managed Shell runtime app.
+- Core cannot rely on its own in-process Core API to complete self runtime replacement after it exits; self-runtime switch/restart operations require the trusted CLI or another outer supervisor.
+- The Docker-hosted combined Next Host implementation was a migration state and has been retired.
 - Channels are runtime-neutral. They select a manifest/source snapshot, not specifically a Docker image.
 - Channels may add, remove, or modify runtime profiles, but only through a reviewed update plan.
 - Channel switching must not implicitly switch the active runtime unless the current runtime no longer exists and the plan explicitly confirms the replacement.

@@ -626,23 +626,23 @@ internal sealed class ModulesCommand(CommandContext context, string commandName 
         var container = await docker.InspectContainerAsync(settings.HostContainerName);
         if (container is null)
         {
-            context.Console.MarkupLine("[red]Host container does not exist.[/]");
-            context.Console.WriteLine("Run hosty start first.");
+            context.Console.MarkupLine("[red]Legacy Host container does not exist.[/]");
+            context.Console.WriteLine("Use hosty apps for current runtime app workflows.");
             return null;
         }
 
         if (container.State?.Running != true)
         {
-            context.Console.MarkupLine("[red]Host container is not running.[/]");
-            context.Console.WriteLine("Run hosty start first.");
+            context.Console.MarkupLine("[red]Legacy Host container is not running.[/]");
+            context.Console.WriteLine("Use hosty apps for current runtime app workflows.");
             return null;
         }
 
-        var url = HostLifecycle.TryGetHostUrl(container, settings);
+        var url = HostContainerUrl.TryGetHostUrl(container, settings);
         if (url is null)
         {
-            context.Console.MarkupLine("[red]Unable to determine the Host API URL from Docker container metadata.[/]");
-            context.Console.WriteLine("Run hosty status and hosty start to inspect or recreate the Host container.");
+            context.Console.MarkupLine("[red]Unable to determine the legacy Host API URL from Docker container metadata.[/]");
+            context.Console.WriteLine("Use hosty apps for current runtime app workflows.");
             return null;
         }
 

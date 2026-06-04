@@ -30,6 +30,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
             # docker-host launch settings
             HOST_UI_PORT=4321
             HOST_CONTAINER_NAME=test-host
+            HOST_IMAGE=ignored-old-image
             UNKNOWN_SETTING=ignored
             """);
         var store = new LaunchSettingsStore(environment);
@@ -38,9 +39,9 @@ public sealed class LaunchSettingsStoreTests : IDisposable
 
         Assert.Equal("4321", settings.HostUiPort);
         Assert.Equal("test-host", settings.HostContainerName);
-        Assert.Equal("ghcr.io/alex-de-haas/docker-host:latest", settings.HostImage);
         Assert.Equal("", settings.HostCorePublicOrigin);
         Assert.Equal("", settings.HostShellPublicOrigin);
+        Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }
 
@@ -69,9 +70,9 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.True(Directory.Exists(environment.ModulesDirectory));
 
         var exception = Assert.Throws<ConfigurationException>(
-            () => store.Set(LaunchSettingDefinitions.HostDataRootContainer, "/other-data"));
+            () => store.Set("HOST_IMAGE", "docker-host:dev"));
 
-        Assert.Contains("cannot be changed", exception.Message);
+        Assert.Contains("Unknown launch setting", exception.Message);
     }
 
     [Theory]

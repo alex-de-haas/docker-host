@@ -1,19 +1,19 @@
-# Auth Gateway
+# Auth And Gateway Model
 
-This document captures the implemented Docker Host authentication, authorization, module gateway routing, realtime traffic, external ingress readiness, and module-owned permissions model.
+This document captures the Hosty authentication, authorization, app identity, and target gateway model. Hosty Core currently owns auth, users, sessions, app identity exchange, and app access assignments. The legacy gateway and external ingress implementation lived in the removed combined Next.js Host package; gateway/ingress APIs described here are retained as target model notes until Core or a Core-managed gateway runtime implements them again.
 
 ## Scope
 
-Docker Host should be the access-control boundary for:
+Hosty should be the access-control boundary for:
 
-- Host Web UI;
-- Host backend API;
+- Hosty Shell;
+- Hosty Core API;
 - externally exposed module service/API endpoints;
 - module gateway routing;
 - module access assignment;
 - Host-level roles and sessions.
 
-Docker Host should not depend on a regular managed module for its own authentication. The Host must be able to protect and recover its own Web UI and API independently.
+Hosty should not depend on a regular managed app for its own authentication. Core must be able to protect and recover its own API independently of Shell.
 
 ## Accepted Decisions
 
@@ -32,14 +32,14 @@ Docker Host should not depend on a regular managed module for its own authentica
 - Local authentication stores Host-owned users, browser sessions, account sets, assignments, invitations, setup/recovery tokens, and audit state in dedicated versioned JSON files under the Host data root.
 - SQLite is not part of the local auth persistence model.
 
-## Gateway Routing
+## Gateway Routing Target
 
 The target production routing model for service/API exposures is subdomain based:
 
 ```text
-host.example.com    -> Docker Host Web UI
-reports-api.example.com -> Docker Host Gateway -> mod-reports:8080
-media.example.com   -> Docker Host Gateway -> mod-media:3000
+shell.example.com       -> Hosty Shell
+reports-api.example.com -> Hosty Gateway -> reports service
+media.example.com       -> Hosty Gateway -> media service
 ```
 
 The Host gateway maps each module hostname to an installed module target inside the Host-managed Docker network. The target should be derived from module metadata and Host-managed runtime state:
@@ -53,29 +53,26 @@ The Host gateway maps each module hostname to an installed module target inside 
 
 Path-based service/API routing is not part of the accepted target model. Realtime transports are simpler on a dedicated origin. Module browser UIs are handled separately by the Host shell app portal.
 
-The first gateway implementation runs as a custom Node server in the Host container. It checks the incoming `Host` header before handing the request to Next.js:
+The legacy gateway implementation ran in the removed combined Host package. Future gateway work should be implemented through Hosty Core or an explicit Core-managed gateway runtime, with the same access-policy model:
 
 ```mermaid
 flowchart LR
   R["Incoming request"] --> H{"Hostname matches exposure?"}
-  H -- "No" --> N["Next Host UI/API"]
+  H -- "No" --> N["Core or Shell route"]
   H -- "Yes" --> A["Gateway access policy"]
   A -- "Denied" --> D["401/403 or login redirect"]
   A -- "Allowed" --> P["Proxy to module network alias"]
 ```
 
-Because this uses a custom server, the Host image runs `server.mjs` directly instead of `next start` or Next standalone output. The image still builds the Next application normally, then copies `.next`, production dependencies, static assets, and the custom server into the runtime image.
-
-Gateway launch settings:
+Current Core origin settings:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `HOST_BIND_ADDRESS` | `127.0.0.1` | Host-side address used by Docker port publishing. Set to `0.0.0.0` only when an administrator intentionally exposes the Host beyond loopback or places it behind a trusted ingress. The Host container also receives this value so loopback-only `http://localhost:<port>` sessions can use HTTP cookies despite Docker bridge remote addresses. |
 | `HOST_PUBLIC_ORIGIN` | empty | Compatibility external Host UI origin for combined deployments, for example `https://host.example.com`. Split Core/Shell deployments should prefer `HOST_CORE_PUBLIC_ORIGIN` and `HOST_SHELL_PUBLIC_ORIGIN`. |
-| `HOST_GATEWAY_BASE_DOMAIN` | empty | Base domain for module subdomains, for example `example.com`. When set, Host session cookies can be scoped to this parent domain and unknown subdomains under it are rejected. |
-| `HOST_INTERNAL_ORIGIN` | `http://docker-host:3000` | Internal Host origin that module containers can use to fetch Host-published metadata such as JWKS. The CLI attaches the Host container to the module network with the stable `docker-host` alias. |
+| `HOST_CORE_PUBLIC_ORIGIN` | empty | Public Core origin for auth, token exchange, and Core-owned API callbacks. |
+| `HOST_SHELL_PUBLIC_ORIGIN` | empty | Public Shell origin for browser app launch links. |
 
-Gateway exposure records live in `/data/gateway/exposures.json`:
+Future gateway work should model exposure records separately from Shell app discovery. The retired Legacy Host stored records in `/data/gateway/exposures.json`:
 
 ```json
 {
@@ -124,9 +121,9 @@ The metadata field `endpoints[].public` is only an endpoint capability hint that
 
 Module access assignments are stored in the auth state as Host-owned authorization data. They are separate from the gateway hostname registry and from module-owned permissions.
 
-## Gateway Admin API
+## Gateway Admin API Target
 
-Gateway exposure management is a Host admin operation:
+Gateway exposure management should be a Hosty admin operation. The old Legacy Host endpoints below are not available in current Core/Shell builds; they document the intended resource shape for future Core-backed implementation:
 
 | Route | Method | Behavior |
 | --- | --- | --- |
@@ -137,7 +134,7 @@ Gateway exposure management is a Host admin operation:
 | `/api/gateway/exposures/{exposureId}` | `DELETE` | Remove an exposure and clear linked external ingress readiness state. |
 | `/api/gateway/exposures/{exposureId}/assignments` | `PUT` | Replace assigned Host user ids for the exposure's module. |
 
-The `/ingress` Web UI uses these endpoints to create, edit, enable/disable, and delete service/API gateway exposures. Gateway exposure changes do not create shell Apps. When a selected public runtime port is also the module UI entrypoint, the UI warns that browser UIs should stay inside the Host Apps shell.
+The removed `/ingress` Web UI used these endpoints to create, edit, enable/disable, and delete service/API gateway exposures. Future Shell work should keep the same boundary: gateway exposure changes do not create shell Apps, and browser UIs should stay inside the Hosty Apps shell unless an app intentionally publishes a separate service/API origin.
 
 Assignment edits remain module-wide. Calling the assignments endpoint through an exposure id updates the Host assignments for that exposure's module, so assigned-only service/API exposures and shell Apps share the same module assignment set.
 
@@ -147,7 +144,7 @@ The gateway sanitizes proxied requests:
 
 - strips hop-by-hop headers;
 - strips CLI `Authorization`;
-- strips Host auth cookies before traffic reaches the module, including the active session cookie and browser account-set cookie;
+- strips Host auth cookies before traffic reaches the module, including the active session cookie and any future account-selection cookies;
 - strips inbound `X-Docker-Host-*` headers so clients cannot spoof Host-owned identity headers;
 - strips inbound `Forwarded`, `X-Forwarded-*`, and `X-Real-IP` before setting Host-owned forwarding headers for the module;
 - strips trusted proxy assertion headers before traffic reaches the module;
@@ -184,63 +181,37 @@ Control requests do not send `Authorization: Bearer`, browser cookies, account-s
 
 Operational CLI auth decisions:
 
-- `hosty auth setup-token` remains for first-administrator bootstrap.
-- `hosty auth recovery-token` remains for local administrator recovery.
+- `hosty auth setup-token` and `hosty auth recovery-token` are reserved for Core-compatible first-administrator bootstrap and local recovery.
+- The retired Legacy Host auth state writer has been removed, so these commands currently return an unavailable status instead of writing obsolete auth JSON.
 - `hosty auth token ...` commands are not part of the active CLI surface.
 - The Web UI no longer generates CLI admin tokens.
-- Browser sessions, user roles, OIDC, trusted proxy authentication, and recent browser reauthentication continue to protect normal Host API routes.
+- Browser sessions and user roles protect current normal Hosty Core API routes. Production OIDC, full trusted-proxy authentication, and recent browser reauthentication are future provider work.
 
 ## Local Authentication Decisions
 
-The local authentication implementation uses a local password provider, opaque server-side sessions, JSON persistence, local setup and recovery tokens, and structured audit records.
-
-Key local-auth decisions:
-
-- password authentication is the first local credential type;
-- the first `host.admin` is created through a local CLI-generated setup token;
-- setup tokens are single-use, stored hashed, expire after 15 minutes, and are invalidated after first admin creation;
-- browser sessions use opaque random tokens in HttpOnly cookies with server-side hashed token records;
-- browser account sets use a separate opaque HttpOnly cookie and server-side hashed token records;
-- development auto-login is available only through explicit `HOST_DEV_AUTH=auto` configuration in development runtime and issues a normal local administrator or user session instead of disabling authorization;
-- default browser sessions use a 12-hour idle timeout and a 14-day absolute lifetime;
-- logout revokes the current account session by default; the sidebar account menu also supports current-account and all-accounts logout for remembered browser accounts;
-- multiple browser accounts may be remembered, with one active account per request;
-- all current Host API functionality remains `host.admin` only, including Host status and module listing;
-- pre-auth installations enter setup-required mode while preserving existing modules and data;
-- emergency recovery requires local machine or container access.
+The current Core authentication implementation uses local Hosty users, opaque server-side sessions, JSON persistence, invitation tokens, development-only direct session creation, trusted-proxy session creation, app authorization codes, and structured audit records.
 
 Implemented local-auth surface:
 
-- `/setup` creates the first Host administrator when supplied with a valid setup token;
-- `/recovery` restores or recreates a local `host.admin` account when supplied with a valid setup or recovery token;
-- `/settings/security` gives Host administrators a tabbed security operations surface for sessions, provider diagnostics, audit review, and audit retention; long session and audit tables scroll inside their tabs, and sensitive auth actions open a contextual reauthentication dialog when needed;
-- `/login` authenticates existing Host users;
-- `/api/auth/bootstrap`, `/api/auth/login`, `/api/auth/logout`, and `/api/auth/status` own browser auth flow;
-- `/api/auth/accounts` lists or clears remembered accounts for the current browser;
-- `/api/auth/accounts/switch` creates a fresh active session for a remembered account;
-- `/api/auth/accounts/{userId}` removes one remembered account from the current browser;
-- `/api/auth/recovery` consumes setup or recovery tokens, resets local administrator credentials, revokes old sessions for that account, and creates a new browser session;
-- `/api/auth/reauth` refreshes a browser session's recent reauthentication timestamp with a password or recovery token;
-- `/api/auth/diagnostics` reports safe OIDC and trusted proxy configuration diagnostics for Host administrators;
-- `/api/auth/audit` lists sanitized audit events for Host administrators with pagination and filters;
-- `DELETE /api/auth/audit` applies retention-based audit purge and writes a final `auth.audit.purged` event;
-- `/api/auth/sessions` lists active and optionally revoked Host sessions for Host administrators;
-- `/api/auth/sessions/{sessionId}` revokes a Host session by id for Host administrators;
-- `/api/health` is the minimal unauthenticated health endpoint;
-- current Host API routes for Host status, modules, containers, images, install, update, lifecycle, remove, and recovery require `host.admin`;
-- `hosty auth setup-token` writes a hashed one-time setup token into the Host auth JSON store through local filesystem access;
-- `hosty auth recovery-token` writes a hashed one-time recovery token into the Host auth JSON store through local filesystem access;
-- local CLI module and dev commands use `/control/v1` through `<HOST_DATA_ROOT_HOST>/run/control.json`.
+- `/login` renders a development user picker in development and a Core-owned placeholder in production until production auth providers are added;
+- `/logout` revokes the active Core session and redirects back to Shell or login;
+- `/setup`, `/setup/invite`, and `/recovery` remain Core-owned pages; invitation acceptance is implemented at `/setup/invite`;
+- `GET /api/auth/csrf` issues the browser CSRF token used by Shell mutation requests;
+- `GET /api/auth/session` returns the current authenticated Core user;
+- `POST /api/auth/session` creates a session only in development;
+- `POST /api/auth/trusted-proxy/session` creates a secure-cookie session from a trusted upstream user id header;
+- `POST /api/auth/logout` revokes the active session;
+- `POST /api/auth/apps/authorize`, `POST /api/apps/{appId}/launch-code`, and `GET /api/apps/{appId}/open` create app authorization codes for authenticated users;
+- `POST /api/auth/apps/token` exchanges an app authorization code for app-scoped identity;
+- `POST /api/auth/apps/revalidate` revalidates an app access token;
+- `/api/auth/users` and `/api/auth/invitations` endpoints implement User Management;
+- `/control/v1/audit/recent` exposes recent audit records to trusted local control clients.
 
-Audit events are stored as append-only NDJSON under `/data/auth/audit.ndjson`, separate from the main auth state. New events use a stable envelope with event identity, timestamp, type, optional actor, optional target, request metadata, success state, and sanitized details. Raw passwords, bearer tokens, setup tokens, recovery tokens, OIDC tokens, trusted proxy assertions, cookies, and authorization headers must not be written to the audit log.
+Core stores users, invitations, app assignments, and sessions under `core/auth/state.json`. Sessions use random opaque ids in HttpOnly cookies, expire after 12 hours, and can be revoked by logout or User Management mutations.
 
-The audit reader supports cursor pagination plus filters for event type, actor, target, result, and timestamp range. The retention purge keeps events on or after the selected cutoff, reports malformed discarded lines, and appends a purge summary event. The default operational retention used by the Web UI is 90 days.
+Audit events are stored as append-only NDJSON under `core/audit/audit.ndjson`, separate from the main auth state. Events must not write raw bearer tokens, setup tokens, invitation tokens, trusted-proxy assertions, cookies, authorization headers, app access tokens, or token hashes.
 
-High-risk auth operations require a recent browser reauthentication window. Browser sessions can refresh this window through `/api/auth/reauth` using the user's local password or a local recovery token. Trusted-proxy authenticated requests bypass browser reauthentication because the caller has already presented a verified upstream identity.
-
-Session operational controls build on the existing server-side session records in `/data/auth/state.json`. The session APIs expose session ids, owner metadata, timestamps, active/revoked state, and coarse request metadata, but never token hashes or raw session cookies.
-
-Module lifecycle, install, update, remove, gateway module-open, and gateway denied-access events are written to the same audit log with module targets. Routine module lifecycle actions do not require recent reauthentication, but the resulting audit records include the Host actor, module id, success state, and HTTP status when available.
+The old Legacy Host password login, remembered browser accounts, `/settings/security`, `/api/auth/bootstrap`, `/api/auth/accounts`, `/api/auth/reauth`, `/api/auth/sessions`, and `/api/auth/audit` browser APIs are not part of the current Core/Shell implementation.
 
 ## Module-Owned Permissions
 
@@ -265,55 +236,19 @@ user_456 -> reports.viewer
 
 This lets different modules implement different domain-specific permission models while still relying on Host for login, assignment, and gateway enforcement.
 
-## Module Identity Token
+## App Identity Token
 
-Host must not forward its own session cookie to modules. When a gateway request is authenticated and the exposure identity mode allows identity propagation, Host passes a short-lived signed JWT scoped to the target module in `X-Docker-Host-Identity`.
+Hosty must not forward its own session cookie to runtime apps. Current direct-origin app launch uses Core-issued authorization codes. The app exchanges the code through Core for a short-lived app-scoped identity token.
 
 Token decisions:
 
-- JWTs are signed with an asymmetric Host-owned key using `ES256`.
-- Private signing keys live under `/data/auth/module-identity-keys.json`, separate from users, sessions, account sets, invitations, and module assignments.
-- Public keys are published as JWKS at `/.well-known/docker-host/jwks.json`.
-- Discovery metadata is published at `/.well-known/docker-host/module-identity.json`.
-- The discovery `jwks_uri` uses `HOST_INTERNAL_ORIGIN`, defaulting to `http://docker-host:3000`, so module containers can validate tokens from inside the Docker network.
-- Tokens use a 5-minute lifetime and are minted for each authenticated gateway HTTP request, WebSocket/SSE/long-poll setup request, or shell iframe identity bootstrap.
-- Host strips inbound `X-Docker-Host-*` request headers before adding its own identity header.
-- Shell iframe identity uses the same Host-signed identity token contract as gateway traffic. App iframes use the installed app or module id as `aud`, including local command runtime profiles.
-
-Example claims:
-
-```json
-{
-  "iss": "docker-host",
-  "sub": "user_123",
-  "aud": "com.acme.reports",
-  "exp": 1790000000,
-  "iat": 1789999700,
-  "jti": "mit_...",
-  "hostRole": "host.user",
-  "moduleAccess": "assigned",
-  "moduleExposurePolicy": "assignedUsersOnly",
-  "email": "work@example.com",
-  "name": "Work User",
-  "gatewayExposureId": "gw_...",
-  "hostname": "reports.example.com",
-  "endpointKey": "web"
-}
-```
-
-Rules:
-
-- `aud` must identify the target module.
-- `sub` must identify the Host user.
-- `hostRole` should be `host.admin` or `host.user`.
-- `moduleAccess` is one of `authenticated`, `assigned`, `hostAdmin`, or `publicAuthenticated`.
-- `moduleExposurePolicy` is the Host gateway exposure policy that allowed the request.
-- public unauthenticated requests do not include a user token.
-- public exposures default to `identityMode: "none"` and may opt into `identityMode: "optional"` for personalization.
-- `loginRequired` and `assignedUsersOnly` exposures default to `identityMode: "required"`.
-- modules must validate tokens against Host JWKS and must reject tokens with the wrong audience, issuer, signature, or expiration.
-
-Host does not pass unsigned identity convenience headers. The signed token is the authoritative identity artifact.
+- Current app identity tokens are HMAC-signed with `HS256`.
+- The signing key lives under `core/auth/app-identity-signing.key`, separate from users, sessions, invitations, and app assignments.
+- Direct-origin Shell launches use `/api/apps/{appId}/launch-code` or `/api/apps/{appId}/open`.
+- Apps exchange authorization codes through `/api/auth/apps/token` and can revalidate through `/api/auth/apps/revalidate`.
+- Tokens use a 5-minute lifetime and use the installed app id as `aud`.
+- Core validates app assignment before issuing app identity to non-admin users.
+- The retired gateway JWKS/discovery endpoints are not current Core/Shell APIs. Future gateway identity propagation can reintroduce asymmetric key discovery if service/API exposure traffic needs offline token validation.
 
 ## Realtime Traffic
 
@@ -333,9 +268,9 @@ Opening a module UI from the Host shell does not replace the service/API gateway
 
 ## Account Switching
 
-Detailed account-switching behavior is documented in [Browser account switching](account-switching.md).
+The old browser account-set implementation from Legacy Host is not part of the current Core/Shell build. The current model supports one active Core session per browser context. Future account switching should be implemented against Core `core/auth/state.json` rather than the retired `/data/auth/state.json` account-set shape.
 
-Docker Host does not use mandatory identity profiles. Different real-world accounts are represented as different Host users:
+Hosty does not use mandatory identity profiles. Different real-world accounts are represented as different Host users:
 
 ```text
 personal@example.com -> host.admin
@@ -346,27 +281,19 @@ When a module is opened, the Host session selected for that module determines wh
 
 Host does not link multiple external identities into a single person, and account switching does not create additional local users.
 
-Browser account switching remembers multiple Host users per browser through a server-side account set. The browser stores only an HttpOnly `docker_host_accounts` token. The Host stores only the token hash in `/data/auth/state.json` under `accountSets`, along with remembered user ids, timestamps, expiry, and revocation state. Raw session tokens and raw account-set tokens are not persisted in auth state.
-
-Successful local login, setup, recovery, development auto-login, and OIDC callback flows add the authenticated Host user to the current browser account set or create a new account set when none exists. Remembered account sets use the same 14-day absolute lifetime as browser sessions.
-
-The sidebar account menu loads remembered users from `/api/auth/accounts`, shows the active account first, and can switch to another remembered user. Switching validates the account-set cookie, verifies that the target user is still enabled and remembered in this browser, then creates a fresh active Host session. Switching does not set `reauthenticatedAt`, so sensitive administrator operations still require the existing recent reauthentication flow.
-
-`Log out current account` removes the active user from the browser account set and revokes the active session. `Log out all accounts` revokes the browser account set and the active session. Disabled users are omitted from switch targets and cannot be activated.
-
-Gateway proxying strips the active session cookie and the account-set cookie before forwarding traffic to modules. Direct-origin shell iframe traffic is not proxied by Host and cannot receive Host cookies for the module origin. Trusted proxy deployments do not use local browser account switching because the upstream proxy owns browser identity selection.
+Gateway proxying should strip Hosty session cookies before forwarding traffic to modules. Direct-origin shell iframe traffic is not proxied by Hosty and cannot receive Hosty cookies for the module origin.
 
 ## User Management
 
 Detailed User Management behavior is documented in [User Management](user-management.md).
 
-Host administrators can manage users from `/settings/users`. The page lists Host users, creates local invitation links, revokes pending invitations, changes local user roles, disables users, and replaces module assignments.
+Host administrators manage users from the Shell User Management view. The view lists Host users, creates local invitation links, revokes pending invitations, changes local user roles, disables users, and replaces app assignments.
 
-Invitations are one-time setup-token style links for local-password users. The raw token is returned only once and only its hash is stored in `/data/auth/state.json`. Invitation tokens carry the invited role, email, optional display name, expiry, creator user id, and initial module assignments. The recipient accepts the invitation at `/setup/invite?setupToken=...`.
+Invitations are one-time setup-token style links for local Hosty users. The raw token is returned only once and only its hash is stored in Core `core/auth/state.json`. Invitation tokens carry the invited role, email, optional display name, expiry, creator user id, and initial app assignments. The recipient accepts the invitation at `/setup/invite?setupToken=...`.
 
-User deletion is soft-disable. Disabling a user revokes active sessions, removes remembered browser account entries, and removes module assignments. Docker Host prevents disabling or demoting the last active administrator and blocks self-disable from User Management.
+User deletion is soft-disable. Disabling a user revokes active sessions and removes app assignments. Hosty Core prevents disabling or demoting the last active administrator and blocks self-disable from User Management.
 
-OIDC and trusted-proxy users can be disabled and assigned to modules after they are provisioned, but their roles remain provider-managed because the next external-provider login can recalculate the stored role from provider mappings.
+OIDC and richer trusted-proxy provisioning are future provider work. When enabled, external users should be disabled and assigned to apps through the same User Management surface, while their roles remain provider-managed.
 
 ## Scoped Module User Directory
 
@@ -412,7 +339,7 @@ The Host auth model should support multiple authentication provider modes:
 - generic OIDC for Auth0, Keycloak, Authentik, ZITADEL, Microsoft Entra ID, Google Workspace, and similar providers;
 - trusted proxy mode for Cloudflare Access, Pomerium, Authentik proxy, oauth2-proxy, and similar deployments.
 
-External providers authenticate users. Docker Host still owns:
+External providers are target provider work. Hosty should still own:
 
 - Host role assignment;
 - module access assignment;
@@ -421,11 +348,11 @@ External providers authenticate users. Docker Host still owns:
 - module-scoped identity tokens;
 - audit events.
 
-### Generic OIDC Provider
+### Generic OIDC Provider Target
 
-The generic OIDC implementation supports one active browser login provider using Authorization Code with PKCE.
+The target generic OIDC implementation supports one active browser login provider using Authorization Code with PKCE.
 
-Implemented OIDC login surface:
+Target OIDC login surface:
 
 - `GET /api/auth/oidc/login` starts the OIDC authorization request;
 - `GET /api/auth/oidc/callback` validates the callback, exchanges the authorization code, verifies the ID token with provider JWKS, maps the external identity to a Host role, and creates a normal Host session cookie.
@@ -448,9 +375,9 @@ OIDC uses explicit claim mappings and denies login when no mapping grants `host.
 
 Host does not persist OIDC access tokens, refresh tokens, or ID tokens. Provider logout, multiple active OIDC providers, automatic email-based account linking, OIDC admin UI, and background group revalidation are not part of this contract.
 
-### Trusted Proxy Provider
+### Trusted Proxy Provider Target
 
-Trusted proxy mode supports deployments where an upstream proxy authenticates the browser before requests reach Docker Host. The implementation accepts only signed JWT assertions from the trusted proxy. The Host verifies issuer, audience, signature, key id, expiration, and not-before before mapping the request to a Host user.
+Trusted proxy mode supports deployments where an upstream proxy authenticates the browser before requests reach Hosty. The current Core implementation exposes a narrow `/api/auth/trusted-proxy/session` bridge for an already-known user id. Full signed-assertion verification, provisioning, and role mapping remain target provider work.
 
 Provider records include issuer, audience, assertion header name, JWKS or JWKS URI, subject/email/display-name claim names, and explicit claim-to-Host-role mappings. Cloudflare Access uses the `Cf-Access-Jwt-Assertion` header and the Access JWKS endpoint. A generic signed-JWT provider can use `X-Docker-Host-Trusted-Proxy-Jwt` or another configured assertion header.
 
@@ -472,7 +399,7 @@ Trusted proxy configuration can be supplied through Host auth state or environme
 | `HOST_TRUSTED_PROXY_EMAIL_CLAIM` | Email claim. Defaults to `email`. |
 | `HOST_TRUSTED_PROXY_DISPLAY_NAME_CLAIM` | Display-name claim. Defaults to `name`. |
 
-When trusted proxy mode is active:
+When full trusted proxy mode is active:
 
 - protected Host API and gateway requests use the verified trusted proxy principal;
 - browser session fallback is disabled for protected requests so direct-origin access cannot bypass the upstream proxy;
@@ -532,22 +459,21 @@ Supported statuses:
 | `planned` | An administrator started a manual publish record. |
 | `manualReady` | The administrator marked the external DNS/proxy/TLS checklist complete. |
 | `validated` | Host-side readiness checks passed for the saved manual intent. |
-| `drifted` | Gateway hostname, policy, identity mode, base domain, public origin, or trusted-proxy mode changed after the manual intent was saved. |
+| `drifted` | Gateway hostname, policy, identity mode, public origin, or trusted-proxy mode changed after the manual intent was saved. |
 | `failed` | Host-side readiness checks failed. |
 | `unknown` | Host cannot determine a useful readiness state. |
 
 Manual setup instructions are generated per exposure and include DNS target guidance, reverse proxy routing expectations, TLS requirements, WebSocket forwarding, the Host OIDC callback URL when Host owns browser login, trusted-proxy assertion guidance when an upstream proxy owns login, and the active Host gateway policy/identity mode.
 
-Readiness checks are intentionally Host-side only:
+Future readiness checks should remain Hosty-side only:
 
-- `HOST_GATEWAY_BASE_DOMAIN` is configured;
 - `HOST_PUBLIC_ORIGIN` or the explicit Core/Shell public origins are configured;
 - the gateway exposure is enabled;
 - non-loopback public origins use HTTPS;
 - manual DNS, reverse proxy, TLS, and websocket checklist items are marked complete;
 - direct-origin bypass protection is marked complete when trusted proxy mode is enabled.
 
-The Web UI shows an external ingress readiness panel for gateway exposures. Admin-only APIs are available under `/api/ingress/exposures` for listing status, reading a single exposure status, creating/updating manual intent, marking ready, refreshing validation, and unlinking local readiness records.
+The retired Legacy Host Web UI showed an external ingress readiness panel for gateway exposures. Future Shell work can restore this as a Core-backed view once `/api/ingress/exposures` or replacement Core endpoints exist.
 
 External ingress lifecycle changes are audited as sanitized events for saved manual intent, mark-ready, validation refresh, drift detection, and unlink. These events reference the gateway exposure target but do not log provider credentials, assertions, secrets, or full request headers.
 

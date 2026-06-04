@@ -12,15 +12,20 @@ internal sealed class InstallCommand(CommandContext context)
             throw new CommandUsageException("install does not accept arguments.", "Usage: hosty install");
         }
 
-        var settings = context.SettingsStore.EnsureInstalled();
+        try
+        {
+            Directory.CreateDirectory(context.Environment.RootDirectory);
+            Directory.CreateDirectory(context.Environment.ConfigDirectory);
+            Directory.CreateDirectory(context.Environment.BinDirectory);
+            Directory.CreateDirectory(context.Environment.AppsDirectory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ConfigurationException($"Unable to prepare Hosty directories: {ex.Message}");
+        }
 
-        using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-        await docker.EnsureLinuxEngineAsync();
-        await HostLifecycle.EnsureHostImageInstalledAsync(context, docker, settings.HostImage);
-
-        context.Console.MarkupLine("[green]Launch configuration is ready.[/]");
-        context.Console.MarkupLine($"Config: [grey]{Markup.Escape(context.Environment.LaunchConfigPath)}[/]");
-        context.Console.MarkupLine($"Data root: [grey]{Markup.Escape(settings.ResolveHostDataRoot(context.Environment))}[/]");
+        context.Console.MarkupLine("[green]Hosty local directories are ready.[/]");
+        context.Console.MarkupLine($"Data root: [grey]{Markup.Escape(context.Environment.RootDirectory)}[/]");
         context.Console.MarkupLine("Next: run [grey]hosty start[/]");
         return 0;
     }

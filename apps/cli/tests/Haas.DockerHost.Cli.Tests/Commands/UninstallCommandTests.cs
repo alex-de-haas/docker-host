@@ -1,6 +1,3 @@
-using System.Net;
-using System.Net.Http;
-using System.Text;
 using Haas.DockerHost.Cli;
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
@@ -12,14 +9,14 @@ namespace Haas.DockerHost.Cli.Tests.Commands;
 
 public sealed class UninstallCommandTests : IDisposable
 {
-    private const string RootVariable = "DOCKER_HOST_HOME";
+    private const string RootVariable = "HOSTY_HOME";
     private readonly string? previousRoot;
     private readonly string rootDirectory;
 
     public UninstallCommandTests()
     {
         previousRoot = Environment.GetEnvironmentVariable(RootVariable);
-        rootDirectory = Path.Combine(Path.GetTempPath(), $"docker-host-uninstall-tests-{Guid.NewGuid():N}");
+        rootDirectory = Path.Combine(Path.GetTempPath(), $"hosty-uninstall-tests-{Guid.NewGuid():N}");
         Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
     }
 
@@ -32,48 +29,64 @@ public sealed class UninstallCommandTests : IDisposable
     }
 
     [Fact]
-    public void Delete_DefaultRoot_RemovesHostFilesAndPreservesCliBin()
+    public void Delete_DefaultRoot_RemovesHostyFilesAndPreservesCliBin()
     {
         var environment = DockerHostEnvironment.Current();
         Directory.CreateDirectory(environment.BinDirectory);
         Directory.CreateDirectory(environment.ConfigDirectory);
-        Directory.CreateDirectory(environment.ModulesDirectory);
-        File.WriteAllText(Path.Combine(environment.BinDirectory, "docker-host"), "binary");
-        File.WriteAllText(environment.LaunchConfigPath, "HOST_UI_PORT=3000");
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "core"));
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "apps"));
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "backups"));
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "sources"));
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "modules"));
+        File.WriteAllText(Path.Combine(environment.BinDirectory, "hosty"), "binary");
+        File.WriteAllText(Path.Combine(environment.RootDirectory, "apps.json"), "{}");
         File.WriteAllText(Path.Combine(environment.RootDirectory, "modules.json"), "{}");
         File.WriteAllText(Path.Combine(environment.RootDirectory, "host-cache.txt"), "cache");
 
         var result = HostUninstallFileCleanup.Delete(environment, environment.RootDirectory);
 
+        Assert.Contains(Path.Combine(environment.RootDirectory, "apps.json"), result.DeletedPaths);
         Assert.Contains(Path.Combine(environment.RootDirectory, "modules.json"), result.DeletedPaths);
-        Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "docker-host")));
+        Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "hosty")));
         Assert.False(Directory.Exists(environment.ConfigDirectory));
-        Assert.False(Directory.Exists(environment.ModulesDirectory));
+        Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "core")));
+        Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "apps")));
+        Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "backups")));
+        Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "sources")));
+        Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "modules")));
         Assert.False(File.Exists(Path.Combine(environment.RootDirectory, "host-cache.txt")));
     }
 
     [Fact]
-    public void Delete_ExternalDataRoot_RemovesKnownHostStateOnly()
+    public void Delete_ExternalDataRoot_RemovesKnownHostyStateOnly()
     {
         var environment = DockerHostEnvironment.Current();
-        var externalDataRoot = Path.Combine(Path.GetTempPath(), $"docker-host-data-{Guid.NewGuid():N}");
+        var externalDataRoot = Path.Combine(Path.GetTempPath(), $"hosty-data-{Guid.NewGuid():N}");
         Directory.CreateDirectory(environment.BinDirectory);
         Directory.CreateDirectory(environment.ConfigDirectory);
-        Directory.CreateDirectory(environment.ModulesDirectory);
+        Directory.CreateDirectory(Path.Combine(externalDataRoot, "core"));
+        Directory.CreateDirectory(Path.Combine(externalDataRoot, "apps"));
+        Directory.CreateDirectory(Path.Combine(externalDataRoot, "backups"));
+        Directory.CreateDirectory(Path.Combine(externalDataRoot, "sources"));
         Directory.CreateDirectory(Path.Combine(externalDataRoot, "modules"));
-        File.WriteAllText(Path.Combine(environment.BinDirectory, "docker-host"), "binary");
-        File.WriteAllText(environment.LaunchConfigPath, "HOST_DATA_ROOT_HOST=/custom");
+        File.WriteAllText(Path.Combine(environment.BinDirectory, "hosty"), "binary");
+        File.WriteAllText(Path.Combine(externalDataRoot, "apps.json"), "{}");
         File.WriteAllText(Path.Combine(externalDataRoot, "modules.json"), "{}");
-        File.WriteAllText(Path.Combine(externalDataRoot, "keep.txt"), "not owned by docker-host");
+        File.WriteAllText(Path.Combine(externalDataRoot, "keep.txt"), "not owned by hosty");
 
         try
         {
             HostUninstallFileCleanup.Delete(environment, externalDataRoot);
 
-            Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "docker-host")));
+            Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "hosty")));
             Assert.False(Directory.Exists(environment.ConfigDirectory));
-            Assert.False(Directory.Exists(environment.ModulesDirectory));
+            Assert.False(File.Exists(Path.Combine(externalDataRoot, "apps.json")));
             Assert.False(File.Exists(Path.Combine(externalDataRoot, "modules.json")));
+            Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "core")));
+            Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "apps")));
+            Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "backups")));
+            Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "sources")));
             Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "modules")));
             Assert.True(File.Exists(Path.Combine(externalDataRoot, "keep.txt")));
         }
@@ -87,146 +100,19 @@ public sealed class UninstallCommandTests : IDisposable
     }
 
     [Fact]
-    public void LoadFromDataRoot_ModulesJsonContainsInstalledModules_ReturnsCleanupRecords()
+    public async Task ExecuteAsync_RemovesLocalStateWithoutDocker()
     {
-        Directory.CreateDirectory(rootDirectory);
-        File.WriteAllText(
-            Path.Combine(rootDirectory, "modules.json"),
-            """
-            {
-              "modules": [
-                {
-                  "id": "com.acme.reports",
-                  "containerName": "custom-reports",
-                  "image": {
-                    "reference": "ghcr.io/acme/reports:1.0.0"
-                  }
-                },
-                {
-                  "id": "com.acme.Identity",
-                  "image": {
-                    "repository": "ghcr.io/acme/identity",
-                    "tag": "2.0.0"
-                  }
-                }
-              ]
-            }
-            """);
-
-        var result = ModuleCleanupRecord.LoadFromDataRoot(rootDirectory);
-
-        Assert.Null(result.Error);
-        Assert.Collection(
-            result.Modules,
-            module =>
-            {
-                Assert.Equal("com.acme.reports", module.Id);
-                Assert.Equal("custom-reports", module.ContainerName);
-                Assert.Equal("ghcr.io/acme/reports:1.0.0", module.ImageReference);
-            },
-            module =>
-            {
-                Assert.Equal("com.acme.Identity", module.Id);
-                Assert.Equal("mod-com-acme-identity", module.ContainerName);
-                Assert.Equal("ghcr.io/acme/identity:2.0.0", module.ImageReference);
-            });
-    }
-
-    [Fact]
-    public void LoadFromDataRoot_ModulesJsonContainsMultiContainerModule_ReturnsAllContainers()
-    {
-        Directory.CreateDirectory(rootDirectory);
-        File.WriteAllText(
-            Path.Combine(rootDirectory, "modules.json"),
-            """
-            {
-              "modules": [
-                {
-                  "id": "com.acme.reports",
-                  "containers": [
-                    {
-                      "key": "web",
-                      "containerName": "mod-com-acme-reports-web",
-                      "image": {
-                        "reference": "ghcr.io/acme/reports-web:1.0.0"
-                      }
-                    },
-                    {
-                      "key": "worker",
-                      "containerName": "mod-com-acme-reports-worker",
-                      "image": {
-                        "repository": "ghcr.io/acme/reports-worker",
-                        "tag": "1.0.0"
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-            """);
-
-        var result = ModuleCleanupRecord.LoadFromDataRoot(rootDirectory);
-
-        Assert.Null(result.Error);
-        var module = Assert.Single(result.Modules);
-        Assert.Equal("com.acme.reports", module.Id);
-        Assert.Equal(
-            ["mod-com-acme-reports-web", "mod-com-acme-reports-worker"],
-            module.Containers.Select(container => container.ContainerName));
-        Assert.Equal(
-            ["ghcr.io/acme/reports-web:1.0.0", "ghcr.io/acme/reports-worker:1.0.0"],
-            module.ImageReferences);
-        Assert.Equal(
-            ["mod-com-acme-reports-worker", "mod-com-acme-reports-web"],
-            module.GetContainersInStopOrder().Select(container => container.ContainerName));
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ModuleContainerRemoveFails_ContinuesRemovingHostContainer()
-    {
-        Directory.CreateDirectory(rootDirectory);
-        File.WriteAllText(
-            Path.Combine(rootDirectory, "modules.json"),
-            """
-            {
-              "modules": [
-                {
-                  "id": "com.acme.reports",
-                  "containers": [
-                    {
-                      "key": "web",
-                      "containerName": "mod-com-acme-reports-web"
-                    },
-                    {
-                      "key": "worker",
-                      "containerName": "mod-com-acme-reports-worker"
-                    }
-                  ]
-                }
-              ]
-            }
-            """);
-        var transport = new FakeDockerTransport(["/containers/mod-com-acme-reports-web?force=true&v=false"]);
-        var context = CreateContext(transport);
+        var environment = DockerHostEnvironment.Current();
+        Directory.CreateDirectory(environment.BinDirectory);
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "core"));
+        File.WriteAllText(Path.Combine(environment.BinDirectory, "hosty"), "binary");
+        var context = CreateContext(environment);
 
         var exitCode = await new UninstallCommand(context).ExecuteAsync([]);
 
         Assert.Equal(0, exitCode);
-        Assert.Contains(
-            transport.Requests.Select(request => request.PathAndQuery),
-            path => path == "/containers/docker-host?force=true&v=false");
-        Assert.Equal(
-            [
-                "/version",
-                "/containers/mod-com-acme-reports-web?force=true&v=false",
-                "/containers/mod-com-acme-reports-worker?force=true&v=false",
-                "/containers/docker-host?force=true&v=false",
-            ],
-            transport.Requests
-                .Where(request =>
-                    request.PathAndQuery == "/version" ||
-                    request.PathAndQuery.StartsWith("/containers/", StringComparison.Ordinal))
-                .Select(request => request.PathAndQuery));
+        Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "hosty")));
+        Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "core")));
     }
 
     public void Dispose()
@@ -239,16 +125,13 @@ public sealed class UninstallCommandTests : IDisposable
         }
     }
 
-    private static CommandContext CreateContext(FakeDockerTransport transport)
-    {
-        var environment = DockerHostEnvironment.Current();
-        return new CommandContext(
+    private static CommandContext CreateContext(DockerHostEnvironment environment)
+        => new(
             CreateConsole(),
             environment,
             new LaunchSettingsStore(environment),
-            new FakeDockerEngineClientFactory(transport),
+            new DockerEngineClientFactory(),
             new HostControlClientFactory());
-    }
 
     private static IAnsiConsole CreateConsole()
     {
@@ -258,64 +141,5 @@ public sealed class UninstallCommandTests : IDisposable
             Out = new AnsiConsoleOutput(output),
             Interactive = InteractionSupport.No,
         });
-    }
-
-    private sealed class FakeDockerEngineClientFactory(IDockerEngineTransport transport) : DockerEngineClientFactory
-    {
-        public override DockerEngineClient Create(string endpoint) => new(transport);
-    }
-
-    private sealed class FakeDockerTransport(IReadOnlyCollection<string>? failedRemovePaths = null) : IDockerEngineTransport
-    {
-        public List<(HttpMethod Method, string PathAndQuery)> Requests { get; } = [];
-
-        public Task<DockerEngineResponse> SendAsync(
-            string operation,
-            HttpMethod method,
-            string pathAndQuery,
-            object? body = null,
-            CancellationToken cancellationToken = default)
-        {
-            Requests.Add((method, pathAndQuery));
-
-            if (method == HttpMethod.Get && pathAndQuery == "/version")
-            {
-                return Task.FromResult(Response(
-                    operation,
-                    HttpStatusCode.OK,
-                    """
-                    {
-                      "OSType": "linux"
-                    }
-                    """));
-            }
-
-            if (method == HttpMethod.Delete)
-            {
-                if (failedRemovePaths?.Contains(pathAndQuery) == true)
-                {
-                    return Task.FromResult(Response(operation, HttpStatusCode.InternalServerError, """{"message":"remove failed"}"""));
-                }
-
-                return Task.FromResult(Response(operation, HttpStatusCode.NoContent, ""));
-            }
-
-            return Task.FromResult(Response(operation, HttpStatusCode.NotFound, """{"message":"not found"}"""));
-        }
-
-        public void Dispose()
-        {
-        }
-
-        private static DockerEngineResponse Response(string operation, HttpStatusCode statusCode, string body)
-        {
-            var bytes = Encoding.UTF8.GetBytes(body);
-            return new DockerEngineResponse(
-                operation,
-                statusCode,
-                body,
-                bytes,
-                new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
-        }
     }
 }

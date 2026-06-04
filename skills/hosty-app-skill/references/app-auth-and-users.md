@@ -174,4 +174,4 @@ When helping publish an app endpoint:
 
 - Keep browser UI in Hosty Shell unless the app intentionally exposes a separate service/API origin or future standalone app origin.
 - Use gateway exposure policy and identity mode for access control; do not use `endpoints[].public` as a policy.
-- Expect readiness records to track manual DNS/proxy/TLS checklist status, drift, and Hosty-side prerequisites such as `HOST_PUBLIC_ORIGIN` and `HOST_GATEWAY_BASE_DOMAIN`.
+- Treat gateway and external ingress readiness as deferred Core-backed work. The retired Legacy Host readiness panel used manual DNS/proxy/TLS checklist state; future work should track drift against Hosty public origins and gateway exposure state without relying on the removed gateway base-domain launch setting.

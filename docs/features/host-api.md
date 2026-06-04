@@ -1,12 +1,12 @@
 # Docker Host API
 
-This document describes the Docker Host API surface. It is the human-readable endpoint catalog used to coordinate the backend, Web UI, and CLI module commands.
+This document describes the legacy Docker Host API surface. It is retained as a human-readable endpoint catalog for compatibility context while current Hosty Core APIs live in `apps/core`.
 
-The Host API is implemented inside the full-stack Next.js Host application. The Web UI calls this API directly. The `docker-host` CLI uses the same API only for module commands; CLI lifecycle commands for the Host container itself run through Docker daemon.
+The retired full-stack Next.js Host implementation has been removed from the repository. New app lifecycle work should use Hosty Core APIs and `hosty apps`; legacy module commands should be treated as compatibility-only.
 
 ## Principles
 
-- Host backend API is the owner of module management logic.
+- Hosty Core is the owner of app management logic. Legacy Host API notes describe the previous module-management contract.
 - Runtime status is read from Docker daemon, not from persistent JSON files.
 - App-oriented lifecycle state is stored in `apps.json` and app state. Legacy installed module records remain readable from root-level `modules.json`.
 - Host API functionality requires Host-owned authentication and `host.admin` authorization unless an endpoint explicitly documents a narrower permission.

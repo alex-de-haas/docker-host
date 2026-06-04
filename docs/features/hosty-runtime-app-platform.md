@@ -13,7 +13,7 @@ Hosty is the target product model for the current Docker Host implementation. Th
 - **Manifest** - the public contract name for app metadata. Legacy `metadata.json` remains a compatibility format.
 - **Runtime profile** - the way an app runs, such as Docker image or local command.
 
-The implementation is intentionally incremental. Docker remains the first production-oriented runtime adapter and many compatibility routes still use module-oriented names. The local-first Core stores app-owned state under `apps/<app-id>/state.json`; the legacy Next compatibility layer persists app-oriented records in `apps.json`. Legacy `modules.json` records remain readable for already-installed legacy modules and explicit compatibility imports, but app-only lifecycle reads and writes no longer create an empty `modules.json`.
+The implementation is intentionally incremental. Docker remains the first production-oriented runtime adapter and many compatibility routes still use module-oriented names. The local-first Core stores app registry data in `apps.json` and app-owned state under `apps/<app-id>/state.json`. Legacy `modules.json` records remain readable for already-installed legacy modules and explicit compatibility imports, but app-only lifecycle reads and writes no longer create an empty `modules.json`.
 
 ```mermaid
 flowchart LR

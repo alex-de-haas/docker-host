@@ -7,8 +7,8 @@ Repository source of truth:
 - `docs/features/hosty-runtime-app-platform.md`
 - `docs/features/module-metadata.md`
 - `docs/features/domain-model.md`
-- `apps/host/src/lib/app-manifest.ts`
-- `apps/host/src/lib/module-metadata.ts`
+- `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`
+- `apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs`
 
 ## Contract
 

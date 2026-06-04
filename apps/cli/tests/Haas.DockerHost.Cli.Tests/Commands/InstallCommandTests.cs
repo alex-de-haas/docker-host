@@ -1,6 +1,3 @@
-using System.Net;
-using System.Net.Http;
-using System.Text;
 using Haas.DockerHost.Cli.Commands;
 using Haas.DockerHost.Cli.Configuration;
 using Haas.DockerHost.Cli.Docker;
@@ -11,59 +8,41 @@ namespace Haas.DockerHost.Cli.Tests.Commands;
 
 public sealed class InstallCommandTests : IDisposable
 {
-    private const string RootVariable = "DOCKER_HOST_HOME";
+    private const string RootVariable = "HOSTY_HOME";
     private readonly string? previousRoot;
     private readonly string rootDirectory;
 
     public InstallCommandTests()
     {
         previousRoot = Environment.GetEnvironmentVariable(RootVariable);
-        rootDirectory = Path.Combine(Path.GetTempPath(), $"docker-host-install-tests-{Guid.NewGuid():N}");
+        rootDirectory = Path.Combine(Path.GetTempPath(), $"hosty-install-tests-{Guid.NewGuid():N}");
         Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
     }
 
     [Fact]
-    public async Task ExecuteAsync_PreparesLaunchConfigAndPullsHostImage()
+    public async Task ExecuteAsync_PreparesLocalHostyDirectories()
     {
-        var transport = new FakeDockerTransport();
         var environment = DockerHostEnvironment.Current();
-        var context = new CommandContext(
-            CreateConsole(),
-            environment,
-            new LaunchSettingsStore(environment),
-            new FakeDockerEngineClientFactory(transport),
-            new HostControlClientFactory());
+        var context = CreateContext(environment);
 
         var exitCode = await new InstallCommand(context).ExecuteAsync([]);
 
         Assert.Equal(0, exitCode);
-        Assert.Contains(
-            transport.Requests,
-            request => request.Method == HttpMethod.Post &&
-                request.PathAndQuery == $"/images/create?fromImage={Uri.EscapeDataString("ghcr.io/alex-de-haas/docker-host:latest")}");
+        Assert.True(Directory.Exists(environment.RootDirectory));
+        Assert.True(Directory.Exists(environment.ConfigDirectory));
+        Assert.True(Directory.Exists(environment.BinDirectory));
+        Assert.True(Directory.Exists(environment.AppsDirectory));
+        Assert.False(File.Exists(environment.LaunchConfigPath));
     }
 
     [Fact]
-    public async Task ExecuteAsync_LocalHostImageExists_SkipsRegistryPull()
+    public async Task ExecuteAsync_WithArgumentsThrowsUsageError()
     {
-        var transport = new FakeDockerTransport(["docker-host:dev"]);
         var environment = DockerHostEnvironment.Current();
-        Directory.CreateDirectory(environment.ConfigDirectory);
-        await File.WriteAllTextAsync(environment.LaunchConfigPath, "HOST_IMAGE=docker-host:dev");
-        var context = new CommandContext(
-            CreateConsole(),
-            environment,
-            new LaunchSettingsStore(environment),
-            new FakeDockerEngineClientFactory(transport),
-            new HostControlClientFactory());
+        var context = CreateContext(environment);
 
-        var exitCode = await new InstallCommand(context).ExecuteAsync([]);
-
-        Assert.Equal(0, exitCode);
-        Assert.DoesNotContain(
-            transport.Requests,
-            request => request.Method == HttpMethod.Post &&
-                request.PathAndQuery.StartsWith("/images/create?", StringComparison.Ordinal));
+        await Assert.ThrowsAsync<CommandUsageException>(
+            async () => await new InstallCommand(context).ExecuteAsync(["--pull"]));
     }
 
     public void Dispose()
@@ -76,6 +55,14 @@ public sealed class InstallCommandTests : IDisposable
         }
     }
 
+    private static CommandContext CreateContext(DockerHostEnvironment environment)
+        => new(
+            CreateConsole(),
+            environment,
+            new LaunchSettingsStore(environment),
+            new DockerEngineClientFactory(),
+            new HostControlClientFactory());
+
     private static IAnsiConsole CreateConsole()
     {
         var output = new StringWriter();
@@ -84,65 +71,5 @@ public sealed class InstallCommandTests : IDisposable
             Out = new AnsiConsoleOutput(output),
             Interactive = InteractionSupport.No,
         });
-    }
-
-    private sealed class FakeDockerEngineClientFactory(IDockerEngineTransport transport) : DockerEngineClientFactory
-    {
-        public override DockerEngineClient Create(string endpoint) => new(transport);
-    }
-
-    private sealed class FakeDockerTransport(IReadOnlyCollection<string>? existingImages = null) : IDockerEngineTransport
-    {
-        public List<(HttpMethod Method, string PathAndQuery)> Requests { get; } = [];
-
-        public Task<DockerEngineResponse> SendAsync(
-            string operation,
-            HttpMethod method,
-            string pathAndQuery,
-            object? body = null,
-            CancellationToken cancellationToken = default)
-        {
-            Requests.Add((method, pathAndQuery));
-
-            if (method == HttpMethod.Get && pathAndQuery == "/version")
-            {
-                return Task.FromResult(Response(operation, HttpStatusCode.OK, """{"Os":"linux","OSType":"linux"}"""));
-            }
-
-            if (method == HttpMethod.Get &&
-                pathAndQuery.StartsWith("/images/", StringComparison.Ordinal) &&
-                pathAndQuery.EndsWith("/json", StringComparison.Ordinal))
-            {
-                var encodedImage = pathAndQuery["/images/".Length..^"/json".Length];
-                var image = Uri.UnescapeDataString(encodedImage);
-                var exists = existingImages?.Contains(image) == true;
-                return Task.FromResult(Response(
-                    operation,
-                    exists ? HttpStatusCode.OK : HttpStatusCode.NotFound,
-                    exists ? "{}" : """{"message":"not found"}"""));
-            }
-
-            if (method == HttpMethod.Post && pathAndQuery.StartsWith("/images/create?", StringComparison.Ordinal))
-            {
-                return Task.FromResult(Response(operation, HttpStatusCode.OK, "{}"));
-            }
-
-            return Task.FromResult(Response(operation, HttpStatusCode.NotFound, """{"message":"not found"}"""));
-        }
-
-        public void Dispose()
-        {
-        }
-
-        private static DockerEngineResponse Response(string operation, HttpStatusCode statusCode, string body)
-        {
-            var bytes = Encoding.UTF8.GetBytes(body);
-            return new DockerEngineResponse(
-                operation,
-                statusCode,
-                body,
-                bytes,
-                new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
-        }
     }
 }

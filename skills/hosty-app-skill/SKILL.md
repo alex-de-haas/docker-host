@@ -14,7 +14,7 @@ Hosty is the target product model: a headless Core API, a replaceable Shell clie
 ## First Pass
 
 1. Identify whether the user wants to create a new runtime app, wrap an existing app, update an app manifest, migrate legacy module metadata, add Hosty identity/roles, configure data/backups, or validate an app.
-2. Treat `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, `docs/features/domain-model.md`, `docs/features/auth-gateway.md`, `docs/features/legacy-compatibility.md`, `apps/host/src/lib/app-manifest.ts`, `apps/host/src/lib/module-metadata.ts`, and `apps/demo-app` as source of truth when implementation details matter. Use minimal inline fixtures for legacy schema `0.3` compatibility examples.
+2. Treat `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, `docs/features/domain-model.md`, `docs/features/auth-gateway.md`, `docs/features/legacy-compatibility.md`, `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`, `apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs`, and `apps/demo-app` as source of truth when implementation details matter. Use minimal inline fixtures for legacy schema `0.3` compatibility examples.
 3. Prefer `hosty` commands and Hosty terminology. Use `docker-host` only as a deprecated compatibility alias or when referring to legacy behavior already implemented under that name.
 4. Keep Hosty Core access decisions separate from app-owned domain authorization. Hosty decides whether a Hosty user can reach the app; the app owns its internal roles and permissions.
 5. For Host-facing behavior, validate through a Core-managed runtime app using a local runtime profile before rebuilding images. Use existing Hosty users and assignments, then let Core issue the normal signed app identity token.
@@ -82,7 +82,7 @@ Use focused validation based on what changed:
 - App code changes: run the app's lint/build/test commands.
 - Demo app changes: run `npm run demo-app:lint` and `npm run demo-app:build`.
 - Shell app, embedded transport, identity behavior, or scoped directory behavior: use a Core-managed local runtime profile and `hosty apps open`.
-- Production-like container behavior: build the Host image and app image locally, then install the manifest through Hosty.
+- Production-like app container behavior: build the runtime app image locally, then install or switch the manifest through Hosty.
 
 Do not claim app security or identity work is complete without checking Hosty-issued token validation, cookie/header stripping assumptions, and audience validation.
 

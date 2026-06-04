@@ -12,21 +12,20 @@ internal sealed class OpenCommand(CommandContext context)
             throw new CommandUsageException("open does not accept arguments.", "Usage: hosty open");
         }
 
-        var settings = context.SettingsStore.Load();
-        settings.Validate(context.Environment);
-        using var docker = context.DockerFactory.Create(settings.HostDockerEndpoint);
-        var container = await docker.InspectContainerAsync(settings.HostContainerName);
-        if (container?.State?.Running != true)
+        using var core = await CoreControlClient.TryCreateAsync(context);
+        if (core is null)
         {
-            context.Console.MarkupLine("[red]Host container is not running.[/]");
+            context.Console.MarkupLine("[red]Hosty Core is not running or local control discovery is unavailable.[/]");
             context.Console.MarkupLine("Run [grey]hosty start[/] first.");
             return 1;
         }
 
-        var url = HostLifecycle.TryGetHostUrl(container, settings);
-        if (url is null)
+        var status = await core.GetAsync<CoreStatusDocument>("core/status");
+        var url = status?.ShellPublicOrigin;
+        if (string.IsNullOrWhiteSpace(url))
         {
-            context.Console.MarkupLine("[red]Unable to determine the Host UI port from Docker container metadata.[/]");
+            context.Console.MarkupLine("[red]Hosty Shell origin is not configured.[/]");
+            context.Console.MarkupLine("Set [grey]HOST_SHELL_PUBLIC_ORIGIN[/] when starting Core, or run [grey]npm run dev[/] for local Core/Shell development.");
             return 1;
         }
 
@@ -41,6 +40,8 @@ internal sealed class OpenCommand(CommandContext context)
 
         return 0;
     }
+
+    private sealed record CoreStatusDocument(string? ShellPublicOrigin);
 
     private static bool TryOpen(string url)
     {

@@ -15,17 +15,11 @@ internal sealed class LaunchSettings
 
     public string this[string key] => values[key];
 
-    public string HostImage => this[LaunchSettingDefinitions.HostImage];
-
     public string HostContainerName => this[LaunchSettingDefinitions.HostContainerName];
 
     public string HostDataRootHostRaw => this[LaunchSettingDefinitions.HostDataRootHost];
 
-    public string HostDataRootContainer => this[LaunchSettingDefinitions.HostDataRootContainer];
-
     public string HostUiPort => this[LaunchSettingDefinitions.HostUiPort];
-
-    public string HostBindAddress => this[LaunchSettingDefinitions.HostBindAddress];
 
     public string HostPublicOrigin => this[LaunchSettingDefinitions.HostPublicOrigin];
 
@@ -33,15 +27,7 @@ internal sealed class LaunchSettings
 
     public string HostShellPublicOrigin => this[LaunchSettingDefinitions.HostShellPublicOrigin];
 
-    public string HostGatewayBaseDomain => this[LaunchSettingDefinitions.HostGatewayBaseDomain];
-
-    public string HostRestartPolicy => this[LaunchSettingDefinitions.HostRestartPolicy];
-
     public string HostDockerEndpoint => this[LaunchSettingDefinitions.HostDockerEndpoint];
-
-    public string HostDockerSocket => this[LaunchSettingDefinitions.HostDockerSocket];
-
-    public string HostModuleNetwork => this[LaunchSettingDefinitions.HostModuleNetwork];
 
     public string ResolveHostDataRoot(DockerHostEnvironment environment)
         => environment.ResolvePath(HostDataRootHostRaw);

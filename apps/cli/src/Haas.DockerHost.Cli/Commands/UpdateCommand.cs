@@ -26,7 +26,7 @@ internal sealed class UpdateCommand(CommandContext context)
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
             context.Console.MarkupLine($"[red]CLI update failed:[/] {Markup.Escape(ex.Message)}");
-            context.Console.MarkupLine("The Host container was not changed. Retry later, then restart the Host with [grey]hosty stop[/] and [grey]hosty start[/].");
+            context.Console.MarkupLine("Hosty Core and Shell were not changed. Retry later, then restart Core with [grey]hosty restart[/].");
             return 1;
         }
 

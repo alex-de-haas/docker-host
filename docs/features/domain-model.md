@@ -144,9 +144,9 @@ The legacy directory contains:
 
 There are no per-module `module-state.json`, `module-installation.json`, or `module-settings.json` files.
 
-### Host launch configuration
+### CLI Configuration
 
-The Host container launch configuration is stored in:
+CLI configuration is stored in:
 
 ```text
 ~/.hosty/config/launch.env
@@ -154,34 +154,32 @@ The Host container launch configuration is stored in:
 
 The legacy `~/.docker-host/config/launch.env` remains readable when the legacy root is selected.
 
-It owns Host container lifecycle settings, not module state:
+It owns local bootstrap settings and legacy module lookup settings, not app state:
 
-- `HOST_IMAGE`;
 - `HOST_CONTAINER_NAME`;
 - `HOST_DATA_ROOT_HOST`;
-- `HOST_DATA_ROOT_CONTAINER`;
 - `HOST_UI_PORT`;
-- `HOST_RESTART_POLICY`;
+- `HOST_PUBLIC_ORIGIN`;
+- `HOST_CORE_PUBLIC_ORIGIN`;
+- `HOST_SHELL_PUBLIC_ORIGIN`;
 - `HOST_DOCKER_ENDPOINT`;
-- `HOST_DOCKER_SOCKET`;
-- `HOST_MODULE_NETWORK`.
 
-The standalone `hosty` CLI reads this file for Host lifecycle commands. `docker-host` remains a deprecated compatibility alias. `HOST_DOCKER_ENDPOINT` is the CLI-side Docker Engine endpoint, such as `unix:///var/run/docker.sock` on macOS/Linux/WSL or `npipe:////./pipe/docker_engine` on native Windows. On Windows with Docker Desktop, WSL integration must be enabled for the WSL distro where the CLI runs so the Unix socket is available there. `HOST_DOCKER_SOCKET` is the socket path mounted into the Linux Host container and remains `/var/run/docker.sock`.
+The standalone `hosty` CLI reads this file when starting Core and when resolving legacy module command fallbacks. `docker-host` remains a deprecated compatibility alias. `HOST_DOCKER_ENDPOINT` is retained only for legacy Docker lookup paths.
 
 ## Persistent Files
 
 | Path | Owner | Responsibility |
 | --- | --- | --- |
-| `~/.hosty/config/launch.env` | CLI | Host container launch settings. |
-| `~/.hosty/apps.json` | Host backend | Legacy Next compatibility registry with manifest source, selected runtime, selected channel, and timestamps. |
+| `~/.hosty/config/launch.env` | CLI | Local bootstrap settings and legacy lookup settings. |
+| `~/.hosty/apps.json` | Hosty Core | App registry index for installed runtime apps. |
 | `~/.hosty/apps/<app-id>/state.json` | Hosty Core | App-owned lifecycle, selected runtime, source state, settings, storage, dependency, endpoint, and error state. |
-| `~/.hosty/apps/<app-id>/manifest.json` | Host backend | Local copy of downloaded app manifest. |
-| `~/.hosty/apps/<app-id>/data/` | Host backend | Primary app data directory for new app-oriented installs. |
-| `~/.hosty/backups/<app-id>/` | Host backend | ZIP app data backups and JSON backup metadata. |
+| `~/.hosty/apps/<app-id>/manifest.json` | Hosty Core | Local copy of downloaded app manifest. |
+| `~/.hosty/apps/<app-id>/data/` | Hosty Core | Primary app data directory for app-oriented installs. |
+| `~/.hosty/backups/<app-id>/` | Hosty Core | ZIP app data backups and JSON backup metadata. |
 | `~/.hosty/sources/<app-id>/` | Hosty Core | Managed source checkout/cache root for repository-backed runtime apps. |
-| `~/.hosty/modules.json` | Host backend | Optional legacy installed module registry, persistent module state, and Host-owned settings for compatibility imports. |
-| `~/.hosty/modules/<module-id>/metadata.json` | Host backend | Local copy of downloaded legacy module metadata. |
-| `~/.hosty/modules/<module-id>/<storage-key>/` | Host backend | Legacy bind-mount target for module-owned persistent storage. |
+| `~/.hosty/modules.json` | Compatibility adapter | Optional legacy installed module registry and imported legacy settings. |
+| `~/.hosty/modules/<module-id>/metadata.json` | Compatibility adapter | Local copy of downloaded legacy module metadata. |
+| `~/.hosty/modules/<module-id>/<storage-key>/` | Compatibility adapter | Legacy bind-mount target for module-owned persistent storage. |
 
 The same layout can live under `~/.docker-host` when the legacy data root is selected.
 

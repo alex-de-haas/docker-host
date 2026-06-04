@@ -6,7 +6,7 @@ Docker Host Manager is evolving into Hosty: a local application orchestrator wit
 
 A runtime app is a Hosty-managed workload. Administrators add an app by providing a direct URL to an `app.0.1` manifest. The Host downloads that JSON file, reads runtime profile, service, image, settings, storage, and endpoint metadata, then prepares local state and runtime configuration. Legacy Docker module metadata remains a compatibility input for already-installed or explicitly imported legacy modules.
 
-The Host itself is expected to run as a Docker container in production-like usage. A standalone CLI executable bootstraps and manages the Host container lifecycle. The preferred command is `hosty`; `docker-host` remains a deprecated compatibility alias during migration.
+The preferred command is `hosty`; `docker-host` remains a deprecated compatibility alias during migration. Legacy Docker module metadata remains a compatibility input for existing records and explicit imports, but the old combined Host UI/API package is retired.
 
 When one runtime app depends on another service app, the consumer declares which dependency endpoint it needs and which target environment variables should receive its base URL. The Host starts the dependency, resolves an internal URL inside one shared Host-managed Docker network, and injects that URL into the requested consumer services. Network aliases are derived from app ids and service keys, for example `com.modulis.storage` + `api` becomes `mod-com-modulis-storage-api`. This does not require Docker Compose, although Compose could be one possible implementation detail.
 
@@ -29,23 +29,22 @@ flowchart LR
 - [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - implemented Hosty compatibility foundation: `hosty` CLI alias, `~/.hosty` root selection, system Shell app, app manifests, apps registry, data directory, and backups.
 - [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - target Core/Shell/CLI package boundaries, Core API ownership, Shell runtime app contract, final storage layout, backup policy, and legacy paths pending removal.
 - [Direct origin module UI](features/direct-origin-module-ui.md) - module UIs embedded from module-owned origins with Host-assigned ports, optional public origins, and identity token bridging.
-- [Auth Gateway](features/auth-gateway.md) - Host-owned authentication, authorization, subdomain module gateway, realtime traffic, account switching, and module-owned permissions.
-- [Browser account switching](features/account-switching.md) - browser-scoped remembered Host accounts, sidebar switching, account-set persistence, logout behavior, and cookie hygiene.
+- [Auth And Gateway Model](features/auth-gateway.md) - current Core-owned authentication, authorization, app identity, and target gateway/ingress model after the Legacy Host gateway was retired.
+- [Browser account switching](features/account-switching.md) - retired Legacy Host behavior and future Core/Shell restoration boundary.
 - [User Management](features/user-management.md) - administrator user directory, local invitation links, role changes, soft-disable, and app access assignment.
-- [Local development and testing](features/local-development.md) - local run modes for testing Host changes without pushing an image.
+- [Local development and testing](features/local-development.md) - local Core, Shell, and runtime app feedback loops.
 - [Runtime source workflows](features/runtime-source-workflows.md) - Core-managed source checkout and local override commands for installed runtime apps.
 - [Runtime profile switching](features/runtime-source-workflows.md#runtime-switch-reviews) - reviewed Docker/local command runtime switching, selected-runtime state, pre-switch backups, and rollback behavior.
 - [App Auth And Origin Separation](features/app-auth-origin-separation.md) - Core-owned app auth code exchange, app-local runtime sessions, split Core/Shell public origins, and migration guidance.
 - [App Data Backup Retention](features/app-data-backup-retention.md) - completed retention policy, cleanup preview/apply APIs, scheduled cleanup, and Shell/CLI backup deletion and prune controls.
 - [Multi-container modules](features/multi-container-modules.md) - module-owned containers, per-container runtime state, endpoint resolution, storage targets, lifecycle behavior, and Web UI service display.
 - [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped Codex skill for agents that wrap apps as Hosty runtime apps or update legacy Docker module compatibility manifests.
-- [Host launch model](features/host-launch.md) - how the Host container, `docker-host` CLI executable, Web UI, and backend API fit together.
-- [Web UI dashboard](features/web-ui-dashboard.md) - installed module dashboard, lifecycle actions, install/update routes, and recovery dialogs.
-- [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command surface, compatibility `docker-host` alias, launch configuration, and direct Docker Engine lifecycle integration.
+- [Web UI dashboard](features/web-ui-dashboard.md) - current Shell dashboard, Installed Apps management surface, and Core app lifecycle/API boundaries.
+- [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command surface, compatibility `docker-host` alias, local Core bootstrap, and control discovery.
 - [CLI module commands](features/cli-module-commands.md) - terminal module management commands using the Host local control channel.
-- [Docker Host API](features/host-api.md) - Host backend API endpoint catalog for Web UI routes and local control routes.
+- [Docker Host API](features/host-api.md) - legacy Host API endpoint catalog and compatibility context.
 - [Docker Host domain model](features/domain-model.md) - shared vocabulary for Hosty runtime apps, legacy installed modules, lifecycle state, settings, storage, dependency resolution, and plans.
-- [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for Host image and CLI.
+- [Repository and release model](features/repository-release-model.md) - monorepo layout, artifact boundaries, and independent GitHub Actions builds for CLI and runtime app images.
 - [Module metadata files](features/module-metadata.md) - supported legacy metadata and app manifest contracts for installing Docker-hosted runtime apps.
 - [Legacy compatibility](features/legacy-compatibility.md) - implemented boundary for schema `0.2`/`0.3` metadata and `modules.json` import compatibility after Demo Module removal.
 - [Module update flow](features/module-update.md) - update plan, apply, preservation, and retry behavior.

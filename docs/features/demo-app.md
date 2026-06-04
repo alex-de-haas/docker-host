@@ -62,13 +62,13 @@ The published manifest image uses:
 ghcr.io/alex-de-haas/demo-app:latest
 ```
 
-For legacy Host UI install testing, the dev-only fixture route is:
+For local install testing, pass the manifest path directly to Core:
 
-```text
-http://localhost:3000/fixtures/apps/demo-app
+```bash
+hosty apps install apps/demo-app/manifest.json --runtime dev
 ```
 
-That fixture returns the Demo App `app.0.1` manifest and rewrites Docker runtime image references to `hosty-demo-app:dev` with `pullPolicy: ifNotPresent`. It replaces the removed legacy Demo Module fixture.
+The removed Legacy Host fixture route at `http://localhost:3000/fixtures/apps/demo-app` is no longer available. Local Docker image testing should use `hosty-demo-app:dev` together with a manifest or channel entry that selects the local image and `pullPolicy: ifNotPresent`.
 
 ## Compatibility Boundary
 

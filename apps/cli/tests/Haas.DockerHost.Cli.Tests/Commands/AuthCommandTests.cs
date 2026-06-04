@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Haas.DockerHost.Cli;
 
 namespace Haas.DockerHost.Cli.Tests.Commands;
@@ -16,48 +15,23 @@ public sealed class AuthCommandTests : IDisposable
         Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
     }
 
-    [Fact]
-    public async Task RunAsync_RecoveryToken_CreatesRecoveryTokenAndAuditEvent()
+    [Theory]
+    [InlineData("setup-token")]
+    [InlineData("recovery-token")]
+    public async Task RunAsync_TokenCommand_DoesNotWriteLegacyAuthState(string command)
     {
-        var exitCode = await CommandLine.RunAsync(["auth", "recovery-token"]);
+        var exitCode = await CommandLine.RunAsync(["auth", command]);
 
-        Assert.Equal(0, exitCode);
-
-        var statePath = Path.Combine(rootDirectory, "auth", "state.json");
-        using var state = JsonDocument.Parse(await File.ReadAllTextAsync(statePath));
-        var tokenRecord = state.RootElement.GetProperty("setupTokens")[0];
-
-        Assert.Equal("recovery", tokenRecord.GetProperty("purpose").GetString());
-        Assert.StartsWith("setup_", tokenRecord.GetProperty("id").GetString());
-        Assert.False(string.IsNullOrWhiteSpace(tokenRecord.GetProperty("tokenHash").GetString()));
-
-        var audit = await File.ReadAllTextAsync(Path.Combine(rootDirectory, "auth", "audit.ndjson"));
-        Assert.Contains("auth.recovery_token.created", audit);
-        Assert.DoesNotContain("dhstp_", audit);
+        Assert.Equal(1, exitCode);
+        Assert.False(File.Exists(Path.Combine(rootDirectory, "auth", "state.json")));
+        Assert.False(File.Exists(Path.Combine(rootDirectory, "auth", "audit.ndjson")));
+        Assert.False(File.Exists(Path.Combine(rootDirectory, "core", "auth", "state.json")));
     }
 
     [Fact]
-    public async Task RunAsync_RecoveryToken_RemovesStaleAuthStateLock()
+    public async Task RunAsync_TokenCommand_WithArguments_ReturnsUsageError()
     {
-        var authRoot = Path.Combine(rootDirectory, "auth");
-        Directory.CreateDirectory(authRoot);
-        var lockPath = Path.Combine(authRoot, "state.json.lock");
-        await File.WriteAllTextAsync(lockPath, "stale");
-        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.AddMinutes(-5));
-
-        var exitCode = await CommandLine.RunAsync(["auth", "recovery-token"]);
-
-        Assert.Equal(0, exitCode);
-        Assert.False(File.Exists(lockPath));
-    }
-
-    [Fact]
-    public async Task RunAsync_RecoveryToken_WhenAuthRootCannotBeCreated_ReturnsConfigurationError()
-    {
-        Directory.CreateDirectory(rootDirectory);
-        await File.WriteAllTextAsync(Path.Combine(rootDirectory, "auth"), "not a directory");
-
-        var exitCode = await CommandLine.RunAsync(["auth", "recovery-token"]);
+        var exitCode = await CommandLine.RunAsync(["auth", "setup-token", "extra"]);
 
         Assert.Equal(2, exitCode);
     }

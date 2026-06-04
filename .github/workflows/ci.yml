@@ -5,7 +5,6 @@ on:
     branches:
       - main
     paths:
-      - "apps/host/**"
       - "apps/core/**"
       - "apps/shell/**"
       - "apps/demo-app/**"
@@ -16,14 +15,12 @@ on:
       - "package-lock.json"
       - "global.json"
       - ".github/workflows/ci.yml"
-      - ".github/workflows/host-image.yml"
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
   push:
     branches:
       - main
     paths:
-      - "apps/host/**"
       - "apps/core/**"
       - "apps/shell/**"
       - "apps/demo-app/**"
@@ -34,7 +31,6 @@ on:
       - "package-lock.json"
       - "global.json"
       - ".github/workflows/ci.yml"
-      - ".github/workflows/host-image.yml"
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
 

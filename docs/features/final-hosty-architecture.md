@@ -197,7 +197,7 @@ The following paths and behaviors are current implementation details only. They 
 - separate local target state and local-target control routes;
 - deterministic development user seeding;
 - browser development account seeding tied to the dev harness;
-- Shell bundled into the same deployed Next.js app as Core APIs.
+- legacy combined `apps/host` package, removed from the repository.
 
 The replacement is an installed runtime app workflow: app manifests, source state, local source overrides, local command runtime profiles, existing Host users, app-scoped identity helpers, and normal Core lifecycle APIs.
 

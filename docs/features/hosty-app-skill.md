@@ -106,7 +106,7 @@ The skill may also trigger implicitly for runtime-app-related work, but explicit
 
 Keep the skill aligned with the source documentation:
 
-- update `references/app-manifest.md` when `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, or `apps/host/src/lib/app-manifest.ts` changes;
+- update `references/app-manifest.md` when `docs/features/hosty-runtime-app-platform.md`, `docs/features/module-metadata.md`, or `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs` changes;
 - update `references/app-auth-and-users.md` when `docs/features/auth-gateway.md` or `docs/features/user-management.md` changes;
 - update `references/app-dev-mode.md` when `docs/features/local-development.md` or Core local runtime behavior changes;
 - update `references/demo-app-patterns.md` when `apps/demo-app` changes in a way agents should copy;

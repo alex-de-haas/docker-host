@@ -103,7 +103,7 @@ When the app is installed by Hosty, each service container receives:
 
 Requests routed through a Host gateway exposure may include `X-Docker-Host-Identity`. The demo app validates that ES256 JWT against Host discovery and JWKS endpoints, shows the normalized claims on the dashboard, and exposes the same sanitized data through `/api/auth/identity`. The endpoint never returns raw bearer tokens, service tokens, session cookies, or raw identity JWTs.
 
-## External Ingress Readiness Testing
+## Future External Ingress Readiness Testing
 
 The demo app is suitable as the first manual external ingress readiness target because its `frontend` service manifest declares a public HTTP endpoint and a health endpoint:
 
@@ -113,4 +113,4 @@ endpoints[].service = frontend
 services[].healthCheck.path = /api/health
 ```
 
-After installing the app, create a Host gateway exposure for the `http` port under `HOST_GATEWAY_BASE_DOMAIN`. The Host external ingress readiness panel can then generate manual DNS, reverse proxy, TLS, OIDC, and trusted-proxy setup guidance for that exposure. Once the external route is configured, use the demo dashboard and `/api/auth/identity` to verify that gateway identity headers, forwarded request headers, and app directory access still behave the same through the external hostname.
+The retired Legacy Host external ingress readiness panel is no longer available in the current Core/Shell split. When gateway and ingress readiness return as Core-backed features, use the Demo App `http` endpoint as the first validation target. Once an external route is configured, use the demo dashboard and `/api/auth/identity` to verify that Hosty identity headers, forwarded request headers, and app directory access still behave the same through the external hostname.

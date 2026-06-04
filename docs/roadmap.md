@@ -221,7 +221,7 @@ Validation focus:
 - Stage 2 runtime/source workflows, Stage 3 app auth/origin work, and Stage 4 backup retention work are complete.
 - Parser compatibility for legacy schema `0.3` remains covered by minimal inline fixtures instead of a repository app package.
 - App-only lifecycle writes now update `apps.json` without creating empty `modules.json`.
-- Local Demo App and Host image builds are the release validation target before published image checks.
+- Local Demo App image, Core, Shell, and CLI builds are the release validation target before published Demo App image checks.
 - Published Demo App image smoke is still required before marking Stage 5 complete. On June 3, 2026, `docker pull ghcr.io/alex-de-haas/demo-app:latest` returned `denied`; the replacement `demo-app-image.yml` workflow must run on `main`, and the GHCR package must be public.
 
 Follow-up source of truth:

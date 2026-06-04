@@ -55,15 +55,15 @@ The CLI is not a runtime app. It is a local bootstrap executable. It can still u
 
 ### Hosty Shell
 
-Hosty Shell is currently part of the Host Web UI and Host container image. The planning target is to show it in app management as a first-class system app.
+Hosty Shell is a Core-managed runtime app and should be shown in app management as a first-class system app.
 
-The first implementation can model Shell updates as Host image updates:
+The channel model should treat Core and Shell separately:
 
-- current Shell channel maps to a Host image reference;
-- switching the Shell channel updates the Host image setting or Host-owned Shell source state;
-- the existing Host lifecycle recreates or restarts the Host container when needed.
+- Shell channels map to Shell manifest, source, or image references;
+- Core channels map to Core package/source references when a Core distribution channel exists;
+- switching the Shell channel reuses runtime app update planning and apply.
 
-A later implementation can separate Shell delivery from Hosty Core if the architecture needs it. The channel model should allow that, but not require it now.
+The retired combined Host image should not be used as the product-channel abstraction.
 
 ### Runtime App Manifest
 
@@ -180,7 +180,7 @@ Example shape:
 
 The `cli` block is optional over time. If the CLI remains simple enough, Shell, Core, and runtime app channels may carry most product changes while the CLI updates less often.
 
-The current implementation can map `shell.image` or `core.image` to the existing Host image until Shell and Core delivery are split.
+The current implementation should map `shell.image` to the Shell runtime app manifest/runtime state. Core image/package delivery remains deferred until a Core distribution channel exists.
 
 ### Runtime App Channel Index
 
@@ -285,14 +285,15 @@ When applying a product channel, the CLI should:
 - download the product channel index;
 - validate the schema version;
 - resolve the selected channel;
-- update the local Hosty Core or Shell image setting from `channel.core.image` or `channel.shell.image`, depending on current packaging;
+- update Shell runtime app state from `channel.shell.image` or a resolved Shell manifest when provided;
+- record Core channel metadata when `channel.core` is present, without pretending a combined Host image exists;
 - download and apply a CLI artifact from `channel.cli.releaseTag` only if the selected channel includes a CLI block;
 - verify CLI artifacts with `SHA256SUMS` when available;
 - refresh the managed CLI command shims, including `hosty` and the deprecated `docker-host` alias during migration;
 - reconcile the shell profile PATH block so the managed CLI bin directory is available in new terminal sessions;
 - print a manual `export PATH=...` command when the current terminal session does not yet include the managed CLI bin directory;
 - store the selected product channel locally so the next interactive update can default to it;
-- leave Host container recreation to the existing `hosty start` flow unless an explicit restart/apply command is introduced.
+- leave Core restart/apply to an explicit supervisor or restart command when Core delivery becomes active.
 
 The selected product channel is user preference, not a permanent property of the binary. Build metadata should still be embedded separately in the CLI over time, such as version, commit SHA, build time, release tag, and build channel.
 
@@ -304,8 +305,8 @@ The implementation should extend the existing artifact publishing workflows inst
 
 Main product channel workflow:
 
-- build the current Host image from `main`;
-- publish the current Host image as the compatibility Hosty Core/Shell image until packaging is split;
+- build and publish Shell artifacts when Shell packaging changes;
+- record Core package metadata only after a Core distribution channel exists;
 - build the CLI only when CLI inputs changed or when a coordinated product channel requires it;
 - publish or update a rolling GitHub prerelease with tag `cli-main` when CLI assets are built;
 - update the generated product channel index entry for `main`;
@@ -314,8 +315,8 @@ Main product channel workflow:
 Pull request product channel workflow:
 
 - run only when a PR is intended to expose an update channel, for example by label `update-channel`;
-- build the current Host image for the PR;
-- publish the current Host image with a tag like `pr-42-auth-flow`;
+- build PR-specific Shell artifacts when Shell packaging changes;
+- publish PR-specific Core package metadata only after a Core distribution channel exists;
 - build and publish PR-specific CLI assets only when needed;
 - publish or update a rolling GitHub prerelease with a tag like `cli-pr-42-auth-flow` when CLI assets are built;
 - add or update the PR channel in the generated product channel index;
@@ -356,7 +357,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 **Status**: Deferred
 
-- Publish the `main` channel entry for the current Host image, mapped to Hosty Core/Shell until packaging is split.
+- Publish the `main` channel entry for Shell and CLI artifacts that exist.
 - Rename or replace the current rolling `cli-dev` behavior with `cli-main` if CLI channel publishing remains useful.
 - Keep backward compatibility for `cli-dev` only if needed for existing installers.
 - Publish `channels.json` to the `update-channels` release.
@@ -369,7 +370,7 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 - Add interactive product channel selection to `hosty update`.
 - Add non-interactive `--channel` and `--list-channels` options.
 - Store the selected product channel in local CLI configuration.
-- Update the local Host image setting when a product channel is applied.
+- Update Shell runtime app channel/runtime metadata when a product channel is applied.
 - Preserve existing checksum verification and executable replacement behavior for channels that include CLI artifacts.
 - Reconcile CLI shims and PATH profile entries during update, especially for the `docker-host` to `hosty` command migration.
 
@@ -409,11 +410,11 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 - Add an opt-in trigger for PR product channels, preferably a label such as `update-channel`.
 - Generate PR-safe slugs using `pr-<number>-<branch-slug>`.
-- Publish PR-specific Hosty Core/Shell image tags while packaging is combined.
+- Publish PR-specific Shell artifacts when the PR channel includes Shell changes.
 - Publish PR-specific CLI releases only when needed.
 - Add PR channel entries to the generated product channel index.
 - Remove closed PR channels from the generated product channel index.
-- Delete generated PR CLI releases, release tags, and Host image tags when safe.
+- Delete generated PR CLI releases, release tags, and Shell artifact tags when safe.
 - Keep cleanup best-effort and visible in workflow logs.
 
 ### Phase 9 - Validate end-to-end delivery
@@ -422,8 +423,8 @@ Runtime app channel workflows are publisher-owned. An app repository can generat
 
 - Validate switching Shell to `main`.
 - Validate switching Shell to `pr-<number>-<branch-slug>`.
-- Confirm the Shell image setting changes to the selected channel image.
-- Confirm `hosty start` pulls and starts the matching Host image.
+- Confirm the Shell runtime app channel changes to the selected channel artifact or manifest.
+- Confirm Shell update apply uses Core lifecycle and leaves Core manageable.
 - Validate switching an installed runtime app to an app PR channel.
 - Confirm runtime app channel switching uses the update plan before applying changes.
 - Validate that source-less Docker apps remain installable and updateable.

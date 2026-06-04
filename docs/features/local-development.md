@@ -64,7 +64,7 @@ hosty apps switch-runtime-plan hosty.shell --runtime dev
 hosty apps switch-runtime hosty.shell --runtime dev --plan-digest <digest>
 ```
 
-Do not use this pattern for Core itself. Core or the temporary combined Host cannot finish its own replacement after it exits; those operations need the trusted CLI or another outer supervisor.
+Do not use this pattern for Core itself. Core cannot finish its own replacement after it exits; those operations need the trusted CLI or another outer supervisor.
 
 ## Local Runtime Apps
 
@@ -135,22 +135,6 @@ The CLI helpers use existing enabled Host users and normal app access checks. Di
 
 Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
 
-## Production-Like Container Testing
-
-Use this mode when the change needs to be validated in the same shape as the released legacy Host container, without pushing an image:
-
-```bash
-docker build -f apps/host/Dockerfile -t docker-host:dev .
-hosty config set HOST_IMAGE docker-host:dev
-hosty config set HOST_DATA_ROOT_HOST "$HOME/.hosty-dev"
-hosty start
-hosty open
-```
-
-Use a dedicated development data root such as `~/.hosty-dev` to avoid mixing test app state with a real local installation.
-
-When the legacy Host container runs as `docker-host:dev`, app metadata URLs for services on the developer machine should use `host.docker.internal`. When Core runs directly through `npm run core:dev`, local URLs can point to `localhost`.
-
 ## Verification Checklist
 
 For normal feature work:
@@ -161,7 +145,7 @@ For normal feature work:
 - run the app's lint/build/test scripts for runtime app changes;
 - install the app manifest with the target runtime profile and exercise lifecycle through `hosty apps`.
 
-For launch/runtime changes:
+For runtime changes:
 
 - build the affected Docker image locally;
 - run lifecycle commands through Core;

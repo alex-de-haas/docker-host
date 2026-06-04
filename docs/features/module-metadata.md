@@ -254,26 +254,23 @@ Baseline update flow:
 
 Update failure handling follows the same optimistic fail-fast approach as install failure handling. If update fails at any step after apply has started, the Host does not perform automatic rollback. Already created files, directories, downloaded images, and containers remain for diagnosis, module status becomes `failed`, and retry/cleanup runs only through explicit administrator action.
 
-## Host storage layout
+## Hosty Storage Layout
 
-Docker Host stores installed modules inside the `modules` directory of its data root. Each module gets a separate folder by module `id`.
+Hosty stores app-oriented installs inside the `apps` directory of its data root. Legacy Docker module records remain readable from `modules.json` and `modules/<module-id>/` only as compatibility input.
 
-The physical default path for the Host data root on the administrator's machine:
+The physical default path for the Hosty data root on the administrator's machine:
 
 ```text
-~/.docker-host
+~/.hosty
 ```
 
-Because production-like launch is Host-container-first, the `docker-host` CLI must mount this path into the Host container as `/data` by default. Inside the Host container, the backend works with `HOST_DATA_ROOT_CONTAINER=/data`, while physical data remains in `HOST_DATA_ROOT_HOST`, usually `~/.docker-host`, on the administrator's machine.
-
-The CLI must pass both data-root paths to the Host backend:
+The legacy `~/.docker-host` root remains readable when it is the selected compatibility root. Current Core process runs use the resolved data root directly and do not require a separate container-side path.
 
 ```env
-HOST_DATA_ROOT_HOST=/Users/example/.docker-host
-HOST_DATA_ROOT_CONTAINER=/data
+HOST_DATA_ROOT_HOST=/Users/example/.hosty
 ```
 
-The Host backend uses `HOST_DATA_ROOT_CONTAINER` for its own file IO inside the Host container. For Docker bind mount source paths for module containers, the backend must use `HOST_DATA_ROOT_HOST`, because the Docker daemon interprets bind source paths relative to the host machine, not relative to the Host container filesystem.
+For Docker runtime app bind mounts, Core must use host-machine paths under the resolved data root because the Docker daemon interprets bind source paths relative to the host machine.
 
 Example:
 
@@ -303,7 +300,7 @@ File and folder responsibilities:
 
 The Host uses `apps.json` and app state for app-oriented lifecycle bookkeeping. Existing `modules.json` files remain a compatibility source for legacy module update flow and legacy install/update bookkeeping. Runtime container status is not stored in either registry file: the Host reads current container state from Docker daemon.
 
-A separate `host-settings.json` is not created. Launch settings for the Host container itself remain in CLI-owned `config/launch.env`; legacy Host backend settings can remain in root-level `modules.json` when needed.
+A separate `host-settings.json` is not created. Core-owned state lives under `core/`; legacy Host backend settings can remain in root-level `modules.json` only while compatibility imports are supported.
 
 Separate per-module `module-state.json`, `module-installation.json`, or `module-settings.json` files are not created for legacy module records. `metadata.json` and storage directories live together because they describe the installed configuration of one legacy module. When moving or backing up a legacy module, the Host must account for both the module directory and the corresponding root-level `modules.json` entry.
 
@@ -480,7 +477,7 @@ External storage mounts can live outside `modules/<module-id>/`. In that case, o
 
 This document is the source of truth for the module metadata schema: the `Metadata example`, `Schema outline`, field notes, and validation rules below together describe the supported contract.
 
-Executable validation now lives inside the Host backend and follows this document. The Host validates and normalizes `schemaVersion: "0.2"` and `schemaVersion: "0.3"` metadata in `apps/host/src/lib/module-metadata.ts` and uses it from install/update planning. A separate shared contracts package or generated schema artifact is not required for the metadata MVP; this document remains the source of truth for the supported metadata contract.
+Executable validation for current app manifests lives in Hosty Core, primarily `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`. Legacy `schemaVersion: "0.2"` and `"0.3"` metadata is retained as documented compatibility behavior rather than a first-party app authoring path.
 
 ## Schema outline
 
@@ -1070,7 +1067,7 @@ For example, for module id `com.acme.reports` and `modulePath: "data"`, the fina
 <host-data-root>/modules/com.acme.reports/data
 ```
 
-If the Host itself runs in a container, the bind mount path must be a path on the Docker daemon machine, not an internal path inside the Host container. Otherwise Docker creates the volume mount somewhere other than where the administrator expects.
+The bind mount path must be a path on the Docker daemon machine. Otherwise Docker creates the volume mount somewhere other than where the administrator expects.
 
 Path mapping example:
 
