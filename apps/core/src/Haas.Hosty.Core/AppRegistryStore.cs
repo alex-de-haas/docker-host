@@ -147,7 +147,8 @@ internal sealed record AppRecord(
     DateTimeOffset InstalledAt,
     DateTimeOffset UpdatedAt,
     AppSourceState? SourceState = null,
-    AppUiContract? Ui = null);
+    AppUiContract? Ui = null,
+    bool? Autostart = null);
 
 internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret);
 
@@ -256,6 +257,7 @@ internal sealed record AppSummary(
     string Source,
     string? SelectedChannel,
     string? SelectedRuntime,
+    bool Autostart,
     string OperationStatus,
     string RuntimeState,
     string? LastOperation,
@@ -289,6 +291,7 @@ internal sealed record AppSummary(
             app.Source,
             app.SelectedChannel,
             app.SelectedRuntime,
+            app.Autostart ?? true,
             app.OperationStatus,
             app.RuntimeState,
             app.LastOperation,

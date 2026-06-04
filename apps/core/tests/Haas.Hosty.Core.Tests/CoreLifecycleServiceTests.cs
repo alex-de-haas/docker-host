@@ -352,6 +352,71 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_DefaultsAutostartOn()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var result = await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        Assert.True(result.App?.Autostart);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.True(app?.Autostart);
+    }
+
+    [Fact]
+    public async Task InstallAsync_CanDisableAutostart()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var result = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, Autostart: false));
+
+        Assert.False(result.App?.Autostart);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.False(app?.Autostart);
+    }
+
+    [Fact]
+    public async Task StartAutostartAppsAsync_StartsOnlyEnabledApps()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, Autostart: false));
+
+        var disabledResults = await fixture.Service.StartAutostartAppsAsync();
+
+        Assert.Empty(disabledResults);
+        Assert.Equal(0, fixture.Adapter.StartCount);
+
+        await fixture.Service.ConfigureAutostartAsync("com.example.notes", new AppAutostartRequest(true));
+        var enabledResults = await fixture.Service.StartAutostartAppsAsync();
+
+        var result = Assert.Single(enabledResults);
+        Assert.True(result.Succeeded);
+        Assert.Equal("com.example.notes", result.AppId);
+        Assert.Equal(1, fixture.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task StopRuntimeAppsAsync_StopsAppsRegardlessOfAutostart()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, Autostart: false));
+        await fixture.Service.StartAsync("com.example.notes");
+
+        var results = await fixture.Service.StopRuntimeAppsAsync();
+
+        var result = Assert.Single(results);
+        Assert.True(result.Succeeded);
+        Assert.Equal("com.example.notes", result.AppId);
+        Assert.Equal(1, fixture.Adapter.StopCount);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("stopped", app?.RuntimeState);
+    }
+
+    [Fact]
     public async Task StartAsync_ResolvesDependencyUrlsForRuntimeAdapter()
     {
         var fixture = await LifecycleFixture.CreateAsync();

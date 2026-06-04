@@ -180,6 +180,7 @@ Returned by `GET /api/apps`.
   "capabilities": ["open", "update", "restart", "stop", "remove", "backup", "restore", "logs"],
   "selectedRuntime": "docker",
   "selectedChannel": null,
+  "autostart": true,
   "operationStatus": "started",
   "runtimeState": "running",
   "lastOperation": "start",
@@ -217,6 +218,7 @@ Hosty Shell is returned as a system app to administrators when Core has installe
   "displayName": "Hosty Shell",
   "version": "bundled",
   "selectedRuntime": "host-core",
+  "autostart": true,
   "operationStatus": "started",
   "runtimeState": "running",
   "capabilities": ["open", "update", "restart", "stop", "logs"],
@@ -395,6 +397,7 @@ Response entries include:
 - display name;
 - description, if available;
 - version;
+- app-level autostart setting;
 - app operation status;
 - runtime state without container details;
 - direct browser UI URL;
@@ -408,7 +411,21 @@ Reviews a runtime app manifest before installation.
 
 The request accepts a local manifest path or an absolute `http`/`https` manifest URL. `selectedRuntime` is optional; when omitted, Core selects the manifest default runtime (`defaultRuntime`, a profile with `default: true`, or the first profile).
 
-The response returns the selected install plan plus `runtimeProfiles[]` so Shell can show a runtime selector only after the manifest is reviewed. Each runtime profile entry includes `key`, `type`, and `default`.
+The response returns the selected install plan plus `runtimeProfiles[]` so Shell can show a runtime selector only after the manifest is reviewed. Each runtime profile entry includes `key`, `type`, and `default`. `defaultAutostart` is `true` unless the request explicitly previews a disabled install.
+
+### `POST /api/apps/{appId}/autostart`
+
+Updates the installed runtime app's app-level startup setting. This endpoint requires an active admin Core browser session and CSRF token.
+
+Request:
+
+```json
+{
+  "autostart": true
+}
+```
+
+The setting is runtime-neutral. Core uses it during Core startup; Docker runtime apps do not use Docker-managed restart policies.
 
 ### `POST /api/apps/{appId}/launch-code`
 
@@ -875,6 +892,7 @@ Initial control routes:
 - `GET /control/v1/host/status` returns Host readiness for CLI preflight checks.
 - `GET /control/v1/apps` lists Hosty system apps and runtime apps for local CLI management.
 - `POST /control/v1/apps/install` installs an `app.0.1` runtime app from a local manifest path or absolute `http` or `https` manifest URL.
+- `POST /control/v1/apps/{appId}/autostart` updates the installed runtime app's app-level startup setting. Request body: `{ "autostart": true }`.
 - `POST /control/v1/apps/{appId}/update/plan` creates a runtime app update plan. Apps installed from a manifest URL refresh that stored URL by default.
 - `POST /control/v1/apps/{appId}/update` applies a reviewed runtime app update plan.
 - `POST /control/v1/apps/{appId}/start`, `stop`, and `restart` run runtime app lifecycle actions.

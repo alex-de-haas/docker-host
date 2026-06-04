@@ -60,11 +60,14 @@ Control APIs require the local control secret from `core/run/control.json`. Brow
 
 ## Shell runtime app contract
 
-Hosty Shell is a first-party runtime app with its own manifest and Docker runtime profile. It is installed as the default Hosty-managed runtime app during Core bootstrap and autostarts by default.
+Hosty Shell is a first-party runtime app with its own manifest and Docker runtime profile. It is installed as the default Hosty-managed runtime app during Core bootstrap and uses the same installed-app autostart setting as other runtime apps. The default is enabled.
+
+Runtime app autostart is owned by Core, not Docker. Docker runtime app containers are created with Docker restart disabled so Docker Desktop or the Docker daemon cannot independently restart runtime apps outside Core lifecycle ownership.
 
 Shell has the same lifecycle shape as other runtime apps:
 
 - install;
+- configure app-level autostart;
 - start;
 - stop;
 - restart;

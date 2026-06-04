@@ -129,6 +129,7 @@ type CoreApp = {
   source: string;
   selectedChannel?: string | null;
   selectedRuntime?: string | null;
+  autostart?: boolean | null;
   operationStatus: string;
   runtimeState: string;
   lastOperation?: string | null;
@@ -240,6 +241,7 @@ type CoreInstallPlan = {
   currentManifestDigest?: string | null;
   targetManifestDigest: string;
   selectedChannel?: string | null;
+  defaultAutostart?: boolean | null;
   runtimeProfiles?: CoreInstallRuntimeProfile[];
   settings: CoreInstallSetting[];
 };
@@ -427,6 +429,10 @@ function appendHostyThemeParams(
   url.searchParams.set("hosty_theme", theme);
   url.searchParams.set("hosty_theme_preference", preference);
   return url.toString();
+}
+
+function isAppAutostartEnabled(app: CoreApp) {
+  return app.autostart ?? true;
 }
 
 export function ShellClient({
@@ -852,11 +858,11 @@ export function ShellClient({
   );
 
   const configureApp = useCallback(
-    async (app: CoreApp, settings: Record<string, string | null>) => {
+    async (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => {
       const actionKey = `${app.id}:configure`;
       setBusyAction(actionKey);
       try {
-        await sendCsrfJson(appEndpoint(app, "/configure"), { settings });
+        await sendCsrfJson(appEndpoint(app, "/configure"), { settings, autostart });
         await refresh();
         setActivePanel(null);
         toast.success("Settings saved", { description: app.displayName });
@@ -967,7 +973,7 @@ export function ShellClient({
   );
 
   const applyInstall = useCallback(
-    async (plan: CoreInstallPlan, settings: Record<string, string | null>) => {
+    async (plan: CoreInstallPlan, settings: Record<string, string | null>, autostart: boolean) => {
       setBusyAction("install");
       try {
         await sendCsrfJson(`${coreOrigin}/api/apps/install`, {
@@ -976,6 +982,7 @@ export function ShellClient({
           selectedChannel: plan.selectedChannel,
           system: false,
           settings,
+          autostart,
         });
         await refresh();
         setInstallOpen(false);
@@ -1753,6 +1760,7 @@ function InstalledAppsPage({
                 <TableHead className="min-w-[240px]">App</TableHead>
                 <TableHead>Runtime</TableHead>
                 <TableHead>Version</TableHead>
+                <TableHead>Autostart</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>UI</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -1801,10 +1809,11 @@ function InstalledAppRow({
   const canControl = canManageApps && !isShell;
   const canInspect = canManageApps;
   const canBackup = canManageApps && app.capabilities.includes("backup");
-  const canConfigure = canControl && Boolean(app.settings?.length);
+  const canConfigure = canControl;
   const canUpdate = canControl && app.capabilities.includes("update");
   const canRemove = canControl && app.capabilities.includes("remove");
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
+  const autostartEnabled = isAppAutostartEnabled(app);
 
   return (
     <TableRow>
@@ -1819,6 +1828,7 @@ function InstalledAppRow({
       </TableCell>
       <TableCell>{app.selectedRuntime || "none"}</TableCell>
       <TableCell>{app.version}</TableCell>
+      <TableCell><Badge variant={autostartEnabled ? "outline" : "secondary"}>{autostartEnabled ? "On" : "Off"}</Badge></TableCell>
       <TableCell><StatusBadge value={app.runtimeState || app.operationStatus} /></TableCell>
       <TableCell>
         <Badge variant={canOpen ? "outline" : "secondary"}>{canOpen ? "Available" : "No UI"}</Badge>
@@ -1959,12 +1969,13 @@ function InstallReviewDialog({
   busyAction: string | null;
   onClose: () => void;
   onReview: (manifestPath: string, selectedRuntime?: string | null) => void;
-  onApply: (plan: CoreInstallPlan, settings: Record<string, string | null>) => void;
+  onApply: (plan: CoreInstallPlan, settings: Record<string, string | null>, autostart: boolean) => void;
 }) {
   const [manifestPath, setManifestPath] = useState("");
   const [selectedRuntime, setSelectedRuntime] = useState("");
   const [reviewedManifestPath, setReviewedManifestPath] = useState<string | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Record<string, string>>({});
+  const [autostartDraft, setAutostartDraft] = useState(true);
   const reviewedPlan = detail.plan && manifestPath.trim() === reviewedManifestPath ? detail.plan : null;
   const runtimeProfiles =
     reviewedPlan?.runtimeProfiles && reviewedPlan.runtimeProfiles.length > 0
@@ -1984,6 +1995,7 @@ function InstallReviewDialog({
 
     setSelectedRuntime(detail.plan.targetRuntime);
     setSettingsDraft(Object.fromEntries(detail.plan.settings.map((setting) => [setting.key, setting.secret ? "" : setting.defaultValue || ""])));
+    setAutostartDraft(detail.plan.defaultAutostart ?? true);
   }, [detail.plan, manifestPath, reviewedManifestPath]);
 
   const submitReview = (event: FormEvent<HTMLFormElement>) => {
@@ -2012,7 +2024,7 @@ function InstallReviewDialog({
       }
     }
 
-    onApply(reviewedPlan, settings);
+    onApply(reviewedPlan, settings, autostartDraft);
   };
 
   return (
@@ -2093,6 +2105,9 @@ function InstallReviewDialog({
                 ))}
               </div>
             )}
+            <div className="rounded-md border bg-muted/30 p-3">
+              <CheckboxRow label="Start at Core startup" checked={autostartDraft} onChange={setAutostartDraft} />
+            </div>
             <DialogFooter>
               {reviewedPlan.action !== "install" && <p className="text-sm text-muted-foreground">Already installed</p>}
               <Button onClick={apply} disabled={reviewedPlan.action !== "install" || detail.loading || busyAction === "install"}>
@@ -2601,7 +2616,7 @@ function AppDetailsDialog({
   onDeleteBackup: (app: CoreApp, backup: CoreBackup) => void;
   onPreviewBackupCleanup: (app: CoreApp) => void;
   onApplyBackupCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
-  onConfigure: (app: CoreApp, settings: Record<string, string | null>) => void;
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
   onReloadUpdatePlan: (app: CoreApp) => void;
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
@@ -2746,13 +2761,15 @@ function BackupsPanel({
   );
 }
 
-function ConfigurePanel({ app, busyAction, canManageApps, onConfigure }: { app: CoreApp; busyAction: string | null; canManageApps: boolean; onConfigure: (app: CoreApp, settings: Record<string, string | null>) => void }) {
+function ConfigurePanel({ app, busyAction, canManageApps, onConfigure }: { app: CoreApp; busyAction: string | null; canManageApps: boolean; onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void }) {
   const settings = app.settings || [];
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [autostartDraft, setAutostartDraft] = useState(isAppAutostartEnabled(app));
 
   useEffect(() => {
     setDraft(Object.fromEntries(settings.map((setting) => [setting.key, setting.secret ? "" : setting.value || ""])));
-  }, [app.id, settings]);
+    setAutostartDraft(isAppAutostartEnabled(app));
+  }, [app.id, app.autostart, settings]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -2763,18 +2780,21 @@ function ConfigurePanel({ app, busyAction, canManageApps, onConfigure }: { app: 
         payload[setting.key] = value;
       }
     }
-    onConfigure(app, payload);
+    onConfigure(app, payload, autostartDraft);
   };
-
-  if (settings.length === 0) {
-    return <EmptyState icon={Settings2} title="No settings" />;
-  }
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      {settings.map((setting) => (
-        <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
-      ))}
+      <div className="rounded-md border bg-muted/30 p-3">
+        <CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} />
+      </div>
+      {settings.length > 0 ? (
+        settings.map((setting) => (
+          <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
+        ))
+      ) : (
+        <p className="text-sm text-muted-foreground">This app has no app-owned settings.</p>
+      )}
       <DialogFooter>
         <Button type="submit" disabled={!canManageApps || busyAction === `${app.id}:configure`}>
           {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Settings2 className="h-4 w-4" />}

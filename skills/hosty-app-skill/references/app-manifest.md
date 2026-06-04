@@ -22,6 +22,7 @@ Repository source of truth:
 - Recommended app ids use reverse-DNS format, for example `com.acme.reports`.
 - Hosty stores one installed runtime app instance per app id.
 - Hosty keeps a local copy of the fetched manifest or metadata as the installed contract.
+- Autostart is an installed-app setting, not a manifest/runtime profile field. The default install behavior enables it, and administrators can disable it during or after install.
 
 ## Preferred `app.0.1` Shape
 
@@ -67,7 +68,7 @@ Docker runtime fields:
 - `services[].runtimes.<profile>.image`: required for `type: "docker"`. It can be a string image reference such as `ghcr.io/example/notes:1.2.3` or an object with `repository`, `tag`, and optional `pullPolicy`.
 - `services[].runtimes.<profile>.ports[]`: named ports with `key`, `containerPort`, optional `localPort`, optional `public`, and `protocol`.
 - `services[].runtimes.<profile>.resources`: optional CPU/memory hints.
-- Docker profiles are installable through the current runtime engine.
+- Docker profiles are installable through the current runtime engine. Do not model Docker restart policies in app manifests; Hosty Core owns runtime app startup and shutdown, and Docker-managed restart is disabled for runtime app containers.
 
 Local command runtime fields:
 

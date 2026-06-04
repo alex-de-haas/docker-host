@@ -52,7 +52,7 @@ Use `HOST_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that 
 
 `HOST_PUBLIC_ORIGIN` remains a compatibility alias for combined Core/Shell deployments. Prefer explicit Core/Shell origin variables for split-origin testing.
 
-Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should not try to start the Docker-managed `hosty.shell` runtime app. Use Core-managed Shell only when validating runtime lifecycle behavior.
+Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. Use Core-managed Shell only when validating runtime lifecycle behavior.
 
 When validating runtime lifecycle behavior, prefer installing Shell through Core like any other runtime app.
 

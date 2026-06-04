@@ -602,7 +602,7 @@ function buildModuleContainerCreateOptions(
     Env: Object.entries(config.env).map(([key, value]) => `${key}=${value}`),
     HostConfig: {
       NetworkMode: config.networkName,
-      RestartPolicy: { Name: 'unless-stopped' },
+      RestartPolicy: { Name: 'no' },
       PortBindings: Object.keys(portBindings).length > 0 ? portBindings : undefined,
       Mounts: config.mounts.map(mount => ({
         Type: 'bind',

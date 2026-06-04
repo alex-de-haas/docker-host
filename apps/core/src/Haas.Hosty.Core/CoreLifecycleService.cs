@@ -53,6 +53,7 @@ internal sealed class CoreLifecycleService(
             CurrentManifestDigest: currentManifestDigest,
             TargetManifestDigest: selection.ManifestDigest,
             SelectedChannel: request.SelectedChannel,
+            DefaultAutostart: request.Autostart ?? true,
             RuntimeProfiles: selection.Manifest.RuntimeProfiles
                 .Select(profile => new AppInstallRuntimeProfile(
                     profile.Key,
@@ -87,6 +88,7 @@ internal sealed class CoreLifecycleService(
             OperationStatus = "installed",
             RuntimeState = "stopped",
             LastOperation = "install",
+            Autostart = request.Autostart ?? true,
         };
         if (request.Settings is { Count: > 0 })
         {
@@ -103,11 +105,28 @@ internal sealed class CoreLifecycleService(
         {
             return app with
             {
-                Settings = MergeSettings(app.Settings, request.Settings),
+                Settings = request.Settings is { Count: > 0 } ? MergeSettings(app.Settings, request.Settings) : app.Settings,
+                Autostart = request.Autostart ?? app.Autostart,
                 OperationStatus = "configured",
                 LastOperation = "configure",
                 LastError = null,
             };
+        }, cancellationToken);
+
+        return new AppLifecycleResponse(AppSummary.From(document.App), null, "configured");
+    }
+
+    public async Task<AppLifecycleResponse> ConfigureAutostartAsync(
+        string appId,
+        AppAutostartRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await apps.UpdateAppAsync(appId, app => app with
+        {
+            Autostart = request.Autostart,
+            OperationStatus = "configured",
+            LastOperation = "configure-autostart",
+            LastError = null,
         }, cancellationToken);
 
         return new AppLifecycleResponse(AppSummary.From(document.App), null, "configured");
@@ -532,6 +551,62 @@ internal sealed class CoreLifecycleService(
             Services: health.Services);
     }
 
+    public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new List<AppBackgroundLifecycleResult>();
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records.Where(app =>
+            string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
+            (app.Autostart ?? true)).OrderBy(app => app.Id, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results.Add(await RunBackgroundLifecycleActionAsync(
+                app.Id,
+                "autostart",
+                async () => await StartAsync(app.Id, cancellationToken),
+                cancellationToken));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StopAutostartDisabledAppsAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new List<AppBackgroundLifecycleResult>();
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records.Where(app =>
+            string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
+            !(app.Autostart ?? true)).OrderByDescending(app => app.Id, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results.Add(await RunBackgroundLifecycleActionAsync(
+                app.Id,
+                "autostart-disabled-stop",
+                async () => await StopAsync(app.Id, cancellationToken),
+                cancellationToken));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StopRuntimeAppsAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new List<AppBackgroundLifecycleResult>();
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records.Where(app =>
+            string.Equals(app.Kind, "runtime", StringComparison.Ordinal)).OrderByDescending(app => app.Id, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results.Add(await RunBackgroundLifecycleActionAsync(
+                app.Id,
+                "core-shutdown-stop",
+                async () => await StopAsync(app.Id, cancellationToken),
+                cancellationToken));
+        }
+
+        return results;
+    }
+
     private AppRecord BuildAppRecord(
         RuntimeAppManifestSelection selection,
         string manifestPath,
@@ -598,7 +673,55 @@ internal sealed class CoreLifecycleService(
             InstalledAt: existing?.InstalledAt ?? default,
             UpdatedAt: default,
             SourceState: BuildSourceState(selection, existing),
-            Ui: AppUiContract.FromManifest(manifest.Ui));
+            Ui: AppUiContract.FromManifest(manifest.Ui),
+            Autostart: existing?.Autostart ?? true);
+    }
+
+    private async Task<AppBackgroundLifecycleResult> RunBackgroundLifecycleActionAsync(
+        string appId,
+        string operation,
+        Func<Task<AppLifecycleResponse>> action,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await action();
+            return new AppBackgroundLifecycleResult(appId, operation, Succeeded: true, ErrorCode: null, Message: response.Status);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException or JsonException)
+        {
+            var code = ex is AppLifecycleException lifecycleException
+                ? lifecycleException.Code
+                : ex is AppManifestException manifestException
+                    ? manifestException.Code
+                    : "background_lifecycle_failed";
+            await RecordBackgroundLifecycleFailureAsync(appId, operation, ex.Message, cancellationToken);
+            return new AppBackgroundLifecycleResult(appId, operation, Succeeded: false, ErrorCode: code, Message: ex.Message);
+        }
+    }
+
+    private async Task RecordBackgroundLifecycleFailureAsync(
+        string appId,
+        string operation,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await apps.UpdateAppAsync(appId, current => current with
+            {
+                OperationStatus = "failed",
+                LastOperation = operation,
+                LastError = message,
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
+        {
+        }
     }
 
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
@@ -1376,16 +1499,22 @@ internal sealed record AppInstallPlanRequest(
     string ManifestPath,
     string? SelectedRuntime = null,
     string? SelectedChannel = null,
-    bool System = false);
+    bool System = false,
+    bool? Autostart = null);
 
 internal sealed record AppInstallRequest(
     string ManifestPath,
     string? SelectedRuntime = null,
     string? SelectedChannel = null,
     bool System = false,
-    IReadOnlyDictionary<string, string?>? Settings = null);
+    IReadOnlyDictionary<string, string?>? Settings = null,
+    bool? Autostart = null);
 
-internal sealed record AppConfigureRequest(IReadOnlyDictionary<string, string?> Settings);
+internal sealed record AppConfigureRequest(
+    IReadOnlyDictionary<string, string?> Settings,
+    bool? Autostart = null);
+
+internal sealed record AppAutostartRequest(bool Autostart);
 
 internal sealed record AppUpdatePlanRequest(
     string? ManifestPath = null,
@@ -1419,6 +1548,13 @@ internal sealed record AppChannelSwitchPlanRequest(string Channel, string? Chann
 
 internal sealed record AppChannelSwitchApplyRequest(string Channel, string PlanDigest, string? ChannelsPath = null, string? SelectedRuntime = null);
 
+internal sealed record AppBackgroundLifecycleResult(
+    string AppId,
+    string Operation,
+    bool Succeeded,
+    string? ErrorCode,
+    string? Message);
+
 internal sealed record AppLifecycleResponse(AppSummary? App, AppBackupRecord? Backup, string Status);
 
 internal sealed record AppInstallPlan(
@@ -1435,6 +1571,7 @@ internal sealed record AppInstallPlan(
     string? CurrentManifestDigest,
     string TargetManifestDigest,
     string? SelectedChannel,
+    bool DefaultAutostart,
     IReadOnlyList<AppInstallRuntimeProfile> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
 

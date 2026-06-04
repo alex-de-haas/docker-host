@@ -481,6 +481,8 @@ internal sealed class DockerRuntimeAdapter(HostyCoreRuntimeConfig config) : IApp
                 "-d",
                 "--name",
                 containerName,
+                "--restart",
+                "no",
                 "--label",
                 $"hosty.app.id={context.App.Id}",
                 "--label",

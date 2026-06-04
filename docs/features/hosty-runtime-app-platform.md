@@ -136,6 +136,7 @@ The local-first Core app record owns the runtime lifecycle fields needed by ordi
 - remote `manifestUrl` when the app was installed from an absolute `http` or `https` manifest URL;
 - selected runtime and selected channel;
 - operation status, runtime state, last operation, and last error;
+- `autostart`, an installed-app setting that controls whether Core starts the app during Core startup. It defaults to `true` on install and is stored in app state, not in Docker-specific runtime metadata;
 - settings values, with secret values treated as write-only at API and UI boundaries;
 - storage mappings and primary app data location;
 - dependency contracts and resolved endpoint URLs;
@@ -158,6 +159,7 @@ The app registry API now returns app summaries with the current Hosty app shape:
 - `accessMode` - currently `allAuthenticated` or `assignedUsersOnly`;
 - `selectedRuntime`;
 - `selectedChannel`;
+- `autostart`;
 - `capabilities`;
 - `operationStatus`, `lastOperation`, and `runtimeState` for installed runtime apps when available;
 - `entryPath`, `embeddedUrl`, `origin`, `originScope`, and `identityTokenUrl`;
@@ -226,7 +228,7 @@ Supported `app.0.1` fields in the compatibility adapter:
 
 `runtimeProfiles[]` are mutually exclusive app-level ways to run the app. `services[]` are the runtime services that run together for the selected profile, such as `web`, `api`, and `worker`. The compatibility adapter selects `defaultRuntime` or the first/default profile, then maps every `services[].runtimes[defaultRuntime]` entry into canonical legacy `0.3` services before install/update planning.
 
-Docker runtime profiles run through the Docker runtime adapter. Local command runtime profiles run through Core from a local source override, managed checkout, or app root fallback, and are intended for trusted local development or explicitly configured administrator workflows.
+Docker runtime profiles run through the Docker runtime adapter. Docker containers for runtime apps are created with Docker restart disabled; Core owns start, stop, restart, startup autostart, and shutdown stop behavior. Local command runtime profiles run through Core from a local source override, managed checkout, or app root fallback, and are intended for trusted local development or explicitly configured administrator workflows.
 
 The earlier top-level `runtimes[]` shape is still accepted as a single-service compatibility path, but new `app.0.1` manifests should use `runtimeProfiles[]` and `services[]`.
 

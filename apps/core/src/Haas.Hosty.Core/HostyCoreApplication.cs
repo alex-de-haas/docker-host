@@ -32,7 +32,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();
-        builder.Services.AddHostedService<ShellBootstrapService>();
+        builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddCors(options =>
         {
@@ -502,17 +502,39 @@ internal sealed record HostyCoreRuntimeConfig(
     }
 }
 
-internal sealed class ShellBootstrapService(
+internal sealed class RuntimeAppSupervisorService(
     HostyCoreRuntimeConfig config,
     AppRegistryStore apps,
     CoreLifecycleService lifecycle,
-    ILogger<ShellBootstrapService> logger) : BackgroundService
+    ILogger<RuntimeAppSupervisorService> logger) : BackgroundService
 {
     private const string ShellAppId = "hosty.shell";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Yield();
+
+        await EnsureShellInstalledAsync(stoppingToken);
+        await StopAutostartDisabledAppsAsync(stoppingToken);
+        await StartAutostartAppsAsync(stoppingToken);
+
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+        await StopRuntimeAppsAsync(cancellationToken);
+    }
+
+    private async Task EnsureShellInstalledAsync(CancellationToken cancellationToken)
+    {
         if (!config.ShellBootstrapEnabled)
         {
             return;
@@ -526,25 +548,102 @@ internal sealed class ShellBootstrapService(
 
         try
         {
-            var shell = await apps.GetAppAsync(ShellAppId, stoppingToken);
+            var shell = await apps.GetAppAsync(ShellAppId, cancellationToken);
             if (shell is null)
             {
                 await lifecycle.InstallAsync(new AppInstallRequest(
                     ManifestPath: config.ShellManifestPath,
                     SelectedRuntime: "docker",
                     SelectedChannel: "local",
-                    System: true), stoppingToken);
-                shell = await apps.GetAppAsync(ShellAppId, stoppingToken);
+                    System: true,
+                    Autostart: config.ShellAutostart), cancellationToken);
+                shell = await apps.GetAppAsync(ShellAppId, cancellationToken);
             }
 
-            if (config.ShellAutostart && !string.Equals(shell?.RuntimeState, "running", StringComparison.Ordinal))
+            if (shell is not null && shell.Autostart != config.ShellAutostart)
             {
-                await lifecycle.StartAsync(ShellAppId, stoppingToken);
+                await lifecycle.ConfigureAutostartAsync(ShellAppId, new AppAutostartRequest(config.ShellAutostart), cancellationToken);
             }
         }
         catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
         {
             logger.LogWarning(ex, "Hosty Shell bootstrap did not complete; Core remains available through CLI and control APIs.");
+        }
+    }
+
+    private async Task StartAutostartAppsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var results = await lifecycle.StartAutostartAppsAsync(cancellationToken);
+            foreach (var result in results)
+            {
+                if (result.Succeeded)
+                {
+                    logger.LogInformation("Hosty autostart completed for runtime app {AppId}.", result.AppId);
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "Hosty autostart failed for runtime app {AppId}: {ErrorCode} {Message}",
+                        result.AppId,
+                        result.ErrorCode,
+                        result.Message);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Hosty runtime app autostart did not complete.");
+        }
+    }
+
+    private async Task StopAutostartDisabledAppsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var results = await lifecycle.StopAutostartDisabledAppsAsync(cancellationToken);
+            foreach (var result in results.Where(result => !result.Succeeded))
+            {
+                logger.LogWarning(
+                    "Hosty startup stop failed for autostart-disabled runtime app {AppId}: {ErrorCode} {Message}",
+                    result.AppId,
+                    result.ErrorCode,
+                    result.Message);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Hosty autostart-disabled runtime app stop did not complete.");
+        }
+    }
+
+    private async Task StopRuntimeAppsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var results = await lifecycle.StopRuntimeAppsAsync(cancellationToken);
+            foreach (var result in results.Where(result => !result.Succeeded))
+            {
+                logger.LogWarning(
+                    "Hosty shutdown stop failed for runtime app {AppId}: {ErrorCode} {Message}",
+                    result.AppId,
+                    result.ErrorCode,
+                    result.Message);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Hosty runtime app shutdown stop did not complete.");
         }
     }
 }

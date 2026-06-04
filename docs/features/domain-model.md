@@ -403,7 +403,7 @@ An install plan describes:
 - settings requiring defaults or administrator input;
 - external mount collection requirements and any administrator-selected external mount mappings;
 - dependency modules that must be installed or started;
-- container names, network aliases, endpoints, ports, mounts, environment variables, and restart policy.
+- container names, network aliases, endpoints, ports, mounts, and environment variables. Runtime app containers do not use Docker-managed restart policy; Hosty Core owns runtime app startup and shutdown.
 
 `metadataDigest` is the SHA-256 digest of the root metadata JSON bytes downloaded from the submitted metadata URL. `planDigest` is the SHA-256 digest of canonical JSON for the normalized plan, including the dependency tree and computed install decisions, but excluding timestamps and transient runtime/download details. Install apply should compare the reviewed `planDigest`, not rely on durable pending plan state.
 

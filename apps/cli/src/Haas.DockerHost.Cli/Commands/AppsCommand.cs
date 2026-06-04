@@ -20,6 +20,7 @@ internal sealed class AppsCommand(CommandContext context)
             {
                 "list" => await ListAsync(args[1..]),
                 "install" => await InstallAsync(args[1..]),
+                "autostart" => await AutostartAsync(args[1..]),
                 "start" => await LifecycleActionAsync("start", args[1..]),
                 "stop" => await LifecycleActionAsync("stop", args[1..]),
                 "restart" => await LifecycleActionAsync("restart", args[1..]),
@@ -82,7 +83,19 @@ internal sealed class AppsCommand(CommandContext context)
             ManifestPath: options.ManifestPath,
             SelectedRuntime: options.SelectedRuntime,
             SelectedChannel: options.SelectedChannel,
-            System: options.System));
+            System: options.System,
+            Autostart: options.Autostart));
+        RenderLifecycle(response);
+        return 0;
+    }
+
+    private async Task<int> AutostartAsync(string[] args)
+    {
+        var options = ParseAutostartOptions(args);
+        using var core = await OpenCoreAsync();
+        var response = await core.PostAsync<AppLifecycleResponse>(
+            $"apps/{Uri.EscapeDataString(options.AppId)}/autostart",
+            new AppAutostartRequest(options.Autostart));
         RenderLifecycle(response);
         return 0;
     }
@@ -369,6 +382,7 @@ internal sealed class AppsCommand(CommandContext context)
         table.AddColumn("App");
         table.AddColumn("Version");
         table.AddColumn("Runtime");
+        table.AddColumn("Autostart");
         table.AddColumn("State");
         table.AddColumn("Status");
         foreach (var app in apps)
@@ -377,6 +391,7 @@ internal sealed class AppsCommand(CommandContext context)
                 Markup.Escape(app.Id),
                 Markup.Escape(app.Version),
                 Markup.Escape(app.SelectedRuntime ?? ""),
+                app.Autostart ? "yes" : "no",
                 Markup.Escape(app.RuntimeState),
                 Markup.Escape(app.OperationStatus));
         }
@@ -394,6 +409,7 @@ internal sealed class AppsCommand(CommandContext context)
 
         context.Console.MarkupLine($"[green]{Markup.Escape(response.Status)}:[/] {Markup.Escape(response.App.Id)}");
         context.Console.MarkupLine($"[grey]Runtime:[/] {Markup.Escape(response.App.SelectedRuntime ?? "none")} / {Markup.Escape(response.App.RuntimeState)}");
+        context.Console.MarkupLine($"[grey]Autostart:[/] {(response.App.Autostart ? "enabled" : "disabled")}");
         if (response.Backup is not null)
         {
             context.Console.MarkupLine($"[grey]Backup:[/] {Markup.Escape(response.Backup.BackupId)}");
@@ -682,6 +698,7 @@ internal sealed class AppsCommand(CommandContext context)
         string? selectedRuntime = null;
         string? selectedChannel = null;
         var system = false;
+        bool? autostart = null;
 
         for (var index = 0; index < args.Length; index++)
         {
@@ -698,6 +715,12 @@ internal sealed class AppsCommand(CommandContext context)
                     break;
                 case "--system":
                     system = true;
+                    break;
+                case "--autostart":
+                    autostart = true;
+                    break;
+                case "--no-autostart":
+                    autostart = false;
                     break;
                 default:
                     if (manifestPath is null)
@@ -718,7 +741,43 @@ internal sealed class AppsCommand(CommandContext context)
             throw new CommandUsageException("apps install requires a manifest path.", Usage);
         }
 
-        return new InstallOptions(NormalizeManifestReference(manifestPath), selectedRuntime, selectedChannel, system);
+        return new InstallOptions(NormalizeManifestReference(manifestPath), selectedRuntime, selectedChannel, system, autostart);
+    }
+
+    private static AutostartOptions ParseAutostartOptions(string[] args)
+    {
+        if (args.Length == 0)
+        {
+            throw new CommandUsageException("apps autostart requires an app id.", Usage);
+        }
+
+        var appId = args[0];
+        bool? autostart = null;
+        for (var index = 1; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--enabled":
+                case "--on":
+                case "--autostart":
+                    autostart = true;
+                    break;
+                case "--disabled":
+                case "--off":
+                case "--no-autostart":
+                    autostart = false;
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown apps autostart argument '{args[index]}'.", Usage);
+            }
+        }
+
+        if (autostart is null)
+        {
+            throw new CommandUsageException("apps autostart requires --enabled or --disabled.", Usage);
+        }
+
+        return new AutostartOptions(appId, autostart.Value);
     }
 
     private static UpdateOptions ParseUpdateOptions(string[] args, bool requirePlanDigest)
@@ -1268,7 +1327,9 @@ internal sealed class AppsCommand(CommandContext context)
         return Path.GetFullPath(manifestReference);
     }
 
-    private sealed record InstallOptions(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System);
+    private sealed record InstallOptions(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
+
+    private sealed record AutostartOptions(string AppId, bool Autostart);
 
     private sealed record UpdateOptions(string AppId, string? ManifestPath, string? SelectedRuntime, string? TargetChannel, string? PlanDigest);
 
@@ -1312,13 +1373,16 @@ internal sealed class AppsCommand(CommandContext context)
         string Source,
         string? SelectedChannel,
         string? SelectedRuntime,
+        bool Autostart,
         string OperationStatus,
         string RuntimeState,
         string? LastOperation,
         string? LastError,
         IReadOnlyList<string> Capabilities);
 
-    private sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System);
+    private sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
+
+    private sealed record AppAutostartRequest(bool Autostart);
 
     private sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
 
@@ -1476,7 +1540,8 @@ internal sealed class AppsCommand(CommandContext context)
 
         Commands:
           list
-          install <manifest-path> [--runtime <key>] [--channel <channel>] [--system]
+          install <manifest-path> [--runtime <key>] [--channel <channel>] [--system] [--autostart|--no-autostart]
+          autostart <app-id> --enabled|--disabled
           start <app-id>
           stop <app-id>
           restart <app-id>

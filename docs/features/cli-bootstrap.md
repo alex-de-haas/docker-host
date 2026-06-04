@@ -36,7 +36,7 @@ hosty config reset <KEY>
 
 Unknown setting keys are rejected. `HOST_UI_PORT` accepts `auto` or a TCP port number. `HOST_DOCKER_ENDPOINT` is limited to the supported local Docker Engine endpoint for the current platform.
 
-`hosty apps` is the preferred trusted-control-backed app command group. It covers app list, install/add, start, stop, restart, update, runtime switching, remove, app data backup, app data restore, app logs, app identity, and app open links. Local development uses app manifests with local command runtime profiles, for example `hosty apps install apps/demo-app/manifest.json --runtime dev`. `hosty modules` and `docker-host modules` remain compatibility aliases for legacy module management. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
+`hosty apps` is the preferred trusted-control-backed app command group. It covers app list, install/add, app-level autostart, start, stop, restart, update, runtime switching, remove, app data backup, app data restore, app logs, app identity, and app open links. Local development uses app manifests with local command runtime profiles, for example `hosty apps install apps/demo-app/manifest.json --runtime dev`. `hosty modules` and `docker-host modules` remain compatibility aliases for legacy module management. The detailed command behavior is documented in [CLI module commands](cli-module-commands.md).
 
 `hosty auth` contains local authentication recovery and bootstrap commands:
 

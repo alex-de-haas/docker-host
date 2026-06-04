@@ -43,7 +43,8 @@ The preferred app command surface:
 
 ```text
 hosty apps list
-hosty apps install <manifest-reference>
+hosty apps install <manifest-reference> [--autostart|--no-autostart]
+hosty apps autostart <app-id> --enabled|--disabled
 hosty apps start <app-id>
 hosty apps stop <app-id>
 hosty apps restart <app-id>
@@ -67,7 +68,16 @@ hosty apps restore <app-id> <backup-id>
 hosty apps remove <app-id> [--delete-data]
 ```
 
-Source, health, runtime switching, identity, and open commands call Core trusted-control APIs. The CLI renders plans and summaries, but Core owns source policy, selected-runtime mutation, local command process supervision, identity issuance, and access checks.
+Source, health, runtime switching, identity, open, and autostart commands call Core trusted-control APIs. The CLI renders plans and summaries, but Core owns source policy, selected-runtime mutation, local command process supervision, startup autostart, shutdown stop, identity issuance, and access checks.
+
+## `apps autostart`
+
+```bash
+hosty apps autostart <app-id> --enabled
+hosty apps autostart <app-id> --disabled
+```
+
+`autostart` updates the installed app setting that tells Core whether to start the app during Core startup. The setting is app-level and runtime-neutral. Docker runtime apps do not receive Docker-managed restart policies; Core starts enabled apps and stops disabled apps when Core starts.
 
 Compatibility aliases remain:
 
@@ -123,7 +133,7 @@ Legacy `modules list` still calls `GET /control/v1/modules` and renders the inst
 ## `apps install`
 
 ```text
-hosty apps install <manifest-reference>
+hosty apps install <manifest-reference> [--autostart|--no-autostart]
 hosty apps add <manifest-reference>
 ```
 
@@ -148,9 +158,12 @@ Request body:
   "manifestPath": "https://apps.example.com/reports/manifest.json",
   "selectedRuntime": "default",
   "selectedChannel": null,
-  "system": false
+  "system": false,
+  "autostart": true
 }
 ```
+
+`autostart` defaults to `true`. Passing `--no-autostart` installs the app without starting it on future Core startups.
 
 The Shell admin UI uses `/api/apps/install/plan` for review before applying the same app install operation. Legacy module installation remains available through `/control/v1/modules/install/plan` and `/control/v1/modules/install`; the reviewed legacy module prompt behavior is described below.
 
