@@ -41,6 +41,12 @@ internal sealed class CoreLifecycleService(
             CurrentManifestDigest: currentManifestDigest,
             TargetManifestDigest: selection.ManifestDigest,
             SelectedChannel: request.SelectedChannel,
+            RuntimeProfiles: selection.Manifest.RuntimeProfiles
+                .Select(profile => new AppInstallRuntimeProfile(
+                    profile.Key,
+                    profile.Type,
+                    string.Equals(profile.Key, ResolveDefaultRuntime(selection.Manifest), StringComparison.Ordinal)))
+                .ToArray(),
             Settings: selection.Manifest.Settings
                 .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret))
                 .ToArray());
@@ -107,7 +113,7 @@ internal sealed class CoreLifecycleService(
             OperationStatus = "started",
             LastOperation = "start",
             LastError = null,
-            Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints),
+            Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
         }, cancellationToken);
 
         return new AppLifecycleResponse(AppSummary.From(updated.App), null, "started");
@@ -144,7 +150,7 @@ internal sealed class CoreLifecycleService(
             OperationStatus = "restarted",
             LastOperation = "restart",
             LastError = null,
-            Endpoints = MergeEndpointUrls(current.Endpoints, start.Endpoints),
+            Endpoints = MergeEndpointUrls(current.Endpoints, start.Endpoints, selection),
         }, cancellationToken);
 
         return new AppLifecycleResponse(AppSummary.From(updated.App), null, "restarted");
@@ -579,7 +585,8 @@ internal sealed class CoreLifecycleService(
             Endpoints: endpoints,
             InstalledAt: existing?.InstalledAt ?? default,
             UpdatedAt: default,
-            SourceState: BuildSourceState(selection, existing));
+            SourceState: BuildSourceState(selection, existing),
+            Ui: AppUiContract.FromManifest(manifest.Ui));
     }
 
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
@@ -614,12 +621,44 @@ internal sealed class CoreLifecycleService(
 
     private static IReadOnlyList<AppEndpointContract> MergeEndpointUrls(
         IReadOnlyList<AppEndpointContract> current,
-        IReadOnlyList<AppEndpointContract> started)
+        IReadOnlyList<AppEndpointContract> started,
+        RuntimeAppManifestSelection selection)
     {
         var startedByKey = started.ToDictionary(endpoint => endpoint.Key, StringComparer.Ordinal);
-        return current.Select(endpoint => startedByKey.TryGetValue(endpoint.Key, out var startedEndpoint)
-            ? endpoint with { Url = startedEndpoint.Url, Protocol = startedEndpoint.Protocol, Public = startedEndpoint.Public }
-            : endpoint).Concat(started.Where(endpoint => current.All(existing => !string.Equals(existing.Key, endpoint.Key, StringComparison.Ordinal)))).ToArray();
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var endpoint in selection.Manifest.Endpoints)
+        {
+            if (!string.IsNullOrWhiteSpace(endpoint.Key) &&
+                !string.IsNullOrWhiteSpace(endpoint.Service) &&
+                !string.IsNullOrWhiteSpace(endpoint.Port))
+            {
+                aliases.TryAdd(endpoint.Key, $"{endpoint.Service}.{endpoint.Port}");
+            }
+        }
+        var usedStartedKeys = new HashSet<string>(StringComparer.Ordinal);
+        var merged = current.Select(endpoint =>
+        {
+            if (startedByKey.TryGetValue(endpoint.Key, out var direct))
+            {
+                usedStartedKeys.Add(direct.Key);
+                return endpoint with { Url = direct.Url, Protocol = direct.Protocol, Public = direct.Public };
+            }
+
+            if (aliases.TryGetValue(endpoint.Key, out var runtimeKey) &&
+                startedByKey.TryGetValue(runtimeKey, out var aliased))
+            {
+                usedStartedKeys.Add(aliased.Key);
+                return endpoint with { Url = aliased.Url, Protocol = aliased.Protocol, Public = aliased.Public };
+            }
+
+            return endpoint;
+        }).ToArray();
+
+        return merged
+            .Concat(started.Where(endpoint =>
+                !usedStartedKeys.Contains(endpoint.Key) &&
+                current.All(existing => !string.Equals(existing.Key, endpoint.Key, StringComparison.Ordinal))))
+            .ToArray();
     }
 
     private async Task RollBackRuntimeSwitchStateAsync(
@@ -1072,6 +1111,11 @@ internal sealed class CoreLifecycleService(
         return settings;
     }
 
+    private static string? ResolveDefaultRuntime(RuntimeAppManifest manifest)
+        => string.IsNullOrWhiteSpace(manifest.DefaultRuntime)
+            ? manifest.RuntimeProfiles.FirstOrDefault(profile => profile.Default)?.Key ?? manifest.RuntimeProfiles.FirstOrDefault()?.Key
+            : manifest.DefaultRuntime;
+
     private async Task<AppChannelIndex> LoadChannelIndexAsync(
         AppRecord app,
         string? channelsPath,
@@ -1247,7 +1291,10 @@ internal sealed record AppInstallPlan(
     string? CurrentManifestDigest,
     string TargetManifestDigest,
     string? SelectedChannel,
+    IReadOnlyList<AppInstallRuntimeProfile> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
+
+internal sealed record AppInstallRuntimeProfile(string Key, string Type, bool Default);
 
 internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret);
 

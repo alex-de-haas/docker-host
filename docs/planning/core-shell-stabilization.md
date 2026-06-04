@@ -98,7 +98,7 @@ Completed browser smoke on 2026-06-03:
 
 Completed implementation:
 
-- Core exposes `/api/apps/install/plan` for admin Shell review before install. The plan returns app identity, action, current and target versions, selected runtime, runtime type, manifest path, current and target manifest digests, selected channel, and safe setting defaults.
+- Core exposes `/api/apps/install/plan` for admin Shell review before install. The plan returns app identity, action, current and target versions, selected runtime, runtime type, available runtime profiles, manifest path, current and target manifest digests, selected channel, and safe setting defaults.
 - Core exposes `/api/apps/install` for admin Shell install apply with CSRF validation.
 - Install apply accepts reviewed setting values and stores them in the installed app state.
 - Shell exposes an `Install app` review panel for administrators.

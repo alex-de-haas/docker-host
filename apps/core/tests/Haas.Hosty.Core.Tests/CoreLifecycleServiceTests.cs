@@ -169,6 +169,33 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal(manifestUrl, plan.ManifestPath);
     }
 
+    [Fact]
+    public async Task CreateInstallPlanAsync_ReturnsRuntimeProfilesAndSelectsManifestDefault()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteSwitchableDockerManifestAsync();
+
+        var defaultPlan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+        var alternatePlan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest, SelectedRuntime: "docker-alt"));
+
+        Assert.Equal("docker", defaultPlan.TargetRuntime);
+        Assert.Collection(defaultPlan.RuntimeProfiles,
+            profile =>
+            {
+                Assert.Equal("docker", profile.Key);
+                Assert.Equal("docker", profile.Type);
+                Assert.True(profile.Default);
+            },
+            profile =>
+            {
+                Assert.Equal("docker-alt", profile.Key);
+                Assert.Equal("docker", profile.Type);
+                Assert.False(profile.Default);
+            });
+        Assert.Equal("docker-alt", alternatePlan.TargetRuntime);
+        Assert.Contains(alternatePlan.RuntimeProfiles, profile => profile.Key == "docker" && profile.Default);
+    }
+
     [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]

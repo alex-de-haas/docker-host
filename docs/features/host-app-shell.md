@@ -137,9 +137,9 @@ Shell App access modes are Host-owned:
 - `assignedUsersOnly` - assigned Host users and `host.admin` can discover the app;
 - no `public` or anonymous shell App mode exists.
 
-The response intentionally returns Host shell paths, such as `/apps/{moduleId}`, plus direct module iframe URLs and origins. It does not return Docker network aliases, container names, container ids, Docker network URLs, or service/API gateway exposure hostnames.
+The response intentionally returns direct app UI URLs resolved from manifest `ui` metadata and runtime endpoint URLs. It does not return Docker network aliases, container names, container ids, Docker network URLs, or service/API gateway exposure hostnames.
 
-Modules appear in the app registry only when local metadata includes an explicit `ui` contract. `runtime.ports[].public` is still only a capability hint and does not create an app entry by itself.
+Runtime apps appear in the shell Apps sidebar only when their installed manifest includes an explicit `ui` contract. Public runtime ports are endpoint capability hints and do not create shell navigation by themselves.
 
 The app registry keeps shell discovery responsive by avoiding Docker runtime reads for modules whose install/update operation state already makes them unavailable, and by reusing runtime status results for a short in-process TTL. The cache only affects `/api/apps` discovery; dedicated module management APIs still read fresh runtime details for lifecycle workflows.
 
@@ -147,15 +147,15 @@ Local command runtime profile visibility reuses the installed app access policy 
 
 ## Embedded App Route
 
-`/apps/{moduleId}` is shell state. It renders the Host shell around the selected module UI and uses the optional `path` query parameter to select nested module navigation, for example `/apps/com.acme.reports?path=%2Fpeople`.
+The selected embedded app page is shell client state. Shell renders Host-owned navigation around the selected app UI and uses the selected `ui.navigation[].path` to request the correct app launch URL.
 
-The iframe uses the direct `embeddedUrl` returned by `/api/apps`, for example `https://reports.example.com/` or `http://localhost:3210/people`. The Host validates the current principal before returning app registry entries and before issuing identity tokens, but it does not proxy module HTML or rewrite module assets. The iframe is sandboxed and uses Host theme-aware background styling. `/apps/{moduleId}` remains shell state and does not become a direct module proxy.
+The iframe uses a Core-issued launch redirect URL derived from the `embeddedUrl` returned by `/api/apps`, for example `http://app.localhost:3210/people`. Core validates the current principal before returning app registry entries and before issuing each launch code, but it does not proxy app HTML or rewrite app assets. The iframe is sandboxed and uses Host theme-aware background styling.
 
-Apps backed by the `http://localhost:{hostPort}` fallback are marked with `originScope: "local"`. When the Host shell is opened through a non-loopback origin, those apps are shown as unavailable with a local-only warning because the browser would resolve `localhost` on the user's own machine.
+Apps backed by local runtime endpoints use the configured runtime public host, for example `app.localhost`, plus the assigned runtime port. Core resolves nested app navigation by applying each manifest path to that endpoint URL.
 
-The Host shell delivers module identity through `/api/apps/{moduleId}/identity-token` and a `postMessage` bridge. The iframe can post `docker-host:ready` or `docker-host:request-identity`; the Host shell verifies the iframe origin, requests a short-lived module identity token, and posts `docker-host:identity` back to the module origin. The shell also refreshes the token before expiry and when the browser page becomes active again, without remounting the iframe for same-user profile changes.
+The Host shell opens apps through `/api/apps/{appId}/launch-code`. The app receives the short-lived code in its redirect URL and exchanges it with Core for app identity. Browser Shell launch always uses the active Core session user.
 
-Module UIs must serve their own routes, assets, cookies, and API calls from their own origin. The Host does not rewrite root-relative URLs, Next.js assets, App Router `_rsc` requests, or response headers. If a module blocks framing with `X-Frame-Options` or `Content-Security-Policy: frame-ancestors`, the browser blocks the iframe according to the module's own response policy.
+App UIs must serve their own routes, assets, cookies, and API calls from their own origin. The Host does not rewrite root-relative URLs, Next.js assets, App Router `_rsc` requests, or response headers. If an app blocks framing with `X-Frame-Options` or `Content-Security-Policy: frame-ancestors`, the browser blocks the iframe according to the app's own response policy.
 
 Local command runtime app transport follows the same direct-origin pattern as Docker runtime app transport. It resolves the active runtime origin from the installed app state, applies Host app access rules before app discovery, and issues identity through the app identity endpoint.
 
@@ -167,11 +167,11 @@ Supported fields:
 
 - `ui.category` is optional and must be `Apps` when provided;
 - `ui.icon` is optional and must be a non-empty lowercase icon key;
-- `ui.entrypoint.portKey` must reference a `runtime.ports[]` item marked `public: true`;
-- `ui.entrypoint.path` must be a same-origin absolute path beginning with `/`;
-- `ui.navigation[]` is optional, preserves author-defined order, and requires unique same-origin absolute paths.
+- `ui.entrypoint.endpoint` should reference a declared manifest endpoint key;
+- `ui.entrypoint.path` should be a same-origin path beginning with `/`;
+- `ui.navigation[]` is optional, preserves author-defined order, and declares page labels plus same-origin paths.
 
-Missing `ui` metadata is valid. The module can still install and run, but it is not returned as a shell App. Malformed `ui` metadata is rejected during install/update planning, and app registry compatibility checks keep invalid installed metadata hidden from `host.user` while returning safe diagnostics to `host.admin`.
+Missing `ui` metadata is valid. The app can still install and run, but it is not returned as a shell App. For older installed records, Core hydrates shell UI metadata from the stored manifest copy when listing `/api/apps`.
 
 ## Gateway Exposure UX
 

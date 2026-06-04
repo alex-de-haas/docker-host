@@ -173,37 +173,40 @@ Returned by `GET /api/apps`.
   "id": "com.acme.reports",
   "kind": "runtime",
   "system": false,
-  "source": "installed",
-  "moduleId": "com.acme.reports",
+  "source": "https://github.com/acme/reports",
   "displayName": "Reports",
   "description": "Generates operational reports.",
-  "icon": "boxes",
   "version": "1.0.0",
-  "status": "available",
-  "statusReason": "available",
-  "accessMode": "allAuthenticated",
-  "capabilities": ["open", "update", "restart", "stop", "remove"],
+  "capabilities": ["open", "update", "restart", "stop", "remove", "backup", "restore", "logs"],
   "selectedRuntime": "docker",
   "selectedChannel": null,
-  "operationStatus": "installed",
+  "operationStatus": "started",
   "runtimeState": "running",
-  "entryPath": "/apps/com.acme.reports",
-  "embeddedUrl": "https://reports.example.com/",
-  "origin": "https://reports.example.com",
-  "originScope": "public",
-  "identityTokenUrl": "/api/apps/com.acme.reports/identity-token",
+  "lastOperation": "start",
+  "lastError": null,
+  "settings": [],
+  "endpoints": [
+    {
+      "key": "http",
+      "protocol": "http",
+      "url": "http://app.localhost:3210",
+      "public": true
+    }
+  ],
+  "entryPath": "/",
+  "embeddedUrl": "http://app.localhost:3210/",
   "navigation": [
     {
       "label": "People",
       "path": "/people",
-      "entryPath": "/apps/com.acme.reports?path=%2Fpeople",
-      "embeddedUrl": "https://reports.example.com/people"
+      "entryPath": "/people",
+      "embeddedUrl": "http://app.localhost:3210/people"
     }
   ]
 }
 ```
 
-Hosty Shell is returned as a system app to administrators:
+Hosty Shell is returned as a system app to administrators when Core has installed or bootstrapped it:
 
 ```json
 {
@@ -211,21 +214,19 @@ Hosty Shell is returned as a system app to administrators:
   "kind": "system",
   "system": true,
   "source": "system",
-  "moduleId": "hosty.shell",
   "displayName": "Hosty Shell",
   "version": "bundled",
-  "status": "available",
   "selectedRuntime": "host-core",
-  "capabilities": ["open", "update"],
+  "operationStatus": "started",
+  "runtimeState": "running",
+  "capabilities": ["open", "update", "restart", "stop", "logs"],
   "entryPath": "/",
   "embeddedUrl": "/",
-  "origin": null,
-  "identityTokenUrl": null,
   "navigation": []
 }
 ```
 
-`GET /api/apps` intentionally omits raw Docker/container internals. It does not return container ids, container names, Docker network aliases, Docker network URLs, or service/API gateway exposure hostnames. It does return direct browser iframe URLs and origins for visible shell Apps.
+`GET /api/apps` intentionally omits raw Docker/container internals. It does not return container ids, container names, Docker network aliases, Docker network URLs, or service/API gateway exposure hostnames. It returns browser UI URLs derived from installed app `ui` metadata and runtime endpoint URLs. Shell uses those URLs as redirect targets when requesting app launch codes.
 
 System apps and runtime apps share the response shape but differ in capabilities. System apps must not expose ordinary runtime app remove actions.
 
@@ -377,7 +378,7 @@ Returns app navigation data for the current authenticated Host principal.
 
 This endpoint requires authentication but does not require `host.admin`. Unauthenticated callers receive HTTP `401` and no app discovery data. `host.admin` can see all shell-routable app entries, including unavailable entries with safe diagnostic status. `host.user` can see only available apps that are visible to all authenticated users or explicitly assigned to that user.
 
-The backend reads installed runtime records from the merged app/legacy registry, reads each app's local `manifest.json` or legacy `metadata.json`, requires explicit `ui` metadata, applies Host-owned module assignments, and reads runtime state for availability. It does not infer shell Apps from gateway exposure records or from `runtime.ports[].public` alone.
+The backend reads installed runtime app records, hydrates shell UI metadata from each app's local `manifest.json` when older `state.json` records do not yet contain it, applies Host-owned app assignments, and returns runtime state from Core's registry. It does not infer shell Apps from gateway exposure records or from public runtime ports alone.
 
 Response body:
 
@@ -391,57 +392,51 @@ Response entries include:
 
 - app id;
 - source (`installed`);
-- module id;
 - display name;
 - description, if available;
-- icon key, if declared by module `ui` metadata;
 - version;
-- app status and safe status reason;
-- shell App access mode;
-- module operation status;
+- app operation status;
 - runtime state without container details;
-- same-origin Host entry path;
-- direct iframe URL;
-- iframe origin;
-- iframe origin scope, when known;
-- identity token URL;
+- direct browser UI URL;
 - nested navigation items.
 
-Installed apps without an administrator-provided public origin use `originScope: "local"` and `http://localhost:{hostPort}` iframe URLs. If the Host shell request origin is not loopback, these entries are returned as unavailable with `statusReason: "localOriginUnavailable"` so clients can show a local-only warning instead of opening a broken iframe.
+The response includes `ui.navigation[]` in manifest order. Each navigation item contains the manifest path and an `embeddedUrl` resolved against the selected UI endpoint. Older installed app records are compatible because Core can hydrate UI metadata from the stored manifest copy at read time.
 
-### `POST /api/apps/{moduleId}/identity-token`
+### `POST /api/apps/install/plan`
 
-Issues a short-lived Host-signed module identity token for an installed shell App iframe.
+Reviews a runtime app manifest before installation.
 
-This endpoint requires Host authentication through the same `apps.read` authorization path as `GET /api/apps`. The Host validates that the selected module app is visible to the current principal and available, then signs a module identity token scoped to the selected module and iframe origin.
+The request accepts a local manifest path or an absolute `http`/`https` manifest URL. `selectedRuntime` is optional; when omitted, Core selects the manifest default runtime (`defaultRuntime`, a profile with `default: true`, or the first profile).
+
+The response returns the selected install plan plus `runtimeProfiles[]` so Shell can show a runtime selector only after the manifest is reviewed. Each runtime profile entry includes `key`, `type`, and `default`.
+
+### `POST /api/apps/{appId}/launch-code`
+
+Issues a short-lived app authorization code for opening an installed runtime app from Hosty Shell.
+
+This endpoint requires an active Core browser session and a valid CSRF token. Core validates that the selected app exists, that the current user is allowed to access it, and that `redirectUri` targets one of the installed app endpoint origins.
+
+Request:
+
+```json
+{
+  "redirectUri": "http://app.localhost:3210/people"
+}
+```
 
 Response:
 
 ```json
 {
-  "token": "<jwt>",
-  "tokenType": "DockerHostModuleIdentity",
-  "moduleId": "com.acme.reports",
-  "origin": "https://reports.example.com",
-  "hostOrigin": "https://host.example.com",
-  "expiresInSeconds": 300
+  "code": "<opaque-code>",
+  "redirectUri": "http://app.localhost:3210/people?code=<opaque-code>",
+  "expiresAt": "2026-06-04T12:05:00Z"
 }
 ```
 
-The response is `Cache-Control: no-store`. The Host shell delivers the token to the iframe with `postMessage` and uses `expiresInSeconds` to schedule silent refresh before expiry; the module can use it directly or exchange it for a module-origin session cookie.
+The Shell uses the returned `redirectUri` as the iframe source or new-tab URL. The runtime app exchanges the one-time code through Core's app auth token endpoint and then owns its app-local session behavior.
 
-```json
-{
-  "token": "<jwt>",
-  "tokenType": "DockerHostModuleIdentity",
-  "moduleId": "com.acme.reports",
-  "origin": "http://localhost:3100",
-  "hostOrigin": "http://localhost:3000",
-  "expiresInSeconds": 300
-}
-```
-
-The endpoint does not create or read production gateway exposure records.
+The endpoint does not create or read gateway exposure records.
 
 ### `GET /api/modules/{moduleId}`
 

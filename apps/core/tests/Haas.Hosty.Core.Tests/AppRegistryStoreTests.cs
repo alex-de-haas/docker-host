@@ -23,6 +23,69 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public async Task ListAppsAsync_HydratesUiNavigationFromInstalledManifest()
+    {
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var appRoot = Path.Combine(paths.AppsRoot, "com.example.notes");
+        Directory.CreateDirectory(appRoot);
+        await File.WriteAllTextAsync(Path.Combine(appRoot, "manifest.json"), """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": {
+                    "type": "docker",
+                    "image": "ghcr.io/example/notes:1.0.0"
+                  }
+                }
+              }],
+              "endpoints": [{ "key": "http", "service": "app", "port": "http", "protocol": "http", "public": true }],
+              "ui": {
+                "entrypoint": { "endpoint": "http", "path": "/" },
+                "navigation": [
+                  { "label": "Notes", "path": "/" },
+                  { "label": "Settings", "path": "/settings" }
+                ]
+              }
+            }
+            """);
+        var store = new AppRegistryStore(paths);
+        await store.UpsertAppAsync(CreateApp("com.example.notes") with
+        {
+            ManifestPath = Path.Combine(appRoot, "manifest.json"),
+            Endpoints =
+            [
+                new AppEndpointContract("http", "http", "http://app.localhost:3100", Public: true),
+            ],
+        });
+
+        var apps = await store.ListAppsAsync();
+
+        var app = Assert.Single(apps);
+        Assert.Equal("/", app.EntryPath);
+        Assert.Equal("http://app.localhost:3100/", app.EmbeddedUrl);
+        Assert.Collection(
+            app.Navigation,
+            item =>
+            {
+                Assert.Equal("Notes", item.Label);
+                Assert.Equal("http://app.localhost:3100/", item.EmbeddedUrl);
+            },
+            item =>
+            {
+                Assert.Equal("Settings", item.Label);
+                Assert.Equal("/settings", item.Path);
+                Assert.Equal("http://app.localhost:3100/settings", item.EmbeddedUrl);
+            });
+    }
+
+    [Fact]
     public async Task ListAppsAsync_SkipsInvalidAppDirectories()
     {
         var root = await CreateTempRootAsync();

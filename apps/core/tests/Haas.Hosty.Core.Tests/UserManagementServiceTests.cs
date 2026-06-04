@@ -53,6 +53,20 @@ public sealed class UserManagementServiceTests
     }
 
     [Fact]
+    public async Task UpdateUserAsync_PreventsSelfDemoteWhenAnotherAdminExists()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        var otherAdmin = CreateUser("admin_2", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor, otherAdmin], [], [], []));
+
+        var error = await Assert.ThrowsAsync<UserManagementException>(() =>
+            fixture.Service.UpdateUserAsync(actor.Id, new HostUserUpdateRequest(Role: "host.user"), actor));
+
+        Assert.Equal("self_role_change_forbidden", error.Code);
+    }
+
+    [Fact]
     public async Task ReplaceAssignmentsAsync_ReplacesOnlyTargetUserAssignments()
     {
         var fixture = await UserManagementFixture.CreateAsync();

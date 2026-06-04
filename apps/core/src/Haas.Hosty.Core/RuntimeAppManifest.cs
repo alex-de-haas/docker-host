@@ -754,6 +754,7 @@ internal sealed class RuntimeAppManifest
     public string? DefaultRuntime { get; init; }
     public IReadOnlyList<RuntimeAppServiceManifest> Services { get; init; } = [];
     public RuntimeAppDataManifest? Data { get; init; }
+    public RuntimeAppUiManifest? Ui { get; init; }
     public IReadOnlyList<RuntimeAppSettingManifest> Settings { get; init; } = [];
     public IReadOnlyList<RuntimeAppDependencyManifest> Dependencies { get; init; } = [];
     public IReadOnlyList<RuntimeAppEndpointManifest> Endpoints { get; init; } = [];
@@ -813,6 +814,24 @@ internal sealed class RuntimeAppDataTarget
     public string? Service { get; init; }
     public string? ContainerPath { get; init; }
     public string? Environment { get; init; }
+}
+
+internal sealed class RuntimeAppUiManifest
+{
+    public string? Category { get; init; }
+    public string? Icon { get; init; }
+    public JsonElement? Entrypoint { get; init; }
+    public string? Path { get; init; }
+    public string? PortKey { get; init; }
+    public IReadOnlyList<RuntimeAppUiNavigationItemManifest> Navigation { get; init; } = [];
+}
+
+internal sealed class RuntimeAppUiNavigationItemManifest
+{
+    public string? Label { get; init; }
+    public string? Path { get; init; }
+    public string? Endpoint { get; init; }
+    public string? PortKey { get; init; }
 }
 
 internal sealed class RuntimeAppSettingManifest

@@ -209,6 +209,13 @@ internal sealed class UserManagementService(
             throw new UserManagementException("last_admin", "At least one active Host administrator must remain.", StatusCodes.Status409Conflict);
         }
 
+        if (string.Equals(user.Id, actor.Id, StringComparison.Ordinal) &&
+            user.Role == "host.admin" &&
+            nextRole != "host.admin")
+        {
+            throw new UserManagementException("self_role_change_forbidden", "Administrators cannot change their own role to user.", StatusCodes.Status409Conflict);
+        }
+
         var updated = user with
         {
             DisplayName = request.DisplayName is null ? user.DisplayName : NormalizeOptional(request.DisplayName),
