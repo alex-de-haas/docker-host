@@ -597,6 +597,7 @@ internal sealed class CoreLifecycleService(
             return existing?.SourceState;
         }
 
+        var localOverridePath = ResolveInstallLocalSourcePath(selection, source);
         if (existing?.SourceState is not null &&
             string.Equals(existing.SourceState.Repository, source.Repository, StringComparison.Ordinal))
         {
@@ -605,6 +606,7 @@ internal sealed class CoreLifecycleService(
                 Type = source.Type,
                 Repository = source.Repository,
                 ManagedCheckoutPath = existing.SourceState.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
+                LocalOverridePath = existing.SourceState.LocalOverridePath ?? localOverridePath,
             };
         }
 
@@ -615,8 +617,79 @@ internal sealed class CoreLifecycleService(
             ResolvedRef: resolvedRef,
             Commit: source.Commit,
             ManagedCheckoutPath: Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
-            LocalOverridePath: null,
+            LocalOverridePath: localOverridePath,
             UpdatedAt: null);
+    }
+
+    private static string? ResolveInstallLocalSourcePath(RuntimeAppManifestSelection selection, RuntimeAppSource source)
+    {
+        if (!string.IsNullOrWhiteSpace(selection.ManifestUrl) ||
+            string.IsNullOrWhiteSpace(selection.ManifestPath) ||
+            string.IsNullOrWhiteSpace(source.Repository))
+        {
+            return null;
+        }
+
+        var repository = source.Repository.Trim();
+        if (Uri.TryCreate(repository, UriKind.Absolute, out var repositoryUri))
+        {
+            if (!repositoryUri.IsFile)
+            {
+                return null;
+            }
+
+            return Directory.Exists(repositoryUri.LocalPath)
+                ? Path.GetFullPath(repositoryUri.LocalPath)
+                : null;
+        }
+
+        if (Path.IsPathFullyQualified(repository))
+        {
+            return Directory.Exists(repository) ? Path.GetFullPath(repository) : null;
+        }
+
+        var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(selection.ManifestPath));
+        if (string.IsNullOrWhiteSpace(manifestDirectory))
+        {
+            return null;
+        }
+
+        var gitRoot = FindGitRoot(manifestDirectory);
+        if (repository == ".")
+        {
+            return gitRoot ?? manifestDirectory;
+        }
+
+        var manifestRelativePath = Path.GetFullPath(Path.Combine(manifestDirectory, repository));
+        if (Directory.Exists(manifestRelativePath))
+        {
+            return manifestRelativePath;
+        }
+
+        if (gitRoot is null)
+        {
+            return null;
+        }
+
+        var gitRelativePath = Path.GetFullPath(Path.Combine(gitRoot, repository));
+        return Directory.Exists(gitRelativePath) ? gitRelativePath : null;
+    }
+
+    private static string? FindGitRoot(string startDirectory)
+    {
+        var directory = new DirectoryInfo(startDirectory);
+        while (directory is not null)
+        {
+            var gitPath = Path.Combine(directory.FullName, ".git");
+            if (Directory.Exists(gitPath) || File.Exists(gitPath))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return null;
     }
 
     private static IReadOnlyList<AppEndpointContract> MergeEndpointUrls(

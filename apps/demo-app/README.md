@@ -9,6 +9,7 @@ Demo App is a small Next.js runtime app used to validate Hosty app operations:
 - app-owned storage mounts under `/app/data` and `/app/logs`;
 - optional external mount collections under `/mnt/sources/{key}`;
 - Hosty app launch-code exchange and app-local session revalidation;
+- optional Hosty Shell theme handoff with standalone system-theme fallback;
 - Host gateway identity token propagation and validation;
 - provider-neutral external ingress readiness checks;
 - shell app discovery metadata with stable overview, people, roles, and settings routes;
@@ -85,6 +86,12 @@ The app reads:
 
 - `HOSTY_APP_ID` as the installed app id;
 - `HOSTY_CORE_ORIGIN` as the Core origin for token exchange and revalidation.
+
+## Theme Handoff
+
+When Shell opens the app, it may pass `hosty_theme=light|dark` and `hosty_theme_preference=light|dark|system` on the launch URL and then keep the iframe synchronized with `postMessage` messages of type `hosty:shell-theme`.
+
+The app treats this as optional context. Standalone launches work without Shell by using the URL theme when present, the current tab session theme when available, and otherwise `prefers-color-scheme`.
 
 ## Auth Gateway Testing
 

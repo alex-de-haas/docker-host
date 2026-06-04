@@ -7,7 +7,7 @@ sequenceDiagram
   participant S as Shell
   participant C as Hosty Core
   participant A as Runtime App
-  S->>C: POST /api/apps/{appId}/launch-code with CSRF
+  S->>C: POST /api/apps/{appId}/launch-code with CSRF or GET /api/apps/{appId}/open
   C->>C: Validate active Core session, user state, assignment, redirect origin
   C-->>S: One-time code and app redirect URI
   S->>A: Open app redirect URI with ?code=
@@ -24,7 +24,8 @@ sequenceDiagram
 - Authorization and launch codes expire after five minutes and can be consumed once.
 - Code exchange rechecks the current user, disabled-user state, installed app state, and app assignments.
 - Redirect URIs must be absolute `http` or `https` URLs without fragments and must match an installed app endpoint origin.
-- Browser Shell launch-code issuance is bound to the active Core session user and requires `X-Hosty-CSRF`.
+- Browser Shell embedded launch-code issuance is bound to the active Core session user and requires `X-Hosty-CSRF`.
+- Standalone browser links use `GET /api/apps/{appId}/open?redirectUri=...`, which validates the active Core session and redirects to the app with a one-time code.
 - Trusted local CLI/control helpers can request identity or open links for a selected existing enabled Host user, but normal app access checks still apply.
 - App identity tokens are app-scoped, short-lived bearer tokens. Apps should store only an app-local HttpOnly session cookie on their own origin.
 

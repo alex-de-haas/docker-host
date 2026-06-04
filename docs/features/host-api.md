@@ -434,7 +434,26 @@ Response:
 }
 ```
 
-The Shell uses the returned `redirectUri` as the iframe source or new-tab URL. The runtime app exchanges the one-time code through Core's app auth token endpoint and then owns its app-local session behavior.
+The Shell uses the returned `redirectUri` as the iframe source for embedded app workspaces. The runtime app exchanges the one-time code through Core's app auth token endpoint and then owns its app-local session behavior.
+
+### `GET /api/apps/{appId}/open`
+
+Redirects the active Core browser session to a standalone runtime app URL with a short-lived app authorization code.
+
+This endpoint is intended for normal browser links such as `target="_blank"` actions. It requires an active Core browser session, validates app access and the supplied `redirectUri`, then responds with an HTTP redirect to the app URL with `code=<opaque-code>` appended. It does not require a CSRF token because it is an OAuth-style browser navigation endpoint, not a JSON mutation endpoint.
+
+Example:
+
+```text
+GET /api/apps/com.haas.demo-app/open?redirectUri=http%3A%2F%2Fapp.localhost%3A3100%2F%3Fhosty_theme%3Ddark%26hosty_theme_preference%3Dsystem
+```
+
+Shell-embedded runtime apps may receive the active Shell theme in two ways:
+
+- Shell appends `hosty_theme=light|dark` and `hosty_theme_preference=light|dark|system` to the app launch redirect URI before requesting the launch code.
+- Shell posts `{ "type": "hosty:shell-theme", "theme": "light|dark", "preference": "light|dark|system" }` to the app iframe whenever the iframe loads or the Shell theme changes.
+
+Runtime apps must treat this as optional UI context. Standalone app launches should continue to work without Shell messages by using the URL value when present and otherwise falling back to the app's own stored or system theme.
 
 The endpoint does not create or read gateway exposure records.
 

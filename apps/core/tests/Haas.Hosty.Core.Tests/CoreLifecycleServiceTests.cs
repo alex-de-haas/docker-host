@@ -537,6 +537,74 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_UsesGitRootAsLocalOverrideForRepositoryRelativeManifest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repositoryRoot = Path.Combine(fixture.Root, "repo");
+        var appDirectory = Path.Combine(repositoryRoot, "apps", "demo-app");
+        Directory.CreateDirectory(Path.Combine(repositoryRoot, ".git"));
+        Directory.CreateDirectory(appDirectory);
+        var manifestPath = Path.Combine(appDirectory, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.repo-local",
+              "name": "Repo Local App",
+              "version": "1.0.0",
+              "source": {
+                "type": "git",
+                "repository": ".",
+                "branch": "main"
+              },
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "pwd > \"$HOSTY_APP_DATA_DIR/cwd.txt\"; sleep 5",
+                    "workingDirectory": "apps/demo-app"
+                  }
+                }
+              }],
+              "data": {
+                "enabled": true,
+                "targets": [{
+                  "runtime": "dev",
+                  "environment": "HOSTY_APP_DATA_DIR"
+                }]
+              }
+            }
+            """);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+        var app = await fixture.Apps.GetAppAsync("com.example.repo-local");
+
+        var localOverridePath = Assert.IsType<string>(app?.SourceState?.LocalOverridePath);
+        Assert.True(Directory.Exists(Path.Combine(localOverridePath, ".git")));
+        Assert.EndsWith($"{Path.DirectorySeparatorChar}repo", localOverridePath, StringComparison.Ordinal);
+
+        try
+        {
+            var start = await fixture.Service.StartAsync("com.example.repo-local");
+            var cwdPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.repo-local", "data", "cwd.txt");
+
+            Assert.Equal("running", start.App?.RuntimeState);
+            Assert.True(File.Exists(cwdPath));
+            var serviceWorkingDirectory = (await File.ReadAllTextAsync(cwdPath)).Trim();
+            Assert.EndsWith(
+                $"{Path.DirectorySeparatorChar}repo{Path.DirectorySeparatorChar}apps{Path.DirectorySeparatorChar}demo-app",
+                serviceWorkingDirectory,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.repo-local");
+        }
+    }
+
+    [Fact]
     public async Task ApplyCleanupAsync_RemovesOnlyAbandonedManagedSourceCheckouts()
     {
         var fixture = await LifecycleFixture.CreateAsync();

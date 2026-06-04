@@ -110,6 +110,33 @@ internal static class AuthEndpoints
                     Results.Json(await identity.CreateAuthorizationCodeAsync(appId, user.Id, input.RedirectUri, cancellationToken))),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
+
+        app.MapGet("/api/apps/{appId}/open", async (
+            string appId,
+            string? redirectUri,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            AppIdentityService identity,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(redirectUri))
+            {
+                return Results.Json(new ErrorResponse("redirect_uri_missing", "Redirect URI is required."), statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            return await CoreSessionAuthorization.RequireSessionAsync(
+                request,
+                users,
+                clock,
+                async user => await HandleIdentityError(async () =>
+                {
+                    var authorization = await identity.CreateAuthorizationCodeAsync(appId, user.Id, redirectUri, cancellationToken);
+                    return Results.Redirect(authorization.RedirectUri);
+                }),
+                requireCsrf: false,
+                cancellationToken: cancellationToken);
+        });
     }
 
     private static async Task<IResult> HandleIdentityError(Func<Task<IResult>> action)

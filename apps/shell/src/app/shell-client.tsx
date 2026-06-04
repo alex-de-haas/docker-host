@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Archive,
@@ -253,6 +253,8 @@ type AppAction = "start" | "stop" | "restart" | "backup";
 type DetailView = "logs" | "backups" | "configure" | "update" | "remove";
 type ShellView = "dashboard" | "apps" | "users";
 type AppOpenTarget = "workspace" | "tab";
+type HostyResolvedTheme = "light" | "dark";
+type HostyThemePreference = "light" | "dark" | "system";
 
 type SessionResponse = {
   authenticated: boolean;
@@ -396,6 +398,37 @@ async function readCoreError(response: Response) {
   }
 }
 
+function normalizeThemePreference(theme: string | undefined): HostyThemePreference {
+  return theme === "light" || theme === "dark" || theme === "system" ? theme : "system";
+}
+
+function resolveShellTheme(resolvedTheme: string | undefined): HostyResolvedTheme {
+  if (resolvedTheme === "dark") {
+    return "dark";
+  }
+
+  if (
+    resolvedTheme !== "light" &&
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("dark")
+  ) {
+    return "dark";
+  }
+
+  return "light";
+}
+
+function appendHostyThemeParams(
+  redirectUri: string,
+  theme: HostyResolvedTheme,
+  preference: HostyThemePreference,
+) {
+  const url = new URL(redirectUri);
+  url.searchParams.set("hosty_theme", theme);
+  url.searchParams.set("hosty_theme_preference", preference);
+  return url.toString();
+}
+
 export function ShellClient({
   coreOrigin,
   shellAppId,
@@ -403,6 +436,7 @@ export function ShellClient({
   coreOrigin: string;
   shellAppId: string;
 }) {
+  const { theme, resolvedTheme } = useTheme();
   const [state, setState] = useState<LoadState>({
     loading: true,
     error: null,
@@ -419,6 +453,8 @@ export function ShellClient({
   const [activeView, setActiveView] = useState<ShellView>("dashboard");
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(false);
+  const shellThemePreference = normalizeThemePreference(theme);
+  const shellResolvedTheme = resolveShellTheme(resolvedTheme);
 
   useEffect(() => {
     setSidebarCompact(window.localStorage.getItem(SIDEBAR_COMPACT_STORAGE_KEY) === "true");
@@ -514,6 +550,16 @@ export function ShellClient({
     [coreOrigin],
   );
 
+  const getStandaloneAppHref = useCallback(
+    (app: CoreApp, page: AppPageLink) => {
+      const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
+      const url = new URL(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/open`);
+      url.searchParams.set("redirectUri", themedRedirectUri);
+      return url.toString();
+    },
+    [coreOrigin, shellResolvedTheme, shellThemePreference],
+  );
+
   const launchAppPage = useCallback(
     async (app: CoreApp, page: AppPageLink, target: AppOpenTarget = "workspace") => {
       if (app.id === shellAppId) {
@@ -527,25 +573,28 @@ export function ShellClient({
         return;
       }
 
+      if (target === "tab") {
+        window.open(getStandaloneAppHref(app, page), "_blank", "noreferrer");
+        return;
+      }
+
       const actionKey = `${app.id}:open`;
       setBusyAction(actionKey);
       setState((current) => ({ ...current, error: null }));
+
       try {
-        const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: page.redirectUri });
+        const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
+        const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: themedRedirectUri });
         const launch = (await response.json()) as AppLaunchResponse;
-        if (target === "tab") {
-          window.open(launch.redirectUri, "_blank", "noreferrer");
-        } else {
-          setActiveView("apps");
-          setWorkspace({
-            appId: app.id,
-            title: app.displayName,
-            pageLabel: page.label,
-            path: page.path,
-            src: launch.redirectUri,
-            externalUrl: launch.redirectUri,
-          });
-        }
+        setActiveView("apps");
+        setWorkspace({
+          appId: app.id,
+          title: app.displayName,
+          pageLabel: page.label,
+          path: page.path,
+          src: launch.redirectUri,
+          externalUrl: launch.redirectUri,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unable to create app launch link.";
         setState((current) => ({ ...current, error: message }));
@@ -554,7 +603,7 @@ export function ShellClient({
         setBusyAction(null);
       }
     },
-    [appEndpoint, sendCsrfJson, shellAppId],
+    [appEndpoint, getStandaloneAppHref, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference],
   );
 
   const openApp = useCallback(
@@ -1002,13 +1051,19 @@ export function ShellClient({
             setWorkspace(null);
           }}
           onLaunchApp={launchAppPage}
+          getStandaloneHref={getStandaloneAppHref}
+          onAction={runAppAction}
         />
       </aside>
 
       <div className={cn("h-dvh min-w-0", workspace ? "overflow-hidden bg-background" : "overflow-y-auto")}>
         <main className={cn("w-full", workspace ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
           {workspace ? (
-            <EmbeddedWorkspacePanel workspace={workspace} />
+            <EmbeddedWorkspacePanel
+              workspace={workspace}
+              theme={shellResolvedTheme}
+              themePreference={shellThemePreference}
+            />
           ) : (
             <>
               {state.error && (
@@ -1105,6 +1160,8 @@ function ShellSidebar({
   onCompactChange,
   onNavigate,
   onLaunchApp,
+  getStandaloneHref,
+  onAction,
 }: {
   compact: boolean;
   activeView: ShellView;
@@ -1117,6 +1174,8 @@ function ShellSidebar({
   onCompactChange: (compact: boolean) => void;
   onNavigate: (view: ShellView) => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
+  onAction: (app: CoreApp, action: AppAction) => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1167,6 +1226,8 @@ function ShellSidebar({
                   busyAction={busyAction}
                   workspace={workspace}
                   onLaunch={onLaunchApp}
+                  getStandaloneHref={getStandaloneHref}
+                  onAction={onAction}
                 />
               ))
             )}
@@ -1246,18 +1307,27 @@ function RuntimeAppNavigationItem({
   busyAction,
   workspace,
   onLaunch,
+  getStandaloneHref,
+  onAction,
 }: {
   app: CoreApp;
   compact: boolean;
   busyAction: string | null;
   workspace: EmbeddedWorkspace | null;
   onLaunch: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
+  onAction: (app: CoreApp, action: AppAction) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const pages = getAppPageLinks(app);
+  const primaryPage = pages[0] ?? null;
   const running = app.runtimeState === "running";
   const active = workspace?.appId === app.id;
-  const canOpen = running && pages.length > 0;
+  const canOpen = running && primaryPage !== null;
+  const canOpenStandalone = canOpen;
+  const canStart = !running;
+  const startBusy = busyAction === `${app.id}:start`;
+  const compactStartMode = compact && canStart;
 
   useEffect(() => {
     if (active && !compact && pages.length > 1) {
@@ -1267,7 +1337,7 @@ function RuntimeAppNavigationItem({
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-1">
+      <div className="group flex items-center gap-1">
         <button
           type="button"
           className={cn(
@@ -1275,23 +1345,66 @@ function RuntimeAppNavigationItem({
             compact ? "justify-center px-0" : "px-2",
             active
               ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-              : canOpen
+              : canOpen || compactStartMode
                 ? "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 : "cursor-not-allowed text-muted-foreground opacity-70",
           )}
-          disabled={!canOpen}
-          title={app.displayName}
+          disabled={compactStartMode ? startBusy : !canOpen}
+          title={compactStartMode ? `Start ${app.displayName}` : app.displayName}
           onClick={() => {
-            if (pages[0]) {
-              void onLaunch(app, pages[0], "workspace");
+            if (compactStartMode) {
+              onAction(app, "start");
+              return;
+            }
+
+            if (primaryPage) {
+              void onLaunch(app, primaryPage, "workspace");
             }
           }}
         >
-          <LayoutGrid className="h-4 w-4 shrink-0" />
+          {compactStartMode && startBusy ? (
+            <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" />
+          ) : compactStartMode ? (
+            <Play className="h-4 w-4 shrink-0" />
+          ) : (
+            <LayoutGrid className="h-4 w-4 shrink-0" />
+          )}
           {!compact && (
             <span className="min-w-0 flex-1 truncate text-left">{app.displayName}</span>
           )}
         </button>
+        {!compact && canOpenStandalone && primaryPage && (
+          <Button
+            asChild
+            variant="ghost"
+            size="icon-sm"
+            className="size-8 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 focus-visible:opacity-100"
+          >
+            <a
+              href={getStandaloneHref(app, primaryPage)}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open ${app.displayName} standalone`}
+              aria-label={`Open ${app.displayName} standalone`}
+            >
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          </Button>
+        )}
+        {!compact && canStart && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-8 shrink-0"
+            title={`Start ${app.displayName}`}
+            aria-label={`Start ${app.displayName}`}
+            disabled={startBusy}
+            onClick={() => onAction(app, "start")}
+          >
+            {startBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          </Button>
+        )}
         {!compact && pages.length > 1 && (
           <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0" onClick={() => setExpanded((current) => !current)}>
             <ChevronRight className={cn("h-4 w-4 transition-transform", expanded && "rotate-90")} />
@@ -2837,17 +2950,56 @@ function CheckboxRow({ label, checked, disabled, onChange }: { label: string; ch
   );
 }
 
-function EmbeddedWorkspacePanel({ workspace }: { workspace: EmbeddedWorkspace }) {
+function EmbeddedWorkspacePanel({
+  workspace,
+  theme,
+  themePreference,
+}: {
+  workspace: EmbeddedWorkspace;
+  theme: HostyResolvedTheme;
+  themePreference: HostyThemePreference;
+}) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const postTheme = useCallback(() => {
+    const frame = iframeRef.current;
+    if (!frame?.contentWindow) {
+      return;
+    }
+
+    frame.contentWindow.postMessage(
+      {
+        type: "hosty:shell-theme",
+        theme,
+        preference: themePreference,
+      },
+      getPostMessageTargetOrigin(workspace.src),
+    );
+  }, [theme, themePreference, workspace.src]);
+
+  useEffect(() => {
+    postTheme();
+  }, [postTheme]);
+
   return (
     <iframe
+      ref={iframeRef}
       key={`${workspace.appId}:${workspace.path}:${workspace.src}`}
       className="hosty-app-frame"
       title={`${workspace.title}: ${workspace.pageLabel}`}
       src={workspace.src}
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
       allow="clipboard-write"
+      onLoad={postTheme}
     />
   );
+}
+
+function getPostMessageTargetOrigin(src: string) {
+  try {
+    return new URL(src, window.location.origin).origin;
+  } catch {
+    return window.location.origin;
+  }
 }
 
 function SettingInput({ setting, value, disabled, onChange }: { setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {

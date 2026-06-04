@@ -153,7 +153,7 @@ The iframe uses a Core-issued launch redirect URL derived from the `embeddedUrl`
 
 Apps backed by local runtime endpoints use the configured runtime public host, for example `app.localhost`, plus the assigned runtime port. Core resolves nested app navigation by applying each manifest path to that endpoint URL.
 
-The Host shell opens apps through `/api/apps/{appId}/launch-code`. The app receives the short-lived code in its redirect URL and exchanges it with Core for app identity. Browser Shell launch always uses the active Core session user.
+The Host shell embeds apps through `/api/apps/{appId}/launch-code` and opens standalone app tabs through `/api/apps/{appId}/open?redirectUri=...`. The app receives the short-lived code in its redirect URL and exchanges it with Core for app identity. Browser Shell launch always uses the active Core session user.
 
 App UIs must serve their own routes, assets, cookies, and API calls from their own origin. The Host does not rewrite root-relative URLs, Next.js assets, App Router `_rsc` requests, or response headers. If an app blocks framing with `X-Frame-Options` or `Content-Security-Policy: frame-ancestors`, the browser blocks the iframe according to the app's own response policy.
 
