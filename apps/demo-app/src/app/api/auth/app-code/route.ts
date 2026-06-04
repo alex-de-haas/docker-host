@@ -86,8 +86,8 @@ export async function POST(request: Request) {
   });
   appResponse.cookies.set(appIdentityCookieName, accessToken, {
     httpOnly: true,
-    sameSite: "lax",
-    secure: request.url.startsWith("https://"),
+    sameSite: "none",
+    secure: true,
     path: "/",
     maxAge,
   });

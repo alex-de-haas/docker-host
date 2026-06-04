@@ -37,6 +37,7 @@ A Hosty-aware app should:
 - accept a `code` query parameter on an app-owned route;
 - exchange the code with `POST {HOSTY_CORE_ORIGIN}/api/auth/apps/token`;
 - create an app-origin session from the returned identity token;
+- use `SameSite=None; Secure` for app session cookies that must work inside Shell iframes from a different site, for example `localhost` embedding `app.localhost`;
 - remove the code from the browser URL after starting exchange;
 - call `POST {HOSTY_CORE_ORIGIN}/api/auth/apps/revalidate` before extending trust in an existing app session;
 - treat Core `401` as missing or expired Host authentication and Core `403` as denied app access;
@@ -57,6 +58,7 @@ Development defaults:
 - Core listens on `http://127.0.0.1:3001`.
 - In `Development`, Shell origin defaults to `http://127.0.0.1:3000`.
 - Local HTTP browser credentials require the browser host to match consistently. Do not mix `localhost` and `127.0.0.1` in one local session.
+- Embedded app sessions are third-party iframe cookies when Shell and the runtime app use different local sites. Modern browsers require `SameSite=None; Secure`; non-loopback HTTP deployments should use HTTPS before relying on embedded app sessions.
 
 Core status includes warnings for invalid public origin values and insecure `http` public origins on non-loopback hosts. Shell and `hosty core status` display those warnings.
 

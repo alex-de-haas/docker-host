@@ -34,8 +34,8 @@ export async function POST(request: Request) {
   });
   response.cookies.set(moduleIdentityCookieName, token.trim(), {
     httpOnly: true,
-    sameSite: "lax",
-    secure: request.url.startsWith("https://"),
+    sameSite: "none",
+    secure: true,
     path: "/",
     maxAge: 5 * 60,
   });

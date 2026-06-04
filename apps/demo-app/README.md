@@ -80,7 +80,7 @@ Useful endpoints:
 
 ## Hosty App Session Testing
 
-When Shell opens the app through Core, Core returns an app redirect URI with a short-lived `code` query parameter. The Demo App client removes that code from the URL, posts it to `/api/auth/app-code`, and stores the returned app-scoped identity token in an HttpOnly app-origin cookie. `/api/auth/identity` revalidates that app session against `HOSTY_CORE_ORIGIN` and reports the app id, Host user id, expiry, and any Core error without exposing the raw token.
+When Shell opens the app through Core, Core returns an app redirect URI with a short-lived `code` query parameter. The Demo App client removes that code from the URL, posts it to `/api/auth/app-code`, and stores the returned app-scoped identity token in an HttpOnly app-origin cookie. The cookie uses `SameSite=None; Secure` so the app session is sent when the app is embedded by Shell from a different local origin such as `localhost` to `app.localhost`. `/api/auth/identity` revalidates that app session against `HOSTY_CORE_ORIGIN` and reports the app id, Host user id, expiry, and any Core error without exposing the raw token.
 
 The app reads:
 
