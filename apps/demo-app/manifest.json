@@ -119,6 +119,30 @@
       "public": true
     }
   ],
+  "ui": {
+    "entrypoint": {
+      "endpoint": "http",
+      "path": "/"
+    },
+    "navigation": [
+      {
+        "label": "Overview",
+        "path": "/"
+      },
+      {
+        "label": "People",
+        "path": "/people"
+      },
+      {
+        "label": "Roles",
+        "path": "/roles"
+      },
+      {
+        "label": "Settings",
+        "path": "/settings"
+      }
+    ]
+  },
   "settings": [
     {
       "key": "DEMO_GREETING",

@@ -1013,7 +1013,6 @@ export function ShellClient({
 
   const activeUser = state.session?.authenticated ? state.session.user : null;
   const canManageApps = activeUser?.role === "host.admin";
-  const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
   const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
@@ -1102,8 +1101,6 @@ export function ShellClient({
                 <DashboardPage
                   state={state}
                   runtimeApps={runtimeApps}
-                  systemApps={systemApps}
-                  canManageApps={Boolean(canManageApps)}
                   onRefresh={() => void refresh()}
                   onOpenInstalledApps={() => setActiveView("apps")}
                 />
@@ -1560,15 +1557,11 @@ function PageHeader({ title, description, actions }: { title: string; descriptio
 function DashboardPage({
   state,
   runtimeApps,
-  systemApps,
-  canManageApps,
   onRefresh,
   onOpenInstalledApps,
 }: {
   state: LoadState;
   runtimeApps: CoreApp[];
-  systemApps: CoreApp[];
-  canManageApps: boolean;
   onRefresh: () => void;
   onOpenInstalledApps: () => void;
 }) {
@@ -1590,15 +1583,7 @@ function DashboardPage({
         onOpenInstalledApps={onOpenInstalledApps}
       />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <CoreStatusWidget status={state.status} loading={state.loading} />
-        <HostSummaryWidget
-          systemApps={systemApps.length}
-          runtimeApps={runtimeApps.length}
-          canManageApps={canManageApps}
-          coreOrigin={state.status?.corePublicOrigin || state.status?.listenUrl || "not configured"}
-        />
-      </div>
+      <CoreStatusWidget status={state.status} loading={state.loading} />
     </div>
   );
 }
@@ -1717,35 +1702,6 @@ function CoreStatusWidget({ status, loading }: { status: CoreStatus | null; load
           {facts.map(([label, value]) => (
             <Fact key={label} label={label} value={value} />
           ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function HostSummaryWidget({
-  systemApps,
-  runtimeApps,
-  canManageApps,
-  coreOrigin,
-}: {
-  systemApps: number;
-  runtimeApps: number;
-  canManageApps: boolean;
-  coreOrigin: string;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Host access</CardTitle>
-        <CardDescription>Current shell permissions and app registry scope.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Fact label="Runtime apps" value={String(runtimeApps)} />
-          <Fact label="System apps" value={String(systemApps)} />
-          <Fact label="Permission" value={canManageApps ? "Admin" : "User"} />
-          <Fact label="Core origin" value={coreOrigin} />
         </div>
       </CardContent>
     </Card>
