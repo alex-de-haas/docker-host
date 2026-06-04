@@ -181,8 +181,8 @@ Control requests do not send `Authorization: Bearer`, browser cookies, account-s
 
 Operational CLI auth decisions:
 
-- `hosty auth setup-token` and `hosty auth recovery-token` are reserved for Core-compatible first-administrator bootstrap and local recovery.
-- The retired Legacy Host auth state writer has been removed, so these commands currently return an unavailable status instead of writing obsolete auth JSON.
+- `hosty auth setup-token` and `hosty auth recovery-token` call the running Core trusted control API and print one-time Core-owned setup or recovery URLs.
+- The retired Legacy Host auth state writer has been removed, so the CLI never writes obsolete auth JSON directly.
 - `hosty auth token ...` commands are not part of the active CLI surface.
 - The Web UI no longer generates CLI admin tokens.
 - Browser sessions and user roles protect current normal Hosty Core API routes. Production OIDC, full trusted-proxy authentication, and recent browser reauthentication are future provider work.
@@ -195,9 +195,11 @@ Implemented local-auth surface:
 
 - `/login` renders a development user picker in development and a Core-owned placeholder in production until production auth providers are added;
 - `/logout` revokes the active Core session and redirects back to Shell or login;
-- `/setup`, `/setup/invite`, and `/recovery` remain Core-owned pages; invitation acceptance is implemented at `/setup/invite`;
+- `/setup`, `/setup/invite`, and `/recovery` are Core-owned pages for first-administrator bootstrap, invitation acceptance, and local administrator recovery;
 - `GET /api/auth/csrf` issues the browser CSRF token used by Shell mutation requests;
 - `GET /api/auth/session` returns the current authenticated Core user;
+- `POST /api/auth/bootstrap` consumes a local setup token, creates the first local `host.admin`, creates a normal Core session, and redirects back to Shell;
+- `POST /api/auth/recovery` consumes a local recovery token, creates or restores a `host.admin`, revokes stale sessions for that account, creates a normal Core session, and redirects back to Shell;
 - `POST /api/auth/session` creates a session only in development;
 - `POST /api/auth/trusted-proxy/session` creates a secure-cookie session from a trusted upstream user id header;
 - `POST /api/auth/logout` revokes the active session;
@@ -205,13 +207,14 @@ Implemented local-auth surface:
 - `POST /api/auth/apps/token` exchanges an app authorization code for app-scoped identity;
 - `POST /api/auth/apps/revalidate` revalidates an app access token;
 - `/api/auth/users` and `/api/auth/invitations` endpoints implement User Management;
+- `POST /control/v1/auth/setup-token` and `POST /control/v1/auth/recovery-token` issue one-time setup and recovery tokens to trusted local control clients;
 - `/control/v1/audit/recent` exposes recent audit records to trusted local control clients.
 
-Core stores users, invitations, app assignments, and sessions under `core/auth/state.json`. Sessions use random opaque ids in HttpOnly cookies, expire after 12 hours, and can be revoked by logout or User Management mutations.
+Core stores users, invitations, app assignments, and sessions under `core/auth/state.json`. Setup and recovery tokens are stored separately under `core/auth/bootstrap-tokens.json` with only token hashes persisted. Sessions use random opaque ids in HttpOnly cookies, expire after 12 hours, and can be revoked by logout, User Management mutations, or administrator recovery.
 
-Audit events are stored as append-only NDJSON under `core/audit/audit.ndjson`, separate from the main auth state. Events must not write raw bearer tokens, setup tokens, invitation tokens, trusted-proxy assertions, cookies, authorization headers, app access tokens, or token hashes.
+Audit events are stored as append-only NDJSON under `core/audit/audit.ndjson`, separate from the main auth state. Events must not write raw bearer tokens, setup tokens, recovery tokens, invitation tokens, trusted-proxy assertions, cookies, authorization headers, app access tokens, or token hashes.
 
-The old Legacy Host password login, remembered browser accounts, `/settings/security`, `/api/auth/bootstrap`, `/api/auth/accounts`, `/api/auth/reauth`, `/api/auth/sessions`, and `/api/auth/audit` browser APIs are not part of the current Core/Shell implementation.
+The old Legacy Host password login, remembered browser accounts, `/settings/security`, `/api/auth/accounts`, `/api/auth/reauth`, `/api/auth/sessions`, and `/api/auth/audit` browser APIs are not part of the current Core/Shell implementation.
 
 ## Module-Owned Permissions
 

@@ -36,12 +36,14 @@ hosty apps install apps/demo-app/manifest.json --runtime dev
 
 `hosty modules` and `docker-host modules` remain compatibility aliases for legacy module management. They are not the preferred workflow for new runtime apps.
 
-`hosty auth setup-token` and `hosty auth recovery-token` are reserved for Core-compatible local authentication bootstrap and recovery. The retired Legacy Host state writer has been removed, so these commands currently return a clear unavailable status instead of writing obsolete auth JSON:
+`hosty auth setup-token` and `hosty auth recovery-token` call the running Hosty Core trusted control API to create one-time local setup and recovery tokens. The retired Legacy Host state writer has been removed, so these commands never write obsolete auth JSON directly from the CLI:
 
 ```text
 hosty auth setup-token
 hosty auth recovery-token
 ```
+
+Core must be running and local control discovery must be available. Each command prints the raw token and Core-owned setup or recovery URL once. Core stores only token hashes under `core/auth/bootstrap-tokens.json`.
 
 ## Configuration
 

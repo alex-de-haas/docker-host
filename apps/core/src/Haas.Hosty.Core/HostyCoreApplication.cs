@@ -20,9 +20,11 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
         builder.Services.AddSingleton<AppRegistryStore>();
         builder.Services.AddSingleton<UserDirectoryStore>();
+        builder.Services.AddSingleton<AuthBootstrapTokenStore>();
         builder.Services.AddSingleton<AuditStore>();
         builder.Services.AddSingleton<AppAuthCodeStore>();
         builder.Services.AddSingleton<AppIdentityService>();
+        builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
         builder.Services.AddSingleton(_ => new AppManifestService());
         builder.Services.AddSingleton<AppBackupService>();
@@ -117,17 +119,15 @@ internal static class HostyCoreApplication
                 "Hosty Core owns login and session setup in the final architecture.",
                 config), "text/html"));
         }
-        app.MapGet("/setup", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
-            "Hosty Core Setup",
-            "Hosty Core owns first administrator setup.",
-            config), "text/html"));
+        app.MapGet("/setup", (string? setupToken, HostyCoreRuntimeConfig config) => Results.Content(
+            RenderSetupPage(config, setupToken),
+            "text/html"));
         app.MapGet("/setup/invite", (string? setupToken, HostyCoreRuntimeConfig config) => Results.Content(
             RenderInvitationPage(config, setupToken),
             "text/html"));
-        app.MapGet("/recovery", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
-            "Hosty Core Recovery",
-            "Hosty Core owns local administrator recovery.",
-            config), "text/html"));
+        app.MapGet("/recovery", (string? recoveryToken, HostyCoreRuntimeConfig config) => Results.Content(
+            RenderRecoveryPage(config, recoveryToken),
+            "text/html"));
         app.MapGet("/logout", async (
             HttpRequest request,
             HttpResponse response,
@@ -146,6 +146,7 @@ internal static class HostyCoreApplication
 
         DomainEndpoints.Map(app);
         AuthEndpoints.Map(app);
+        AuthBootstrapEndpoints.Map(app);
         UserManagementEndpoints.Map(app);
         LifecycleEndpoints.Map(app);
         SourceEndpoints.Map(app);
@@ -271,6 +272,142 @@ internal static class HostyCoreApplication
               <p>Shell origin: <code>{{encodedShellOrigin}}</code></p>
               <p class="hint">Production authentication remains owned by Core auth providers.</p>
             </main>
+          </body>
+          </html>
+          """;
+    }
+
+    private static string RenderSetupPage(HostyCoreRuntimeConfig config, string? setupToken)
+    {
+        var encodedToken = HtmlEncoder.Default.Encode(setupToken ?? "");
+        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.ShellPublicOrigin ?? "/");
+
+        return $$"""
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Hosty Core Setup</title>
+            <style>
+              :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+              body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+              main { width: min(34rem, calc(100vw - 2rem)); border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 1.5rem; }
+              h1 { margin: 0 0 .75rem; font-size: 1.25rem; }
+              p { margin: .5rem 0; line-height: 1.5; }
+              form { display: grid; gap: .75rem; margin-top: 1rem; }
+              label { font-weight: 650; }
+              input, button { border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; font: inherit; padding: .7rem .85rem; }
+              button { cursor: pointer; background: CanvasText; color: Canvas; }
+              .error { color: #b42318; font-weight: 650; }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>Hosty Core Setup</h1>
+              <p id="message"></p>
+              <form id="setup-form">
+                <input type="hidden" id="setup-token" value="{{encodedToken}}">
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" autocomplete="email" required>
+                <label for="display-name">Display name</label>
+                <input id="display-name" name="displayName" autocomplete="name">
+                <button type="submit">Create administrator</button>
+              </form>
+            </main>
+            <script>
+              const form = document.getElementById('setup-form');
+              const message = document.getElementById('message');
+              form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                message.className = '';
+                message.textContent = 'Creating administrator...';
+                const response = await fetch('/api/auth/bootstrap', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    setupToken: document.getElementById('setup-token').value,
+                    email: document.getElementById('email').value,
+                    displayName: document.getElementById('display-name').value || undefined
+                  })
+                });
+                if (!response.ok) {
+                  const error = await response.json().catch(() => ({}));
+                  message.className = 'error';
+                  message.textContent = error.message || 'Administrator setup could not be completed.';
+                  return;
+                }
+                window.location.href = '{{encodedShellOrigin}}';
+              });
+            </script>
+          </body>
+          </html>
+          """;
+    }
+
+    private static string RenderRecoveryPage(HostyCoreRuntimeConfig config, string? recoveryToken)
+    {
+        var encodedToken = HtmlEncoder.Default.Encode(recoveryToken ?? "");
+        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.ShellPublicOrigin ?? "/");
+
+        return $$"""
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Hosty Core Recovery</title>
+            <style>
+              :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+              body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+              main { width: min(34rem, calc(100vw - 2rem)); border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 1.5rem; }
+              h1 { margin: 0 0 .75rem; font-size: 1.25rem; }
+              p { margin: .5rem 0; line-height: 1.5; }
+              form { display: grid; gap: .75rem; margin-top: 1rem; }
+              label { font-weight: 650; }
+              input, button { border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; font: inherit; padding: .7rem .85rem; }
+              button { cursor: pointer; background: CanvasText; color: Canvas; }
+              .error { color: #b42318; font-weight: 650; }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>Hosty Core Recovery</h1>
+              <p id="message"></p>
+              <form id="recovery-form">
+                <input type="hidden" id="recovery-token" value="{{encodedToken}}">
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" autocomplete="email" required>
+                <label for="display-name">Display name</label>
+                <input id="display-name" name="displayName" autocomplete="name">
+                <button type="submit">Restore administrator</button>
+              </form>
+            </main>
+            <script>
+              const form = document.getElementById('recovery-form');
+              const message = document.getElementById('message');
+              form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                message.className = '';
+                message.textContent = 'Restoring administrator...';
+                const response = await fetch('/api/auth/recovery', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    recoveryToken: document.getElementById('recovery-token').value,
+                    email: document.getElementById('email').value,
+                    displayName: document.getElementById('display-name').value || undefined
+                  })
+                });
+                if (!response.ok) {
+                  const error = await response.json().catch(() => ({}));
+                  message.className = 'error';
+                  message.textContent = error.message || 'Administrator recovery could not be completed.';
+                  return;
+                }
+                window.location.href = '{{encodedShellOrigin}}';
+              });
+            </script>
           </body>
           </html>
           """;

@@ -857,39 +857,37 @@ Lifecycle hardening marks modules `failed` when a lifecycle action discovers a m
 
 ### Authentication
 
-Browser authentication uses Host-owned sessions stored server-side in the auth state. Host session cookies are HttpOnly and are never forwarded to modules by the gateway. Browser account switching uses a separate HttpOnly account-set cookie with only a server-side token hash stored in auth state.
+Browser authentication uses Host-owned sessions stored server-side in Core auth state. Host session cookies are HttpOnly and are never forwarded to runtime apps by the gateway.
 
-Implemented browser auth endpoints:
+Implemented Core auth endpoints:
 
-- `POST /api/auth/bootstrap` creates the first local `host.admin` after a valid local setup token.
-- `POST /api/auth/login` authenticates a local password user, creates a Host session, and remembers the account in the current browser account set.
+- `GET /api/auth/csrf` issues the browser CSRF token used by Shell mutation requests.
+- `GET /api/auth/session` returns the current authenticated Core user.
+- `POST /api/auth/bootstrap` consumes `{ "setupToken": "...", "email": "admin@example.test", "displayName": "Admin" }`, creates the first local `host.admin`, creates a Core session, and returns the Shell redirect path.
+- `POST /api/auth/recovery` consumes `{ "recoveryToken": "...", "email": "admin@example.test", "displayName": "Admin" }`, creates or restores a local `host.admin`, revokes stale sessions for that account, creates a Core session, and returns the Shell redirect path.
+- `POST /api/auth/session` creates a development-only session for an existing enabled local user.
+- `POST /api/auth/trusted-proxy/session` creates a secure-cookie session from a trusted upstream user id header.
 - `POST /api/auth/logout` revokes the current Host session.
-- `GET /api/auth/status` returns setup and current-session status.
-- `POST /api/auth/recovery` consumes a local setup or recovery token, restores a `host.admin` account, revokes stale sessions for that account, creates a new browser session, and remembers the account in the current browser account set.
-- `POST /api/auth/reauth` refreshes the current browser session's recent reauthentication timestamp using a local password or recovery token.
-- `GET /api/auth/accounts` returns the active user and remembered account summaries for the current browser.
-- `POST /api/auth/accounts/switch` accepts `{ "userId": "..." }`, validates that the user is remembered and enabled, creates a fresh active Host session, and returns the selected user's default shell path.
-- `DELETE /api/auth/accounts/{userId}` removes one remembered account from the current browser. If it removes the active user, it also revokes the active session and clears the session cookie.
-- `DELETE /api/auth/accounts` revokes the current browser account set and the active session, then clears both browser auth cookies.
-- `GET /api/auth/diagnostics` returns safe OIDC and trusted-proxy diagnostics for Host administrators.
-- `GET /api/auth/oidc/login` starts generic OIDC Authorization Code with PKCE when an OIDC provider is configured.
-- `GET /api/auth/oidc/callback` validates the OIDC callback, exchanges the authorization code, verifies the ID token with provider JWKS, applies explicit role mapping, creates or updates the Host user for the external identity, creates a normal Host session, and remembers the account in the current browser account set.
-- `GET /api/auth/invitations/accept?setupToken=...` returns a safe local invitation preview containing the invited email, role, display name, assigned module ids, and expiry.
-- `POST /api/auth/invitations/accept` consumes a valid local invitation token, creates a local password user, applies initial module assignments, creates a Host session, and remembers the account in the current browser account set.
+- `POST /api/auth/apps/authorize`, `POST /api/apps/{appId}/launch-code`, and `GET /api/apps/{appId}/open` create app authorization codes for authenticated users.
+- `POST /api/auth/apps/token` exchanges an app authorization code for an app-scoped identity token.
+- `POST /api/auth/apps/revalidate` revalidates an app access token.
+- `GET /api/auth/invitations/accept?setupToken=...` returns a safe local invitation preview containing the invited email, role, display name, assigned app ids, and expiry.
+- `POST /api/auth/invitations/accept` consumes a valid local invitation token, creates a local user, applies initial app assignments, and creates a Core session.
 
-OIDC login denies access when the transaction state is invalid or expired, ID token verification fails, the token has no subject, no role mapping matches, or the mapped Host user is disabled. OIDC provider access tokens, refresh tokens, and ID tokens are not persisted.
-
-Account switching endpoints use the active Host session for authorization and the HttpOnly `docker_host_accounts` cookie to find the browser account set. The account-set cookie is not a module credential and is stripped from gateway traffic. Direct-origin shell iframe traffic cannot receive Host cookies for its module origin.
+The current Core/Shell implementation does not include the old Legacy Host password login, remembered browser account switching, `/settings/security`, `/api/auth/accounts`, `/api/auth/reauth`, `/api/auth/sessions`, or `/api/auth/audit` browser APIs.
 
 ### Local CLI control
 
-Local CLI module and dev commands authenticate through trusted control discovery, not through browser sessions or CLI bearer tokens. The Host writes `<HOST_DATA_ROOT_HOST>/run/control.json` at startup, and the CLI calls `/control/v1` with the discovered control contract version and per-start control secret.
+Local CLI module and dev commands authenticate through trusted control discovery, not through browser sessions or CLI bearer tokens. Core writes `<HOSTY_HOME>/core/run/control.json` at startup, and the CLI calls `/control/v1` with the discovered per-start control secret.
 
 The control channel is not a public Host API surface. It is not proxied by the gateway, does not accept browser cookies, and does not grant remote API access.
 
 Initial control routes:
 
-- `GET /control/v1/host/status` returns Host readiness for CLI preflight checks.
+- `GET /control/v1/core/status` returns Core readiness for CLI preflight checks.
+- `POST /control/v1/core/stop` asks the running Core process to stop.
+- `POST /control/v1/auth/setup-token` creates a one-time first-administrator setup token and setup URL. The raw token is returned once; Core stores only a hash.
+- `POST /control/v1/auth/recovery-token` creates a one-time local administrator recovery token and recovery URL. The raw token is returned once; Core stores only a hash.
 - `GET /control/v1/apps` lists Hosty system apps and runtime apps for local CLI management.
 - `POST /control/v1/apps/install` installs an `app.0.1` runtime app from a local manifest path or absolute `http` or `https` manifest URL.
 - `POST /control/v1/apps/{appId}/autostart` updates the installed runtime app's app-level startup setting. Request body: `{ "autostart": true }`.
@@ -917,18 +915,13 @@ External mounts are excluded. Update apply creates a `pre-update` backup when a 
 
 ### Sessions and audit
 
-Session and audit APIs support the `/settings/security` operations surface:
+Current Core sessions are revoked by logout, User Management mutations, and administrator recovery. Browser session-management and audit-management APIs are not part of the current Core/Shell surface.
 
-- `GET /api/auth/sessions` returns active Host sessions and can include recently revoked sessions with `includeRevoked=true`.
-- `DELETE /api/auth/sessions/{sessionId}` revokes a Host session by id.
-- `GET /api/auth/audit` returns sanitized audit events with cursor pagination and filters for event type, actor, target, result, and timestamp range.
-- `DELETE /api/auth/audit` applies retention-based purge and appends a final `auth.audit.purged` summary event.
-
-Session revocation and audit purge require `host.auth.configure`; mutating browser-session requests also require recent reauthentication. Responses never expose raw session cookies, token hashes, bearer tokens, setup tokens, recovery tokens, provider assertions, or provider tokens.
+Trusted local control clients can call `GET /control/v1/audit/recent` to inspect recent sanitized audit records. Responses never expose raw session cookies, token hashes, bearer tokens, setup tokens, recovery tokens, invitation tokens, provider assertions, or provider tokens.
 
 ### User management
 
-User Management APIs support the `/settings/users` operations surface:
+User Management APIs support the Shell User Management view:
 
 - `GET /api/auth/users` returns Host user summaries, invitation summaries, assignable installed runtime apps, and supported invite expiry options.
 - `GET /api/auth/invitations` returns invitation summaries.
@@ -938,9 +931,9 @@ User Management APIs support the `/settings/users` operations surface:
 - `DELETE /api/auth/users/{userId}` soft-disables the user.
 - `PUT /api/auth/users/{userId}/assignments` replaces the user's module assignment list.
 
-All administrator user-management endpoints require `host.users.manage`. Mutating browser-session requests also require recent reauthentication and the same-origin CSRF check.
+All administrator user-management endpoints require an active `host.admin` session. Mutating browser-session requests also require the same-origin CSRF check.
 
-Invitation tokens are setup-token style credentials with hash-only storage. Local invitations require email, are single-use, and can expire after 15 minutes, 24 hours, or 7 days. Accepting an invitation creates a local password user; it does not pre-provision OIDC or trusted-proxy identities.
+Invitation tokens are setup-token style credentials with hash-only storage. Local invitations require email, are single-use, and can expire after 15 minutes, 24 hours, or 7 days. Accepting an invitation creates a local user; it does not pre-provision OIDC or trusted-proxy identities.
 
 User deletion is implemented as soft-disable. Disabling a user revokes active sessions, removes the user from remembered browser account sets, and removes module assignments. Docker Host prevents disabling or demoting the last active administrator.
 

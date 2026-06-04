@@ -4,11 +4,13 @@ Hosty administrators manage users from the Shell User Management view. The old L
 
 Host users can enter the system through these implemented flows:
 
+- first-administrator setup creates the initial local `host.admin` after a valid local setup token;
+- local administrator recovery creates or restores a `host.admin` after a valid local recovery token;
 - local invitations create `host.admin` or `host.user` accounts after the invite is accepted;
 - future OIDC login can provision or update external users through provider role mappings;
 - future trusted-proxy assertions can provision or update external users through trusted proxy role mappings;
 
-First-administrator bootstrap and local administrator recovery remain reserved Core auth work. The removed Legacy Host auth-token writer is not part of the current implementation.
+First-administrator bootstrap and local administrator recovery are Core auth flows, not User Management flows. The removed Legacy Host auth-token writer is not part of the current implementation.
 
 Browser account switching is a separate compatibility topic. User Management owns persisted users, invitations, assignments, sessions, and audit events.
 
@@ -17,8 +19,9 @@ The feature uses Core-owned auth state:
 - users are stored as `HostUserRecord` entries in Core's `auth/state.json`;
 - roles remain `host.admin` and `host.user`;
 - local invitations use one-time setup-token style links with only token hashes stored at rest;
+- setup and recovery tokens use separate hash-only storage under `core/auth/bootstrap-tokens.json`;
 - app access uses Core `AppAssignmentRecord` entries;
-- sensitive changes require recent administrator reauthentication;
+- mutating browser requests require an active administrator session and same-origin CSRF validation;
 - user lifecycle changes append auth audit events.
 
 ```mermaid
@@ -125,6 +128,6 @@ The UI uses the Core auth API:
 - `DELETE /api/auth/users/{userId}` disables the user.
 - `PUT /api/auth/users/{userId}/assignments` replaces app assignments for the user.
 
-All administrator mutation endpoints require `host.users.manage`, same-origin CSRF checks for browser sessions, and recent reauthentication.
+All administrator mutation endpoints require `host.users.manage` and same-origin CSRF checks for browser sessions.
 
 Common business errors include duplicate email, active invitation already exists, invalid or expired invitation token, provider-managed role, last active administrator protection, self-disable protection, and disabled or missing user.
