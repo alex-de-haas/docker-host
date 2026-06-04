@@ -1,15 +1,18 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppManifestService
+internal sealed class AppManifestService(HttpClient? httpClient = null)
 {
     private const string SupportedSchemaVersion = "app.0.1";
+    private const int MaxManifestBytes = 1024 * 1024;
     private static readonly Regex ContractKeyPattern = new("^[a-z][a-z0-9-]{0,62}$", RegexOptions.Compiled);
+    private readonly HttpClient httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
 
     public async Task<RuntimeAppManifestSelection> LoadAsync(
         string manifestPath,
@@ -21,18 +24,12 @@ internal sealed class AppManifestService
             throw new AppManifestException("manifest_path_required", "A runtime app manifest path is required.");
         }
 
-        var fullPath = Path.GetFullPath(manifestPath);
-        if (!File.Exists(fullPath))
-        {
-            throw new AppManifestException("manifest_not_found", $"Runtime app manifest was not found at '{fullPath}'.");
-        }
-
-        var json = await File.ReadAllTextAsync(fullPath, cancellationToken);
-        var digest = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
+        var source = await ReadManifestSourceAsync(manifestPath.Trim(), cancellationToken);
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source.Json))).ToLowerInvariant();
         RuntimeAppManifest? manifest;
         try
         {
-            manifest = JsonSerializer.Deserialize<RuntimeAppManifest>(json, JsonOptions);
+            manifest = JsonSerializer.Deserialize<RuntimeAppManifest>(source.Json, JsonOptions);
         }
         catch (JsonException ex)
         {
@@ -44,7 +41,7 @@ internal sealed class AppManifestService
             throw new AppManifestException("manifest_json_invalid", "Runtime app manifest must be a JSON object.");
         }
 
-        return Select(manifest, fullPath, digest, selectedRuntime);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl);
     }
 
     public async Task SaveManifestCopyAsync(
@@ -59,16 +56,16 @@ internal sealed class AppManifestService
             return;
         }
 
-        await using var source = File.OpenRead(selection.ManifestPath);
-        await using var target = File.Create(targetPath);
-        await source.CopyToAsync(target, cancellationToken);
+        await File.WriteAllTextAsync(targetPath, selection.ManifestJson, Encoding.UTF8, cancellationToken);
     }
 
     public RuntimeAppManifestSelection Select(
         RuntimeAppManifest manifest,
         string manifestPath,
         string manifestDigest,
-        string? selectedRuntime = null)
+        string? selectedRuntime = null,
+        string? manifestJson = null,
+        string? manifestUrl = null)
     {
         var errors = new List<AppManifestValidationError>();
         ValidateRequired(manifest.SchemaVersion, "$.schemaVersion", errors);
@@ -246,8 +243,127 @@ internal sealed class AppManifestService
             ManifestDigest: manifestDigest,
             RuntimeProfile: selectedProfile!,
             Services: selectedServices,
-            DataTarget: dataTarget);
+            DataTarget: dataTarget,
+            ManifestJson: manifestJson ?? JsonSerializer.Serialize(manifest, JsonOptions),
+            ManifestUrl: manifestUrl);
     }
+
+    private async Task<AppManifestSource> ReadManifestSourceAsync(string manifestPath, CancellationToken cancellationToken)
+    {
+        if (TryCreateAbsoluteUri(manifestPath, out var uri))
+        {
+            if (IsHttpManifestUri(uri))
+            {
+                return await DownloadManifestAsync(uri, cancellationToken);
+            }
+
+            if (uri.IsFile)
+            {
+                return await ReadLocalManifestAsync(uri.LocalPath, cancellationToken);
+            }
+
+            throw new AppManifestException("manifest_url_scheme_unsupported", "Runtime app manifest URL must use http or https.");
+        }
+
+        return await ReadLocalManifestAsync(manifestPath, cancellationToken);
+    }
+
+    private static async Task<AppManifestSource> ReadLocalManifestAsync(string manifestPath, CancellationToken cancellationToken)
+    {
+        var fullPath = Path.GetFullPath(manifestPath);
+        if (!File.Exists(fullPath))
+        {
+            throw new AppManifestException("manifest_not_found", $"Runtime app manifest was not found at '{fullPath}'.");
+        }
+
+        return new AppManifestSource(fullPath, await File.ReadAllTextAsync(fullPath, cancellationToken), ManifestUrl: null);
+    }
+
+    private async Task<AppManifestSource> DownloadManifestAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Accept.ParseAdd("application/json");
+        using var response = await SendManifestRequestAsync(request, uri, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new AppManifestException(
+                "manifest_fetch_failed",
+                $"Runtime app manifest URL returned HTTP {(int)response.StatusCode}.");
+        }
+
+        if (response.Content.Headers.ContentLength is > MaxManifestBytes)
+        {
+            throw new AppManifestException(
+                "manifest_too_large",
+                $"Runtime app manifest response exceeds the {MaxManifestBytes} byte limit.");
+        }
+
+        return new AppManifestSource(uri.AbsoluteUri, await ReadManifestResponseAsync(response.Content, cancellationToken), uri.AbsoluteUri);
+    }
+
+    private async Task<HttpResponseMessage> SendManifestRequestAsync(HttpRequestMessage request, Uri uri, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new AppManifestException("manifest_fetch_failed", $"Runtime app manifest URL '{uri.AbsoluteUri}' timed out.");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new AppManifestException("manifest_fetch_failed", $"Runtime app manifest URL could not be fetched: {ex.Message}");
+        }
+    }
+
+    private static async Task<string> ReadManifestResponseAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        await using var source = await content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        var total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(chunk, cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            total += read;
+            if (total > MaxManifestBytes)
+            {
+                throw new AppManifestException(
+                    "manifest_too_large",
+                    $"Runtime app manifest response exceeds the {MaxManifestBytes} byte limit.");
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private static bool TryCreateAbsoluteUri(string value, out Uri uri)
+    {
+        if (Uri.TryCreate(value, UriKind.Absolute, out var parsed) &&
+            !string.IsNullOrWhiteSpace(parsed.Scheme) &&
+            !parsed.IsUnc)
+        {
+            uri = parsed;
+            return true;
+        }
+
+        uri = null!;
+        return false;
+    }
+
+    private static bool IsHttpManifestUri(Uri uri)
+        => string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+
+    private sealed record AppManifestSource(string Reference, string Json, string? ManifestUrl);
 
     private static RuntimeDockerImage? ParseDockerImage(JsonElement? value, List<AppManifestValidationError> errors, string path)
     {
@@ -610,7 +726,9 @@ internal sealed record RuntimeAppManifestSelection(
     string ManifestDigest,
     RuntimeProfileManifest RuntimeProfile,
     IReadOnlyList<RuntimeSelectedService> Services,
-    RuntimeAppDataTarget? DataTarget);
+    RuntimeAppDataTarget? DataTarget,
+    string ManifestJson,
+    string? ManifestUrl);
 
 internal sealed record RuntimeSelectedService(
     string Key,

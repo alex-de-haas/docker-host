@@ -132,6 +132,8 @@ Runtime app manifests declare mutually exclusive runtime profiles. Hosty stores 
 
 The local-first Core app record owns the runtime lifecycle fields needed by ordinary app operations:
 
+- local `manifestPath` pointing at the installed `apps/<app-id>/manifest.json` copy;
+- remote `manifestUrl` when the app was installed from an absolute `http` or `https` manifest URL;
 - selected runtime and selected channel;
 - operation status, runtime state, last operation, and last error;
 - settings values, with secret values treated as write-only at API and UI boundaries;

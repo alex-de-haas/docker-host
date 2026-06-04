@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -141,6 +143,30 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("local-data", await File.ReadAllTextAsync(dataPath));
         var backup = Assert.Single(await fixture.Backups.ListBackupsAsync("com.example.notes"));
         Assert.Equal("pre-update", backup.Reason);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_UsesStoredManifestUrlForRemoteInstalls()
+    {
+        const string manifestUrl = "https://apps.example.test/notes/manifest.json";
+        var remoteManifestJson = CreateRemoteManifestJson("1.0.0");
+        using var httpClient = new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(remoteManifestJson, Encoding.UTF8, "application/json"),
+        }));
+        var manifests = new AppManifestService(httpClient);
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl));
+        remoteManifestJson = CreateRemoteManifestJson("2.0.0");
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        Assert.Equal(manifestUrl, app?.ManifestUrl);
+        Assert.Equal(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json"), app?.ManifestPath);
+        Assert.Equal("2.0.0", plan.TargetVersion);
+        Assert.Equal(manifestUrl, plan.ManifestPath);
     }
 
     [Theory]
@@ -587,6 +613,32 @@ public sealed class CoreLifecycleServiceTests
         Assert.Null(fixture.LocalProcesses.Get("com.example.local-fail", "second"));
     }
 
+    private static string CreateRemoteManifestJson(string version)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "{{version}}",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "defaultRuntime": "docker",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": {
+                    "type": "docker",
+                    "image": "ghcr.io/example/notes:{{version}}"
+                  }
+                }
+              }]
+            }
+            """;
+
+    private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(handler(request));
+    }
 
     private sealed class LifecycleFixture
     {
@@ -634,7 +686,7 @@ public sealed class CoreLifecycleServiceTests
 
         public FakeClock Clock { get; }
 
-        public static async Task<LifecycleFixture> CreateAsync()
+        public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null)
         {
             var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -650,7 +702,7 @@ public sealed class CoreLifecycleServiceTests
             var apps = new AppRegistryStore(paths);
             var clock = new FakeClock(DateTimeOffset.Parse("2026-06-02T12:00:00Z"));
             var backups = new AppBackupService(paths, clock);
-            var manifests = new AppManifestService();
+            manifests ??= new AppManifestService();
             var sources = new AppSourceService(paths, apps, clock);
             var adapter = new RecordingRuntimeAdapter();
             var runtimeConfig = new HostyCoreRuntimeConfig(

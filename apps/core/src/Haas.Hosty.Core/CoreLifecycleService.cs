@@ -61,6 +61,7 @@ internal sealed class CoreLifecycleService(
         var record = BuildAppRecord(
             selection,
             manifestCopyPath,
+            manifestUrl: selection.ManifestUrl,
             selectedChannel: request.SelectedChannel,
             system: request.System,
             existing: null) with
@@ -152,7 +153,7 @@ internal sealed class CoreLifecycleService(
     public async Task<AppUpdatePlan> CreateUpdatePlanAsync(string appId, AppUpdatePlanRequest request, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
-        var manifestPath = request.ManifestPath ?? app.ManifestPath;
+        var manifestPath = request.ManifestPath ?? app.ManifestUrl ?? app.ManifestPath;
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
             throw new AppLifecycleException("manifest_path_required", "Installed app has no manifest path and update request did not provide one.");
@@ -218,6 +219,7 @@ internal sealed class CoreLifecycleService(
         var next = BuildAppRecord(
             selection,
             manifestCopyPath,
+            manifestUrl: selection.ManifestUrl,
             selectedChannel: plan.TargetChannel,
             system: app.System,
             existing: app) with
@@ -310,6 +312,7 @@ internal sealed class CoreLifecycleService(
         var next = BuildAppRecord(
             targetSelection,
             app.ManifestPath!,
+            manifestUrl: app.ManifestUrl,
             selectedChannel: app.SelectedChannel,
             system: app.System,
             existing: app) with
@@ -514,6 +517,7 @@ internal sealed class CoreLifecycleService(
     private AppRecord BuildAppRecord(
         RuntimeAppManifestSelection selection,
         string manifestPath,
+        string? manifestUrl,
         string? selectedChannel,
         bool system,
         AppRecord? existing)
@@ -561,7 +565,7 @@ internal sealed class CoreLifecycleService(
             System: system,
             Source: manifest.Source?.Repository ?? "manifest",
             ManifestPath: manifestPath,
-            ManifestUrl: null,
+            ManifestUrl: manifestUrl,
             SelectedChannel: selectedChannel,
             SelectedRuntime: selection.RuntimeProfile.Key,
             OperationStatus: existing?.OperationStatus ?? "installed",
@@ -627,6 +631,7 @@ internal sealed class CoreLifecycleService(
         var rolledBack = BuildAppRecord(
             currentSelection,
             app.ManifestPath!,
+            manifestUrl: app.ManifestUrl,
             selectedChannel: app.SelectedChannel,
             system: app.System,
             existing: app) with
@@ -1112,6 +1117,13 @@ internal sealed class CoreLifecycleService(
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
             throw new AppLifecycleException("channel_manifest_missing", $"Channel '{channel.Id}' does not declare a manifest path.");
+        }
+
+        if (Uri.TryCreate(manifestPath, UriKind.Absolute, out var manifestUri) &&
+            (string.Equals(manifestUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(manifestUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            return manifestUri.AbsoluteUri;
         }
 
         if (Path.IsPathRooted(manifestPath))

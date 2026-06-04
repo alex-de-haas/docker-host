@@ -43,11 +43,12 @@ The preferred app command surface:
 
 ```text
 hosty apps list
-hosty apps install <manifest-url>
+hosty apps install <manifest-reference>
 hosty apps start <app-id>
 hosty apps stop <app-id>
 hosty apps restart <app-id>
-hosty apps update <app-id>
+hosty apps update-plan <app-id>
+hosty apps update <app-id> --plan-digest <digest>
 hosty apps switch-runtime-plan <app-id> --runtime <key>
 hosty apps switch-runtime <app-id> --runtime <key> --plan-digest <digest>
 hosty apps source <app-id>
@@ -122,58 +123,38 @@ Legacy `modules list` still calls `GET /control/v1/modules` and renders the inst
 ## `apps install`
 
 ```text
-hosty apps install <manifest-url>
-hosty apps add <manifest-url>
+hosty apps install <manifest-reference>
+hosty apps add <manifest-reference>
 ```
 
-`install` is a two-step reviewed flow:
+`manifest-reference` may be a local manifest path or an absolute `http` or `https` manifest URL. The CLI normalizes local paths to absolute paths before sending them to Core and preserves remote URLs unchanged.
+
+`install` calls the Core runtime app install endpoint:
 
 ```mermaid
 flowchart LR
-  A["manifest URL"] --> B["POST /control/v1/modules/install/plan"]
-  B --> X{"Already installed from same URL?"}
-  X -- "No" --> C["Terminal install plan review"]
-  C --> D["Collect settings and mounts"]
-  D --> E["POST /control/v1/modules/install"]
-  E --> F["Installed module"]
-  X -- "Yes" --> U["Terminal update plan review"]
-  U --> V["POST /control/v1/modules/{moduleId}/update"]
-  V --> W["Updated module"]
+  A["manifest path or URL"] --> B["POST /control/v1/apps/install"]
+  B --> C["Core loads or downloads manifest"]
+  C --> D["Core writes apps/<app-id>/manifest.json"]
+  D --> E["Installed runtime app"]
 ```
 
-### Interactive install flow
+Core stores the installed local copy as `manifestPath`. When the submitted manifest reference is an `http` or `https` URL, Core also stores it as `manifestUrl`; later update planning refreshes from that URL by default.
 
-1. CLI calls `GET /control/v1/host/status` and fails before planning if Host runtime or Docker daemon dependencies are unavailable.
-2. CLI calls `POST /control/v1/modules/install/plan` with both preferred and compatibility fields:
+Request body:
 
 ```json
 {
-  "manifestUrl": "https://apps.example.com/reports/manifest.json",
-  "metadataUrl": "https://apps.example.com/reports/manifest.json"
+  "manifestPath": "https://apps.example.com/reports/manifest.json",
+  "selectedRuntime": "default",
+  "selectedChannel": null,
+  "system": false
 }
 ```
 
-3. If the response is `mode: "update"`, CLI switches to the update review flow using the returned `updatePlan`. This happens when the metadata URL identifies a module id already registered from the same source URL.
-4. CLI renders the returned install plan as terminal tables and sections:
+The Shell admin UI uses `/api/apps/install/plan` for review before applying the same app install operation. Legacy module installation remains available through `/control/v1/modules/install/plan` and `/control/v1/modules/install`; the reviewed legacy module prompt behavior is described below.
 
-- root module identity;
-- metadata digest and plan digest;
-- dependency tree and install order;
-- images and pull policies;
-- module-owned storage directories;
-- external mount collections;
-- setting prompts, with secret values marked write-only;
-- runtime ports and Docker container names;
-- conflicts and validation messages.
-
-5. If the plan contains conflicts, CLI does not submit apply. It exits non-zero after printing conflict details.
-6. CLI prompts for setting values declared in `plan.settings`.
-7. CLI prompts for required external mount collection items and allows optional items to be skipped.
-8. CLI shows a redacted request preview and asks for final confirmation.
-9. CLI calls `POST /control/v1/modules/install` with the reviewed `planDigest`, setting values, and external mount selections.
-10. CLI prints installed and reused module ids, root module status, and next actions.
-
-### Setting prompts
+### Legacy module setting prompts
 
 CLI prompt behavior should match the plan schema:
 
@@ -205,7 +186,7 @@ The submitted shape must stay compatible with `ModuleInstallRequest`:
 }
 ```
 
-### External mounts
+### Legacy module external mounts
 
 For each mount collection in `plan.storage.mountCollections`, CLI should show:
 
@@ -233,12 +214,12 @@ hosty apps start <app-id>
 `start` calls:
 
 ```text
-POST /control/v1/modules/{moduleId}/start
+POST /control/v1/apps/{appId}/start
 ```
 
-CLI should print the updated runtime state on success. On failure, it should print the backend `ModuleOperationError`, including Docker status and next step when available.
+CLI should print the updated runtime state on success. On failure, it should print the backend lifecycle error, including runtime status and next step when available.
 
-This command should not directly start module containers through Docker Engine. Missing container, invalid operation status, storage mapping, and dependency checks belong to the Host backend.
+This command should not directly start app runtime processes through Docker Engine or local process supervision. Missing runtime state, invalid operation status, storage mapping, and dependency checks belong to Core.
 
 ## `apps stop`
 
@@ -249,10 +230,10 @@ hosty apps stop <app-id>
 `stop` calls:
 
 ```text
-POST /control/v1/modules/{moduleId}/stop
+POST /control/v1/apps/{appId}/stop
 ```
 
-CLI should print the updated runtime state on success. Stop remains a backend lifecycle action so persistent module status and Docker error handling stay consistent with Web UI behavior.
+CLI should print the updated runtime state on success. Stop remains a Core lifecycle action so persistent app status and runtime error handling stay consistent with Shell behavior.
 
 ## `apps restart`
 
@@ -263,61 +244,56 @@ hosty apps restart <app-id>
 `restart` calls:
 
 ```text
-POST /control/v1/modules/{moduleId}/restart
+POST /control/v1/apps/{appId}/restart
 ```
 
-CLI should print the updated runtime state on success. If restart fails because the module container is missing or the module is not in a runnable operation state, CLI should surface the backend error without attempting local repair.
+CLI should print the updated runtime state on success. If restart fails because runtime state is missing or the app is not in a runnable operation state, CLI should surface the backend error without attempting local repair.
 
 ## `apps update`
 
 ```text
-hosty apps update <app-id>
+hosty apps update-plan <app-id> [--manifest <manifest-reference>] [--runtime <key>] [--channel <id>]
+hosty apps update <app-id> --plan-digest <digest> [--manifest <manifest-reference>] [--runtime <key>] [--channel <id>]
 ```
 
 `update` is a two-step reviewed flow:
 
 ```mermaid
 flowchart LR
-  A["module id"] --> B["POST /control/v1/modules/{moduleId}/update/plan"]
+  A["app id"] --> B["POST /control/v1/apps/{appId}/update/plan"]
   B --> C["Terminal update plan review"]
-  C --> D["Collect changed settings and mounts"]
-  D --> E["POST /control/v1/modules/{moduleId}/update"]
-  E --> F["Updated module"]
+  C --> D["POST /control/v1/apps/{appId}/update"]
+  D --> E["Updated runtime app"]
 ```
 
 ### Interactive update flow
 
-1. CLI calls `GET /control/v1/host/status` and fails before planning if Host runtime or Docker daemon dependencies are unavailable.
-2. CLI calls `POST /control/v1/modules/{moduleId}/update/plan`.
+1. CLI calls `POST /control/v1/apps/{appId}/update/plan`.
+2. When `--manifest` is omitted, Core refreshes the stored `manifestUrl` for apps installed from an `http` or `https` URL; otherwise it uses the installed local `manifestPath`.
 3. CLI renders:
 
-- current and proposed module version;
-- current and refreshed metadata digests;
+- current and proposed app version;
+- current and refreshed manifest digests;
 - update plan digest;
-- image changes;
-- settings added, removed, changed, preserved;
-- storage and external mount changes;
-- dependency install/reuse decisions;
-- runtime and Docker replacement requirements;
-- warnings and conflicts.
+- selected runtime and target channel;
+- whether a pre-update backup will be created;
+- runtime contract changes.
 
-4. If the plan contains conflicts, CLI does not submit apply. It exits non-zero after printing conflict details.
-5. CLI prompts only for new or changed values required by `plan.settings` and mount collections.
-6. CLI shows a redacted update request preview and asks for final confirmation.
-7. CLI calls `POST /control/v1/modules/{moduleId}/update` with:
+4. CLI requires the reviewed `planDigest` before apply.
+5. CLI calls `POST /control/v1/apps/{appId}/update` with:
 
 ```json
 {
-  "updatePlanDigest": "sha256:...",
-  "confirmed": true,
-  "settings": [],
-  "externalMounts": []
+  "planDigest": "sha256:...",
+  "manifestPath": "https://apps.example.com/reports/manifest.json",
+  "selectedRuntime": "default",
+  "targetChannel": null
 }
 ```
 
-8. CLI prints updated module id, installed dependency ids, reused dependency ids, and the resulting runtime state.
+6. CLI prints the updated app id and resulting runtime state.
 
-Before applying an update, the Host backend creates a `pre-update` app data backup when a primary app data directory exists.
+Before applying an update, Core creates a `pre-update` app data backup when a primary app data directory exists.
 
 ## `apps backup`, `apps backups`, and `apps restore`
 
@@ -365,18 +341,15 @@ The `createPreRestoreBackup` field is `true` only when `--pre-restore-backup` is
 hosty apps remove <app-id> [--delete-data]
 ```
 
-`remove` is a two-step reviewed flow:
+`remove` calls the Core runtime app remove endpoint:
 
 ```mermaid
 flowchart LR
-  A["module id"] --> B["POST /control/v1/modules/{moduleId}/remove/plan"]
-  B --> C["Terminal remove plan review"]
-  C --> D["Confirm deletion scope"]
-  D --> E["POST /control/v1/modules/{moduleId}/remove"]
-  E --> F["Removed module"]
+  A["app id"] --> B["POST /control/v1/apps/{appId}/remove"]
+  B --> C["Removed runtime app"]
 ```
 
-The plan shows the module, containers, storage mappings, dependency impact, and whether module-owned data will be deleted. By default, remove preserves module data. `--delete-data` requests deletion of module-owned data after confirmation. External mount collection data is never deleted by module removal.
+By default, remove deletes runtime state and preserves app data, backups, and managed source checkouts. Flags such as `--delete-data`, `--delete-backups`, and `--delete-source` request additional cleanup.
 
 ## Output modes
 

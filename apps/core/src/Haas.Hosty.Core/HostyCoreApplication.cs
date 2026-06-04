@@ -24,7 +24,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppAuthCodeStore>();
         builder.Services.AddSingleton<AppIdentityService>();
         builder.Services.AddSingleton<UserManagementService>();
-        builder.Services.AddSingleton<AppManifestService>();
+        builder.Services.AddSingleton(_ => new AppManifestService());
         builder.Services.AddSingleton<AppBackupService>();
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<CoreLifecycleService>();

@@ -860,6 +860,10 @@ Initial control routes:
 
 - `GET /control/v1/host/status` returns Host readiness for CLI preflight checks.
 - `GET /control/v1/apps` lists Hosty system apps and runtime apps for local CLI management.
+- `POST /control/v1/apps/install` installs an `app.0.1` runtime app from a local manifest path or absolute `http` or `https` manifest URL.
+- `POST /control/v1/apps/{appId}/update/plan` creates a runtime app update plan. Apps installed from a manifest URL refresh that stored URL by default.
+- `POST /control/v1/apps/{appId}/update` applies a reviewed runtime app update plan.
+- `POST /control/v1/apps/{appId}/start`, `stop`, and `restart` run runtime app lifecycle actions.
 - `GET /control/v1/apps/{appId}/backups` lists app data backups.
 - `POST /control/v1/apps/{appId}/backups` creates a manual app data backup.
 - `POST /control/v1/apps/{appId}/backups/{backupId}/restore` restores one backup. Request body: `{ "confirmed": true, "stopBeforeRestore": true, "createPreRestoreBackup": true }`.

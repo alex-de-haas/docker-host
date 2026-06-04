@@ -718,7 +718,7 @@ internal sealed class AppsCommand(CommandContext context)
             throw new CommandUsageException("apps install requires a manifest path.", Usage);
         }
 
-        return new InstallOptions(Path.GetFullPath(manifestPath), selectedRuntime, selectedChannel, system);
+        return new InstallOptions(NormalizeManifestReference(manifestPath), selectedRuntime, selectedChannel, system);
     }
 
     private static UpdateOptions ParseUpdateOptions(string[] args, bool requirePlanDigest)
@@ -739,7 +739,7 @@ internal sealed class AppsCommand(CommandContext context)
             switch (args[index])
             {
                 case "--manifest":
-                    manifestPath = Path.GetFullPath(RequireOptionValue(args, ref index, "--manifest"));
+                    manifestPath = NormalizeManifestReference(RequireOptionValue(args, ref index, "--manifest"));
                     break;
                 case "--runtime":
                     selectedRuntime = RequireOptionValue(args, ref index, "--runtime");
@@ -1253,6 +1253,19 @@ internal sealed class AppsCommand(CommandContext context)
 
         index++;
         return args[index];
+    }
+
+    private static string NormalizeManifestReference(string value)
+    {
+        var manifestReference = value.Trim();
+        if (Uri.TryCreate(manifestReference, UriKind.Absolute, out var uri) &&
+            (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            return uri.AbsoluteUri;
+        }
+
+        return Path.GetFullPath(manifestReference);
     }
 
     private sealed record InstallOptions(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System);

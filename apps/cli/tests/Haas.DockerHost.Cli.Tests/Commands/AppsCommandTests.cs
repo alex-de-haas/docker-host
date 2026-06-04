@@ -203,6 +203,49 @@ public sealed class AppsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task InstallAsync_PreservesRemoteManifestUrl()
+    {
+        const string manifestUrl = "https://github.com/alex-de-haas/project-manager/releases/download/latest/manifest.json";
+        using var server = new FakeCoreServer("""
+            {
+              "app": {
+                "id": "com.haas.project-manager",
+                "displayName": "Project Manager",
+                "version": "1.0.0",
+                "kind": "runtime",
+                "system": false,
+                "source": "manifest",
+                "selectedRuntime": "default",
+                "operationStatus": "installed",
+                "runtimeState": "stopped",
+                "capabilities": []
+              },
+              "backup": null,
+              "status": "installed"
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "install",
+            manifestUrl,
+            "--runtime",
+            "default",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/install", server.PathAndQuery);
+        using var body = JsonDocument.Parse(server.Body);
+        Assert.Equal(manifestUrl, body.RootElement.GetProperty("manifestPath").GetString());
+        Assert.Equal("default", body.RootElement.GetProperty("selectedRuntime").GetString());
+        Assert.Contains("com.haas.project-manager", output.ToString());
+    }
+
+    [Fact]
     public async Task BackupDeleteAsync_UsesDeleteControlRoute()
     {
         using var server = new FakeCoreServer("""
