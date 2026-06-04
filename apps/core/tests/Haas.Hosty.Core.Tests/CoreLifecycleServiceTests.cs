@@ -694,6 +694,28 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ListAppsAsync_ReconcilesStaleRunningLocalCommandState()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteLocalCommandManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
+        await fixture.Apps.UpdateAppAsync("com.example.local", app => app with
+        {
+            RuntimeState = "running",
+            OperationStatus = "started",
+            LastOperation = "start",
+        });
+
+        var apps = await fixture.Service.ListAppsAsync();
+
+        var listed = Assert.Single(apps);
+        Assert.Equal("stopped", listed.RuntimeState);
+        var stored = await fixture.Apps.GetAppAsync("com.example.local");
+        Assert.Equal("stopped", stored?.RuntimeState);
+        Assert.Equal("started", stored?.OperationStatus);
+    }
+
+    [Fact]
     public async Task StartAsync_LocalCommandFailureStopsPreviouslyStartedServices()
     {
         var fixture = await LifecycleFixture.CreateAsync();

@@ -6,7 +6,7 @@ internal static class DomainEndpoints
     {
         app.MapGet("/api/apps", async (
             HttpRequest request,
-            AppRegistryStore store,
+            CoreLifecycleService lifecycle,
             UserDirectoryStore users,
             IClock clock,
             CancellationToken cancellationToken) =>
@@ -17,14 +17,14 @@ internal static class DomainEndpoints
                 async user =>
                 {
                     var state = await users.ReadAsync(cancellationToken);
-                    var apps = await store.ListAppsAsync(cancellationToken);
+                    var apps = await lifecycle.ListAppsAsync(cancellationToken);
                     return Results.Json(new AppsResponse(FilterAppsForUser(apps, state, user)));
                 },
                 cancellationToken: cancellationToken));
 
-        app.MapGet("/control/v1/apps", async (HttpRequest request, ControlSecret secret, AppRegistryStore store, CancellationToken cancellationToken) =>
+        app.MapGet("/control/v1/apps", async (HttpRequest request, ControlSecret secret, CoreLifecycleService lifecycle, CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                Results.Json(new AppsResponse(await store.ListAppsAsync(cancellationToken)))));
+                Results.Json(new AppsResponse(await lifecycle.ListAppsAsync(cancellationToken)))));
 
         app.MapGet("/api/users", async (
             HttpRequest request,

@@ -606,19 +606,6 @@ export function ShellClient({
     [appEndpoint, getStandaloneAppHref, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference],
   );
 
-  const openApp = useCallback(
-    async (app: CoreApp, target: AppOpenTarget = "workspace") => {
-      const page = getAppPageLinks(app)[0];
-      if (!page) {
-        setState((current) => ({ ...current, error: "App does not expose a browser UI endpoint." }));
-        return;
-      }
-
-      await launchAppPage(app, page, target);
-    },
-    [launchAppPage],
-  );
-
   const runAppAction = useCallback(
     async (app: CoreApp, action: AppAction) => {
       const actionKey = `${app.id}:${action}`;
@@ -1095,7 +1082,6 @@ export function ShellClient({
                   onAction={runAppAction}
                   onCreateBackup={createManualBackup}
                   onOpenPanel={openAppPanel}
-                  onOpenApp={openApp}
                 />
               ) : (
                 <DashboardPage
@@ -1719,7 +1705,6 @@ function InstalledAppsPage({
   onAction,
   onCreateBackup,
   onOpenPanel,
-  onOpenApp,
 }: {
   apps: CoreApp[];
   shellAppId: string;
@@ -1731,7 +1716,6 @@ function InstalledAppsPage({
   onAction: (app: CoreApp, action: AppAction) => void;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
-  onOpenApp: (app: CoreApp, target?: AppOpenTarget) => void;
 }) {
   const isRefreshing = loading;
 
@@ -1785,7 +1769,6 @@ function InstalledAppsPage({
                   onAction={onAction}
                   onCreateBackup={onCreateBackup}
                   onOpenPanel={onOpenPanel}
-                  onOpenApp={onOpenApp}
                 />
               ))}
             </TableBody>
@@ -1804,7 +1787,6 @@ function InstalledAppRow({
   onAction,
   onCreateBackup,
   onOpenPanel,
-  onOpenApp,
 }: {
   app: CoreApp;
   isShell: boolean;
@@ -1813,7 +1795,6 @@ function InstalledAppRow({
   onAction: (app: CoreApp, action: AppAction) => void;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
-  onOpenApp: (app: CoreApp, target?: AppOpenTarget) => void;
 }) {
   const running = app.runtimeState === "running";
   const canOpen = isShell || getAppPageLinks(app).length > 0;
@@ -1860,18 +1841,14 @@ function InstalledAppRow({
           )}
           <InstalledAppActionsMenu
             app={app}
-            isShell={isShell}
-            running={running}
             canInspect={canInspect}
             canBackup={canBackup}
             canConfigure={canConfigure}
             canUpdate={canUpdate}
-            canOpen={canOpen}
             canRemove={canRemove}
             busyAction={busyAction}
             onCreateBackup={onCreateBackup}
             onOpenPanel={onOpenPanel}
-            onOpenApp={onOpenApp}
           />
         </div>
       </TableCell>
@@ -1881,37 +1858,28 @@ function InstalledAppRow({
 
 function InstalledAppActionsMenu({
   app,
-  isShell,
-  running,
   canInspect,
   canBackup,
   canConfigure,
   canUpdate,
-  canOpen,
   canRemove,
   busyAction,
   onCreateBackup,
   onOpenPanel,
-  onOpenApp,
 }: {
   app: CoreApp;
-  isShell: boolean;
-  running: boolean;
   canInspect: boolean;
   canBackup: boolean;
   canConfigure: boolean;
   canUpdate: boolean;
-  canOpen: boolean;
   canRemove: boolean;
   busyAction: string | null;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
-  onOpenApp: (app: CoreApp, target?: AppOpenTarget) => void;
 }) {
   const hasLogs = canInspect && app.capabilities.includes("logs");
-  const canOpenInShell = canOpen && (isShell || running);
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
-  const hasMenuActions = hasLogs || canBackup || canConfigure || canUpdate || canOpen || canRemove;
+  const hasMenuActions = hasLogs || canBackup || canConfigure || canUpdate || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -1943,7 +1911,7 @@ function InstalledAppActionsMenu({
             </DropdownMenuItem>
           </>
         )}
-        {(canConfigure || canUpdate || canOpen) && <DropdownMenuSeparator />}
+        {(canConfigure || canUpdate) && <DropdownMenuSeparator />}
         {canConfigure && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "configure")}>
             <Settings2 className="h-4 w-4" />
@@ -1954,12 +1922,6 @@ function InstalledAppActionsMenu({
           <DropdownMenuItem onClick={() => onOpenPanel(app, "update")}>
             <Upload className="h-4 w-4" />
             Update
-          </DropdownMenuItem>
-        )}
-        {canOpen && (
-          <DropdownMenuItem disabled={!canOpenInShell || isBusy("open")} onClick={() => onOpenApp(app, "workspace")}>
-            {isBusy("open") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-            Open in shell
           </DropdownMenuItem>
         )}
         {canRemove && (

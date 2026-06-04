@@ -3,13 +3,18 @@ namespace Haas.Hosty.Core;
 internal sealed class AppRegistryStore(CoreDataPaths paths)
 {
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
+        => (await ListAppRecordsAsync(cancellationToken))
+            .Select(AppSummary.From)
+            .ToArray();
+
+    public async Task<IReadOnlyList<AppRecord>> ListAppRecordsAsync(CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(paths.AppsRoot))
         {
             return [];
         }
 
-        var apps = new List<AppSummary>();
+        var apps = new List<AppRecord>();
         foreach (var appDirectory in Directory.EnumerateDirectories(paths.AppsRoot).Order(StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -20,7 +25,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
                 continue;
             }
 
-            apps.Add(AppSummary.From(await HydrateAppUiAsync(state.App, appDirectory, cancellationToken)));
+            apps.Add(await HydrateAppUiAsync(state.App, appDirectory, cancellationToken));
         }
 
         return apps;

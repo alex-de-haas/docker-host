@@ -10,6 +10,18 @@ internal sealed class CoreLifecycleService(
     AppBackupService backups,
     IEnumerable<IAppRuntimeAdapter> adapters)
 {
+    public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
+    {
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        var summaries = new List<AppSummary>(records.Count);
+        foreach (var app in records)
+        {
+            summaries.Add(AppSummary.From(await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken)));
+        }
+
+        return summaries;
+    }
+
     public async Task<AppInstallPlan> CreateInstallPlanAsync(AppInstallPlanRequest request, CancellationToken cancellationToken = default)
     {
         var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
@@ -1253,6 +1265,65 @@ internal sealed class CoreLifecycleService(
             : Path.GetDirectoryName(installedManifestPath) ?? Directory.GetCurrentDirectory();
         return Path.GetFullPath(Path.Combine(baseDirectory, manifestPath));
     }
+
+    private async Task<AppRecord> ReconcileRuntimeStateForSummaryAsync(AppRecord app, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
+            !string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(app.ManifestPath))
+        {
+            return app;
+        }
+
+        RuntimeAppManifestSelection selection;
+        try
+        {
+            selection = await LoadSelectionForAppAsync(app, cancellationToken);
+        }
+        catch (Exception ex) when (ex is AppManifestException or IOException or UnauthorizedAccessException or JsonException)
+        {
+            return app;
+        }
+
+        if (!string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal))
+        {
+            return app;
+        }
+
+        AppRuntimeHealthResult health;
+        try
+        {
+            health = await ResolveAdapter(selection.RuntimeProfile.Type).GetHealthAsync(
+                await CreateRuntimeContextAsync(app, selection, cancellationToken),
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
+        {
+            return app;
+        }
+
+        var observedRuntimeState = ResolveRuntimeStateFromHealth(health);
+        if (observedRuntimeState is null ||
+            string.Equals(observedRuntimeState, app.RuntimeState, StringComparison.Ordinal))
+        {
+            return app;
+        }
+
+        var updated = await apps.UpdateAppAsync(app.Id, current => current with
+        {
+            RuntimeState = observedRuntimeState,
+        }, cancellationToken);
+        return updated.App;
+    }
+
+    private static string? ResolveRuntimeStateFromHealth(AppRuntimeHealthResult health)
+        => health.Status switch
+        {
+            "healthy" => "running",
+            "stopped" => "stopped",
+            "unhealthy" => "unknown",
+            _ => null,
+        };
 
     private static void TryDelete(string path)
     {
