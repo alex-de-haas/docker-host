@@ -26,18 +26,25 @@ flowchart LR
 
 ## Core And Shell
 
-Run Core from source:
+Run Core and Shell from source with one command:
 
 ```bash
 npm install
-npm run core:dev
+npm run dev
 ```
 
-`npm run core:dev` starts Core in the development environment. Core listens on `http://127.0.0.1:3001` by default and allows the default local Shell origin `http://127.0.0.1:3000` for credentialed Shell API calls.
+`npm run dev` starts Core and Shell together. Core listens on `http://localhost:3001`, Shell listens on `http://localhost:3000`, and local state is stored in `.hosty-dev/` so branch development does not mutate an installed Hosty CLI data root. The script seeds `admin@hosty.local` as a development-only `host.admin` when the dev data root has no enabled local users.
 
-Shell can be run directly during UI work:
+If those ports are already occupied, stop the existing process or choose an alternate local pair:
 
 ```bash
+HOSTY_CORE_URL=http://localhost:3301 HOST_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
+```
+
+Run Core and Shell separately when debugging one side:
+
+```bash
+npm run core:dev
 npm run shell:dev
 ```
 

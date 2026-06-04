@@ -14,7 +14,10 @@
     }
   },
   "scripts": {
+    "dev": "node scripts/dev-local.mjs",
+    "dev:local": "node scripts/dev-local.mjs",
     "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --launch-profile dev",
+    "core-dev": "npm run core:dev",
     "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
     "core:test": "dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj",
     "shell:dev": "npm run dev --workspace @haas/hosty-shell",

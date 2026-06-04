@@ -35,6 +35,7 @@
 # local Docker Host runtime state
 /.docker-host-dev/
 /.docker-host-dev-demo/
+/.hosty-dev*/
 
 # debug
 npm-debug.log*

@@ -73,10 +73,27 @@ curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scrip
 
 Detailed local testing guidance is documented in [Local development and testing](docs/features/local-development.md).
 
-Run Core and Shell directly from source:
+Run Core and Shell directly from source with a seeded development admin:
 
 ```bash
 npm install
+npm run dev
+```
+
+This starts Core on `http://localhost:3001`, Shell on
+`http://localhost:3000`, uses `.hosty-dev/` as an isolated data root, and
+creates `admin@hosty.local` when no enabled local user exists.
+
+If those ports are already occupied, either stop the existing Core/Shell or run
+with explicit origins:
+
+```bash
+HOSTY_CORE_URL=http://localhost:3301 HOST_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
+```
+
+Run Core and Shell as separate processes when debugging one side:
+
+```bash
 npm run core:dev
 npm run shell:dev
 ```

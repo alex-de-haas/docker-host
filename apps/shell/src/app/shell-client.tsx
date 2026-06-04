@@ -341,6 +341,19 @@ export function ShellClient({
 
       const status = (await statusResponse.json()) as CoreStatus;
       const session = sessionResponse.ok ? ((await sessionResponse.json()) as SessionResponse) : null;
+      if (session && !session.authenticated) {
+        setState({
+          loading: false,
+          error: null,
+          status,
+          apps: [],
+          session,
+          updatedAt: new Date().toISOString(),
+        });
+        window.location.assign(`${coreOrigin}/login`);
+        return;
+      }
+
       let apps: AppsResponse = { apps: [] };
       if (session?.authenticated) {
         const appsResponse = await fetch(`${coreOrigin}/api/apps`, { credentials: "include" });
