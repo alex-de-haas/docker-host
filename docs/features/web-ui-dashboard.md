@@ -1,6 +1,6 @@
 # Web UI Dashboard
 
-The Hosty Web UI is the Core-managed Shell runtime app. The dashboard is a lightweight overview surface; app lifecycle, updates, backups, configuration, and removal live in the Shell Installed Apps view.
+The Hosty Web UI is the Core-managed Shell runtime app. The dashboard is an administrator-only overview surface; app lifecycle, updates, backups, configuration, and removal live in the Shell Installed Apps view.
 
 ## Scope
 
@@ -10,11 +10,11 @@ The dashboard reads:
 - the current Core session from `GET /api/auth/session`;
 - installed app summaries from `GET /api/apps`.
 
-The dashboard shows aggregate runtime app counts, running state, attention indicators, Core health warnings, and a link into Installed Apps for detailed management.
+The dashboard shows aggregate non-system runtime app counts, running state, attention indicators, Core health warnings, Core status, and a link into Installed Apps for detailed management.
 
 ## Installed Apps Management
 
-The Installed Apps view is the implemented management surface for runtime apps. It uses Core app APIs:
+The Installed Apps view is the implemented administrator management surface for installed apps. It separates non-system Runtime Apps from System Apps such as Hosty Shell. Runtime Apps use Core app APIs:
 
 - `POST /api/apps/install/plan`
 - `POST /api/apps/install`
@@ -34,7 +34,7 @@ The Installed Apps view is the implemented management surface for runtime apps. 
 - `POST /api/apps/{appId}/backups/cleanup`
 - `POST /api/apps/{appId}/remove`
 
-Shell renders install review, configuration, update, logs, backups, backup cleanup, restore, and removal flows with Core-generated plans and capability checks. Core remains the authority for app state and mutation validity.
+Shell renders install review, configuration, update, logs, backups, backup cleanup, restore, and removal flows with Core-generated plans and capability checks for non-system Runtime Apps. System Apps are inspect-only in Shell: logs can be opened when the app has the `logs` capability, while lifecycle, update, configuration, backup, restore, and removal controls stay hidden. Core remains the authority for app state and mutation validity.
 
 ```mermaid
 flowchart TD
@@ -51,9 +51,11 @@ flowchart TD
 
 ## Empty and Recovery States
 
-The empty state is shown when Core has no non-system runtime apps. The primary way to leave the empty state is the Installed Apps install dialog.
+The runtime empty state is shown when Core has no non-system runtime apps. The primary way to leave the runtime empty state is the Installed Apps install dialog.
 
 Failed apps remain visible with their last operation and error so administrators can choose the correct recovery path. Shell delegates retry, update, backup, and remove behavior to Core app endpoints.
+
+Non-admin `host.user` accounts do not see Dashboard, Installed Apps, or User Management. They land on the `/apps` overview and can only open visible non-system runtime app UIs.
 
 ## Gateway Boundary
 

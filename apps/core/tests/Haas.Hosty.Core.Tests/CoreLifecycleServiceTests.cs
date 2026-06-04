@@ -896,6 +896,8 @@ public sealed class CoreLifecycleServiceTests
                 ShellPublicOrigin: null,
                 RuntimePublicHost: "localhost",
                 ShellManifestPath: null,
+                ShellBootstrapRuntime: "docker",
+                ShellSourceOverridePath: null,
                 ShellBootstrapEnabled: false,
                 ShellAutostart: false);
             var localProcesses = new LocalCommandProcessRegistry();
@@ -1120,6 +1122,9 @@ public sealed class CoreLifecycleServiceTests
                         "type": "localCommand",
                         "command": "printf \"$APP_MODE|$HOSTY_APP_DATA_DIR|$HOSTY_DEPENDENCY_COM_EXAMPLE_CACHE_URL\" > \"$HOSTY_APP_DATA_DIR/local-output.txt\"; sleep 5",
                         "workingDirectory": ".",
+                        "environment": {
+                          "APP_MODE": "manifest"
+                        },
                         "ports": [{
                           "key": "http",
                           "containerPort": 5173,

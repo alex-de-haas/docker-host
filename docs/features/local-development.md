@@ -33,7 +33,9 @@ npm install
 npm run dev
 ```
 
-`npm run dev` starts Core and Shell together. Core listens on `http://localhost:3001`, Shell listens on `http://localhost:3000`, and local state is stored in `.hosty-dev/` so branch development does not mutate an installed Hosty CLI data root. The script seeds `admin@hosty.local` as a development-only `host.admin` when the dev data root has no enabled local users.
+`npm run dev` starts Core and Shell together. Core listens on `http://localhost:3001`, Shell listens on `http://localhost:3000`, and local state is stored in `.hosty-dev/` so branch development does not mutate an installed Hosty CLI data root. The script ensures two development-only local users exist for the Core login helper: `admin@hosty.local` with `host.admin` and `user@hosty.local` with `host.user`.
+
+The script also lets Core bootstrap `hosty.shell` into the `.hosty-dev` app registry as a system app using the Shell manifest's `dev` runtime profile and this repository as the local source override. Core then autostarts Shell through the normal runtime app lifecycle, so the Shell dev server is visible in System Apps and its logs/health come from Core.
 
 If those ports are already occupied, stop the existing process or choose an alternate local pair:
 
@@ -52,7 +54,7 @@ Use `HOST_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that 
 
 `HOST_PUBLIC_ORIGIN` remains a compatibility alias for combined Core/Shell deployments. Prefer explicit Core/Shell origin variables for split-origin testing.
 
-Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. Use Core-managed Shell only when validating runtime lifecycle behavior.
+Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. Use `HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev` and `HOSTY_SHELL_SOURCE_OVERRIDE_PATH=<repo-root>` when that Core process should register and run Shell with the manifest's local command runtime profile. Use Core-managed Shell when validating Shell runtime lifecycle behavior.
 
 When validating runtime lifecycle behavior, prefer installing Shell through Core like any other runtime app.
 

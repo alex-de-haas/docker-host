@@ -491,6 +491,8 @@ internal sealed record HostyCoreRuntimeConfig(
     string? ShellPublicOrigin,
     string RuntimePublicHost,
     string? ShellManifestPath,
+    string ShellBootstrapRuntime,
+    string? ShellSourceOverridePath,
     bool ShellBootstrapEnabled,
     bool ShellAutostart)
 {
@@ -526,6 +528,8 @@ internal sealed record HostyCoreRuntimeConfig(
             shellPublicOrigin,
             runtimePublicHost,
             shellManifestPath,
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_BOOTSTRAP_RUNTIME")) ?? "docker",
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_SOURCE_OVERRIDE_PATH")),
             ReadBoolean("HOSTY_SHELL_BOOTSTRAP_ENABLED", defaultValue: true),
             ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true));
     }
@@ -645,6 +649,7 @@ internal sealed class RuntimeAppSupervisorService(
     HostyCoreRuntimeConfig config,
     AppRegistryStore apps,
     CoreLifecycleService lifecycle,
+    AppSourceService sources,
     ILogger<RuntimeAppSupervisorService> logger) : BackgroundService
 {
     private const string ShellAppId = "hosty.shell";
@@ -692,22 +697,56 @@ internal sealed class RuntimeAppSupervisorService(
             {
                 await lifecycle.InstallAsync(new AppInstallRequest(
                     ManifestPath: config.ShellManifestPath,
-                    SelectedRuntime: "docker",
+                    SelectedRuntime: config.ShellBootstrapRuntime,
                     SelectedChannel: "local",
                     System: true,
+                    Settings: BuildShellBootstrapSettings(config),
                     Autostart: config.ShellAutostart), cancellationToken);
                 shell = await apps.GetAppAsync(ShellAppId, cancellationToken);
+            }
+
+            var bootstrapSettings = BuildShellBootstrapSettings(config);
+            if (shell is not null && bootstrapSettings.Count > 0)
+            {
+                await lifecycle.ConfigureAsync(ShellAppId, new AppConfigureRequest(bootstrapSettings), cancellationToken);
             }
 
             if (shell is not null && shell.Autostart != config.ShellAutostart)
             {
                 await lifecycle.ConfigureAutostartAsync(ShellAppId, new AppAutostartRequest(config.ShellAutostart), cancellationToken);
             }
+
+            if (shell is not null && !string.IsNullOrWhiteSpace(config.ShellSourceOverridePath))
+            {
+                await sources.SetLocalOverrideAsync(
+                    ShellAppId,
+                    new AppSourceOverrideRequest(config.ShellSourceOverridePath),
+                    cancellationToken);
+            }
         }
         catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
         {
             logger.LogWarning(ex, "Hosty Shell bootstrap did not complete; Core remains available through CLI and control APIs.");
         }
+    }
+
+    private static IReadOnlyDictionary<string, string?> BuildShellBootstrapSettings(HostyCoreRuntimeConfig config)
+    {
+        var settings = new Dictionary<string, string?>(StringComparer.Ordinal);
+        if (Uri.TryCreate(config.ShellPublicOrigin, UriKind.Absolute, out var shellOrigin))
+        {
+            if (!string.IsNullOrWhiteSpace(shellOrigin.Host))
+            {
+                settings["HOSTNAME"] = shellOrigin.Host;
+            }
+
+            if (!shellOrigin.IsDefaultPort)
+            {
+                settings["PORT"] = shellOrigin.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+        }
+
+        return settings;
     }
 
     private async Task StartAutostartAppsAsync(CancellationToken cancellationToken)

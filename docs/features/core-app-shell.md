@@ -6,9 +6,9 @@ Hosty Shell is the Core-managed browser UI runtime app. It renders a single auth
 
 The implemented Shell provides:
 
-- Dashboard overview widgets for Core status and installed runtime apps;
-- Installed Apps management for runtime app install, lifecycle, configuration, updates, logs, backups, restore, prune, and removal;
-- User Management for local invitations, user role changes, disabling users, and app assignments;
+- administrator-only Dashboard overview widgets for Core status and installed runtime app summary;
+- administrator-only Installed Apps management for runtime app install, lifecycle, configuration, updates, logs, backups, restore, prune, and removal;
+- administrator-only User Management for local invitations, user role changes, disabling users, and app assignments;
 - Apps navigation for app manifests that declare shell UI metadata;
 - embedded app workspaces that open app-owned UI origins through Core-issued launch codes.
 
@@ -21,13 +21,15 @@ The Shell sidebar is a persistent desktop-style rail with an expanded and compac
 - Core:
   - Dashboard
   - Installed Apps
-  - User Management for `host.admin`
+  - User Management
 - Apps:
   - one entry for each non-system runtime app that exposes shell UI metadata
   - nested app links from manifest `ui.navigation`
   - loading, error, and empty states when app registry data is unavailable
 
-Non-admin `host.user` principals can load Shell and use visible Apps. Administrative management views and app mutation controls are restricted to `host.admin`.
+The Core navigation group is visible only to `host.admin`. Non-admin `host.user` principals can load Shell but see only non-system runtime app navigation and the `/apps` app overview. Dashboard, Installed Apps, User Management, system apps, and app mutation controls are restricted to `host.admin`.
+
+Hosty Shell is installed as a system runtime app and does not appear as a normal entry in the Apps sidebar.
 
 ```mermaid
 flowchart TD
@@ -44,7 +46,12 @@ flowchart TD
 
 ## Installed Apps
 
-The Installed Apps view is the current management surface for runtime apps. It lists non-system apps from `GET /api/apps` and exposes actions according to Core state and app capabilities:
+The Installed Apps view is the current administrator management surface for installed apps. It separates app inventory into:
+
+- Runtime Apps: non-system runtime apps installed by users or administrators;
+- System Apps: Core-managed apps such as Hosty Shell.
+
+Runtime Apps expose actions according to Core state and app capabilities:
 
 - start, stop, and restart;
 - install from an `app.0.1` manifest URL or local manifest path;
@@ -54,11 +61,11 @@ The Installed Apps view is the current management surface for runtime apps. It l
 - create, restore, delete, and prune backups;
 - remove an app, with optional backup deletion.
 
-Hosty Shell hides destructive or self-disruptive actions that are not valid for the active Shell app. Core remains the source of truth for what operations are allowed.
+System Apps are inspect-only in Shell. Hosty Shell and future system apps can expose logs when the `logs` capability is present, but Shell hides lifecycle, configuration, update, backup, restore, autostart, and removal controls for all `system` apps. Core remains the source of truth for what operations are allowed.
 
 ## Embedded Apps
 
-Apps appear in the Shell Apps navigation only when their installed manifest includes a `ui` contract. Public runtime endpoints alone do not create Shell navigation.
+Apps appear in the Shell Apps navigation only when their installed manifest includes a `ui` contract and the app is not a system app. Public runtime endpoints alone do not create Shell navigation.
 
 Shell opens app UIs through the app-owned origin returned by Core. For embedded workspaces, Shell requests `/api/apps/{appId}/launch-code` and loads the resulting redirect URI in an iframe. For standalone tabs, Shell uses `/api/apps/{appId}/open?redirectUri=...`.
 

@@ -183,17 +183,17 @@ internal sealed class LocalCommandRuntimeAdapter(
         startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.AppDataPath;
         Directory.CreateDirectory(context.AppDataPath);
 
+        foreach (var environment in service.Runtime.Environment)
+        {
+            startInfo.Environment[environment.Key] = environment.Value;
+        }
+
         foreach (var setting in context.App.Settings.Values)
         {
             if (!string.IsNullOrWhiteSpace(setting.Value))
             {
                 startInfo.Environment[setting.Key] = setting.Value;
             }
-        }
-
-        foreach (var environment in service.Runtime.Environment)
-        {
-            startInfo.Environment[environment.Key] = environment.Value;
         }
 
         startInfo.Environment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);

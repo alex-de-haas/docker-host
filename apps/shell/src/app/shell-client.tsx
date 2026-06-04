@@ -253,7 +253,7 @@ type CoreError = {
 
 type AppAction = "start" | "stop" | "restart" | "backup";
 type DetailView = "logs" | "backups" | "configure" | "update" | "remove";
-type ShellView = "dashboard" | "apps" | "users";
+type ShellView = "available-apps" | "dashboard" | "installed-apps" | "users";
 type AppOpenTarget = "workspace" | "tab";
 type HostyResolvedTheme = "light" | "dark";
 type HostyThemePreference = "light" | "dark" | "system";
@@ -437,9 +437,11 @@ function isAppAutostartEnabled(app: CoreApp) {
 export function ShellClient({
   coreOrigin,
   shellAppId,
+  initialView = "dashboard",
 }: {
   coreOrigin: string;
   shellAppId: string;
+  initialView?: ShellView;
 }) {
   const { theme, resolvedTheme } = useTheme();
   const [state, setState] = useState<LoadState>({
@@ -455,11 +457,13 @@ export function ShellClient({
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
-  const [activeView, setActiveView] = useState<ShellView>("dashboard");
+  const [activeView, setActiveView] = useState<ShellView>(initialView);
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(false);
   const shellThemePreference = normalizeThemePreference(theme);
   const shellResolvedTheme = resolveShellTheme(resolvedTheme);
+  const activeUser = state.session?.authenticated ? state.session.user : null;
+  const canManageApps = activeUser?.role === "host.admin";
 
   useEffect(() => {
     setSidebarCompact(window.localStorage.getItem(SIDEBAR_COMPACT_STORAGE_KEY) === "true");
@@ -569,7 +573,7 @@ export function ShellClient({
     async (app: CoreApp, page: AppPageLink, target: AppOpenTarget = "workspace") => {
       if (app.id === shellAppId) {
         setWorkspace(null);
-        setActiveView("dashboard");
+        setActiveView(canManageApps ? "dashboard" : "available-apps");
         return;
       }
 
@@ -591,7 +595,7 @@ export function ShellClient({
         const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
         const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: themedRedirectUri });
         const launch = (await response.json()) as AppLaunchResponse;
-        setActiveView("apps");
+        setActiveView("available-apps");
         setWorkspace({
           appId: app.id,
           title: app.displayName,
@@ -608,7 +612,7 @@ export function ShellClient({
         setBusyAction(null);
       }
     },
-    [appEndpoint, getStandaloneAppHref, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference],
+    [appEndpoint, canManageApps, getStandaloneAppHref, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference],
   );
 
   const runAppAction = useCallback(
@@ -1004,10 +1008,10 @@ export function ShellClient({
     void refresh();
   }, [refresh]);
 
-  const activeUser = state.session?.authenticated ? state.session.user : null;
-  const canManageApps = activeUser?.role === "host.admin";
   const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
+  const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
+  const effectiveView = canManageApps ? activeView : "available-apps";
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
 
   function setCompact(compact: boolean) {
@@ -1030,7 +1034,7 @@ export function ShellClient({
       <aside className="sticky top-0 h-dvh border-r bg-sidebar text-sidebar-foreground">
         <ShellSidebar
           compact={sidebarCompact}
-          activeView={activeView}
+          activeView={effectiveView}
           workspace={workspace}
           coreOrigin={coreOrigin}
           activeUser={activeUser}
@@ -1044,7 +1048,6 @@ export function ShellClient({
           }}
           onLaunchApp={launchAppPage}
           getStandaloneHref={getStandaloneAppHref}
-          onAction={runAppAction}
         />
       </aside>
 
@@ -1074,11 +1077,12 @@ export function ShellClient({
 
               {state.loading && !state.status ? (
                 <EmptyState icon={LoaderCircle} title="Loading Core state" description="Waiting for Core status and current session." iconClassName="animate-spin" />
-              ) : activeView === "users" && canManageApps ? (
+              ) : effectiveView === "users" && canManageApps ? (
                 <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
-              ) : activeView === "apps" ? (
+              ) : effectiveView === "installed-apps" && canManageApps ? (
                 <InstalledAppsPage
-                  apps={runtimeApps}
+                  runtimeApps={runtimeApps}
+                  systemApps={systemApps}
                   shellAppId={shellAppId}
                   canManageApps={Boolean(canManageApps)}
                   loading={state.loading}
@@ -1089,12 +1093,20 @@ export function ShellClient({
                   onCreateBackup={createManualBackup}
                   onOpenPanel={openAppPanel}
                 />
-              ) : (
+              ) : effectiveView === "dashboard" && canManageApps ? (
                 <DashboardPage
                   state={state}
                   runtimeApps={runtimeApps}
                   onRefresh={() => void refresh()}
-                  onOpenInstalledApps={() => setActiveView("apps")}
+                  onOpenInstalledApps={() => setActiveView("installed-apps")}
+                />
+              ) : (
+                <AvailableAppsPage
+                  apps={uiRuntimeApps}
+                  loading={state.loading}
+                  busyAction={busyAction}
+                  onLaunchApp={launchAppPage}
+                  getStandaloneHref={getStandaloneAppHref}
                 />
               )}
             </>
@@ -1115,7 +1127,6 @@ export function ShellClient({
         <AppDetailsDialog
           app={selectedApp}
           view={activePanel.view}
-          isShell={selectedApp.id === shellAppId}
           canManageApps={Boolean(canManageApps)}
           busyAction={busyAction}
           detail={detailPanel}
@@ -1150,7 +1161,6 @@ function ShellSidebar({
   onNavigate,
   onLaunchApp,
   getStandaloneHref,
-  onAction,
 }: {
   compact: boolean;
   activeView: ShellView;
@@ -1164,7 +1174,6 @@ function ShellSidebar({
   onNavigate: (view: ShellView) => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
-  onAction: (app: CoreApp, action: AppAction) => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1195,13 +1204,13 @@ function ShellSidebar({
 
       <nav className={cn("min-h-0 flex-1 overflow-y-auto py-4", compact ? "px-2" : "px-3")} aria-label="Host navigation">
         <div className={cn(compact ? "space-y-4" : "space-y-6")}>
-          <NavigationSection title="Host" compact={compact}>
-            <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
-            <SidebarButton compact={compact} active={activeView === "apps" && !workspace} icon={Boxes} label="Installed Apps" onClick={() => onNavigate("apps")} />
-            {canManageApps && (
+          {canManageApps && (
+            <NavigationSection title="Host" compact={compact}>
+              <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
+              <SidebarButton compact={compact} active={activeView === "installed-apps" && !workspace} icon={Boxes} label="Installed Apps" onClick={() => onNavigate("installed-apps")} />
               <SidebarButton compact={compact} active={activeView === "users"} icon={Users} label="User Management" onClick={() => onNavigate("users")} />
-            )}
-          </NavigationSection>
+            </NavigationSection>
+          )}
 
           <NavigationSection title="Apps" compact={compact}>
             {runtimeApps.length === 0 ? (
@@ -1216,7 +1225,6 @@ function ShellSidebar({
                   workspace={workspace}
                   onLaunch={onLaunchApp}
                   getStandaloneHref={getStandaloneHref}
-                  onAction={onAction}
                 />
               ))
             )}
@@ -1297,7 +1305,6 @@ function RuntimeAppNavigationItem({
   workspace,
   onLaunch,
   getStandaloneHref,
-  onAction,
 }: {
   app: CoreApp;
   compact: boolean;
@@ -1305,7 +1312,6 @@ function RuntimeAppNavigationItem({
   workspace: EmbeddedWorkspace | null;
   onLaunch: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
-  onAction: (app: CoreApp, action: AppAction) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const pages = getAppPageLinks(app);
@@ -1314,9 +1320,6 @@ function RuntimeAppNavigationItem({
   const active = workspace?.appId === app.id;
   const canOpen = running && primaryPage !== null;
   const canOpenStandalone = canOpen;
-  const canStart = !running;
-  const startBusy = busyAction === `${app.id}:start`;
-  const compactStartMode = compact && canStart;
 
   useEffect(() => {
     if (active && !compact && pages.length > 1) {
@@ -1334,30 +1337,19 @@ function RuntimeAppNavigationItem({
             compact ? "justify-center px-0" : "px-2",
             active
               ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-              : canOpen || compactStartMode
+              : canOpen
                 ? "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 : "cursor-not-allowed text-muted-foreground opacity-70",
           )}
-          disabled={compactStartMode ? startBusy : !canOpen}
-          title={compactStartMode ? `Start ${app.displayName}` : app.displayName}
+          disabled={!canOpen}
+          title={canOpen ? app.displayName : `${app.displayName} is ${app.runtimeState || app.operationStatus}`}
           onClick={() => {
-            if (compactStartMode) {
-              onAction(app, "start");
-              return;
-            }
-
             if (primaryPage) {
               void onLaunch(app, primaryPage, "workspace");
             }
           }}
         >
-          {compactStartMode && startBusy ? (
-            <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" />
-          ) : compactStartMode ? (
-            <Play className="h-4 w-4 shrink-0" />
-          ) : (
-            <LayoutGrid className="h-4 w-4 shrink-0" />
-          )}
+          <LayoutGrid className="h-4 w-4 shrink-0" />
           {!compact && (
             <span className="min-w-0 flex-1 truncate text-left">{app.displayName}</span>
           )}
@@ -1378,20 +1370,6 @@ function RuntimeAppNavigationItem({
             >
               <ExternalLink className="h-4 w-4" />
             </a>
-          </Button>
-        )}
-        {!compact && canStart && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="size-8 shrink-0"
-            title={`Start ${app.displayName}`}
-            aria-label={`Start ${app.displayName}`}
-            disabled={startBusy}
-            onClick={() => onAction(app, "start")}
-          >
-            {startBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
           </Button>
         )}
         {!compact && pages.length > 1 && (
@@ -1543,6 +1521,87 @@ function PageHeader({ title, description, actions }: { title: string; descriptio
       </div>
       {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:justify-end">{actions}</div>}
     </section>
+  );
+}
+
+function AvailableAppsPage({
+  apps,
+  loading,
+  busyAction,
+  onLaunchApp,
+  getStandaloneHref,
+}: {
+  apps: CoreApp[];
+  loading: boolean;
+  busyAction: string | null;
+  onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
+}) {
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Apps" description="Runtime apps available to the current user." />
+      {loading && apps.length === 0 ? (
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : apps.length === 0 ? (
+        <EmptyState icon={LayoutGrid} title="No apps available" description="No runtime app UI is available for this account." />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {apps.map((app) => {
+            const pages = getAppPageLinks(app);
+            const primaryPage = pages[0] ?? null;
+            const canOpen = app.runtimeState === "running" && primaryPage !== null;
+            const busy = busyAction === `${app.id}:open`;
+            return (
+              <div key={app.id} className="rounded-lg border bg-card p-4">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <h2 className="truncate text-base font-semibold">{app.displayName}</h2>
+                    <p className="truncate text-xs text-muted-foreground">{app.id}</p>
+                  </div>
+                  <StatusBadge value={app.runtimeState || app.operationStatus} />
+                </div>
+                {app.description && <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{app.description}</p>}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!canOpen || busy}
+                    onClick={() => {
+                      if (primaryPage) {
+                        void onLaunchApp(app, primaryPage, "workspace");
+                      }
+                    }}
+                  >
+                    {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LayoutGrid className="h-4 w-4" />}
+                    Open
+                  </Button>
+                  {primaryPage && (
+                    <Button asChild variant="outline" size="sm" className={cn(!canOpen && "pointer-events-none opacity-50")} aria-disabled={!canOpen}>
+                      <a
+                        href={canOpen ? getStandaloneHref(app, primaryPage) : undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        tabIndex={canOpen ? undefined : -1}
+                        onClick={(event) => {
+                          if (!canOpen) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Standalone
+                      </a>
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1701,7 +1760,8 @@ function CoreStatusWidget({ status, loading }: { status: CoreStatus | null; load
 }
 
 function InstalledAppsPage({
-  apps,
+  runtimeApps,
+  systemApps,
   shellAppId,
   canManageApps,
   loading,
@@ -1712,7 +1772,8 @@ function InstalledAppsPage({
   onCreateBackup,
   onOpenPanel,
 }: {
-  apps: CoreApp[];
+  runtimeApps: CoreApp[];
+  systemApps: CoreApp[];
   shellAppId: string;
   canManageApps: boolean;
   loading: boolean;
@@ -1724,6 +1785,7 @@ function InstalledAppsPage({
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
 }) {
   const isRefreshing = loading;
+  const hasAnyApps = runtimeApps.length > 0 || systemApps.length > 0;
 
   return (
     <div className="space-y-6">
@@ -1745,12 +1807,82 @@ function InstalledAppsPage({
         )}
       />
 
-      {loading && apps.length === 0 ? (
+      {loading && !hasAnyApps ? (
         <div className="flex items-center justify-center py-12">
           <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-      ) : apps.length === 0 ? (
+      ) : !hasAnyApps ? (
         <EmptyState icon={Boxes} title="No installed apps" description="Install a runtime app to make it available in the shell." />
+      ) : (
+        <div className="space-y-6">
+          <InstalledAppTableSection
+            title="Runtime Apps"
+            description="User-installed runtime apps and their lifecycle state."
+            emptyTitle="No runtime apps installed"
+            emptyDescription="Install a runtime app to make it available in the shell."
+            apps={runtimeApps}
+            shellAppId={shellAppId}
+            canManageApps={canManageApps}
+            busyAction={busyAction}
+            onAction={onAction}
+            onCreateBackup={onCreateBackup}
+            onOpenPanel={onOpenPanel}
+          />
+          <InstalledAppTableSection
+            title="System Apps"
+            description="Core-managed Shell and platform runtime apps. Shell exposes inspection only."
+            emptyTitle="No system apps registered"
+            emptyDescription="Core has not registered a system app yet."
+            apps={systemApps}
+            shellAppId={shellAppId}
+            canManageApps={canManageApps}
+            busyAction={busyAction}
+            onAction={onAction}
+            onCreateBackup={onCreateBackup}
+            onOpenPanel={onOpenPanel}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InstalledAppTableSection({
+  title,
+  description,
+  emptyTitle,
+  emptyDescription,
+  apps,
+  shellAppId,
+  canManageApps,
+  busyAction,
+  onAction,
+  onCreateBackup,
+  onOpenPanel,
+}: {
+  title: string;
+  description: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  apps: CoreApp[];
+  shellAppId: string;
+  canManageApps: boolean;
+  busyAction: string | null;
+  onAction: (app: CoreApp, action: AppAction) => void;
+  onCreateBackup: (app: CoreApp) => void;
+  onOpenPanel: (app: CoreApp, view: DetailView) => void;
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold">{title}</h2>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+        <Badge variant="outline">{apps.length}</Badge>
+      </div>
+      {apps.length === 0 ? (
+        <EmptyState icon={Boxes} title={emptyTitle} description={emptyDescription} />
       ) : (
         <div className="rounded-lg border bg-card">
           <Table>
@@ -1782,7 +1914,7 @@ function InstalledAppsPage({
           </Table>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -1804,10 +1936,10 @@ function InstalledAppRow({
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
 }) {
   const running = app.runtimeState === "running";
-  const canOpen = isShell || getAppPageLinks(app).length > 0;
-  const canControl = canManageApps && !isShell;
+  const canOpen = !app.system && getAppPageLinks(app).length > 0;
+  const canControl = canManageApps && !app.system;
   const canInspect = canManageApps;
-  const canBackup = canManageApps && app.capabilities.includes("backup");
+  const canBackup = canControl && app.capabilities.includes("backup");
   const canConfigure = canControl;
   const canUpdate = canControl && app.capabilities.includes("update");
   const canRemove = canControl && app.capabilities.includes("remove");
@@ -1820,6 +1952,8 @@ function InstalledAppRow({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate font-medium">{app.displayName}</span>
+            {app.system && <Badge variant="secondary">System</Badge>}
+            {isShell && <Badge variant="outline">Shell</Badge>}
             {app.lastError && <CircleAlert className="h-4 w-4 text-destructive" />}
           </div>
           <div className="truncate text-xs text-muted-foreground">{app.id}</div>
@@ -2584,7 +2718,6 @@ function AppAccessPicker({ apps, selectedAppIds, onChange }: { apps: AssignableA
 function AppDetailsDialog({
   app,
   view,
-  isShell,
   canManageApps,
   busyAction,
   detail,
@@ -2603,7 +2736,6 @@ function AppDetailsDialog({
 }: {
   app: CoreApp;
   view: DetailView;
-  isShell: boolean;
   canManageApps: boolean;
   busyAction: string | null;
   detail: DetailPanelState;
@@ -2620,6 +2752,8 @@ function AppDetailsDialog({
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
 }) {
+  const canMutateApp = canManageApps && !app.system;
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className={cn("sm:max-w-3xl", view === "logs" && "sm:max-w-5xl")}>
@@ -2629,7 +2763,7 @@ function AppDetailsDialog({
         </DialogHeader>
         {detail.error && <InlineError message={detail.error} />}
         {view === "logs" && <LogsPanel app={app} detail={detail} onRefresh={onRefreshLogs} />}
-        {view === "backups" && (
+        {view === "backups" && canMutateApp && (
           <BackupsPanel
             app={app}
             detail={detail}
@@ -2642,9 +2776,14 @@ function AppDetailsDialog({
             onApplyCleanup={onApplyBackupCleanup}
           />
         )}
-        {view === "configure" && <ConfigurePanel app={app} busyAction={busyAction} canManageApps={canManageApps && !isShell} onConfigure={onConfigure} />}
-        {view === "update" && <UpdatePanel app={app} detail={detail} busyAction={busyAction} onReloadPlan={onReloadUpdatePlan} onApplyUpdate={onApplyUpdate} />}
-        {view === "remove" && <RemovePanel app={app} busyAction={busyAction} canRemove={canManageApps && !isShell} onRemove={onRemove} />}
+        {view === "backups" && !canMutateApp && <InlineError message="System app backup controls are not available in Shell." />}
+        {view === "configure" && <ConfigurePanel app={app} busyAction={busyAction} canManageApps={canMutateApp} onConfigure={onConfigure} />}
+        {view === "update" && (canMutateApp ? (
+          <UpdatePanel app={app} detail={detail} busyAction={busyAction} onReloadPlan={onReloadUpdatePlan} onApplyUpdate={onApplyUpdate} />
+        ) : (
+          <InlineError message="System app update controls are not available in Shell." />
+        ))}
+        {view === "remove" && <RemovePanel app={app} busyAction={busyAction} canRemove={canMutateApp} onRemove={onRemove} />}
       </DialogContent>
     </Dialog>
   );

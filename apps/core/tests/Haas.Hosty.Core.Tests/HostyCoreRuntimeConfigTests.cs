@@ -80,6 +80,36 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Contains("Core public origin uses insecure HTTP", warning);
     }
 
+    [Fact]
+    public void FromEnvironment_DefaultsShellBootstrapRuntimeToDocker()
+    {
+        using var env = TemporaryEnvironment.With("HOSTY_SHELL_BOOTSTRAP_RUNTIME", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
+
+        Assert.Equal("docker", config.ShellBootstrapRuntime);
+    }
+
+    [Fact]
+    public void FromEnvironment_UsesExplicitShellBootstrapRuntime()
+    {
+        using var env = TemporaryEnvironment.With("HOSTY_SHELL_BOOTSTRAP_RUNTIME", " dev ");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
+
+        Assert.Equal("dev", config.ShellBootstrapRuntime);
+    }
+
+    [Fact]
+    public void FromEnvironment_UsesExplicitShellSourceOverridePath()
+    {
+        using var env = TemporaryEnvironment.With("HOSTY_SHELL_SOURCE_OVERRIDE_PATH", " /repo ");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
+
+        Assert.Equal("/repo", config.ShellSourceOverridePath);
+    }
+
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = environmentName;

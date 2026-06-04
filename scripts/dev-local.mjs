@@ -12,14 +12,24 @@ const coreUrl = process.env.HOSTY_CORE_URL || "http://localhost:3001";
 const shellOrigin = process.env.HOST_SHELL_PUBLIC_ORIGIN || "http://localhost:3000";
 const coreEndpoint = parseEndpoint(coreUrl);
 const shellEndpoint = parseEndpoint(shellOrigin);
-const devUser = {
-  id: process.env.HOSTY_DEV_USER_ID || "user_dev_admin",
-  email: process.env.HOSTY_DEV_USER_EMAIL || "admin@hosty.local",
-  displayName: process.env.HOSTY_DEV_USER_NAME || "Local Admin",
-};
+const developmentUsers = [
+  {
+    id: process.env.HOSTY_DEV_USER_ID || "user_dev_admin",
+    email: process.env.HOSTY_DEV_USER_EMAIL || "admin@hosty.local",
+    displayName: process.env.HOSTY_DEV_USER_NAME || "Local Admin",
+    role: "host.admin",
+  },
+  {
+    id: process.env.HOSTY_DEV_LOCAL_USER_ID || "user_dev_local",
+    email: process.env.HOSTY_DEV_LOCAL_USER_EMAIL || "user@hosty.local",
+    displayName: process.env.HOSTY_DEV_LOCAL_USER_NAME || "Local User",
+    role: "host.user",
+  },
+];
+const devAdmin = developmentUsers[0];
 
 try {
-  await seedDevelopmentAdmin();
+  await seedDevelopmentUsers();
   await assertPortAvailable("Core", coreEndpoint);
   await assertPortAvailable("Shell", shellEndpoint);
 } catch (error) {
@@ -43,15 +53,10 @@ let shuttingDown = false;
 start("Core", "dotnet", ["run", "--no-launch-profile", "--project", "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj"], {
   ...commonEnv,
   DOTNET_ENVIRONMENT: "Development",
-  HOSTY_SHELL_BOOTSTRAP_ENABLED: "false",
-  HOSTY_SHELL_AUTOSTART: "false",
-});
-start("Shell", "npm", ["run", "shell:dev"], {
-  ...commonEnv,
-  HOSTY_CORE_ORIGIN: coreUrl,
-  HOSTNAME: shellEndpoint.hostname,
-  NEXT_PUBLIC_HOSTY_CORE_ORIGIN: coreUrl,
-  PORT: String(shellEndpoint.port),
+  HOSTY_SHELL_BOOTSTRAP_ENABLED: "true",
+  HOSTY_SHELL_BOOTSTRAP_RUNTIME: "dev",
+  HOSTY_SHELL_SOURCE_OVERRIDE_PATH: repoRoot,
+  HOSTY_SHELL_AUTOSTART: "true",
 });
 
 console.log("");
@@ -59,9 +64,9 @@ console.log("Hosty local development is starting.");
 console.log(`Core:  ${coreUrl}`);
 console.log(`Shell: ${shellOrigin}`);
 console.log(`Data:  ${dataRoot}`);
-console.log(`Dev admin: ${devUser.email}`);
+console.log(`Dev users: ${developmentUsers.map((user) => `${user.email} (${user.role})`).join(", ")}`);
 console.log("");
-console.log(`Open ${shellOrigin}. If redirected to Core login, select ${devUser.email}.`);
+console.log(`Open ${shellOrigin}. If redirected to Core login, select ${devAdmin.email}.`);
 console.log("Press Ctrl+C to stop Core and Shell.");
 
 process.on("SIGINT", () => stopAll("SIGINT"));
@@ -99,7 +104,7 @@ function stopAll(signal) {
   }
 }
 
-async function seedDevelopmentAdmin() {
+async function seedDevelopmentUsers() {
   const authDirectory = path.join(dataRoot, "core", "auth");
   const statePath = path.join(authDirectory, "state.json");
   await mkdir(authDirectory, { recursive: true });
@@ -114,20 +119,58 @@ async function seedDevelopmentAdmin() {
   state.assignments ??= [];
   state.sessions ??= [];
 
-  const hasEnabledUser = state.users.some((user) => user && user.disabled !== true);
-  if (!hasEnabledUser) {
-    const now = new Date().toISOString();
-    state.users.push({
-      id: devUser.id,
-      email: devUser.email,
-      displayName: devUser.displayName,
-      role: "host.admin",
-      disabled: false,
-      createdAt: now,
-      updatedAt: now,
-    });
+  const now = new Date().toISOString();
+  let changed = false;
+
+  for (const user of developmentUsers) {
+    const existingIndex = state.users.findIndex((candidate) => isSameDevelopmentUser(candidate, user));
+    if (existingIndex === -1) {
+      state.users.push({
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        role: user.role,
+        disabled: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      changed = true;
+      continue;
+    }
+
+    const existing = state.users[existingIndex];
+    if (
+      !existing.id ||
+      existing.email !== user.email ||
+      existing.displayName !== user.displayName ||
+      existing.role !== user.role ||
+      existing.disabled !== false
+    ) {
+      state.users[existingIndex] = {
+        ...existing,
+        id: existing.id || user.id,
+        email: user.email,
+        displayName: user.displayName,
+        role: user.role,
+        disabled: false,
+        updatedAt: now,
+      };
+      changed = true;
+    }
+  }
+
+  if (changed) {
     await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
   }
+}
+
+function isSameDevelopmentUser(candidate, developmentUser) {
+  if (!candidate) {
+    return false;
+  }
+
+  return candidate.id === developmentUser.id ||
+    (typeof candidate.email === "string" && candidate.email.toLowerCase() === developmentUser.email.toLowerCase());
 }
 
 function parseEndpoint(origin) {
