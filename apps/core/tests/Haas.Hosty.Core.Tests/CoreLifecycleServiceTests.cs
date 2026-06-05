@@ -170,6 +170,48 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateUpdatePlanAsync_ReturnsNoChangesForInstalledManifestRecheck()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        Assert.Empty(plan.Changes);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_ReportsManifestFallbackOnlyForUnclassifiedDigestChange()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var targetManifest = Path.Combine(fixture.Root, "notes-description-only.json");
+        var json = await File.ReadAllTextAsync(manifest);
+        await File.WriteAllTextAsync(targetManifest, json.Replace("Personal notes.", "Personal notes with updated copy.", StringComparison.Ordinal));
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(targetManifest));
+
+        Assert.Equal(["manifest"], plan.Changes);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_ReportsRuntimeContractChanges()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestV1 = await fixture.WriteManifestAsync("1.0.0");
+        var manifestV2 = await fixture.WriteManifestAsync("1.0.1");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestV1));
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+
+        Assert.Contains("version:1.0.0->1.0.1", plan.Changes);
+        Assert.Contains("image:app:ghcr.io/example/notes:1.0.0->ghcr.io/example/notes:1.0.1", plan.Changes);
+        Assert.DoesNotContain("manifest", plan.Changes);
+    }
+
+    [Fact]
     public async Task CreateInstallPlanAsync_ReturnsRuntimeProfilesAndSelectsManifestDefault()
     {
         var fixture = await LifecycleFixture.CreateAsync();

@@ -2228,7 +2228,7 @@ function InstallReviewDialog({
               <FactCard label="App" value={reviewedPlan.displayName} />
               <FactCard label="Version" value={reviewedPlan.currentVersion ? `${reviewedPlan.currentVersion} to ${reviewedPlan.targetVersion}` : reviewedPlan.targetVersion} />
               <FactCard label="Runtime" value={reviewedPlan.targetRuntime} />
-              <FactCard label="Digest" value={reviewedPlan.targetManifestDigest.slice(0, 16)} />
+              <FactCard label="Manifest digest" value={reviewedPlan.targetManifestDigest.slice(0, 16)} />
             </div>
             {reviewedPlan.settings.length > 0 && (
               <div className="space-y-3">
@@ -2962,20 +2962,20 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
             <FactCard label="Version" value={`${plan.currentVersion} to ${plan.targetVersion}`} />
             <FactCard label="Runtime" value={`${plan.currentRuntime || "none"} to ${plan.targetRuntime}`} />
             <FactCard label="Backup" value={plan.willCreatePreUpdateBackup ? "pre-update" : "none"} />
-            <FactCard label="Digest" value={plan.planDigest.slice(0, 16)} />
+            <FactCard label="Plan digest" value={plan.planDigest.slice(0, 16)} />
           </div>
           <div className="rounded-md border p-4">
             <h3 className="mb-2 text-sm font-medium">Changes</h3>
             {plan.changes.length === 0 ? (
               <p className="text-sm text-muted-foreground">No changes reported.</p>
             ) : (
-              <ul className="space-y-1 text-sm text-muted-foreground">
-                {plan.changes.map((change) => <li key={change}>- {change}</li>)}
+              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                {plan.changes.map((change) => <li key={change}>{formatUpdateChange(change)}</li>)}
               </ul>
             )}
           </div>
           <DialogFooter>
-            <Button onClick={() => onApplyUpdate(app, plan)} disabled={busyAction === `${app.id}:update`}>
+            <Button onClick={() => onApplyUpdate(app, plan)} disabled={plan.changes.length === 0 || busyAction === `${app.id}:update`}>
               {busyAction === `${app.id}:update` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               Apply update
             </Button>
@@ -3015,6 +3015,178 @@ function RemovePanel({ app, busyAction, canRemove, onRemove }: { app: CoreApp; b
       </DialogFooter>
     </div>
   );
+}
+
+function formatUpdateChange(change: string): string {
+  if (change === "manifest") {
+    return "Manifest content changed";
+  }
+
+  if (change.startsWith("version:")) {
+    return `Version changed from ${formatArrowValue(change.slice("version:".length))}`;
+  }
+
+  if (change.startsWith("runtime:")) {
+    return `Runtime changed from ${formatArrowValue(change.slice("runtime:".length))}`;
+  }
+
+  if (change.startsWith("service:")) {
+    return formatServiceChange(splitToken(change.slice("service:".length), 2));
+  }
+
+  if (change.startsWith("image:")) {
+    const [service, diff] = splitToken(change.slice("image:".length), 1);
+    return `Service ${service} image changed from ${formatArrowValue(diff)}`;
+  }
+
+  if (change.startsWith("command:")) {
+    const [service] = splitToken(change.slice("command:".length), 1);
+    return `Service ${service} command changed`;
+  }
+
+  if (change.startsWith("workingDirectory:")) {
+    const [service, diff] = splitToken(change.slice("workingDirectory:".length), 1);
+    return `Service ${service} working directory changed from ${formatArrowValue(diff)}`;
+  }
+
+  if (change.startsWith("port:")) {
+    return formatResourceChange("Port", change.slice("port:".length));
+  }
+
+  if (change.startsWith("environment:")) {
+    return formatResourceChange("Environment variable", change.slice("environment:".length));
+  }
+
+  if (change.startsWith("setting:")) {
+    return formatSettingChange(change.slice("setting:".length));
+  }
+
+  if (change.startsWith("dependency:")) {
+    return formatResourceChange("Dependency", change.slice("dependency:".length));
+  }
+
+  if (change.startsWith("endpoint:")) {
+    return formatResourceChange("Endpoint", change.slice("endpoint:".length));
+  }
+
+  if (change.startsWith("data:")) {
+    return formatDataChange(change.slice("data:".length));
+  }
+
+  if (change.startsWith("capability:")) {
+    return formatResourceChange("Capability", change.slice("capability:".length));
+  }
+
+  return change;
+}
+
+function formatServiceChange(parts: string[]): string {
+  const [service, action, detail] = parts;
+  if (action === "added") {
+    return `Service ${service} added (${detail})`;
+  }
+
+  if (action === "removed") {
+    return `Service ${service} removed (${detail})`;
+  }
+
+  if (action === "runtimeType") {
+    return `Service ${service} runtime type changed from ${formatArrowValue(detail || "")}`;
+  }
+
+  return `Service ${service} changed`;
+}
+
+function formatSettingChange(payload: string): string {
+  const [setting, action, detail] = splitToken(payload, 2);
+  if (action === "type") {
+    return `Setting ${setting} type changed from ${formatArrowValue(detail || "")}`;
+  }
+
+  if (action === "secret") {
+    return `Setting ${setting} secret flag changed from ${formatArrowValue(detail || "")}`;
+  }
+
+  return formatResourceChange("Setting", payload);
+}
+
+function formatDataChange(payload: string): string {
+  const [action, detail] = splitToken(payload, 1);
+  if (action === "added") {
+    return `Data directory added at ${detail}`;
+  }
+
+  if (action === "removed") {
+    return `Data directory removed from ${detail}`;
+  }
+
+  if (action === "target") {
+    return `Data directory target changed from ${formatArrowValue(detail || "")}`;
+  }
+
+  return "Data directory changed";
+}
+
+function formatResourceChange(label: string, payload: string): string {
+  const [name, detail] = splitToken(payload, 1);
+  if (detail.startsWith("added:")) {
+    return `${label} ${name} added (${detail.slice("added:".length)})`;
+  }
+
+  if (detail.startsWith("removed:")) {
+    return `${label} ${name} removed (${detail.slice("removed:".length)})`;
+  }
+
+  if (detail === "added") {
+    return `${label} ${name} added`;
+  }
+
+  if (detail === "removed") {
+    return `${label} ${name} removed`;
+  }
+
+  if (detail === "changed") {
+    return `${label} ${name} changed`;
+  }
+
+  if (detail.includes("->")) {
+    return `${label} ${name} changed from ${formatArrowValue(detail)}`;
+  }
+
+  const [attribute, value] = splitToken(detail, 1);
+  if (value) {
+    return `${label} ${name} ${attribute} changed from ${formatArrowValue(value)}`;
+  }
+
+  return `${label} ${name} changed`;
+}
+
+function formatArrowValue(value: string): string {
+  const separator = value.indexOf("->");
+  if (separator === -1) {
+    return value || "unknown";
+  }
+
+  return `${value.slice(0, separator)} to ${value.slice(separator + 2)}`;
+}
+
+function splitToken(value: string, fixedParts: number): string[] {
+  const parts: string[] = [];
+  let rest = value;
+  for (let index = 0; index < fixedParts; index++) {
+    const separator = rest.indexOf(":");
+    if (separator === -1) {
+      parts.push(rest);
+      rest = "";
+      break;
+    }
+
+    parts.push(rest.slice(0, separator));
+    rest = rest.slice(separator + 1);
+  }
+
+  parts.push(rest);
+  return parts;
 }
 
 function CheckboxRow({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {

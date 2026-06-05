@@ -196,6 +196,7 @@ internal sealed class CoreLifecycleService(
             throw new AppLifecycleException("manifest_path_required", "Installed app has no manifest path and update request did not provide one.");
         }
 
+        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken);
         if (!string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal))
         {
@@ -203,6 +204,7 @@ internal sealed class CoreLifecycleService(
         }
 
         var willCreateBackup = Directory.Exists(GetAppDataPath(appId));
+        var changes = BuildUpdateChanges(app, currentSelection, selection);
         var seed = new
         {
             appId,
@@ -211,8 +213,10 @@ internal sealed class CoreLifecycleService(
             currentRuntime = app.SelectedRuntime,
             targetRuntime = selection.RuntimeProfile.Key,
             targetChannel = request.TargetChannel ?? app.SelectedChannel,
-            selection.ManifestDigest,
+            currentManifestDigest = currentSelection.ManifestDigest,
+            targetManifestDigest = selection.ManifestDigest,
             willCreateBackup,
+            changes,
         };
         var digest = HashPlanSeed(seed);
         return new AppUpdatePlan(
@@ -226,7 +230,7 @@ internal sealed class CoreLifecycleService(
             ManifestDigest: selection.ManifestDigest,
             PlanDigest: digest,
             WillCreatePreUpdateBackup: willCreateBackup,
-            Changes: BuildUpdateChanges(app, selection));
+            Changes: changes);
     }
 
     public async Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
@@ -665,7 +669,7 @@ internal sealed class CoreLifecycleService(
             RuntimeState: existing?.RuntimeState ?? "stopped",
             LastOperation: existing?.LastOperation,
             LastError: existing?.LastError,
-            Capabilities: manifest.Capabilities.Count == 0 ? DefaultCapabilities : manifest.Capabilities,
+            Capabilities: ResolveCapabilities(manifest),
             Settings: settings,
             StorageMappings: storageMappings,
             Dependencies: dependencies,
@@ -946,25 +950,71 @@ internal sealed class CoreLifecycleService(
         return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
     }
 
-    private static IReadOnlyList<string> BuildUpdateChanges(AppRecord app, RuntimeAppManifestSelection selection)
+    private IReadOnlyList<string> BuildUpdateChanges(
+        AppRecord app,
+        RuntimeAppManifestSelection currentSelection,
+        RuntimeAppManifestSelection targetSelection)
     {
         var changes = new List<string>();
-        if (!string.Equals(app.Version, selection.Manifest.Version, StringComparison.Ordinal))
+        if (!string.Equals(app.Version, targetSelection.Manifest.Version, StringComparison.Ordinal))
         {
-            changes.Add($"version:{app.Version}->{selection.Manifest.Version}");
+            changes.Add($"version:{app.Version}->{targetSelection.Manifest.Version}");
         }
 
-        if (!string.Equals(app.SelectedRuntime, selection.RuntimeProfile.Key, StringComparison.Ordinal))
+        if (!string.Equals(app.SelectedRuntime, targetSelection.RuntimeProfile.Key, StringComparison.Ordinal))
         {
-            changes.Add($"runtime:{app.SelectedRuntime}->{selection.RuntimeProfile.Key}");
+            changes.Add($"runtime:{app.SelectedRuntime}->{targetSelection.RuntimeProfile.Key}");
         }
 
-        if (changes.Count == 0)
+        AddUpdateServiceChanges(changes, currentSelection, targetSelection);
+        AddSettingChanges(changes, app.Settings, targetSelection.Manifest.Settings);
+        AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
+        AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
+        AddUpdateDataTargetChanges(changes, app, targetSelection);
+        AddCapabilityChanges(changes, app.Capabilities, ResolveCapabilities(targetSelection.Manifest));
+
+        if (changes.Count == 0 &&
+            !string.Equals(currentSelection.ManifestDigest, targetSelection.ManifestDigest, StringComparison.Ordinal))
         {
             changes.Add("manifest");
         }
 
         return changes;
+    }
+
+    private static void AddUpdateServiceChanges(
+        List<string> changes,
+        RuntimeAppManifestSelection currentSelection,
+        RuntimeAppManifestSelection targetSelection)
+    {
+        var currentServices = currentSelection.Services.ToDictionary(service => service.Key, StringComparer.Ordinal);
+        var targetServices = targetSelection.Services.ToDictionary(service => service.Key, StringComparer.Ordinal);
+        foreach (var key in currentServices.Keys.Concat(targetServices.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var hasCurrent = currentServices.TryGetValue(key, out var current);
+            var hasTarget = targetServices.TryGetValue(key, out var target);
+            if (!hasCurrent)
+            {
+                changes.Add($"service:{key}:added:{target!.Runtime.Type}");
+                continue;
+            }
+
+            if (!hasTarget)
+            {
+                changes.Add($"service:{key}:removed:{current!.Runtime.Type}");
+                continue;
+            }
+
+            if (!string.Equals(current!.Runtime.Type, target!.Runtime.Type, StringComparison.Ordinal))
+            {
+                changes.Add($"service:{key}:runtimeType:{current.Runtime.Type}->{target.Runtime.Type}");
+            }
+
+            AddImageChange(changes, key, current, target);
+            AddCommandChanges(changes, key, current, target);
+            AddPortChanges(changes, key, current.Runtime.Ports, target.Runtime.Ports);
+            AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
+        }
     }
 
     private IReadOnlyList<string> BuildRuntimeSwitchChanges(
@@ -1249,6 +1299,53 @@ internal sealed class CoreLifecycleService(
             changes.Add("data:compatible");
         }
     }
+
+    private void AddUpdateDataTargetChanges(List<string> changes, AppRecord app, RuntimeAppManifestSelection targetSelection)
+    {
+        var currentData = app.StorageMappings.FirstOrDefault(mapping => string.Equals(mapping.Key, "data", StringComparison.Ordinal));
+        var targetPath = targetSelection.DataTarget is null
+            ? null
+            : targetSelection.DataTarget.ContainerPath ?? GetAppDataPath(app.Id);
+        if (currentData is null && targetPath is null)
+        {
+            return;
+        }
+
+        if (currentData is null)
+        {
+            changes.Add($"data:added:{targetPath}");
+        }
+        else if (targetPath is null)
+        {
+            changes.Add($"data:removed:{currentData.TargetPath}");
+        }
+        else if (!string.Equals(currentData.TargetPath, targetPath, StringComparison.Ordinal))
+        {
+            changes.Add($"data:target:{currentData.TargetPath}->{targetPath}");
+        }
+    }
+
+    private static void AddCapabilityChanges(List<string> changes, IReadOnlyList<string> currentCapabilities, IReadOnlyList<string> targetCapabilities)
+    {
+        var current = currentCapabilities.ToHashSet(StringComparer.Ordinal);
+        var target = targetCapabilities.ToHashSet(StringComparer.Ordinal);
+        foreach (var key in current.Concat(target).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var hasCurrent = current.Contains(key);
+            var hasTarget = target.Contains(key);
+            if (!hasCurrent)
+            {
+                changes.Add($"capability:{key}:added");
+            }
+            else if (!hasTarget)
+            {
+                changes.Add($"capability:{key}:removed");
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> ResolveCapabilities(RuntimeAppManifest manifest)
+        => manifest.Capabilities.Count == 0 ? DefaultCapabilities : manifest.Capabilities;
 
     private static IReadOnlyDictionary<string, string> BuildPortMap(IReadOnlyList<RuntimePortManifest> ports)
     {
