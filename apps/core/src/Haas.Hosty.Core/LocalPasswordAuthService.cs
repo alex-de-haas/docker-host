@@ -15,7 +15,16 @@ internal sealed class LocalPasswordAuthService(
     private const int MinPasswordLength = 8;
     private const int MaxPasswordLength = 1024;
     private const int MaxFailedAttempts = 10;
+    private const int MaxTrackedThrottleKeys = 10_000;
     private static readonly TimeSpan FailureWindow = TimeSpan.FromMinutes(10);
+    private static readonly LocalPasswordCredentialRecord DummyCredential = new(
+        UserId: "dummy",
+        Algorithm: Algorithm,
+        Iterations: Iterations,
+        Salt: "AAAAAAAAAAAAAAAAAAAAAA==",
+        Hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        CreatedAt: DateTimeOffset.MinValue,
+        UpdatedAt: DateTimeOffset.MinValue);
     private readonly object throttleLock = new();
     private readonly Dictionary<string, List<DateTimeOffset>> failuresByKey = new(StringComparer.Ordinal);
 
@@ -52,8 +61,8 @@ internal sealed class LocalPasswordAuthService(
     {
         var now = clock.UtcNow;
         var email = NormalizeEmail(request.Email);
-        var throttleKey = BuildThrottleKey(email, remoteAddress);
-        if (IsThrottled(throttleKey, now))
+        var throttleKeys = BuildThrottleKeys(email, remoteAddress);
+        if (IsThrottled(throttleKeys, now))
         {
             await AppendAuditAsync("auth.login.throttled", null, "failed", new Dictionary<string, string>
             {
@@ -73,14 +82,15 @@ internal sealed class LocalPasswordAuthService(
         var credential = user is null
             ? null
             : FindCredential(state, user.Id);
+        var passwordVerified = VerifyPassword(request.Password, credential ?? DummyCredential);
         var valid = user is not null &&
             !user.Disabled &&
             credential is not null &&
-            VerifyPassword(request.Password, credential);
+            passwordVerified;
 
         if (!valid)
         {
-            RegisterFailure(throttleKey, now);
+            RegisterFailure(throttleKeys, now);
             await AppendAuditAsync("auth.login.failed", user?.Id, "failed", new Dictionary<string, string>
             {
                 ["email"] = email,
@@ -91,8 +101,8 @@ internal sealed class LocalPasswordAuthService(
                 StatusCodes.Status403Forbidden);
         }
 
-        ClearFailures(throttleKey);
         var authenticatedUser = user!;
+        ClearEmailFailures(email);
         await AppendAuditAsync("auth.login.succeeded", authenticatedUser.Id, "succeeded", new Dictionary<string, string>
         {
             ["email"] = email,
@@ -161,50 +171,69 @@ internal sealed class LocalPasswordAuthService(
         }
     }
 
-    private bool IsThrottled(string key, DateTimeOffset now)
+    private bool IsThrottled(IReadOnlyList<string> keys, DateTimeOffset now)
     {
         lock (throttleLock)
         {
-            TrimFailuresLocked(key, now);
-            return failuresByKey.TryGetValue(key, out var failures) &&
-                failures.Count >= MaxFailedAttempts;
+            TrimExpiredFailuresLocked(now);
+            return keys.Any(key => failuresByKey.TryGetValue(key, out var failures) &&
+                failures.Count >= MaxFailedAttempts);
         }
     }
 
-    private void RegisterFailure(string key, DateTimeOffset now)
+    private void RegisterFailure(IReadOnlyList<string> keys, DateTimeOffset now)
     {
         lock (throttleLock)
         {
-            TrimFailuresLocked(key, now);
-            if (!failuresByKey.TryGetValue(key, out var failures))
+            TrimExpiredFailuresLocked(now);
+            foreach (var key in keys)
             {
-                failures = [];
-                failuresByKey[key] = failures;
-            }
+                if (!failuresByKey.TryGetValue(key, out var failures))
+                {
+                    EnsureThrottleCapacityLocked();
+                    failures = [];
+                    failuresByKey[key] = failures;
+                }
 
-            failures.Add(now);
+                failures.Add(now);
+            }
         }
     }
 
-    private void ClearFailures(string key)
+    private void ClearEmailFailures(string email)
     {
         lock (throttleLock)
         {
-            failuresByKey.Remove(key);
+            failuresByKey.Remove(BuildEmailThrottleKey(email));
         }
     }
 
-    private void TrimFailuresLocked(string key, DateTimeOffset now)
+    private void TrimExpiredFailuresLocked(DateTimeOffset now)
     {
-        if (!failuresByKey.TryGetValue(key, out var failures))
+        var cutoff = now.Subtract(FailureWindow);
+        foreach (var item in failuresByKey.ToArray())
+        {
+            item.Value.RemoveAll(failedAt => failedAt <= cutoff);
+            if (item.Value.Count == 0)
+            {
+                failuresByKey.Remove(item.Key);
+            }
+        }
+    }
+
+    private void EnsureThrottleCapacityLocked()
+    {
+        if (failuresByKey.Count < MaxTrackedThrottleKeys)
         {
             return;
         }
 
-        failures.RemoveAll(failedAt => failedAt <= now.Subtract(FailureWindow));
-        if (failures.Count == 0)
+        var oldest = failuresByKey
+            .OrderBy(item => item.Value.Count == 0 ? DateTimeOffset.MinValue : item.Value.Max())
+            .FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(oldest.Key))
         {
-            failuresByKey.Remove(key);
+            failuresByKey.Remove(oldest.Key);
         }
     }
 
@@ -220,12 +249,19 @@ internal sealed class LocalPasswordAuthService(
             ResourceType: "auth.user",
             ResourceId: userId,
             Outcome: outcome,
-            ActorUserId: userId,
+            ActorUserId: outcome == "succeeded" ? userId : null,
             CreatedAt: clock.UtcNow,
             Details: details), cancellationToken);
 
-    private static string BuildThrottleKey(string email, string? remoteAddress)
-        => $"{email}|{NormalizeOptional(remoteAddress) ?? "unknown"}";
+    private static IReadOnlyList<string> BuildThrottleKeys(string email, string? remoteAddress)
+        =>
+        [
+            BuildEmailThrottleKey(email),
+            $"ip:{NormalizeOptional(remoteAddress) ?? "unknown"}",
+        ];
+
+    private static string BuildEmailThrottleKey(string email)
+        => $"email:{email}";
 
     private static string NormalizeEmail(string? value)
     {

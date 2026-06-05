@@ -42,7 +42,7 @@ Core adds a local password authentication service responsible for:
 - credential hashing and verification;
 - credential upsert for setup, recovery, and invitation acceptance;
 - local email/password authentication;
-- in-memory throttling for repeated failed login attempts.
+- in-memory throttling for repeated failed login attempts with separate email and remote-address limits.
 
 Password credential records are stored in Core auth state separately from `HostUserRecord` entries, and APIs continue returning `HostUserRecord` and user summaries without password hash material.
 
@@ -68,7 +68,8 @@ No app identity token format changes are required.
 - Existing users without password credentials cannot use `/login` until a password is set through recovery or a future reset-password flow.
 - Disabled users cannot authenticate even with a valid password.
 - Login failures use a generic message to avoid account enumeration.
-- Repeated failures are throttled in memory per email/IP key.
+- Repeated failures are throttled in memory separately by email and by remote address.
+- In-memory throttle state is capped to avoid unbounded growth from unique login keys.
 - Setup remains unavailable once an enabled administrator exists.
 - Recovery remains the break-glass flow for local administrators.
 

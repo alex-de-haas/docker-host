@@ -139,7 +139,7 @@ internal static class HostyCoreApplication
                         cancellationToken);
                     var result = await AuthEndpoints.CreateSessionAsync(
                         user.Id,
-                        secureCookie: false,
+                        secureCookie: request.IsHttps,
                         response,
                         users,
                         clock,

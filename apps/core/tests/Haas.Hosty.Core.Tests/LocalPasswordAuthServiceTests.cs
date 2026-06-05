@@ -90,6 +90,75 @@ public sealed class LocalPasswordAuthServiceTests
         Assert.Equal("login_throttled", throttled.Code);
     }
 
+    [Fact]
+    public async Task AuthenticateAsync_ThrottlesByEmailAcrossRemoteAddresses()
+    {
+        var fixture = await LocalPasswordFixture.CreateAsync();
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
+
+        for (var attempt = 0; attempt < 10; attempt += 1)
+        {
+            var error = await Assert.ThrowsAsync<LocalPasswordAuthException>(() =>
+                fixture.Passwords.AuthenticateAsync(
+                    new LocalPasswordLoginRequest("target@example.test", "wrong password"),
+                    $"127.0.0.{attempt + 1}"));
+            Assert.Equal("login_invalid", error.Code);
+        }
+
+        var throttled = await Assert.ThrowsAsync<LocalPasswordAuthException>(() =>
+            fixture.Passwords.AuthenticateAsync(
+                new LocalPasswordLoginRequest("target@example.test", "wrong password"),
+                "127.0.0.99"));
+
+        Assert.Equal("login_throttled", throttled.Code);
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_ThrottlesByRemoteAddressAcrossEmails()
+    {
+        var fixture = await LocalPasswordFixture.CreateAsync();
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
+
+        for (var attempt = 0; attempt < 10; attempt += 1)
+        {
+            var error = await Assert.ThrowsAsync<LocalPasswordAuthException>(() =>
+                fixture.Passwords.AuthenticateAsync(
+                    new LocalPasswordLoginRequest($"missing-{attempt}@example.test", "wrong password"),
+                    "127.0.0.1"));
+            Assert.Equal("login_invalid", error.Code);
+        }
+
+        var throttled = await Assert.ThrowsAsync<LocalPasswordAuthException>(() =>
+            fixture.Passwords.AuthenticateAsync(
+                new LocalPasswordLoginRequest("another@example.test", "wrong password"),
+                "127.0.0.1"));
+
+        Assert.Equal("login_throttled", throttled.Code);
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_FailedExistingUserAuditDoesNotSetActor()
+    {
+        var fixture = await LocalPasswordFixture.CreateAsync();
+        var user = CreateUser("user_1") with { Email = "user@example.test" };
+        var credentials = fixture.Passwords.UpsertCredential(
+            null,
+            user.Id,
+            "correct horse battery staple",
+            fixture.Clock.UtcNow);
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [user], [], [], [], credentials));
+
+        _ = await Assert.ThrowsAsync<LocalPasswordAuthException>(() =>
+            fixture.Passwords.AuthenticateAsync(
+                new LocalPasswordLoginRequest("user@example.test", "wrong password"),
+                "127.0.0.1"));
+        var audit = Assert.Single(await fixture.Audit.ReadRecentAsync());
+
+        Assert.Equal("auth.login.failed", audit.Action);
+        Assert.Equal(user.Id, audit.ResourceId);
+        Assert.Null(audit.ActorUserId);
+    }
+
     private static HostUserRecord CreateUser(string id)
         => new(
             Id: id,
@@ -102,14 +171,17 @@ public sealed class LocalPasswordAuthServiceTests
 
     private sealed class LocalPasswordFixture
     {
-        private LocalPasswordFixture(UserDirectoryStore users, LocalPasswordAuthService passwords, FakeClock clock)
+        private LocalPasswordFixture(UserDirectoryStore users, AuditStore audit, LocalPasswordAuthService passwords, FakeClock clock)
         {
             Users = users;
+            Audit = audit;
             Passwords = passwords;
             Clock = clock;
         }
 
         public UserDirectoryStore Users { get; }
+
+        public AuditStore Audit { get; }
 
         public LocalPasswordAuthService Passwords { get; }
 
@@ -132,7 +204,7 @@ public sealed class LocalPasswordAuthServiceTests
             var clock = new FakeClock(DateTimeOffset.Parse("2026-06-05T10:00:00Z"));
             var passwords = new LocalPasswordAuthService(users, audit, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
-            return new LocalPasswordFixture(users, passwords, clock);
+            return new LocalPasswordFixture(users, audit, passwords, clock);
         }
     }
 

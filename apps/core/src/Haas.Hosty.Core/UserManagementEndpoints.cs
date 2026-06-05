@@ -81,6 +81,7 @@ internal static class UserManagementEndpoints
             await HandleUserManagementError(() => management.PreviewInvitationAsync(setupToken, cancellationToken)));
 
         app.MapPost("/api/auth/invitations/accept", async (
+            HttpRequest request,
             HttpResponse response,
             UserManagementService management,
             UserDirectoryStore users,
@@ -90,7 +91,7 @@ internal static class UserManagementEndpoints
             await HandleUserManagementError(async () =>
             {
                 var user = await management.AcceptInvitationAsync(input, cancellationToken);
-                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: false, response, users, clock, cancellationToken);
+                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, cancellationToken);
                 return new UserInvitationAcceptResponse(user, user.Role == "host.admin" ? "/" : "/apps");
             }));
 

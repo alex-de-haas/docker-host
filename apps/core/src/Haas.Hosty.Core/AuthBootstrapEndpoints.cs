@@ -21,6 +21,7 @@ internal static class AuthBootstrapEndpoints
                 await HandleAuthBootstrapError(() => bootstrap.CreateRecoveryTokenAsync(cancellationToken))));
 
         app.MapPost("/api/auth/bootstrap", async (
+            HttpRequest request,
             HttpResponse response,
             AuthBootstrapRequest input,
             AuthBootstrapService bootstrap,
@@ -31,11 +32,12 @@ internal static class AuthBootstrapEndpoints
             await HandleAuthBootstrapError(async () =>
             {
                 var user = await bootstrap.BootstrapAsync(input, cancellationToken);
-                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: false, response, users, clock, cancellationToken);
+                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, cancellationToken);
                 return new AuthBootstrapCompleteResponse(user, config.ShellPublicOrigin ?? "/");
             }));
 
         app.MapPost("/api/auth/recovery", async (
+            HttpRequest request,
             HttpResponse response,
             AuthRecoveryRequest input,
             AuthBootstrapService bootstrap,
@@ -46,7 +48,7 @@ internal static class AuthBootstrapEndpoints
             await HandleAuthBootstrapError(async () =>
             {
                 var user = await bootstrap.RecoverAsync(input, cancellationToken);
-                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: false, response, users, clock, cancellationToken);
+                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, cancellationToken);
                 return new AuthRecoveryCompleteResponse(user, config.ShellPublicOrigin ?? "/");
             }));
     }
