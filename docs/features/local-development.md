@@ -1,327 +1,154 @@
-# Local development and testing
+# Local Development And Testing
 
-This document defines how Docker Host should be run locally while developing and testing changes before any image is pushed to a registry.
+This document describes the current local feedback loops after the Core/Shell/runtime app split.
 
-## Decision
+## Development Loops
 
-Docker Host should support two local feedback loops:
+Hosty local development uses normal component boundaries:
 
-- direct host-run development through `npm run host:dev`;
-- production-like local container testing through a locally built Docker image tag, for example `docker-host:dev`.
-
-The direct host-run mode is the default development loop. The production-like mode is used when validating Dockerfile behavior, container environment variables, Docker socket mounts, Host data root mounts, and `docker-host` CLI lifecycle behavior.
+- Hosty Core runs as the local ASP.NET Core process.
+- Hosty Shell runs as a runtime app and browser client for Core.
+- User apps run through Core-managed runtime lifecycle, including local command runtime profiles.
+- The CLI bootstraps Core and then calls Core APIs for app operations.
 
 ```mermaid
 flowchart LR
-  A["Developer changes code"] --> B{"What needs testing?"}
-  B --> C["Fast UI/API feedback"]
-  B --> D["Container launch behavior"]
-  C --> E["npm run host:dev"]
-  E --> F["Host backend on developer machine"]
-  F --> G["Docker daemon"]
-  D --> H["docker build -f apps/host/Dockerfile -t docker-host:dev ."]
-  H --> I["docker run docker-host:dev"]
-  I --> J["Host backend inside container"]
-  J --> G
+  A["Developer changes code"] --> B{"Component"}
+  B --> C["Core"]
+  B --> D["Shell"]
+  B --> E["Runtime app"]
+  C --> F["npm run core:dev"]
+  D --> G["npm run shell:dev or Core-managed Shell app"]
+  E --> H["hosty apps install --runtime dev"]
+  H --> I["hosty apps start <app-id>"]
+  I --> J["Core runtime lifecycle"]
 ```
 
-## Direct host-run development
+## Core And Shell
 
-Use this mode for normal UI and backend API development:
+Run Core and Shell from source with one command:
 
 ```bash
 npm install
-npm run host:dev
+npm run dev
 ```
 
-The Next.js server runs directly on the developer machine. It connects to Docker using the existing Docker connection priority:
+`npm run dev` starts Core and Shell together. Core listens on `http://localhost:3001`, Shell listens on `http://localhost:3000`, and local state is stored in `.hosty-dev/` so branch development does not mutate an installed Hosty CLI data root. The script ensures two development-only local users exist for the Core login helper: `admin@hosty.local` with `host.admin` and `user@hosty.local` with `host.user`.
 
-1. `DOCKER_SOCKET_PATH`, if set;
-2. `DOCKER_HOST`, if set;
-3. `/var/run/docker.sock`, by default.
+The script also lets Core bootstrap `hosty.shell` into the `.hosty-dev` app registry as a system app using the Shell manifest's `dev` runtime profile and this repository as the local source override. Core then autostarts Shell through the normal runtime app lifecycle, so the Shell dev server is visible in System Apps and its logs/health come from Core.
 
-Examples:
+If those ports are already occupied, stop the existing process or choose an alternate local pair:
 
 ```bash
-DOCKER_SOCKET_PATH=/var/run/docker.sock npm run host:dev
-DOCKER_HOST=unix:///var/run/docker.sock npm run host:dev
-DOCKER_HOST=tcp://127.0.0.1:2375 npm run host:dev
+HOSTY_CORE_URL=http://localhost:3301 HOST_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
 ```
 
-In this mode, local metadata test servers can usually be referenced as `http://localhost:<port>/...`, because the Host backend also runs on the developer machine.
-
-The repository uses npm workspace scripts from the root. `npm run host:dev`, `npm run host:build`, and `npm run host:lint` execute the Host app in `apps/host`.
-
-The installed CLI dev harness is dev-only. It starts the Host from `HOST_DEV_REPOSITORY_PATH` through `npm run host:dev`, or it can target an already running source Host with a loopback URL such as `--host-url http://localhost:3000`.
-
-Module dev server upstreams should usually be `http://127.0.0.1:<port>`. The metadata `runtime.ports[].localPort` value expands to that address for the top-level `hosty dev` harness.
-
-## Direct host-run development with a demo shell app
-
-Use this mode for Host shell work, Apps sidebar work, account switching checks, nested app navigation, or direct-origin iframe transport against the demo module from the current repository checkout:
+Run Core and Shell separately when debugging one side:
 
 ```bash
-npm run host:dev:demo
+npm run core:dev
+npm run shell:dev
 ```
 
-This script configures an isolated CLI home and then delegates orchestration to `hosty dev up --manifest modules/demo-module/metadata.dev.json`. It starts both local development servers:
+Use `HOST_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that differs from its listen URL. Use `HOST_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently instead of mixing `localhost` and `127.0.0.1`.
 
-- Hosty Core and Shell at `http://localhost:3000`;
-- the repository-local demo module at `http://localhost:3100`.
+`HOST_PUBLIC_ORIGIN` remains a compatibility alias for combined Core/Shell deployments. Prefer explicit Core/Shell origin variables for split-origin testing.
 
-The script sets:
+Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. Use `HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev` and `HOSTY_SHELL_SOURCE_OVERRIDE_PATH=<repo-root>` when that Core process should register and run Shell with the manifest's local command runtime profile. Use Core-managed Shell when validating Shell runtime lifecycle behavior.
 
-- `HOSTY_HOME` to the repository-local `.hosty-dev-demo/` directory unless already provided. Legacy `DOCKER_HOST_HOME` remains accepted for older scripts;
-- `HOST_DEV_REPOSITORY_PATH` in the isolated CLI config to the current checkout;
-- `HOST_DEV_PORT` in the isolated CLI config to `3000` unless `HOST_DEV_PORT` or `PORT` is provided.
+When validating runtime lifecycle behavior, prefer installing Shell through Core like any other runtime app.
 
-The generic `hosty dev up` command sets the local Host process environment:
-
-- `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER` to the active CLI Host data root;
-- `HOST_DEV_AUTH=auto`, which enables development-only auto-login;
-- `HOST_DEV_AUTH_SEED_BROWSER_ACCOUNTS=enabled`, which remembers development accounts in the browser account menu.
-
-The demo wrapper also sets:
-
-- `HOST_ENABLE_DEV_FIXTURES=true`, which enables the current-branch demo metadata fixture.
-
-When auto-login is enabled, `/setup`, `/login`, and unauthenticated dashboard requests redirect through `/api/auth/dev-login`. That route is available only in development runtime, only when `HOST_DEV_AUTH=auto` is set, and only when the Host server observes the client socket as a loopback address such as `127.0.0.1` or `::1`.
-
-Development runtime is visible in the shell: the sidebar header shows a `DEV` marker next to `DOCKER HOST`, with a compact marker on the Host icon when the sidebar is collapsed.
-
-The route does not disable authentication. It creates or updates normal local accounts, issues a normal browser session cookie, and then redirects back to the shell. The default development administrator account is:
-
-- email: `admin@docker-host.local`;
-- password: `docker-host-dev-admin`;
-- display name: `Dev Admin`.
-
-Override these values with `HOST_DEV_ADMIN_EMAIL`, `HOST_DEV_ADMIN_PASSWORD`, and `HOST_DEV_ADMIN_NAME` if a local test needs different credentials. The password still has to satisfy the normal local password policy.
-
-The demo script signs the first browser session in as the administrator account. It still creates and remembers a normal development user for account switching:
-
-- email: `user@docker-host.local`;
-- password: `docker-host-dev-user`;
-- display name: `Dev User`.
-
-Override these values with `HOST_DEV_USER_EMAIL`, `HOST_DEV_USER_PASSWORD`, and `HOST_DEV_USER_NAME`. The administrator account is still seeded so the Host is not left in setup-required mode. The development user and administrator emails must be different.
-
-Module-specific development users can be added in `metadata.dev.json`:
-
-```json
-{
-  "development": {
-    "users": [
-      {
-        "email": "reviewer@example.test",
-        "displayName": "Review User",
-        "role": "user"
-      }
-    ]
-  }
-}
-```
-
-The CLI creates or updates those local Host users through trusted control and assigns them to the active developer target by default. The Host account menu seeds all enabled local development users into the current browser account set, so they are available for account switching without signing in. The CLI removes the `development` block before serving the metadata file to Docker Host's strict module metadata validator.
-
-Before starting the module process, the CLI seeds a deterministic developer target through Host trusted control. The target points at the current checkout's `modules/demo-module` UI and stores the current metadata `ui` snapshot, so `/api/apps` immediately returns a `Dev` app without a manual link step.
-
-The default app is available through the Host shell at:
-
-```text
-http://localhost:3000/apps/dev/mdev_com_haas_demo_module_localhost
-```
-
-Use this path for quick smoke tests. It validates shell navigation, app registry output, direct iframe embedding, and Host identity token bridging against current branch code. It does not create a managed Docker container or exercise module install/lifecycle operations.
-
-## Native Windows CLI development
-
-Native Windows CLI support targets Docker Desktop with the WSL 2 Linux engine. Windows containers mode is unsupported because the Host image and module runtime are Linux-container based.
-
-The Windows CLI artifact should connect to Docker Engine through:
-
-```text
-npipe:////./pipe/docker_engine
-```
-
-The Host container still receives Docker access through the Linux Engine socket mount:
-
-```text
-/var/run/docker.sock:/var/run/docker.sock
-```
-
-During `hosty install/start/status`, the CLI should fail clearly if Docker Desktop is in Windows containers mode and should instruct the administrator to switch to Linux containers.
-
-## Production-like local container testing
-
-Use this mode when the change needs to be validated in the same shape as the released Host container, but without pushing an image:
+For Shell-only runtime work through Core, use the Shell manifest's `dev` runtime profile:
 
 ```bash
-docker build -f apps/host/Dockerfile -t docker-host:dev .
-
-docker run --rm --name docker-host-dev -p 127.0.0.1:3000:3000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$HOME/.hosty-dev:/data" \
-  -e HOST_DATA_ROOT_HOST="$HOME/.hosty-dev" \
-  -e HOST_DATA_ROOT_CONTAINER=/data \
-  -e HOST_BIND_ADDRESS=127.0.0.1 \
-  docker-host:dev
+hosty apps source-override hosty.shell --path "$PWD"
+hosty apps switch-runtime-plan hosty.shell --runtime dev
+hosty apps switch-runtime hosty.shell --runtime dev --plan-digest <digest>
 ```
 
-Use a dedicated development data root such as `~/.hosty-dev` to avoid mixing test app state with a real local installation.
+Do not use this pattern for Core itself. Core cannot finish its own replacement after it exits; those operations need the trusted CLI or another outer supervisor.
 
-The loopback bind and `HOST_BIND_ADDRESS=127.0.0.1` are intentional. Docker port forwarding can make the Host container observe browser traffic as coming from a Docker bridge address instead of `127.0.0.1`; the bind setting tells the Host that `http://localhost:<port>` is still local-only, so it may issue non-`Secure` development cookies over HTTP. If the port is bound to `0.0.0.0` or the Host is reachable from another machine, browser authentication must use HTTPS through `HOST_PUBLIC_ORIGIN`.
+## Local Runtime Apps
 
-In this mode, the Host backend runs inside the Host container. A metadata server or helper service running on the developer machine should be referenced from inside the container as:
+Local app development uses an app manifest runtime profile, not a separate local target command group.
 
-```text
-http://host.docker.internal:<port>/...
-```
-
-`localhost` from inside the Host container points to the Host container itself, not to the developer machine.
-
-## CLI development contract
-
-The standalone `hosty` CLI allows local Host image override so the lifecycle flow can be tested without registry push. The deprecated `docker-host` alias remains available during migration.
-
-Target local flow:
+For the repository demo app:
 
 ```bash
-docker build -f apps/host/Dockerfile -t docker-host:dev .
-hosty config set HOST_IMAGE docker-host:dev
-hosty config set HOST_DATA_ROOT_HOST "$HOME/.hosty-dev"
-hosty start
-hosty open
+hosty core start
+hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps start com.haas.demo-app
 ```
 
-The CLI config command shape is:
+The `dev` runtime profile in `apps/demo-app/manifest.json` starts local command services from `apps/demo-app`:
+
+- frontend on `http://localhost:3100`;
+- backend on `http://localhost:3101`.
+
+When Shell opens the Demo App, Core issues a one-time app authorization code. The Demo App exchanges that code through `HOSTY_CORE_ORIGIN`, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`.
+
+Use normal app lifecycle commands while iterating:
 
 ```bash
-hosty config list
-hosty config get HOST_IMAGE
-hosty config set HOST_IMAGE docker-host:dev
-hosty config set HOST_DATA_ROOT_HOST "$HOME/.hosty-dev"
-hosty config set HOST_IMAGE=docker-host:dev
-hosty config reset HOST_IMAGE
+hosty apps list
+hosty apps health com.haas.demo-app
+hosty apps logs com.haas.demo-app
+hosty apps restart com.haas.demo-app
+hosty apps source com.haas.demo-app
+hosty apps source-override com.haas.demo-app --path "$PWD"
+hosty apps source-clear-override com.haas.demo-app
+hosty apps switch-runtime-plan com.haas.demo-app --runtime docker
+hosty apps switch-runtime com.haas.demo-app --runtime docker --plan-digest <digest>
 ```
 
-`config list` shows all launch settings, `config get` shows one setting, `config set` updates one known launch setting, and `config reset` restores one setting to its default. The `KEY VALUE` form is the primary syntax, while `KEY=VALUE` is supported as a convenience for shell users.
+Use `hosty apps source-resolve <app-id> --branch <name> --fetch` when the app should run from a Core-managed checkout. Use `source-override` when a specific local worktree should be used instead. Local override state is stored in the Hosty installation record and is not written back to the public app manifest.
 
-The launch model must preserve these capabilities:
+## Local Command Constraints
 
-- local Host image tags can be used instead of `ghcr.io/...:latest`;
-- local development uses an isolated data root;
-- Host container still receives both `HOST_DATA_ROOT_HOST` and `HOST_DATA_ROOT_CONTAINER`;
-- the same Docker socket mount behavior is used as the production-like launch path.
+`localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`.
 
-## Local module testing
+Production installers should treat `localCommand` as platform-specific unless the command is known to be portable. Prefer commands that:
 
-Test modules do not need to be pushed if their metadata references a Docker image tag already available to the local Docker daemon.
+- run in the foreground and let Core own stop/restart behavior;
+- write diagnostics to stdout/stderr instead of daemonizing into a separate logger;
+- read `HOSTY_APP_DATA_DIR`, `HOSTY_PORT_<KEY>`, `HOSTY_CORE_ORIGIN`, and dependency URL environment variables instead of hard-coding local paths or ports;
+- avoid shell features that only exist on one target platform unless the runtime profile key or installer target makes that platform explicit;
+- keep package installation outside runtime start commands so app start is repeatable and does not require network access.
 
-Example metadata container image reference for local module testing:
+Docker runtime profiles remain the production-oriented default for app distribution. `localCommand` is the local-first runtime path for source workflows and for apps that are intentionally supervised as local processes.
 
-```json
-{
-  "containers": [
-    {
-      "key": "app",
-      "image": {
-        "repository": "acme-reports-module",
-        "tag": "dev",
-        "pullPolicy": "ifNotPresent"
-      }
-    }
-  ]
-}
-```
+## Identity Checks
 
-When the Host itself runs directly through `npm run host:dev`, local metadata URLs can point to `localhost`. When the Host runs as `docker-host:dev`, metadata URLs for services on the developer machine should use `host.docker.internal`.
-
-## Module developer mode
-
-For faster module UI/runtime iteration, Hosty also supports local-only app developer targets. This mode validates manifest or legacy metadata and lets the Host gateway route an app hostname to a local dev server without creating a managed app container.
-
-Use this as the default app integration loop when the change touches shell embedding, authenticated pages, Host identity tokens, scoped directory reads, assigned-user behavior, redirects, WebSockets, or SSE. Run the app locally, link it as a developer target, and let Hosty issue the normal gateway identity instead of injecting hand-written tokens into the app.
-
-Link a target directly:
+For direct local endpoint probes, request a Core-issued app identity token for an existing Hosty user:
 
 ```bash
-hosty apps dev link \
-  http://localhost:3000/fixtures/modules/demo-module \
-  demo.localhost \
-  http \
-  http://127.0.0.1:3100
-```
-
-For the reusable installed-CLI workflow, prefer the metadata-driven harness:
-
-```bash
-hosty config set HOST_DEV_REPOSITORY_PATH /path/to/docker-host
-hosty config set HOST_DEV_PORT 3000
-hosty dev up --manifest modules/demo-module/metadata.dev.json
-hosty dev status --manifest modules/demo-module/metadata.dev.json
-hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token
-hosty dev reset --manifest modules/demo-module/metadata.dev.json
-```
-
-When iterating on Host source code, run the same harness against a local Host origin:
-
-```bash
-hosty dev up --manifest modules/demo-module/metadata.dev.json --host-url http://localhost:3000
-```
-
-This skips Docker lifecycle operations and uses the running Host's local control channel for dev target registration, user seeding, assignments, and directory policy.
-
-Developer targets are stored under the Host data root in `/data/dev/module-targets.json`. They do not modify installed module records, module metadata, or production gateway exposure records. The harness manages targets, development users, assignments, directory policy, local process startup, status checks, reset behavior, and development data cleanup through Host-owned control routes.
-
-For direct local module endpoint probes, `hosty dev identity` can issue a real Host-signed identity token for the prepared developer target:
-
-```bash
-TOKEN="$(hosty dev identity --manifest modules/demo-module/metadata.dev.json --format token)"
+TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
 curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
 ```
 
-Use this only as a diagnostic shortcut for direct module-origin requests. Browser shell transport and gateway behavior should still be validated through the Host app URL and gateway URL printed by `hosty dev up`.
-
-See [Module developer mode](module-developer-mode.md) for API, CLI, and gateway details.
-
-## Current branch demo module install
-
-Use this mode when the smoke test must exercise a real managed module container from the current repository checkout.
-
-First build the local demo module image:
+For Shell or standalone launch validation, ask Core for an app open link:
 
 ```bash
-npm run demo-module:docker:build:local
+hosty apps open com.haas.demo-app --user user@docker-host.local --mode shell
+hosty apps open com.haas.demo-app --user user@docker-host.local --mode standalone
 ```
 
-That command tags the image as:
+The CLI helpers use existing enabled Host users and normal app access checks. Disabled users, missing app assignments, incompatible exposure policy, and unavailable runtime state fail instead of silently issuing app identity. There is no deterministic development-user seeding or default bypass flag in the local source runtime workflow.
 
-```text
-docker-host-demo-module:dev
-```
+Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
 
-Then run the Host and install the current demo metadata fixture from `/modules/install`. Use the `Current demo` action to fill:
+## Verification Checklist
 
-```text
-http://localhost:3000/fixtures/modules/demo-module
-```
+For normal feature work:
 
-The fixture reads `modules/demo-module/metadata.json` from the current checkout and rewrites the image reference to `docker-host-demo-module:dev` with `pullPolicy: ifNotPresent`. This keeps install testing on the current branch instead of the published GitHub Container Registry image.
+- run `npm run core:build`;
+- run `npm run core:test` for Core behavior changes;
+- run `npm run shell:build` for Shell changes;
+- run the app's lint/build/test scripts for runtime app changes;
+- install the app manifest with the target runtime profile and exercise lifecycle through `hosty apps`.
 
-## Verification checklist
+For runtime changes:
 
-For a normal feature change:
-
-- run `npm run host:dev`;
-- for install/update request helper changes, run `npm run host:test`;
-- open the Web UI;
-- exercise the changed API/UI behavior;
-- check the Docker operation result in the UI or Docker Desktop.
-
-For a launch/runtime change:
-
-- build `docker-host:dev`;
-- run the container with Docker socket and data root mounts;
-- verify the Web UI opens;
-- verify Docker operations still work from inside the Host container;
-- verify the isolated data root is used.
+- build the affected Docker image locally;
+- run lifecycle commands through Core;
+- verify logs, identity, data directory behavior, backups, and runtime status.

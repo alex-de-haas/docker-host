@@ -1,0 +1,69 @@
+# App Data Backup Retention
+
+## Description
+
+Hosty manages retention for app data backups stored under the Hosty backup root. Backups cover only the primary app `data/` directory; external mounts and additional app storage mappings are excluded from retention cleanup.
+
+```mermaid
+flowchart LR
+  A["Backup archive and metadata"] --> B["Retention policy"]
+  B --> C["Cleanup preview"]
+  C --> D["Digest-verified apply"]
+  D --> E["Deleted backup files"]
+```
+
+## Retention Policy
+
+The default retention policy is conservative:
+
+- `manual` backups are kept until explicit deletion.
+- `pre-update`, `pre-restore`, `pre-runtime-switch`, and `scheduled` backups keep the latest 5 backups per app.
+- No age-based deletion is enabled by default.
+- Retention cleanup does not delete the only known backup candidate unless policy support is explicitly expanded later.
+- Per-app retention overrides are deferred; Hosty currently applies global defaults.
+
+Backup list responses include retention status so Shell and CLI can show whether each backup is retained by policy, manually kept, or part of the current cleanup plan.
+
+## Cleanup Preview And Apply
+
+Core exposes cleanup preview and apply endpoints for browser Shell and trusted local control callers:
+
+```text
+GET  /api/apps/{appId}/backups/cleanup/plan
+POST /api/apps/{appId}/backups/cleanup
+
+GET  /control/v1/apps/{appId}/backups/cleanup/plan
+POST /control/v1/apps/{appId}/backups/cleanup
+```
+
+The preview response includes cleanup candidates and a plan digest. Apply requires that digest; Core recomputes the current plan before deleting files and rejects stale digests. Candidate deletion verifies paths stay under `<hosty-data-root>/backups/<app-id>/` and verifies archive SHA-256 before deleting archives.
+
+Cleanup handles missing archive or metadata pairs gracefully. Missing-archive metadata can be removed automatically. Archive-only candidates are exposed in previews but require explicit apply.
+
+## Scheduled Cleanup
+
+Hosty Core runs a background retention cleanup pass after startup and then periodically. Scheduled cleanup applies only automatic-safe candidates and writes audit/diagnostic records when cleanup deletes or skips candidates.
+
+## Shell And CLI Controls
+
+Shell backup details can:
+
+- create manual backups;
+- list backups with retention status;
+- restore stopped apps from a backup;
+- delete one backup with confirmation;
+- preview retention cleanup;
+- apply cleanup with confirmation and plan digest verification.
+
+CLI commands:
+
+```text
+hosty apps backup <app-id> [--reason <reason>]
+hosty apps backup delete <app-id> <backup-id> --yes
+hosty apps backups <app-id>
+hosty apps backups prune-plan <app-id> [--format table|json]
+hosty apps backups prune <app-id> --plan-digest <digest> --yes [--format table|json]
+hosty apps restore <app-id> <backup-id> [--pre-restore-backup]
+```
+
+Destructive CLI commands require `--yes`. Manual filesystem cleanup remains a recovery fallback, not the preferred workflow.

@@ -5,38 +5,38 @@ on:
     branches:
       - main
     paths:
-      - "apps/host/**"
+      - "apps/core/**"
+      - "apps/shell/**"
+      - "apps/demo-app/**"
       - "apps/cli/**"
-      - "modules/demo-module/**"
-      - "docs/features/host-api.md"
+      - "docs/features/core-api.md"
       - "scripts/install.sh"
       - "package.json"
       - "package-lock.json"
       - "global.json"
       - ".github/workflows/ci.yml"
-      - ".github/workflows/host-image.yml"
-      - ".github/workflows/demo-module-image.yml"
+      - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
   push:
     branches:
       - main
     paths:
-      - "apps/host/**"
+      - "apps/core/**"
+      - "apps/shell/**"
+      - "apps/demo-app/**"
       - "apps/cli/**"
-      - "modules/demo-module/**"
-      - "docs/features/host-api.md"
+      - "docs/features/core-api.md"
       - "scripts/install.sh"
       - "package.json"
       - "package-lock.json"
       - "global.json"
       - ".github/workflows/ci.yml"
-      - ".github/workflows/host-image.yml"
-      - ".github/workflows/demo-module-image.yml"
+      - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
 
 jobs:
-  host:
-    name: Host
+  shell:
+    name: Shell
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -51,19 +51,11 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Lint Host
-        if: github.event_name == 'push'
-        run: npm run host:lint
+      - name: Build Shell
+        run: npm run shell:build
 
-      - name: Test Host
-        if: github.event_name == 'push'
-        run: npm run host:test
-
-      - name: Build Host
-        run: npm run host:build
-
-  demo-module:
-    name: Demo Module
+  demo-app:
+    name: Demo App
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -78,12 +70,31 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Lint Demo Module
+      - name: Lint Demo App
         if: github.event_name == 'push'
-        run: npm run demo-module:lint
+        run: npm run demo-app:lint
 
-      - name: Build Demo Module
-        run: npm run demo-module:build
+      - name: Build Demo App
+        run: npm run demo-app:build
+
+  core:
+    name: Core
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build Core
+        run: npm run core:build
+
+      - name: Test Core
+        if: github.event_name == 'push'
+        run: npm run core:test
 
   cli:
     name: CLI

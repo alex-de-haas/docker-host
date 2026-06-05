@@ -21,12 +21,10 @@ Environment overrides:
   HOSTY_INSTALL_PROFILE      Shell profile to update for PATH, default auto-detect
   HOSTY_INSTALL_SKIP_PATH_UPDATE Set to 1 to skip shell profile updates
   HOSTY_INSTALL_START        Set to 1 to run hosty start and open after install
-
-Legacy DOCKER_HOST_INSTALL_* variables are still accepted during migration.
 USAGE
 }
 
-START_AFTER_INSTALL="${HOSTY_INSTALL_START:-${DOCKER_HOST_INSTALL_START:-0}}"
+START_AFTER_INSTALL="${HOSTY_INSTALL_START:-0}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --start)
@@ -49,9 +47,9 @@ command -v uname >/dev/null 2>&1 || fail "uname is required to detect OS and arc
 HOME_DIR="${HOME:-}"
 [ -n "$HOME_DIR" ] || fail "HOME is not set."
 
-REPO="${HOSTY_INSTALL_REPO:-${DOCKER_HOST_INSTALL_REPO:-$DEFAULT_REPO}}"
-TAG="${HOSTY_INSTALL_TAG:-${DOCKER_HOST_INSTALL_TAG:-$DEFAULT_TAG}}"
-INSTALL_DIR="${HOSTY_INSTALL_DIR:-${DOCKER_HOST_INSTALL_DIR:-$HOME_DIR/.hosty/bin}}"
+REPO="${HOSTY_INSTALL_REPO:-$DEFAULT_REPO}"
+TAG="${HOSTY_INSTALL_TAG:-$DEFAULT_TAG}"
+INSTALL_DIR="${HOSTY_INSTALL_DIR:-$HOME_DIR/.hosty/bin}"
 
 [ -n "$REPO" ] || fail "HOSTY_INSTALL_REPO cannot be empty."
 [ -n "$TAG" ] || fail "HOSTY_INSTALL_TAG cannot be empty."
@@ -87,11 +85,10 @@ case "$(uname -m)" in
     ;;
 esac
 
-ARTIFACT="docker-host-$OS_NAME-$ARCH_NAME"
+ARTIFACT="hosty-$OS_NAME-$ARCH_NAME"
 BASE_URL="https://github.com/$REPO/releases/download/$TAG"
-TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t docker-host-install)"
+TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t hosty-install)"
 TARGET="$INSTALL_DIR/hosty"
-LEGACY_TARGET="$INSTALL_DIR/docker-host"
 TARGET_TMP="$TARGET.tmp.$$"
 
 cleanup() {
@@ -138,11 +135,6 @@ detect_shell_profile() {
     return 0
   fi
 
-  if [ -n "${DOCKER_HOST_INSTALL_PROFILE:-}" ]; then
-    printf '%s\n' "$DOCKER_HOST_INSTALL_PROFILE"
-    return 0
-  fi
-
   shell_name="$(basename "${SHELL:-}")"
   case "$shell_name" in
     zsh)
@@ -185,7 +177,7 @@ append_path_block() {
 }
 
 ensure_path_profile() {
-  if [ "${HOSTY_INSTALL_SKIP_PATH_UPDATE:-${DOCKER_HOST_INSTALL_SKIP_PATH_UPDATE:-0}}" = "1" ]; then
+  if [ "${HOSTY_INSTALL_SKIP_PATH_UPDATE:-0}" = "1" ]; then
     printf '\n%s\n' "Skipping shell profile PATH update because HOSTY_INSTALL_SKIP_PATH_UPDATE=1."
     print_manual_path_instruction
     return 0
@@ -252,11 +244,8 @@ mkdir -p "$INSTALL_DIR"
 cp "$TMP_DIR/$ARTIFACT" "$TARGET_TMP"
 chmod 755 "$TARGET_TMP"
 mv "$TARGET_TMP" "$TARGET"
-cp "$TARGET" "$LEGACY_TARGET"
-chmod 755 "$LEGACY_TARGET"
 
 printf '%s\n' "Installed hosty to $TARGET"
-printf '%s\n' "Installed deprecated docker-host alias to $LEGACY_TARGET"
 
 "$TARGET" install
 

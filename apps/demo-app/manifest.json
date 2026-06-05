@@ -1,0 +1,189 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "com.haas.demo-app",
+  "name": "Demo App",
+  "description": "Hosty-aware demo runtime app for validating lifecycle, settings, storage, identity, and app-owned role flows.",
+  "version": "0.2.1",
+  "source": {
+    "type": "git",
+    "repository": ".",
+    "branch": "main"
+  },
+  "runtimeProfiles": [
+    {
+      "key": "docker",
+      "type": "docker",
+      "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand"
+    }
+  ],
+  "defaultRuntime": "docker",
+  "services": [
+    {
+      "key": "backend",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": {
+            "repository": "ghcr.io/alex-de-haas/demo-app",
+            "tag": "latest",
+            "pullPolicy": "always"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http"
+            }
+          ]
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/demo-app",
+          "command": "npm run dev:backend",
+          "environment": {
+            "NEXT_DIST_DIR": ".next-dev-backend",
+            "PORT": "3101",
+            "DEMO_PUBLIC_URL": "http://localhost:3101"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "localPort": 3101,
+              "protocol": "http"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "key": "frontend",
+      "dependsOn": ["backend"],
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": {
+            "repository": "ghcr.io/alex-de-haas/demo-app",
+            "tag": "latest",
+            "pullPolicy": "always"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/demo-app",
+          "command": "npm run dev:frontend",
+          "environment": {
+            "NEXT_DIST_DIR": ".next-dev-frontend",
+            "PORT": "3100",
+            "DEMO_PUBLIC_URL": "http://localhost:3100",
+            "DEMO_BACKEND_BASE_URL": "http://localhost:3101"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "localPort": 3100,
+              "protocol": "http",
+              "public": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "api",
+      "service": "backend",
+      "port": "http",
+      "protocol": "http",
+      "public": false
+    },
+    {
+      "key": "http",
+      "service": "frontend",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "ui": {
+    "entrypoint": {
+      "endpoint": "http",
+      "path": "/"
+    },
+    "navigation": [
+      {
+        "label": "Overview",
+        "path": "/"
+      },
+      {
+        "label": "People",
+        "path": "/people"
+      },
+      {
+        "label": "Roles",
+        "path": "/roles"
+      },
+      {
+        "label": "Settings",
+        "path": "/settings"
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "DEMO_GREETING",
+      "type": "string",
+      "default": "Hello from Hosty"
+    },
+    {
+      "key": "DEMO_RELEASE_CHANNEL",
+      "type": "string",
+      "default": "local"
+    },
+    {
+      "key": "DEMO_REFRESH_SECONDS",
+      "type": "number",
+      "default": "30"
+    },
+    {
+      "key": "DEMO_AUTH_PREVIEW",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "DEMO_PUBLIC_URL",
+      "type": "url",
+      "default": "http://localhost:3100"
+    }
+  ],
+  "data": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "docker",
+        "service": "backend",
+        "containerPath": "/app/data",
+        "environment": "HOSTY_APP_DATA_DIR"
+      },
+      {
+        "runtime": "dev",
+        "environment": "HOSTY_APP_DATA_DIR"
+      }
+    ]
+  },
+  "capabilities": ["open", "update", "restart", "stop", "remove", "backup", "restore", "logs"]
+}
