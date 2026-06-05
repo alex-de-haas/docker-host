@@ -15,6 +15,7 @@ internal sealed class LocalCommandRuntimeAdapter(
     {
         var endpoints = new List<AppEndpointContract>();
         var startedServices = new List<string>();
+        EnsureExplicitPortsAvailable(context.Manifest.Services);
         try
         {
             foreach (var service in context.Manifest.Services)
@@ -33,7 +34,6 @@ internal sealed class LocalCommandRuntimeAdapter(
                         $"Local command working directory was not found: {workingDirectory}");
                 }
 
-                EnsureExplicitPortsAvailable(service);
                 Directory.CreateDirectory(Path.Combine(context.AppRoot, "logs"));
                 var logPath = Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
                 var logWriter = new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
@@ -235,22 +235,35 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
     }
 
-    private static void EnsureExplicitPortsAvailable(RuntimeSelectedService service)
+    private static void EnsureExplicitPortsAvailable(IReadOnlyList<RuntimeSelectedService> services)
     {
-        foreach (var port in service.Runtime.Ports)
+        var usedPorts = new Dictionary<int, string>();
+        foreach (var service in services)
         {
-            var hostPort = port.LocalPort ?? port.HostPort;
-            if (hostPort is null)
+            foreach (var port in service.Runtime.Ports)
             {
-                continue;
-            }
+                var hostPort = port.LocalPort ?? port.HostPort;
+                if (hostPort is null)
+                {
+                    continue;
+                }
 
-            var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port";
-            if (!IsLoopbackPortAvailable(hostPort.Value))
-            {
-                throw new AppLifecycleException(
-                    "local_command_port_unavailable",
-                    $"Local command service '{service.Key}' requires local port {hostPort.Value} for port '{key}', but that port is already in use.");
+                var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port";
+                if (!IsLoopbackPortAvailable(hostPort.Value))
+                {
+                    throw new AppLifecycleException(
+                        "local_command_port_unavailable",
+                        $"Local command service '{service.Key}' requires local port {hostPort.Value} for port '{key}', but that port is already in use or invalid.");
+                }
+
+                if (usedPorts.TryGetValue(hostPort.Value, out var existingService))
+                {
+                    throw new AppLifecycleException(
+                        "local_command_port_unavailable",
+                        $"Local command service '{service.Key}' requires local port {hostPort.Value} for port '{key}', but that port is already used by service '{existingService}' in this app.");
+                }
+
+                usedPorts.Add(hostPort.Value, service.Key);
             }
         }
     }
@@ -263,26 +276,35 @@ internal sealed class LocalCommandRuntimeAdapter(
 
     private static bool IsLoopbackPortAvailable(int port)
     {
-        if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)
+        if (port is <= 0 or > IPEndPoint.MaxPort)
         {
             return false;
         }
 
-        return CanBind(IPAddress.Loopback, port) &&
-            (!Socket.OSSupportsIPv6 || CanBind(IPAddress.IPv6Loopback, port));
+        if (ProbeBind(IPAddress.Loopback, port) is not PortBindProbeResult.Available)
+        {
+            return false;
+        }
+
+        return !Socket.OSSupportsIPv6 ||
+            ProbeBind(IPAddress.IPv6Loopback, port) is not PortBindProbeResult.InUse;
     }
 
-    private static bool CanBind(IPAddress address, int port)
+    private static PortBindProbeResult ProbeBind(IPAddress address, int port)
     {
         try
         {
             using var listener = new TcpListener(address, port);
             listener.Start();
-            return true;
+            return PortBindProbeResult.Available;
+        }
+        catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+        {
+            return PortBindProbeResult.InUse;
         }
         catch (SocketException)
         {
-            return false;
+            return PortBindProbeResult.Unavailable;
         }
     }
 
@@ -348,6 +370,13 @@ internal sealed class LocalCommandRuntimeAdapter(
 
     private static string NormalizeEnvironmentKey(string value)
         => new(value.Select(character => char.IsLetterOrDigit(character) ? char.ToUpperInvariant(character) : '_').ToArray());
+
+    private enum PortBindProbeResult
+    {
+        Available,
+        InUse,
+        Unavailable,
+    }
 }
 
 internal sealed class LocalCommandProcessRegistry

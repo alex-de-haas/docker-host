@@ -136,12 +136,17 @@ internal sealed class CoreLifecycleService(
     public async Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+        IAppRuntimeAdapter? adapter = null;
+        RuntimeLifecycleContext? context = null;
+        var runtimeStarted = false;
         try
         {
             var selection = await LoadSelectionForAppAsync(app, cancellationToken);
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
-            var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
-            var result = await adapter.StartAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
+            adapter = ResolveAdapter(selection.RuntimeProfile.Type);
+            context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            var result = await adapter.StartAsync(context, cancellationToken);
+            runtimeStarted = true;
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
@@ -155,6 +160,11 @@ internal sealed class CoreLifecycleService(
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
+            if (runtimeStarted && adapter is not null && context is not null)
+            {
+                await TryStopRuntimeAsync(adapter, context);
+            }
+
             await RecordForegroundLifecycleFailureAsync(appId, "start", "stopped", ex.Message, cancellationToken);
             throw;
         }
@@ -180,13 +190,17 @@ internal sealed class CoreLifecycleService(
     public async Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+        IAppRuntimeAdapter? adapter = null;
+        RuntimeLifecycleContext? context = null;
+        var runtimeStarted = false;
         try
         {
             var selection = await LoadSelectionForAppAsync(app, cancellationToken);
-            var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
-            var context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            adapter = ResolveAdapter(selection.RuntimeProfile.Type);
+            context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             _ = await adapter.StopAsync(context, cancellationToken);
             var start = await adapter.StartAsync(context, cancellationToken);
+            runtimeStarted = true;
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = start.RuntimeState,
@@ -200,6 +214,11 @@ internal sealed class CoreLifecycleService(
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
+            if (runtimeStarted && adapter is not null && context is not null)
+            {
+                await TryStopRuntimeAsync(adapter, context);
+            }
+
             await RecordForegroundLifecycleFailureAsync(appId, "restart", "stopped", ex.Message, cancellationToken);
             throw;
         }
@@ -764,6 +783,17 @@ internal sealed class CoreLifecycleService(
             }, cancellationToken);
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
+        {
+        }
+    }
+
+    private static async Task TryStopRuntimeAsync(IAppRuntimeAdapter adapter, RuntimeLifecycleContext context)
+    {
+        try
+        {
+            _ = await adapter.StopAsync(context, CancellationToken.None);
+        }
+        catch
         {
         }
     }

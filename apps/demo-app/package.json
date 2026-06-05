@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "npm run dev:frontend",
-    "dev:frontend": "next dev --port ${PORT:-3100}",
-    "dev:backend": "next dev --port ${PORT:-3101}",
+    "dev:frontend": "node scripts/run-next.mjs dev 3100",
+    "dev:backend": "node scripts/run-next.mjs dev 3101",
     "build": "next build",
-    "start": "next start --port ${PORT:-3100}",
+    "start": "node scripts/run-next.mjs start 3100",
     "lint": "eslint"
   },
   "dependencies": {
