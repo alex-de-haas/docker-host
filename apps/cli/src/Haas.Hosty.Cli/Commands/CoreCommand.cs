@@ -32,33 +32,31 @@ internal sealed class CoreCommand(CommandContext context)
     private async Task<int> StartAsync(string[] args)
     {
         var options = ParseStartOptions(args);
-        var projectPath = options.ProjectPath is null ? FindCoreProjectPath() : Path.GetFullPath(options.ProjectPath);
-        if (projectPath is null)
-        {
-            throw new CommandUsageException(
-                "Unable to locate Hosty Core project. Run from the repository root or pass --project <path>.",
-                Usage);
-        }
-
-        if (!File.Exists(projectPath))
-        {
-            throw new CommandUsageException($"Hosty Core project was not found: {projectPath}", Usage);
-        }
-
         Directory.CreateDirectory(context.Environment.RootDirectory);
         var url = options.Url ?? DefaultCoreUrl;
         var settings = context.SettingsStore.Load();
         settings.Validate(context.Environment);
 
+        CoreStartTarget target;
+        try
+        {
+            target = await ResolveStartTargetAsync(options);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
+        {
+            context.Console.MarkupLine($"[red]Hosty Core bootstrap failed:[/] {Markup.Escape(ex.Message)}");
+            return 1;
+        }
+
         if (options.Foreground)
         {
-            var process = StartForeground(projectPath, url, settings);
+            var process = StartForeground(target, url, settings);
             context.Console.MarkupLine($"[green]Hosty Core starting.[/] PID {process.Id}, URL {Markup.Escape(url)}");
             await process.WaitForExitAsync();
             return process.ExitCode;
         }
 
-        var logPath = StartBackground(projectPath, url, settings);
+        var logPath = StartBackground(target, url, settings);
         context.Console.MarkupLine($"[green]Hosty Core starting.[/] URL {Markup.Escape(url)}");
         context.Console.MarkupLine($"[grey]Log:[/] {Markup.Escape(logPath)}");
 
@@ -74,14 +72,36 @@ internal sealed class CoreCommand(CommandContext context)
         return 0;
     }
 
-    private Process StartForeground(string projectPath, string url, LaunchSettings settings)
+    private async Task<CoreStartTarget> ResolveStartTargetAsync(StartOptions options)
     {
-        var startInfo = CreateCoreStartInfo(projectPath, url, settings);
+        if (options.ProjectPath is not null)
+        {
+            if (string.IsNullOrWhiteSpace(options.ProjectPath))
+            {
+                throw new CommandUsageException("--project requires a non-empty path.", Usage);
+            }
+
+            var projectPath = Path.GetFullPath(options.ProjectPath);
+            if (!File.Exists(projectPath))
+            {
+                throw new CommandUsageException($"Hosty Core project was not found: {projectPath}", Usage);
+            }
+
+            return CoreStartTarget.FromProject(projectPath);
+        }
+
+        var installation = await new CoreInstallationService(context).EnsureInstalledAsync();
+        return CoreStartTarget.FromExecutable(installation.ExecutablePath);
+    }
+
+    private Process StartForeground(CoreStartTarget target, string url, LaunchSettings settings)
+    {
+        var startInfo = CreateCoreStartInfo(target, url, settings);
         startInfo.CreateNoWindow = false;
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start Hosty Core process.");
     }
 
-    private string StartBackground(string projectPath, string url, LaunchSettings settings)
+    private string StartBackground(CoreStartTarget target, string url, LaunchSettings settings)
     {
         var logDirectory = Path.Combine(context.Environment.RootDirectory, "core", "logs");
         Directory.CreateDirectory(logDirectory);
@@ -89,7 +109,7 @@ internal sealed class CoreCommand(CommandContext context)
 
         if (OperatingSystem.IsWindows())
         {
-            var windowsStartInfo = CreateCoreStartInfo(projectPath, url, settings);
+            var windowsStartInfo = CreateCoreStartInfo(target, url, settings);
             windowsStartInfo.CreateNoWindow = true;
             using var windowsProcess = Process.Start(windowsStartInfo);
             return logPath;
@@ -100,11 +120,7 @@ internal sealed class CoreCommand(CommandContext context)
         var command = string.Join(" ", [
             .. environment,
             "nohup",
-            "dotnet",
-            "run",
-            "--project",
-            ShellQuote(projectPath),
-            "--no-launch-profile",
+            .. target.GetShellCommand(),
             ">",
             ShellQuote(logPath),
             "2>&1",
@@ -116,6 +132,7 @@ internal sealed class CoreCommand(CommandContext context)
             FileName = "/bin/sh",
             UseShellExecute = false,
             CreateNoWindow = true,
+            WorkingDirectory = target.WorkingDirectory,
         };
         startInfo.ArgumentList.Add("-c");
         startInfo.ArgumentList.Add(command);
@@ -130,18 +147,19 @@ internal sealed class CoreCommand(CommandContext context)
         return logPath;
     }
 
-    private ProcessStartInfo CreateCoreStartInfo(string projectPath, string url, LaunchSettings settings)
+    private ProcessStartInfo CreateCoreStartInfo(CoreStartTarget target, string url, LaunchSettings settings)
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = "dotnet",
+            FileName = target.FileName,
             UseShellExecute = false,
-            WorkingDirectory = Path.GetDirectoryName(projectPath) ?? Directory.GetCurrentDirectory(),
+            WorkingDirectory = target.WorkingDirectory,
         };
-        startInfo.ArgumentList.Add("run");
-        startInfo.ArgumentList.Add("--project");
-        startInfo.ArgumentList.Add(projectPath);
-        startInfo.ArgumentList.Add("--no-launch-profile");
+        foreach (var argument in target.Arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
         foreach (var pair in BuildCoreEnvironment(url, settings))
         {
             startInfo.Environment[pair.Key] = pair.Value;
@@ -400,32 +418,6 @@ internal sealed class CoreCommand(CommandContext context)
         return args[index];
     }
 
-    private static string? FindCoreProjectPath()
-    {
-        foreach (var root in GetSearchRoots())
-        {
-            var current = new DirectoryInfo(root);
-            while (current is not null)
-            {
-                var candidate = Path.Combine(current.FullName, "apps", "core", "src", "Haas.Hosty.Core", "Haas.Hosty.Core.csproj");
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-
-                current = current.Parent;
-            }
-        }
-
-        return null;
-    }
-
-    private static IEnumerable<string> GetSearchRoots()
-    {
-        yield return Directory.GetCurrentDirectory();
-        yield return AppContext.BaseDirectory;
-    }
-
     private static string ShellQuote(string value)
         => $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
 
@@ -452,6 +444,33 @@ internal sealed class CoreCommand(CommandContext context)
 
     private sealed record StartOptions(string? ProjectPath, string? Url, bool Foreground);
 
+    private sealed record CoreStartTarget(
+        string FileName,
+        string WorkingDirectory,
+        IReadOnlyList<string> Arguments)
+    {
+        public static CoreStartTarget FromProject(string projectPath)
+            => new(
+                "dotnet",
+                Path.GetDirectoryName(projectPath) ?? Directory.GetCurrentDirectory(),
+                ["run", "--project", projectPath, "--no-launch-profile"]);
+
+        public static CoreStartTarget FromExecutable(string executablePath)
+            => new(
+                executablePath,
+                Path.GetDirectoryName(executablePath) ?? Directory.GetCurrentDirectory(),
+                []);
+
+        public IEnumerable<string> GetShellCommand()
+        {
+            yield return ShellQuote(FileName);
+            foreach (var argument in Arguments)
+            {
+                yield return ShellQuote(argument);
+            }
+        }
+    }
+
     private sealed record ControlDiscoveryDocument(
         string ControlBaseUrl,
         IReadOnlyDictionary<string, string> RequiredHeaders);
@@ -472,13 +491,13 @@ internal sealed class CoreCommand(CommandContext context)
           hosty core <command> [options]
 
         Commands:
-          start [--project <path>] [--url <url>] [--foreground]
+          start [--project <csproj-path>] [--url <url>] [--foreground]
           status
           stop
-          restart [--project <path>] [--url <url>] [--foreground]
+          restart [--project <csproj-path>] [--url <url>] [--foreground]
           logs [--tail <count>]
 
         Description:
-          Manages the local-first Hosty Core process without Docker.
+          Manages the installed Hosty Core process. Pass --project for explicit source mode.
         """;
 }

@@ -8,7 +8,7 @@ Monorepo for Hosty, including the local-first Hosty Core API, the Hosty Shell br
 
 ## Install Current CLI Build
 
-The Unix installer downloads the rolling `cli-dev` CLI release, verifies `SHA256SUMS` when available, installs `hosty` under `~/.hosty/bin`, adds that directory to your shell profile when possible, and prepares the local Hosty directories:
+The Unix installer downloads the rolling `cli-dev` CLI release, verifies `SHA256SUMS` when available, installs `hosty` under `~/.hosty/bin`, adds that directory to your shell profile when possible, and prepares the local Hosty directories. The first `hosty start` downloads the matching Core executable into `~/.hosty/core/bin` when it is missing:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
@@ -96,6 +96,12 @@ Run Core and Shell as separate processes when debugging one side:
 ```bash
 npm run core:dev
 npm run shell:dev
+```
+
+The installed CLI only runs Core from this checkout when a project is passed explicitly:
+
+```bash
+hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj
 ```
 
 For runtime app work with Hosty identity and Shell integration, install the app

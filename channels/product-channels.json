@@ -4,7 +4,7 @@
       "id": "main",
       "label": "Main",
       "cliVersion": "0.1.0",
-      "coreManifestPath": "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
+      "coreArtifactPrefix": "hosty-core",
       "shellManifestPath": "apps/shell/manifest.json"
     }
   ]

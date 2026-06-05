@@ -6,7 +6,7 @@ Update channels add a discovery layer above concrete runtime app manifests, sour
 
 ## Scope
 
-- Product channel index for Hosty Core, Shell, and optional CLI delivery.
+- Product channel index for Hosty Core executable artifacts, Shell, and optional CLI delivery.
 - Runtime app channel indexes that resolve to `app.0.1` manifest snapshots or source refs.
 - Pull request channels for validating temporary builds.
 - Channel cleanup for expired pull request builds.
@@ -25,6 +25,10 @@ Runtime app channels should resolve to:
 - `manifestUrl` or manifest snapshot path
 - source repository/ref/commit when source-backed
 - image repository/tag/digest when Docker-backed
+
+## Product Channel Placeholder
+
+The committed `channels/product-channels.json` file is a local placeholder, not a generated release index. Its Core entry identifies the `hosty-core` artifact family. It must not point at the repository Core `.csproj`, because default Core start uses the installed executable and source mode is only selected with `hosty core start --project <csproj-path>`.
 
 ## Open Questions And Recommendations
 

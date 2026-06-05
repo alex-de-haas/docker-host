@@ -1,4 +1,4 @@
-name: CLI Release Assets
+name: Hosty Release Assets
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches:
       - main
     paths:
+      - "apps/core/**"
       - "apps/cli/**"
       - "docs/features/core-api.md"
       - "scripts/install.sh"
@@ -23,18 +24,23 @@ jobs:
           - os: macos-latest
             rid: osx-arm64
             artifact: hosty-darwin-arm64
+            core_artifact: hosty-core-darwin-arm64
           - os: macos-latest
             rid: osx-x64
             artifact: hosty-darwin-x64
+            core_artifact: hosty-core-darwin-x64
           - os: ubuntu-latest
             rid: linux-arm64
             artifact: hosty-linux-arm64
+            core_artifact: hosty-core-linux-arm64
           - os: ubuntu-latest
             rid: linux-x64
             artifact: hosty-linux-x64
+            core_artifact: hosty-core-linux-x64
           - os: windows-latest
             rid: win-x64
             artifact: hosty-windows-x64.exe
+            core_artifact: hosty-core-windows-x64.exe
 
     steps:
       - name: Check out repository
@@ -72,6 +78,33 @@ jobs:
           name: ${{ matrix.artifact }}
           path: artifacts/${{ matrix.artifact }}
 
+      - name: Publish Core executable
+        shell: bash
+        run: |
+          dotnet publish apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj \
+            --configuration Release \
+            --runtime "${{ matrix.rid }}" \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=false \
+            --output core-artifacts
+
+      - name: Normalize Core artifact name
+        shell: bash
+        run: |
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            mv core-artifacts/hosty-core.exe "core-artifacts/${{ matrix.core_artifact }}"
+          else
+            mv core-artifacts/hosty-core "core-artifacts/${{ matrix.core_artifact }}"
+            chmod +x "core-artifacts/${{ matrix.core_artifact }}"
+          fi
+
+      - name: Upload Core artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ matrix.core_artifact }}
+          path: core-artifacts/${{ matrix.core_artifact }}
+
   publish-cli-dev-release:
     name: Publish cli-dev release
     needs: publish-artifacts
@@ -86,7 +119,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Download CLI artifacts
+      - name: Download release artifacts
         uses: actions/download-artifact@v8.0.1
         with:
           path: release-assets
@@ -103,6 +136,11 @@ jobs:
             hosty-linux-arm64
             hosty-linux-x64
             hosty-windows-x64.exe
+            hosty-core-darwin-arm64
+            hosty-core-darwin-x64
+            hosty-core-linux-arm64
+            hosty-core-linux-x64
+            hosty-core-windows-x64.exe
           )
 
           for artifact in "${expected[@]}"; do
@@ -135,7 +173,7 @@ jobs:
           git push --force origin refs/tags/cli-dev
 
           cat > release-notes.md <<EOF
-          Rolling development release for the Hosty CLI.
+          Rolling development release for Hosty CLI and Core.
 
           Commit: ${GITHUB_SHA}
 
@@ -144,13 +182,13 @@ jobs:
 
           if gh release view cli-dev >/dev/null 2>&1; then
             gh release edit cli-dev \
-              --title "CLI development build" \
+              --title "Hosty development build" \
               --notes-file release-notes.md \
               --prerelease
             gh release upload cli-dev dist/* --clobber
           else
             gh release create cli-dev dist/* \
-              --title "CLI development build" \
+              --title "Hosty development build" \
               --notes-file release-notes.md \
               --prerelease
           fi

@@ -9,7 +9,7 @@ Hosty local development uses normal component boundaries:
 - Hosty Core runs as the local ASP.NET Core process.
 - Hosty Shell runs as a runtime app and browser client for Core.
 - User apps run through Core-managed runtime lifecycle, including local command runtime profiles.
-- The CLI bootstraps Core and then calls Core APIs for app operations.
+- The CLI bootstraps the installed Core executable by default and then calls Core APIs for app operations.
 
 ```mermaid
 flowchart LR
@@ -68,6 +68,12 @@ hosty apps switch-runtime hosty.shell --runtime dev --plan-digest <digest>
 
 Do not use this pattern for Core itself. Core cannot finish its own replacement after it exits; those operations need the trusted CLI or another outer supervisor.
 
+The installed CLI does not implicitly run Core from the current repository checkout. Use the explicit project path when validating the current Core source through the CLI:
+
+```bash
+hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj
+```
+
 ## Local Runtime Apps
 
 Local app development uses an app manifest runtime profile, not a separate local target command group.
@@ -75,10 +81,12 @@ Local app development uses an app manifest runtime profile, not a separate local
 For the repository demo app:
 
 ```bash
-hosty core start
+hosty start
 hosty apps install apps/demo-app/manifest.json --runtime dev
 hosty apps start com.haas.demo-app
 ```
+
+`hosty start` uses the installed Core executable. When testing repository Core changes, start Core with `npm run core:dev` or with `hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj` before running app lifecycle commands.
 
 The `dev` runtime profile in `apps/demo-app/manifest.json` starts local command services from `apps/demo-app`:
 
