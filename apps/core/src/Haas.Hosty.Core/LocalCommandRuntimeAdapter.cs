@@ -33,6 +33,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                         $"Local command working directory was not found: {workingDirectory}");
                 }
 
+                EnsureExplicitPortsAvailable(service);
                 Directory.CreateDirectory(Path.Combine(context.AppRoot, "logs"));
                 var logPath = Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
                 var logWriter = new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
@@ -209,6 +210,7 @@ internal sealed class LocalCommandRuntimeAdapter(
             startInfo.Environment[$"HOSTY_DEPENDENCY_{NormalizeEnvironmentKey(dependency.Key)}_URL"] = dependency.Value;
         }
 
+        var assignedHostPorts = new List<int>();
         foreach (var port in service.Runtime.Ports)
         {
             var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -218,12 +220,69 @@ internal sealed class LocalCommandRuntimeAdapter(
             }
 
             var hostPort = port.LocalPort ?? port.HostPort ?? AllocateLoopbackPort();
+            assignedHostPorts.Add(hostPort);
             startInfo.Environment[$"HOSTY_PORT_{NormalizeEnvironmentKey(key)}"] = hostPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
             endpoints.Add(new AppEndpointContract(
                 Key: $"{service.Key}.{key}",
                 Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
                 Url: $"{(string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol)}://{config.RuntimePublicHost}:{hostPort}",
                 Public: port.Public ?? false));
+        }
+
+        if (assignedHostPorts.Count == 1 && !HasExplicitPortEnvironment(context, service))
+        {
+            startInfo.Environment["PORT"] = assignedHostPorts[0].ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
+    private static void EnsureExplicitPortsAvailable(RuntimeSelectedService service)
+    {
+        foreach (var port in service.Runtime.Ports)
+        {
+            var hostPort = port.LocalPort ?? port.HostPort;
+            if (hostPort is null)
+            {
+                continue;
+            }
+
+            var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port";
+            if (!IsLoopbackPortAvailable(hostPort.Value))
+            {
+                throw new AppLifecycleException(
+                    "local_command_port_unavailable",
+                    $"Local command service '{service.Key}' requires local port {hostPort.Value} for port '{key}', but that port is already in use.");
+            }
+        }
+    }
+
+    private static bool HasExplicitPortEnvironment(RuntimeLifecycleContext context, RuntimeSelectedService service)
+        => service.Runtime.Environment.Keys.Any(key => string.Equals(key, "PORT", StringComparison.OrdinalIgnoreCase)) ||
+            context.App.Settings.Values.Any(setting =>
+                string.Equals(setting.Key, "PORT", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(setting.Value));
+
+    private static bool IsLoopbackPortAvailable(int port)
+    {
+        if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)
+        {
+            return false;
+        }
+
+        return CanBind(IPAddress.Loopback, port) &&
+            (!Socket.OSSupportsIPv6 || CanBind(IPAddress.IPv6Loopback, port));
+    }
+
+    private static bool CanBind(IPAddress address, int port)
+    {
+        try
+        {
+            using var listener = new TcpListener(address, port);
+            listener.Start();
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
         }
     }
 

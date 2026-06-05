@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using Haas.Hosty.Core;
@@ -908,6 +909,9 @@ public sealed class CoreLifecycleServiceTests
             var output = await File.ReadAllTextAsync(outputPath);
             Assert.Contains("local", output);
             Assert.Contains("http://127.0.0.1:6379", output);
+            var parts = output.Split('|');
+            Assert.Equal(parts[3], parts[4]);
+            Assert.Matches("^[0-9]+$", parts[3]);
         }
         finally
         {
@@ -949,6 +953,27 @@ public sealed class CoreLifecycleServiceTests
         var stopped = await fixture.Service.GetHealthAsync("com.example.local");
         Assert.Equal("stopped", stopped.Status);
         Assert.Equal("stopped", Assert.Single(stopped.Services).Status);
+    }
+
+    [Fact]
+    public async Task StartAsync_LocalCommandFixedPortInUseRecordsFailure()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var manifest = await fixture.WriteLocalCommandManifestAsync(localPort: port);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.StartAsync("com.example.local"));
+
+        Assert.Equal("local_command_port_unavailable", error.Code);
+        var stored = await fixture.Apps.GetAppAsync("com.example.local");
+        Assert.Equal("stopped", stored?.RuntimeState);
+        Assert.Equal("failed", stored?.OperationStatus);
+        Assert.Equal("start", stored?.LastOperation);
+        Assert.Contains(port.ToString(System.Globalization.CultureInfo.InvariantCulture), stored?.LastError);
     }
 
     [Fact]
@@ -1331,10 +1356,13 @@ public sealed class CoreLifecycleServiceTests
             return path;
         }
 
-        public async Task<string> WriteLocalCommandManifestAsync()
+        public async Task<string> WriteLocalCommandManifestAsync(int? localPort = null)
         {
             var path = Path.Combine(Root, "local-command.json");
-            await File.WriteAllTextAsync(path, """
+            var localPortJson = localPort is null
+                ? ""
+                : $"\"localPort\": {localPort.Value},{Environment.NewLine}                          ";
+            await File.WriteAllTextAsync(path, $$"""
                 {
                   "schemaVersion": "app.0.1",
                   "id": "com.example.local",
@@ -1347,7 +1375,7 @@ public sealed class CoreLifecycleServiceTests
                     "runtimes": {
                       "dev": {
                         "type": "localCommand",
-                        "command": "printf \"$APP_MODE|$HOSTY_APP_DATA_DIR|$HOSTY_DEPENDENCY_COM_EXAMPLE_CACHE_URL\" > \"$HOSTY_APP_DATA_DIR/local-output.txt\"; sleep 5",
+                        "command": "printf \"$APP_MODE|$HOSTY_APP_DATA_DIR|$HOSTY_DEPENDENCY_COM_EXAMPLE_CACHE_URL|$PORT|$HOSTY_PORT_HTTP\" > \"$HOSTY_APP_DATA_DIR/local-output.txt\"; sleep 5",
                         "workingDirectory": ".",
                         "environment": {
                           "APP_MODE": "manifest"
@@ -1355,7 +1383,7 @@ public sealed class CoreLifecycleServiceTests
                         "ports": [{
                           "key": "http",
                           "containerPort": 5173,
-                          "protocol": "http",
+                          {{localPortJson}}"protocol": "http",
                           "public": true
                         }]
                       }

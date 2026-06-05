@@ -136,20 +136,28 @@ internal sealed class CoreLifecycleService(
     public async Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
-        var selection = await LoadSelectionForAppAsync(app, cancellationToken);
-        app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
-        var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
-        var result = await adapter.StartAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
-        var updated = await apps.UpdateAppAsync(appId, current => current with
+        try
         {
-            RuntimeState = result.RuntimeState,
-            OperationStatus = "started",
-            LastOperation = "start",
-            LastError = null,
-            Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
-        }, cancellationToken);
+            var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+            app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
+            var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
+            var result = await adapter.StartAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
+            var updated = await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = result.RuntimeState,
+                OperationStatus = "started",
+                LastOperation = "start",
+                LastError = null,
+                Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
+            }, cancellationToken);
 
-        return new AppLifecycleResponse(AppSummary.From(updated.App), null, "started");
+            return new AppLifecycleResponse(AppSummary.From(updated.App), null, "started");
+        }
+        catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
+        {
+            await RecordForegroundLifecycleFailureAsync(appId, "start", "stopped", ex.Message, cancellationToken);
+            throw;
+        }
     }
 
     public async Task<AppLifecycleResponse> StopAsync(string appId, CancellationToken cancellationToken = default)
@@ -172,21 +180,29 @@ internal sealed class CoreLifecycleService(
     public async Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
-        var selection = await LoadSelectionForAppAsync(app, cancellationToken);
-        var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
-        var context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
-        _ = await adapter.StopAsync(context, cancellationToken);
-        var start = await adapter.StartAsync(context, cancellationToken);
-        var updated = await apps.UpdateAppAsync(appId, current => current with
+        try
         {
-            RuntimeState = start.RuntimeState,
-            OperationStatus = "restarted",
-            LastOperation = "restart",
-            LastError = null,
-            Endpoints = MergeEndpointUrls(current.Endpoints, start.Endpoints, selection),
-        }, cancellationToken);
+            var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+            var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
+            var context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            _ = await adapter.StopAsync(context, cancellationToken);
+            var start = await adapter.StartAsync(context, cancellationToken);
+            var updated = await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = start.RuntimeState,
+                OperationStatus = "restarted",
+                LastOperation = "restart",
+                LastError = null,
+                Endpoints = MergeEndpointUrls(current.Endpoints, start.Endpoints, selection),
+            }, cancellationToken);
 
-        return new AppLifecycleResponse(AppSummary.From(updated.App), null, "restarted");
+            return new AppLifecycleResponse(AppSummary.From(updated.App), null, "restarted");
+        }
+        catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
+        {
+            await RecordForegroundLifecycleFailureAsync(appId, "restart", "stopped", ex.Message, cancellationToken);
+            throw;
+        }
     }
 
     public async Task<AppUpdatePlan> CreateUpdatePlanAsync(string appId, AppUpdatePlanRequest request, CancellationToken cancellationToken = default)
@@ -729,6 +745,31 @@ internal sealed class CoreLifecycleService(
         {
         }
     }
+
+    private async Task RecordForegroundLifecycleFailureAsync(
+        string appId,
+        string operation,
+        string runtimeState,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = runtimeState,
+                OperationStatus = "failed",
+                LastOperation = operation,
+                LastError = message,
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
+        {
+        }
+    }
+
+    private static bool IsRecordableLifecycleFailure(Exception ex)
+        => ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException or JsonException;
 
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
     {

@@ -15,6 +15,7 @@ Hosty runs local and Docker-backed runtime apps under Core-managed lifecycle. Th
 - App auth code exchange and app-origin sessions.
 - Scoped app directory through `HOSTY_APP_SERVICE_TOKEN`.
 - Primary app data directory and app backup/restore workflows.
+- Automatic local port assignment for runtime services that omit explicit host ports.
 
 ## App Lifecycle
 
@@ -41,6 +42,8 @@ Core injects app environment into each service:
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_{KEY}`
 - `HOSTY_DEPENDENCY_{KEY}_URL`
+
+For local command services, Core assigns available ports when `localPort` / `hostPort` are omitted. Single-port services also receive `PORT=<assigned-port>` unless the app explicitly configured `PORT`.
 
 ## Local Demo App Workflow
 

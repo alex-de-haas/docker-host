@@ -21,6 +21,7 @@ flowchart LR
 - [Shell access and system apps](features/shell-access-and-system-apps.md) - administrator-only management views and system app visibility.
 - [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - current runtime app lifecycle platform.
 - [Runtime app manifest](features/runtime-app-manifest.md) - `app.0.1` manifest contract.
+- [Automatic runtime app ports](features/automatic-runtime-app-ports.md) - Core-assigned local ports and `PORT` compatibility behavior.
 - [Runtime app update](features/runtime-app-update.md) - update plan and apply behavior.
 - [Runtime source workflows](features/runtime-source-workflows.md) - source checkout, local override, and runtime switching.
 - [Multi-service runtime apps](features/multi-service-runtime-apps.md) - multiple services per app.

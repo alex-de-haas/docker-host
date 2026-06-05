@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "npm run dev:frontend",
-    "dev:frontend": "next dev --port 3100",
-    "dev:backend": "next dev --port 3101",
+    "dev:frontend": "next dev --port ${PORT:-3100}",
+    "dev:backend": "next dev --port ${PORT:-3101}",
     "build": "next build",
     "start": "next start --port ${PORT:-3100}",
     "lint": "eslint"

@@ -45,15 +45,12 @@
           "workingDirectory": "apps/demo-app",
           "command": "npm run dev:backend",
           "environment": {
-            "NEXT_DIST_DIR": ".next-dev-backend",
-            "PORT": "3101",
-            "DEMO_PUBLIC_URL": "http://localhost:3101"
+            "NEXT_DIST_DIR": ".next-dev-backend"
           },
           "ports": [
             {
               "key": "http",
               "containerPort": 3000,
-              "localPort": 3101,
               "protocol": "http"
             }
           ]
@@ -85,16 +82,12 @@
           "workingDirectory": "apps/demo-app",
           "command": "npm run dev:frontend",
           "environment": {
-            "NEXT_DIST_DIR": ".next-dev-frontend",
-            "PORT": "3100",
-            "DEMO_PUBLIC_URL": "http://localhost:3100",
-            "DEMO_BACKEND_BASE_URL": "http://localhost:3101"
+            "NEXT_DIST_DIR": ".next-dev-frontend"
           },
           "ports": [
             {
               "key": "http",
               "containerPort": 3000,
-              "localPort": 3100,
               "protocol": "http",
               "public": true
             }
@@ -163,11 +156,6 @@
       "key": "DEMO_AUTH_PREVIEW",
       "type": "boolean",
       "default": "true"
-    },
-    {
-      "key": "DEMO_PUBLIC_URL",
-      "type": "url",
-      "default": "http://localhost:3100"
     }
   ],
   "data": {
