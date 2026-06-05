@@ -45,6 +45,10 @@ hosty apps start com.haas.demo-app
 - `HOSTY_PORT_{KEY}`
 - `HOSTY_DEPENDENCY_{KEY}_URL`
 
+For `localCommand` profiles, omit `localPort` and `hostPort` unless the app explicitly requires a fixed local port. Core assigns an available loopback port and exposes it as `HOSTY_PORT_{KEY}`. When a service has exactly one assigned port and did not explicitly set `PORT`, Core also injects `PORT` with the assigned value for framework compatibility.
+
+Use explicit `localPort` / `hostPort` only as an override. If an explicit local command port is already in use, Core fails start instead of launching the process against a conflicting port.
+
 ## Source
 
 `source` is optional app-level metadata that describes where Core can obtain the app source when a runtime needs it.

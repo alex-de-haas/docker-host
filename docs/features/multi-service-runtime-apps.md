@@ -18,7 +18,7 @@ Runtime apps can declare more than one service. Each service has runtime-specifi
         "dev": {
           "type": "localCommand",
           "command": "npm run dev:api",
-          "ports": [{ "key": "http", "localPort": 3101, "protocol": "http" }]
+          "ports": [{ "key": "http", "containerPort": 3000, "protocol": "http" }]
         }
       }
     },
@@ -29,7 +29,7 @@ Runtime apps can declare more than one service. Each service has runtime-specifi
         "dev": {
           "type": "localCommand",
           "command": "npm run dev:web",
-          "ports": [{ "key": "http", "localPort": 3100, "protocol": "http", "public": true }]
+          "ports": [{ "key": "http", "containerPort": 3000, "protocol": "http", "public": true }]
         }
       }
     }
@@ -41,6 +41,7 @@ Runtime apps can declare more than one service. Each service has runtime-specifi
 
 - Core starts services in dependency order.
 - `HOSTY_APP_SERVICE_KEY` identifies the running service.
-- `HOSTY_PORT_{KEY}` exposes assigned local ports.
+- `HOSTY_PORT_{KEY}` exposes assigned local ports. Prefer omitting `localPort` so Core can avoid collisions.
+- Single-port `localCommand` services receive `PORT` when the manifest or settings did not explicitly set it.
 - Public endpoints are shown in Shell and used by `hosty apps open`.
 - Health and logs are reported per service.

@@ -8,8 +8,8 @@ flowchart LR
   B --> C{"Runtime profile"}
   C --> D["docker image ghcr.io/alex-de-haas/demo-app"]
   C --> E["localCommand dev services"]
-  E --> F["frontend localhost:3100"]
-  E --> G["backend localhost:3101"]
+  E --> F["frontend Core-assigned port"]
+  E --> G["backend Core-assigned port"]
   B --> H["Hosty identity and app directory"]
 ```
 
@@ -34,10 +34,10 @@ hosty apps health com.haas.demo-app
 hosty apps open com.haas.demo-app --user user@docker-host.local --mode shell
 ```
 
-The `dev` runtime profile starts two Core-managed local command services from `apps/demo-app`:
+The `dev` runtime profile starts two Core-managed local command services from `apps/demo-app`. Core assigns available local ports and injects each service's selected port as `HOSTY_PORT_HTTP` and `PORT`.
 
-- `frontend` on `http://localhost:3100`;
-- `backend` on `http://localhost:3101`.
+- `frontend` exposes the public app UI endpoint.
+- `backend` exposes the internal API endpoint.
 
 Use source overrides when validating changes from a specific worktree:
 

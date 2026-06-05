@@ -20,8 +20,8 @@ hosty apps start com.haas.demo-app
 
 The demo app manifest declares local command services under the `dev` runtime profile:
 
-- `frontend` runs from `apps/demo-app` on `http://localhost:3100`;
-- `backend` runs from `apps/demo-app` on `http://localhost:3101`.
+- `frontend` runs from `apps/demo-app` on a Core-assigned public app UI port;
+- `backend` runs from `apps/demo-app` on a Core-assigned internal API port.
 
 Use the normal lifecycle while iterating:
 
@@ -37,7 +37,7 @@ For direct app-origin endpoint probes, request an app identity token for an exis
 
 ```bash
 TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
-curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
+curl -H "X-Docker-Host-Identity: $TOKEN" <assigned-demo-app-origin>/api/auth/identity
 ```
 
 For launch validation, ask Core for an app open link:
@@ -72,7 +72,6 @@ Use `runtimeProfiles` to declare both Docker and local command modes:
             {
               "key": "http",
               "containerPort": 3000,
-              "localPort": 3100,
               "protocol": "http",
               "public": true
             }
@@ -83,6 +82,8 @@ Use `runtimeProfiles` to declare both Docker and local command modes:
   ]
 }
 ```
+
+Do not add `localPort` or `hostPort` for normal local app development. Core assigns available ports, exposes them through `HOSTY_PORT_{KEY}`, and injects `PORT` for single-port services unless the app explicitly set `PORT`.
 
 Keep the same service keys, endpoint keys, settings, data directory semantics, and UI navigation across runtime profiles so switching runtimes is reviewable and reversible.
 

@@ -39,6 +39,7 @@ const defaultAppVersion = "0.2.1";
 export function getDemoConfig(): DemoConfig {
   const appId = process.env.HOSTY_APP_ID || defaultAppId;
   const coreOrigin = process.env.HOSTY_CORE_ORIGIN || process.env.HOST_CORE_PUBLIC_ORIGIN || "http://127.0.0.1:3001";
+  const publicPort = process.env.HOSTY_PORT_HTTP || process.env.PORT;
 
   return {
     appId,
@@ -47,7 +48,7 @@ export function getDemoConfig(): DemoConfig {
     releaseChannel: process.env.DEMO_RELEASE_CHANNEL || "local",
     refreshSeconds: readNumber(process.env.DEMO_REFRESH_SECONDS, 30),
     authPreview: readBoolean(process.env.DEMO_AUTH_PREVIEW, false),
-    publicUrl: process.env.DEMO_PUBLIC_URL || "http://localhost:3100",
+    publicUrl: process.env.DEMO_PUBLIC_URL || (publicPort ? `http://localhost:${publicPort}` : "http://localhost:3100"),
     host: {
       coreOrigin,
       appId,

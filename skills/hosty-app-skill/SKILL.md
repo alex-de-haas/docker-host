@@ -34,5 +34,5 @@ For direct endpoint probes:
 
 ```bash
 TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
-curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
+curl -H "X-Docker-Host-Identity: $TOKEN" <assigned-demo-app-origin>/api/auth/identity
 ```

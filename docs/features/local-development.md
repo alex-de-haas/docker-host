@@ -92,8 +92,8 @@ hosty apps start com.haas.demo-app
 
 The `dev` runtime profile in `apps/demo-app/manifest.json` starts local command services from `apps/demo-app`:
 
-- frontend on `http://localhost:3100`;
-- backend on `http://localhost:3101`.
+- frontend on a Core-assigned public app UI port;
+- backend on a Core-assigned internal API port.
 
 When Shell opens the Demo App, Core issues a one-time app authorization code. The Demo App exchanges that code through `HOSTY_CORE_ORIGIN`, creates its own app-origin cookie, and reports revalidation status on `/api/auth/identity`.
 
@@ -123,7 +123,8 @@ Production installers should treat `localCommand` as platform-specific unless th
 
 - run in the foreground and let Core own stop/restart behavior;
 - write diagnostics to stdout/stderr instead of daemonizing into a separate logger;
-- read `HOSTY_APP_DATA_DIR`, `HOSTY_PORT_<KEY>`, `HOSTY_CORE_ORIGIN`, and dependency URL environment variables instead of hard-coding local paths or ports;
+- read `HOSTY_APP_DATA_DIR`, `HOSTY_PORT_<KEY>`, `PORT`, `HOSTY_CORE_ORIGIN`, and dependency URL environment variables instead of hard-coding local paths or ports;
+- omit `localPort` / `hostPort` in normal local development so Core can assign a free port;
 - avoid shell features that only exist on one target platform unless the runtime profile key or installer target makes that platform explicit;
 - keep package installation outside runtime start commands so app start is repeatable and does not require network access.
 
@@ -135,7 +136,7 @@ For direct local endpoint probes, request a Core-issued app identity token for a
 
 ```bash
 TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
-curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
+curl -H "X-Docker-Host-Identity: $TOKEN" <assigned-demo-app-origin>/api/auth/identity
 ```
 
 For Shell or standalone launch validation, ask Core for an app open link:

@@ -23,6 +23,7 @@ Core injects:
 - `HOSTY_CORE_ORIGIN`
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_HTTP`
+- `PORT`
 
 The app also reads demo settings from the manifest:
 
@@ -30,7 +31,8 @@ The app also reads demo settings from the manifest:
 - `DEMO_RELEASE_CHANNEL`
 - `DEMO_REFRESH_SECONDS`
 - `DEMO_AUTH_PREVIEW`
-- `DEMO_PUBLIC_URL`
+
+`DEMO_PUBLIC_URL` remains an optional manual override. During Core-managed local runs the app derives its public URL from the assigned `HOSTY_PORT_HTTP` / `PORT` value.
 
 ## API Routes
 
@@ -45,7 +47,7 @@ The app also reads demo settings from the manifest:
 
 ```bash
 TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
-curl -H "X-Docker-Host-Identity: $TOKEN" http://127.0.0.1:3100/api/auth/identity
+curl -H "X-Docker-Host-Identity: $TOKEN" <assigned-demo-app-origin>/api/auth/identity
 ```
 
 The endpoint revalidates the app identity token through Core and never returns raw tokens or cookies.
