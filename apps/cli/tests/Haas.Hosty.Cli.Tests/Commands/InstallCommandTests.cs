@@ -30,6 +30,7 @@ public sealed class InstallCommandTests : IDisposable
         Assert.True(Directory.Exists(environment.ConfigDirectory));
         Assert.True(Directory.Exists(environment.BinDirectory));
         Assert.True(Directory.Exists(environment.AppsDirectory));
+        Assert.True(Directory.Exists(Path.GetDirectoryName(CoreInstallationService.GetInstalledExecutablePath(environment))));
         Assert.False(File.Exists(environment.LaunchConfigPath));
     }
 

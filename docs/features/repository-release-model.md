@@ -23,7 +23,7 @@ flowchart LR
   Shell["apps/shell Hosty Shell"] --> Core
   Core --> Runtime["Runtime app lifecycle"]
   Runtime --> Demo["apps/demo-app"]
-  CLI --> Artifacts["CLI release assets"]
+  CLI --> Artifacts["CLI/Core release assets"]
   Demo --> DemoImage["Demo App image"]
 ```
 
@@ -35,7 +35,7 @@ Builds are independent:
 
 - `ci.yml` - shared checks on pull requests and pushes;
 - `demo-app-image.yml` - build and push the first-party Demo App Docker image;
-- `cli-release.yml` - build and publish standalone CLI artifacts;
+- `cli-release.yml` - build and publish standalone CLI and Core executable artifacts;
 - optional future workflows - Shell image or package publishing when a public Shell distribution channel is introduced.
 
 Recommended path filters:
@@ -61,7 +61,8 @@ Core build:
   apps/core/**
   global.json
 
-CLI build:
+CLI/Core release build:
+  apps/core/**
   apps/cli/**
   scripts/install.sh
   global.json
@@ -95,10 +96,20 @@ hosty-darwin-x64
 hosty-linux-arm64
 hosty-linux-x64
 hosty-windows-x64.exe
+```
+
+Core release artifacts:
+
+```text
+hosty-core-darwin-arm64
+hosty-core-darwin-x64
+hosty-core-linux-arm64
+hosty-core-linux-x64
+hosty-core-windows-x64.exe
 SHA256SUMS
 ```
 
-For development and early usage, CLI artifacts are published to one rolling GitHub prerelease with tag `cli-dev`. The `cli-dev` workflow overwrites existing release assets for every new CLI build, so installation URLs stay stable while the binary tracks the latest development build.
+For development and early usage, CLI and Core artifacts are published to one rolling GitHub prerelease with tag `cli-dev`. The `cli-dev` workflow overwrites existing release assets for every new release build, so installation URLs stay stable while the binaries track the latest development build.
 
 Unix users install the current development CLI through `scripts/install.sh`:
 
@@ -106,11 +117,11 @@ Unix users install the current development CLI through `scripts/install.sh`:
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
 ```
 
-Stable CLI versions use immutable GitHub releases such as `cli-v0.2.1` when that channel is enabled.
+Stable CLI/Core versions can use immutable GitHub releases such as `cli-v0.2.1` when that channel is enabled.
 
-`install.sh` detects OS/architecture, downloads the right `cli-dev` artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
+`install.sh` detects OS/architecture, downloads the right CLI artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
 
-`hosty update` updates the managed CLI executable. It does not pull a Host image or recreate a Host container. Runtime app updates are separate app commands, for example `hosty apps update <app-id>`.
+The installer does not install Core directly. `hosty start` downloads Core only when `~/.hosty/core/bin/hosty-core` is missing. `hosty update` updates the managed CLI executable first, then installs or replaces the managed Core executable. It does not pull a Host image or recreate a Host container. Runtime app updates are separate app commands, for example `hosty apps update <app-id>`.
 
 ## Release-Ready Validation
 
@@ -118,7 +129,8 @@ Manual validation for the current artifact model:
 
 - install the CLI through the curl flow;
 - run `hosty install` and confirm local Hosty directories are prepared;
-- start Core with `hosty start` from a checkout or a configured Core project path;
+- start installed Core with `hosty start` and confirm missing Core bootstrap downloads `hosty-core`;
+- start source Core explicitly with `hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj` when validating repository Core changes;
 - run Shell locally with `npm run shell:dev` or through the Core-managed `hosty.shell` runtime app;
 - install the Demo App through `hosty apps install apps/demo-app/manifest.json`;
 - start, stop, restart, log, update-plan, update, backup, restore, and remove the Demo App through `hosty apps`;
@@ -126,6 +138,6 @@ Manual validation for the current artifact model:
 
 ## Versioning
 
-During early development, `cli-dev` is the main CLI distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions.
+During early development, `cli-dev` is the main CLI/Core distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions.
 
-Runtime apps carry their own app manifest versions. Product channel metadata can coordinate CLI/Core/Shell updates later, but generated product channels are deferred.
+Runtime apps carry their own app manifest versions. Product channel metadata can coordinate CLI/Core/Shell updates later, but generated product channels are deferred. Until then, the placeholder product channel records the Core artifact family instead of a source project path.

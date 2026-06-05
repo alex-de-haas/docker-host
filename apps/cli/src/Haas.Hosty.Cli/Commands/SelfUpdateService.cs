@@ -1,16 +1,10 @@
 namespace Haas.Hosty.Cli.Commands;
 
-using System.Net;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text;
 using Spectre.Console;
 
 internal sealed class SelfUpdateService(CommandContext context)
 {
-    private const string ReleaseBaseUrl = "https://github.com/alex-de-haas/docker-host/releases/download/cli-dev";
-    private const int DownloadBufferSize = 81920;
-
     public async Task<SelfUpdateResult> UpdateAsync(CancellationToken cancellationToken = default)
     {
         var processPath = Environment.ProcessPath;
@@ -25,26 +19,23 @@ internal sealed class SelfUpdateService(CommandContext context)
             throw new InvalidOperationException($"Refusing to replace '{processPath}' because it is not a managed hosty executable.");
         }
 
-        var artifact = GetArtifactName();
-        var artifactUrl = $"{ReleaseBaseUrl}/{artifact}";
-        var checksumsUrl = $"{ReleaseBaseUrl}/SHA256SUMS";
+        var artifact = ReleaseArtifactNames.GetCliArtifactName();
+        var releaseArtifacts = new ReleaseArtifactService(context);
 
         using var httpClient = new HttpClient();
-        var checksums = await DownloadChecksumsAsync(
+        var checksums = await releaseArtifacts.DownloadChecksumsAsync(
             httpClient,
-            checksumsUrl,
             cancellationToken);
 
-        var hasExpectedSha256 = TryFindChecksum(checksums, artifact, out var expectedSha256);
+        var hasExpectedSha256 = ReleaseArtifactService.TryFindChecksum(checksums, artifact, out var expectedSha256);
         if (hasExpectedSha256 && CurrentExecutableMatches(processPath, expectedSha256))
         {
             context.Console.MarkupLine("[green]CLI ready up to date.[/]");
             return SelfUpdateResult.AlreadyCurrent(processPath);
         }
 
-        var artifactBytes = await DownloadArtifactAsync(
+        var artifactBytes = await releaseArtifacts.DownloadArtifactAsync(
             httpClient,
-            artifactUrl,
             artifact,
             cancellationToken);
 
@@ -150,200 +141,11 @@ internal sealed class SelfUpdateService(CommandContext context)
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
-    private static string GetArtifactName()
-    {
-        var architecture = RuntimeInformation.OSArchitecture switch
-        {
-            Architecture.Arm64 => "arm64",
-            Architecture.X64 => "x64",
-            _ => throw new PlatformNotSupportedException($"Unsupported architecture {RuntimeInformation.OSArchitecture}."),
-        };
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            return $"hosty-darwin-{architecture}";
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            return $"hosty-linux-{architecture}";
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            if (architecture != "x64")
-            {
-                throw new PlatformNotSupportedException("Windows CLI release assets are published for x64 only.");
-            }
-
-            return "hosty-windows-x64.exe";
-        }
-
-        throw new PlatformNotSupportedException($"Unsupported OS {RuntimeInformation.OSDescription}.");
-    }
-
-    private async Task<string?> DownloadChecksumsAsync(
-        HttpClient httpClient,
-        string checksumsUrl,
-        CancellationToken cancellationToken)
-    {
-        var checksumsBytes = await TryDownloadBytesAsync(
-            httpClient,
-            checksumsUrl,
-            "SHA256SUMS",
-            cancellationToken);
-
-        return checksumsBytes is null ? null : Encoding.UTF8.GetString(checksumsBytes);
-    }
-
-    private async Task<byte[]> DownloadArtifactAsync(
-        HttpClient httpClient,
-        string artifactUrl,
-        string artifact,
-        CancellationToken cancellationToken)
-        => await DownloadBytesAsync(
-            httpClient,
-            artifactUrl,
-            artifact,
-            cancellationToken);
-
-    private async Task<byte[]?> TryDownloadBytesAsync(
-        HttpClient httpClient,
-        string url,
-        string description,
-        CancellationToken cancellationToken)
-    {
-        using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-
-        response.EnsureSuccessStatusCode();
-        return await ReadResponseBytesWithProgressAsync(response, description, cancellationToken);
-    }
-
-    private async Task<byte[]> DownloadBytesAsync(
-        HttpClient httpClient,
-        string url,
-        string description,
-        CancellationToken cancellationToken)
-    {
-        using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        return await ReadResponseBytesWithProgressAsync(response, description, cancellationToken);
-    }
-
-    private async Task<byte[]> ReadResponseBytesWithProgressAsync(
-        HttpResponseMessage response,
-        string description,
-        CancellationToken cancellationToken)
-    {
-        var contentLength = response.Content.Headers.ContentLength;
-        return await context.Console
-            .Progress()
-            .AutoClear(true)
-            .HideCompleted(true)
-            .Columns(CreateDownloadProgressColumns(contentLength))
-            .StartAsync(progressContext => ReadResponseBytesAsync(
-                response,
-                description,
-                progressContext,
-                cancellationToken));
-    }
-
     internal static ProgressColumn[] CreateDownloadProgressColumns(long? contentLength)
-        => contentLength is > 0
-            ? [
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn(),
-                new DownloadedColumn(),
-                new TransferSpeedColumn(),
-                new RemainingTimeColumn(),
-            ]
-            : [
-                new TaskDescriptionColumn(),
-                new SpinnerColumn(Spinner.Known.Dots),
-                new DownloadedColumn(),
-                new TransferSpeedColumn(),
-            ];
-
-    private static async Task<byte[]> ReadResponseBytesAsync(
-        HttpResponseMessage response,
-        string description,
-        ProgressContext progressContext,
-        CancellationToken cancellationToken)
-    {
-        var contentLength = response.Content.Headers.ContentLength;
-        var maxValue = contentLength is > 0 ? contentLength.Value : 1;
-        var progressTask = progressContext.AddTask(Markup.Escape(description), maxValue: maxValue);
-        if (contentLength is null)
-        {
-            progressTask.IsIndeterminate();
-        }
-
-        await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var output = new MemoryStream(
-            contentLength is > 0 and <= int.MaxValue
-                ? (int)contentLength.Value
-                : 0);
-        var buffer = new byte[DownloadBufferSize];
-        long downloaded = 0;
-
-        while (true)
-        {
-            var bytesRead = await contentStream.ReadAsync(buffer, cancellationToken);
-            if (bytesRead == 0)
-            {
-                break;
-            }
-
-            output.Write(buffer.AsSpan(0, bytesRead));
-            downloaded += bytesRead;
-            if (contentLength is null)
-            {
-                progressTask.MaxValue = Math.Max(progressTask.MaxValue, downloaded + 1);
-            }
-
-            progressTask.Value = downloaded;
-        }
-
-        if (contentLength is null)
-        {
-            progressTask.IsIndeterminate(false);
-            progressTask.MaxValue = Math.Max(downloaded, 1);
-        }
-
-        if (downloaded > 0)
-        {
-            progressTask.Value = downloaded;
-        }
-
-        progressTask.StopTask();
-        return output.ToArray();
-    }
+        => ReleaseArtifactService.CreateDownloadProgressColumns(contentLength);
 
     internal static bool TryFindChecksum(string? checksums, string artifact, out string sha256)
-    {
-        sha256 = string.Empty;
-        if (string.IsNullOrWhiteSpace(checksums))
-        {
-            return false;
-        }
-
-        foreach (var line in checksums.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length >= 2 && string.Equals(parts[^1], artifact, StringComparison.Ordinal))
-            {
-                sha256 = parts[0];
-                return true;
-            }
-        }
-
-        return false;
-    }
+        => ReleaseArtifactService.TryFindChecksum(checksums, artifact, out sha256);
 }
 
 internal readonly record struct SelfUpdateResult(bool WasUpdated, string ExecutablePath)

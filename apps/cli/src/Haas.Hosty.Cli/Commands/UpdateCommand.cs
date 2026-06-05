@@ -31,6 +31,18 @@ internal sealed class UpdateCommand(CommandContext context)
         }
 
         context.Console.MarkupLine("[green]Bootstrap CLI update step completed.[/]");
+        try
+        {
+            await new CoreInstallationService(context).UpdateAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            context.Console.MarkupLine($"[red]Core update failed:[/] {Markup.Escape(ex.Message)}");
+            context.Console.MarkupLine("Hosty Shell was not changed. Retry later, then restart Core with [grey]hosty restart[/].");
+            return 1;
+        }
+
+        context.Console.MarkupLine("[green]Hosty Core update step completed.[/]");
         await CheckCoreAndShellAsync(selectedChannel);
 
         return 0;
@@ -83,7 +95,7 @@ internal sealed class UpdateCommand(CommandContext context)
         {
             var status = await core.GetAsync<CoreStatusDocument>("core/status");
             context.Console.MarkupLine($"[green]Hosty Core reachable:[/] {Markup.Escape(status?.Status ?? "running")}");
-            context.Console.MarkupLine("[grey]Hosty Core self-replacement is reserved for the bootstrap supervisor and is not performed by the running Core process.[/]");
+            context.Console.MarkupLine("[grey]A running Core process uses the updated executable after the next Core restart.[/]");
 
             var apps = await core.GetAsync<AppsResponse>("apps");
             var shell = apps?.Apps.FirstOrDefault(app => string.Equals(app.Id, "hosty.shell", StringComparison.Ordinal));
@@ -205,7 +217,7 @@ internal sealed class UpdateCommand(CommandContext context)
         string Id,
         string Label,
         string? CliVersion,
-        string? CoreManifestPath,
+        string? CoreArtifactPrefix,
         string? ShellManifestPath);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);

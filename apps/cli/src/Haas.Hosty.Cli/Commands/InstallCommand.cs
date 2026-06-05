@@ -18,6 +18,9 @@ internal sealed class InstallCommand(CommandContext context)
             Directory.CreateDirectory(context.Environment.ConfigDirectory);
             Directory.CreateDirectory(context.Environment.BinDirectory);
             Directory.CreateDirectory(context.Environment.AppsDirectory);
+            var coreBinDirectory = Path.GetDirectoryName(CoreInstallationService.GetInstalledExecutablePath(context.Environment)) ??
+                throw new ConfigurationException("Unable to resolve Hosty Core bin directory.");
+            Directory.CreateDirectory(coreBinDirectory);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

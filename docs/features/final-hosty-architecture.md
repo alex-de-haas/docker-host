@@ -86,12 +86,13 @@ Core must remain manageable through CLI and local APIs when Shell is stopped, fa
 The `hosty` CLI is a bootstrap and Core API client:
 
 - `hosty start`, `hosty stop`, `hosty restart`, `hosty status`, and `hosty logs` operate on Hosty Core.
-- `hosty core ...` exposes explicit Core process commands.
+- `hosty start` and `hosty core start` use the installed Core executable under the Hosty data root by default, downloading it only when missing.
+- `hosty core start --project <csproj-path>` is the explicit source-mode Core process command.
 - `hosty apps ...` calls Core lifecycle APIs for runtime app management.
 - `hosty users list` calls Core user summary APIs.
 - `hosty apps identity` issues app-scoped identity through Core.
 - `hosty apps open` asks Core for Shell or standalone app launch links.
-- `hosty update` runs bootstrap CLI update first, then Core reachability and Shell update planning through Core APIs.
+- `hosty update` runs bootstrap CLI update first, then installs or replaces the managed Core executable, then performs Core reachability and Shell update planning through Core APIs when Core is running.
 - `hosty update --list-channels` and `hosty update --channel <channel-id>` can read the local product channel index, but full product-channel publishing is deferred.
 
 The legacy developer harness route is no longer exposed. Existing users are used for app identity helpers; deterministic development-user seeding is not part of the final workflow.
@@ -127,7 +128,7 @@ Local source overrides are never written back to public app manifests.
 
 Runtime app channel switching is a deferred feature. The low-level Core shape resolves a channel to a concrete manifest snapshot and reuses update planning/apply, but Shell UI, generated indexes, pull request channels, and remote manifest resolution are intentionally out of the current stabilization scope.
 
-Product channels are described by `channels/product-channels.json` as a local placeholder. Generated product channels and coordinated CLI/Core/Shell rollout are deferred.
+Product channels are described by `channels/product-channels.json` as a local placeholder. Generated product channels and coordinated CLI/Core/Shell rollout are deferred; the current Core entry identifies the release artifact family, not a source project path.
 
 ## Storage layout
 
