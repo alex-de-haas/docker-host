@@ -54,7 +54,9 @@ Use `HOST_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that 
 
 `HOST_PUBLIC_ORIGIN` remains a compatibility alias for combined Core/Shell deployments. Prefer explicit Core/Shell origin variables for split-origin testing.
 
-Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. Use `HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev` and `HOSTY_SHELL_SOURCE_OVERRIDE_PATH=<repo-root>` when that Core process should register and run Shell with the manifest's local command runtime profile. Use Core-managed Shell when validating Shell runtime lifecycle behavior.
+Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. Use `HOSTY_SHELL_MANIFEST_PATH=<manifest-path-or-url>`, `HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev`, and `HOSTY_SHELL_SOURCE_OVERRIDE_PATH=<repo-root>` when that Core process should register and run Shell with the manifest's local command runtime profile. Use Core-managed Shell when validating Shell runtime lifecycle behavior.
+
+For installed CLI runs, `launch.env` defaults `HOSTY_SHELL_MANIFEST_PATH` to the repository Shell manifest on GitHub and `HOSTY_SHELL_BOOTSTRAP_RUNTIME` to `docker`. Override those settings with `hosty config set` when validating a custom Shell manifest.
 
 When validating runtime lifecycle behavior, prefer installing Shell through Core like any other runtime app.
 
@@ -111,9 +113,11 @@ hosty apps switch-runtime com.haas.demo-app --runtime docker --plan-digest <dige
 
 Use `hosty apps source-resolve <app-id> --branch <name> --fetch` when the app should run from a Core-managed checkout. Use `source-override` when a specific local worktree should be used instead. Local override state is stored in the Hosty installation record and is not written back to the public app manifest.
 
+When an app manifest is installed from a local filesystem path with `--runtime dev`, Core records the containing Git worktree as the local source root and starts `localCommand` services from that root. When the same runtime is selected from an HTTP(S) manifest URL, Core clones the manifest's absolute `source.repository` into `sources/<app-id>` before start.
+
 ## Local Command Constraints
 
-`localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`.
+`localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`. The resolved working directory must already exist; Core does not create missing source directories.
 
 Production installers should treat `localCommand` as platform-specific unless the command is known to be portable. Prefer commands that:
 

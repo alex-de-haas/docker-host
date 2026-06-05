@@ -8,6 +8,7 @@ internal sealed class CoreLifecycleService(
     AppRegistryStore apps,
     AppManifestService manifests,
     AppBackupService backups,
+    AppSourceService sources,
     IEnumerable<IAppRuntimeAdapter> adapters)
 {
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
@@ -136,6 +137,7 @@ internal sealed class CoreLifecycleService(
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+        app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
         var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
         var result = await adapter.StartAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
         var updated = await apps.UpdateAppAsync(appId, current => current with
@@ -731,25 +733,42 @@ internal sealed class CoreLifecycleService(
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
     {
         var source = selection.Manifest.Source;
+        var localOverridePath = ResolveInstallLocalSourcePath(selection, source);
         if (source?.Repository is null)
         {
-            return existing?.SourceState;
+            if (!string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal))
+            {
+                return existing?.SourceState;
+            }
+
+            return existing?.SourceState ?? (localOverridePath is null
+                ? null
+                : new AppSourceState(
+                    Type: "local",
+                    Repository: null,
+                    ResolvedRef: null,
+                    Commit: null,
+                    ManagedCheckoutPath: Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
+                    LocalOverridePath: localOverridePath,
+                    UpdatedAt: null));
         }
 
-        var localOverridePath = ResolveInstallLocalSourcePath(selection, source);
+        var resolvedRef = source.Commit ?? source.Tag ?? source.Branch;
         if (existing?.SourceState is not null &&
             string.Equals(existing.SourceState.Repository, source.Repository, StringComparison.Ordinal))
         {
+            var resolvedRefChanged = !string.Equals(existing.SourceState.ResolvedRef, resolvedRef, StringComparison.Ordinal);
             return existing.SourceState with
             {
                 Type = source.Type,
                 Repository = source.Repository,
+                ResolvedRef = resolvedRef ?? existing.SourceState.ResolvedRef,
+                Commit = source.Commit ?? (resolvedRefChanged ? null : existing.SourceState.Commit),
                 ManagedCheckoutPath = existing.SourceState.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
                 LocalOverridePath = existing.SourceState.LocalOverridePath ?? localOverridePath,
             };
         }
 
-        var resolvedRef = source.Commit ?? source.Tag ?? source.Branch;
         return new AppSourceState(
             Type: source.Type,
             Repository: source.Repository,
@@ -760,31 +779,12 @@ internal sealed class CoreLifecycleService(
             UpdatedAt: null);
     }
 
-    private static string? ResolveInstallLocalSourcePath(RuntimeAppManifestSelection selection, RuntimeAppSource source)
+    private string? ResolveInstallLocalSourcePath(RuntimeAppManifestSelection selection, RuntimeAppSource? source)
     {
         if (!string.IsNullOrWhiteSpace(selection.ManifestUrl) ||
-            string.IsNullOrWhiteSpace(selection.ManifestPath) ||
-            string.IsNullOrWhiteSpace(source.Repository))
+            string.IsNullOrWhiteSpace(selection.ManifestPath))
         {
             return null;
-        }
-
-        var repository = source.Repository.Trim();
-        if (Uri.TryCreate(repository, UriKind.Absolute, out var repositoryUri))
-        {
-            if (!repositoryUri.IsFile)
-            {
-                return null;
-            }
-
-            return Directory.Exists(repositoryUri.LocalPath)
-                ? Path.GetFullPath(repositoryUri.LocalPath)
-                : null;
-        }
-
-        if (Path.IsPathFullyQualified(repository))
-        {
-            return Directory.Exists(repository) ? Path.GetFullPath(repository) : null;
         }
 
         var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(selection.ManifestPath));
@@ -793,10 +793,41 @@ internal sealed class CoreLifecycleService(
             return null;
         }
 
+        var repository = source?.Repository?.Trim();
+        if (!string.IsNullOrWhiteSpace(repository))
+        {
+            if (Uri.TryCreate(repository, UriKind.Absolute, out var repositoryUri) && repositoryUri.IsFile)
+            {
+                return Directory.Exists(repositoryUri.LocalPath)
+                    ? Path.GetFullPath(repositoryUri.LocalPath)
+                    : null;
+            }
+
+            if (Path.IsPathFullyQualified(repository))
+            {
+                return Directory.Exists(repository) ? Path.GetFullPath(repository) : null;
+            }
+        }
+
         var gitRoot = FindGitRoot(manifestDirectory);
+        if (gitRoot is not null)
+        {
+            return gitRoot;
+        }
+
+        if (string.IsNullOrWhiteSpace(repository))
+        {
+            return InferLocalSourceRootFromWorkingDirectories(manifestDirectory, selection) ?? manifestDirectory;
+        }
+
+        if (Uri.TryCreate(repository, UriKind.Absolute, out var absoluteRepositoryUri) && !absoluteRepositoryUri.IsFile)
+        {
+            return null;
+        }
+
         if (repository == ".")
         {
-            return gitRoot ?? manifestDirectory;
+            return manifestDirectory;
         }
 
         var manifestRelativePath = Path.GetFullPath(Path.Combine(manifestDirectory, repository));
@@ -805,13 +836,63 @@ internal sealed class CoreLifecycleService(
             return manifestRelativePath;
         }
 
-        if (gitRoot is null)
+        return InferLocalSourceRootFromWorkingDirectories(manifestDirectory, selection) ?? manifestDirectory;
+    }
+
+    private static string? InferLocalSourceRootFromWorkingDirectories(
+        string manifestDirectory,
+        RuntimeAppManifestSelection selection)
+    {
+        foreach (var workingDirectory in selection.Services
+            .Select(service => service.Runtime.WorkingDirectory)
+            .Where(directory => !string.IsNullOrWhiteSpace(directory))
+            .Distinct(StringComparer.Ordinal))
+        {
+            var root = TryStripRelativeSuffix(manifestDirectory, workingDirectory!);
+            if (root is not null)
+            {
+                return root;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryStripRelativeSuffix(string path, string suffix)
+    {
+        if (Path.IsPathFullyQualified(suffix))
         {
             return null;
         }
 
-        var gitRelativePath = Path.GetFullPath(Path.Combine(gitRoot, repository));
-        return Directory.Exists(gitRelativePath) ? gitRelativePath : null;
+        var suffixParts = suffix
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar)
+            .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
+            .Where(part => part != ".")
+            .ToArray();
+        if (suffixParts.Length == 0)
+        {
+            return path;
+        }
+
+        if (suffixParts.Any(part => part == ".."))
+        {
+            return null;
+        }
+
+        var current = new DirectoryInfo(path);
+        for (var index = suffixParts.Length - 1; index >= 0; index--)
+        {
+            if (!string.Equals(current.Name, suffixParts[index], StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            current = current.Parent ?? current;
+        }
+
+        return current.FullName;
     }
 
     private static string? FindGitRoot(string startDirectory)
@@ -901,6 +982,85 @@ internal sealed class CoreLifecycleService(
         RuntimeAppManifestSelection selection,
         CancellationToken cancellationToken)
         => new(app, selection, GetAppRoot(app.Id), GetAppDataPath(app.Id), await ResolveDependencyUrlsAsync(app, cancellationToken));
+
+    private async Task<AppRecord> EnsureLocalCommandSourceReadyAsync(
+        AppRecord app,
+        RuntimeAppManifestSelection selection,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal))
+        {
+            return app;
+        }
+
+        var source = app.SourceState;
+        if (!string.IsNullOrWhiteSpace(source?.LocalOverridePath))
+        {
+            if (!Directory.Exists(source.LocalOverridePath))
+            {
+                throw new AppLifecycleException(
+                    "source_override_not_found",
+                    $"Local source override path was not found: {source.LocalOverridePath}");
+            }
+
+            return app;
+        }
+
+        if (string.IsNullOrWhiteSpace(app.ManifestUrl))
+        {
+            throw new AppLifecycleException(
+                "local_command_source_root_required",
+                $"Runtime app '{app.Id}' uses localCommand but no local source root was resolved.");
+        }
+
+        if (string.IsNullOrWhiteSpace(selection.Manifest.Source?.Repository))
+        {
+            throw new AppLifecycleException(
+                "source_required_for_local_command",
+                $"Remote manifest runtime '{selection.RuntimeProfile.Key}' uses localCommand and must declare source.repository.");
+        }
+
+        if (IsRelativeSourceRepository(selection.Manifest.Source.Repository))
+        {
+            throw new AppLifecycleException(
+                "source_repository_relative_remote_unsupported",
+                $"Remote manifest runtime '{selection.RuntimeProfile.Key}' uses localCommand, so source.repository must be an absolute Git URL or local repository path.");
+        }
+
+        var checkoutPath = source?.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, app.Id);
+        if (Directory.Exists(Path.Combine(checkoutPath, ".git")) &&
+            !string.IsNullOrWhiteSpace(source?.Commit))
+        {
+            return app;
+        }
+
+        await sources.ResolveManagedAsync(
+            app.Id,
+            new AppSourceResolveRequest(
+                Branch: selection.Manifest.Source.Branch,
+                Tag: selection.Manifest.Source.Tag,
+                Commit: selection.Manifest.Source.Commit,
+                Fetch: !string.IsNullOrWhiteSpace(selection.Manifest.Source.Branch)),
+            cancellationToken);
+
+        return await RequireAppAsync(app.Id, cancellationToken);
+    }
+
+    private static bool IsRelativeSourceRepository(string repository)
+    {
+        var trimmed = repository.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) && !string.IsNullOrWhiteSpace(uri.Scheme))
+        {
+            return false;
+        }
+
+        if (Path.IsPathFullyQualified(trimmed))
+        {
+            return false;
+        }
+
+        return true;
+    }
 
     private async Task<IReadOnlyDictionary<string, string>> ResolveDependencyUrlsAsync(AppRecord app, CancellationToken cancellationToken)
     {

@@ -20,6 +20,17 @@ public sealed class UpdateCommandTests
         Assert.Contains("hosty update [--list-channels]", exception.Usage);
     }
 
+    [Fact]
+    public void NormalizeManifestReference_TrimsUrlAndLocalPathValues()
+    {
+        Assert.Equal(
+            "https://raw.githubusercontent.com/example/shell/main/manifest.json",
+            UpdateCommand.NormalizeManifestReference(" https://raw.githubusercontent.com/example/shell/main/manifest.json "));
+        Assert.Equal(
+            Path.GetFullPath("apps/shell/manifest.json"),
+            UpdateCommand.NormalizeManifestReference(" apps/shell/manifest.json "));
+    }
+
     private static IAnsiConsole CreateConsole()
     {
         var output = new StringWriter();

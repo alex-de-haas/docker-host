@@ -134,7 +134,7 @@ internal sealed class UpdateCommand(CommandContext context)
 
             var shellManifestPath = selectedChannel?.ShellManifestPath is null
                 ? null
-                : Path.GetFullPath(selectedChannel.ShellManifestPath);
+                : NormalizeManifestReference(selectedChannel.ShellManifestPath);
             var plan = await core.PostAsync<AppUpdatePlan>("apps/hosty.shell/update/plan", new AppUpdatePlanRequest(shellManifestPath, shell.SelectedRuntime, selectedChannel?.Id ?? shell.SelectedChannel));
             if (plan is null)
             {
@@ -187,6 +187,19 @@ internal sealed class UpdateCommand(CommandContext context)
         }
 
         return null;
+    }
+
+    internal static string NormalizeManifestReference(string manifestPath)
+    {
+        var manifestReference = manifestPath.Trim();
+        if (Uri.TryCreate(manifestReference, UriKind.Absolute, out var uri) &&
+            !string.IsNullOrWhiteSpace(uri.Scheme) &&
+            (uri.IsFile || uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            return manifestReference;
+        }
+
+        return Path.GetFullPath(manifestReference);
     }
 
     private static UpdateOptions ParseOptions(string[] args)

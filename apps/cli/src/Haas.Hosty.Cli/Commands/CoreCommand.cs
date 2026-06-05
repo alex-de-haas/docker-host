@@ -180,6 +180,8 @@ internal sealed class CoreCommand(CommandContext context)
         AddOptional(environment, LaunchSettingDefinitions.HostPublicOrigin, settings.HostPublicOrigin);
         AddOptional(environment, LaunchSettingDefinitions.HostCorePublicOrigin, settings.HostCorePublicOrigin);
         AddOptional(environment, LaunchSettingDefinitions.HostShellPublicOrigin, settings.HostShellPublicOrigin);
+        AddOptional(environment, LaunchSettingDefinitions.HostyShellManifestPath, settings.ResolveHostyShellManifestPath(context.Environment));
+        AddOptional(environment, LaunchSettingDefinitions.HostyShellBootstrapRuntime, settings.HostyShellBootstrapRuntime);
         return environment;
     }
 

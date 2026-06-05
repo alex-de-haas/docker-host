@@ -107,7 +107,7 @@ Core includes two runtime adapters:
   - binds the app data directory when the manifest declares data;
   - reads Docker logs.
 - Local command runtime adapter:
-  - launches local command services from a local source override, managed checkout, or app root fallback;
+  - launches local command services from a local source override, local manifest worktree, or managed checkout;
   - supervises process state in Core memory;
   - writes stdout/stderr logs under `apps/<app-id>/logs/`;
   - injects the same app data, settings, dependency URL, port, and Core identity/config environment as Docker runtimes.
@@ -125,6 +125,8 @@ Runtime apps can declare one app-level source repository. Core stores source sta
 - optional local source override path selected by an administrator.
 
 Local source overrides are never written back to public app manifests.
+
+For `localCommand` runtimes, Core resolves the source root before runtime start. Local manifest path installs record a local worktree and do not clone source; remote manifest URL installs require an absolute clonable source repository and prepare the managed checkout under `sources/<app-id>/`.
 
 Runtime app channel switching is a deferred feature. The low-level Core shape resolves a channel to a concrete manifest snapshot and reuses update planning/apply, but Shell UI, generated indexes, pull request channels, and remote manifest resolution are intentionally out of the current stabilization scope.
 

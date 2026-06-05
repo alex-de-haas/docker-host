@@ -10,6 +10,7 @@ The Unix installer is `scripts/install.sh`. It stays a thin shell bootstrap:
 - add the install directory to the user's shell profile when a POSIX-compatible profile can be detected;
 - delegate Docker preflight and `launch.env` creation to `hosty install`;
 - leave Core executable installation to `hosty start`, which downloads Core only when `~/.hosty/core/bin/hosty-core` is missing;
+- let Core bootstrap Shell from the `HOSTY_SHELL_MANIFEST_PATH` and `HOSTY_SHELL_BOOTSTRAP_RUNTIME` values stored in `launch.env`;
 - preserve existing launch configuration on reinstall;
 - support `HOSTY_INSTALL_REPO`, `HOSTY_INSTALL_TAG`, `HOSTY_INSTALL_DIR`, `HOSTY_INSTALL_PROFILE`, `HOSTY_INSTALL_SKIP_PATH_UPDATE`, and `HOSTY_INSTALL_START` for forks, tests, custom shells, and explicit start mode.
 

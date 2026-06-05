@@ -17,6 +17,10 @@ public sealed class RuntimeAppManifestRepositoryTests
 
         Assert.Equal("hosty.shell", docker.Manifest.Id);
         Assert.Equal("docker", docker.RuntimeProfile.Type);
+        var dockerService = Assert.Single(docker.Services);
+        Assert.Equal("ghcr.io/alex-de-haas/hosty-shell", dockerService.Image?.Repository);
+        Assert.Equal("latest", dockerService.Image?.Tag);
+        Assert.Equal("always", dockerService.Image?.PullPolicy);
         Assert.Equal("dev", dev.RuntimeProfile.Key);
         Assert.Equal("localCommand", dev.RuntimeProfile.Type);
         Assert.Equal("apps/shell", Assert.Single(dev.Services).Runtime.WorkingDirectory);

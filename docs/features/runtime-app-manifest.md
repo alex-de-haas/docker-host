@@ -45,6 +45,20 @@ hosty apps start com.haas.demo-app
 - `HOSTY_PORT_{KEY}`
 - `HOSTY_DEPENDENCY_{KEY}_URL`
 
+## Source
+
+`source` is optional app-level metadata that describes where Core can obtain the app source when a runtime needs it.
+
+For `docker` runtime profiles, Core starts the declared image and does not need source checkout state.
+
+For `localCommand` runtime profiles, Core resolves a source root before starting services:
+
+- local manifest path installs use the local worktree that contains the manifest, without cloning `source.repository`;
+- HTTP(S) manifest URL installs require `source.repository` to be an absolute clonable Git URL or local repository path;
+- administrator `source-override` state takes priority over both local inference and managed checkouts.
+
+Relative source repositories such as `.` are only meaningful for local manifest path installs. They are rejected when starting a `localCommand` runtime from a remote manifest URL.
+
 ## Storage
 
 When `data.enabled` is true, Core creates a primary app data directory:

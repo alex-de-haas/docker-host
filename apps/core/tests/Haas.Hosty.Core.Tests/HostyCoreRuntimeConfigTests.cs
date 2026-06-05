@@ -101,6 +101,16 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
+    public void FromEnvironment_UsesHttpShellManifestPath()
+    {
+        using var env = TemporaryEnvironment.With("HOSTY_SHELL_MANIFEST_PATH", " https://raw.githubusercontent.com/example/shell/main/manifest.json ");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.Equal("https://raw.githubusercontent.com/example/shell/main/manifest.json", config.ShellManifestPath);
+    }
+
+    [Fact]
     public void FromEnvironment_UsesExplicitShellSourceOverridePath()
     {
         using var env = TemporaryEnvironment.With("HOSTY_SHELL_SOURCE_OVERRIDE_PATH", " /repo ");
