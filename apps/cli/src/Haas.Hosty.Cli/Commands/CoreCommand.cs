@@ -91,7 +91,7 @@ internal sealed class CoreCommand(CommandContext context)
         {
             var windowsStartInfo = CreateCoreStartInfo(projectPath, url, settings);
             windowsStartInfo.CreateNoWindow = true;
-            Process.Start(windowsStartInfo);
+            using var windowsProcess = Process.Start(windowsStartInfo);
             return logPath;
         }
 

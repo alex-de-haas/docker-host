@@ -70,6 +70,26 @@ public sealed class AppIdentityServiceTests
         Assert.Equal("app_access_denied", error.Code);
     }
 
+    [Fact]
+    public async Task CreateLaunchTokenAsync_ConcurrentFirstUseSharesSigningKey()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+
+        var tokens = await Task.WhenAll(Enumerable.Range(0, 16)
+            .Select(_ => fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1")));
+
+        foreach (var token in tokens)
+        {
+            var session = await fixture.Service.RevalidateAsync(token.AccessToken);
+            Assert.True(session.Active);
+            Assert.Equal("user_1", session.UserId);
+        }
+
+        var keyPath = Path.Combine(fixture.Paths.AuthRoot, "app-identity-signing.key");
+        Assert.Equal(32, Convert.FromBase64String((await File.ReadAllTextAsync(keyPath)).Trim()).Length);
+    }
+
     private static HostUserRecord CreateUser(string id, bool disabled = false)
         => new(
             Id: id,
@@ -82,16 +102,19 @@ public sealed class AppIdentityServiceTests
 
     private sealed class IdentityFixture
     {
-        private IdentityFixture(UserDirectoryStore users, AppIdentityService service, FakeClock clock)
+        private IdentityFixture(UserDirectoryStore users, AppIdentityService service, CoreDataPaths paths, FakeClock clock)
         {
             Users = users;
             Service = service;
+            Paths = paths;
             Clock = clock;
         }
 
         public UserDirectoryStore Users { get; }
 
         public AppIdentityService Service { get; }
+
+        public CoreDataPaths Paths { get; }
 
         public FakeClock Clock { get; }
 
@@ -114,7 +137,7 @@ public sealed class AppIdentityServiceTests
             var service = new AppIdentityService(users, codes, apps, paths, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             await apps.UpsertAppAsync(CreateApp());
-            return new IdentityFixture(users, service, clock);
+            return new IdentityFixture(users, service, paths, clock);
         }
 
         public async Task WriteUsersAsync(IReadOnlyList<HostUserRecord> users, IReadOnlyList<AppAssignmentRecord> assignments)

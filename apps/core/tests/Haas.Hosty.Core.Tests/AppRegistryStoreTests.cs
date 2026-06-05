@@ -98,6 +98,23 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public async Task ListAppsAsync_SkipsCorruptedStateAndContinuesListingHealthyApps()
+    {
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var store = new AppRegistryStore(paths);
+        await store.UpsertAppAsync(CreateApp("com.example.notes"));
+        var brokenRoot = Path.Combine(paths.AppsRoot, "broken");
+        Directory.CreateDirectory(brokenRoot);
+        await File.WriteAllTextAsync(Path.Combine(brokenRoot, "state.json"), "{not-json");
+
+        var apps = await store.ListAppsAsync();
+
+        var app = Assert.Single(apps);
+        Assert.Equal("com.example.notes", app.Id);
+    }
+
+    [Fact]
     public async Task UserDirectoryStore_ReadAsync_ReturnsEmptyFinalStateWhenMissing()
     {
         var root = await CreateTempRootAsync();

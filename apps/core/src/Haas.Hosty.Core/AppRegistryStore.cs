@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Haas.Hosty.Core;
 
 internal sealed class AppRegistryStore(CoreDataPaths paths)
@@ -19,13 +21,20 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var statePath = Path.Combine(appDirectory, "state.json");
-            var state = await JsonStorage.ReadAsync<AppStateDocument>(statePath, cancellationToken);
-            if (state?.App is null || string.IsNullOrWhiteSpace(state.App.Id))
+            try
+            {
+                var state = await JsonStorage.ReadAsync<AppStateDocument>(statePath, cancellationToken);
+                if (state?.App is null || string.IsNullOrWhiteSpace(state.App.Id))
+                {
+                    continue;
+                }
+
+                apps.Add(await HydrateAppUiAsync(state.App, appDirectory, cancellationToken));
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
                 continue;
             }
-
-            apps.Add(await HydrateAppUiAsync(state.App, appDirectory, cancellationToken));
         }
 
         return apps;

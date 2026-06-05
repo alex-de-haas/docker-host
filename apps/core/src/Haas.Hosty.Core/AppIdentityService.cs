@@ -122,7 +122,7 @@ internal sealed class AppIdentityService(
         var signingKey = await GetSigningKeyAsync(cancellationToken);
         var signedValue = $"{parts[0]}.{parts[1]}";
         var expectedSignature = Base64UrlEncode(HMACSHA256.HashData(signingKey, Encoding.UTF8.GetBytes(signedValue)));
-        if (!string.Equals(expectedSignature, parts[2], StringComparison.Ordinal))
+        if (!FixedTimeEquals(expectedSignature, parts[2]))
         {
             throw new AppIdentityException("token_invalid", "Identity token signature is invalid.");
         }
@@ -152,14 +152,54 @@ internal sealed class AppIdentityService(
         var path = Path.Combine(paths.AuthRoot, "app-identity-signing.key");
         try
         {
-            return Convert.FromBase64String((await File.ReadAllTextAsync(path, cancellationToken)).Trim());
+            return await ReadSigningKeyAsync(path, cancellationToken);
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            return await ReadSigningKeyAfterConcurrentCreateAsync(path, cancellationToken);
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
-            Directory.CreateDirectory(paths.AuthRoot);
-            var key = RandomNumberGenerator.GetBytes(32);
-            await File.WriteAllTextAsync(path, Convert.ToBase64String(key), cancellationToken);
+            // Missing key falls through to atomic creation below.
+        }
+
+        Directory.CreateDirectory(paths.AuthRoot);
+        var key = RandomNumberGenerator.GetBytes(32);
+        var encodedKey = Encoding.UTF8.GetBytes(Convert.ToBase64String(key));
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, useAsync: true);
+            await stream.WriteAsync(encodedKey, cancellationToken);
             return key;
+        }
+        catch (IOException)
+        {
+            return await ReadSigningKeyAfterConcurrentCreateAsync(path, cancellationToken);
+        }
+    }
+
+    private static bool FixedTimeEquals(string expected, string actual)
+    {
+        var expectedBytes = Encoding.UTF8.GetBytes(expected);
+        var actualBytes = Encoding.UTF8.GetBytes(actual);
+        return CryptographicOperations.FixedTimeEquals(expectedBytes, actualBytes);
+    }
+
+    private static async Task<byte[]> ReadSigningKeyAsync(string path, CancellationToken cancellationToken)
+        => Convert.FromBase64String((await File.ReadAllTextAsync(path, cancellationToken)).Trim());
+
+    private static async Task<byte[]> ReadSigningKeyAfterConcurrentCreateAsync(string path, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await ReadSigningKeyAsync(path, cancellationToken);
+            }
+            catch (IOException) when (attempt < 10)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+            }
         }
     }
 

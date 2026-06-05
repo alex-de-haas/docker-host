@@ -34,7 +34,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
         var metadataPath = Path.Combine(backupRoot, $"{backupId}.json");
 
         ZipFile.CreateFromDirectory(dataPath, archivePath, CompressionLevel.Optimal, includeBaseDirectory: false);
-        var archiveBytes = await File.ReadAllBytesAsync(archivePath, cancellationToken);
+        var archiveInfo = new FileInfo(archivePath);
         var record = new AppBackupRecord(
             AppId: appId,
             BackupId: backupId,
@@ -42,8 +42,8 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
             CreatedAt: clock.UtcNow,
             DataPath: dataPath,
             ArchivePath: archivePath,
-            ArchiveSha256: Convert.ToHexString(SHA256.HashData(archiveBytes)).ToLowerInvariant(),
-            ArchiveSize: archiveBytes.Length,
+            ArchiveSha256: await ComputeSha256Async(archivePath, cancellationToken),
+            ArchiveSize: archiveInfo.Length,
             FileCount: Directory.EnumerateFiles(dataPath, "*", SearchOption.AllDirectories).Count(),
             Retention: null);
         await JsonStorage.WriteAsync(metadataPath, record, cancellationToken);

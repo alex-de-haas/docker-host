@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using Haas.Hosty.Core;
 
@@ -57,6 +58,22 @@ public sealed class CoreLifecycleServiceTests
 
         Assert.Contains(backups, backup => backup.Reason == "manual" && backup.Retention?.Reason == "manual-kept");
         Assert.Contains(backups, backup => backup.Reason == "pre-update" && backup.Retention?.Reason == "retained-by-policy");
+    }
+
+    [Fact]
+    public async Task CreateBackupAsync_RecordsArchiveSizeAndSha256()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var dataDir = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data");
+        Directory.CreateDirectory(dataDir);
+        await File.WriteAllTextAsync(Path.Combine(dataDir, "notes.db"), "manual");
+
+        var backup = await fixture.Backups.CreateBackupAsync("com.example.notes", "manual");
+
+        Assert.NotNull(backup);
+        var archiveBytes = await File.ReadAllBytesAsync(backup.ArchivePath);
+        Assert.Equal(new FileInfo(backup.ArchivePath).Length, backup.ArchiveSize);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(archiveBytes)).ToLowerInvariant(), backup.ArchiveSha256);
     }
 
     [Fact]
