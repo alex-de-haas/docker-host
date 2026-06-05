@@ -18,6 +18,13 @@ Open a new terminal, then start and open the Host:
 
 ```bash
 hosty start
+hosty auth setup-token
+```
+
+Open the printed Setup URL, enter the first administrator email and password,
+then open Shell:
+
+```bash
 hosty open
 ```
 
@@ -68,6 +75,9 @@ For one-command install and start:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh -s -- --start
 ```
+
+After the started Core is reachable, run `hosty auth setup-token` once and open
+the printed Setup URL to create the first administrator password.
 
 ## Local development
 

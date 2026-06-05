@@ -17,7 +17,8 @@ internal sealed record UserDirectoryState(
     IReadOnlyList<HostUserRecord> Users,
     IReadOnlyList<HostInvitationRecord> Invitations,
     IReadOnlyList<AppAssignmentRecord> Assignments,
-    IReadOnlyList<AuthSessionRecord> Sessions);
+    IReadOnlyList<AuthSessionRecord> Sessions,
+    IReadOnlyList<LocalPasswordCredentialRecord>? PasswordCredentials = null);
 
 internal sealed record HostUserRecord(
     string Id,
@@ -50,3 +51,12 @@ internal sealed record AuthSessionRecord(
     DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt,
     DateTimeOffset? RevokedAt);
+
+internal sealed record LocalPasswordCredentialRecord(
+    string UserId,
+    string Algorithm,
+    int Iterations,
+    string Salt,
+    string Hash,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);

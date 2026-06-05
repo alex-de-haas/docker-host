@@ -42,15 +42,35 @@ public sealed class AuthBootstrapServiceTests
         var user = await fixture.Service.BootstrapAsync(new AuthBootstrapRequest(
             SetupToken: token.Token,
             Email: "Admin@Example.Test",
-            DisplayName: "Admin"));
+            DisplayName: "Admin",
+            Password: "correct horse battery staple"));
         var userState = await fixture.Users.ReadAsync();
         var tokenState = await fixture.Tokens.ReadAsync();
+        var credential = Assert.Single(userState.PasswordCredentials ?? []);
 
         Assert.Equal("host.admin", user.Role);
         Assert.False(user.Disabled);
         Assert.Equal("admin@example.test", user.Email);
         Assert.Contains(userState.Users, candidate => candidate.Id == user.Id);
         Assert.Equal("used", Assert.Single(tokenState.Tokens).Status);
+        Assert.Equal(user.Id, credential.UserId);
+        Assert.Equal(LocalPasswordAuthService.Algorithm, credential.Algorithm);
+        Assert.NotEqual("correct horse battery staple", credential.Hash);
+        Assert.NotEmpty(credential.Salt);
+    }
+
+    [Fact]
+    public async Task BootstrapAsync_RequiresPassword()
+    {
+        var fixture = await AuthBootstrapFixture.CreateAsync();
+        var token = await fixture.Service.CreateSetupTokenAsync();
+
+        var error = await Assert.ThrowsAsync<LocalPasswordAuthException>(() =>
+            fixture.Service.BootstrapAsync(new AuthBootstrapRequest(
+                SetupToken: token.Token,
+                Email: "admin@example.test")));
+
+        Assert.Equal("password_invalid", error.Code);
     }
 
     [Fact]
@@ -60,7 +80,8 @@ public sealed class AuthBootstrapServiceTests
         var token = await fixture.Service.CreateSetupTokenAsync();
         _ = await fixture.Service.BootstrapAsync(new AuthBootstrapRequest(
             SetupToken: token.Token,
-            Email: "admin@example.test"));
+            Email: "admin@example.test",
+            Password: "correct horse battery staple"));
 
         var error = await Assert.ThrowsAsync<AuthBootstrapException>(() =>
             fixture.Service.BootstrapAsync(new AuthBootstrapRequest(
@@ -101,16 +122,20 @@ public sealed class AuthBootstrapServiceTests
         var recovered = await fixture.Service.RecoverAsync(new AuthRecoveryRequest(
             RecoveryToken: token.Token,
             Email: "USER@example.test",
-            DisplayName: "Recovered Admin"));
+            DisplayName: "Recovered Admin",
+            Password: "replacement horse battery staple"));
         var state = await fixture.Users.ReadAsync();
         var stored = Assert.Single(state.Users);
         var storedSession = Assert.Single(state.Sessions);
+        var credential = Assert.Single(state.PasswordCredentials ?? []);
 
         Assert.Equal(user.Id, recovered.Id);
         Assert.Equal("host.admin", stored.Role);
         Assert.False(stored.Disabled);
         Assert.Equal("Recovered Admin", stored.DisplayName);
         Assert.NotNull(storedSession.RevokedAt);
+        Assert.Equal(user.Id, credential.UserId);
+        Assert.NotEqual("replacement horse battery staple", credential.Hash);
     }
 
     private static HostUserRecord CreateUser(string id, string role)
@@ -174,7 +199,8 @@ public sealed class AuthBootstrapServiceTests
                 ShellSourceOverridePath: null,
                 ShellBootstrapEnabled: false,
                 ShellAutostart: false);
-            var service = new AuthBootstrapService(users, tokens, audit, config, clock);
+            var passwords = new LocalPasswordAuthService(users, audit, clock);
+            var service = new AuthBootstrapService(users, tokens, audit, passwords, config, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             return new AuthBootstrapFixture(users, tokens, service, clock);
         }

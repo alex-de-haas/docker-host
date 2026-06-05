@@ -28,6 +28,7 @@ flowchart LR
 - [App Auth And Origin Separation](features/app-auth-origin-separation.md) - Core-owned app auth and app-local sessions.
 - [Auth And Gateway Model](features/auth-gateway.md) - current app auth, assignments, and scoped app directory.
 - [User Management](features/user-management.md) - users, invitations, roles, and app access assignment.
+- [Local Password Login](features/local-password-login.md) - Core-owned local password setup, recovery, invitations, and login.
 - [App Data Backup Retention](features/app-data-backup-retention.md) - backup cleanup and retention.
 - [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command setup and Core control discovery.
 - [CLI app commands](features/cli-app-commands.md) - runtime app CLI commands.
