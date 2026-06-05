@@ -81,6 +81,16 @@ public sealed class SelfUpdateServiceTests
     }
 
     [Fact]
+    public void PreloadReferencedAssemblies_CliAssembly_LoadsLazyJsonDependency()
+    {
+        SelfUpdateService.PreloadReferencedAssemblies(typeof(UpdateCommand).Assembly);
+
+        Assert.Contains(
+            AppDomain.CurrentDomain.GetAssemblies(),
+            assembly => string.Equals(assembly.GetName().Name, "System.Text.Json", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void TryFindChecksum_ArtifactEntryExists_ReturnsChecksum()
     {
         const string checksums = """
