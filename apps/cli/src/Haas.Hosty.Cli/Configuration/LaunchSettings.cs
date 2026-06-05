@@ -21,8 +21,21 @@ internal sealed class LaunchSettings
 
     public string HostShellPublicOrigin => this[LaunchSettingDefinitions.HostShellPublicOrigin];
 
+    public string HostyShellManifestPath => this[LaunchSettingDefinitions.HostyShellManifestPath];
+
+    public string HostyShellBootstrapRuntime => this[LaunchSettingDefinitions.HostyShellBootstrapRuntime];
+
     public string ResolveHostDataRoot(HostyEnvironment environment)
         => environment.ResolvePath(HostDataRootHostRaw);
+
+    public string ResolveHostyShellManifestPath(HostyEnvironment environment)
+    {
+        var manifestPath = HostyShellManifestPath.Trim();
+        return Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? manifestPath
+            : environment.ResolvePath(manifestPath);
+    }
 
     public void Validate(HostyEnvironment environment)
     {

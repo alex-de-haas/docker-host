@@ -15,6 +15,7 @@ on:
       - "package-lock.json"
       - "global.json"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/shell-image.yml"
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
   push:
@@ -31,6 +32,7 @@ on:
       - "package-lock.json"
       - "global.json"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/shell-image.yml"
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
 

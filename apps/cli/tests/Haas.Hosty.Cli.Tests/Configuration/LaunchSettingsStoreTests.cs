@@ -32,7 +32,9 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         var settings = store.Load();
 
         Assert.Equal("", settings.HostCorePublicOrigin);
-        Assert.Equal("", settings.HostShellPublicOrigin);
+        Assert.Equal("http://127.0.0.1:3000", settings.HostShellPublicOrigin);
+        Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json", settings.HostyShellManifestPath);
+        Assert.Equal("docker", settings.HostyShellBootstrapRuntime);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }
@@ -40,6 +42,9 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     [Theory]
     [InlineData("HOST_CORE_PUBLIC_ORIGIN", "https://core.example")]
     [InlineData("HOST_SHELL_PUBLIC_ORIGIN", "https://shell.example")]
+    [InlineData("HOSTY_SHELL_MANIFEST_PATH", "https://raw.githubusercontent.com/example/shell/main/manifest.json")]
+    [InlineData("HOSTY_SHELL_MANIFEST_PATH", "~/shell/manifest.json")]
+    [InlineData("HOSTY_SHELL_BOOTSTRAP_RUNTIME", "dev")]
     public void Set_ExplicitPublicOrigin_AcceptsHttpOriginsWithoutPaths(string key, string origin)
     {
         var environment = HostyEnvironment.Current();
@@ -64,6 +69,19 @@ public sealed class LaunchSettingsStoreTests : IDisposable
             () => store.Set("HOST_IMAGE", "hosty:dev"));
 
         Assert.Contains("Unknown launch setting", exception.Message);
+    }
+
+    [Fact]
+    public void ResolveHostyShellManifestPath_LocalPath_ExpandsForCoreEnvironment()
+    {
+        var environment = HostyEnvironment.Current();
+        var settings = new LaunchSettingsStore(environment)
+            .Load()
+            .WithValue("HOSTY_SHELL_MANIFEST_PATH", "~/custom-shell/manifest.json");
+
+        var resolved = settings.ResolveHostyShellManifestPath(environment);
+
+        Assert.Equal(Path.Combine(environment.HomeDirectory, "custom-shell", "manifest.json"), resolved);
     }
 
     public void Dispose()

@@ -24,6 +24,7 @@ flowchart LR
   Core --> Runtime["Runtime app lifecycle"]
   Runtime --> Demo["apps/demo-app"]
   CLI --> Artifacts["CLI/Core release assets"]
+  Shell --> ShellImage["Shell image"]
   Demo --> DemoImage["Demo App image"]
 ```
 
@@ -34,9 +35,10 @@ Core owns API, auth, app lifecycle, source state, backup state, local control di
 Builds are independent:
 
 - `ci.yml` - shared checks on pull requests and pushes;
+- `shell-image.yml` - build and push the Hosty Shell Docker image on `main`;
 - `demo-app-image.yml` - build and push the first-party Demo App Docker image;
 - `cli-release.yml` - build and publish standalone CLI and Core executable artifacts;
-- optional future workflows - Shell image or package publishing when a public Shell distribution channel is introduced.
+- optional future workflows - desktop Shell packages or generated product channel indexes.
 
 Recommended path filters:
 
@@ -45,6 +47,12 @@ Shell build:
   apps/shell/**
   package.json
   package-lock.json
+
+Shell image build:
+  apps/shell/**
+  package.json
+  package-lock.json
+  .github/workflows/shell-image.yml
 
 Demo App build:
   apps/demo-app/**
@@ -79,6 +87,15 @@ Pull request CI is intentionally lighter than default-branch CI. Pull requests r
 
 ## Release Artifacts
 
+Hosty Shell image artifact:
+
+```text
+ghcr.io/alex-de-haas/hosty-shell:latest
+ghcr.io/alex-de-haas/hosty-shell:sha-<commit>
+```
+
+The Shell image is the Core-managed system runtime app artifact for the browser UI. Its source of truth is `apps/shell/manifest.json` and `apps/shell/Dockerfile`. The `shell-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry on pushes to `main`.
+
 Demo App image artifact:
 
 ```text
@@ -86,7 +103,7 @@ ghcr.io/alex-de-haas/demo-app:latest
 ghcr.io/alex-de-haas/demo-app:sha-<commit>
 ```
 
-The Demo App image is the first-party runtime app artifact for app manifest workflows. Its source of truth is `apps/demo-app/manifest.json` and `apps/demo-app/Dockerfile`. The `demo-app-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry.
+The Demo App image is the first-party example runtime app artifact for app manifest workflows. Its source of truth is `apps/demo-app/manifest.json` and `apps/demo-app/Dockerfile`. The `demo-app-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry.
 
 CLI release artifacts:
 
@@ -121,7 +138,7 @@ Stable CLI/Core versions can use immutable GitHub releases such as `cli-v0.2.1` 
 
 `install.sh` detects OS/architecture, downloads the right CLI artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
 
-The installer does not install Core directly. `hosty start` downloads Core only when `~/.hosty/core/bin/hosty-core` is missing. `hosty update` updates the managed CLI executable first, then installs or replaces the managed Core executable. It does not pull a Host image or recreate a Host container. Runtime app updates are separate app commands, for example `hosty apps update <app-id>`.
+The installer does not install Core directly. `hosty start` downloads Core only when `~/.hosty/core/bin/hosty-core` is missing. `hosty update` updates the managed CLI executable first, then installs or replaces the managed Core executable. It does not pull a Host image or recreate a Host container. Shell remains a Core-managed system runtime app. Core bootstraps it from `HOSTY_SHELL_MANIFEST_PATH` and `HOSTY_SHELL_BOOTSTRAP_RUNTIME`, then Docker pulls the image according to the Shell manifest.
 
 ## Release-Ready Validation
 
@@ -132,6 +149,7 @@ Manual validation for the current artifact model:
 - start installed Core with `hosty start` and confirm missing Core bootstrap downloads `hosty-core`;
 - start source Core explicitly with `hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj` when validating repository Core changes;
 - run Shell locally with `npm run shell:dev` or through the Core-managed `hosty.shell` runtime app;
+- verify `docker pull ghcr.io/alex-de-haas/hosty-shell:latest` succeeds after `shell-image.yml` runs on `main`;
 - install the Demo App through `hosty apps install apps/demo-app/manifest.json`;
 - start, stop, restart, log, update-plan, update, backup, restore, and remove the Demo App through `hosty apps`;
 - run `hosty update` and confirm the CLI channel works.

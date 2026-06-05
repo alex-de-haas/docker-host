@@ -39,11 +39,23 @@ The installed Core executable is not placed on `PATH`. The CLI owns it under:
 
 On Windows the executable names use `.exe`.
 
+`launch.env` also carries the default Shell bootstrap settings passed to Core:
+
+```text
+HOST_SHELL_PUBLIC_ORIGIN=http://127.0.0.1:3000
+HOSTY_SHELL_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json
+HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
+```
+
+`HOSTY_SHELL_MANIFEST_PATH` can be a local manifest path or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
+
 ## Core Bootstrap
 
 `hosty start` and `hosty core start` start the installed Core executable by default. If `~/.hosty/core/bin/hosty-core` is missing, the CLI downloads the platform Core artifact from the rolling release, verifies `SHA256SUMS` when available, installs it into `core/bin`, and starts it.
 
 Start does not check for newer Core builds when Core is already installed. Freshness checks and replacement are owned by `hosty update`.
+
+After Core starts, Core bootstraps Hosty Shell as the system runtime app `hosty.shell` from the configured Shell manifest reference and runtime. The default installed configuration downloads `apps/shell/manifest.json` from GitHub and starts `ghcr.io/alex-de-haas/hosty-shell:latest` through Docker.
 
 Explicit source mode is available only through `--project`:
 
@@ -61,7 +73,7 @@ Before replacing the running single-file CLI executable, `hosty update` preloads
 
 On Windows, if the installed Core executable already exists, `hosty update` first makes a best-effort Core stop request before replacing the executable because a running `.exe` is normally locked by the process.
 
-Shell remains a Core-managed runtime app. `hosty update` only asks the running Core for Shell update planning when Core is reachable; applying Shell updates remains an app lifecycle command.
+Shell remains a Core-managed runtime app. Core startup reconciles `hosty.shell` against the configured Shell manifest when the installed runtime matches `HOSTY_SHELL_BOOTSTRAP_RUNTIME`. `hosty update` still asks the running Core for Shell update planning when Core is reachable so operators can inspect pending Shell changes explicitly.
 
 ## Control Discovery
 

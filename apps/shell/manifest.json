@@ -28,9 +28,9 @@
         "docker": {
           "type": "docker",
           "image": {
-            "repository": "hosty-shell",
-            "tag": "local",
-            "pullPolicy": "never"
+            "repository": "ghcr.io/alex-de-haas/hosty-shell",
+            "tag": "latest",
+            "pullPolicy": "always"
           },
           "environment": {
             "PORT": "3000",

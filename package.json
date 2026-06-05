@@ -22,6 +22,8 @@
     "shell:dev": "npm run dev --workspace @haas/hosty-shell",
     "shell:build": "npm run build --workspace @haas/hosty-shell",
     "shell:start": "npm run start --workspace @haas/hosty-shell",
+    "shell:docker:build": "docker build -f apps/shell/Dockerfile -t ghcr.io/alex-de-haas/hosty-shell:latest .",
+    "shell:docker:build:local": "docker build -f apps/shell/Dockerfile -t hosty-shell:dev .",
     "demo-app:dev": "npm run dev --workspace @haas/hosty-demo-app",
     "demo-app:build": "npm run build --workspace @haas/hosty-demo-app",
     "demo-app:start": "npm run start --workspace @haas/hosty-demo-app",

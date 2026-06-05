@@ -34,6 +34,7 @@ flowchart LR
 - [Core API](features/core-api.md) - current Core browser and control APIs.
 - [Domain model](features/domain-model.md) - shared app-oriented vocabulary.
 - [Repository and release model](features/repository-release-model.md) - monorepo and release workflows.
+- [Hosty Shell Docker Image](features/hosty-shell-image.md) - draft plan for publishing browser Shell as a Core-managed Docker image.
 - [Demo App](features/demo-app.md) - repository-local runtime app used for validation.
 - [Local development and testing](features/local-development.md) - Core-managed local workflows.
 - [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped agent skill.

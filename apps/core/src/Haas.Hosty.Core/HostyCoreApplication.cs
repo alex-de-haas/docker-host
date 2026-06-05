@@ -684,9 +684,9 @@ internal sealed class RuntimeAppSupervisorService(
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(config.ShellManifestPath) || !File.Exists(config.ShellManifestPath))
+        if (string.IsNullOrWhiteSpace(config.ShellManifestPath))
         {
-            logger.LogWarning("Hosty Shell bootstrap skipped because the Shell manifest was not found.");
+            logger.LogWarning("Hosty Shell bootstrap skipped because no Shell manifest path or URL was configured.");
             return;
         }
 
@@ -703,6 +703,10 @@ internal sealed class RuntimeAppSupervisorService(
                     Settings: BuildShellBootstrapSettings(config),
                     Autostart: config.ShellAutostart), cancellationToken);
                 shell = await apps.GetAppAsync(ShellAppId, cancellationToken);
+            }
+            else
+            {
+                shell = await ReconcileShellManifestAsync(shell, cancellationToken);
             }
 
             var bootstrapSettings = BuildShellBootstrapSettings(config);
@@ -729,6 +733,48 @@ internal sealed class RuntimeAppSupervisorService(
             logger.LogWarning(ex, "Hosty Shell bootstrap did not complete; Core remains available through CLI and control APIs.");
         }
     }
+
+    private async Task<AppRecord?> ReconcileShellManifestAsync(AppRecord shell, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(shell.SelectedRuntime ?? config.ShellBootstrapRuntime, config.ShellBootstrapRuntime, StringComparison.Ordinal))
+        {
+            logger.LogInformation(
+                "Hosty Shell bootstrap reconciliation skipped because installed runtime {InstalledRuntime} differs from configured runtime {ConfiguredRuntime}.",
+                shell.SelectedRuntime,
+                config.ShellBootstrapRuntime);
+            return shell;
+        }
+
+        var plan = await lifecycle.CreateUpdatePlanAsync(
+            ShellAppId,
+            new AppUpdatePlanRequest(config.ShellManifestPath, config.ShellBootstrapRuntime, shell.SelectedChannel),
+            cancellationToken);
+
+        var configuredRemoteManifestChanged =
+            IsHttpManifestReference(config.ShellManifestPath) &&
+            !string.Equals(shell.ManifestUrl, config.ShellManifestPath, StringComparison.Ordinal);
+        if (plan.Changes.Count == 0 && !configuredRemoteManifestChanged)
+        {
+            return shell;
+        }
+
+        logger.LogInformation(
+            "Hosty Shell bootstrap applying manifest reconciliation with {ChangeCount} reported changes.",
+            plan.Changes.Count);
+        await lifecycle.ApplyUpdateAsync(
+            ShellAppId,
+            new AppUpdateApplyRequest(
+                PlanDigest: plan.PlanDigest,
+                ManifestPath: config.ShellManifestPath,
+                SelectedRuntime: config.ShellBootstrapRuntime,
+                TargetChannel: shell.SelectedChannel),
+            cancellationToken);
+        return await apps.GetAppAsync(ShellAppId, cancellationToken);
+    }
+
+    private static bool IsHttpManifestReference(string? manifestPath)
+        => Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     private static IReadOnlyDictionary<string, string?> BuildShellBootstrapSettings(HostyCoreRuntimeConfig config)
     {
