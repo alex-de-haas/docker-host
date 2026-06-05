@@ -89,7 +89,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(manifestHandler)));
         var backups = new AppBackupService(paths, clock);
         var sources = new AppSourceService(paths, apps, clock);
-        var lifecycle = new CoreLifecycleService(paths, apps, manifests, backups, [new NoopDockerRuntimeAdapter()]);
+        var lifecycle = new CoreLifecycleService(paths, apps, manifests, backups, sources, [new NoopDockerRuntimeAdapter()]);
         return new TestFixture(paths, apps, sources, lifecycle);
     }
 

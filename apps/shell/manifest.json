@@ -6,7 +6,7 @@
   "version": "0.1.0",
   "source": {
     "type": "git",
-    "repository": ".",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
     "branch": "main"
   },
   "runtimeProfiles": [

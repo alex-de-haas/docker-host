@@ -26,7 +26,13 @@ internal sealed class LocalCommandRuntimeAdapter(
 
                 await StopServiceAsync(context.App.Id, service.Key, cancellationToken);
                 var workingDirectory = ResolveWorkingDirectory(context, service);
-                Directory.CreateDirectory(workingDirectory);
+                if (!Directory.Exists(workingDirectory))
+                {
+                    throw new AppLifecycleException(
+                        "local_command_working_directory_not_found",
+                        $"Local command working directory was not found: {workingDirectory}");
+                }
+
                 Directory.CreateDirectory(Path.Combine(context.AppRoot, "logs"));
                 var logPath = Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
                 var logWriter = new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))

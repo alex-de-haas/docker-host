@@ -41,13 +41,23 @@ Only one of `--branch`, `--tag`, or `--commit` may be passed to `source-resolve`
 
 ## Runtime Behavior
 
-Local command runtime profiles start from the local override path when one is configured. Otherwise they use the managed checkout path, then fall back to the app root. Source override state is not public manifest metadata; it belongs to the local Hosty installation.
+Local command runtime profiles require a source root. Core resolves it in this order:
+
+- administrator-selected `source-override` path, when configured;
+- local worktree inferred at install/update time when the manifest was loaded from a local filesystem path;
+- managed checkout under `sources/<app-id>` when the manifest was loaded from an HTTP(S) URL.
+
+When a manifest is installed from a local path, Core treats that path as a developer/operator-owned worktree. It does not clone or fetch `source.repository`; instead it records the nearest Git root above the manifest path when one exists, or falls back to the manifest directory/relative `workingDirectory` inference.
+
+When a manifest is installed from an HTTP(S) URL and the selected runtime profile is `localCommand`, Core requires an app-level `source.repository` that can be cloned as an absolute Git URL or local repository path. Relative repositories such as `.` are rejected for this remote-manifest start path because Core has no repository root to resolve them against.
+
+Docker runtime profiles do not need a source root and ignore source checkout state during start. Source override state is not public manifest metadata; it belongs to the local Hosty installation.
 
 Docker-only apps remain valid without source metadata. Resolving source for an app with no source repository returns a Core validation error instead of changing the app.
 
 Cleanup only considers immediate child directories under Hosty's managed `sources/` root. It does not delete local source override paths or arbitrary administrator worktrees.
 
-Local command runtimes are Core-supervised process runtimes. Core starts each service command from the resolved working directory, injects app data/settings/dependency/port/Core identity environment, captures stdout/stderr into app logs, and reports per-service health with process state, PID, exit code, log path, and working directory.
+Local command runtimes are Core-supervised process runtimes. Core starts each service command from the resolved working directory, injects app data/settings/dependency/port/Core identity environment, captures stdout/stderr into app logs, and reports per-service health with process state, PID, exit code, log path, and working directory. Core fails the start when the resolved working directory does not exist; it does not create missing source directories on behalf of the app.
 
 ## Runtime Switch Reviews
 

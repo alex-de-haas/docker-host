@@ -729,6 +729,62 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_ClonesRemoteManifestSourceForLocalCommandRuntime()
+    {
+        const string manifestUrl = "https://apps.example.test/remote-local/manifest.json";
+        string? repository = null;
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(CreateRemoteLocalCommandManifestJson(repository!), Encoding.UTF8, "application/json"),
+        })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+        repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "dev"));
+
+        try
+        {
+            var start = await fixture.Service.StartAsync("com.example.remote-local");
+            var app = await fixture.Apps.GetAppAsync("com.example.remote-local");
+            var managedCheckoutPath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.remote-local");
+            var cwdPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.remote-local", "data", "cwd.txt");
+
+            Assert.Equal("running", start.App?.RuntimeState);
+            Assert.Equal(manifestUrl, app?.ManifestUrl);
+            Assert.Equal(repository, app?.SourceState?.Repository);
+            Assert.Null(app?.SourceState?.LocalOverridePath);
+            Assert.True(Directory.Exists(Path.Combine(managedCheckoutPath, ".git")));
+            Assert.True(File.Exists(cwdPath));
+            var serviceWorkingDirectory = (await File.ReadAllTextAsync(cwdPath)).Trim();
+            Assert.EndsWith(
+                $"{Path.DirectorySeparatorChar}sources{Path.DirectorySeparatorChar}com.example.remote-local{Path.DirectorySeparatorChar}apps{Path.DirectorySeparatorChar}remote-app",
+                serviceWorkingDirectory,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.remote-local");
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_RejectsRemoteManifestRelativeSourceForLocalCommandRuntime()
+    {
+        const string manifestUrl = "https://apps.example.test/remote-local/manifest.json";
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(CreateRemoteLocalCommandManifestJson("."), Encoding.UTF8, "application/json"),
+        })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "dev"));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.StartAsync("com.example.remote-local"));
+
+        Assert.Equal("source_repository_relative_remote_unsupported", error.Code);
+    }
+
+    [Fact]
     public async Task ApplyCleanupAsync_RemovesOnlyAbandonedManagedSourceCheckouts()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -875,6 +931,40 @@ public sealed class CoreLifecycleServiceTests
             }
             """;
 
+    private static string CreateRemoteLocalCommandManifestJson(string sourceRepository)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.remote-local",
+              "name": "Remote Local App",
+              "version": "1.0.0",
+              "source": {
+                "type": "git",
+                "repository": "{{JsonEscape(sourceRepository)}}",
+                "branch": "main"
+              },
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "pwd > \"$HOSTY_APP_DATA_DIR/cwd.txt\"; sleep 5",
+                    "workingDirectory": "apps/remote-app"
+                  }
+                }
+              }],
+              "data": {
+                "enabled": true,
+                "targets": [{
+                  "runtime": "dev",
+                  "environment": "HOSTY_APP_DATA_DIR"
+                }]
+              }
+            }
+            """;
+
     private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -962,7 +1052,7 @@ public sealed class CoreLifecycleServiceTests
             var localProcesses = new LocalCommandProcessRegistry();
             var appServiceTokens = new AppServiceTokenService(new ControlSecret("test-control-secret"));
             var localAdapter = new LocalCommandRuntimeAdapter(runtimeConfig, localProcesses, appServiceTokens);
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, [adapter, localAdapter]);
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter]);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }
 
@@ -1336,6 +1426,18 @@ public sealed class CoreLifecycleServiceTests
         _ = await RunGitAsync(repository, ["init", "-b", "main"]);
         await File.WriteAllTextAsync(Path.Combine(repository, "README.md"), "source");
         _ = await RunGitAsync(repository, ["add", "README.md"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Initial commit"]);
+        return repository;
+    }
+
+    private static async Task<string> CreateLocalCommandGitRepositoryAsync(string root)
+    {
+        var repository = Path.Combine(root, "local-command-repo");
+        var appDirectory = Path.Combine(repository, "apps", "remote-app");
+        Directory.CreateDirectory(appDirectory);
+        _ = await RunGitAsync(repository, ["init", "-b", "main"]);
+        await File.WriteAllTextAsync(Path.Combine(appDirectory, "README.md"), "remote local command app");
+        _ = await RunGitAsync(repository, ["add", "apps/remote-app/README.md"]);
         _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Initial commit"]);
         return repository;
     }

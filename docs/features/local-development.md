@@ -113,9 +113,11 @@ hosty apps switch-runtime com.haas.demo-app --runtime docker --plan-digest <dige
 
 Use `hosty apps source-resolve <app-id> --branch <name> --fetch` when the app should run from a Core-managed checkout. Use `source-override` when a specific local worktree should be used instead. Local override state is stored in the Hosty installation record and is not written back to the public app manifest.
 
+When an app manifest is installed from a local filesystem path with `--runtime dev`, Core records the containing Git worktree as the local source root and starts `localCommand` services from that root. When the same runtime is selected from an HTTP(S) manifest URL, Core clones the manifest's absolute `source.repository` into `sources/<app-id>` before start.
+
 ## Local Command Constraints
 
-`localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`.
+`localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`. The resolved working directory must already exist; Core does not create missing source directories.
 
 Production installers should treat `localCommand` as platform-specific unless the command is known to be portable. Prefer commands that:
 
