@@ -23,7 +23,7 @@ internal sealed class UpdateCommand(CommandContext context)
         {
             await new SelfUpdateService(context).UpdateAsync();
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
             context.Console.MarkupLine($"[red]CLI update failed:[/] {Markup.Escape(ex.Message)}");
             context.Console.MarkupLine("Hosty Core and Shell were not changed. Retry later, then restart Core with [grey]hosty restart[/].");
@@ -33,9 +33,10 @@ internal sealed class UpdateCommand(CommandContext context)
         context.Console.MarkupLine("[green]Bootstrap CLI update step completed.[/]");
         try
         {
+            await TryStopWindowsCoreBeforeExecutableUpdateAsync();
             await new CoreInstallationService(context).UpdateAsync();
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
             context.Console.MarkupLine($"[red]Core update failed:[/] {Markup.Escape(ex.Message)}");
             context.Console.MarkupLine("Hosty Shell was not changed. Retry later, then restart Core with [grey]hosty restart[/].");
@@ -46,6 +47,32 @@ internal sealed class UpdateCommand(CommandContext context)
         await CheckCoreAndShellAsync(selectedChannel);
 
         return 0;
+    }
+
+    private async Task TryStopWindowsCoreBeforeExecutableUpdateAsync()
+    {
+        if (!OperatingSystem.IsWindows() ||
+            !File.Exists(CoreInstallationService.GetInstalledExecutablePath(context.Environment)))
+        {
+            return;
+        }
+
+        try
+        {
+            using var core = await CoreControlClient.TryCreateAsync(context);
+            if (core is null)
+            {
+                return;
+            }
+
+            await core.PostAsync<object>("core/stop");
+            context.Console.MarkupLine("[grey]Hosty Core stop requested before Windows executable update.[/]");
+            await Task.Delay(750);
+        }
+        catch (Exception ex) when (ex is CoreControlException or HttpRequestException or IOException or JsonException or OperationCanceledException)
+        {
+            context.Console.MarkupLine($"[yellow]Could not stop Hosty Core before Windows executable update:[/] {Markup.Escape(ex.Message)}");
+        }
     }
 
     private async Task<int> ListChannelsAsync(UpdateOptions options)

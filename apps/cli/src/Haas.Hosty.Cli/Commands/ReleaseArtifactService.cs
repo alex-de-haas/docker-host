@@ -160,7 +160,13 @@ internal sealed class ReleaseArtifactService(CommandContext context)
         foreach (var line in checksums.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length >= 2 && string.Equals(parts[^1], artifact, StringComparison.Ordinal))
+            if (parts.Length < 2)
+            {
+                continue;
+            }
+
+            var filename = parts[^1].TrimStart('*');
+            if (string.Equals(filename, artifact, StringComparison.Ordinal))
             {
                 sha256 = parts[0];
                 return true;

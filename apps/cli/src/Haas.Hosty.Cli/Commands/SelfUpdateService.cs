@@ -30,7 +30,7 @@ internal sealed class SelfUpdateService(CommandContext context)
         var hasExpectedSha256 = ReleaseArtifactService.TryFindChecksum(checksums, artifact, out var expectedSha256);
         if (hasExpectedSha256 && CurrentExecutableMatches(processPath, expectedSha256))
         {
-            context.Console.MarkupLine("[green]CLI ready up to date.[/]");
+            context.Console.MarkupLine("[green]CLI is already up to date.[/]");
             return SelfUpdateResult.AlreadyCurrent(processPath);
         }
 
@@ -54,7 +54,7 @@ internal sealed class SelfUpdateService(CommandContext context)
 
         if (CurrentExecutableMatches(processPath, artifactSha256))
         {
-            context.Console.MarkupLine("[green]CLI ready up to date.[/]");
+            context.Console.MarkupLine("[green]CLI is already up to date.[/]");
             return SelfUpdateResult.AlreadyCurrent(processPath);
         }
 

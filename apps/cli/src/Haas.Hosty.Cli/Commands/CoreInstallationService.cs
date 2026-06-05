@@ -44,7 +44,7 @@ internal sealed class CoreInstallationService(CommandContext context)
             File.Exists(executablePath) &&
             SelfUpdateService.CurrentExecutableMatches(executablePath, expectedSha256))
         {
-            context.Console.MarkupLine("[green]Hosty Core ready up to date.[/]");
+            context.Console.MarkupLine("[green]Hosty Core is already up to date.[/]");
             return CoreInstallationResult.AlreadyCurrent(executablePath);
         }
 
@@ -65,7 +65,7 @@ internal sealed class CoreInstallationService(CommandContext context)
         if (File.Exists(executablePath) &&
             SelfUpdateService.CurrentExecutableMatches(executablePath, artifactSha256))
         {
-            context.Console.MarkupLine("[green]Hosty Core ready up to date.[/]");
+            context.Console.MarkupLine("[green]Hosty Core is already up to date.[/]");
             return CoreInstallationResult.AlreadyCurrent(executablePath);
         }
 

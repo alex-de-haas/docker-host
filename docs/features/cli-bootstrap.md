@@ -57,6 +57,8 @@ The CLI does not scan the current directory or repository parents for a Core pro
 
 `hosty update` updates the managed CLI executable first. If that succeeds, it checks the current platform Core artifact, installs it when missing, or replaces the installed Core executable when a newer artifact is available. A running Core process uses the updated executable after the next restart.
 
+On Windows, if the installed Core executable already exists, `hosty update` first makes a best-effort Core stop request before replacing the executable because a running `.exe` is normally locked by the process.
+
 Shell remains a Core-managed runtime app. `hosty update` only asks the running Core for Shell update planning when Core is reachable; applying Shell updates remains an app lifecycle command.
 
 ## Control Discovery

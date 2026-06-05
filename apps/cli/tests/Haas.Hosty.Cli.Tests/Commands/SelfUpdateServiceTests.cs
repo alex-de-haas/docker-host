@@ -97,6 +97,22 @@ public sealed class SelfUpdateServiceTests
         Assert.Equal("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd", sha256);
     }
 
+    [Fact]
+    public void TryFindChecksum_BinaryModeArtifactEntryExists_ReturnsChecksum()
+    {
+        const string checksums = """
+            abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd *hosty-core-linux-x64
+            """;
+
+        var found = SelfUpdateService.TryFindChecksum(
+            checksums,
+            "hosty-core-linux-x64",
+            out var sha256);
+
+        Assert.True(found);
+        Assert.Equal("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd", sha256);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
