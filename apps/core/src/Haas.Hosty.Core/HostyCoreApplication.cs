@@ -728,7 +728,8 @@ internal sealed class RuntimeAppSupervisorService(
                     cancellationToken);
             }
         }
-        catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+            ex is AppLifecycleException or AppManifestException or HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
         {
             logger.LogWarning(ex, "Hosty Shell bootstrap did not complete; Core remains available through CLI and control APIs.");
         }
@@ -750,10 +751,8 @@ internal sealed class RuntimeAppSupervisorService(
             new AppUpdatePlanRequest(config.ShellManifestPath, config.ShellBootstrapRuntime, shell.SelectedChannel),
             cancellationToken);
 
-        var configuredRemoteManifestChanged =
-            IsHttpManifestReference(config.ShellManifestPath) &&
-            !string.Equals(shell.ManifestUrl, config.ShellManifestPath, StringComparison.Ordinal);
-        if (plan.Changes.Count == 0 && !configuredRemoteManifestChanged)
+        var configuredManifestReferenceChanged = HasShellManifestReferenceChanged(shell);
+        if (plan.Changes.Count == 0 && !configuredManifestReferenceChanged)
         {
             return shell;
         }
@@ -775,6 +774,16 @@ internal sealed class RuntimeAppSupervisorService(
     private static bool IsHttpManifestReference(string? manifestPath)
         => Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private bool HasShellManifestReferenceChanged(AppRecord shell)
+    {
+        if (IsHttpManifestReference(config.ShellManifestPath))
+        {
+            return !string.Equals(shell.ManifestUrl, config.ShellManifestPath, StringComparison.Ordinal);
+        }
+
+        return !string.IsNullOrWhiteSpace(shell.ManifestUrl);
+    }
 
     private static IReadOnlyDictionary<string, string?> BuildShellBootstrapSettings(HostyCoreRuntimeConfig config)
     {

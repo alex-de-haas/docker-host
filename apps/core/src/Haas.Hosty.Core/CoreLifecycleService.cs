@@ -793,33 +793,36 @@ internal sealed class CoreLifecycleService(
             return null;
         }
 
+        var repository = source?.Repository?.Trim();
+        if (!string.IsNullOrWhiteSpace(repository))
+        {
+            if (Uri.TryCreate(repository, UriKind.Absolute, out var repositoryUri) && repositoryUri.IsFile)
+            {
+                return Directory.Exists(repositoryUri.LocalPath)
+                    ? Path.GetFullPath(repositoryUri.LocalPath)
+                    : null;
+            }
+
+            if (Path.IsPathFullyQualified(repository))
+            {
+                return Directory.Exists(repository) ? Path.GetFullPath(repository) : null;
+            }
+        }
+
         var gitRoot = FindGitRoot(manifestDirectory);
         if (gitRoot is not null)
         {
             return gitRoot;
         }
 
-        if (string.IsNullOrWhiteSpace(source?.Repository))
+        if (string.IsNullOrWhiteSpace(repository))
         {
             return InferLocalSourceRootFromWorkingDirectories(manifestDirectory, selection) ?? manifestDirectory;
         }
 
-        var repository = source.Repository.Trim();
-        if (Uri.TryCreate(repository, UriKind.Absolute, out var repositoryUri))
+        if (Uri.TryCreate(repository, UriKind.Absolute, out var absoluteRepositoryUri) && !absoluteRepositoryUri.IsFile)
         {
-            if (!repositoryUri.IsFile)
-            {
-                return null;
-            }
-
-            return Directory.Exists(repositoryUri.LocalPath)
-                ? Path.GetFullPath(repositoryUri.LocalPath)
-                : null;
-        }
-
-        if (Path.IsPathFullyQualified(repository))
-        {
-            return Directory.Exists(repository) ? Path.GetFullPath(repository) : null;
+            return null;
         }
 
         if (repository == ".")
@@ -865,8 +868,10 @@ internal sealed class CoreLifecycleService(
         var suffixParts = suffix
             .Replace('\\', Path.DirectorySeparatorChar)
             .Replace('/', Path.DirectorySeparatorChar)
-            .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
-        if (suffixParts.Length == 0 || suffixParts.Any(part => part == "."))
+            .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
+            .Where(part => part != ".")
+            .ToArray();
+        if (suffixParts.Length == 0)
         {
             return path;
         }

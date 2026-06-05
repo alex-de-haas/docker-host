@@ -729,6 +729,84 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_UsesAbsoluteSourceRepositoryBeforeContainingGitRoot()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var containingRepositoryRoot = Path.Combine(fixture.Root, "container-repo");
+        var appDirectory = Path.Combine(containingRepositoryRoot, "apps", "external-app");
+        var externalSourceRoot = Path.Combine(fixture.Root, "external-source");
+        Directory.CreateDirectory(Path.Combine(containingRepositoryRoot, ".git"));
+        Directory.CreateDirectory(appDirectory);
+        Directory.CreateDirectory(externalSourceRoot);
+        var manifestPath = Path.Combine(appDirectory, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.external-local",
+              "name": "External Local App",
+              "version": "1.0.0",
+              "source": {
+                "type": "git",
+                "repository": "{{JsonEscape(externalSourceRoot)}}",
+                "branch": "main"
+              },
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "sleep 5",
+                    "workingDirectory": "."
+                  }
+                }
+              }]
+            }
+            """);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.external-local");
+        Assert.Equal(externalSourceRoot, app?.SourceState?.LocalOverridePath);
+    }
+
+    [Fact]
+    public async Task InstallAsync_StripsDotSegmentFromWorkingDirectoryWhenInferringLocalSourceRoot()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repositoryRoot = Path.Combine(fixture.Root, "repo-without-git");
+        var appDirectory = Path.Combine(repositoryRoot, "apps", "demo-app");
+        Directory.CreateDirectory(appDirectory);
+        var manifestPath = Path.Combine(appDirectory, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.dot-working-directory",
+              "name": "Dot Working Directory App",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "sleep 5",
+                    "workingDirectory": "./apps/demo-app"
+                  }
+                }
+              }]
+            }
+            """);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.dot-working-directory");
+        Assert.Equal(repositoryRoot, app?.SourceState?.LocalOverridePath);
+    }
+
+    [Fact]
     public async Task StartAsync_ClonesRemoteManifestSourceForLocalCommandRuntime()
     {
         const string manifestUrl = "https://apps.example.test/remote-local/manifest.json";

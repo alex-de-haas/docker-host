@@ -48,6 +48,70 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task StartAsync_ShellBootstrapHttpFailureLeavesCoreSupervisorRunning()
+    {
+        const string manifestUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
+        var fixture = CreateFixture(_ => throw new HttpRequestException("offline"));
+        var config = CreateConfig(fixture.Paths, manifestUrl, shellAutostart: false);
+        var supervisor = new RuntimeAppSupervisorService(
+            config,
+            fixture.Apps,
+            fixture.Lifecycle,
+            fixture.Sources,
+            NullLogger<RuntimeAppSupervisorService>.Instance);
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            await Task.Delay(250);
+            Assert.Null(await fixture.Apps.GetAppAsync("hosty.shell"));
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_ReconcilesInstalledShellFromRemoteManifestToConfiguredLocalPath()
+    {
+        const string manifestUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
+        var shellManifest = CreateShellManifest("0.2.0", "ghcr.io/alex-de-haas/hosty-shell", "latest", "always");
+        var fixture = CreateFixture(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(shellManifest, Encoding.UTF8, "application/json"),
+        });
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: manifestUrl,
+            SelectedRuntime: "docker",
+            SelectedChannel: "local",
+            System: true,
+            Autostart: false));
+        var localManifest = Path.Combine(root, "shell-manifest.json");
+        await File.WriteAllTextAsync(localManifest, shellManifest);
+        var config = CreateConfig(fixture.Paths, localManifest, shellAutostart: false);
+        var supervisor = new RuntimeAppSupervisorService(
+            config,
+            fixture.Apps,
+            fixture.Lifecycle,
+            fixture.Sources,
+            NullLogger<RuntimeAppSupervisorService>.Instance);
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            var shell = await WaitForShellManifestUrlAsync(fixture.Apps, expectedManifestUrl: null);
+
+            Assert.Equal("0.2.0", shell.Version);
+            Assert.Null(shell.ManifestUrl);
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))
@@ -71,6 +135,23 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
 
         throw new TimeoutException($"hosty.shell did not reach version {version}.");
+    }
+
+    private static async Task<AppRecord> WaitForShellManifestUrlAsync(AppRegistryStore apps, string? expectedManifestUrl)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var shell = await apps.GetAppAsync("hosty.shell");
+            if (shell is not null && string.Equals(shell.ManifestUrl, expectedManifestUrl, StringComparison.Ordinal))
+            {
+                return shell;
+            }
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException($"hosty.shell did not reach manifest URL '{expectedManifestUrl ?? "<local>"}'.");
     }
 
     private TestFixture CreateFixture(Func<HttpRequestMessage, HttpResponseMessage> manifestHandler)

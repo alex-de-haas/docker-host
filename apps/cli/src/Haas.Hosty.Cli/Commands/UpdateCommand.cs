@@ -189,16 +189,17 @@ internal sealed class UpdateCommand(CommandContext context)
         return null;
     }
 
-    private static string NormalizeManifestReference(string manifestPath)
+    internal static string NormalizeManifestReference(string manifestPath)
     {
-        if (Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
+        var manifestReference = manifestPath.Trim();
+        if (Uri.TryCreate(manifestReference, UriKind.Absolute, out var uri) &&
             !string.IsNullOrWhiteSpace(uri.Scheme) &&
             (uri.IsFile || uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
         {
-            return manifestPath;
+            return manifestReference;
         }
 
-        return Path.GetFullPath(manifestPath);
+        return Path.GetFullPath(manifestReference);
     }
 
     private static UpdateOptions ParseOptions(string[] args)
