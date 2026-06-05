@@ -27,6 +27,52 @@ public sealed class UserManagementServiceTests
     }
 
     [Fact]
+    public async Task AcceptInvitationAsync_CreatesUserAssignmentsAndPasswordCredential()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+        var invitation = await fixture.Service.CreateInvitationAsync(new UserInvitationCreateRequest(
+            Email: "user@example.test",
+            DisplayName: "Invited User",
+            Role: "host.user",
+            AssignedAppIds: ["com.example.notes"]), actor);
+
+        var user = await fixture.Service.AcceptInvitationAsync(new UserInvitationAcceptRequest(
+            SetupToken: invitation.Token,
+            DisplayName: "Accepted User",
+            Password: "correct horse battery staple"));
+        var state = await fixture.Users.ReadAsync();
+        var stored = Assert.Single(state.Users, candidate => candidate.Id == user.Id);
+        var credential = Assert.Single(state.PasswordCredentials ?? []);
+
+        Assert.Equal("user@example.test", stored.Email);
+        Assert.Equal("Accepted User", stored.DisplayName);
+        Assert.Equal("host.user", stored.Role);
+        Assert.Contains(state.Assignments, assignment => assignment.UserId == user.Id && assignment.AppId == "com.example.notes");
+        Assert.Equal(user.Id, credential.UserId);
+        Assert.NotEqual("correct horse battery staple", credential.Hash);
+        Assert.Equal("used", Assert.Single(state.Invitations).Status);
+    }
+
+    [Fact]
+    public async Task AcceptInvitationAsync_RequiresPassword()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+        var invitation = await fixture.Service.CreateInvitationAsync(new UserInvitationCreateRequest(
+            Email: "user@example.test",
+            Role: "host.user"), actor);
+
+        var error = await Assert.ThrowsAsync<LocalPasswordAuthException>(() =>
+            fixture.Service.AcceptInvitationAsync(new UserInvitationAcceptRequest(
+                SetupToken: invitation.Token)));
+
+        Assert.Equal("password_invalid", error.Code);
+    }
+
+    [Fact]
     public async Task DisableUserAsync_PreventsSelfDisable()
     {
         var fixture = await UserManagementFixture.CreateAsync();
@@ -133,6 +179,7 @@ public sealed class UserManagementServiceTests
             var apps = new AppRegistryStore(paths);
             var audit = new AuditStore(paths);
             var clock = new FakeClock(DateTimeOffset.Parse("2026-06-03T10:00:00Z"));
+            var passwords = new LocalPasswordAuthService(users, audit, clock);
             var config = new HostyCoreRuntimeConfig(
                 DataRoot: root,
                 RunDirectory: Path.Combine(root, "core", "run"),
@@ -146,7 +193,7 @@ public sealed class UserManagementServiceTests
                 ShellSourceOverridePath: null,
                 ShellBootstrapEnabled: false,
                 ShellAutostart: false);
-            var service = new UserManagementService(users, apps, audit, config, clock);
+            var service = new UserManagementService(users, apps, audit, passwords, config, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             return new UserManagementFixture(users, service, clock);
         }

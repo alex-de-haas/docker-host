@@ -61,5 +61,9 @@ internal static class AuthBootstrapEndpoints
         {
             return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
         }
+        catch (LocalPasswordAuthException ex)
+        {
+            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
+        }
     }
 }

@@ -13,6 +13,8 @@ hosty uninstall
 hosty core start
 hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj
 hosty core stop
+hosty auth setup-token
+hosty auth recovery-token
 hosty apps list
 hosty apps install apps/demo-app/manifest.json --runtime dev
 ```
@@ -56,6 +58,14 @@ HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 Start does not check for newer Core builds when Core is already installed. Freshness checks and replacement are owned by `hosty update`.
 
 After Core starts, Core bootstraps Hosty Shell as the system runtime app `hosty.shell` from the configured Shell manifest reference and runtime. The default installed configuration downloads `apps/shell/manifest.json` from GitHub and starts `ghcr.io/alex-de-haas/hosty-shell:latest` through Docker.
+
+For a fresh installed data root, create the first administrator through Core-owned local setup:
+
+```bash
+hosty auth setup-token
+```
+
+Open the printed Setup URL, enter the first administrator email and password, and then use `/login` for later browser sessions. If an older local administrator does not have a password credential, use `hosty auth recovery-token` once to set a replacement password.
 
 Explicit source mode is available only through `--project`:
 

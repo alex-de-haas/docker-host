@@ -25,6 +25,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AuditStore>();
         builder.Services.AddSingleton<AppAuthCodeStore>();
         builder.Services.AddSingleton<AppIdentityService>();
+        builder.Services.AddSingleton<LocalPasswordAuthService>();
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
         builder.Services.AddSingleton(_ => new AppManifestService());
@@ -115,10 +116,55 @@ internal static class HostyCoreApplication
         }
         else
         {
-            app.MapGet("/login", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
-                "Hosty Core Login",
-                "Hosty Core owns login and session setup in the final architecture.",
-                config), "text/html"));
+            app.MapGet("/login", (HostyCoreRuntimeConfig config) => Results.Content(
+                RenderPasswordLoginPage(config),
+                "text/html"));
+            app.MapPost("/login", async (
+                HttpRequest request,
+                HttpResponse response,
+                HostyCoreRuntimeConfig config,
+                LocalPasswordAuthService passwords,
+                UserDirectoryStore users,
+                IClock clock,
+                CancellationToken cancellationToken) =>
+            {
+                var form = await request.ReadFormAsync(cancellationToken);
+                try
+                {
+                    var user = await passwords.AuthenticateAsync(
+                        new LocalPasswordLoginRequest(
+                            form["email"].ToString(),
+                            form["password"].ToString()),
+                        request.HttpContext.Connection.RemoteIpAddress?.ToString(),
+                        cancellationToken);
+                    var result = await AuthEndpoints.CreateSessionAsync(
+                        user.Id,
+                        secureCookie: false,
+                        response,
+                        users,
+                        clock,
+                        cancellationToken);
+
+                    return result.Succeeded
+                        ? Results.Redirect(config.ShellPublicOrigin ?? "/")
+                        : Results.Content(
+                            RenderPasswordLoginPage(config, "Email or password is invalid."),
+                            "text/html",
+                            Encoding.UTF8,
+                            StatusCodes.Status403Forbidden);
+                }
+                catch (LocalPasswordAuthException ex)
+                {
+                    var message = ex.Code == "login_throttled"
+                        ? ex.Message
+                        : "Email or password is invalid.";
+                    return Results.Content(
+                        RenderPasswordLoginPage(config, message),
+                        "text/html",
+                        Encoding.UTF8,
+                        ex.StatusCode);
+                }
+            });
         }
         app.MapGet("/setup", (string? setupToken, HostyCoreRuntimeConfig config) => Results.Content(
             RenderSetupPage(config, setupToken),
@@ -279,6 +325,56 @@ internal static class HostyCoreApplication
           """;
     }
 
+    private static string RenderPasswordLoginPage(HostyCoreRuntimeConfig config, string? error = null)
+    {
+        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.CorePublicOrigin ?? config.ListenUrl);
+        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.ShellPublicOrigin ?? "not configured");
+        var encodedError = error is null
+            ? string.Empty
+            : $"""<p class="error">{HtmlEncoder.Default.Encode(error)}</p>""";
+
+        return $$"""
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Hosty Core Login</title>
+            <style>
+              :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+              body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+              main { width: min(34rem, calc(100vw - 2rem)); border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 1.5rem; }
+              h1 { margin: 0 0 .75rem; font-size: 1.25rem; }
+              p { margin: .5rem 0; line-height: 1.5; }
+              form { display: grid; gap: .75rem; margin: 1rem 0; }
+              label { font-weight: 650; }
+              input, button { border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; font: inherit; padding: .7rem .85rem; }
+              button { cursor: pointer; background: CanvasText; color: Canvas; }
+              code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+              .error { color: #b42318; font-weight: 650; }
+              .hint { color: color-mix(in srgb, CanvasText 70%, transparent); }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>Hosty Core Login</h1>
+              {{encodedError}}
+              <form method="post" action="/login">
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" autocomplete="email" required>
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" autocomplete="current-password" required>
+                <button type="submit">Sign in</button>
+              </form>
+              <p>Core origin: <code>{{encodedCoreOrigin}}</code></p>
+              <p>Shell origin: <code>{{encodedShellOrigin}}</code></p>
+              <p class="hint">Use recovery from the local CLI if this account does not have a password yet.</p>
+            </main>
+          </body>
+          </html>
+          """;
+    }
+
     private static string RenderSetupPage(HostyCoreRuntimeConfig config, string? setupToken)
     {
         var encodedToken = HtmlEncoder.Default.Encode(setupToken ?? "");
@@ -314,6 +410,10 @@ internal static class HostyCoreApplication
                 <input id="email" name="email" type="email" autocomplete="email" required>
                 <label for="display-name">Display name</label>
                 <input id="display-name" name="displayName" autocomplete="name">
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
+                <label for="confirm-password">Confirm password</label>
+                <input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="8">
                 <button type="submit">Create administrator</button>
               </form>
             </main>
@@ -324,13 +424,21 @@ internal static class HostyCoreApplication
                 event.preventDefault();
                 message.className = '';
                 message.textContent = 'Creating administrator...';
+                const password = document.getElementById('password').value;
+                const confirmPassword = document.getElementById('confirm-password').value;
+                if (password !== confirmPassword) {
+                  message.className = 'error';
+                  message.textContent = 'Passwords do not match.';
+                  return;
+                }
                 const response = await fetch('/api/auth/bootstrap', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     setupToken: document.getElementById('setup-token').value,
                     email: document.getElementById('email').value,
-                    displayName: document.getElementById('display-name').value || undefined
+                    displayName: document.getElementById('display-name').value || undefined,
+                    password
                   })
                 });
                 if (!response.ok) {
@@ -382,6 +490,10 @@ internal static class HostyCoreApplication
                 <input id="email" name="email" type="email" autocomplete="email" required>
                 <label for="display-name">Display name</label>
                 <input id="display-name" name="displayName" autocomplete="name">
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
+                <label for="confirm-password">Confirm password</label>
+                <input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="8">
                 <button type="submit">Restore administrator</button>
               </form>
             </main>
@@ -392,13 +504,21 @@ internal static class HostyCoreApplication
                 event.preventDefault();
                 message.className = '';
                 message.textContent = 'Restoring administrator...';
+                const password = document.getElementById('password').value;
+                const confirmPassword = document.getElementById('confirm-password').value;
+                if (password !== confirmPassword) {
+                  message.className = 'error';
+                  message.textContent = 'Passwords do not match.';
+                  return;
+                }
                 const response = await fetch('/api/auth/recovery', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     recoveryToken: document.getElementById('recovery-token').value,
                     email: document.getElementById('email').value,
-                    displayName: document.getElementById('display-name').value || undefined
+                    displayName: document.getElementById('display-name').value || undefined,
+                    password
                   })
                 });
                 if (!response.ok) {
@@ -449,6 +569,10 @@ internal static class HostyCoreApplication
                 <input type="hidden" id="setup-token" value="{{encodedToken}}">
                 <label for="display-name">Display name</label>
                 <input id="display-name" name="displayName" autocomplete="name">
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
+                <label for="confirm-password">Confirm password</label>
+                <input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="8">
                 <button type="submit">Accept invitation</button>
               </form>
             </main>
@@ -459,12 +583,20 @@ internal static class HostyCoreApplication
                 event.preventDefault();
                 message.className = '';
                 message.textContent = 'Accepting invitation...';
+                const password = document.getElementById('password').value;
+                const confirmPassword = document.getElementById('confirm-password').value;
+                if (password !== confirmPassword) {
+                  message.className = 'error';
+                  message.textContent = 'Passwords do not match.';
+                  return;
+                }
                 const response = await fetch('/api/auth/invitations/accept', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     setupToken: document.getElementById('setup-token').value,
-                    displayName: document.getElementById('display-name').value || undefined
+                    displayName: document.getElementById('display-name').value || undefined,
+                    password
                   })
                 });
                 if (!response.ok) {

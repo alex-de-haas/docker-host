@@ -7,8 +7,12 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 ## Browser APIs
 
 - `GET /api/core/status` - public Core status.
+- `GET /login` - Core-owned login page. Development renders the local user selector; non-development renders email/password login.
+- `POST /login` - create a Core session from the development selector or from local email/password credentials, depending on environment.
 - `GET /api/apps` - apps visible to the active Host session.
 - `GET /api/users` - admin user directory state.
+- `POST /api/auth/bootstrap` - consume a setup token, create the first administrator, store the submitted password credential, and create a Core session.
+- `POST /api/auth/recovery` - consume a recovery token, create or restore an administrator, replace the submitted password credential, and create a Core session.
 - `POST /api/auth/apps/authorize` - create an app authorization code for an authenticated Host user.
 - `POST /api/auth/apps/token` - exchange an app authorization code for an app identity token.
 - `POST /api/auth/apps/revalidate` - validate an app identity token.
@@ -31,6 +35,8 @@ The CLI discovers Core control information from the local run directory and send
 - `GET /control/v1/apps/{appId}/health`
 - `GET /control/v1/apps/{appId}/logs`
 - `GET /control/v1/users/summaries?appId={appId}`
+- `POST /control/v1/auth/setup-token`
+- `POST /control/v1/auth/recovery-token`
 - `POST /control/v1/apps/{appId}/identity`
 - `POST /control/v1/apps/{appId}/open-link`
 

@@ -167,5 +167,9 @@ internal static class UserManagementEndpoints
         {
             return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
         }
+        catch (LocalPasswordAuthException ex)
+        {
+            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
+        }
     }
 }

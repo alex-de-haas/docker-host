@@ -7,6 +7,7 @@ internal sealed class UserManagementService(
     UserDirectoryStore users,
     AppRegistryStore apps,
     AuditStore audit,
+    LocalPasswordAuthService passwords,
     HostyCoreRuntimeConfig config,
     IClock clock)
 {
@@ -137,12 +138,14 @@ internal sealed class UserManagementService(
                 ? candidate with { Status = "used", UsedAt = now }
                 : candidate)
             .ToArray();
+        var credentials = passwords.UpsertCredential(state.PasswordCredentials, user.Id, request.Password, now);
 
         var nextState = state with
         {
             Users = state.Users.Append(user).ToArray(),
             Invitations = invitations,
             Assignments = state.Assignments.Concat(assignments).ToArray(),
+            PasswordCredentials = credentials,
         };
         await users.WriteAsync(nextState, cancellationToken);
         await AppendAuditAsync("auth.invitation.accepted", "auth.user", user.Id, user.Id, "succeeded", new Dictionary<string, string>

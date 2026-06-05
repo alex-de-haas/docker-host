@@ -4,9 +4,9 @@ Hosty administrators manage users from the Shell User Management view. The old L
 
 Host users can enter the system through these implemented flows:
 
-- first-administrator setup creates the initial local `host.admin` after a valid local setup token;
-- local administrator recovery creates or restores a `host.admin` after a valid local recovery token;
-- local invitations create `host.admin` or `host.user` accounts after the invite is accepted;
+- first-administrator setup creates the initial local `host.admin` with a password after a valid local setup token;
+- local administrator recovery creates or restores a `host.admin` and replaces its password after a valid local recovery token;
+- local invitations create `host.admin` or `host.user` accounts with passwords after the invite is accepted;
 - future OIDC login can provision or update external users through provider role mappings;
 - future trusted-proxy assertions can provision or update external users through trusted proxy role mappings;
 
@@ -17,8 +17,10 @@ Browser account switching is a separate compatibility topic. User Management own
 The feature uses Core-owned auth state:
 
 - users are stored as `HostUserRecord` entries in Core's `auth/state.json`;
+- local password credentials are stored separately from `HostUserRecord` entries in Core auth state;
 - roles remain `host.admin` and `host.user`;
 - local invitations use one-time setup-token style links with only token hashes stored at rest;
+- local password credentials use PBKDF2-HMAC-SHA256 with per-password salts;
 - setup and recovery tokens use separate hash-only storage under `core/auth/bootstrap-tokens.json`;
 - app access uses Core `AppAssignmentRecord` entries;
 - mutating browser requests require an active administrator session and same-origin CSRF validation;
@@ -68,10 +70,11 @@ The administrator generates a URL like:
 /setup/invite?setupToken=dhstp_...
 ```
 
-The recipient opens the URL, confirms the token, and creates the account. On success, Hosty Core:
+The recipient opens the URL, confirms the token, sets a password, and creates the account. On success, Hosty Core:
 
 - marks the invitation token as used;
 - creates a local Host user with the invited role;
+- stores the local password credential separately from the user record;
 - applies the stored app assignments;
 - creates a normal browser session;
 - redirects `host.user` accounts to `/apps` and `host.admin` accounts to `/`.
@@ -79,6 +82,8 @@ The recipient opens the URL, confirms the token, and creates the account. On suc
 The raw setup token is returned only once to the administrator and is never stored in auth state.
 
 Hosty does not create users directly from User Management in this version. New local users are invite-first. Password-reset invites can reuse the same token mechanics later, but they are not part of this feature.
+
+After logout, local users sign in through Core `/login` with email and password. Existing users from older builds that do not have password credentials need administrator recovery or a future reset-password flow before they can use password login.
 
 Invitations do not pre-provision future OIDC or trusted-proxy identities. External users should be created or updated when they authenticate through their provider, then administrators can disable them or assign app access after first login.
 
@@ -123,7 +128,7 @@ The UI uses the Core auth API:
 - `POST /api/auth/invitations` creates an invitation and returns the raw setup token and setup URL once.
 - `DELETE /api/auth/invitations/{inviteId}` revokes a pending invitation.
 - `GET /api/auth/invitations/accept?setupToken=...` returns a safe invitation preview.
-- `POST /api/auth/invitations/accept` consumes an invitation and creates the user session.
+- `POST /api/auth/invitations/accept` consumes an invitation, stores the submitted password credential, and creates the user session.
 - `PATCH /api/auth/users/{userId}` updates local user profile or role.
 - `DELETE /api/auth/users/{userId}` disables the user.
 - `PUT /api/auth/users/{userId}/assignments` replaces app assignments for the user.

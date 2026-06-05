@@ -19,6 +19,7 @@ internal sealed class AuthBootstrapService(
     UserDirectoryStore users,
     AuthBootstrapTokenStore tokens,
     AuditStore audit,
+    LocalPasswordAuthService passwords,
     HostyCoreRuntimeConfig config,
     IClock clock)
 {
@@ -100,7 +101,12 @@ internal sealed class AuthBootstrapService(
             Disabled: false,
             CreatedAt: now,
             UpdatedAt: now);
-        await users.WriteAsync(userState with { Users = userState.Users.Append(user).ToArray() }, cancellationToken);
+        var credentials = passwords.UpsertCredential(userState.PasswordCredentials, user.Id, request.Password, now);
+        await users.WriteAsync(userState with
+        {
+            Users = userState.Users.Append(user).ToArray(),
+            PasswordCredentials = credentials,
+        }, cancellationToken);
         await MarkTokenUsedAsync(tokenState, token.Id, now, cancellationToken);
         await AppendAuditAsync("auth.bootstrap.completed", "auth.user", user.Id, "succeeded", new Dictionary<string, string>
         {
@@ -135,7 +141,12 @@ internal sealed class AuthBootstrapService(
                 Disabled: false,
                 CreatedAt: now,
                 UpdatedAt: now);
-            nextState = userState with { Users = userState.Users.Append(recovered).ToArray() };
+            var credentials = passwords.UpsertCredential(userState.PasswordCredentials, recovered.Id, request.Password, now);
+            nextState = userState with
+            {
+                Users = userState.Users.Append(recovered).ToArray(),
+                PasswordCredentials = credentials,
+            };
         }
         else
         {
@@ -146,10 +157,12 @@ internal sealed class AuthBootstrapService(
                 Disabled = false,
                 UpdatedAt = now,
             };
+            var credentials = passwords.UpsertCredential(userState.PasswordCredentials, recovered.Id, request.Password, now);
             nextState = userState with
             {
                 Users = userState.Users.Select(user => string.Equals(user.Id, existing.Id, StringComparison.Ordinal) ? recovered : user).ToArray(),
                 Sessions = RevokeSessions(userState.Sessions, existing.Id, now),
+                PasswordCredentials = credentials,
             };
         }
 
@@ -298,9 +311,9 @@ internal sealed record AuthBootstrapTokenResponse(
     string? RecoveryUrl,
     DateTimeOffset ExpiresAt);
 
-internal sealed record AuthBootstrapRequest(string SetupToken, string Email, string? DisplayName = null);
+internal sealed record AuthBootstrapRequest(string SetupToken, string Email, string? DisplayName = null, string? Password = null);
 
-internal sealed record AuthRecoveryRequest(string RecoveryToken, string Email, string? DisplayName = null);
+internal sealed record AuthRecoveryRequest(string RecoveryToken, string Email, string? DisplayName = null, string? Password = null);
 
 internal sealed record AuthBootstrapCompleteResponse(HostUserRecord User, string RedirectTo);
 
