@@ -1,4 +1,5 @@
 using Haas.Hosty.Cli.Commands;
+using System.Reflection;
 using Spectre.Console;
 
 namespace Haas.Hosty.Cli.Tests.Commands;
@@ -81,6 +82,27 @@ public sealed class SelfUpdateServiceTests
     }
 
     [Fact]
+    public void PreloadReferencedAssemblies_CliAssembly_VisitsLazyJsonDependency()
+    {
+        var visitedAssemblies = SelfUpdateService.PreloadReferencedAssemblies(typeof(UpdateCommand).Assembly);
+
+        Assert.Contains(
+            visitedAssemblies,
+            assemblyName => assemblyName.StartsWith("System.Text.Json,", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PreloadReferencedAssemblies_MissingReference_IgnoresBestEffortLoadFailure()
+    {
+        var missingReference = new AssemblyName("Haas.Hosty.Optional.Missing");
+        var rootAssembly = new TestAssembly("Haas.Hosty.Tests.Root", [missingReference]);
+
+        var visitedAssemblies = SelfUpdateService.PreloadReferencedAssemblies(rootAssembly);
+
+        Assert.Contains(missingReference.FullName, visitedAssemblies);
+    }
+
+    [Fact]
     public void TryFindChecksum_ArtifactEntryExists_ReturnsChecksum()
     {
         const string checksums = """
@@ -150,5 +172,16 @@ public sealed class SelfUpdateServiceTests
         Assert.DoesNotContain(columns, column => column is ProgressBarColumn);
         Assert.DoesNotContain(columns, column => column is PercentageColumn);
         Assert.DoesNotContain(columns, column => column is RemainingTimeColumn);
+    }
+
+    private sealed class TestAssembly(string name, AssemblyName[] references) : Assembly
+    {
+        public override string FullName => GetName().FullName;
+
+        public override AssemblyName GetName()
+            => new(name);
+
+        public override AssemblyName[] GetReferencedAssemblies()
+            => references;
     }
 }

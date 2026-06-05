@@ -1,5 +1,6 @@
 namespace Haas.Hosty.Cli.Commands;
 
+using System.Reflection;
 using System.Security.Cryptography;
 using Spectre.Console;
 
@@ -69,6 +70,7 @@ internal sealed class SelfUpdateService(CommandContext context)
                 UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         }
 
+        PreloadAssembliesForInProcessContinuation();
         ReplaceExecutable(tempPath, processPath);
         context.Console.MarkupLine("[green]CLI updated.[/] New version installed.");
         return SelfUpdateResult.Updated(processPath);
@@ -107,6 +109,57 @@ internal sealed class SelfUpdateService(CommandContext context)
     internal static bool IsManagedExecutableName(string executableName)
         => string.Equals(executableName, "hosty", StringComparison.Ordinal) ||
             string.Equals(executableName, "hosty.exe", StringComparison.OrdinalIgnoreCase);
+
+    internal static void PreloadAssembliesForInProcessContinuation()
+    {
+        var entryAssembly = Assembly.GetEntryAssembly();
+        if (entryAssembly is null)
+        {
+            return;
+        }
+
+        PreloadReferencedAssemblies(entryAssembly);
+    }
+
+    internal static IReadOnlySet<string> PreloadReferencedAssemblies(Assembly rootAssembly)
+    {
+        ArgumentNullException.ThrowIfNull(rootAssembly);
+
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var rootName = rootAssembly.FullName ?? rootAssembly.GetName().FullName;
+        if (!string.IsNullOrWhiteSpace(rootName))
+        {
+            visited.Add(rootName);
+        }
+
+        var pending = new Stack<Assembly>();
+        pending.Push(rootAssembly);
+
+        while (pending.TryPop(out var assembly))
+        {
+            foreach (var reference in assembly.GetReferencedAssemblies())
+            {
+                if (!visited.Add(reference.FullName))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    pending.Push(Assembly.Load(reference));
+                }
+                catch (Exception ex) when (IsBestEffortPreloadFailure(ex))
+                {
+                    // Optional and platform-specific references should not make the self-update path fail.
+                }
+            }
+        }
+
+        return visited;
+    }
+
+    private static bool IsBestEffortPreloadFailure(Exception ex)
+        => ex is FileNotFoundException or FileLoadException or BadImageFormatException or PlatformNotSupportedException;
 
     private static void TryRestoreWindowsBackup(string backupPath, string processPath)
     {
