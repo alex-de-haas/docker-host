@@ -121,14 +121,17 @@ internal sealed class SelfUpdateService(CommandContext context)
         PreloadReferencedAssemblies(entryAssembly);
     }
 
-    internal static void PreloadReferencedAssemblies(Assembly rootAssembly)
+    internal static IReadOnlySet<string> PreloadReferencedAssemblies(Assembly rootAssembly)
     {
         ArgumentNullException.ThrowIfNull(rootAssembly);
 
-        var visited = new HashSet<string>(StringComparer.Ordinal)
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var rootName = rootAssembly.FullName ?? rootAssembly.GetName().FullName;
+        if (!string.IsNullOrWhiteSpace(rootName))
         {
-            rootAssembly.FullName ?? rootAssembly.GetName().Name ?? string.Empty,
-        };
+            visited.Add(rootName);
+        }
+
         var pending = new Stack<Assembly>();
         pending.Push(rootAssembly);
 
@@ -145,15 +148,18 @@ internal sealed class SelfUpdateService(CommandContext context)
                 {
                     pending.Push(Assembly.Load(reference));
                 }
-                catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
+                catch (Exception ex) when (IsBestEffortPreloadFailure(ex))
                 {
-                    throw new InvalidOperationException(
-                        $"Unable to preload assembly '{reference.FullName}' before replacing the running Hosty CLI executable.",
-                        ex);
+                    // Optional and platform-specific references should not make the self-update path fail.
                 }
             }
         }
+
+        return visited;
     }
+
+    private static bool IsBestEffortPreloadFailure(Exception ex)
+        => ex is FileNotFoundException or FileLoadException or BadImageFormatException or PlatformNotSupportedException;
 
     private static void TryRestoreWindowsBackup(string backupPath, string processPath)
     {
