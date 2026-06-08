@@ -789,6 +789,23 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_PreservesManifestEndpointServiceMetadata()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var endpoint = Assert.Single(app?.Endpoints ?? []);
+        Assert.Equal("app.http", endpoint.Key);
+        Assert.Equal("app", endpoint.Service);
+        Assert.Equal("http", endpoint.Port);
+        Assert.True(endpoint.Public);
+        Assert.Null(endpoint.Url);
+    }
+
+    [Fact]
     public async Task InstallAsync_StripsDotSegmentFromWorkingDirectoryWhenInferringLocalSourceRoot()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -928,6 +945,12 @@ public sealed class CoreLifecycleServiceTests
             var parts = output.Split('|');
             Assert.Equal(parts[3], parts[4]);
             Assert.Matches("^[0-9]+$", parts[3]);
+            Assert.NotNull(start.App);
+            var endpoint = Assert.Single(start.App.Endpoints);
+            Assert.Equal("app.http", endpoint.Key);
+            Assert.Equal("app", endpoint.Service);
+            Assert.Equal("http", endpoint.Port);
+            Assert.StartsWith("http://localhost:", endpoint.Url, StringComparison.Ordinal);
         }
         finally
         {
@@ -1572,7 +1595,7 @@ public sealed class CoreLifecycleServiceTests
             }
 
             return Task.FromResult(new AppRuntimeStartResult("running", [
-                new AppEndpointContract("app.http", "http", "http://127.0.0.1:3100", Public: true),
+                new AppEndpointContract("app.http", "http", "http://127.0.0.1:3100", Public: true, Service: "app", Port: "http"),
             ]));
         }
 

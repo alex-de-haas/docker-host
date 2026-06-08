@@ -683,12 +683,16 @@ internal sealed class CoreLifecycleService(
                 Key: $"{service.Key}.{port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"}",
                 Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
                 Url: null,
-                Public: port.Public ?? false))).ToArray()
+                Public: port.Public ?? false,
+                Service: service.Key,
+                Port: port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"))).ToArray()
             : manifest.Endpoints.Select(endpoint => new AppEndpointContract(
                 Key: endpoint.Key,
                 Protocol: endpoint.Protocol ?? "http",
                 Url: null,
-                Public: endpoint.Public)).ToArray();
+                Public: endpoint.Public,
+                Service: endpoint.Service,
+                Port: endpoint.Port)).ToArray();
 
         return new AppRecord(
             Id: manifest.Id!,
@@ -988,6 +992,12 @@ internal sealed class CoreLifecycleService(
         IReadOnlyList<AppEndpointContract> started,
         RuntimeAppManifestSelection selection)
     {
+        var baseEndpoints = BuildEndpointContracts(selection);
+        if (baseEndpoints.Count == 0)
+        {
+            baseEndpoints = current;
+        }
+
         var startedByKey = started.ToDictionary(endpoint => endpoint.Key, StringComparer.Ordinal);
         var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var endpoint in selection.Manifest.Endpoints)
@@ -1000,19 +1010,33 @@ internal sealed class CoreLifecycleService(
             }
         }
         var usedStartedKeys = new HashSet<string>(StringComparer.Ordinal);
-        var merged = current.Select(endpoint =>
+        var merged = baseEndpoints.Select(endpoint =>
         {
             if (startedByKey.TryGetValue(endpoint.Key, out var direct))
             {
                 usedStartedKeys.Add(direct.Key);
-                return endpoint with { Url = direct.Url, Protocol = direct.Protocol, Public = direct.Public };
+                return endpoint with
+                {
+                    Url = direct.Url,
+                    Protocol = direct.Protocol,
+                    Public = direct.Public,
+                    Service = endpoint.Service ?? direct.Service,
+                    Port = endpoint.Port ?? direct.Port,
+                };
             }
 
             if (aliases.TryGetValue(endpoint.Key, out var runtimeKey) &&
                 startedByKey.TryGetValue(runtimeKey, out var aliased))
             {
                 usedStartedKeys.Add(aliased.Key);
-                return endpoint with { Url = aliased.Url, Protocol = aliased.Protocol, Public = aliased.Public };
+                return endpoint with
+                {
+                    Url = aliased.Url,
+                    Protocol = aliased.Protocol,
+                    Public = aliased.Public,
+                    Service = endpoint.Service ?? aliased.Service,
+                    Port = endpoint.Port ?? aliased.Port,
+                };
             }
 
             return endpoint;
@@ -1021,7 +1045,7 @@ internal sealed class CoreLifecycleService(
         return merged
             .Concat(started.Where(endpoint =>
                 !usedStartedKeys.Contains(endpoint.Key) &&
-                current.All(existing => !string.Equals(existing.Key, endpoint.Key, StringComparison.Ordinal))))
+                baseEndpoints.All(existing => !string.Equals(existing.Key, endpoint.Key, StringComparison.Ordinal))))
             .ToArray();
     }
 
@@ -1604,7 +1628,11 @@ internal sealed class CoreLifecycleService(
     }
 
     private static string EndpointSignature(AppEndpointContract endpoint)
-        => $"{endpoint.Protocol}:public={endpoint.Public}";
+    {
+        var service = string.IsNullOrWhiteSpace(endpoint.Service) ? "none" : endpoint.Service;
+        var port = string.IsNullOrWhiteSpace(endpoint.Port) ? "none" : endpoint.Port;
+        return $"{endpoint.Protocol}:public={endpoint.Public}:service={service}:port={port}";
+    }
 
     private static string DependencySignature(AppDependencyContract dependency)
         => $"{dependency.AppId}:{dependency.Endpoint}";
@@ -1617,14 +1645,18 @@ internal sealed class CoreLifecycleService(
                 Key: endpoint.Key,
                 Protocol: endpoint.Protocol ?? "http",
                 Url: null,
-                Public: endpoint.Public)).ToArray();
+                Public: endpoint.Public,
+                Service: endpoint.Service,
+                Port: endpoint.Port)).ToArray();
         }
 
         return selection.Services.SelectMany(service => service.Runtime.Ports.Select(port => new AppEndpointContract(
             Key: $"{service.Key}.{port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"}",
             Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
             Url: null,
-            Public: port.Public ?? false))).ToArray();
+            Public: port.Public ?? false,
+            Service: service.Key,
+            Port: port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"))).ToArray();
     }
 
     private static IReadOnlyDictionary<string, AppSettingValue> MergeSettings(

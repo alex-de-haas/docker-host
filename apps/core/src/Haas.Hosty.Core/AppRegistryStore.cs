@@ -165,7 +165,13 @@ internal sealed record AppStorageMapping(string Key, string HostPath, string Tar
 
 internal sealed record AppDependencyContract(string Key, string AppId, string Endpoint);
 
-internal sealed record AppEndpointContract(string Key, string Protocol, string? Url, bool Public);
+internal sealed record AppEndpointContract(
+    string Key,
+    string Protocol,
+    string? Url,
+    bool Public,
+    string? Service = null,
+    string? Port = null);
 
 internal sealed record AppSourceState(
     string? Type,

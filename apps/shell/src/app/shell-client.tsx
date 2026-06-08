@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Archive,
@@ -110,6 +110,8 @@ type CoreEndpoint = {
   protocol: string;
   url?: string | null;
   public: boolean;
+  service?: string | null;
+  port?: string | null;
 };
 
 type CoreNavigationItem = {
@@ -198,6 +200,24 @@ type CoreBackupCleanupApplyResponse = {
 type LogsResponse = {
   appId: string;
   text: string;
+};
+
+type CoreRuntimeServiceHealth = {
+  service: string;
+  status: string;
+  processId?: number | null;
+  exitCode?: number | null;
+  logPath?: string | null;
+  workingDirectory?: string | null;
+  message?: string | null;
+};
+
+type AppHealthResponse = {
+  appId: string;
+  runtime: string;
+  runtimeType: string;
+  status: string;
+  services: CoreRuntimeServiceHealth[];
 };
 
 type CoreUpdatePlan = {
@@ -371,6 +391,19 @@ type EmbeddedWorkspace = {
   path: string;
   src: string;
   externalUrl: string;
+};
+
+type RuntimeHealthState = {
+  loading: boolean;
+  error: string | null;
+  health: AppHealthResponse | null;
+};
+
+type RuntimeServiceRow = {
+  service: string;
+  status: string;
+  message?: string | null;
+  endpoints: CoreEndpoint[];
 };
 
 const SIDEBAR_COMPACT_STORAGE_KEY = "hosty.shell.sidebar.compact";
@@ -1081,6 +1114,7 @@ export function ShellClient({
                 <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
               ) : effectiveView === "installed-apps" && canManageApps ? (
                 <InstalledAppsPage
+                  coreOrigin={coreOrigin}
                   runtimeApps={runtimeApps}
                   systemApps={systemApps}
                   shellAppId={shellAppId}
@@ -1760,6 +1794,7 @@ function CoreStatusWidget({ status, loading }: { status: CoreStatus | null; load
 }
 
 function InstalledAppsPage({
+  coreOrigin,
   runtimeApps,
   systemApps,
   shellAppId,
@@ -1772,6 +1807,7 @@ function InstalledAppsPage({
   onCreateBackup,
   onOpenPanel,
 }: {
+  coreOrigin: string;
   runtimeApps: CoreApp[];
   systemApps: CoreApp[];
   shellAppId: string;
@@ -1816,6 +1852,7 @@ function InstalledAppsPage({
       ) : (
         <div className="space-y-6">
           <InstalledAppTableSection
+            coreOrigin={coreOrigin}
             title="Runtime Apps"
             description="User-installed runtime apps and their lifecycle state."
             emptyTitle="No runtime apps installed"
@@ -1829,6 +1866,7 @@ function InstalledAppsPage({
             onOpenPanel={onOpenPanel}
           />
           <InstalledAppTableSection
+            coreOrigin={coreOrigin}
             title="System Apps"
             description="Core-managed Shell and platform runtime apps. Shell exposes inspection only."
             emptyTitle="No system apps registered"
@@ -1847,7 +1885,100 @@ function InstalledAppsPage({
   );
 }
 
+function AppServiceDetailsPanel({ app, healthState }: { app: CoreApp; healthState?: RuntimeHealthState }) {
+  const serviceRows = buildRuntimeServiceRows(app, healthState?.health);
+  const copyEndpointUrl = async (url: string) => {
+    try {
+      await copyTextToClipboard(url);
+      toast.success("URL copied", { description: url });
+    } catch {
+      toast.error("Copy failed", { description: "Clipboard access is unavailable." });
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border bg-background p-3">
+      {healthState?.loading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+          Loading services
+        </div>
+      )}
+      {healthState?.error && <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">{healthState.error}</div>}
+
+      {serviceRows.length === 0 ? (
+        <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">No services reported</div>
+      ) : (
+        <div className="grid gap-2">
+          {serviceRows.map((service) => (
+            <div key={service.service} className="rounded-md bg-muted/30 p-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium">{service.service}</div>
+                  {service.message && <div className="truncate text-xs text-muted-foreground">{service.message}</div>}
+                </div>
+                <StatusBadge value={service.status} />
+              </div>
+              {service.endpoints.length === 0 ? (
+                <div className="mt-2 rounded-md border border-dashed px-2 py-1.5 text-xs text-muted-foreground">No endpoints</div>
+              ) : (
+                <div className="mt-2 grid gap-1.5">
+                  {service.endpoints.map((endpoint) => {
+                    return (
+                      <div key={endpoint.key} className="grid gap-2 rounded-md border bg-background px-2 py-1.5 text-xs sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                        <span className={cn("truncate font-mono", endpoint.url ? "text-foreground" : "text-muted-foreground")}>{endpoint.url || "not assigned"}</span>
+                        {endpoint.url && (
+                          <span className="flex items-center gap-1">
+                            <IconButton title="Copy endpoint URL" onClick={() => void copyEndpointUrl(endpoint.url!)}>
+                              <Copy className="h-4 w-4" />
+                            </IconButton>
+                            <Button type="button" variant="ghost" size="icon-sm" title="Open endpoint URL" aria-label="Open endpoint URL" asChild>
+                              <a href={endpoint.url} target="_blank" rel="noreferrer">
+                                <ExternalLink className="h-4 w-4" />
+                              </a>
+                            </Button>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to the legacy copy path below when browser clipboard access is unavailable.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error("Clipboard copy failed.");
+  }
+}
+
 function InstalledAppTableSection({
+  coreOrigin,
   title,
   description,
   emptyTitle,
@@ -1860,6 +1991,7 @@ function InstalledAppTableSection({
   onCreateBackup,
   onOpenPanel,
 }: {
+  coreOrigin: string;
   title: string;
   description: string;
   emptyTitle: string;
@@ -1872,6 +2004,74 @@ function InstalledAppTableSection({
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
 }) {
+  const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
+  const [healthByApp, setHealthByApp] = useState<Record<string, RuntimeHealthState>>({});
+
+  useEffect(() => {
+    const appIds = new Set(apps.map((app) => app.id));
+    setExpandedAppIds((current) => {
+      const next = new Set([...current].filter((appId) => appIds.has(appId)));
+      return next.size === current.size ? current : next;
+    });
+    setHealthByApp((current) => {
+      const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
+  }, [apps]);
+
+  const loadAppHealth = useCallback(async (app: CoreApp) => {
+    setHealthByApp((current) => ({
+      ...current,
+      [app.id]: {
+        loading: true,
+        error: null,
+        health: current[app.id]?.health ?? null,
+      },
+    }));
+
+    try {
+      const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/health`, { credentials: "include" });
+      if (!response.ok) {
+        throw new Error(await readCoreError(response));
+      }
+      const health = (await response.json()) as AppHealthResponse;
+      setHealthByApp((current) => ({
+        ...current,
+        [app.id]: {
+          loading: false,
+          error: null,
+          health,
+        },
+      }));
+    } catch (error) {
+      setHealthByApp((current) => ({
+        ...current,
+        [app.id]: {
+          loading: false,
+          error: error instanceof Error ? error.message : "Health is unavailable.",
+          health: current[app.id]?.health ?? null,
+        },
+      }));
+    }
+  }, [coreOrigin]);
+
+  const toggleAppExpanded = (app: CoreApp) => {
+    const shouldExpand = !expandedAppIds.has(app.id);
+    setExpandedAppIds((current) => {
+      const next = new Set(current);
+      if (shouldExpand) {
+        next.add(app.id);
+      } else {
+        next.delete(app.id);
+      }
+      return next;
+    });
+
+    if (shouldExpand) {
+      void loadAppHealth(app);
+    }
+  };
+
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1898,18 +2098,34 @@ function InstalledAppTableSection({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {apps.map((app) => (
-                <InstalledAppRow
-                  key={app.id}
-                  app={app}
-                  isShell={app.id === shellAppId}
-                  canManageApps={canManageApps}
-                  busyAction={busyAction}
-                  onAction={onAction}
-                  onCreateBackup={onCreateBackup}
-                  onOpenPanel={onOpenPanel}
-                />
-              ))}
+              {apps.map((app) => {
+                const expanded = expandedAppIds.has(app.id);
+                const healthState = healthByApp[app.id];
+
+                return (
+                  <Fragment key={app.id}>
+                    <InstalledAppRow
+                      app={app}
+                      isShell={app.id === shellAppId}
+                      expanded={expanded}
+                      healthLoading={healthState?.loading ?? false}
+                      canManageApps={canManageApps}
+                      busyAction={busyAction}
+                      onToggleExpanded={() => toggleAppExpanded(app)}
+                      onAction={onAction}
+                      onCreateBackup={onCreateBackup}
+                      onOpenPanel={onOpenPanel}
+                    />
+                    {expanded && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="bg-muted/20 px-4 py-3">
+                          <AppServiceDetailsPanel app={app} healthState={healthState} />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
@@ -1921,16 +2137,22 @@ function InstalledAppTableSection({
 function InstalledAppRow({
   app,
   isShell,
+  expanded,
+  healthLoading,
   canManageApps,
   busyAction,
+  onToggleExpanded,
   onAction,
   onCreateBackup,
   onOpenPanel,
 }: {
   app: CoreApp;
   isShell: boolean;
+  expanded: boolean;
+  healthLoading: boolean;
   canManageApps: boolean;
   busyAction: string | null;
+  onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: (app: CoreApp, view: DetailView) => void;
@@ -1949,14 +2171,34 @@ function InstalledAppRow({
   return (
     <TableRow>
       <TableCell>
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-medium">{app.displayName}</span>
-            {app.system && <Badge variant="secondary">System</Badge>}
-            {isShell && <Badge variant="outline">Shell</Badge>}
-            {app.lastError && <CircleAlert className="h-4 w-4 text-destructive" />}
+        <div className="flex min-w-0 items-start gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="mt-0.5 shrink-0"
+            title={expanded ? "Hide services" : "Show services"}
+            aria-label={expanded ? "Hide services" : "Show services"}
+            aria-expanded={expanded}
+            onClick={onToggleExpanded}
+          >
+            {healthLoading ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            ) : expanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </Button>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-medium">{app.displayName}</span>
+              {app.system && <Badge variant="secondary">System</Badge>}
+              {isShell && <Badge variant="outline">Shell</Badge>}
+              {app.lastError && <CircleAlert className="h-4 w-4 text-destructive" />}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">{app.id}</div>
           </div>
-          <div className="truncate text-xs text-muted-foreground">{app.id}</div>
         </div>
       </TableCell>
       <TableCell>{app.selectedRuntime || "none"}</TableCell>
@@ -3369,6 +3611,55 @@ function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
 
 function getOpenEndpoint(app: CoreApp) {
   return app.endpoints?.find((endpoint) => endpoint.public && endpoint.url) ?? app.endpoints?.find((endpoint) => endpoint.url);
+}
+
+function buildRuntimeServiceRows(app: CoreApp, health: AppHealthResponse | null | undefined): RuntimeServiceRow[] {
+  const services = new Map<string, RuntimeServiceRow>();
+  const ensureService = (service: string) => {
+    const existing = services.get(service);
+    if (existing) {
+      return existing;
+    }
+
+    const created: RuntimeServiceRow = {
+      service,
+      status: health?.status || app.runtimeState || app.operationStatus,
+      message: null,
+      endpoints: [],
+    };
+    services.set(service, created);
+    return created;
+  };
+
+  for (const service of health?.services || []) {
+    const row = ensureService(service.service || "default");
+    row.status = service.status || row.status;
+    row.message = service.message || null;
+  }
+
+  const healthServices = health?.services || [];
+  const fallbackEndpointService = healthServices.length === 1 ? healthServices[0].service : "endpoints";
+  for (const endpoint of app.endpoints || []) {
+    const service = getEndpointService(endpoint, fallbackEndpointService);
+    ensureService(service).endpoints.push(endpoint);
+  }
+
+  return Array.from(services.values())
+    .map((service) => ({
+      ...service,
+      endpoints: [...service.endpoints].sort((left, right) => left.key.localeCompare(right.key)),
+    }))
+    .sort((left, right) => left.service.localeCompare(right.service));
+}
+
+function getEndpointService(endpoint: CoreEndpoint, fallback = "endpoints") {
+  const service = endpoint.service?.trim();
+  if (service) {
+    return service;
+  }
+
+  const separatorIndex = endpoint.key.indexOf(".");
+  return separatorIndex > 0 ? endpoint.key.slice(0, separatorIndex) : fallback;
 }
 
 function getHealthSummary(total: number, running: number, attention: number) {

@@ -573,7 +573,9 @@ internal sealed class DockerRuntimeAdapter(
                     Key: $"{service.Key}.{key}",
                     Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
                     Url: $"{(string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol)}://{config.RuntimePublicHost}:{hostPort}",
-                    Public: port.Public ?? false));
+                    Public: port.Public ?? false,
+                    Service: service.Key,
+                    Port: key));
             }
         }
 

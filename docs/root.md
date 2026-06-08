@@ -25,6 +25,7 @@ flowchart LR
 - [Runtime app update](features/runtime-app-update.md) - update plan and apply behavior.
 - [Runtime source workflows](features/runtime-source-workflows.md) - source checkout, local override, and runtime switching.
 - [Multi-service runtime apps](features/multi-service-runtime-apps.md) - multiple services per app.
+- [Runtime app compact view](features/runtime-app-compact-view.md) - compact Shell view of installed app services and assigned endpoints.
 - [Direct origin runtime app UI](features/direct-origin-runtime-app-ui.md) - app-origin UI and auth code exchange.
 - [App Auth And Origin Separation](features/app-auth-origin-separation.md) - Core-owned app auth and app-local sessions.
 - [Auth And Gateway Model](features/auth-gateway.md) - current app auth, assignments, and scoped app directory.

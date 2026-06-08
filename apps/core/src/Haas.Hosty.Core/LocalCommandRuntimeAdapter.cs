@@ -226,7 +226,9 @@ internal sealed class LocalCommandRuntimeAdapter(
                 Key: $"{service.Key}.{key}",
                 Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
                 Url: $"{(string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol)}://{config.RuntimePublicHost}:{hostPort}",
-                Public: port.Public ?? false));
+                Public: port.Public ?? false,
+                Service: service.Key,
+                Port: key));
         }
 
         if (assignedHostPorts.Count == 1 && !HasExplicitPortEnvironment(context, service))
