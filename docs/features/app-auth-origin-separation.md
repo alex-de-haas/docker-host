@@ -50,30 +50,35 @@ The repository Demo App is the first Next.js example. Its `/api/auth/app-code` r
 
 Core reads these public origin settings:
 
-- `HOST_CORE_PUBLIC_ORIGIN` - explicit Core public origin.
-- `HOST_SHELL_PUBLIC_ORIGIN` - explicit Shell public origin and allowed credentialed CORS origin.
-- `HOST_PUBLIC_ORIGIN` - compatibility alias for combined deployments; when explicit Core/Shell values are absent, Core uses it for both Core and Shell public origins.
+- `HOSTY_CORE_PUBLIC_ORIGIN` - explicit Core public origin.
+- `HOSTY_SHELL_PUBLIC_ORIGIN` - explicit Shell public origin and allowed credentialed CORS origin.
 
-Development defaults:
+Installed CLI defaults:
+
+- Core listens on `http://localhost:7070`.
+- Shell listens on `http://localhost:7171`.
+- Core and Shell public origins are unset unless configured.
+
+Source development defaults:
 
 - Core listens on `http://localhost:3001`.
-- In `Development`, Shell origin defaults to `http://localhost:3000`.
+- `npm run dev` sets Shell public origin to `http://localhost:3000`.
 - Runtime apps publish local endpoints as `http://localhost:<assigned-port>`.
 - Local HTTP browser credentials require the browser host to match consistently. Do not mix `localhost` and `127.0.0.1` in one local session.
 - Shell and runtime apps are still different origins because their ports differ. Cross-origin messaging and iframe access must use explicit target origins, but the cookie host remains `localhost`.
 
 Core status includes warnings for invalid public origin values and insecure `http` public origins on non-loopback hosts. Shell and `hosty core status` display those warnings.
 
-## Migration
+## Configuration
 
-Existing combined deployments can keep `HOST_PUBLIC_ORIGIN` while moving to the split-origin model. New split deployments should set both explicit variables:
+Split-origin deployments should set both explicit variables:
 
 ```env
-HOST_CORE_PUBLIC_ORIGIN=https://core.host.example
-HOST_SHELL_PUBLIC_ORIGIN=https://shell.host.example
+HOSTY_CORE_PUBLIC_ORIGIN=https://core.host.example
+HOSTY_SHELL_PUBLIC_ORIGIN=https://shell.host.example
 ```
 
-During migration:
+When configuring public origins:
 
 - keep Core auth pages on the Core origin;
 - configure reverse proxies to preserve `X-Forwarded-Host` and `X-Forwarded-Proto`;

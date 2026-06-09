@@ -98,7 +98,7 @@ If those ports are already occupied, either stop the existing Core/Shell or run
 with explicit origins:
 
 ```bash
-HOSTY_CORE_URL=http://localhost:3301 HOST_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
+HOSTY_CORE_URL=http://localhost:3301 HOSTY_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
 ```
 
 Run Core and Shell as separate processes when debugging one side:
@@ -123,7 +123,9 @@ hosty apps install apps/demo-app/manifest.json --runtime dev
 hosty apps start com.haas.demo-app
 ```
 
-The Core process listens on `http://127.0.0.1:3001` by default. The demo app
+The installed CLI starts Core on `http://localhost:7070` and Shell on
+`http://localhost:7171` by default. Source dev scripts keep using
+`http://localhost:3001` for Core and `http://localhost:3000` for Shell. The demo app
 manifest's `dev` runtime profile starts local command services on ports `3100`
 and `3101`.
 

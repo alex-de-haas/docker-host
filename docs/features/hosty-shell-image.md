@@ -34,7 +34,7 @@ The intended installed flow is:
 - Core can install runtime apps from local manifest paths or HTTP(S) manifest URLs through the existing app manifest loader.
 - Core bootstraps `hosty.shell` as a system app when it can find a Shell manifest.
 - Source runs can find `apps/shell/manifest.json`, but installed Core startup currently depends on local manifest discovery or explicit `HOSTY_SHELL_MANIFEST_PATH`.
-- Outside Development, Core leaves `ShellPublicOrigin` unset unless the user configures it, so `hosty open` cannot open Shell even if the container starts.
+- Outside Development, Core leaves `ShellPublicOrigin` unset unless the user configures it, so older `hosty open` behavior could not infer a Shell URL.
 - When `hosty.shell` is already installed, Core bootstrap updates settings/autostart only; it does not reconcile the installed Shell manifest with a newer configured manifest URL.
 
 ## Implemented Behavior
@@ -55,12 +55,12 @@ The intended installed flow is:
 - Keep Core as the owner of Shell system app bootstrap. The CLI writes and passes launch settings only.
 - Make Core bootstrap accept either a local Shell manifest path or URL, then use the same install/update path used by ordinary runtime apps.
 - Make Core bootstrap reconcile an existing `hosty.shell` system app with the configured Shell manifest URL while preserving explicit runtime/source override intent where possible.
-- Set the installed launch default `HOST_SHELL_PUBLIC_ORIGIN` to `http://localhost:3000`, while keeping explicit `HOST_SHELL_PUBLIC_ORIGIN` configuration authoritative.
+- Set the installed launch default `HOSTY_SHELL_PORT` to `7171`, while keeping `HOSTY_SHELL_PUBLIC_ORIGIN` unset unless explicitly configured.
 
 ## User/API Scenarios
 
 - A new user installs Hosty through `scripts/install.sh`, runs `hosty install`, then `hosty start`. Core downloads the configured Shell manifest and starts `hosty.shell` from the published `ghcr.io/alex-de-haas/hosty-shell:latest` image.
-- `hosty open` opens the configured Shell origin after Core startup.
+- `hosty open` opens the configured Shell public origin after Core startup, or `http://localhost:<HOSTY_SHELL_PORT>` when no Shell public origin is configured.
 - A user replaces the Shell by setting `HOSTY_SHELL_MANIFEST_PATH` in `launch.env` to another compatible local manifest path or manifest URL, and setting `HOSTY_SHELL_BOOTSTRAP_RUNTIME` when the replacement should use a non-default runtime profile.
 - A developer runs `npm run dev`; Core still bootstraps Shell with the repository-local manifest's `dev` local command runtime and source override.
 - An administrator sees Hosty Shell under System Apps and can inspect logs, but cannot stop, update, back up, or remove it from Shell UI.
@@ -80,7 +80,9 @@ The intended installed flow is:
 - CLI launch settings include:
   - `HOSTY_SHELL_MANIFEST_PATH`, defaulting to `https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json`;
   - `HOSTY_SHELL_BOOTSTRAP_RUNTIME`, defaulting to `docker`;
-  - `HOST_SHELL_PUBLIC_ORIGIN`, defaulting to `http://localhost:3000`.
+  - `HOSTY_CORE_PORT`, defaulting to `7070`;
+  - `HOSTY_SHELL_PORT`, defaulting to `7171`;
+  - `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN`, defaulting to empty.
 - `CoreCommand.BuildCoreEnvironment` passes those launch settings to Core.
 - Core runtime config resolves a Shell manifest reference in this priority order:
   - explicit `HOSTY_SHELL_MANIFEST_PATH` for local paths, manifest URLs, and existing development workflows;
@@ -149,6 +151,6 @@ Future product channels can replace the rolling `latest` reference with digest-p
 - `HOSTY_SHELL_MANIFEST_PATH` can be a local path or an HTTP(S) URL.
 - `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the Shell runtime profile.
 - The default installed values are the raw GitHub Shell manifest URL and runtime `docker`.
-- `HOST_SHELL_PUBLIC_ORIGIN` defaults to `http://localhost:3000` for the installed CLI launch path.
+- `HOSTY_SHELL_PORT` defaults to `7171` for the installed CLI launch path, and `HOSTY_SHELL_PUBLIC_ORIGIN` is unset by default.
 - Core auto-applies Shell manifest reconciliation for `hosty.shell` only when the installed runtime matches `HOSTY_SHELL_BOOTSTRAP_RUNTIME`.
 - Pull requests keep the existing standard CI and do not build or publish the Shell Docker image.

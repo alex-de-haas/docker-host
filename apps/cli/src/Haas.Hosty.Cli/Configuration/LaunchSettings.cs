@@ -15,11 +15,13 @@ internal sealed class LaunchSettings
 
     public string HostDataRootHostRaw => this[LaunchSettingDefinitions.HostDataRootHost];
 
-    public string HostPublicOrigin => this[LaunchSettingDefinitions.HostPublicOrigin];
+    public string HostyCorePort => this[LaunchSettingDefinitions.HostyCorePort];
 
-    public string HostCorePublicOrigin => this[LaunchSettingDefinitions.HostCorePublicOrigin];
+    public string HostyShellPort => this[LaunchSettingDefinitions.HostyShellPort];
 
-    public string HostShellPublicOrigin => this[LaunchSettingDefinitions.HostShellPublicOrigin];
+    public string HostyCorePublicOrigin => this[LaunchSettingDefinitions.HostyCorePublicOrigin];
+
+    public string HostyShellPublicOrigin => this[LaunchSettingDefinitions.HostyShellPublicOrigin];
 
     public string HostyShellManifestPath => this[LaunchSettingDefinitions.HostyShellManifestPath];
 

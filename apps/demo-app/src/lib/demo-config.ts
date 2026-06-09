@@ -38,7 +38,7 @@ const defaultAppVersion = "0.2.1";
 
 export function getDemoConfig(): DemoConfig {
   const appId = process.env.HOSTY_APP_ID || defaultAppId;
-  const coreOrigin = process.env.HOSTY_CORE_ORIGIN || process.env.HOST_CORE_PUBLIC_ORIGIN || "http://localhost:3001";
+  const coreOrigin = process.env.HOSTY_CORE_ORIGIN || "http://localhost:3001";
   const publicPort = process.env.HOSTY_PORT_HTTP || process.env.PORT;
 
   return {

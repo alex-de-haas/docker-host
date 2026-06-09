@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -518,7 +516,7 @@ internal sealed class DockerRuntimeAdapter(
             foreach (var dependency in context.DependencyUrls)
             {
                 runArgs.Add("-e");
-                runArgs.Add($"HOSTY_DEPENDENCY_{NormalizeEnvironmentKey(dependency.Key)}_URL={dependency.Value}");
+                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={dependency.Value}");
             }
 
             var assignedPorts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -529,14 +527,15 @@ internal sealed class DockerRuntimeAdapter(
                     continue;
                 }
 
-                var hostPort = port.LocalPort ?? port.HostPort ?? AllocateLoopbackPort();
-                assignedPorts[port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)] = hostPort;
+                var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var hostPort = RuntimePortHelper.ResolveHostPort(context, port, key);
+                assignedPorts[key] = hostPort;
                 runArgs.Add("-p");
                 runArgs.Add($"127.0.0.1:{hostPort}:{port.ContainerPort.Value}");
                 if (!string.IsNullOrWhiteSpace(port.Key))
                 {
                     runArgs.Add("-e");
-                    runArgs.Add($"HOSTY_PORT_{NormalizeEnvironmentKey(port.Key)}={hostPort}");
+                    runArgs.Add($"HOSTY_PORT_{RuntimePortHelper.NormalizeEnvironmentKey(port.Key)}={hostPort}");
                 }
             }
 
@@ -711,15 +710,6 @@ internal sealed class DockerRuntimeAdapter(
         return string.IsNullOrWhiteSpace(normalized) ? "app" : normalized.Trim('-');
     }
 
-    private static string NormalizeEnvironmentKey(string value)
-        => new(value.Select(character => char.IsLetterOrDigit(character) ? char.ToUpperInvariant(character) : '_').ToArray());
-
-    private static int AllocateLoopbackPort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
 }
 
 internal sealed record RuntimeLifecycleContext(

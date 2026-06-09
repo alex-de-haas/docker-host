@@ -21,11 +21,11 @@ internal sealed class OpenCommand(CommandContext context)
         }
 
         var status = await core.GetAsync<CoreStatusDocument>("core/status");
-        var url = status?.ShellPublicOrigin;
+        var url = ResolveShellOpenUrl(status);
         if (string.IsNullOrWhiteSpace(url))
         {
             context.Console.MarkupLine("[red]Hosty Shell origin is not configured.[/]");
-            context.Console.MarkupLine("Set [grey]HOST_SHELL_PUBLIC_ORIGIN[/] when starting Core, or run [grey]npm run dev[/] for local Core/Shell development.");
+            context.Console.MarkupLine("Set [grey]HOSTY_SHELL_PUBLIC_ORIGIN[/] when starting Core, or run [grey]npm run dev[/] for local Core/Shell development.");
             return 1;
         }
 
@@ -41,7 +41,19 @@ internal sealed class OpenCommand(CommandContext context)
         return 0;
     }
 
-    private sealed record CoreStatusDocument(string? ShellPublicOrigin);
+    private sealed record CoreStatusDocument(string? ShellPublicOrigin, int? ShellPort);
+
+    private static string? ResolveShellOpenUrl(CoreStatusDocument? status)
+    {
+        if (!string.IsNullOrWhiteSpace(status?.ShellPublicOrigin))
+        {
+            return status.ShellPublicOrigin;
+        }
+
+        return status?.ShellPort is int shellPort && shellPort > 0
+            ? $"http://localhost:{shellPort}"
+            : null;
+    }
 
     private static bool TryOpen(string url)
     {

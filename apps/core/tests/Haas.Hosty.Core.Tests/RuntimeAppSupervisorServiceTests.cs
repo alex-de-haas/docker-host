@@ -179,6 +179,8 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             DataRoot: paths.DataRoot,
             RunDirectory: Path.Combine(paths.CoreRoot, "run"),
             ControlDiscoveryPath: Path.Combine(paths.CoreRoot, "run", "control.json"),
+            CorePort: 3001,
+            ShellPort: 3000,
             ListenUrl: "http://127.0.0.1:3001",
             CorePublicOrigin: "http://127.0.0.1:3001",
             ShellPublicOrigin: "http://127.0.0.1:3000",

@@ -184,6 +184,8 @@ public sealed class UserManagementServiceTests
                 DataRoot: root,
                 RunDirectory: Path.Combine(root, "core", "run"),
                 ControlDiscoveryPath: Path.Combine(root, "core", "run", "control.json"),
+                CorePort: 3001,
+                ShellPort: 3000,
                 ListenUrl: "http://127.0.0.1:3001",
                 CorePublicOrigin: "http://127.0.0.1:3001",
                 ShellPublicOrigin: "http://127.0.0.1:3000",

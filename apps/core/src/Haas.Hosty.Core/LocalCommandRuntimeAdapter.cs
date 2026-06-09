@@ -15,7 +15,7 @@ internal sealed class LocalCommandRuntimeAdapter(
     {
         var endpoints = new List<AppEndpointContract>();
         var startedServices = new List<string>();
-        EnsureExplicitPortsAvailable(context.Manifest.Services);
+        EnsureExplicitPortsAvailable(context);
         try
         {
             foreach (var service in context.Manifest.Services)
@@ -207,7 +207,7 @@ internal sealed class LocalCommandRuntimeAdapter(
 
         foreach (var dependency in context.DependencyUrls)
         {
-            startInfo.Environment[$"HOSTY_DEPENDENCY_{NormalizeEnvironmentKey(dependency.Key)}_URL"] = dependency.Value;
+            startInfo.Environment[$"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL"] = dependency.Value;
         }
 
         var assignedHostPorts = new List<int>();
@@ -219,9 +219,9 @@ internal sealed class LocalCommandRuntimeAdapter(
                 continue;
             }
 
-            var hostPort = port.LocalPort ?? port.HostPort ?? AllocateLoopbackPort();
+            var hostPort = RuntimePortHelper.ResolveHostPort(context, port, key);
             assignedHostPorts.Add(hostPort);
-            startInfo.Environment[$"HOSTY_PORT_{NormalizeEnvironmentKey(key)}"] = hostPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            startInfo.Environment[$"HOSTY_PORT_{RuntimePortHelper.NormalizeEnvironmentKey(key)}"] = hostPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
             endpoints.Add(new AppEndpointContract(
                 Key: $"{service.Key}.{key}",
                 Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
@@ -237,20 +237,22 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
     }
 
-    private static void EnsureExplicitPortsAvailable(IReadOnlyList<RuntimeSelectedService> services)
+    private static void EnsureExplicitPortsAvailable(RuntimeLifecycleContext context)
     {
         var usedPorts = new Dictionary<int, string>();
-        foreach (var service in services)
+        foreach (var service in context.Manifest.Services)
         {
             foreach (var port in service.Runtime.Ports)
             {
-                var hostPort = port.LocalPort ?? port.HostPort;
+                var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port";
+                var hostPort = RuntimePortHelper.TryReadHostPortOverride(context, key, out var overridePort)
+                    ? overridePort
+                    : port.LocalPort ?? port.HostPort;
                 if (hostPort is null)
                 {
                     continue;
                 }
 
-                var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port";
                 if (!IsLoopbackPortAvailable(hostPort.Value))
                 {
                     throw new AppLifecycleException(
@@ -362,16 +364,6 @@ internal sealed class LocalCommandRuntimeAdapter(
             WorkingDirectory: process.WorkingDirectory,
             Message: hasExited ? "Local command process exited." : null);
     }
-
-    private static int AllocateLoopbackPort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
-
-    private static string NormalizeEnvironmentKey(string value)
-        => new(value.Select(character => char.IsLetterOrDigit(character) ? char.ToUpperInvariant(character) : '_').ToArray());
 
     private enum PortBindProbeResult
     {
