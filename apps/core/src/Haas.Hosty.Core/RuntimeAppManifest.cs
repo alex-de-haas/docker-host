@@ -529,8 +529,9 @@ internal sealed class DockerRuntimeAdapter(
                     continue;
                 }
 
-                var hostPort = port.LocalPort ?? port.HostPort ?? AllocateLoopbackPort();
-                assignedPorts[port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)] = hostPort;
+                var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var hostPort = ResolveHostPort(context, port, key);
+                assignedPorts[key] = hostPort;
                 runArgs.Add("-p");
                 runArgs.Add($"127.0.0.1:{hostPort}:{port.ContainerPort.Value}");
                 if (!string.IsNullOrWhiteSpace(port.Key))
@@ -713,6 +714,35 @@ internal sealed class DockerRuntimeAdapter(
 
     private static string NormalizeEnvironmentKey(string value)
         => new(value.Select(character => char.IsLetterOrDigit(character) ? char.ToUpperInvariant(character) : '_').ToArray());
+
+    private static int ResolveHostPort(RuntimeLifecycleContext context, RuntimePortManifest port, string key)
+    {
+        if (TryReadHostPortOverride(context, key, out var overridePort))
+        {
+            return overridePort;
+        }
+
+        return port.LocalPort ?? port.HostPort ?? AllocateLoopbackPort();
+    }
+
+    private static bool TryReadHostPortOverride(RuntimeLifecycleContext context, string key, out int port)
+    {
+        port = 0;
+        var settingKey = $"HOSTY_PORT_{NormalizeEnvironmentKey(key)}";
+        if (!context.App.Settings.TryGetValue(settingKey, out var setting) ||
+            string.IsNullOrWhiteSpace(setting.Value))
+        {
+            return false;
+        }
+
+        if (int.TryParse(setting.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out port) &&
+            port is > 0 and <= IPEndPoint.MaxPort)
+        {
+            return true;
+        }
+
+        throw new AppLifecycleException("runtime_port_invalid", $"{settingKey} must be an integer between 1 and {IPEndPoint.MaxPort}.");
+    }
 
     private static int AllocateLoopbackPort()
     {

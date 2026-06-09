@@ -7,7 +7,6 @@ using Spectre.Console;
 
 internal sealed class CoreCommand(CommandContext context)
 {
-    private const string DefaultCoreUrl = "http://localhost:3001";
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
 
     public async Task<int> ExecuteAsync(string[] args)
@@ -33,9 +32,9 @@ internal sealed class CoreCommand(CommandContext context)
     {
         var options = ParseStartOptions(args);
         Directory.CreateDirectory(context.Environment.RootDirectory);
-        var url = options.Url ?? DefaultCoreUrl;
         var settings = context.SettingsStore.Load();
         settings.Validate(context.Environment);
+        var url = options.Url ?? BuildDefaultCoreUrl(settings);
 
         CoreStartTarget target;
         try
@@ -173,17 +172,26 @@ internal sealed class CoreCommand(CommandContext context)
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["HOSTY_CORE_DATA_ROOT"] = context.Environment.RootDirectory,
+            [LaunchSettingDefinitions.HostyCorePort] = ResolveCorePort(url, settings.HostyCorePort),
+            [LaunchSettingDefinitions.HostyShellPort] = settings.HostyShellPort,
             ["HOSTY_CORE_URL"] = url,
             ["ASPNETCORE_URLS"] = url,
         };
 
-        AddOptional(environment, LaunchSettingDefinitions.HostPublicOrigin, settings.HostPublicOrigin);
-        AddOptional(environment, LaunchSettingDefinitions.HostCorePublicOrigin, settings.HostCorePublicOrigin);
-        AddOptional(environment, LaunchSettingDefinitions.HostShellPublicOrigin, settings.HostShellPublicOrigin);
+        AddOptional(environment, LaunchSettingDefinitions.HostyCorePublicOrigin, settings.HostyCorePublicOrigin);
+        AddOptional(environment, LaunchSettingDefinitions.HostyShellPublicOrigin, settings.HostyShellPublicOrigin);
         AddOptional(environment, LaunchSettingDefinitions.HostyShellManifestPath, settings.ResolveHostyShellManifestPath(context.Environment));
         AddOptional(environment, LaunchSettingDefinitions.HostyShellBootstrapRuntime, settings.HostyShellBootstrapRuntime);
         return environment;
     }
+
+    private static string BuildDefaultCoreUrl(LaunchSettings settings)
+        => $"http://localhost:{settings.HostyCorePort}";
+
+    private static string ResolveCorePort(string url, string fallback)
+        => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Port > 0
+            ? uri.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : fallback;
 
     private static void AddOptional(IDictionary<string, string> environment, string key, string value)
     {
@@ -431,6 +439,16 @@ internal sealed class CoreCommand(CommandContext context)
         table.AddRow("Status", Markup.Escape(status.Status ?? "unknown"));
         table.AddRow("Component", Markup.Escape(status.Component ?? "hosty-core"));
         table.AddRow("Listen URL", Markup.Escape(status.ListenUrl ?? ""));
+        if (status.CorePort > 0)
+        {
+            table.AddRow("Core port", status.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (status.ShellPort > 0)
+        {
+            table.AddRow("Shell port", status.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
         table.AddRow("Data root", Markup.Escape(status.DataRoot ?? ""));
         table.AddRow("Core origin", Markup.Escape(status.CorePublicOrigin ?? "not configured"));
         table.AddRow("Shell origin", Markup.Escape(status.ShellPublicOrigin ?? "not configured"));
@@ -482,6 +500,8 @@ internal sealed class CoreCommand(CommandContext context)
         string? Component,
         string? DataRoot,
         string? ListenUrl,
+        int CorePort,
+        int ShellPort,
         string? CorePublicOrigin,
         string? ShellPublicOrigin,
         IReadOnlyList<string> Warnings);

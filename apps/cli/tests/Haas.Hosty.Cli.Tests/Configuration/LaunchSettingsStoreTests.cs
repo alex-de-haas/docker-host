@@ -31,8 +31,10 @@ public sealed class LaunchSettingsStoreTests : IDisposable
 
         var settings = store.Load();
 
-        Assert.Equal("", settings.HostCorePublicOrigin);
-        Assert.Equal("http://localhost:3000", settings.HostShellPublicOrigin);
+        Assert.Equal("7070", settings.HostyCorePort);
+        Assert.Equal("7171", settings.HostyShellPort);
+        Assert.Equal("", settings.HostyCorePublicOrigin);
+        Assert.Equal("", settings.HostyShellPublicOrigin);
         Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json", settings.HostyShellManifestPath);
         Assert.Equal("docker", settings.HostyShellBootstrapRuntime);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
@@ -40,7 +42,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void Load_LegacyLoopbackDefaults_MigratesToLocalhost()
+    public void Load_LegacyOriginKeys_IgnoresOldValues()
     {
         var environment = HostyEnvironment.Current();
         Directory.CreateDirectory(environment.ConfigDirectory);
@@ -55,25 +57,44 @@ public sealed class LaunchSettingsStoreTests : IDisposable
 
         var settings = store.Load();
 
-        Assert.Equal("http://localhost:3001", settings.HostCorePublicOrigin);
-        Assert.Equal("http://localhost:3000", settings.HostShellPublicOrigin);
+        Assert.Equal("", settings.HostyCorePublicOrigin);
+        Assert.Equal("", settings.HostyShellPublicOrigin);
+        Assert.False(settings.Values.ContainsKey("HOST_CORE_PUBLIC_ORIGIN"));
+        Assert.False(settings.Values.ContainsKey("HOST_SHELL_PUBLIC_ORIGIN"));
     }
 
     [Theory]
-    [InlineData("HOST_CORE_PUBLIC_ORIGIN", "https://core.example")]
-    [InlineData("HOST_SHELL_PUBLIC_ORIGIN", "https://shell.example")]
+    [InlineData("HOSTY_CORE_PORT", "8080")]
+    [InlineData("HOSTY_SHELL_PORT", "8181")]
+    [InlineData("HOSTY_CORE_PUBLIC_ORIGIN", "https://core.example")]
+    [InlineData("HOSTY_SHELL_PUBLIC_ORIGIN", "https://shell.example")]
     [InlineData("HOSTY_SHELL_MANIFEST_PATH", "https://raw.githubusercontent.com/example/shell/main/manifest.json")]
     [InlineData("HOSTY_SHELL_MANIFEST_PATH", "~/shell/manifest.json")]
     [InlineData("HOSTY_SHELL_BOOTSTRAP_RUNTIME", "dev")]
-    public void Set_ExplicitPublicOrigin_AcceptsHttpOriginsWithoutPaths(string key, string origin)
+    public void Set_EditableLaunchSetting_AcceptsValidValues(string key, string value)
     {
         var environment = HostyEnvironment.Current();
         var store = new LaunchSettingsStore(environment);
         store.EnsureInstalled();
 
-        store.Set(key, origin);
+        store.Set(key, value);
 
-        Assert.Equal(origin, store.Load()[key]);
+        Assert.Equal(value, store.Load()[key]);
+    }
+
+    [Theory]
+    [InlineData("HOSTY_CORE_PORT", "0")]
+    [InlineData("HOSTY_CORE_PORT", "65536")]
+    [InlineData("HOSTY_SHELL_PORT", "port")]
+    public void Set_PortSetting_RejectsInvalidPorts(string key, string value)
+    {
+        var environment = HostyEnvironment.Current();
+        var store = new LaunchSettingsStore(environment);
+        store.EnsureInstalled();
+
+        var exception = Assert.Throws<ConfigurationException>(() => store.Set(key, value));
+
+        Assert.Contains("Port must be an integer between 1 and 65535", exception.Message);
     }
 
     [Fact]

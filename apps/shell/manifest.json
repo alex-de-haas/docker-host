@@ -51,7 +51,6 @@
           "workingDirectory": "apps/shell",
           "command": "npm run dev",
           "environment": {
-            "PORT": "3000",
             "HOSTNAME": "0.0.0.0"
           },
           "ports": [

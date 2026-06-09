@@ -40,7 +40,7 @@ The script also lets Core bootstrap `hosty.shell` into the `.hosty-dev` app regi
 If those ports are already occupied, stop the existing process or choose an alternate local pair:
 
 ```bash
-HOSTY_CORE_URL=http://localhost:3301 HOST_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
+HOSTY_CORE_URL=http://localhost:3301 HOSTY_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev
 ```
 
 Run Core and Shell separately when debugging one side:
@@ -50,13 +50,11 @@ npm run core:dev
 npm run shell:dev
 ```
 
-Use `HOST_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that differs from its listen URL. Use `HOST_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently instead of mixing `localhost` and `127.0.0.1`.
-
-`HOST_PUBLIC_ORIGIN` remains a compatibility alias for combined Core/Shell deployments. Prefer explicit Core/Shell origin variables for split-origin testing.
+Use `HOSTY_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that differs from its listen URL. Use `HOSTY_SHELL_PUBLIC_ORIGIN` when Shell runs on a different origin, and make the browser URL match exactly. For example, use `http://localhost:3000` consistently instead of mixing `localhost` and `127.0.0.1`.
 
 Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. Use `HOSTY_SHELL_MANIFEST_PATH=<manifest-path-or-url>`, `HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev`, and `HOSTY_SHELL_SOURCE_OVERRIDE_PATH=<repo-root>` when that Core process should register and run Shell with the manifest's local command runtime profile. Use Core-managed Shell when validating Shell runtime lifecycle behavior.
 
-For installed CLI runs, `launch.env` defaults `HOSTY_SHELL_MANIFEST_PATH` to the repository Shell manifest on GitHub and `HOSTY_SHELL_BOOTSTRAP_RUNTIME` to `docker`. Override those settings with `hosty config set` when validating a custom Shell manifest.
+For installed CLI runs, `launch.env` defaults `HOSTY_CORE_PORT` to `7070`, `HOSTY_SHELL_PORT` to `7171`, `HOSTY_SHELL_MANIFEST_PATH` to the repository Shell manifest on GitHub, and `HOSTY_SHELL_BOOTSTRAP_RUNTIME` to `docker`. Override those settings with `hosty config set` when validating custom local ports or a custom Shell manifest.
 
 When validating runtime lifecycle behavior, prefer installing Shell through Core like any other runtime app.
 

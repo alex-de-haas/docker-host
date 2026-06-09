@@ -1064,6 +1064,46 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_LocalCommandUsesHostyPortSettingAsAssignedPort()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Apps.UpsertAppAsync(CreateDependencyApp());
+        var overridePath = Path.Combine(fixture.Root, "local-app");
+        Directory.CreateDirectory(overridePath);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        var manifest = await fixture.WriteLocalCommandManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
+        await fixture.Service.ConfigureAsync(
+            "com.example.local",
+            new AppConfigureRequest(new Dictionary<string, string?>
+            {
+                ["HOSTY_PORT_HTTP"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            }));
+        _ = await fixture.Sources.SetLocalOverrideAsync("com.example.local", new AppSourceOverrideRequest(overridePath));
+
+        try
+        {
+            var start = await fixture.Service.StartAsync("com.example.local");
+            var outputPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.local", "data", "local-output.txt");
+
+            var output = await File.ReadAllTextAsync(outputPath);
+            var parts = output.Split('|');
+            Assert.Equal(port.ToString(System.Globalization.CultureInfo.InvariantCulture), parts[3]);
+            Assert.Equal(parts[3], parts[4]);
+            Assert.NotNull(start.App);
+            var endpoint = Assert.Single(start.App.Endpoints);
+            Assert.Equal($"http://localhost:{port}", endpoint.Url);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.local");
+        }
+    }
+
+    [Fact]
     public async Task StartAsync_PreservesManifestEndpointPublicFlagForAliasedRuntimePort()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -1389,6 +1429,8 @@ public sealed class CoreLifecycleServiceTests
                 DataRoot: root,
                 RunDirectory: Path.Combine(root, "core", "run"),
                 ControlDiscoveryPath: Path.Combine(root, "core", "run", "control.json"),
+                CorePort: 3001,
+                ShellPort: 3000,
                 ListenUrl: "http://127.0.0.1:3001",
                 CorePublicOrigin: "http://127.0.0.1:3001",
                 ShellPublicOrigin: null,

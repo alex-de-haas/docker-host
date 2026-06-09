@@ -44,14 +44,19 @@ On Windows the executable names use `.exe`.
 `launch.env` also carries the default Shell bootstrap settings passed to Core:
 
 ```text
-HOST_SHELL_PUBLIC_ORIGIN=http://localhost:3000
+HOSTY_CORE_PORT=7070
+HOSTY_SHELL_PORT=7171
+HOSTY_CORE_PUBLIC_ORIGIN=
+HOSTY_SHELL_PUBLIC_ORIGIN=
 HOSTY_SHELL_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json
 HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 ```
 
+`HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
+
 `HOSTY_SHELL_MANIFEST_PATH` can be a local manifest path or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
 
-Existing managed `launch.env` files that still contain the previous `http://127.0.0.1:3001` Core public origin or `http://127.0.0.1:3000` Shell public origin are migrated to the `localhost` defaults when the CLI loads and saves launch settings. Custom non-default origins are preserved.
+Legacy `HOST_CORE_PUBLIC_ORIGIN`, `HOST_SHELL_PUBLIC_ORIGIN`, and `HOST_PUBLIC_ORIGIN` launch settings are not read.
 
 ## Core Bootstrap
 
@@ -60,6 +65,8 @@ Existing managed `launch.env` files that still contain the previous `http://127.
 Start does not check for newer Core builds when Core is already installed. Freshness checks and replacement are owned by `hosty update`.
 
 After Core starts, Core bootstraps Hosty Shell as the system runtime app `hosty.shell` from the configured Shell manifest reference and runtime. The default installed configuration downloads `apps/shell/manifest.json` from GitHub and starts `ghcr.io/alex-de-haas/hosty-shell:latest` through Docker.
+
+`hosty open` opens `HOSTY_SHELL_PUBLIC_ORIGIN` when it is configured. Otherwise it opens the local Shell URL derived from `HOSTY_SHELL_PORT`.
 
 For a fresh installed data root, create the first administrator through Core-owned local setup:
 

@@ -4,18 +4,20 @@ internal static class LaunchSettingDefinitions
 {
     private const string DefaultShellManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
     public const string HostDataRootHost = "HOST_DATA_ROOT_HOST";
-    public const string HostPublicOrigin = "HOST_PUBLIC_ORIGIN";
-    public const string HostCorePublicOrigin = "HOST_CORE_PUBLIC_ORIGIN";
-    public const string HostShellPublicOrigin = "HOST_SHELL_PUBLIC_ORIGIN";
+    public const string HostyCorePort = "HOSTY_CORE_PORT";
+    public const string HostyShellPort = "HOSTY_SHELL_PORT";
+    public const string HostyCorePublicOrigin = "HOSTY_CORE_PUBLIC_ORIGIN";
+    public const string HostyShellPublicOrigin = "HOSTY_SHELL_PUBLIC_ORIGIN";
     public const string HostyShellManifestPath = "HOSTY_SHELL_MANIFEST_PATH";
     public const string HostyShellBootstrapRuntime = "HOSTY_SHELL_BOOTSTRAP_RUNTIME";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
         new(HostDataRootHost, DefaultDataRootHost, true, ValidateHostPath),
-        new(HostPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
-        new(HostCorePublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
-        new(HostShellPublicOrigin, _ => "http://localhost:3000", true, ValidateOptionalHttpOrigin),
+        new(HostyCorePort, _ => "7070", true, ValidatePort),
+        new(HostyShellPort, _ => "7171", true, ValidatePort),
+        new(HostyCorePublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
+        new(HostyShellPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
         new(HostyShellManifestPath, _ => DefaultShellManifestPath, true, ValidateManifestReference),
         new(HostyShellBootstrapRuntime, _ => "docker", true, ValidateRuntimeKey),
     ];
@@ -68,6 +70,12 @@ internal static class LaunchSettingDefinitions
             ? null
             : "Host public origin must be an absolute http(s) origin without a path.";
     }
+
+    private static string? ValidatePort(string value, HostyEnvironment _)
+        => int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var port) &&
+            port is > 0 and <= 65535
+            ? null
+            : "Port must be an integer between 1 and 65535.";
 
     private static string? ValidateManifestReference(string value, HostyEnvironment environment)
     {

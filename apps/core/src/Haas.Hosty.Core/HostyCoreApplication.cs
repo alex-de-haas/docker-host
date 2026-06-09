@@ -618,6 +618,8 @@ internal sealed record HostyCoreRuntimeConfig(
     string DataRoot,
     string RunDirectory,
     string ControlDiscoveryPath,
+    int CorePort,
+    int ShellPort,
     string ListenUrl,
     string? CorePublicOrigin,
     string? ShellPublicOrigin,
@@ -628,8 +630,6 @@ internal sealed record HostyCoreRuntimeConfig(
     bool ShellBootstrapEnabled,
     bool ShellAutostart)
 {
-    private const string DefaultDevelopmentShellPublicOrigin = "http://localhost:3000";
-
     public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment)
     {
         var dataRoot = NormalizePath(
@@ -637,15 +637,13 @@ internal sealed record HostyCoreRuntimeConfig(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".hosty"));
         var coreRoot = Path.Combine(dataRoot, "core");
         var runDirectory = Path.Combine(coreRoot, "run");
+        var corePort = ReadPort("HOSTY_CORE_PORT", 7070);
+        var shellPort = ReadPort("HOSTY_SHELL_PORT", 7171);
         var listenUrl = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_URL")) ??
             NormalizeOptional(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) ??
-            "http://localhost:3001";
-        var combinedPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_PUBLIC_ORIGIN"));
-        var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_CORE_PUBLIC_ORIGIN")) ??
-            combinedPublicOrigin;
-        var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_SHELL_PUBLIC_ORIGIN")) ??
-            combinedPublicOrigin ??
-            ResolveDefaultShellPublicOrigin(environment);
+            $"http://localhost:{corePort}";
+        var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_PUBLIC_ORIGIN"));
+        var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_PUBLIC_ORIGIN"));
         var runtimePublicHost = "localhost";
         var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
             ResolveDefaultShellManifestPath();
@@ -654,6 +652,8 @@ internal sealed record HostyCoreRuntimeConfig(
             dataRoot,
             runDirectory,
             Path.Combine(runDirectory, "control.json"),
+            corePort,
+            shellPort,
             listenUrl,
             corePublicOrigin,
             shellPublicOrigin,
@@ -693,8 +693,22 @@ internal sealed record HostyCoreRuntimeConfig(
     private static string? NormalizeOptional(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static string? ResolveDefaultShellPublicOrigin(IHostEnvironment environment)
-        => environment.IsDevelopment() ? DefaultDevelopmentShellPublicOrigin : null;
+    private static int ReadPort(string name, int defaultValue)
+    {
+        var value = NormalizeOptional(Environment.GetEnvironmentVariable(name));
+        if (value is null)
+        {
+            return defaultValue;
+        }
+
+        if (int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var port) &&
+            port is > 0 and <= IPEndPoint.MaxPort)
+        {
+            return port;
+        }
+
+        throw new InvalidOperationException($"{name} must be an integer between 1 and {IPEndPoint.MaxPort}.");
+    }
 
     private static bool ReadBoolean(string name, bool defaultValue)
     {
@@ -918,17 +932,17 @@ internal sealed class RuntimeAppSupervisorService(
 
     private static IReadOnlyDictionary<string, string?> BuildShellBootstrapSettings(HostyCoreRuntimeConfig config)
     {
-        var settings = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var shellPort = config.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var settings = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["HOSTY_PORT_HTTP"] = shellPort,
+        };
+
         if (Uri.TryCreate(config.ShellPublicOrigin, UriKind.Absolute, out var shellOrigin))
         {
             if (!string.IsNullOrWhiteSpace(shellOrigin.Host))
             {
                 settings["HOSTNAME"] = shellOrigin.Host;
-            }
-
-            if (!shellOrigin.IsDefaultPort)
-            {
-                settings["PORT"] = shellOrigin.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
             }
         }
 
@@ -1139,6 +1153,8 @@ internal sealed record CoreStatusResponse(
     string Component,
     string DataRoot,
     string ListenUrl,
+    int CorePort,
+    int ShellPort,
     string? CorePublicOrigin,
     string? ShellPublicOrigin,
     string RuntimePublicHost,
@@ -1153,6 +1169,8 @@ internal sealed record CoreStatusResponse(
             "hosty-core",
             config.DataRoot,
             config.ListenUrl,
+            config.CorePort,
+            config.ShellPort,
             config.CorePublicOrigin,
             config.ShellPublicOrigin,
             config.RuntimePublicHost,
