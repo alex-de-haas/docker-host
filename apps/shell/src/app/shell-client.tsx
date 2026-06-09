@@ -3085,7 +3085,7 @@ function AppDetailsDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className={cn("sm:max-w-3xl", view === "logs" && "sm:max-w-5xl")}>
+      <DialogContent className={cn("sm:max-w-3xl", view === "logs" && "max-h-[calc(100vh-2rem)] overflow-hidden sm:max-w-5xl")}>
         <DialogHeader>
           <DialogTitle>{detailTitle(view)} · {app.displayName}</DialogTitle>
           <DialogDescription>{app.id}</DialogDescription>
@@ -3120,14 +3120,14 @@ function AppDetailsDialog({
 
 function LogsPanel({ app, detail, onRefresh }: { app: CoreApp; detail: DetailPanelState; onRefresh: (app: CoreApp) => void }) {
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 min-w-0 flex-col gap-3">
       <div className="flex justify-end">
         <Button variant="outline" onClick={() => onRefresh(app)} disabled={detail.loading}>
           <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin")} />
           Refresh
         </Button>
       </div>
-      <pre className="max-h-[480px] overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">{detail.loading ? "Loading logs" : detail.logs || "No logs"}</pre>
+      <pre className="max-h-[min(480px,calc(100vh-14rem))] min-w-0 max-w-full overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">{detail.loading ? "Loading logs" : detail.logs || "No logs"}</pre>
     </div>
   );
 }
