@@ -300,6 +300,21 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ListAppsAsync_IncludesRuntimeProfilesFromInstalledManifest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteSwitchableDockerManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { RuntimeProfiles = null });
+
+        var app = Assert.Single(await fixture.Service.ListAppsAsync());
+
+        Assert.Equal(["docker", "docker-alt"], app.RuntimeProfiles.Select(profile => profile.Key));
+        Assert.Contains(app.RuntimeProfiles, profile => profile.Key == "docker" && profile.Default);
+        Assert.Contains(app.RuntimeProfiles, profile => profile.Key == "docker-alt" && profile.Type == "docker");
+    }
+
+    [Fact]
     public async Task CreateRuntimeSwitchPlanAsync_ReportsRuntimeContractChanges()
     {
         var fixture = await LifecycleFixture.CreateAsync();

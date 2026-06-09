@@ -9,13 +9,15 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 - `GET /api/core/status` - public Core status.
 - `GET /login` - Core-owned login page. Development renders the local user selector; non-development renders email/password login.
 - `POST /login` - create a Core session from the development selector or from local email/password credentials, depending on environment.
-- `GET /api/apps` - apps visible to the active Host session.
+- `GET /api/apps` - apps visible to the active Host session, including the selected runtime and available `runtimeProfiles`.
 - `GET /api/users` - admin user directory state.
 - `POST /api/auth/bootstrap` - consume a setup token, create the first administrator, store the submitted password credential, and create a Core session.
 - `POST /api/auth/recovery` - consume a recovery token, create or restore an administrator, replace the submitted password credential, and create a Core session.
 - `POST /api/auth/apps/authorize` - create an app authorization code for an authenticated Host user.
 - `POST /api/auth/apps/token` - exchange an app authorization code for an app identity token.
 - `POST /api/auth/apps/revalidate` - validate an app identity token.
+- `POST /api/apps/{appId}/switch-runtime/plan` - admin runtime switch review for browser Shell clients.
+- `POST /api/apps/{appId}/switch-runtime` - admin runtime switch apply for browser Shell clients; CSRF-protected and requires the reviewed plan digest.
 - `GET /api/internal/apps/{appId}/directory/users` - scoped app directory for runtime apps with `HOSTY_APP_SERVICE_TOKEN`.
 
 ## Control APIs

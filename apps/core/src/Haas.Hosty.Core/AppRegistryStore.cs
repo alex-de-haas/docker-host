@@ -6,7 +6,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
 {
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
         => (await ListAppRecordsAsync(cancellationToken))
-            .Select(AppSummary.From)
+            .Select(app => AppSummary.From(app))
             .ToArray();
 
     public async Task<IReadOnlyList<AppRecord>> ListAppRecordsAsync(CancellationToken cancellationToken = default)
@@ -157,7 +157,8 @@ internal sealed record AppRecord(
     DateTimeOffset UpdatedAt,
     AppSourceState? SourceState = null,
     AppUiContract? Ui = null,
-    bool? Autostart = null);
+    bool? Autostart = null,
+    IReadOnlyList<AppRuntimeProfileSummary>? RuntimeProfiles = null);
 
 internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret);
 
@@ -173,6 +174,8 @@ internal sealed record AppEndpointContract(
     string? Service = null,
     string? Port = null,
     string? PublicOrigin = null);
+
+internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default);
 
 internal sealed record AppSourceState(
     string? Type,
@@ -281,14 +284,16 @@ internal sealed record AppSummary(
     IReadOnlyList<string> Capabilities,
     IReadOnlyList<AppSettingSummary> Settings,
     IReadOnlyList<AppEndpointContract> Endpoints,
+    IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     string? EntryPath,
     string? EmbeddedUrl,
     IReadOnlyList<AppNavigationSummary> Navigation)
 {
-    public static AppSummary From(AppRecord app)
+    public static AppSummary From(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null)
     {
         var ui = app.Ui;
         var endpoints = AttachPublicOrigins(app.Endpoints, app.Settings);
+        var profiles = runtimeProfiles ?? app.RuntimeProfiles ?? [];
         var entryUrl = BuildUiUrl(ResolveEndpointUrl(endpoints, ui?.EndpointKey), ui?.EntryPath);
         var navigation = ui?.Navigation
             .Select(item => new AppNavigationSummary(
@@ -316,6 +321,7 @@ internal sealed record AppSummary(
             app.Capabilities,
             BuildSettingSummaries(app.Settings, app.Endpoints),
             endpoints,
+            profiles,
             ui?.EntryPath,
             entryUrl,
             navigation);

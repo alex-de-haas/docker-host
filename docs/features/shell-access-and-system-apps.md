@@ -40,9 +40,10 @@ For administrators, Installed Apps should show both non-system runtime apps and 
 
 Dashboard should continue to show Core status and runtime app summary metrics. Runtime app metrics should count non-system runtime apps only. System app inventory belongs on Installed Apps to avoid duplicating the same list across management surfaces.
 
-System app actions should be inspect-only in Shell for now:
+System app actions should stay limited in Shell:
 
 - logs are allowed when the app exposes the `logs` capability and the active user is `host.admin`;
+- runtime switching is allowed for administrators when the app exposes more than one runtime profile;
 - lifecycle controls such as start, stop, restart, update, configure, autostart, backup, restore, and remove are hidden for all system apps.
 
 ## User/API Scenarios
@@ -50,6 +51,7 @@ System app actions should be inspect-only in Shell for now:
 - A `host.admin` opens Shell and sees Dashboard, Installed Apps, User Management, and normal runtime app navigation.
 - A `host.admin` opens Installed Apps and sees normal runtime apps in Runtime Apps plus Hosty Shell in System Apps.
 - A `host.admin` can open logs for Hosty Shell when logs are available.
+- A `host.admin` can switch Hosty Shell between available runtime profiles from the System Apps runtime column.
 - A `host.admin` cannot stop, restart, update, configure, back up, or remove Hosty Shell from Shell UI.
 - A `host.user` opens Shell and sees only the Apps navigation for assigned or unrestricted non-system runtime apps.
 - A `host.user` does not see Dashboard, Installed Apps, User Management, or any system app.
@@ -72,7 +74,7 @@ Dashboard should receive runtime app groups for summary metrics. System app rend
 
 ## Data Model / API Changes
 
-No Core API schema change is required. `AppSummary.system` is already present.
+`GET /api/apps` includes available `runtimeProfiles` so Shell can render runtime switching for normal runtime apps and system apps without loading each manifest separately.
 
 No database or registry migration is required. Hosty Shell is already installed with `System: true` during Core bootstrap.
 
@@ -85,6 +87,7 @@ No change is required for User Management assignments because system apps are al
 - If a user's role changes from `host.admin` to `host.user` during a session refresh, Shell should clear inaccessible management views.
 - If future system apps are added, they should inherit the same inspect-only Shell behavior without app-id-specific handling.
 - If a system app does not expose `logs`, it should have no visible Shell actions.
+- If a system app has only one runtime profile or Core cannot load its runtime profiles, Shell should render the selected runtime as read-only text.
 
 ## Testing Plan
 
@@ -95,7 +98,8 @@ No change is required for User Management assignments because system apps are al
   - administrator sees management navigation, runtime apps, and system apps;
   - ordinary user sees only runtime app navigation;
   - Hosty Shell does not appear in the sidebar Apps section;
-  - system app lifecycle actions are hidden and logs remain available for administrators.
+  - system app lifecycle actions are hidden and logs remain available for administrators;
+  - Hosty Shell runtime switching is visible when multiple runtime profiles are available.
 
 ## Rollout / Migration Notes
 
@@ -108,5 +112,7 @@ The change tightens ordinary user access to Shell management views. Any workflow
 - System Apps includes all apps with `system: true`, not only Hosty Shell.
 
 - System app logs are available from the Installed Apps System Apps section when the app exposes the `logs` capability.
+
+- System app runtime switching is available to administrators when Core reports multiple runtime profiles, while other system app lifecycle actions remain hidden.
 
 - `host.user` uses Apps as the effective default view. The Shell also provides a `/apps` route that renders the same non-management app overview.

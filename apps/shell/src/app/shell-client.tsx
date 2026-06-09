@@ -141,6 +141,7 @@ type CoreApp = {
   capabilities: string[];
   settings?: CoreSetting[];
   endpoints?: CoreEndpoint[];
+  runtimeProfiles?: CoreRuntimeProfile[];
   navigation?: CoreNavigationItem[];
   entryPath?: string | null;
   embeddedUrl?: string | null;
@@ -236,6 +237,16 @@ type CoreUpdatePlan = {
   changes: string[];
 };
 
+type CoreRuntimeSwitchPlan = {
+  appId: string;
+  currentRuntime?: string | null;
+  targetRuntime: string;
+  targetRuntimeType: string;
+  planDigest: string;
+  automaticBackup: boolean;
+  changes: string[];
+};
+
 type CoreInstallSetting = {
   key: string;
   type: string;
@@ -244,11 +255,13 @@ type CoreInstallSetting = {
   required?: boolean;
 };
 
-type CoreInstallRuntimeProfile = {
+type CoreRuntimeProfile = {
   key: string;
   type: string;
   default: boolean;
 };
+
+type CoreInstallRuntimeProfile = CoreRuntimeProfile;
 
 type CoreInstallPlan = {
   appId: string;
@@ -685,6 +698,46 @@ export function ShellClient({
         const message = error instanceof Error ? error.message : "Core lifecycle action failed.";
         setState((current) => ({ ...current, error: message }));
         toast.error("App action failed", { description: message });
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [appEndpoint, refresh, sendCsrfJson],
+  );
+
+  const switchAppRuntime = useCallback(
+    async (app: CoreApp, targetRuntime: string) => {
+      if (!targetRuntime || targetRuntime === app.selectedRuntime) {
+        return;
+      }
+
+      const actionKey = `${app.id}:switch-runtime:${targetRuntime}`;
+      setBusyAction(actionKey);
+      setState((current) => ({ ...current, error: null }));
+      try {
+        const planResponse = await fetch(appEndpoint(app, "/switch-runtime/plan"), {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetRuntime }),
+        });
+        if (!planResponse.ok) {
+          throw new Error(await readCoreError(planResponse));
+        }
+
+        const plan = (await planResponse.json()) as CoreRuntimeSwitchPlan;
+        await sendCsrfJson(appEndpoint(app, "/switch-runtime"), {
+          targetRuntime: plan.targetRuntime,
+          planDigest: plan.planDigest,
+        });
+        await refresh();
+        toast.success("Runtime switched", {
+          description: `${app.displayName}: ${plan.currentRuntime || "none"} to ${plan.targetRuntime}`,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Runtime switch failed.";
+        setState((current) => ({ ...current, error: message }));
+        toast.error("Runtime switch failed", { description: message });
       } finally {
         setBusyAction(null);
       }
@@ -1147,6 +1200,7 @@ export function ShellClient({
                   onRefresh={() => void refresh()}
                   onInstall={openInstallDialog}
                   onAction={runAppAction}
+                  onSwitchRuntime={switchAppRuntime}
                   onCreateBackup={createManualBackup}
                   onOpenPanel={openAppPanel}
                 />
@@ -1828,6 +1882,7 @@ function InstalledAppsPage({
   onRefresh,
   onInstall,
   onAction,
+  onSwitchRuntime,
   onCreateBackup,
   onOpenPanel,
 }: {
@@ -1841,6 +1896,7 @@ function InstalledAppsPage({
   onRefresh: () => void;
   onInstall: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
@@ -1886,13 +1942,14 @@ function InstalledAppsPage({
             canManageApps={canManageApps}
             busyAction={busyAction}
             onAction={onAction}
+            onSwitchRuntime={onSwitchRuntime}
             onCreateBackup={onCreateBackup}
             onOpenPanel={onOpenPanel}
           />
           <InstalledAppTableSection
             coreOrigin={coreOrigin}
             title="System Apps"
-            description="Core-managed Shell and platform runtime apps. Shell exposes inspection only."
+            description="Core-managed Shell and platform runtime apps. Runtime switching and inspection are available to administrators."
             emptyTitle="No system apps registered"
             emptyDescription="Core has not registered a system app yet."
             apps={systemApps}
@@ -1900,6 +1957,7 @@ function InstalledAppsPage({
             canManageApps={canManageApps}
             busyAction={busyAction}
             onAction={onAction}
+            onSwitchRuntime={onSwitchRuntime}
             onCreateBackup={onCreateBackup}
             onOpenPanel={onOpenPanel}
           />
@@ -2068,6 +2126,7 @@ function InstalledAppTableSection({
   canManageApps,
   busyAction,
   onAction,
+  onSwitchRuntime,
   onCreateBackup,
   onOpenPanel,
 }: {
@@ -2081,6 +2140,7 @@ function InstalledAppTableSection({
   canManageApps: boolean;
   busyAction: string | null;
   onAction: (app: CoreApp, action: AppAction) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
@@ -2193,6 +2253,7 @@ function InstalledAppTableSection({
                       busyAction={busyAction}
                       onToggleExpanded={() => toggleAppExpanded(app)}
                       onAction={onAction}
+                      onSwitchRuntime={onSwitchRuntime}
                       onCreateBackup={onCreateBackup}
                       onOpenPanel={onOpenPanel}
                     />
@@ -2228,6 +2289,7 @@ function InstalledAppRow({
   busyAction,
   onToggleExpanded,
   onAction,
+  onSwitchRuntime,
   onCreateBackup,
   onOpenPanel,
 }: {
@@ -2239,12 +2301,14 @@ function InstalledAppRow({
   busyAction: string | null;
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const running = app.runtimeState === "running";
   const canOpen = !app.system && getAppPageLinks(app).length > 0;
   const canControl = canManageApps && !app.system;
+  const canSwitchRuntime = canManageApps;
   const canInspect = canManageApps;
   const canBackup = canControl && app.capabilities.includes("backup");
   const canConfigure = canControl;
@@ -2286,7 +2350,14 @@ function InstalledAppRow({
           </div>
         </div>
       </TableCell>
-      <TableCell>{app.selectedRuntime || "none"}</TableCell>
+      <TableCell>
+        <RuntimeSwitcher
+          app={app}
+          canSwitch={canSwitchRuntime}
+          busyAction={busyAction}
+          onSwitchRuntime={onSwitchRuntime}
+        />
+      </TableCell>
       <TableCell>{app.version}</TableCell>
       <TableCell><Badge variant={autostartEnabled ? "outline" : "secondary"}>{autostartEnabled ? "On" : "Off"}</Badge></TableCell>
       <TableCell><StatusBadge value={app.runtimeState || app.operationStatus} /></TableCell>
@@ -2323,6 +2394,69 @@ function InstalledAppRow({
         </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+function RuntimeSwitcher({
+  app,
+  canSwitch,
+  busyAction,
+  onSwitchRuntime,
+}: {
+  app: CoreApp;
+  canSwitch: boolean;
+  busyAction: string | null;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
+}) {
+  const runtimeProfiles = app.runtimeProfiles ?? [];
+  const currentRuntime = app.selectedRuntime || "none";
+  const switchable = canSwitch && runtimeProfiles.length > 1;
+  const switching = busyAction?.startsWith(`${app.id}:switch-runtime:`) ?? false;
+
+  if (!switchable) {
+    return <span className="font-mono text-sm">{currentRuntime}</span>;
+  }
+
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <span className="min-w-0 truncate font-mono text-sm">{currentRuntime}</span>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Switch runtime for ${app.displayName}`}
+            title="Switch runtime"
+            disabled={switching}
+          >
+            {switching ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuLabel>Runtime</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {runtimeProfiles.map((profile) => {
+            const selected = profile.key === app.selectedRuntime;
+            const targetBusy = busyAction === `${app.id}:switch-runtime:${profile.key}`;
+            return (
+              <DropdownMenuItem
+                key={profile.key}
+                disabled={switching}
+                onClick={() => onSwitchRuntime(app, profile.key)}
+              >
+                {targetBusy ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Check className={cn("h-4 w-4", selected ? "opacity-100" : "opacity-0")} />
+                )}
+                <span className="min-w-0 flex-1 truncate">{formatRuntimeProfileLabel(profile)}</span>
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 

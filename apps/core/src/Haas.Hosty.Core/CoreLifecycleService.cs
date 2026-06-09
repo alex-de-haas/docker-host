@@ -19,7 +19,8 @@ internal sealed class CoreLifecycleService(
         var summaries = new List<AppSummary>(records.Count);
         foreach (var app in records)
         {
-            summaries.Add(AppSummary.From(await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken)));
+            var reconciled = await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken);
+            summaries.Add(await BuildAppSummaryAsync(reconciled, cancellationToken));
         }
 
         return summaries;
@@ -57,12 +58,7 @@ internal sealed class CoreLifecycleService(
             TargetManifestDigest: selection.ManifestDigest,
             SelectedChannel: request.SelectedChannel,
             DefaultAutostart: request.Autostart ?? true,
-            RuntimeProfiles: selection.Manifest.RuntimeProfiles
-                .Select(profile => new AppInstallRuntimeProfile(
-                    profile.Key,
-                    profile.Type,
-                    string.Equals(profile.Key, ResolveDefaultRuntime(selection.Manifest), StringComparison.Ordinal)))
-                .ToArray(),
+            RuntimeProfiles: BuildRuntimeProfileSummaries(selection.Manifest),
             Settings: selection.Manifest.Settings
                 .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret))
                 .ToArray());
@@ -723,7 +719,40 @@ internal sealed class CoreLifecycleService(
             UpdatedAt: default,
             SourceState: BuildSourceState(selection, existing),
             Ui: AppUiContract.FromManifest(manifest.Ui),
-            Autostart: existing?.Autostart ?? true);
+            Autostart: existing?.Autostart ?? true,
+            RuntimeProfiles: BuildRuntimeProfileSummaries(manifest));
+    }
+
+    private async Task<AppSummary> BuildAppSummaryAsync(AppRecord app, CancellationToken cancellationToken)
+    {
+        if (app.RuntimeProfiles is { Count: > 0 })
+        {
+            return AppSummary.From(app);
+        }
+
+        return AppSummary.From(app, await TryLoadRuntimeProfilesForSummaryAsync(app, cancellationToken));
+    }
+
+    private async Task<IReadOnlyList<AppRuntimeProfileSummary>> TryLoadRuntimeProfilesForSummaryAsync(
+        AppRecord app,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(app.ManifestPath))
+        {
+            return [];
+        }
+
+        try
+        {
+            var selection = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
+            return string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal)
+                ? BuildRuntimeProfileSummaries(selection.Manifest)
+                : [];
+        }
+        catch (Exception ex) when (ex is AppManifestException or IOException or UnauthorizedAccessException or JsonException or HttpRequestException)
+        {
+            return [];
+        }
     }
 
     private async Task<AppBackgroundLifecycleResult> RunBackgroundLifecycleActionAsync(
@@ -1761,6 +1790,17 @@ internal sealed class CoreLifecycleService(
             ? manifest.RuntimeProfiles.FirstOrDefault(profile => profile.Default)?.Key ?? manifest.RuntimeProfiles.FirstOrDefault()?.Key
             : manifest.DefaultRuntime;
 
+    private static IReadOnlyList<AppRuntimeProfileSummary> BuildRuntimeProfileSummaries(RuntimeAppManifest manifest)
+    {
+        var defaultRuntime = ResolveDefaultRuntime(manifest);
+        return manifest.RuntimeProfiles
+            .Select(profile => new AppRuntimeProfileSummary(
+                profile.Key,
+                profile.Type,
+                string.Equals(profile.Key, defaultRuntime, StringComparison.Ordinal)))
+            .ToArray();
+    }
+
     private async Task<AppChannelIndex> LoadChannelIndexAsync(
         AppRecord app,
         string? channelsPath,
@@ -2009,10 +2049,8 @@ internal sealed record AppInstallPlan(
     string TargetManifestDigest,
     string? SelectedChannel,
     bool DefaultAutostart,
-    IReadOnlyList<AppInstallRuntimeProfile> RuntimeProfiles,
+    IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
-
-internal sealed record AppInstallRuntimeProfile(string Key, string Type, bool Default);
 
 internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret);
 
