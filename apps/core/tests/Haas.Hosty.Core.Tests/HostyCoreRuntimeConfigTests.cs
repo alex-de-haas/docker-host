@@ -25,6 +25,33 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
+    public void FromEnvironment_UsesExplicitDataRoot()
+    {
+        var dataRoot = Path.Combine(Path.GetTempPath(), $"hosty-core-data-{Guid.NewGuid():N}");
+        using var dataRootEnv = TemporaryEnvironment.With("HOSTY_DATA_ROOT", dataRoot);
+        using var homeEnv = TemporaryEnvironment.With("HOSTY_HOME", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.Equal(Path.GetFullPath(dataRoot), config.DataRoot);
+    }
+
+    [Fact]
+    public void FromEnvironment_IgnoresLegacyDataRootVariables()
+    {
+        using var dataRootEnv = TemporaryEnvironment.With("HOSTY_DATA_ROOT", null);
+        using var homeEnv = TemporaryEnvironment.With("HOSTY_HOME", null);
+        using var coreDataRootEnv = TemporaryEnvironment.With("HOSTY_CORE_DATA_ROOT", Path.Combine(Path.GetTempPath(), "legacy-core-data"));
+        using var hostDataRootEnv = TemporaryEnvironment.With("HOST_DATA_ROOT_HOST", Path.Combine(Path.GetTempPath(), "legacy-host-data"));
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.Equal(
+            Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".hosty")),
+            config.DataRoot);
+    }
+
+    [Fact]
     public void FromEnvironment_UsesExplicitPorts()
     {
         using var coreUrlEnv = TemporaryEnvironment.With("HOSTY_CORE_URL", null);

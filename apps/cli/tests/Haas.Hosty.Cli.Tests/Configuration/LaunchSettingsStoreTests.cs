@@ -31,6 +31,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
 
         var settings = store.Load();
 
+        Assert.Equal(rootDirectory, settings[LaunchSettingDefinitions.HostyDataRoot]);
         Assert.Equal("7070", settings.HostyCorePort);
         Assert.Equal("7171", settings.HostyShellPort);
         Assert.Equal("", settings.HostyCorePublicOrigin);
@@ -63,7 +64,28 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.False(settings.Values.ContainsKey("HOST_SHELL_PUBLIC_ORIGIN"));
     }
 
+    [Fact]
+    public void Load_LegacyDataRootKey_IgnoresOldValue()
+    {
+        var environment = HostyEnvironment.Current();
+        var legacyDataRoot = Path.Combine(rootDirectory, "legacy-data");
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        File.WriteAllText(
+            environment.LaunchConfigPath,
+            $"""
+            # hosty launch settings
+            HOST_DATA_ROOT_HOST={legacyDataRoot}
+            """);
+        var store = new LaunchSettingsStore(environment);
+
+        var settings = store.Load();
+
+        Assert.Equal(rootDirectory, settings[LaunchSettingDefinitions.HostyDataRoot]);
+        Assert.False(settings.Values.ContainsKey("HOST_DATA_ROOT_HOST"));
+    }
+
     [Theory]
+    [InlineData("HOSTY_DATA_ROOT", "$HOME/custom-hosty")]
     [InlineData("HOSTY_CORE_PORT", "8080")]
     [InlineData("HOSTY_SHELL_PORT", "8181")]
     [InlineData("HOSTY_CORE_PUBLIC_ORIGIN", "https://core.example")]
@@ -122,6 +144,19 @@ public sealed class LaunchSettingsStoreTests : IDisposable
             () => store.Set("HOST_IMAGE", "hosty:dev"));
 
         Assert.Contains("Unknown launch setting", exception.Message);
+    }
+
+    [Fact]
+    public void ResolveHostDataRoot_LocalPath_ExpandsForCoreEnvironment()
+    {
+        var environment = HostyEnvironment.Current();
+        var settings = new LaunchSettingsStore(environment)
+            .Load()
+            .WithValue("HOSTY_DATA_ROOT", "~/custom-data");
+
+        var resolved = settings.ResolveHostDataRoot(environment);
+
+        Assert.Equal(Path.Combine(environment.HomeDirectory, "custom-data"), resolved);
     }
 
     [Fact]

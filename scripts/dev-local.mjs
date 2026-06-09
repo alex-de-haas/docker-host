@@ -44,7 +44,7 @@ const commonEnv = {
   HOSTY_CORE_URL: coreUrl,
   HOSTY_CORE_PORT: String(coreEndpoint.port),
   HOSTY_SHELL_PORT: String(shellEndpoint.port),
-  HOSTY_CORE_DATA_ROOT: dataRoot,
+  HOSTY_DATA_ROOT: dataRoot,
   HOSTY_CORE_PUBLIC_ORIGIN: coreUrl,
   HOSTY_SHELL_PUBLIC_ORIGIN: shellOrigin,
 };

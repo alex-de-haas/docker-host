@@ -633,7 +633,7 @@ internal sealed record HostyCoreRuntimeConfig(
     public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment)
     {
         var dataRoot = NormalizePath(
-            ReadFirst("HOSTY_CORE_DATA_ROOT", "HOST_DATA_ROOT_HOST", "HOSTY_HOME") ??
+            ReadFirst("HOSTY_DATA_ROOT", "HOSTY_HOME") ??
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".hosty"));
         var coreRoot = Path.Combine(dataRoot, "core");
         var runDirectory = Path.Combine(coreRoot, "run");

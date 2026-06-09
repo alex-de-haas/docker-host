@@ -44,6 +44,7 @@ On Windows the executable names use `.exe`.
 `launch.env` also carries the default Shell bootstrap settings passed to Core:
 
 ```text
+HOSTY_DATA_ROOT=$HOME/.hosty
 HOSTY_CORE_PORT=7070
 HOSTY_SHELL_PORT=7171
 HOSTY_CORE_PUBLIC_ORIGIN=
@@ -52,11 +53,11 @@ HOSTY_SHELL_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-
 HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 ```
 
-`HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
+`HOSTY_DATA_ROOT` defines the Hosty state root used by Core. `HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
 
 `HOSTY_SHELL_MANIFEST_PATH` can be a local manifest path or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
 
-Legacy `HOST_CORE_PUBLIC_ORIGIN`, `HOST_SHELL_PUBLIC_ORIGIN`, and `HOST_PUBLIC_ORIGIN` launch settings are not read.
+Legacy `HOST_DATA_ROOT_HOST`, `HOSTY_CORE_DATA_ROOT`, `HOST_CORE_PUBLIC_ORIGIN`, `HOST_SHELL_PUBLIC_ORIGIN`, and `HOST_PUBLIC_ORIGIN` settings are not read.
 
 ## Core Bootstrap
 

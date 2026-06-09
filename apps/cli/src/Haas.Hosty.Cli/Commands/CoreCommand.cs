@@ -171,7 +171,7 @@ internal sealed class CoreCommand(CommandContext context)
     {
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["HOSTY_CORE_DATA_ROOT"] = context.Environment.RootDirectory,
+            [LaunchSettingDefinitions.HostyDataRoot] = settings.ResolveHostDataRoot(context.Environment),
             [LaunchSettingDefinitions.HostyCorePort] = ResolveCorePort(url, settings.HostyCorePort),
             [LaunchSettingDefinitions.HostyShellPort] = settings.HostyShellPort,
             ["HOSTY_CORE_URL"] = url,

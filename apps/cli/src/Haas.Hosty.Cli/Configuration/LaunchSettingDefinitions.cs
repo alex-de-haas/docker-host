@@ -3,7 +3,7 @@ namespace Haas.Hosty.Cli.Configuration;
 internal static class LaunchSettingDefinitions
 {
     private const string DefaultShellManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
-    public const string HostDataRootHost = "HOST_DATA_ROOT_HOST";
+    public const string HostyDataRoot = "HOSTY_DATA_ROOT";
     public const string HostyCorePort = "HOSTY_CORE_PORT";
     public const string HostyShellPort = "HOSTY_SHELL_PORT";
     public const string HostyCorePublicOrigin = "HOSTY_CORE_PUBLIC_ORIGIN";
@@ -13,7 +13,7 @@ internal static class LaunchSettingDefinitions
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
-        new(HostDataRootHost, DefaultDataRootHost, true, ValidateHostPath),
+        new(HostyDataRoot, DefaultDataRootHost, true, ValidateHostPath),
         new(HostyCorePort, _ => "7070", true, ValidatePort),
         new(HostyShellPort, _ => "7171", true, ValidatePort),
         new(HostyCorePublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),

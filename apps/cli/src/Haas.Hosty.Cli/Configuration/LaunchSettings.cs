@@ -13,7 +13,7 @@ internal sealed class LaunchSettings
 
     public string this[string key] => values[key];
 
-    public string HostDataRootHostRaw => this[LaunchSettingDefinitions.HostDataRootHost];
+    public string HostyDataRootRaw => this[LaunchSettingDefinitions.HostyDataRoot];
 
     public string HostyCorePort => this[LaunchSettingDefinitions.HostyCorePort];
 
@@ -28,7 +28,7 @@ internal sealed class LaunchSettings
     public string HostyShellBootstrapRuntime => this[LaunchSettingDefinitions.HostyShellBootstrapRuntime];
 
     public string ResolveHostDataRoot(HostyEnvironment environment)
-        => environment.ResolvePath(HostDataRootHostRaw);
+        => environment.ResolvePath(HostyDataRootRaw);
 
     public string ResolveHostyShellManifestPath(HostyEnvironment environment)
     {

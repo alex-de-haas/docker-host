@@ -78,6 +78,7 @@ The intended installed flow is:
   - `shell:docker:build:local`.
 - `apps/shell/manifest.json` Docker image metadata points to `ghcr.io/alex-de-haas/hosty-shell`.
 - CLI launch settings include:
+  - `HOSTY_DATA_ROOT`, defaulting to `$HOME/.hosty`;
   - `HOSTY_SHELL_MANIFEST_PATH`, defaulting to `https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json`;
   - `HOSTY_SHELL_BOOTSTRAP_RUNTIME`, defaulting to `docker`;
   - `HOSTY_CORE_PORT`, defaulting to `7070`;
