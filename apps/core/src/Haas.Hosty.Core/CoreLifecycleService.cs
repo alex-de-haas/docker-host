@@ -17,7 +17,8 @@ internal sealed class CoreLifecycleService(
         var summaries = new List<AppSummary>(records.Count);
         foreach (var app in records)
         {
-            summaries.Add(AppSummary.From(await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken)));
+            var reconciled = await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken);
+            summaries.Add(await BuildAppSummaryAsync(reconciled, cancellationToken));
         }
 
         return summaries;
@@ -55,13 +56,9 @@ internal sealed class CoreLifecycleService(
             TargetManifestDigest: selection.ManifestDigest,
             SelectedChannel: request.SelectedChannel,
             DefaultAutostart: request.Autostart ?? true,
-            RuntimeProfiles: selection.Manifest.RuntimeProfiles
-                .Select(profile => new AppInstallRuntimeProfile(
-                    profile.Key,
-                    profile.Type,
-                    string.Equals(profile.Key, ResolveDefaultRuntime(selection.Manifest), StringComparison.Ordinal)))
-                .ToArray(),
+            RuntimeProfiles: BuildRuntimeProfileSummaries(selection.Manifest),
             Settings: selection.Manifest.Settings
+                .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
                 .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret))
                 .ToArray());
     }
@@ -93,6 +90,7 @@ internal sealed class CoreLifecycleService(
         };
         if (request.Settings is { Count: > 0 })
         {
+            ValidatePublicOriginSettings(request.Settings);
             record = record with { Settings = MergeSettings(record.Settings, request.Settings) };
         }
 
@@ -104,6 +102,7 @@ internal sealed class CoreLifecycleService(
     {
         var document = await apps.UpdateAppAsync(appId, app =>
         {
+            ValidatePublicOriginSettings(request.Settings);
             return app with
             {
                 Settings = request.Settings is { Count: > 0 } ? MergeSettings(app.Settings, request.Settings) : app.Settings,
@@ -657,7 +656,7 @@ internal sealed class CoreLifecycleService(
         AppRecord? existing)
     {
         var manifest = selection.Manifest;
-        var settings = manifest.Settings.ToDictionary(
+        var settings = BuildSettingDefinitions(selection).ToDictionary(
             setting => setting.Key,
             setting =>
             {
@@ -719,7 +718,40 @@ internal sealed class CoreLifecycleService(
             UpdatedAt: default,
             SourceState: BuildSourceState(selection, existing),
             Ui: AppUiContract.FromManifest(manifest.Ui),
-            Autostart: existing?.Autostart ?? true);
+            Autostart: existing?.Autostart ?? true,
+            RuntimeProfiles: BuildRuntimeProfileSummaries(manifest));
+    }
+
+    private async Task<AppSummary> BuildAppSummaryAsync(AppRecord app, CancellationToken cancellationToken)
+    {
+        if (app.RuntimeProfiles is { Count: > 0 })
+        {
+            return AppSummary.From(app);
+        }
+
+        return AppSummary.From(app, await TryLoadRuntimeProfilesForSummaryAsync(app, cancellationToken));
+    }
+
+    private async Task<IReadOnlyList<AppRuntimeProfileSummary>> TryLoadRuntimeProfilesForSummaryAsync(
+        AppRecord app,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(app.ManifestPath))
+        {
+            return [];
+        }
+
+        try
+        {
+            var selection = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
+            return string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal)
+                ? BuildRuntimeProfileSummaries(selection.Manifest)
+                : [];
+        }
+        catch (Exception ex) when (ex is AppManifestException or IOException or UnauthorizedAccessException or JsonException or HttpRequestException)
+        {
+            return [];
+        }
     }
 
     private async Task<AppBackgroundLifecycleResult> RunBackgroundLifecycleActionAsync(
@@ -1019,7 +1051,7 @@ internal sealed class CoreLifecycleService(
                 {
                     Url = direct.Url,
                     Protocol = direct.Protocol,
-                    Public = direct.Public,
+                    Public = endpoint.Public,
                     Service = endpoint.Service ?? direct.Service,
                     Port = endpoint.Port ?? direct.Port,
                 };
@@ -1033,7 +1065,7 @@ internal sealed class CoreLifecycleService(
                 {
                     Url = aliased.Url,
                     Protocol = aliased.Protocol,
-                    Public = aliased.Public,
+                    Public = endpoint.Public,
                     Service = endpoint.Service ?? aliased.Service,
                     Port = endpoint.Port ?? aliased.Port,
                 };
@@ -1222,7 +1254,7 @@ internal sealed class CoreLifecycleService(
         }
 
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
-        AddSettingChanges(changes, app.Settings, targetSelection.Manifest.Settings);
+        AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
         AddUpdateDataTargetChanges(changes, app, targetSelection);
@@ -1287,7 +1319,7 @@ internal sealed class CoreLifecycleService(
             : $"runtimeType:{currentSelection.RuntimeProfile.Type}->{targetSelection.RuntimeProfile.Type}");
 
         AddServiceChanges(changes, app.Id, currentSelection, targetSelection);
-        AddSettingChanges(changes, app.Settings, targetSelection.Manifest.Settings);
+        AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
         AddDataTargetChanges(changes, app, targetSelection);
@@ -1659,6 +1691,26 @@ internal sealed class CoreLifecycleService(
             Port: port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"))).ToArray();
     }
 
+    private static IReadOnlyList<RuntimeAppSettingManifest> BuildSettingDefinitions(RuntimeAppManifestSelection selection)
+    {
+        var settings = selection.Manifest.Settings
+            .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
+            .ToDictionary(setting => setting.Key, StringComparer.Ordinal);
+        foreach (var endpoint in BuildEndpointContracts(selection).Where(endpoint => endpoint.Public))
+        {
+            var key = PublicOriginSettings.BuildSettingKey(endpoint.Key);
+            settings.TryAdd(key, new RuntimeAppSettingManifest
+            {
+                Key = key,
+                Type = "url",
+                Default = null,
+                Secret = false,
+            });
+        }
+
+        return settings.Values.ToArray();
+    }
+
     private static IReadOnlyDictionary<string, AppSettingValue> MergeSettings(
         IReadOnlyDictionary<string, AppSettingValue> current,
         IReadOnlyDictionary<string, string?> incoming)
@@ -1672,17 +1724,52 @@ internal sealed class CoreLifecycleService(
             }
             else
             {
-                settings[key] = new AppSettingValue(key, "string", value, Secret: false);
+                settings[key] = new AppSettingValue(key, PublicOriginSettings.IsSettingKey(key) ? "url" : "string", value, Secret: false);
             }
         }
 
         return settings;
     }
 
+    private static void ValidatePublicOriginSettings(IReadOnlyDictionary<string, string?>? settings)
+    {
+        if (settings is null)
+        {
+            return;
+        }
+
+        foreach (var (key, value) in settings)
+        {
+            if (!PublicOriginSettings.IsSettingKey(key) ||
+                string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (!PublicOriginSettings.TryNormalizeOrigin(value, out _))
+            {
+                throw new AppLifecycleException(
+                    "public_origin_invalid",
+                    $"Setting '{key}' must be an absolute http(s) origin without a path, query, or fragment.");
+            }
+        }
+    }
+
     private static string? ResolveDefaultRuntime(RuntimeAppManifest manifest)
         => string.IsNullOrWhiteSpace(manifest.DefaultRuntime)
             ? manifest.RuntimeProfiles.FirstOrDefault(profile => profile.Default)?.Key ?? manifest.RuntimeProfiles.FirstOrDefault()?.Key
             : manifest.DefaultRuntime;
+
+    private static IReadOnlyList<AppRuntimeProfileSummary> BuildRuntimeProfileSummaries(RuntimeAppManifest manifest)
+    {
+        var defaultRuntime = ResolveDefaultRuntime(manifest);
+        return manifest.RuntimeProfiles
+            .Select(profile => new AppRuntimeProfileSummary(
+                profile.Key,
+                profile.Type,
+                string.Equals(profile.Key, defaultRuntime, StringComparison.Ordinal)))
+            .ToArray();
+    }
 
     private async Task<AppChannelIndex> LoadChannelIndexAsync(
         AppRecord app,
@@ -1871,7 +1958,7 @@ internal sealed record AppInstallRequest(
     bool? Autostart = null);
 
 internal sealed record AppConfigureRequest(
-    IReadOnlyDictionary<string, string?> Settings,
+    IReadOnlyDictionary<string, string?>? Settings = null,
     bool? Autostart = null);
 
 internal sealed record AppAutostartRequest(bool Autostart);
@@ -1932,10 +2019,8 @@ internal sealed record AppInstallPlan(
     string TargetManifestDigest,
     string? SelectedChannel,
     bool DefaultAutostart,
-    IReadOnlyList<AppInstallRuntimeProfile> RuntimeProfiles,
+    IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
-
-internal sealed record AppInstallRuntimeProfile(string Key, string Type, bool Default);
 
 internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret);
 

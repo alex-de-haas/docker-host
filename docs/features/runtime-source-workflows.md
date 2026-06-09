@@ -78,3 +78,5 @@ hosty apps switch-runtime hosty.shell --runtime dev --plan-digest <digest>
 ```
 
 Core and combined-Host self-runtime changes are different from Shell-only changes. Core cannot complete its own replacement after it stops, so Core runtime switching still requires the trusted CLI or another outer supervisor.
+
+Shell also exposes Hosty Shell runtime switching in the Installed Apps System Apps table when Core reports multiple runtime profiles. Other system app lifecycle controls remain hidden there.

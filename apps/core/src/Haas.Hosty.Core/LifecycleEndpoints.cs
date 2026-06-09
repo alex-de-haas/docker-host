@@ -141,6 +141,37 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        app.MapPost("/api/apps/{appId}/switch-runtime/plan", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppRuntimeSwitchPlanRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.CreateRuntimeSwitchPlanAsync(appId, input, cancellationToken)),
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/switch-runtime", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppRuntimeSwitchApplyRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.ApplyRuntimeSwitchAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapPost("/api/apps/{appId}/remove", async (
             string appId,
             HttpRequest request,

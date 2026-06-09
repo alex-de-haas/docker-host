@@ -6,7 +6,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
 {
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
         => (await ListAppRecordsAsync(cancellationToken))
-            .Select(AppSummary.From)
+            .Select(app => AppSummary.From(app))
             .ToArray();
 
     public async Task<IReadOnlyList<AppRecord>> ListAppRecordsAsync(CancellationToken cancellationToken = default)
@@ -157,7 +157,8 @@ internal sealed record AppRecord(
     DateTimeOffset UpdatedAt,
     AppSourceState? SourceState = null,
     AppUiContract? Ui = null,
-    bool? Autostart = null);
+    bool? Autostart = null,
+    IReadOnlyList<AppRuntimeProfileSummary>? RuntimeProfiles = null);
 
 internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret);
 
@@ -171,7 +172,10 @@ internal sealed record AppEndpointContract(
     string? Url,
     bool Public,
     string? Service = null,
-    string? Port = null);
+    string? Port = null,
+    string? PublicOrigin = null);
+
+internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default);
 
 internal sealed record AppSourceState(
     string? Type,
@@ -280,20 +284,23 @@ internal sealed record AppSummary(
     IReadOnlyList<string> Capabilities,
     IReadOnlyList<AppSettingSummary> Settings,
     IReadOnlyList<AppEndpointContract> Endpoints,
+    IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     string? EntryPath,
     string? EmbeddedUrl,
     IReadOnlyList<AppNavigationSummary> Navigation)
 {
-    public static AppSummary From(AppRecord app)
+    public static AppSummary From(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null)
     {
         var ui = app.Ui;
-        var entryUrl = BuildUiUrl(ResolveEndpointUrl(app.Endpoints, ui?.EndpointKey), ui?.EntryPath);
+        var endpoints = AttachPublicOrigins(app.Endpoints, app.Settings);
+        var profiles = runtimeProfiles ?? app.RuntimeProfiles ?? [];
+        var entryUrl = BuildUiUrl(ResolveEndpointUrl(endpoints, ui?.EndpointKey), ui?.EntryPath);
         var navigation = ui?.Navigation
             .Select(item => new AppNavigationSummary(
                 Label: item.Label,
                 Path: item.Path,
                 EntryPath: item.Path,
-                EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(app.Endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path)))
+                EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path)))
             .ToArray() ?? [];
 
         return new(
@@ -312,15 +319,47 @@ internal sealed record AppSummary(
             app.LastOperation,
             app.LastError,
             app.Capabilities,
-            app.Settings.Values
-                .OrderBy(setting => setting.Key, StringComparer.Ordinal)
-                .Select(setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret))
-                .ToArray(),
-            app.Endpoints,
+            BuildSettingSummaries(app.Settings, app.Endpoints),
+            endpoints,
+            profiles,
             ui?.EntryPath,
             entryUrl,
             navigation);
     }
+
+    private static IReadOnlyList<AppSettingSummary> BuildSettingSummaries(
+        IReadOnlyDictionary<string, AppSettingValue> settings,
+        IReadOnlyList<AppEndpointContract> endpoints)
+    {
+        var summaries = settings.Values
+            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret), StringComparer.Ordinal);
+        foreach (var endpoint in endpoints.Where(endpoint => endpoint.Public))
+        {
+            var key = PublicOriginSettings.BuildSettingKey(endpoint.Key);
+            summaries.TryAdd(key, new AppSettingSummary(key, "url", null, Secret: false));
+        }
+
+        return summaries.Values.OrderBy(setting => setting.Key, StringComparer.Ordinal).ToArray();
+    }
+
+    private static IReadOnlyList<AppEndpointContract> AttachPublicOrigins(
+        IReadOnlyList<AppEndpointContract> endpoints,
+        IReadOnlyDictionary<string, AppSettingValue> settings)
+        => endpoints
+            .Select(endpoint =>
+            {
+                if (!endpoint.Public ||
+                    string.IsNullOrWhiteSpace(endpoint.Url) ||
+                    !settings.TryGetValue(PublicOriginSettings.BuildSettingKey(endpoint.Key), out var setting) ||
+                    string.IsNullOrWhiteSpace(setting.Value) ||
+                    !PublicOriginSettings.TryNormalizeOrigin(setting.Value, out var publicOrigin))
+                {
+                    return endpoint;
+                }
+
+                return endpoint with { PublicOrigin = publicOrigin };
+            })
+            .ToArray();
 
     private static string? ResolveEndpointUrl(IReadOnlyList<AppEndpointContract> endpoints, string? endpointKey)
     {
@@ -329,24 +368,32 @@ internal sealed record AppSummary(
             var exact = endpoints.FirstOrDefault(endpoint =>
                 string.Equals(endpoint.Key, endpointKey, StringComparison.Ordinal) &&
                 !string.IsNullOrWhiteSpace(endpoint.Url));
-            if (exact?.Url is not null)
+            var exactUrl = ResolveEndpointOpenUrl(exact);
+            if (exactUrl is not null)
             {
-                return exact.Url;
+                return exactUrl;
             }
 
             var suffix = $".{endpointKey}";
             var compatible = endpoints.FirstOrDefault(endpoint =>
                 endpoint.Key.EndsWith(suffix, StringComparison.Ordinal) &&
-                !string.IsNullOrWhiteSpace(endpoint.Url));
-            if (compatible?.Url is not null)
+                HasEndpointOpenUrl(endpoint));
+            var compatibleUrl = ResolveEndpointOpenUrl(compatible);
+            if (compatibleUrl is not null)
             {
-                return compatible.Url;
+                return compatibleUrl;
             }
         }
 
-        return endpoints.FirstOrDefault(endpoint => endpoint.Public && !string.IsNullOrWhiteSpace(endpoint.Url))?.Url ??
-            endpoints.FirstOrDefault(endpoint => !string.IsNullOrWhiteSpace(endpoint.Url))?.Url;
+        return ResolveEndpointOpenUrl(endpoints.FirstOrDefault(endpoint => endpoint.Public && HasEndpointOpenUrl(endpoint))) ??
+            ResolveEndpointOpenUrl(endpoints.FirstOrDefault(HasEndpointOpenUrl));
     }
+
+    private static bool HasEndpointOpenUrl(AppEndpointContract endpoint)
+        => !string.IsNullOrWhiteSpace(endpoint.PublicOrigin) || !string.IsNullOrWhiteSpace(endpoint.Url);
+
+    private static string? ResolveEndpointOpenUrl(AppEndpointContract? endpoint)
+        => string.IsNullOrWhiteSpace(endpoint?.PublicOrigin) ? endpoint?.Url : endpoint.PublicOrigin;
 
     private static string? BuildUiUrl(string? baseUrl, string? path)
     {

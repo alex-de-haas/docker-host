@@ -55,7 +55,7 @@ The intended installed flow is:
 - Keep Core as the owner of Shell system app bootstrap. The CLI writes and passes launch settings only.
 - Make Core bootstrap accept either a local Shell manifest path or URL, then use the same install/update path used by ordinary runtime apps.
 - Make Core bootstrap reconcile an existing `hosty.shell` system app with the configured Shell manifest URL while preserving explicit runtime/source override intent where possible.
-- Set the installed launch default `HOST_SHELL_PUBLIC_ORIGIN` to `http://127.0.0.1:3000`, while keeping explicit `HOST_SHELL_PUBLIC_ORIGIN` configuration authoritative.
+- Set the installed launch default `HOST_SHELL_PUBLIC_ORIGIN` to `http://localhost:3000`, while keeping explicit `HOST_SHELL_PUBLIC_ORIGIN` configuration authoritative.
 
 ## User/API Scenarios
 
@@ -80,7 +80,7 @@ The intended installed flow is:
 - CLI launch settings include:
   - `HOSTY_SHELL_MANIFEST_PATH`, defaulting to `https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json`;
   - `HOSTY_SHELL_BOOTSTRAP_RUNTIME`, defaulting to `docker`;
-  - `HOST_SHELL_PUBLIC_ORIGIN`, defaulting to `http://127.0.0.1:3000`.
+  - `HOST_SHELL_PUBLIC_ORIGIN`, defaulting to `http://localhost:3000`.
 - `CoreCommand.BuildCoreEnvironment` passes those launch settings to Core.
 - Core runtime config resolves a Shell manifest reference in this priority order:
   - explicit `HOSTY_SHELL_MANIFEST_PATH` for local paths, manifest URLs, and existing development workflows;
@@ -149,6 +149,6 @@ Future product channels can replace the rolling `latest` reference with digest-p
 - `HOSTY_SHELL_MANIFEST_PATH` can be a local path or an HTTP(S) URL.
 - `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the Shell runtime profile.
 - The default installed values are the raw GitHub Shell manifest URL and runtime `docker`.
-- `HOST_SHELL_PUBLIC_ORIGIN` defaults to `http://127.0.0.1:3000` for the installed CLI launch path.
+- `HOST_SHELL_PUBLIC_ORIGIN` defaults to `http://localhost:3000` for the installed CLI launch path.
 - Core auto-applies Shell manifest reconciliation for `hosty.shell` only when the installed runtime matches `HOSTY_SHELL_BOOTSTRAP_RUNTIME`.
 - Pull requests keep the existing standard CI and do not build or publish the Shell Docker image.

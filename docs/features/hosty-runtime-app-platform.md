@@ -45,6 +45,8 @@ Core injects app environment into each service:
 
 For local command services, Core assigns available ports when `localPort` / `hostPort` are omitted. Single-port services also receive `PORT=<assigned-port>` unless the app explicitly configured `PORT`.
 
+Local runtime URLs are published as `http://localhost:<assigned-port>`. Public UI/API exposure is configured after installation per public endpoint through the generated `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}` app setting; empty means use the local `localhost` endpoint.
+
 ## Local Demo App Workflow
 
 ```bash

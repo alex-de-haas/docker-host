@@ -44,12 +44,14 @@ On Windows the executable names use `.exe`.
 `launch.env` also carries the default Shell bootstrap settings passed to Core:
 
 ```text
-HOST_SHELL_PUBLIC_ORIGIN=http://127.0.0.1:3000
+HOST_SHELL_PUBLIC_ORIGIN=http://localhost:3000
 HOSTY_SHELL_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json
 HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 ```
 
 `HOSTY_SHELL_MANIFEST_PATH` can be a local manifest path or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
+
+Existing managed `launch.env` files that still contain the previous `http://127.0.0.1:3001` Core public origin or `http://127.0.0.1:3000` Shell public origin are migrated to the `localhost` defaults when the CLI loads and saves launch settings. Custom non-default origins are preserved.
 
 ## Core Bootstrap
 

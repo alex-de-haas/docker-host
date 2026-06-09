@@ -300,6 +300,21 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ListAppsAsync_IncludesRuntimeProfilesFromInstalledManifest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteSwitchableDockerManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { RuntimeProfiles = null });
+
+        var app = Assert.Single(await fixture.Service.ListAppsAsync());
+
+        Assert.Equal(["docker", "docker-alt"], app.RuntimeProfiles.Select(profile => profile.Key));
+        Assert.Contains(app.RuntimeProfiles, profile => profile.Key == "docker" && profile.Default);
+        Assert.Contains(app.RuntimeProfiles, profile => profile.Key == "docker-alt" && profile.Type == "docker");
+    }
+
+    [Fact]
     public async Task CreateRuntimeSwitchPlanAsync_ReportsRuntimeContractChanges()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -408,7 +423,7 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal(1, fixture.Adapter.StartCount);
         Assert.Contains(app!.Endpoints, endpoint =>
             endpoint.Key == "app.http" &&
-            endpoint.Url == "http://127.0.0.1:3100");
+            endpoint.Url == "http://localhost:3100");
     }
 
     [Fact]
@@ -806,6 +821,93 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateInstallPlanAsync_DoesNotAddPublicOriginSettingForPublicEndpoint()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+
+        Assert.DoesNotContain(plan.Settings, setting =>
+            setting.Key.StartsWith("HOSTY_PUBLIC_ORIGIN_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CreateInstallPlanAsync_FiltersReservedPublicOriginManifestSettings()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: ReservedPublicOriginSettingsJson());
+
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+
+        Assert.DoesNotContain(plan.Settings, setting =>
+            setting.Key.StartsWith("HOSTY_PUBLIC_ORIGIN_", StringComparison.Ordinal));
+        Assert.Contains(plan.Settings, setting => setting.Key == "APP_MODE");
+    }
+
+    [Fact]
+    public async Task InstallAsync_AddsPublicOriginSettingForConfigure()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var setting = Assert.Contains("HOSTY_PUBLIC_ORIGIN_APP_HTTP", app!.Settings);
+        Assert.Equal("url", setting.Type);
+        Assert.Null(setting.Value);
+        Assert.False(setting.Secret);
+    }
+
+    [Fact]
+    public async Task InstallAsync_DoesNotPreseedPublicOriginFromManifestReservedSetting()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: ReservedPublicOriginSettingsJson());
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var setting = Assert.Contains("HOSTY_PUBLIC_ORIGIN_APP_HTTP", app!.Settings);
+        Assert.Equal("url", setting.Type);
+        Assert.Null(setting.Value);
+        Assert.False(setting.Secret);
+        Assert.DoesNotContain(app.Settings.Values, setting => setting.Value == "https://attacker.example.com");
+    }
+
+    [Fact]
+    public async Task InstallAsync_RejectsInvalidPublicOriginSetting()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.InstallAsync(new AppInstallRequest(
+                manifest,
+                Settings: new Dictionary<string, string?>
+                {
+                    ["HOSTY_PUBLIC_ORIGIN_HTTP"] = "https://notes.example.com/app",
+                })));
+
+        Assert.Equal("public_origin_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_AllowsNullSettings()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        await fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(null, Autostart: false));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.False(app!.Autostart.GetValueOrDefault());
+        Assert.Equal("configured", app.OperationStatus);
+    }
+
+    [Fact]
     public async Task InstallAsync_StripsDotSegmentFromWorkingDirectoryWhenInferringLocalSourceRoot()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -959,6 +1061,63 @@ public sealed class CoreLifecycleServiceTests
 
         var app = await fixture.Apps.GetAppAsync("com.example.local");
         Assert.Equal("stopped", app?.RuntimeState);
+    }
+
+    [Fact]
+    public async Task StartAsync_PreservesManifestEndpointPublicFlagForAliasedRuntimePort()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "endpoint-public-alias.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.endpoint-public",
+              "name": "Endpoint Public",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "backend",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "sleep 5",
+                    "workingDirectory": ".",
+                    "ports": [{
+                      "key": "http",
+                      "containerPort": 5173,
+                      "protocol": "http"
+                    }]
+                  }
+                }
+              }],
+              "endpoints": [{
+                "key": "api",
+                "service": "backend",
+                "port": "http",
+                "protocol": "http",
+                "public": true
+              }]
+            }
+            """);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+
+        try
+        {
+            var start = await fixture.Service.StartAsync("com.example.endpoint-public");
+
+            Assert.NotNull(start.App);
+            var endpoint = Assert.Single(start.App.Endpoints);
+            Assert.Equal("api", endpoint.Key);
+            Assert.True(endpoint.Public);
+            Assert.StartsWith("http://localhost:", endpoint.Url, StringComparison.Ordinal);
+            Assert.Contains("HOSTY_PUBLIC_ORIGIN_API", (await fixture.Apps.GetAppAsync("com.example.endpoint-public"))!.Settings);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.endpoint-public");
+        }
     }
 
     [Fact]
@@ -1148,6 +1307,19 @@ public sealed class CoreLifecycleServiceTests
             => Task.FromResult(handler(request));
     }
 
+    private static string ReservedPublicOriginSettingsJson()
+        => """
+                  "settings": [{
+                    "key": "HOSTY_PUBLIC_ORIGIN_APP_HTTP",
+                    "type": "url",
+                    "default": "https://attacker.example.com"
+                  }, {
+                    "key": "APP_MODE",
+                    "type": "string",
+                    "default": "production"
+                  }],
+                """;
+
     private sealed class LifecycleFixture
     {
         private LifecycleFixture(
@@ -1233,7 +1405,11 @@ public sealed class CoreLifecycleServiceTests
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }
 
-        public async Task<string> WriteManifestAsync(string version, bool includeDependency = false, string? sourceRepository = null)
+        public async Task<string> WriteManifestAsync(
+            string version,
+            bool includeDependency = false,
+            string? sourceRepository = null,
+            string? settingsJson = null)
         {
             var path = Path.Combine(Root, $"notes-{version}.json");
             var dependencyJson = includeDependency
@@ -1253,6 +1429,13 @@ public sealed class CoreLifecycleServiceTests
                     "repository": "{{JsonEscape(sourceRepository)}}",
                     "branch": "main"
                   },
+                """;
+            var manifestSettingsJson = settingsJson ?? """
+                  "settings": [{
+                    "key": "APP_MODE",
+                    "type": "string",
+                    "default": "production"
+                  }],
                 """;
             await File.WriteAllTextAsync(path, $$"""
                 {
@@ -1286,11 +1469,7 @@ public sealed class CoreLifecycleServiceTests
                     "protocol": "http",
                     "public": true
                   }],
-                  "settings": [{
-                    "key": "APP_MODE",
-                    "type": "string",
-                    "default": "production"
-                  }],
+                  {{manifestSettingsJson}}
                   {{dependencyJson}}
                   "data": {
                     "enabled": true,
@@ -1595,7 +1774,7 @@ public sealed class CoreLifecycleServiceTests
             }
 
             return Task.FromResult(new AppRuntimeStartResult("running", [
-                new AppEndpointContract("app.http", "http", "http://127.0.0.1:3100", Public: true, Service: "app", Port: "http"),
+                new AppEndpointContract("app.http", "http", "http://localhost:3100", Public: true, Service: "app", Port: "http"),
             ]));
         }
 

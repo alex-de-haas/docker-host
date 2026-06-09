@@ -125,6 +125,7 @@ Production installers should treat `localCommand` as platform-specific unless th
 - write diagnostics to stdout/stderr instead of daemonizing into a separate logger;
 - read `HOSTY_APP_DATA_DIR`, `HOSTY_PORT_<KEY>`, `PORT`, `HOSTY_CORE_ORIGIN`, and dependency URL environment variables instead of hard-coding local paths or ports;
 - omit `localPort` / `hostPort` in normal local development so Core can assign a free port;
+- expect Core and Shell links to use `http://localhost:<assigned-port>` locally; configure `HOSTY_PUBLIC_ORIGIN_<ENDPOINT_KEY>` only when the endpoint is exposed through an external origin;
 - avoid shell features that only exist on one target platform unless the runtime profile key or installer target makes that platform explicit;
 - keep package installation outside runtime start commands so app start is repeatable and does not require network access.
 

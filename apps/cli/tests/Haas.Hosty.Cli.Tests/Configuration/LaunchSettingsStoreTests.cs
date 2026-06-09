@@ -32,11 +32,31 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         var settings = store.Load();
 
         Assert.Equal("", settings.HostCorePublicOrigin);
-        Assert.Equal("http://127.0.0.1:3000", settings.HostShellPublicOrigin);
+        Assert.Equal("http://localhost:3000", settings.HostShellPublicOrigin);
         Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json", settings.HostyShellManifestPath);
         Assert.Equal("docker", settings.HostyShellBootstrapRuntime);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
+    }
+
+    [Fact]
+    public void Load_LegacyLoopbackDefaults_MigratesToLocalhost()
+    {
+        var environment = HostyEnvironment.Current();
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        File.WriteAllText(
+            environment.LaunchConfigPath,
+            """
+            # hosty launch settings
+            HOST_CORE_PUBLIC_ORIGIN=http://127.0.0.1:3001
+            HOST_SHELL_PUBLIC_ORIGIN=http://127.0.0.1:3000
+            """);
+        var store = new LaunchSettingsStore(environment);
+
+        var settings = store.Load();
+
+        Assert.Equal("http://localhost:3001", settings.HostCorePublicOrigin);
+        Assert.Equal("http://localhost:3000", settings.HostShellPublicOrigin);
     }
 
     [Theory]

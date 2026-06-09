@@ -34,6 +34,10 @@ For `localCommand` runtime profiles, do not hard-code development ports by defau
 
 Use explicit `localPort` only when a fixed local port is a real requirement. If that port is occupied, Core fails start with a lifecycle error instead of silently routing Shell to another app.
 
+## Settings
+
+Manifest settings are app-owned configuration. Do not define settings with the `HOSTY_PUBLIC_ORIGIN_` prefix. That prefix is reserved for Hosty-managed public endpoint origin settings, and Core ignores manifest-provided entries with that prefix so apps cannot pre-seed redirect origins.
+
 ## Storage And Backups
 
 Use `data.enabled: true` when the app needs a primary persistent data directory. Backups cover that primary app data directory only.
