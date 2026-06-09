@@ -335,7 +335,7 @@ internal sealed record AppSummary(
             .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret), StringComparer.Ordinal);
         foreach (var endpoint in endpoints.Where(endpoint => endpoint.Public))
         {
-            var key = BuildPublicOriginSettingKey(endpoint.Key);
+            var key = PublicOriginSettings.BuildSettingKey(endpoint.Key);
             summaries.TryAdd(key, new AppSettingSummary(key, "url", null, Secret: false));
         }
 
@@ -350,9 +350,9 @@ internal sealed record AppSummary(
             {
                 if (!endpoint.Public ||
                     string.IsNullOrWhiteSpace(endpoint.Url) ||
-                    !settings.TryGetValue(BuildPublicOriginSettingKey(endpoint.Key), out var setting) ||
+                    !settings.TryGetValue(PublicOriginSettings.BuildSettingKey(endpoint.Key), out var setting) ||
                     string.IsNullOrWhiteSpace(setting.Value) ||
-                    !TryNormalizePublicOrigin(setting.Value, out var publicOrigin))
+                    !PublicOriginSettings.TryNormalizeOrigin(setting.Value, out var publicOrigin))
                 {
                     return endpoint;
                 }
@@ -360,39 +360,6 @@ internal sealed record AppSummary(
                 return endpoint with { PublicOrigin = publicOrigin };
             })
             .ToArray();
-
-    private static string BuildPublicOriginSettingKey(string endpointKey)
-        => $"HOSTY_PUBLIC_ORIGIN_{NormalizeSettingKey(endpointKey)}";
-
-    private static string NormalizeSettingKey(string value)
-    {
-        var chars = value.Length == 0 ? "endpoint".ToCharArray() : value.ToCharArray();
-        for (var index = 0; index < chars.Length; index++)
-        {
-            chars[index] = char.IsAsciiLetterOrDigit(chars[index])
-                ? char.ToUpperInvariant(chars[index])
-                : '_';
-        }
-
-        var normalized = new string(chars).Trim('_');
-        return normalized.Length == 0 ? "ENDPOINT" : normalized;
-    }
-
-    private static bool TryNormalizePublicOrigin(string value, out string origin)
-    {
-        origin = "";
-        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) ||
-            uri.Scheme is not ("http" or "https") ||
-            !string.IsNullOrWhiteSpace(uri.UserInfo) ||
-            !string.IsNullOrEmpty(uri.PathAndQuery.Trim('/')) ||
-            !string.IsNullOrWhiteSpace(uri.Fragment))
-        {
-            return false;
-        }
-
-        origin = uri.GetLeftPart(UriPartial.Authority);
-        return true;
-    }
 
     private static string? ResolveEndpointUrl(IReadOnlyList<AppEndpointContract> endpoints, string? endpointKey)
     {

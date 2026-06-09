@@ -3738,6 +3738,13 @@ function EmbeddedWorkspacePanel({
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [loadedSrc, setLoadedSrc] = useState(workspace.src);
+
+  if (workspace.src !== loadedSrc) {
+    setLoadedSrc(workspace.src);
+    setLoaded(false);
+  }
+
   const postTheme = useCallback(() => {
     const frame = iframeRef.current;
     if (!frame?.contentWindow) {
@@ -3764,14 +3771,9 @@ function EmbeddedWorkspacePanel({
     }
   }, [loaded, postTheme]);
 
-  useEffect(() => {
-    setLoaded(false);
-  }, [workspace.src]);
-
   const handleLoad = useCallback(() => {
     setLoaded(true);
-    postTheme();
-  }, [postTheme]);
+  }, []);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-background">

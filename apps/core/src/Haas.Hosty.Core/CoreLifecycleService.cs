@@ -11,8 +11,6 @@ internal sealed class CoreLifecycleService(
     AppSourceService sources,
     IEnumerable<IAppRuntimeAdapter> adapters)
 {
-    private const string PublicOriginSettingPrefix = "HOSTY_PUBLIC_ORIGIN_";
-
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
         var records = await apps.ListAppRecordsAsync(cancellationToken);
@@ -60,6 +58,7 @@ internal sealed class CoreLifecycleService(
             DefaultAutostart: request.Autostart ?? true,
             RuntimeProfiles: BuildRuntimeProfileSummaries(selection.Manifest),
             Settings: selection.Manifest.Settings
+                .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
                 .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret))
                 .ToArray());
     }
@@ -1694,10 +1693,12 @@ internal sealed class CoreLifecycleService(
 
     private static IReadOnlyList<RuntimeAppSettingManifest> BuildSettingDefinitions(RuntimeAppManifestSelection selection)
     {
-        var settings = selection.Manifest.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
+        var settings = selection.Manifest.Settings
+            .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
+            .ToDictionary(setting => setting.Key, StringComparer.Ordinal);
         foreach (var endpoint in BuildEndpointContracts(selection).Where(endpoint => endpoint.Public))
         {
-            var key = BuildPublicOriginSettingKey(endpoint.Key);
+            var key = PublicOriginSettings.BuildSettingKey(endpoint.Key);
             settings.TryAdd(key, new RuntimeAppSettingManifest
             {
                 Key = key,
@@ -1723,66 +1724,35 @@ internal sealed class CoreLifecycleService(
             }
             else
             {
-                settings[key] = new AppSettingValue(key, IsPublicOriginSettingKey(key) ? "url" : "string", value, Secret: false);
+                settings[key] = new AppSettingValue(key, PublicOriginSettings.IsSettingKey(key) ? "url" : "string", value, Secret: false);
             }
         }
 
         return settings;
     }
 
-    private static void ValidatePublicOriginSettings(IReadOnlyDictionary<string, string?> settings)
+    private static void ValidatePublicOriginSettings(IReadOnlyDictionary<string, string?>? settings)
     {
+        if (settings is null)
+        {
+            return;
+        }
+
         foreach (var (key, value) in settings)
         {
-            if (!IsPublicOriginSettingKey(key) ||
+            if (!PublicOriginSettings.IsSettingKey(key) ||
                 string.IsNullOrWhiteSpace(value))
             {
                 continue;
             }
 
-            if (!TryNormalizePublicOrigin(value, out _))
+            if (!PublicOriginSettings.TryNormalizeOrigin(value, out _))
             {
                 throw new AppLifecycleException(
                     "public_origin_invalid",
                     $"Setting '{key}' must be an absolute http(s) origin without a path, query, or fragment.");
             }
         }
-    }
-
-    private static string BuildPublicOriginSettingKey(string endpointKey)
-        => $"{PublicOriginSettingPrefix}{NormalizeSettingKey(endpointKey)}";
-
-    private static bool IsPublicOriginSettingKey(string key)
-        => key.StartsWith(PublicOriginSettingPrefix, StringComparison.Ordinal);
-
-    private static string NormalizeSettingKey(string value)
-    {
-        var chars = value.Length == 0 ? "endpoint".ToCharArray() : value.ToCharArray();
-        for (var index = 0; index < chars.Length; index++)
-        {
-            chars[index] = char.IsAsciiLetterOrDigit(chars[index])
-                ? char.ToUpperInvariant(chars[index])
-                : '_';
-        }
-
-        var normalized = new string(chars).Trim('_');
-        return normalized.Length == 0 ? "ENDPOINT" : normalized;
-    }
-
-    private static bool TryNormalizePublicOrigin(string value, out string origin)
-    {
-        origin = "";
-        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) ||
-            uri.Scheme is not ("http" or "https") ||
-            !string.IsNullOrWhiteSpace(uri.UserInfo) ||
-            !string.IsNullOrEmpty(uri.PathAndQuery.Trim('/')) ||
-            !string.IsNullOrWhiteSpace(uri.Fragment))
-        {
-            return false;
-        }
-
-        origin = uri.GetLeftPart(UriPartial.Authority);
-        return true;
     }
 
     private static string? ResolveDefaultRuntime(RuntimeAppManifest manifest)
@@ -1988,7 +1958,7 @@ internal sealed record AppInstallRequest(
     bool? Autostart = null);
 
 internal sealed record AppConfigureRequest(
-    IReadOnlyDictionary<string, string?> Settings,
+    IReadOnlyDictionary<string, string?>? Settings = null,
     bool? Autostart = null);
 
 internal sealed record AppAutostartRequest(bool Autostart);

@@ -833,6 +833,19 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateInstallPlanAsync_FiltersReservedPublicOriginManifestSettings()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: ReservedPublicOriginSettingsJson());
+
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+
+        Assert.DoesNotContain(plan.Settings, setting =>
+            setting.Key.StartsWith("HOSTY_PUBLIC_ORIGIN_", StringComparison.Ordinal));
+        Assert.Contains(plan.Settings, setting => setting.Key == "APP_MODE");
+    }
+
+    [Fact]
     public async Task InstallAsync_AddsPublicOriginSettingForConfigure()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -845,6 +858,22 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("url", setting.Type);
         Assert.Null(setting.Value);
         Assert.False(setting.Secret);
+    }
+
+    [Fact]
+    public async Task InstallAsync_DoesNotPreseedPublicOriginFromManifestReservedSetting()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: ReservedPublicOriginSettingsJson());
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var setting = Assert.Contains("HOSTY_PUBLIC_ORIGIN_APP_HTTP", app!.Settings);
+        Assert.Equal("url", setting.Type);
+        Assert.Null(setting.Value);
+        Assert.False(setting.Secret);
+        Assert.DoesNotContain(app.Settings.Values, setting => setting.Value == "https://attacker.example.com");
     }
 
     [Fact]
@@ -862,6 +891,20 @@ public sealed class CoreLifecycleServiceTests
                 })));
 
         Assert.Equal("public_origin_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_AllowsNullSettings()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        await fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(null, Autostart: false));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.False(app!.Autostart.GetValueOrDefault());
+        Assert.Equal("configured", app.OperationStatus);
     }
 
     [Fact]
@@ -1264,6 +1307,19 @@ public sealed class CoreLifecycleServiceTests
             => Task.FromResult(handler(request));
     }
 
+    private static string ReservedPublicOriginSettingsJson()
+        => """
+                  "settings": [{
+                    "key": "HOSTY_PUBLIC_ORIGIN_APP_HTTP",
+                    "type": "url",
+                    "default": "https://attacker.example.com"
+                  }, {
+                    "key": "APP_MODE",
+                    "type": "string",
+                    "default": "production"
+                  }],
+                """;
+
     private sealed class LifecycleFixture
     {
         private LifecycleFixture(
@@ -1349,7 +1405,11 @@ public sealed class CoreLifecycleServiceTests
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }
 
-        public async Task<string> WriteManifestAsync(string version, bool includeDependency = false, string? sourceRepository = null)
+        public async Task<string> WriteManifestAsync(
+            string version,
+            bool includeDependency = false,
+            string? sourceRepository = null,
+            string? settingsJson = null)
         {
             var path = Path.Combine(Root, $"notes-{version}.json");
             var dependencyJson = includeDependency
@@ -1369,6 +1429,13 @@ public sealed class CoreLifecycleServiceTests
                     "repository": "{{JsonEscape(sourceRepository)}}",
                     "branch": "main"
                   },
+                """;
+            var manifestSettingsJson = settingsJson ?? """
+                  "settings": [{
+                    "key": "APP_MODE",
+                    "type": "string",
+                    "default": "production"
+                  }],
                 """;
             await File.WriteAllTextAsync(path, $$"""
                 {
@@ -1402,11 +1469,7 @@ public sealed class CoreLifecycleServiceTests
                     "protocol": "http",
                     "public": true
                   }],
-                  "settings": [{
-                    "key": "APP_MODE",
-                    "type": "string",
-                    "default": "production"
-                  }],
+                  {{manifestSettingsJson}}
                   {{dependencyJson}}
                   "data": {
                     "enabled": true,
