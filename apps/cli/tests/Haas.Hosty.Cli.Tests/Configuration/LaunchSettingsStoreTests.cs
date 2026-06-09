@@ -82,6 +82,18 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal(value, store.Load()[key]);
     }
 
+    [Fact]
+    public void Set_PortSetting_TrimsWhitespace()
+    {
+        var environment = HostyEnvironment.Current();
+        var store = new LaunchSettingsStore(environment);
+        store.EnsureInstalled();
+
+        store.Set("HOSTY_CORE_PORT", " 8080 ");
+
+        Assert.Equal("8080", store.Load()["HOSTY_CORE_PORT"]);
+    }
+
     [Theory]
     [InlineData("HOSTY_CORE_PORT", "0")]
     [InlineData("HOSTY_CORE_PORT", "65536")]

@@ -1080,7 +1080,7 @@ public sealed class CoreLifecycleServiceTests
             "com.example.local",
             new AppConfigureRequest(new Dictionary<string, string?>
             {
-                ["HOSTY_PORT_HTTP"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["HOSTY_PORT_HTTP"] = $" {port.ToString(System.Globalization.CultureInfo.InvariantCulture)} ",
             }));
         _ = await fixture.Sources.SetLocalOverrideAsync("com.example.local", new AppSourceOverrideRequest(overridePath));
 

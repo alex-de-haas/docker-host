@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -518,7 +516,7 @@ internal sealed class DockerRuntimeAdapter(
             foreach (var dependency in context.DependencyUrls)
             {
                 runArgs.Add("-e");
-                runArgs.Add($"HOSTY_DEPENDENCY_{NormalizeEnvironmentKey(dependency.Key)}_URL={dependency.Value}");
+                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={dependency.Value}");
             }
 
             var assignedPorts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -530,14 +528,14 @@ internal sealed class DockerRuntimeAdapter(
                 }
 
                 var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                var hostPort = ResolveHostPort(context, port, key);
+                var hostPort = RuntimePortHelper.ResolveHostPort(context, port, key);
                 assignedPorts[key] = hostPort;
                 runArgs.Add("-p");
                 runArgs.Add($"127.0.0.1:{hostPort}:{port.ContainerPort.Value}");
                 if (!string.IsNullOrWhiteSpace(port.Key))
                 {
                     runArgs.Add("-e");
-                    runArgs.Add($"HOSTY_PORT_{NormalizeEnvironmentKey(port.Key)}={hostPort}");
+                    runArgs.Add($"HOSTY_PORT_{RuntimePortHelper.NormalizeEnvironmentKey(port.Key)}={hostPort}");
                 }
             }
 
@@ -712,44 +710,6 @@ internal sealed class DockerRuntimeAdapter(
         return string.IsNullOrWhiteSpace(normalized) ? "app" : normalized.Trim('-');
     }
 
-    private static string NormalizeEnvironmentKey(string value)
-        => new(value.Select(character => char.IsLetterOrDigit(character) ? char.ToUpperInvariant(character) : '_').ToArray());
-
-    private static int ResolveHostPort(RuntimeLifecycleContext context, RuntimePortManifest port, string key)
-    {
-        if (TryReadHostPortOverride(context, key, out var overridePort))
-        {
-            return overridePort;
-        }
-
-        return port.LocalPort ?? port.HostPort ?? AllocateLoopbackPort();
-    }
-
-    private static bool TryReadHostPortOverride(RuntimeLifecycleContext context, string key, out int port)
-    {
-        port = 0;
-        var settingKey = $"HOSTY_PORT_{NormalizeEnvironmentKey(key)}";
-        if (!context.App.Settings.TryGetValue(settingKey, out var setting) ||
-            string.IsNullOrWhiteSpace(setting.Value))
-        {
-            return false;
-        }
-
-        if (int.TryParse(setting.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out port) &&
-            port is > 0 and <= IPEndPoint.MaxPort)
-        {
-            return true;
-        }
-
-        throw new AppLifecycleException("runtime_port_invalid", $"{settingKey} must be an integer between 1 and {IPEndPoint.MaxPort}.");
-    }
-
-    private static int AllocateLoopbackPort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
 }
 
 internal sealed record RuntimeLifecycleContext(

@@ -207,7 +207,7 @@ internal sealed class LocalCommandRuntimeAdapter(
 
         foreach (var dependency in context.DependencyUrls)
         {
-            startInfo.Environment[$"HOSTY_DEPENDENCY_{NormalizeEnvironmentKey(dependency.Key)}_URL"] = dependency.Value;
+            startInfo.Environment[$"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL"] = dependency.Value;
         }
 
         var assignedHostPorts = new List<int>();
@@ -219,9 +219,9 @@ internal sealed class LocalCommandRuntimeAdapter(
                 continue;
             }
 
-            var hostPort = ResolveHostPort(context, port, key);
+            var hostPort = RuntimePortHelper.ResolveHostPort(context, port, key);
             assignedHostPorts.Add(hostPort);
-            startInfo.Environment[$"HOSTY_PORT_{NormalizeEnvironmentKey(key)}"] = hostPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            startInfo.Environment[$"HOSTY_PORT_{RuntimePortHelper.NormalizeEnvironmentKey(key)}"] = hostPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
             endpoints.Add(new AppEndpointContract(
                 Key: $"{service.Key}.{key}",
                 Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
@@ -245,7 +245,7 @@ internal sealed class LocalCommandRuntimeAdapter(
             foreach (var port in service.Runtime.Ports)
             {
                 var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port";
-                var hostPort = TryReadHostPortOverride(context, key, out var overridePort)
+                var hostPort = RuntimePortHelper.TryReadHostPortOverride(context, key, out var overridePort)
                     ? overridePort
                     : port.LocalPort ?? port.HostPort;
                 if (hostPort is null)
@@ -270,35 +270,6 @@ internal sealed class LocalCommandRuntimeAdapter(
                 usedPorts.Add(hostPort.Value, service.Key);
             }
         }
-    }
-
-    private static int ResolveHostPort(RuntimeLifecycleContext context, RuntimePortManifest port, string key)
-    {
-        if (TryReadHostPortOverride(context, key, out var overridePort))
-        {
-            return overridePort;
-        }
-
-        return port.LocalPort ?? port.HostPort ?? AllocateLoopbackPort();
-    }
-
-    private static bool TryReadHostPortOverride(RuntimeLifecycleContext context, string key, out int port)
-    {
-        port = 0;
-        var settingKey = $"HOSTY_PORT_{NormalizeEnvironmentKey(key)}";
-        if (!context.App.Settings.TryGetValue(settingKey, out var setting) ||
-            string.IsNullOrWhiteSpace(setting.Value))
-        {
-            return false;
-        }
-
-        if (int.TryParse(setting.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out port) &&
-            port is > 0 and <= IPEndPoint.MaxPort)
-        {
-            return true;
-        }
-
-        throw new AppLifecycleException("runtime_port_invalid", $"{settingKey} must be an integer between 1 and {IPEndPoint.MaxPort}.");
     }
 
     private static bool HasExplicitPortEnvironment(RuntimeLifecycleContext context, RuntimeSelectedService service)
@@ -393,16 +364,6 @@ internal sealed class LocalCommandRuntimeAdapter(
             WorkingDirectory: process.WorkingDirectory,
             Message: hasExited ? "Local command process exited." : null);
     }
-
-    private static int AllocateLoopbackPort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
-
-    private static string NormalizeEnvironmentKey(string value)
-        => new(value.Select(character => char.IsLetterOrDigit(character) ? char.ToUpperInvariant(character) : '_').ToArray());
 
     private enum PortBindProbeResult
     {

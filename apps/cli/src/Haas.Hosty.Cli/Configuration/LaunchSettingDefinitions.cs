@@ -72,7 +72,7 @@ internal static class LaunchSettingDefinitions
     }
 
     private static string? ValidatePort(string value, HostyEnvironment _)
-        => int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var port) &&
+        => int.TryParse(value.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var port) &&
             port is > 0 and <= 65535
             ? null
             : "Port must be an integer between 1 and 65535.";

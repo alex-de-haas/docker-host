@@ -89,7 +89,7 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
             throw new ConfigurationException($"Invalid {key}: {error}");
         }
 
-        Save(Load().WithValue(key, value));
+        Save(Load().WithValue(key, NormalizeValue(key, value)));
     }
 
     public void Reset(string key)
@@ -100,6 +100,11 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
 
     private Dictionary<string, string> CreateDefaultValues()
         => LaunchSettingDefinitions.All.ToDictionary(x => x.Key, x => x.DefaultValue(environment), StringComparer.Ordinal);
+
+    private static string NormalizeValue(string key, string value)
+        => key is LaunchSettingDefinitions.HostyCorePort or LaunchSettingDefinitions.HostyShellPort
+            ? value.Trim()
+            : value;
 
     private static IEnumerable<(string Key, string Value)> Parse(IEnumerable<string> lines)
     {
