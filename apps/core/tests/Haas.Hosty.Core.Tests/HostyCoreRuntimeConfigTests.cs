@@ -14,7 +14,7 @@ public sealed class HostyCoreRuntimeConfigTests
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
 
-        Assert.Equal("http://127.0.0.1:3000", config.ShellPublicOrigin);
+        Assert.Equal("http://localhost:3000", config.ShellPublicOrigin);
     }
 
     [Fact]

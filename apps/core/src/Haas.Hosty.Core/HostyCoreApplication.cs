@@ -628,7 +628,7 @@ internal sealed record HostyCoreRuntimeConfig(
     bool ShellBootstrapEnabled,
     bool ShellAutostart)
 {
-    private const string DefaultDevelopmentShellPublicOrigin = "http://127.0.0.1:3000";
+    private const string DefaultDevelopmentShellPublicOrigin = "http://localhost:3000";
 
     public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment)
     {
@@ -639,15 +639,14 @@ internal sealed record HostyCoreRuntimeConfig(
         var runDirectory = Path.Combine(coreRoot, "run");
         var listenUrl = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_URL")) ??
             NormalizeOptional(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) ??
-            "http://127.0.0.1:3001";
+            "http://localhost:3001";
         var combinedPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_PUBLIC_ORIGIN"));
         var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_CORE_PUBLIC_ORIGIN")) ??
             combinedPublicOrigin;
         var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOST_SHELL_PUBLIC_ORIGIN")) ??
             combinedPublicOrigin ??
             ResolveDefaultShellPublicOrigin(environment);
-        var runtimePublicHost = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_RUNTIME_PUBLIC_HOST")) ??
-            "app.localhost";
+        var runtimePublicHost = "localhost";
         var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
             ResolveDefaultShellManifestPath();
 

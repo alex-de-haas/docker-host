@@ -60,7 +60,7 @@ public sealed class AppRegistryStoreTests
             ManifestPath = Path.Combine(appRoot, "manifest.json"),
             Endpoints =
             [
-                new AppEndpointContract("http", "http", "http://app.localhost:3100", Public: true),
+                new AppEndpointContract("http", "http", "http://localhost:3100", Public: true),
             ],
         });
 
@@ -68,20 +68,82 @@ public sealed class AppRegistryStoreTests
 
         var app = Assert.Single(apps);
         Assert.Equal("/", app.EntryPath);
-        Assert.Equal("http://app.localhost:3100/", app.EmbeddedUrl);
+        Assert.Equal("http://localhost:3100/", app.EmbeddedUrl);
         Assert.Collection(
             app.Navigation,
             item =>
             {
                 Assert.Equal("Notes", item.Label);
-                Assert.Equal("http://app.localhost:3100/", item.EmbeddedUrl);
+                Assert.Equal("http://localhost:3100/", item.EmbeddedUrl);
             },
             item =>
             {
                 Assert.Equal("Settings", item.Label);
                 Assert.Equal("/settings", item.Path);
-                Assert.Equal("http://app.localhost:3100/settings", item.EmbeddedUrl);
+                Assert.Equal("http://localhost:3100/settings", item.EmbeddedUrl);
             });
+    }
+
+    [Fact]
+    public async Task ListAppsAsync_AddsPublicOriginToSummariesWithoutReplacingLocalEndpointUrl()
+    {
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var appRoot = Path.Combine(paths.AppsRoot, "com.example.notes");
+        Directory.CreateDirectory(appRoot);
+        await File.WriteAllTextAsync(Path.Combine(appRoot, "manifest.json"), """
+            {
+              "ui": {
+                "entrypoint": { "endpoint": "http", "path": "/" }
+              }
+            }
+            """);
+        var store = new AppRegistryStore(paths);
+        await store.UpsertAppAsync(CreateApp("com.example.notes") with
+        {
+            ManifestPath = Path.Combine(appRoot, "manifest.json"),
+            Settings = new Dictionary<string, AppSettingValue>
+            {
+                ["HOSTY_PUBLIC_ORIGIN_HTTP"] = new("HOSTY_PUBLIC_ORIGIN_HTTP", "url", "https://notes.example.com", Secret: false),
+            },
+            Endpoints =
+            [
+                new AppEndpointContract("http", "http", "http://localhost:3100", Public: true),
+            ],
+        });
+
+        var apps = await store.ListAppsAsync();
+
+        var app = Assert.Single(apps);
+        Assert.Equal("https://notes.example.com/", app.EmbeddedUrl);
+        var endpoint = Assert.Single(app.Endpoints);
+        Assert.Equal("http", endpoint.Protocol);
+        Assert.Equal("http://localhost:3100", endpoint.Url);
+        Assert.Equal("https://notes.example.com", endpoint.PublicOrigin);
+    }
+
+    [Fact]
+    public async Task ListAppsAsync_AddsMissingPublicOriginSettingSummaryForPublicEndpoint()
+    {
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var store = new AppRegistryStore(paths);
+        await store.UpsertAppAsync(CreateApp("com.example.notes") with
+        {
+            Settings = new Dictionary<string, AppSettingValue>(),
+            Endpoints =
+            [
+                new AppEndpointContract("http", "http", "http://localhost:3100", Public: true),
+            ],
+        });
+
+        var apps = await store.ListAppsAsync();
+
+        var app = Assert.Single(apps);
+        var setting = Assert.Single(app.Settings, setting => setting.Key == "HOSTY_PUBLIC_ORIGIN_HTTP");
+        Assert.Equal("url", setting.Type);
+        Assert.Null(setting.Value);
+        Assert.False(setting.Secret);
     }
 
     [Fact]

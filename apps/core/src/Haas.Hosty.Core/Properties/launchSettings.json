@@ -5,7 +5,7 @@
       "commandName": "Project",
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development",
-        "HOSTY_CORE_URL": "http://127.0.0.1:3001"
+        "HOSTY_CORE_URL": "http://localhost:3001"
       }
     }
   }

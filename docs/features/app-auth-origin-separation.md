@@ -26,6 +26,7 @@ sequenceDiagram
 - Redirect URIs must be absolute `http` or `https` URLs without fragments and must match an installed app endpoint origin.
 - Browser Shell embedded launch-code issuance is bound to the active Core session user and requires `X-Hosty-CSRF`.
 - Standalone browser links use `GET /api/apps/{appId}/open?redirectUri=...`, which validates the active Core session and redirects to the app with a one-time code.
+- Shell issues an embedded launch code when opening an app workspace from outside that app. Page-to-page navigation inside the already-open app workspace uses the app's direct URL and relies on the existing app-origin session cookie, so runtime apps do not re-exchange a code and reload on every Shell menu click.
 - Trusted local CLI/control helpers can request identity or open links for a selected existing enabled Host user, but normal app access checks still apply.
 - App identity tokens are app-scoped, short-lived bearer tokens. Apps should store only an app-local HttpOnly session cookie on their own origin.
 
@@ -37,7 +38,7 @@ A Hosty-aware app should:
 - accept a `code` query parameter on an app-owned route;
 - exchange the code with `POST {HOSTY_CORE_ORIGIN}/api/auth/apps/token`;
 - create an app-origin session from the returned identity token;
-- use `SameSite=None; Secure` for app session cookies that must work inside Shell iframes from a different site, for example `localhost` embedding `app.localhost`;
+- use app-specific cookie names because local Shell, Core, and runtime apps all use the `localhost` host on different ports;
 - remove the code from the browser URL after starting exchange;
 - call `POST {HOSTY_CORE_ORIGIN}/api/auth/apps/revalidate` before extending trust in an existing app session;
 - treat Core `401` as missing or expired Host authentication and Core `403` as denied app access;
@@ -55,10 +56,11 @@ Core reads these public origin settings:
 
 Development defaults:
 
-- Core listens on `http://127.0.0.1:3001`.
-- In `Development`, Shell origin defaults to `http://127.0.0.1:3000`.
+- Core listens on `http://localhost:3001`.
+- In `Development`, Shell origin defaults to `http://localhost:3000`.
+- Runtime apps publish local endpoints as `http://localhost:<assigned-port>`.
 - Local HTTP browser credentials require the browser host to match consistently. Do not mix `localhost` and `127.0.0.1` in one local session.
-- Embedded app sessions are third-party iframe cookies when Shell and the runtime app use different local sites. Modern browsers require `SameSite=None; Secure`; non-loopback HTTP deployments should use HTTPS before relying on embedded app sessions.
+- Shell and runtime apps are still different origins because their ports differ. Cross-origin messaging and iframe access must use explicit target origins, but the cookie host remains `localhost`.
 
 Core status includes warnings for invalid public origin values and insecure `http` public origins on non-loopback hosts. Shell and `hosty core status` display those warnings.
 

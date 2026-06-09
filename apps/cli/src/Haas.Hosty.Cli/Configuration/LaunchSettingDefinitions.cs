@@ -15,7 +15,7 @@ internal static class LaunchSettingDefinitions
         new(HostDataRootHost, DefaultDataRootHost, true, ValidateHostPath),
         new(HostPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
         new(HostCorePublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
-        new(HostShellPublicOrigin, _ => "http://127.0.0.1:3000", true, ValidateOptionalHttpOrigin),
+        new(HostShellPublicOrigin, _ => "http://localhost:3000", true, ValidateOptionalHttpOrigin),
         new(HostyShellManifestPath, _ => DefaultShellManifestPath, true, ValidateManifestReference),
         new(HostyShellBootstrapRuntime, _ => "docker", true, ValidateRuntimeKey),
     ];

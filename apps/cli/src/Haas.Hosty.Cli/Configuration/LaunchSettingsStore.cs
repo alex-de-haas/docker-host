@@ -4,6 +4,11 @@ using System.Text;
 
 internal sealed class LaunchSettingsStore(HostyEnvironment environment)
 {
+    private const string LegacyCorePublicOrigin = "http://127.0.0.1:3001";
+    private const string LegacyShellPublicOrigin = "http://127.0.0.1:3000";
+    private const string LocalhostCorePublicOrigin = "http://localhost:3001";
+    private const string LocalhostShellPublicOrigin = "http://localhost:3000";
+
     public string LaunchConfigPath => environment.LaunchConfigPath;
 
     public LaunchSettings Load()
@@ -21,6 +26,7 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
             }
         }
 
+        MigrateLegacyLoopbackDefaults(values);
         return new LaunchSettings(values);
     }
 
@@ -100,6 +106,21 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
 
     private Dictionary<string, string> CreateDefaultValues()
         => LaunchSettingDefinitions.All.ToDictionary(x => x.Key, x => x.DefaultValue(environment), StringComparer.Ordinal);
+
+    private static void MigrateLegacyLoopbackDefaults(Dictionary<string, string> values)
+    {
+        if (values.TryGetValue(LaunchSettingDefinitions.HostCorePublicOrigin, out var corePublicOrigin) &&
+            string.Equals(corePublicOrigin, LegacyCorePublicOrigin, StringComparison.OrdinalIgnoreCase))
+        {
+            values[LaunchSettingDefinitions.HostCorePublicOrigin] = LocalhostCorePublicOrigin;
+        }
+
+        if (values.TryGetValue(LaunchSettingDefinitions.HostShellPublicOrigin, out var shellPublicOrigin) &&
+            string.Equals(shellPublicOrigin, LegacyShellPublicOrigin, StringComparison.OrdinalIgnoreCase))
+        {
+            values[LaunchSettingDefinitions.HostShellPublicOrigin] = LocalhostShellPublicOrigin;
+        }
+    }
 
     private static IEnumerable<(string Key, string Value)> Parse(IEnumerable<string> lines)
     {

@@ -11,6 +11,8 @@ internal sealed class CoreLifecycleService(
     AppSourceService sources,
     IEnumerable<IAppRuntimeAdapter> adapters)
 {
+    private const string PublicOriginSettingPrefix = "HOSTY_PUBLIC_ORIGIN_";
+
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
         var records = await apps.ListAppRecordsAsync(cancellationToken);
@@ -93,6 +95,7 @@ internal sealed class CoreLifecycleService(
         };
         if (request.Settings is { Count: > 0 })
         {
+            ValidatePublicOriginSettings(request.Settings);
             record = record with { Settings = MergeSettings(record.Settings, request.Settings) };
         }
 
@@ -104,6 +107,7 @@ internal sealed class CoreLifecycleService(
     {
         var document = await apps.UpdateAppAsync(appId, app =>
         {
+            ValidatePublicOriginSettings(request.Settings);
             return app with
             {
                 Settings = request.Settings is { Count: > 0 } ? MergeSettings(app.Settings, request.Settings) : app.Settings,
@@ -657,7 +661,7 @@ internal sealed class CoreLifecycleService(
         AppRecord? existing)
     {
         var manifest = selection.Manifest;
-        var settings = manifest.Settings.ToDictionary(
+        var settings = BuildSettingDefinitions(selection).ToDictionary(
             setting => setting.Key,
             setting =>
             {
@@ -1019,7 +1023,7 @@ internal sealed class CoreLifecycleService(
                 {
                     Url = direct.Url,
                     Protocol = direct.Protocol,
-                    Public = direct.Public,
+                    Public = endpoint.Public,
                     Service = endpoint.Service ?? direct.Service,
                     Port = endpoint.Port ?? direct.Port,
                 };
@@ -1033,7 +1037,7 @@ internal sealed class CoreLifecycleService(
                 {
                     Url = aliased.Url,
                     Protocol = aliased.Protocol,
-                    Public = aliased.Public,
+                    Public = endpoint.Public,
                     Service = endpoint.Service ?? aliased.Service,
                     Port = endpoint.Port ?? aliased.Port,
                 };
@@ -1222,7 +1226,7 @@ internal sealed class CoreLifecycleService(
         }
 
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
-        AddSettingChanges(changes, app.Settings, targetSelection.Manifest.Settings);
+        AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
         AddUpdateDataTargetChanges(changes, app, targetSelection);
@@ -1287,7 +1291,7 @@ internal sealed class CoreLifecycleService(
             : $"runtimeType:{currentSelection.RuntimeProfile.Type}->{targetSelection.RuntimeProfile.Type}");
 
         AddServiceChanges(changes, app.Id, currentSelection, targetSelection);
-        AddSettingChanges(changes, app.Settings, targetSelection.Manifest.Settings);
+        AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
         AddDataTargetChanges(changes, app, targetSelection);
@@ -1659,6 +1663,24 @@ internal sealed class CoreLifecycleService(
             Port: port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"))).ToArray();
     }
 
+    private static IReadOnlyList<RuntimeAppSettingManifest> BuildSettingDefinitions(RuntimeAppManifestSelection selection)
+    {
+        var settings = selection.Manifest.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
+        foreach (var endpoint in BuildEndpointContracts(selection).Where(endpoint => endpoint.Public))
+        {
+            var key = BuildPublicOriginSettingKey(endpoint.Key);
+            settings.TryAdd(key, new RuntimeAppSettingManifest
+            {
+                Key = key,
+                Type = "url",
+                Default = null,
+                Secret = false,
+            });
+        }
+
+        return settings.Values.ToArray();
+    }
+
     private static IReadOnlyDictionary<string, AppSettingValue> MergeSettings(
         IReadOnlyDictionary<string, AppSettingValue> current,
         IReadOnlyDictionary<string, string?> incoming)
@@ -1672,11 +1694,66 @@ internal sealed class CoreLifecycleService(
             }
             else
             {
-                settings[key] = new AppSettingValue(key, "string", value, Secret: false);
+                settings[key] = new AppSettingValue(key, IsPublicOriginSettingKey(key) ? "url" : "string", value, Secret: false);
             }
         }
 
         return settings;
+    }
+
+    private static void ValidatePublicOriginSettings(IReadOnlyDictionary<string, string?> settings)
+    {
+        foreach (var (key, value) in settings)
+        {
+            if (!IsPublicOriginSettingKey(key) ||
+                string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (!TryNormalizePublicOrigin(value, out _))
+            {
+                throw new AppLifecycleException(
+                    "public_origin_invalid",
+                    $"Setting '{key}' must be an absolute http(s) origin without a path, query, or fragment.");
+            }
+        }
+    }
+
+    private static string BuildPublicOriginSettingKey(string endpointKey)
+        => $"{PublicOriginSettingPrefix}{NormalizeSettingKey(endpointKey)}";
+
+    private static bool IsPublicOriginSettingKey(string key)
+        => key.StartsWith(PublicOriginSettingPrefix, StringComparison.Ordinal);
+
+    private static string NormalizeSettingKey(string value)
+    {
+        var chars = value.Length == 0 ? "endpoint".ToCharArray() : value.ToCharArray();
+        for (var index = 0; index < chars.Length; index++)
+        {
+            chars[index] = char.IsAsciiLetterOrDigit(chars[index])
+                ? char.ToUpperInvariant(chars[index])
+                : '_';
+        }
+
+        var normalized = new string(chars).Trim('_');
+        return normalized.Length == 0 ? "ENDPOINT" : normalized;
+    }
+
+    private static bool TryNormalizePublicOrigin(string value, out string origin)
+    {
+        origin = "";
+        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("http" or "https") ||
+            !string.IsNullOrWhiteSpace(uri.UserInfo) ||
+            !string.IsNullOrEmpty(uri.PathAndQuery.Trim('/')) ||
+            !string.IsNullOrWhiteSpace(uri.Fragment))
+        {
+            return false;
+        }
+
+        origin = uri.GetLeftPart(UriPartial.Authority);
+        return true;
     }
 
     private static string? ResolveDefaultRuntime(RuntimeAppManifest manifest)

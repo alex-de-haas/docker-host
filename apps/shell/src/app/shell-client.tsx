@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Archive,
@@ -103,6 +103,7 @@ type CoreSetting = {
   type: string;
   value?: string | null;
   secret: boolean;
+  required?: boolean;
 };
 
 type CoreEndpoint = {
@@ -112,6 +113,7 @@ type CoreEndpoint = {
   public: boolean;
   service?: string | null;
   port?: string | null;
+  publicOrigin?: string | null;
 };
 
 type CoreNavigationItem = {
@@ -239,6 +241,7 @@ type CoreInstallSetting = {
   type: string;
   defaultValue?: string | null;
   secret: boolean;
+  required?: boolean;
 };
 
 type CoreInstallRuntimeProfile = {
@@ -369,7 +372,14 @@ type InstallPanelState = {
 type ActivePanel = {
   appId: string;
   view: DetailView;
+  configureSection?: "publicOrigins";
 };
+
+type OpenPanelOptions = {
+  configureSection?: "publicOrigins";
+};
+
+type OpenAppPanel = (app: CoreApp, view: DetailView, options?: OpenPanelOptions) => void;
 
 type RemoveOptions = {
   deleteData: boolean;
@@ -620,12 +630,25 @@ export function ShellClient({
         return;
       }
 
+      const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
+      if (workspace?.appId === app.id) {
+        setActiveView("available-apps");
+        setWorkspace({
+          appId: app.id,
+          title: app.displayName,
+          pageLabel: page.label,
+          path: page.path,
+          src: themedRedirectUri,
+          externalUrl: getStandaloneAppHref(app, page),
+        });
+        return;
+      }
+
       const actionKey = `${app.id}:open`;
       setBusyAction(actionKey);
       setState((current) => ({ ...current, error: null }));
 
       try {
-        const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
         const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: themedRedirectUri });
         const launch = (await response.json()) as AppLaunchResponse;
         setActiveView("available-apps");
@@ -645,7 +668,7 @@ export function ShellClient({
         setBusyAction(null);
       }
     },
-    [appEndpoint, canManageApps, getStandaloneAppHref, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference],
+    [appEndpoint, canManageApps, getStandaloneAppHref, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference, workspace?.appId],
   );
 
   const runAppAction = useCallback(
@@ -734,7 +757,7 @@ export function ShellClient({
   );
 
   const openAppPanel = useCallback(
-    (app: CoreApp, view: DetailView) => {
+    (app: CoreApp, view: DetailView, options?: OpenPanelOptions) => {
       if (view === "logs") {
         void loadAppLogs(app);
         return;
@@ -747,7 +770,7 @@ export function ShellClient({
         void loadUpdatePlan(app);
         return;
       }
-      setActivePanel({ appId: app.id, view });
+      setActivePanel({ appId: app.id, view, configureSection: options?.configureSection });
       setDetailPanel(emptyDetailPanelState());
     },
     [loadAppBackups, loadAppLogs, loadUpdatePlan],
@@ -1161,6 +1184,7 @@ export function ShellClient({
         <AppDetailsDialog
           app={selectedApp}
           view={activePanel.view}
+          configureSection={activePanel.configureSection}
           canManageApps={Boolean(canManageApps)}
           busyAction={busyAction}
           detail={detailPanel}
@@ -1767,7 +1791,7 @@ function CoreStatusWidget({ status, loading }: { status: CoreStatus | null; load
     ["Listen URL", status?.listenUrl || "unknown"],
     ["Core origin", status?.corePublicOrigin || "not configured"],
     ["Shell origin", status?.shellPublicOrigin || "not configured"],
-    ["Runtime host", status?.runtimePublicHost || "unknown"],
+    ["Local runtime host", status?.runtimePublicHost || "unknown"],
     ["Data root", status?.dataRoot || "unknown"],
   ];
 
@@ -1818,7 +1842,7 @@ function InstalledAppsPage({
   onInstall: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onCreateBackup: (app: CoreApp) => void;
-  onOpenPanel: (app: CoreApp, view: DetailView) => void;
+  onOpenPanel: OpenAppPanel;
 }) {
   const isRefreshing = loading;
   const hasAnyApps = runtimeApps.length > 0 || systemApps.length > 0;
@@ -1885,7 +1909,17 @@ function InstalledAppsPage({
   );
 }
 
-function AppServiceDetailsPanel({ app, healthState }: { app: CoreApp; healthState?: RuntimeHealthState }) {
+function AppServiceDetailsPanel({
+  app,
+  healthState,
+  canConfigurePublicOrigins,
+  onConfigurePublicOrigins,
+}: {
+  app: CoreApp;
+  healthState?: RuntimeHealthState;
+  canConfigurePublicOrigins: boolean;
+  onConfigurePublicOrigins: () => void;
+}) {
   const serviceRows = buildRuntimeServiceRows(app, healthState?.health);
   const copyEndpointUrl = async (url: string) => {
     try {
@@ -1924,20 +1958,26 @@ function AppServiceDetailsPanel({ app, healthState }: { app: CoreApp; healthStat
               ) : (
                 <div className="mt-2 grid gap-1.5">
                   {service.endpoints.map((endpoint) => {
+                    const publicOrigin = getEndpointPublicOrigin(app, endpoint);
                     return (
-                      <div key={endpoint.key} className="grid gap-2 rounded-md border bg-background px-2 py-1.5 text-xs sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                        <span className={cn("truncate font-mono", endpoint.url ? "text-foreground" : "text-muted-foreground")}>{endpoint.url || "not assigned"}</span>
-                        {endpoint.url && (
-                          <span className="flex items-center gap-1">
-                            <IconButton title="Copy endpoint URL" onClick={() => void copyEndpointUrl(endpoint.url!)}>
-                              <Copy className="h-4 w-4" />
-                            </IconButton>
-                            <Button type="button" variant="ghost" size="icon-sm" title="Open endpoint URL" aria-label="Open endpoint URL" asChild>
-                              <a href={endpoint.url} target="_blank" rel="noreferrer">
-                                <ExternalLink className="h-4 w-4" />
-                              </a>
-                            </Button>
-                          </span>
+                      <div key={endpoint.key} className={cn("grid gap-2 text-xs", endpoint.public && "md:grid-cols-2")}>
+                        <EndpointUrlBlock
+                          url={endpoint.url}
+                          missingText="not assigned"
+                          copyTitle="Copy local endpoint URL"
+                          openTitle="Open local endpoint URL"
+                          onCopy={copyEndpointUrl}
+                        />
+                        {endpoint.public && (
+                          <EndpointUrlBlock
+                            url={publicOrigin}
+                            missingText="not configured"
+                            copyTitle="Copy public origin"
+                            openTitle="Open public origin"
+                            onCopy={copyEndpointUrl}
+                            configureTitle="Configure public origin"
+                            onConfigure={canConfigurePublicOrigins ? onConfigurePublicOrigins : undefined}
+                          />
                         )}
                       </div>
                     );
@@ -1948,6 +1988,46 @@ function AppServiceDetailsPanel({ app, healthState }: { app: CoreApp; healthStat
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function EndpointUrlBlock({
+  url,
+  missingText,
+  copyTitle,
+  openTitle,
+  configureTitle,
+  onCopy,
+  onConfigure,
+}: {
+  url?: string | null;
+  missingText: string;
+  copyTitle: string;
+  openTitle: string;
+  configureTitle?: string;
+  onCopy: (url: string) => void | Promise<void>;
+  onConfigure?: () => void;
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-background px-2 py-1.5">
+      <span className={cn("truncate font-mono", url ? "text-foreground" : "text-muted-foreground")}>{url || missingText}</span>
+      {url ? (
+        <span className="flex items-center gap-1">
+          <IconButton title={copyTitle} onClick={() => void onCopy(url)}>
+            <Copy className="h-4 w-4" />
+          </IconButton>
+          <Button type="button" variant="ghost" size="icon-sm" title={openTitle} aria-label={openTitle} asChild>
+            <a href={url} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          </Button>
+        </span>
+      ) : onConfigure ? (
+        <IconButton title={configureTitle || "Configure"} onClick={onConfigure}>
+          <Settings2 className="h-4 w-4" />
+        </IconButton>
+      ) : null}
     </div>
   );
 }
@@ -2002,7 +2082,7 @@ function InstalledAppTableSection({
   busyAction: string | null;
   onAction: (app: CoreApp, action: AppAction) => void;
   onCreateBackup: (app: CoreApp) => void;
-  onOpenPanel: (app: CoreApp, view: DetailView) => void;
+  onOpenPanel: OpenAppPanel;
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
   const [healthByApp, setHealthByApp] = useState<Record<string, RuntimeHealthState>>({});
@@ -2119,7 +2199,12 @@ function InstalledAppTableSection({
                     {expanded && (
                       <TableRow>
                         <TableCell colSpan={7} className="bg-muted/20 px-4 py-3">
-                          <AppServiceDetailsPanel app={app} healthState={healthState} />
+                          <AppServiceDetailsPanel
+                            app={app}
+                            healthState={healthState}
+                            canConfigurePublicOrigins={canManageApps && !app.system}
+                            onConfigurePublicOrigins={() => onOpenPanel(app, "configure", { configureSection: "publicOrigins" })}
+                          />
                         </TableCell>
                       </TableRow>
                     )}
@@ -2155,7 +2240,7 @@ function InstalledAppRow({
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onCreateBackup: (app: CoreApp) => void;
-  onOpenPanel: (app: CoreApp, view: DetailView) => void;
+  onOpenPanel: OpenAppPanel;
 }) {
   const running = app.runtimeState === "running";
   const canOpen = !app.system && getAppPageLinks(app).length > 0;
@@ -2169,7 +2254,7 @@ function InstalledAppRow({
   const autostartEnabled = isAppAutostartEnabled(app);
 
   return (
-    <TableRow>
+    <TableRow data-testid={`app-row-${app.id}`}>
       <TableCell>
         <div className="flex min-w-0 items-start gap-2">
           <Button
@@ -2260,7 +2345,7 @@ function InstalledAppActionsMenu({
   canRemove: boolean;
   busyAction: string | null;
   onCreateBackup: (app: CoreApp) => void;
-  onOpenPanel: (app: CoreApp, view: DetailView) => void;
+  onOpenPanel: OpenAppPanel;
 }) {
   const hasLogs = canInspect && app.capabilities.includes("logs");
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
@@ -2960,6 +3045,7 @@ function AppAccessPicker({ apps, selectedAppIds, onChange }: { apps: AssignableA
 function AppDetailsDialog({
   app,
   view,
+  configureSection,
   canManageApps,
   busyAction,
   detail,
@@ -2978,6 +3064,7 @@ function AppDetailsDialog({
 }: {
   app: CoreApp;
   view: DetailView;
+  configureSection?: "publicOrigins";
   canManageApps: boolean;
   busyAction: string | null;
   detail: DetailPanelState;
@@ -3019,7 +3106,7 @@ function AppDetailsDialog({
           />
         )}
         {view === "backups" && !canMutateApp && <InlineError message="System app backup controls are not available in Shell." />}
-        {view === "configure" && <ConfigurePanel app={app} busyAction={busyAction} canManageApps={canMutateApp} onConfigure={onConfigure} />}
+        {view === "configure" && <ConfigurePanel app={app} busyAction={busyAction} canManageApps={canMutateApp} initialOpenSection={configureSection} onConfigure={onConfigure} />}
         {view === "update" && (canMutateApp ? (
           <UpdatePanel app={app} detail={detail} busyAction={busyAction} onReloadPlan={onReloadUpdatePlan} onApplyUpdate={onApplyUpdate} />
         ) : (
@@ -3141,15 +3228,39 @@ function BackupsPanel({
   );
 }
 
-function ConfigurePanel({ app, busyAction, canManageApps, onConfigure }: { app: CoreApp; busyAction: string | null; canManageApps: boolean; onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void }) {
+function ConfigurePanel({
+  app,
+  busyAction,
+  canManageApps,
+  initialOpenSection,
+  onConfigure,
+}: {
+  app: CoreApp;
+  busyAction: string | null;
+  canManageApps: boolean;
+  initialOpenSection?: "publicOrigins";
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+}) {
   const settings = app.settings || [];
+  const appSettings = settings.filter((setting) => !isPublicOriginSettingKey(setting.key));
+  const publicOriginSettings = settings.filter((setting) => isPublicOriginSettingKey(setting.key));
+  const publicOriginGroups = buildPublicOriginGroups(app, publicOriginSettings);
+  const settingsSignature = settings
+    .map((setting) => `${setting.key}\u0000${setting.type}\u0000${setting.secret ? "1" : "0"}\u0000${setting.required ? "1" : "0"}\u0000${setting.value ?? ""}`)
+    .join("\u0001");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [autostartDraft, setAutostartDraft] = useState(isAppAutostartEnabled(app));
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [publicOriginsOpen, setPublicOriginsOpen] = useState(false);
 
   useEffect(() => {
-    setDraft(Object.fromEntries(settings.map((setting) => [setting.key, setting.secret ? "" : setting.value || ""])));
+    const nextDraft = Object.fromEntries(settings.map((setting) => [setting.key, setting.secret ? "" : setting.value || ""]));
+    const nextAppSettings = settings.filter((setting) => !isPublicOriginSettingKey(setting.key));
+    setDraft(nextDraft);
     setAutostartDraft(isAppAutostartEnabled(app));
-  }, [app.id, app.autostart, settings]);
+    setSettingsOpen(hasMissingRequiredSettings(nextAppSettings, nextDraft));
+    setPublicOriginsOpen(initialOpenSection === "publicOrigins");
+  }, [app.id, app.autostart, settingsSignature, initialOpenSection]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -3168,13 +3279,55 @@ function ConfigurePanel({ app, busyAction, canManageApps, onConfigure }: { app: 
       <div className="rounded-md border bg-muted/30 p-3">
         <CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} />
       </div>
-      {settings.length > 0 ? (
-        settings.map((setting) => (
-          <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
-        ))
-      ) : (
-        <p className="text-sm text-muted-foreground">This app has no app-owned settings.</p>
-      )}
+      <ConfigureSection
+        title="App settings"
+        testId="configure-app-settings"
+        count={appSettings.length}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        attention={hasMissingRequiredSettings(appSettings, draft)}
+      >
+        {appSettings.length > 0 ? (
+          <div className="space-y-3">
+            {appSettings.map((setting) => (
+              <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">This app has no app-owned settings.</p>
+        )}
+      </ConfigureSection>
+      <ConfigureSection
+        title="Public origins"
+        testId="configure-public-origins"
+        count={publicOriginSettings.length}
+        open={publicOriginsOpen}
+        onOpenChange={setPublicOriginsOpen}
+      >
+        {publicOriginSettings.length > 0 ? (
+          <div className="space-y-4">
+            {publicOriginGroups.map((group) => (
+              <div key={group.service} className="space-y-2">
+                <h3 className="text-sm font-medium">{group.service}</h3>
+                <div className="space-y-2">
+                  {group.items.map(({ setting, endpoint }) => (
+                    <PublicOriginInput
+                      key={setting.key}
+                      setting={setting}
+                      endpoint={endpoint}
+                      value={draft[setting.key] ?? ""}
+                      disabled={!canManageApps}
+                      onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">This app has no public endpoints.</p>
+        )}
+      </ConfigureSection>
       <DialogFooter>
         <Button type="submit" disabled={!canManageApps || busyAction === `${app.id}:configure`}>
           {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Settings2 className="h-4 w-4" />}
@@ -3450,37 +3603,56 @@ function EmbeddedWorkspacePanel({
   themePreference: HostyThemePreference;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const postTheme = useCallback(() => {
     const frame = iframeRef.current;
     if (!frame?.contentWindow) {
       return;
     }
 
-    frame.contentWindow.postMessage(
-      {
-        type: "hosty:shell-theme",
-        theme,
-        preference: themePreference,
-      },
-      getPostMessageTargetOrigin(workspace.src),
-    );
+    try {
+      frame.contentWindow.postMessage(
+        {
+          type: "hosty:shell-theme",
+          theme,
+          preference: themePreference,
+        },
+        getPostMessageTargetOrigin(workspace.src),
+      );
+    } catch {
+      // The frame can still be about:blank or chrome-error while a local app is restarting.
+    }
   }, [theme, themePreference, workspace.src]);
 
   useEffect(() => {
+    if (loaded) {
+      postTheme();
+    }
+  }, [loaded, postTheme]);
+
+  useEffect(() => {
+    setLoaded(false);
+  }, [workspace.src]);
+
+  const handleLoad = useCallback(() => {
+    setLoaded(true);
     postTheme();
   }, [postTheme]);
 
   return (
-    <iframe
-      ref={iframeRef}
-      key={`${workspace.appId}:${workspace.path}:${workspace.src}`}
-      className="hosty-app-frame"
-      title={`${workspace.title}: ${workspace.pageLabel}`}
-      src={workspace.src}
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
-      allow="clipboard-write"
-      onLoad={postTheme}
-    />
+    <div className="relative h-full w-full overflow-hidden bg-background">
+      <iframe
+        ref={iframeRef}
+        key={`${workspace.appId}:${workspace.path}:${workspace.src}`}
+        className={cn("hosty-app-frame transition-opacity duration-100", loaded ? "opacity-100" : "opacity-0")}
+        title={`${workspace.title}: ${workspace.pageLabel}`}
+        src={workspace.src}
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+        allow="clipboard-write"
+        style={{ colorScheme: theme }}
+        onLoad={handleLoad}
+      />
+    </div>
   );
 }
 
@@ -3492,23 +3664,131 @@ function getPostMessageTargetOrigin(src: string) {
   }
 }
 
-function SettingInput({ setting, value, disabled, onChange }: { setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+function ConfigureSection({ title, testId, count, open, attention, onOpenChange, children }: { title: string; testId: string; count: number; open: boolean; attention?: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
   return (
-    <div className="space-y-2">
-      <Label htmlFor={`setting-${setting.key}`} className="flex items-center gap-2">
-        {setting.key}
-        <Badge variant="outline">{setting.secret ? "secret" : setting.type}</Badge>
-      </Label>
+    <section data-testid={testId} className="rounded-md border bg-background">
+      <button
+        type="button"
+        className="flex min-h-12 w-full items-center justify-between gap-3 px-3 text-left"
+        aria-expanded={open}
+        onClick={() => onOpenChange(!open)}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {open ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+          <span className="truncate text-sm font-medium">{title}</span>
+          <Badge variant={attention ? "default" : "outline"}>{count}</Badge>
+        </span>
+      </button>
+      {open && <div className="border-t p-3">{children}</div>}
+    </section>
+  );
+}
+
+function PublicOriginInput({ setting, endpoint, value, disabled, onChange }: { setting: CoreSetting; endpoint?: CoreEndpoint; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+  const currentUrl = endpoint?.url || "not assigned";
+  const endpointKey = endpoint?.key || getPublicOriginEndpointLabel(setting.key);
+  const inputLabel = `Public origin for ${endpoint?.service || "service"} ${endpointKey}`;
+
+  return (
+    <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(18rem,1fr)] md:items-center">
+      <div className="min-w-0 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+        <div className={cn("truncate font-mono", endpoint?.url ? "text-foreground" : "text-muted-foreground")}>{currentUrl}</div>
+      </div>
       <Input
         id={`setting-${setting.key}`}
-        type={setting.secret ? "password" : "text"}
+        type="url"
         value={value}
-        placeholder={setting.secret ? "Unchanged" : undefined}
+        aria-label={inputLabel}
+        placeholder={`https://${endpointKey || "app"}.example.com`}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       />
     </div>
   );
+}
+
+function SettingInput({ setting, value, disabled, onChange }: { setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+  const label = formatSettingLabel(setting.key);
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={`setting-${setting.key}`} className="flex items-center gap-2" title={setting.key}>
+        {label}
+        <Badge variant="outline">{setting.secret ? "secret" : setting.type}</Badge>
+        {setting.required && <Badge variant="secondary">required</Badge>}
+      </Label>
+      <Input
+        id={`setting-${setting.key}`}
+        type={setting.secret ? "password" : setting.type === "url" ? "url" : "text"}
+        value={value}
+        placeholder={setting.secret ? "Unchanged" : setting.type === "url" ? "https://app.example.com" : undefined}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
+const publicOriginSettingPrefix = "HOSTY_PUBLIC_ORIGIN_";
+
+function isPublicOriginSettingKey(key: string) {
+  return key.startsWith(publicOriginSettingPrefix);
+}
+
+function getPublicOriginEndpointLabel(key: string) {
+  if (!isPublicOriginSettingKey(key)) {
+    return "";
+  }
+
+  return key.slice(publicOriginSettingPrefix.length).toLowerCase().replaceAll("_", ".");
+}
+
+function formatSettingLabel(key: string) {
+  if (isPublicOriginSettingKey(key)) {
+    const endpoint = getPublicOriginEndpointLabel(key);
+    return endpoint.length > 0 ? `Public origin (${endpoint})` : "Public origin";
+  }
+
+  return key;
+}
+
+function findPublicOriginEndpoint(app: CoreApp, settingKey: string) {
+  return app.endpoints?.find((endpoint) => buildPublicOriginSettingKey(endpoint.key) === settingKey);
+}
+
+function buildPublicOriginGroups(app: CoreApp, settings: CoreSetting[]) {
+  const groups = new Map<string, { service: string; items: Array<{ setting: CoreSetting; endpoint?: CoreEndpoint }> }>();
+  for (const setting of settings) {
+    const endpoint = findPublicOriginEndpoint(app, setting.key);
+    const service = endpoint?.service?.trim() || "service";
+    const group = groups.get(service) ?? { service, items: [] };
+    group.items.push({ setting, endpoint });
+    groups.set(service, group);
+  }
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      items: group.items.sort((left, right) =>
+        (left.endpoint?.key || left.setting.key).localeCompare(right.endpoint?.key || right.setting.key)),
+    }))
+    .sort((left, right) => left.service.localeCompare(right.service));
+}
+
+function buildPublicOriginSettingKey(endpointKey: string) {
+  return `${publicOriginSettingPrefix}${normalizePublicOriginEndpointKey(endpointKey)}`;
+}
+
+function normalizePublicOriginEndpointKey(value: string) {
+  const normalized = (value || "endpoint")
+    .split("")
+    .map((character) => /[a-zA-Z0-9]/.test(character) ? character.toUpperCase() : "_")
+    .join("")
+    .replace(/^_+|_+$/g, "");
+  return normalized.length > 0 ? normalized : "ENDPOINT";
+}
+
+function hasMissingRequiredSettings(settings: CoreSetting[], draft: Record<string, string>) {
+  return settings.some((setting) => setting.required && !setting.secret && (draft[setting.key] ?? "").trim().length === 0);
 }
 
 function InlineError({ message }: { message: string }) {
@@ -3611,6 +3891,17 @@ function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
 
 function getOpenEndpoint(app: CoreApp) {
   return app.endpoints?.find((endpoint) => endpoint.public && endpoint.url) ?? app.endpoints?.find((endpoint) => endpoint.url);
+}
+
+function getConfiguredPublicOrigin(app: CoreApp, endpointKey: string) {
+  const settingKey = buildPublicOriginSettingKey(endpointKey);
+  const value = app.settings?.find((setting) => setting.key === settingKey)?.value?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
+function getEndpointPublicOrigin(app: CoreApp, endpoint: CoreEndpoint) {
+  const value = endpoint.publicOrigin?.trim() || getConfiguredPublicOrigin(app, endpoint.key);
+  return value && value.length > 0 ? value : null;
 }
 
 function buildRuntimeServiceRows(app: CoreApp, health: AppHealthResponse | null | undefined): RuntimeServiceRow[] {

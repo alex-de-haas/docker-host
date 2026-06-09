@@ -16,7 +16,7 @@ Give administrators a compact, expandable Shell view of installed apps, their se
 
 Shell shows runtime apps and system apps in the Installed Apps tables with app-level runtime state, selected runtime, version, autostart, UI availability, and actions.
 
-Core stores endpoint URLs after app start and exposes them through `GET /api/apps`. Endpoint summaries include `key`, `protocol`, `url`, `public`, and optional `service` and `port` metadata so Shell can group endpoint URLs by runtime service.
+Core stores endpoint URLs after app start and exposes them through `GET /api/apps`. Endpoint summaries include `key`, `protocol`, local `url`, `public`, optional `service` and `port` metadata, and optional `publicOrigin` when an external origin is configured. Shell groups endpoint URLs by runtime service and displays local and public origins as separate adjacent URL blocks. Missing public origins show `not configured` with a configure shortcut instead of hiding the public-origin slot.
 
 Service-level state exists through `GET /api/apps/{appId}/health`. Shell loads that state lazily when an installed app row is expanded.
 

@@ -32,8 +32,6 @@ The app also reads demo settings from the manifest:
 - `DEMO_REFRESH_SECONDS`
 - `DEMO_AUTH_PREVIEW`
 
-`DEMO_PUBLIC_URL` remains an optional manual override. During Core-managed local runs the app derives its public URL from the assigned `HOSTY_PORT_HTTP` / `PORT` value.
-
 ## API Routes
 
 - `/api/health` - storage write probe and runtime health.

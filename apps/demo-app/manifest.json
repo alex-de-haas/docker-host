@@ -102,7 +102,7 @@
       "service": "backend",
       "port": "http",
       "protocol": "http",
-      "public": false
+      "public": true
     },
     {
       "key": "http",

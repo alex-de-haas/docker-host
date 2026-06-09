@@ -7,7 +7,7 @@ using Spectre.Console;
 
 internal sealed class CoreCommand(CommandContext context)
 {
-    private const string DefaultCoreUrl = "http://127.0.0.1:3001";
+    private const string DefaultCoreUrl = "http://localhost:3001";
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
 
     public async Task<int> ExecuteAsync(string[] args)
