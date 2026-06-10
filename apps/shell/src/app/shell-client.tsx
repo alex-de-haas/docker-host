@@ -635,6 +635,8 @@ export function ShellClient({
   const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
   const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
   const pendingWorkspaceRoute = useRef<string | null>(null);
+  // Core CSRF is a cookie/header pair, so token refresh + mutation must stay ordered.
+  const csrfOperationQueue = useRef<Promise<void>>(Promise.resolve());
   const shellThemePreference = normalizeThemePreference(theme);
   const shellResolvedTheme = resolveShellTheme(resolvedTheme);
   const activeUser = state.session?.authenticated ? state.session.user : null;
@@ -720,23 +722,35 @@ export function ShellClient({
 
   const sendCsrfJson = useCallback(
     async (endpoint: string, body?: unknown, method = "POST") => {
-      const csrf = await loadCsrfToken();
-      const response = await fetch(endpoint, {
-        method,
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Hosty-CSRF": csrf,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
+      const previousOperation = csrfOperationQueue.current;
+      let releaseOperation = () => {};
+      csrfOperationQueue.current = new Promise<void>((resolve) => {
+        releaseOperation = () => resolve();
       });
 
-      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-      if (!response.ok) {
-        throw new Error(await readCoreError(response));
-      }
+      await previousOperation.catch(() => undefined);
 
-      return response;
+      try {
+        const csrf = await loadCsrfToken();
+        const response = await fetch(endpoint, {
+          method,
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hosty-CSRF": csrf,
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+        if (!response.ok) {
+          throw new Error(await readCoreError(response));
+        }
+
+        return response;
+      } finally {
+        releaseOperation();
+      }
     },
     [coreOrigin, loadCsrfToken],
   );
@@ -1340,6 +1354,8 @@ export function ShellClient({
   const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
   const effectiveView = canManageApps ? shellRoute.view : "available-apps";
+  const pendingWorkspaceApp = activeWorkspaceRoute ? state.apps.find((app) => app.id === activeWorkspaceRoute.appId) ?? null : null;
+  const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
 
   useEffect(() => {
@@ -1545,13 +1561,18 @@ export function ShellClient({
         />
       </aside>
 
-      <div className={cn("h-dvh min-w-0", workspace ? "overflow-hidden bg-background" : "overflow-y-auto")}>
-        <main className={cn("w-full", workspace ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
+      <div className={cn("h-dvh min-w-0", workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto")}>
+        <main className={cn("w-full", workspaceSurfaceActive ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
           {workspace ? (
             <EmbeddedWorkspacePanel
               workspace={workspace}
               theme={shellResolvedTheme}
               themePreference={shellThemePreference}
+            />
+          ) : activeWorkspaceRoute ? (
+            <EmbeddedWorkspacePendingPanel
+              appName={pendingWorkspaceApp?.displayName ?? activeWorkspaceRoute.appId}
+              error={state.error}
             />
           ) : (
             <>
@@ -4126,6 +4147,23 @@ function CheckboxRow({ label, checked, disabled, onChange }: { label: string; ch
       <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
       {label}
     </label>
+  );
+}
+
+function EmbeddedWorkspacePendingPanel({ appName, error }: { appName: string; error: string | null }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background px-6">
+      {error ? (
+        <div className="max-w-lg rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+          <span>Opening {appName}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
