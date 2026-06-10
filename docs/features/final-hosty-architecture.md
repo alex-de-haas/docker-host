@@ -38,7 +38,7 @@ Core owns the public and local API surface. API groups are organized around app-
 - deferred runtime app channel discovery and switching;
 - deferred product channel discovery and coordinated CLI/Core/Shell updates.
 
-Shell calls Core APIs through the configured Core origin. Shell must not contain Core-owned backend, auth, app lifecycle, or state mutation routes.
+Shell calls Core APIs through the browser-facing Core public origin. Shell must not contain Core-owned backend, auth, app lifecycle, or state mutation routes. Runtime process-to-Core access uses `HOSTY_CORE_ORIGIN`; browser Shell access uses `HOSTY_CORE_PUBLIC_ORIGIN` or Core's localhost fallback, so Docker-only origins such as `host.docker.internal` never appear in Shell browser fetches or login links.
 
 The CLI should call Core APIs for ordinary operations. It may keep recovery behavior only when Core is not installed, not running, or not reachable.
 

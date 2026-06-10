@@ -186,7 +186,11 @@ internal sealed class LocalCommandRuntimeAdapter(
     {
         startInfo.Environment["HOSTY_APP_ID"] = context.App.Id;
         startInfo.Environment["HOSTY_APP_SERVICE_KEY"] = service.Key;
-        startInfo.Environment["HOSTY_CORE_ORIGIN"] = config.EffectiveCorePublicOrigin;
+        foreach (var environment in BuildCoreEnvironment(config))
+        {
+            startInfo.Environment[environment.Key] = environment.Value;
+        }
+
         startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.AppDataPath;
         Directory.CreateDirectory(context.AppDataPath);
 
@@ -236,6 +240,14 @@ internal sealed class LocalCommandRuntimeAdapter(
             startInfo.Environment["PORT"] = assignedHostPorts[0].ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
     }
+
+    internal static IReadOnlyDictionary<string, string> BuildCoreEnvironment(HostyCoreRuntimeConfig config)
+        => new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["HOSTY_CORE_PORT"] = config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["HOSTY_CORE_PUBLIC_ORIGIN"] = config.EffectiveCorePublicOrigin,
+            ["HOSTY_CORE_ORIGIN"] = config.ListenUrl,
+        };
 
     private static void EnsureExplicitPortsAvailable(RuntimeLifecycleContext context)
     {

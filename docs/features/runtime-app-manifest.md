@@ -40,12 +40,13 @@ hosty apps start com.haas.demo-app
 - `HOSTY_APP_ID`
 - `HOSTY_APP_SERVICE_KEY`
 - `HOSTY_APP_SERVICE_TOKEN`
+- `HOSTY_CORE_PUBLIC_ORIGIN`
 - `HOSTY_CORE_ORIGIN`
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_{KEY}`
 - `HOSTY_DEPENDENCY_{KEY}_URL`
 
-For `docker` profiles, loopback Core origins are injected as a container-reachable origin using `host.docker.internal`, so app server code can exchange Hosty app codes and revalidate identity with Core from inside the container. Published runtime endpoint URLs remain browser-facing `localhost` URLs unless a generated public origin setting overrides them.
+`HOSTY_CORE_PUBLIC_ORIGIN` is the browser-facing Core origin. `HOSTY_CORE_ORIGIN` is the runtime process-to-Core origin. For `docker` profiles, loopback Core origins are injected into `HOSTY_CORE_ORIGIN` as a container-reachable origin using `host.docker.internal`, so app server code can exchange Hosty app codes and revalidate identity with Core from inside the container. For `localCommand` profiles, `HOSTY_CORE_ORIGIN` uses Core's listen URL. Published runtime endpoint URLs remain browser-facing `localhost` URLs unless a generated public origin setting overrides them.
 
 For `localCommand` profiles, omit `localPort` and `hostPort` unless the app explicitly requires a fixed local port. Core assigns an available loopback port and exposes it as `HOSTY_PORT_{KEY}`. When a service has exactly one assigned port and did not explicitly set `PORT`, Core also injects `PORT` with the assigned value for framework compatibility.
 
