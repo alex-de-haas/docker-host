@@ -20,7 +20,7 @@ First-administrator setup, administrator recovery, and local invitation acceptan
 
 Core keeps the development login helper unchanged in `Development` environment.
 
-In non-development mode, Core `/login` renders a local email/password form. Successful authentication creates the existing Core browser session cookie and redirects to Shell. Failed authentication returns a generic error that does not reveal whether the email, credential, or user state exists.
+In non-development mode, Core `/login` renders a local email/password form. Successful authentication creates the existing Core browser session cookie and redirects to the effective Shell origin. When `HOSTY_SHELL_PUBLIC_ORIGIN` is not configured, the effective Shell origin is `http://localhost:<shell-port>`. Failed authentication returns a generic error that does not reveal whether the email, credential, or user state exists.
 
 First-administrator setup, administrator recovery, and invitation acceptance require a password. The browser pages collect password and password confirmation, validate the confirmation client-side, and submit the password to Core. Core validates password policy server-side before creating or restoring the user.
 

@@ -14,6 +14,8 @@ The implemented Shell provides:
 
 Shell uses Core session cookies and redirects unauthenticated users to Core-owned `/login`. Protected data comes from Core APIs such as `/api/core/status`, `/api/auth/session`, `/api/apps`, `/api/auth/users`, and `/api/apps/{appId}/...` lifecycle endpoints.
 
+When `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is not configured, Core uses local fallback origins from the configured ports: `http://localhost:<core-port>` and `http://localhost:<shell-port>`. Login redirects, Shell CORS, setup/recovery redirects, and Shell status all use these effective origins.
+
 ## Navigation
 
 The Shell sidebar is a persistent desktop-style rail with an expanded and compact mode. The selected mode is stored in browser local storage.

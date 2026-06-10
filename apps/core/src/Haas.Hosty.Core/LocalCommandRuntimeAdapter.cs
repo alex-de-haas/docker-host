@@ -186,7 +186,7 @@ internal sealed class LocalCommandRuntimeAdapter(
     {
         startInfo.Environment["HOSTY_APP_ID"] = context.App.Id;
         startInfo.Environment["HOSTY_APP_SERVICE_KEY"] = service.Key;
-        startInfo.Environment["HOSTY_CORE_ORIGIN"] = config.CorePublicOrigin ?? config.ListenUrl;
+        startInfo.Environment["HOSTY_CORE_ORIGIN"] = config.EffectiveCorePublicOrigin;
         startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.AppDataPath;
         Directory.CreateDirectory(context.AppDataPath);
 
