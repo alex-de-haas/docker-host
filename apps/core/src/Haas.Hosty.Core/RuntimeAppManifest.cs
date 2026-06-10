@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -483,6 +484,8 @@ internal sealed class DockerRuntimeAdapter(
                 containerName,
                 "--restart",
                 "no",
+                "--add-host",
+                "host.docker.internal:host-gateway",
                 "--label",
                 $"hosty.app.id={context.App.Id}",
                 "--label",
@@ -492,7 +495,7 @@ internal sealed class DockerRuntimeAdapter(
                 "-e",
                 $"HOSTY_APP_SERVICE_KEY={service.Key}",
                 "-e",
-                $"HOSTY_CORE_ORIGIN={config.EffectiveCorePublicOrigin}",
+                $"HOSTY_CORE_ORIGIN={BuildDockerCoreOrigin(config.EffectiveCorePublicOrigin)}",
             };
 
             foreach (var setting in context.App.Settings.Values)
@@ -704,10 +707,39 @@ internal sealed class DockerRuntimeAdapter(
     internal static string BuildContainerName(string appId, string serviceKey)
         => $"hosty-{NormalizeDockerName(appId)}-{NormalizeDockerName(serviceKey)}";
 
+    internal static string BuildDockerCoreOrigin(string coreOrigin)
+    {
+        if (!Uri.TryCreate(coreOrigin, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+            !IsLoopbackHost(uri.Host))
+        {
+            return coreOrigin;
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Host = "host.docker.internal",
+            Path = string.Empty,
+            Query = string.Empty,
+            Fragment = string.Empty,
+        };
+        return builder.Uri.GetLeftPart(UriPartial.Authority);
+    }
+
     private static string NormalizeDockerName(string value)
     {
         var normalized = new string(value.Select(character => char.IsLetterOrDigit(character) ? char.ToLowerInvariant(character) : '-').ToArray());
         return string.IsNullOrWhiteSpace(normalized) ? "app" : normalized.Trim('-');
+    }
+
+    private static bool IsLoopbackHost(string host)
+    {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
     }
 
 }
