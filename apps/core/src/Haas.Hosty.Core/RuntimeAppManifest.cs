@@ -494,9 +494,12 @@ internal sealed class DockerRuntimeAdapter(
                 $"HOSTY_APP_ID={context.App.Id}",
                 "-e",
                 $"HOSTY_APP_SERVICE_KEY={service.Key}",
-                "-e",
-                $"HOSTY_CORE_ORIGIN={BuildDockerCoreOrigin(config.EffectiveCorePublicOrigin)}",
             };
+            foreach (var environment in BuildDockerCoreEnvironment(config))
+            {
+                runArgs.Add("-e");
+                runArgs.Add(environment);
+            }
 
             foreach (var setting in context.App.Settings.Values)
             {
@@ -706,6 +709,13 @@ internal sealed class DockerRuntimeAdapter(
 
     internal static string BuildContainerName(string appId, string serviceKey)
         => $"hosty-{NormalizeDockerName(appId)}-{NormalizeDockerName(serviceKey)}";
+
+    internal static IReadOnlyList<string> BuildDockerCoreEnvironment(HostyCoreRuntimeConfig config)
+        => [
+            $"HOSTY_CORE_PORT={config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            $"HOSTY_CORE_PUBLIC_ORIGIN={config.EffectiveCorePublicOrigin}",
+            $"HOSTY_CORE_ORIGIN={BuildDockerCoreOrigin(config.EffectiveCorePublicOrigin)}",
+        ];
 
     internal static string BuildDockerCoreOrigin(string coreOrigin)
     {

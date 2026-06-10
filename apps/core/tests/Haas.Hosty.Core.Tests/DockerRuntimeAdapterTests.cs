@@ -4,6 +4,19 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class DockerRuntimeAdapterTests
 {
+    [Fact]
+    public void BuildDockerCoreEnvironment_SplitsContainerAndBrowserOrigins()
+    {
+        var config = CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null);
+
+        var result = DockerRuntimeAdapter.BuildDockerCoreEnvironment(config);
+
+        Assert.Contains("HOSTY_CORE_PORT=7070", result);
+        Assert.Contains("HOSTY_CORE_PUBLIC_ORIGIN=http://localhost:7070", result);
+        Assert.Contains("HOSTY_CORE_ORIGIN=http://host.docker.internal:7070", result);
+        Assert.DoesNotContain("HOSTY_CORE_PUBLIC_ORIGIN=http://host.docker.internal:7070", result);
+    }
+
     [Theory]
     [InlineData("http://localhost:7070", "http://host.docker.internal:7070")]
     [InlineData("http://127.0.0.1:7070", "http://host.docker.internal:7070")]
@@ -28,4 +41,21 @@ public sealed class DockerRuntimeAdapterTests
 
         Assert.Equal(coreOrigin, result);
     }
+
+    private static HostyCoreRuntimeConfig CreateConfig(int corePort, string listenUrl, string? corePublicOrigin)
+        => new(
+            DataRoot: "/tmp/hosty",
+            RunDirectory: "/tmp/hosty/core/run",
+            ControlDiscoveryPath: "/tmp/hosty/core/run/control.json",
+            CorePort: corePort,
+            ShellPort: 7171,
+            ListenUrl: listenUrl,
+            CorePublicOrigin: corePublicOrigin,
+            ShellPublicOrigin: null,
+            RuntimePublicHost: "localhost",
+            ShellManifestPath: null,
+            ShellBootstrapRuntime: "docker",
+            ShellSourceOverridePath: null,
+            ShellBootstrapEnabled: false,
+            ShellAutostart: false);
 }
