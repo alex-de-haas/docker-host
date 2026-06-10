@@ -8,7 +8,7 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 
 - `GET /api/core/status` - public Core status.
 - `GET /login` - Core-owned login page. Development renders the local user selector; non-development renders email/password login.
-- `POST /login` - create a Core session from the development selector or from local email/password credentials, depending on environment.
+- `POST /login` - create a Core session from the development selector or from local email/password credentials, depending on environment, then redirect to the effective Shell origin.
 - `GET /api/apps` - apps visible to the active Host session, including the selected runtime and available `runtimeProfiles`.
 - `GET /api/users` - admin user directory state.
 - `POST /api/auth/bootstrap` - consume a setup token, create the first administrator, store the submitted password credential, and create a Core session.
@@ -19,6 +19,8 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 - `POST /api/apps/{appId}/switch-runtime/plan` - admin runtime switch review for browser Shell clients.
 - `POST /api/apps/{appId}/switch-runtime` - admin runtime switch apply for browser Shell clients; CSRF-protected and requires the reviewed plan digest.
 - `GET /api/internal/apps/{appId}/directory/users` - scoped app directory for runtime apps with `HOSTY_APP_SERVICE_TOKEN`.
+
+`/api/core/status` reports effective public origins. If `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is unset, Core falls back to `http://localhost:<core-port>` and `http://localhost:<shell-port>`.
 
 ## Control APIs
 

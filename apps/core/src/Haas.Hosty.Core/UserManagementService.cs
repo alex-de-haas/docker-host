@@ -388,7 +388,7 @@ internal sealed class UserManagementService(
             Details: details), cancellationToken);
 
     private string ResolveCoreOrigin()
-        => config.CorePublicOrigin ?? config.ListenUrl;
+        => config.EffectiveCorePublicOrigin;
 
     private static IReadOnlyList<AuthSessionRecord> RevokeSessions(
         IReadOnlyList<AuthSessionRecord> sessions,

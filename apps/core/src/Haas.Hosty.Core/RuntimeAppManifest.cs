@@ -492,7 +492,7 @@ internal sealed class DockerRuntimeAdapter(
                 "-e",
                 $"HOSTY_APP_SERVICE_KEY={service.Key}",
                 "-e",
-                $"HOSTY_CORE_ORIGIN={config.CorePublicOrigin ?? config.ListenUrl}",
+                $"HOSTY_CORE_ORIGIN={config.EffectiveCorePublicOrigin}",
             };
 
             foreach (var setting in context.App.Settings.Values)

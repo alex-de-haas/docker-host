@@ -60,7 +60,7 @@ internal static class ControlIdentityEndpoints
                     var mode = string.IsNullOrWhiteSpace(input.Mode) ? "standalone" : input.Mode;
                     if (string.Equals(mode, "shell", StringComparison.OrdinalIgnoreCase))
                     {
-                        var shellOrigin = config.ShellPublicOrigin ?? $"http://localhost:{config.ShellPort}";
+                        var shellOrigin = config.EffectiveShellPublicOrigin;
                         return Results.Json(new AppOpenLinkResponse(
                             AppId: appId,
                             UserId: user.Id,

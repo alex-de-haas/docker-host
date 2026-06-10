@@ -33,7 +33,7 @@ internal static class AuthBootstrapEndpoints
             {
                 var user = await bootstrap.BootstrapAsync(input, cancellationToken);
                 _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, cancellationToken);
-                return new AuthBootstrapCompleteResponse(user, config.ShellPublicOrigin ?? "/");
+                return new AuthBootstrapCompleteResponse(user, config.EffectiveShellPublicOrigin);
             }));
 
         app.MapPost("/api/auth/recovery", async (
@@ -49,7 +49,7 @@ internal static class AuthBootstrapEndpoints
             {
                 var user = await bootstrap.RecoverAsync(input, cancellationToken);
                 _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, cancellationToken);
-                return new AuthRecoveryCompleteResponse(user, config.ShellPublicOrigin ?? "/");
+                return new AuthRecoveryCompleteResponse(user, config.EffectiveShellPublicOrigin);
             }));
     }
 

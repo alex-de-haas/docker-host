@@ -245,7 +245,7 @@ internal sealed class AuthBootstrapService(
             Details: details), cancellationToken);
 
     private string ResolveCoreOrigin()
-        => config.CorePublicOrigin ?? config.ListenUrl;
+        => config.EffectiveCorePublicOrigin;
 
     private static string GetTokenStatus(AuthBootstrapTokenRecord token, DateTimeOffset now)
     {

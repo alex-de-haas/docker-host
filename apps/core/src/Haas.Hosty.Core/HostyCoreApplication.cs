@@ -42,13 +42,10 @@ internal static class HostyCoreApplication
         {
             options.AddPolicy("HostyShell", policy =>
             {
-                if (!string.IsNullOrWhiteSpace(config.ShellPublicOrigin))
-                {
-                    policy.WithOrigins(config.ShellPublicOrigin)
-                        .AllowCredentials()
-                        .AllowAnyHeader()
-                        .AllowAnyMethod();
-                }
+                policy.WithOrigins(config.EffectiveShellPublicOrigin)
+                    .AllowCredentials()
+                    .AllowAnyHeader()
+                    .AllowAnyMethod();
             });
         });
         builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -103,7 +100,7 @@ internal static class HostyCoreApplication
 
                 if (result.Succeeded)
                 {
-                    return Results.Redirect(config.ShellPublicOrigin ?? "/");
+                    return Results.Redirect(config.EffectiveShellPublicOrigin);
                 }
 
                 var state = await users.ReadAsync(cancellationToken);
@@ -146,7 +143,7 @@ internal static class HostyCoreApplication
                         cancellationToken);
 
                     return result.Succeeded
-                        ? Results.Redirect(config.ShellPublicOrigin ?? "/")
+                        ? Results.Redirect(config.EffectiveShellPublicOrigin)
                         : Results.Content(
                             RenderPasswordLoginPage(config, "Email or password is invalid."),
                             "text/html",
@@ -184,7 +181,7 @@ internal static class HostyCoreApplication
             CancellationToken cancellationToken) =>
         {
             await AuthEndpoints.LogoutAsync(request, response, users, clock, cancellationToken);
-            return Results.Redirect(config.ShellPublicOrigin ?? "/login");
+            return Results.Redirect(config.EffectiveShellPublicOrigin);
         });
         app.MapGet("/api/auth/callback/oidc", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
             "Hosty Core OIDC Callback",
@@ -230,8 +227,8 @@ internal static class HostyCoreApplication
     {
         var encodedTitle = HtmlEncoder.Default.Encode(title);
         var encodedMessage = HtmlEncoder.Default.Encode(message);
-        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.CorePublicOrigin ?? config.ListenUrl);
-        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.ShellPublicOrigin ?? "not configured");
+        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
+        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
 
         return $$"""
           <!doctype html>
@@ -266,8 +263,8 @@ internal static class HostyCoreApplication
         IReadOnlyList<HostUserRecord> users,
         string? error = null)
     {
-        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.CorePublicOrigin ?? config.ListenUrl);
-        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.ShellPublicOrigin ?? "not configured");
+        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
+        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
         var enabledUsers = users.Where(user => !user.Disabled).ToArray();
         var options = string.Join(Environment.NewLine, enabledUsers.Select(user =>
         {
@@ -327,8 +324,8 @@ internal static class HostyCoreApplication
 
     private static string RenderPasswordLoginPage(HostyCoreRuntimeConfig config, string? error = null)
     {
-        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.CorePublicOrigin ?? config.ListenUrl);
-        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.ShellPublicOrigin ?? "not configured");
+        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
+        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
         var encodedError = error is null
             ? string.Empty
             : $"""<p class="error">{HtmlEncoder.Default.Encode(error)}</p>""";
@@ -378,7 +375,7 @@ internal static class HostyCoreApplication
     private static string RenderSetupPage(HostyCoreRuntimeConfig config, string? setupToken)
     {
         var encodedToken = HtmlEncoder.Default.Encode(setupToken ?? "");
-        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.ShellPublicOrigin ?? "/");
+        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
 
         return $$"""
           <!doctype html>
@@ -458,7 +455,7 @@ internal static class HostyCoreApplication
     private static string RenderRecoveryPage(HostyCoreRuntimeConfig config, string? recoveryToken)
     {
         var encodedToken = HtmlEncoder.Default.Encode(recoveryToken ?? "");
-        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.ShellPublicOrigin ?? "/");
+        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
 
         return $$"""
           <!doctype html>
@@ -538,7 +535,7 @@ internal static class HostyCoreApplication
     private static string RenderInvitationPage(HostyCoreRuntimeConfig config, string? setupToken)
     {
         var encodedToken = HtmlEncoder.Default.Encode(setupToken ?? "");
-        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.ShellPublicOrigin ?? "/");
+        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
 
         return $$"""
           <!doctype html>
@@ -630,6 +627,10 @@ internal sealed record HostyCoreRuntimeConfig(
     bool ShellBootstrapEnabled,
     bool ShellAutostart)
 {
+    public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
+
+    public string EffectiveShellPublicOrigin => ShellPublicOrigin ?? $"http://localhost:{ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
     public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment)
     {
         var dataRoot = NormalizePath(
@@ -938,7 +939,7 @@ internal sealed class RuntimeAppSupervisorService(
             ["HOSTY_PORT_HTTP"] = shellPort,
         };
 
-        if (Uri.TryCreate(config.ShellPublicOrigin, UriKind.Absolute, out var shellOrigin))
+        if (Uri.TryCreate(config.EffectiveShellPublicOrigin, UriKind.Absolute, out var shellOrigin))
         {
             if (!string.IsNullOrWhiteSpace(shellOrigin.Host))
             {
@@ -1171,8 +1172,8 @@ internal sealed record CoreStatusResponse(
             config.ListenUrl,
             config.CorePort,
             config.ShellPort,
-            config.CorePublicOrigin,
-            config.ShellPublicOrigin,
+            config.EffectiveCorePublicOrigin,
+            config.EffectiveShellPublicOrigin,
             config.RuntimePublicHost,
             config.ShellManifestPath,
             config.ShellAutostart,

@@ -6,7 +6,7 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class HostyCoreRuntimeConfigTests
 {
     [Fact]
-    public void FromEnvironment_DefaultsPortsAndLeavesPublicOriginsUnset()
+    public void FromEnvironment_DefaultsPortsAndEffectiveLocalOrigins()
     {
         using var coreUrlEnv = TemporaryEnvironment.With("HOSTY_CORE_URL", null);
         using var aspNetUrlsEnv = TemporaryEnvironment.With("ASPNETCORE_URLS", null);
@@ -22,6 +22,8 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Equal("http://localhost:7070", config.ListenUrl);
         Assert.Null(config.CorePublicOrigin);
         Assert.Null(config.ShellPublicOrigin);
+        Assert.Equal("http://localhost:7070", config.EffectiveCorePublicOrigin);
+        Assert.Equal("http://localhost:7171", config.EffectiveShellPublicOrigin);
     }
 
     [Fact]
@@ -64,6 +66,8 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Equal(8080, config.CorePort);
         Assert.Equal(8181, config.ShellPort);
         Assert.Equal("http://localhost:8080", config.ListenUrl);
+        Assert.Equal("http://localhost:8080", config.EffectiveCorePublicOrigin);
+        Assert.Equal("http://localhost:8181", config.EffectiveShellPublicOrigin);
     }
 
     [Fact]
@@ -86,6 +90,7 @@ public sealed class HostyCoreRuntimeConfigTests
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
 
         Assert.Equal("http://localhost:3100/", config.ShellPublicOrigin);
+        Assert.Equal("http://localhost:3100/", config.EffectiveShellPublicOrigin);
     }
 
     [Fact]
@@ -98,6 +103,24 @@ public sealed class HostyCoreRuntimeConfigTests
 
         Assert.Equal("https://core.example", config.CorePublicOrigin);
         Assert.Null(config.ShellPublicOrigin);
+        Assert.Equal("https://core.example", config.EffectiveCorePublicOrigin);
+    }
+
+    [Fact]
+    public void CoreStatusResponse_ReportsEffectivePublicOrigins()
+    {
+        using var coreUrlEnv = TemporaryEnvironment.With("HOSTY_CORE_URL", null);
+        using var aspNetUrlsEnv = TemporaryEnvironment.With("ASPNETCORE_URLS", null);
+        using var corePortEnv = TemporaryEnvironment.With("HOSTY_CORE_PORT", null);
+        using var shellPortEnv = TemporaryEnvironment.With("HOSTY_SHELL_PORT", null);
+        using var coreOriginEnv = TemporaryEnvironment.With("HOSTY_CORE_PUBLIC_ORIGIN", null);
+        using var shellOriginEnv = TemporaryEnvironment.With("HOSTY_SHELL_PUBLIC_ORIGIN", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+        var response = CoreStatusResponse.From(config);
+
+        Assert.Equal("http://localhost:7070", response.CorePublicOrigin);
+        Assert.Equal("http://localhost:7171", response.ShellPublicOrigin);
     }
 
     [Fact]
