@@ -99,6 +99,8 @@ Shell remains a Core-managed runtime app. Core startup reconciles `hosty.shell` 
 
 Core writes a local control discovery document under the run directory. CLI commands read that file and call `/control/v1` with `X-Hosty-Control-Secret`.
 
+If Core rejects a control request with HTTP 401, the CLI treats the discovery as stale or mismatched and exits with a friendly error instead of throwing an unhandled exception. Verify the active Core with `hosty core status`; if no matching Core is running, remove the stale `~/.hosty/core/run/control.json` file and start Core again.
+
 ## Uninstall
 
 `hosty uninstall` requests Core shutdown when local control discovery is available, then removes Hosty-owned state while preserving the CLI executable directory.

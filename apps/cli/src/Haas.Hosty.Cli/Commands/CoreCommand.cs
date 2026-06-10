@@ -2,6 +2,7 @@ namespace Haas.Hosty.Cli.Commands;
 
 using Haas.Hosty.Cli.Configuration;
 using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
 using Spectre.Console;
 
@@ -261,7 +262,16 @@ internal sealed class CoreCommand(CommandContext context)
             if (!response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync();
-                throw new InvalidOperationException($"Unable to stop Hosty Core. HTTP {(int)response.StatusCode}: {body}");
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    context.Console.MarkupLine("[red]Unable to stop Hosty Core:[/] local control secret was rejected.");
+                    context.Console.MarkupLine($"[grey]This usually means the control discovery file is stale or belongs to another Core process: {Markup.Escape(GetControlDiscoveryPath())}[/]");
+                    context.Console.MarkupLine("[grey]Run `hosty core status` to verify the active Core. If no matching Core is running, remove the stale discovery file and start Core again.[/]");
+                    return 1;
+                }
+
+                context.Console.MarkupLine($"[red]Unable to stop Hosty Core:[/] HTTP {(int)response.StatusCode}: {Markup.Escape(body)}");
+                return 1;
             }
 
             context.Console.MarkupLine("[green]Hosty Core stop requested.[/]");
