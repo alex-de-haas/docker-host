@@ -1,11 +1,13 @@
 import { ShellClient } from "./shell-client";
 
 function getCoreOrigin() {
-  return (
-    process.env.HOSTY_CORE_ORIGIN ||
-    process.env.NEXT_PUBLIC_HOSTY_CORE_ORIGIN ||
-    "http://localhost:3001"
-  ).replace(/\/$/, "");
+  const configuredOrigin = process.env.HOSTY_CORE_PUBLIC_ORIGIN || process.env.NEXT_PUBLIC_HOSTY_CORE_ORIGIN;
+  if (configuredOrigin) {
+    return configuredOrigin.replace(/\/$/, "");
+  }
+
+  const corePort = process.env.HOSTY_CORE_PORT || process.env.NEXT_PUBLIC_HOSTY_CORE_PORT || "3001";
+  return `http://localhost:${corePort}`;
 }
 
 export function HostyShellPage({ initialView = "dashboard" }: { initialView?: "available-apps" | "dashboard" }) {
