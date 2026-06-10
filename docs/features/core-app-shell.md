@@ -23,15 +23,19 @@ When `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is not configured
 The Shell sidebar is a persistent desktop-style rail with an expanded and compact mode. The selected mode is stored in browser local storage.
 
 - Core:
-  - Dashboard
-  - Installed Apps
-  - User Management
+  - Dashboard (`/dashboard`, with `/` retained as a compatible entry route)
+  - Installed Apps (`/installed-apps`)
+  - User Management (`/users`)
 - Apps:
-  - one entry for each non-system runtime app that exposes shell UI metadata
+  - app overview (`/apps`)
+  - one sidebar entry for each non-system runtime app that exposes shell UI metadata
   - nested app links from manifest `ui.navigation`
+  - embedded app workspace links (`/workspace?app=<app-id>&path=<app-path>`)
   - loading, error, and empty states when app registry data is unavailable
 
 The Core navigation group is visible only to `host.admin`. Non-admin `host.user` principals can load Shell but see only non-system runtime app navigation and the `/apps` app overview. Dashboard, Installed Apps, User Management, system apps, and app mutation controls are restricted to `host.admin`.
+
+Shell top-level navigation is route-backed. Sidebar clicks update the browser URL, and refresh restores the active route. Workspace URLs store only the app id and app path; Shell requests a fresh Core launch code after loading the current Core session and app registry.
 
 Hosty Shell is installed as a system runtime app and does not appear as a normal entry in the Apps sidebar.
 
@@ -71,7 +75,7 @@ System Apps are inspect-only in Shell. Hosty Shell and future system apps can ex
 
 Apps appear in the Shell Apps navigation only when their installed manifest includes a `ui` contract and the app is not a system app. Public runtime endpoints alone do not create Shell navigation.
 
-Shell opens app UIs through the app-owned origin returned by Core. Local runtime app origins use `http://localhost:<assigned-port>`. If an app endpoint has a configured `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}` value, Core uses that public origin for Shell and standalone links, while endpoint summaries still keep the local `url` and expose the external value separately as `publicOrigin`. For embedded workspaces, Shell requests `/api/apps/{appId}/launch-code` and loads the resulting redirect URI in an iframe. For standalone tabs, Shell uses `/api/apps/{appId}/open?redirectUri=...`.
+Shell opens app UIs through the app-owned origin returned by Core. Local runtime app origins use `http://localhost:<assigned-port>`. If an app endpoint has a configured `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}` value, Core uses that public origin for Shell and standalone links, while endpoint summaries still keep the local `url` and expose the external value separately as `publicOrigin`. For embedded workspaces, Shell navigates to `/workspace?app=<app-id>&path=<app-path>`, requests `/api/apps/{appId}/launch-code`, and loads the resulting redirect URI in an iframe. For standalone tabs, Shell uses `/api/apps/{appId}/open?redirectUri=...`.
 
 The app receives a short-lived code and exchanges it with Core for app-scoped identity. Shell does not proxy app HTML, rewrite assets, or forward Hosty session cookies to the app origin.
 

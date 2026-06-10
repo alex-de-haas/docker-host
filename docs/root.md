@@ -18,6 +18,7 @@ flowchart LR
 
 - [Roadmap](roadmap.md) - active and deferred product stages.
 - [Core app shell](features/core-app-shell.md) - Shell foundation and navigation.
+- [Shell route navigation](features/shell-route-navigation.md) - route-backed Shell sections and embedded workspace deep links.
 - [Shell access and system apps](features/shell-access-and-system-apps.md) - administrator-only management views and system app visibility.
 - [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - current runtime app lifecycle platform.
 - [Runtime app manifest](features/runtime-app-manifest.md) - `app.0.1` manifest contract.

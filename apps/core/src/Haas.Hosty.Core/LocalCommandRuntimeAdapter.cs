@@ -36,10 +36,10 @@ internal sealed class LocalCommandRuntimeAdapter(
 
                 Directory.CreateDirectory(Path.Combine(context.AppRoot, "logs"));
                 var logPath = Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
-                var logWriter = new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                var logWriter = new LocalCommandLogWriter(new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
                 {
                     AutoFlush = true,
-                };
+                });
 
                 var startInfo = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
                 InjectEnvironment(startInfo, context, service, endpoints);
@@ -50,36 +50,31 @@ internal sealed class LocalCommandRuntimeAdapter(
                 };
                 process.OutputDataReceived += (_, args) =>
                 {
-                    if (args.Data is not null)
-                    {
-                        lock (logWriter)
-                        {
-                            logWriter.WriteLine(args.Data);
-                        }
-                    }
+                    logWriter.TryWriteLine(args.Data);
                 };
                 process.ErrorDataReceived += (_, args) =>
                 {
-                    if (args.Data is not null)
-                    {
-                        lock (logWriter)
-                        {
-                            logWriter.WriteLine(args.Data);
-                        }
-                    }
+                    logWriter.TryWriteLine(args.Data);
                 };
                 process.Exited += (_, _) =>
                 {
-                    lock (logWriter)
-                    {
-                        logWriter.WriteLine($"[hosty] process exited with code {process.ExitCode}");
-                        logWriter.Dispose();
-                    }
+                    logWriter.TryWriteLine($"[hosty] process exited with code {process.ExitCode}");
+                    logWriter.Dispose();
                 };
 
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+                try
+                {
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                }
+                catch
+                {
+                    logWriter.Dispose();
+                    process.Dispose();
+                    throw;
+                }
+
                 registry.Set(context.App.Id, service.Key, new LocalCommandProcess(process, logPath, workingDirectory));
                 startedServices.Add(service.Key);
                 await Task.Delay(250, cancellationToken);
@@ -403,3 +398,46 @@ internal sealed record LocalCommandProcess(
     System.Diagnostics.Process Process,
     string LogPath,
     string WorkingDirectory);
+
+internal sealed class LocalCommandLogWriter(TextWriter writer) : IDisposable
+{
+    private readonly object syncRoot = new();
+    private TextWriter? currentWriter = writer;
+
+    public void TryWriteLine(string? value)
+    {
+        if (value is null)
+        {
+            return;
+        }
+
+        lock (syncRoot)
+        {
+            if (currentWriter is null)
+            {
+                return;
+            }
+
+            try
+            {
+                currentWriter.WriteLine(value);
+            }
+            catch (ObjectDisposedException)
+            {
+                currentWriter = null;
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        TextWriter? writerToDispose;
+        lock (syncRoot)
+        {
+            writerToDispose = currentWriter;
+            currentWriter = null;
+        }
+
+        writerToDispose?.Dispose();
+    }
+}

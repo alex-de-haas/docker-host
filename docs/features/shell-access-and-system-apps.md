@@ -66,7 +66,7 @@ Shell should derive these app groups from the `system` flag already returned by 
 
 Shell sidebar rendering should show Host management navigation only when the active session user has role `host.admin`. The Apps section remains based on `uiRuntimeApps`.
 
-Shell main-content routing should guard management views with `canManageApps`. If the active user is not an administrator and there is no embedded workspace, the rendered view should be the app-navigation experience rather than Dashboard or Installed Apps.
+Shell main-content routing should guard management views with `canManageApps`. If the active user is not an administrator and reaches `/`, `/dashboard`, `/installed-apps`, or `/users`, Shell should route the user back to `/apps` and render the app-navigation experience rather than Dashboard or Installed Apps.
 
 Installed Apps should accept both runtime apps and system apps for administrator rendering. It should render separate sections and pass `app.system` into action eligibility. Existing Shell-specific checks can remain for self-navigation, but lifecycle action eligibility should use the system flag.
 
@@ -115,4 +115,4 @@ The change tightens ordinary user access to Shell management views. Any workflow
 
 - System app runtime switching is available to administrators when Core reports multiple runtime profiles, while other system app lifecycle actions remain hidden.
 
-- `host.user` uses Apps as the effective default view. The Shell also provides a `/apps` route that renders the same non-management app overview.
+- `host.user` uses Apps as the effective default view. The Shell also provides a `/apps` route that renders the same non-management app overview and is the fallback for unauthorized management routes.
