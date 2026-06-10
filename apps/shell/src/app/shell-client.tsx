@@ -458,7 +458,7 @@ function isAuthRequiredRedirectError(error: unknown) {
 }
 
 function isAuthRequiredResponse(response: Response) {
-  return response.status === 401 || response.status === 403;
+  return response.status === 401;
 }
 
 function redirectToCoreLogin(coreOrigin: string): never {
@@ -559,6 +559,7 @@ export function ShellClient({
         fetch(`${coreOrigin}/api/auth/session`, { credentials: "include" }),
       ]);
 
+      redirectToCoreLoginIfAuthRequired(statusResponse, coreOrigin);
       if (!statusResponse.ok) {
         throw new Error(`Core status returned ${statusResponse.status}.`);
       }
@@ -644,7 +645,7 @@ export function ShellClient({
 
       return response;
     },
-    [loadCsrfToken],
+    [coreOrigin, loadCsrfToken],
   );
 
   const appEndpoint = useCallback(
