@@ -446,6 +446,32 @@ const emptyInstallPanelState = (): InstallPanelState => ({
   plan: null,
 });
 
+class AuthRequiredRedirectError extends Error {
+  constructor() {
+    super("Authentication is required.");
+    this.name = "AuthRequiredRedirectError";
+  }
+}
+
+function isAuthRequiredRedirectError(error: unknown) {
+  return error instanceof AuthRequiredRedirectError;
+}
+
+function isAuthRequiredResponse(response: Response) {
+  return response.status === 401 || response.status === 403;
+}
+
+function redirectToCoreLogin(coreOrigin: string): never {
+  window.location.assign(`${coreOrigin}/login`);
+  throw new AuthRequiredRedirectError();
+}
+
+function redirectToCoreLoginIfAuthRequired(response: Response, coreOrigin: string) {
+  if (isAuthRequiredResponse(response)) {
+    redirectToCoreLogin(coreOrigin);
+  }
+}
+
 async function readCoreError(response: Response) {
   try {
     const error = (await response.json()) as CoreError;
@@ -538,8 +564,13 @@ export function ShellClient({
       }
 
       const status = (await statusResponse.json()) as CoreStatus;
-      const session = sessionResponse.ok ? ((await sessionResponse.json()) as SessionResponse) : null;
-      if (session && !session.authenticated) {
+      redirectToCoreLoginIfAuthRequired(sessionResponse, coreOrigin);
+      if (!sessionResponse.ok) {
+        throw new Error(await readCoreError(sessionResponse));
+      }
+
+      const session = (await sessionResponse.json()) as SessionResponse;
+      if (!session.authenticated) {
         setState({
           loading: false,
           error: null,
@@ -548,13 +579,13 @@ export function ShellClient({
           session,
           updatedAt: new Date().toISOString(),
         });
-        window.location.assign(`${coreOrigin}/login`);
-        return;
+        redirectToCoreLogin(coreOrigin);
       }
 
       let apps: AppsResponse = { apps: [] };
       if (session?.authenticated) {
         const appsResponse = await fetch(`${coreOrigin}/api/apps`, { credentials: "include" });
+        redirectToCoreLoginIfAuthRequired(appsResponse, coreOrigin);
         if (!appsResponse.ok) {
           throw new Error(`Apps API returned ${appsResponse.status}.`);
         }
@@ -571,6 +602,10 @@ export function ShellClient({
         updatedAt: new Date().toISOString(),
       });
     } catch (error) {
+      if (isAuthRequiredRedirectError(error)) {
+        return;
+      }
+
       setState((current) => ({
         ...current,
         loading: false,
@@ -581,6 +616,7 @@ export function ShellClient({
 
   const loadCsrfToken = useCallback(async () => {
     const response = await fetch(`${coreOrigin}/api/auth/csrf`, { credentials: "include" });
+    redirectToCoreLoginIfAuthRequired(response, coreOrigin);
     if (!response.ok) {
       throw new Error(`CSRF endpoint returned ${response.status}.`);
     }
@@ -601,6 +637,7 @@ export function ShellClient({
         body: body === undefined ? undefined : JSON.stringify(body),
       });
 
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) {
         throw new Error(await readCoreError(response));
       }
@@ -674,6 +711,10 @@ export function ShellClient({
           externalUrl: launch.redirectUri,
         });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         const message = error instanceof Error ? error.message : "Unable to create app launch link.";
         setState((current) => ({ ...current, error: message }));
         toast.error("App launch failed", { description: message });
@@ -695,6 +736,10 @@ export function ShellClient({
         await refresh();
         toast.success(`${app.displayName}: ${action} complete`);
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         const message = error instanceof Error ? error.message : "Core lifecycle action failed.";
         setState((current) => ({ ...current, error: message }));
         toast.error("App action failed", { description: message });
@@ -702,7 +747,7 @@ export function ShellClient({
         setBusyAction(null);
       }
     },
-    [appEndpoint, refresh, sendCsrfJson],
+    [appEndpoint, coreOrigin, refresh, sendCsrfJson],
   );
 
   const switchAppRuntime = useCallback(
@@ -721,6 +766,7 @@ export function ShellClient({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ targetRuntime }),
         });
+        redirectToCoreLoginIfAuthRequired(planResponse, coreOrigin);
         if (!planResponse.ok) {
           throw new Error(await readCoreError(planResponse));
         }
@@ -735,6 +781,10 @@ export function ShellClient({
           description: `${app.displayName}: ${plan.currentRuntime || "none"} to ${plan.targetRuntime}`,
         });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         const message = error instanceof Error ? error.message : "Runtime switch failed.";
         setState((current) => ({ ...current, error: message }));
         toast.error("Runtime switch failed", { description: message });
@@ -742,7 +792,7 @@ export function ShellClient({
         setBusyAction(null);
       }
     },
-    [appEndpoint, refresh, sendCsrfJson],
+    [appEndpoint, coreOrigin, refresh, sendCsrfJson],
   );
 
   const loadAppLogs = useCallback(
@@ -751,6 +801,7 @@ export function ShellClient({
       setDetailPanel({ loading: true, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
         const response = await fetch(`${appEndpoint(app, "/logs")}?tail=200`, { credentials: "include" });
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           throw new Error(await readCoreError(response));
         }
@@ -758,10 +809,14 @@ export function ShellClient({
         const payload = (await response.json()) as LogsResponse;
         setDetailPanel({ loading: false, error: null, logs: payload.text || "", backups: null, backupCleanupPlan: null, updatePlan: null });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Core logs are unavailable.", logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       }
     },
-    [appEndpoint],
+    [appEndpoint, coreOrigin],
   );
 
   const loadAppBackups = useCallback(
@@ -772,6 +827,7 @@ export function ShellClient({
       setDetailPanel({ loading: true, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
         const response = await fetch(appEndpoint(app, "/backups"), { credentials: "include" });
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           throw new Error(await readCoreError(response));
         }
@@ -779,10 +835,14 @@ export function ShellClient({
         const payload = (await response.json()) as BackupsResponse;
         setDetailPanel({ loading: false, error: null, logs: null, backups: payload.backups, backupCleanupPlan: null, updatePlan: null });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Core backups are unavailable.", logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       }
     },
-    [appEndpoint],
+    [appEndpoint, coreOrigin],
   );
 
   const loadUpdatePlan = useCallback(
@@ -796,6 +856,7 @@ export function ShellClient({
           headers: { "Content-Type": "application/json" },
           body: "{}",
         });
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           throw new Error(await readCoreError(response));
         }
@@ -803,10 +864,14 @@ export function ShellClient({
         const payload = (await response.json()) as CoreUpdatePlan;
         setDetailPanel({ loading: false, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: payload });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Update plan is unavailable.", logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       }
     },
-    [appEndpoint],
+    [appEndpoint, coreOrigin],
   );
 
   const openAppPanel = useCallback(
@@ -841,6 +906,10 @@ export function ShellClient({
         }
         toast.success("Backup created", { description: app.displayName });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel((current) => ({
           ...current,
           loading: false,
@@ -867,6 +936,10 @@ export function ShellClient({
         await loadAppBackups(app, false);
         toast.success("Backup restored", { description: backup.backupId });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel((current) => ({
           ...current,
           loading: false,
@@ -892,6 +965,10 @@ export function ShellClient({
         await loadAppBackups(app, false);
         toast.success("Backup deleted", { description: backup.backupId });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel((current) => ({
           ...current,
           loading: false,
@@ -910,6 +987,7 @@ export function ShellClient({
       setBusyAction(actionKey);
       try {
         const response = await fetch(appEndpoint(app, "/backups/cleanup/plan"), { credentials: "include" });
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           throw new Error(await readCoreError(response));
         }
@@ -922,6 +1000,10 @@ export function ShellClient({
           backupCleanupPlan: payload,
         }));
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel((current) => ({
           ...current,
           loading: false,
@@ -931,7 +1013,7 @@ export function ShellClient({
         setBusyAction(null);
       }
     },
-    [appEndpoint],
+    [appEndpoint, coreOrigin],
   );
 
   const applyBackupCleanup = useCallback(
@@ -957,6 +1039,10 @@ export function ShellClient({
           toast.success("Backup cleanup complete", { description: `${result.deleted.length} deleted` });
         }
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel((current) => ({
           ...current,
           loading: false,
@@ -979,6 +1065,10 @@ export function ShellClient({
         setActivePanel(null);
         toast.success("Settings saved", { description: app.displayName });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel((current) => ({
           ...current,
           loading: false,
@@ -1006,6 +1096,10 @@ export function ShellClient({
         setActivePanel(null);
         toast.success("Update applied", { description: app.displayName });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel((current) => ({
           ...current,
           loading: false,
@@ -1041,6 +1135,10 @@ export function ShellClient({
         }
         toast.success("App removed", { description: app.displayName });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setDetailPanel((current) => ({
           ...current,
           loading: false,
@@ -1067,6 +1165,7 @@ export function ShellClient({
             system: false,
           }),
         });
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           throw new Error(await readCoreError(response));
         }
@@ -1074,6 +1173,10 @@ export function ShellClient({
         const plan = (await response.json()) as CoreInstallPlan;
         setInstallPanel({ loading: false, error: null, plan });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setInstallPanel({
           loading: false,
           error: error instanceof Error ? error.message : "Install review is unavailable.",
@@ -1101,6 +1204,10 @@ export function ShellClient({
         setInstallPanel(emptyInstallPanelState());
         toast.success("App installed", { description: plan.displayName });
       } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
         setInstallPanel((current) => ({
           ...current,
           loading: false,
@@ -2171,6 +2278,7 @@ function InstalledAppTableSection({
 
     try {
       const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/health`, { credentials: "include" });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) {
         throw new Error(await readCoreError(response));
       }
@@ -2184,6 +2292,10 @@ function InstalledAppTableSection({
         },
       }));
     } catch (error) {
+      if (isAuthRequiredRedirectError(error)) {
+        return;
+      }
+
       setHealthByApp((current) => ({
         ...current,
         [app.id]: {
@@ -2766,6 +2878,7 @@ function UserManagementPanel({
     setError(null);
     try {
       const response = await fetch(`${coreOrigin}/api/auth/users`, { credentials: "include" });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) {
         throw new Error(await readCoreError(response));
       }
@@ -2779,6 +2892,10 @@ function UserManagementPanel({
         setInviteTtlMs(payload.inviteTtlOptions[1]?.ttlMs ?? payload.inviteTtlOptions[0].ttlMs);
       }
     } catch (caught) {
+      if (isAuthRequiredRedirectError(caught)) {
+        return;
+      }
+
       setError(caught instanceof Error ? caught.message : "Unable to load users.");
     } finally {
       setLoading(false);
@@ -2797,6 +2914,10 @@ function UserManagementPanel({
         await action();
         await loadUsers();
       } catch (caught) {
+        if (isAuthRequiredRedirectError(caught)) {
+          return;
+        }
+
         setError(caught instanceof Error ? caught.message : "User action failed.");
       } finally {
         setPendingAction(null);
