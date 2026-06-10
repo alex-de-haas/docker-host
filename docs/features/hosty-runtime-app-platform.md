@@ -38,12 +38,13 @@ Core injects app environment into each service:
 - `HOSTY_APP_ID`
 - `HOSTY_APP_SERVICE_KEY`
 - `HOSTY_APP_SERVICE_TOKEN`
+- `HOSTY_CORE_PUBLIC_ORIGIN`
 - `HOSTY_CORE_ORIGIN`
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_{KEY}`
 - `HOSTY_DEPENDENCY_{KEY}_URL`
 
-For Docker services, `HOSTY_CORE_ORIGIN` is rewritten from loopback Core origins such as `http://localhost:7070` to the container-reachable `host.docker.internal` host while preserving the scheme and port. Browser-facing app endpoint URLs still use the configured runtime public host, normally `localhost`.
+`HOSTY_CORE_PUBLIC_ORIGIN` is the browser-facing Core origin. `HOSTY_CORE_ORIGIN` is the runtime process-to-Core origin. For Docker services, `HOSTY_CORE_ORIGIN` is rewritten from loopback Core origins such as `http://localhost:7070` to the container-reachable `host.docker.internal` host while preserving the scheme and port. For local command services, `HOSTY_CORE_ORIGIN` uses Core's listen URL. Browser-facing app endpoint URLs still use the configured runtime public host, normally `localhost`.
 
 For local command services, Core assigns available ports when `localPort` / `hostPort` are omitted. Single-port services also receive `PORT=<assigned-port>` unless the app explicitly configured `PORT`.
 
