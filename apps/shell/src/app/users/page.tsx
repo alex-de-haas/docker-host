@@ -2,6 +2,6 @@ import { HostyShellPage } from "../shell-page";
 
 export const dynamic = "force-dynamic";
 
-export default function AppsPage() {
+export default function UsersPage() {
   return <HostyShellPage />;
 }

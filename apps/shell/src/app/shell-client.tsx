@@ -42,6 +42,7 @@ import {
   UserX,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -293,6 +294,17 @@ type ShellView = "available-apps" | "dashboard" | "installed-apps" | "users";
 type AppOpenTarget = "workspace" | "tab";
 type HostyResolvedTheme = "light" | "dark";
 type HostyThemePreference = "light" | "dark" | "system";
+type WorkspaceRoute = {
+  appId: string;
+  path: string;
+};
+type ShellRouteState = {
+  view: ShellView;
+  workspace: WorkspaceRoute | null;
+};
+type ShellSearchParams = {
+  get(name: string): string | null;
+};
 
 type SessionResponse = {
   authenticated: boolean;
@@ -431,6 +443,78 @@ type RuntimeServiceRow = {
 
 const SIDEBAR_COMPACT_STORAGE_KEY = "hosty.shell.sidebar.compact";
 
+const SHELL_VIEW_HREFS: Record<ShellView, string> = {
+  dashboard: "/dashboard",
+  "available-apps": "/apps",
+  "installed-apps": "/installed-apps",
+  users: "/users",
+};
+
+function normalizeShellPath(pathname: string) {
+  if (!pathname || pathname === "/") {
+    return "/";
+  }
+
+  return pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+}
+
+function normalizeAppPath(path: string | null | undefined) {
+  const value = (path || "/").trim();
+  if (!value || value === ".") {
+    return "/";
+  }
+
+  return value.startsWith("/") ? value : `/${value}`;
+}
+
+function readShellRoute(pathname: string, searchParams: ShellSearchParams): ShellRouteState {
+  const path = normalizeShellPath(pathname);
+
+  if (path === "/workspace") {
+    const appId = searchParams.get("app")?.trim();
+    if (appId) {
+      return {
+        view: "available-apps",
+        workspace: {
+          appId,
+          path: normalizeAppPath(searchParams.get("path")),
+        },
+      };
+    }
+
+    return { view: "available-apps", workspace: null };
+  }
+
+  if (path === "/apps") {
+    return { view: "available-apps", workspace: null };
+  }
+
+  if (path === "/installed-apps") {
+    return { view: "installed-apps", workspace: null };
+  }
+
+  if (path === "/users") {
+    return { view: "users", workspace: null };
+  }
+
+  return { view: "dashboard", workspace: null };
+}
+
+function getShellViewHref(view: ShellView) {
+  return SHELL_VIEW_HREFS[view];
+}
+
+function getWorkspaceHref(appId: string, appPath: string) {
+  const params = new URLSearchParams();
+  params.set("app", appId);
+  params.set("path", normalizeAppPath(appPath));
+  return `/workspace?${params.toString()}`;
+}
+
+function getWorkspaceRouteKey(route: WorkspaceRoute | null) {
+  return route ? `${route.appId}:${route.path}` : "none";
+}
+
 const emptyDetailPanelState = (): DetailPanelState => ({
   loading: false,
   error: null,
@@ -519,13 +603,19 @@ function isAppAutostartEnabled(app: CoreApp) {
 export function ShellClient({
   coreOrigin,
   shellAppId,
-  initialView = "dashboard",
 }: {
   coreOrigin: string;
   shellAppId: string;
-  initialView?: ShellView;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { theme, resolvedTheme } = useTheme();
+  const shellRoute = useMemo(
+    () => readShellRoute(pathname || "/", searchParams ?? new URLSearchParams()),
+    [pathname, searchParams],
+  );
+  const normalizedRoutePath = normalizeShellPath(pathname || "/");
   const [state, setState] = useState<LoadState>({
     loading: true,
     error: null,
@@ -539,9 +629,14 @@ export function ShellClient({
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
-  const [activeView, setActiveView] = useState<ShellView>(initialView);
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
+  const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(false);
+  const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
+  const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
+  const pendingWorkspaceRoute = useRef<string | null>(null);
+  // Core CSRF is a cookie/header pair, so token refresh + mutation must stay ordered.
+  const csrfOperationQueue = useRef<Promise<void>>(Promise.resolve());
   const shellThemePreference = normalizeThemePreference(theme);
   const shellResolvedTheme = resolveShellTheme(resolvedTheme);
   const activeUser = state.session?.authenticated ? state.session.user : null;
@@ -627,23 +722,35 @@ export function ShellClient({
 
   const sendCsrfJson = useCallback(
     async (endpoint: string, body?: unknown, method = "POST") => {
-      const csrf = await loadCsrfToken();
-      const response = await fetch(endpoint, {
-        method,
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Hosty-CSRF": csrf,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
+      const previousOperation = csrfOperationQueue.current;
+      let releaseOperation = () => {};
+      csrfOperationQueue.current = new Promise<void>((resolve) => {
+        releaseOperation = () => resolve();
       });
 
-      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-      if (!response.ok) {
-        throw new Error(await readCoreError(response));
-      }
+      await previousOperation.catch(() => undefined);
 
-      return response;
+      try {
+        const csrf = await loadCsrfToken();
+        const response = await fetch(endpoint, {
+          method,
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hosty-CSRF": csrf,
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+        if (!response.ok) {
+          throw new Error(await readCoreError(response));
+        }
+
+        return response;
+      } finally {
+        releaseOperation();
+      }
     },
     [coreOrigin, loadCsrfToken],
   );
@@ -667,7 +774,8 @@ export function ShellClient({
     async (app: CoreApp, page: AppPageLink, target: AppOpenTarget = "workspace") => {
       if (app.id === shellAppId) {
         setWorkspace(null);
-        setActiveView(canManageApps ? "dashboard" : "available-apps");
+        setOptimisticWorkspaceRoute(null);
+        router.push(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
         return;
       }
 
@@ -681,33 +789,48 @@ export function ShellClient({
         return;
       }
 
+      const routePath = normalizeAppPath(page.path);
       const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
+      const workspaceHref = getWorkspaceHref(app.id, routePath);
+      const nextWorkspaceRoute = { appId: app.id, path: routePath };
+      setState((current) => ({ ...current, error: null }));
+      setOptimisticWorkspaceRoute(nextWorkspaceRoute);
       if (workspace?.appId === app.id) {
-        setActiveView("available-apps");
         setWorkspace({
           appId: app.id,
           title: app.displayName,
           pageLabel: page.label,
-          path: page.path,
+          path: routePath,
           src: themedRedirectUri,
           externalUrl: getStandaloneAppHref(app, page),
         });
+        router.push(workspaceHref);
         return;
       }
 
-      const actionKey = `${app.id}:open`;
-      setBusyAction(actionKey);
-      setState((current) => ({ ...current, error: null }));
+      const routeKey = getWorkspaceRouteKey(nextWorkspaceRoute);
+      pendingWorkspaceRoute.current = routeKey;
+      setWorkspace(null);
+      setBusyAction(`${app.id}:open`);
+      router.push(workspaceHref);
 
       try {
         const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: themedRedirectUri });
         const launch = (await response.json()) as AppLaunchResponse;
-        setActiveView("available-apps");
+        const currentUrl = new URL(window.location.href);
+        if (
+          normalizeShellPath(currentUrl.pathname) !== "/workspace" ||
+          currentUrl.searchParams.get("app") !== app.id ||
+          normalizeAppPath(currentUrl.searchParams.get("path")) !== routePath
+        ) {
+          return;
+        }
+
         setWorkspace({
           appId: app.id,
           title: app.displayName,
           pageLabel: page.label,
-          path: page.path,
+          path: routePath,
           src: launch.redirectUri,
           externalUrl: launch.redirectUri,
         });
@@ -717,13 +840,15 @@ export function ShellClient({
         }
 
         const message = error instanceof Error ? error.message : "Unable to create app launch link.";
+        setWorkspace(null);
         setState((current) => ({ ...current, error: message }));
         toast.error("App launch failed", { description: message });
       } finally {
+        pendingWorkspaceRoute.current = null;
         setBusyAction(null);
       }
     },
-    [appEndpoint, canManageApps, getStandaloneAppHref, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference, workspace?.appId],
+    [appEndpoint, canManageApps, getStandaloneAppHref, router, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference, workspace?.appId],
   );
 
   const runAppAction = useCallback(
@@ -1228,8 +1353,173 @@ export function ShellClient({
   const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
   const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
-  const effectiveView = canManageApps ? activeView : "available-apps";
+  const effectiveView = canManageApps ? shellRoute.view : "available-apps";
+  const pendingWorkspaceApp = activeWorkspaceRoute ? state.apps.find((app) => app.id === activeWorkspaceRoute.appId) ?? null : null;
+  const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
+  const resetWorkspaceLaunch = useCallback(
+    (options: { clearOptimisticRoute?: boolean; error?: string } = {}) => {
+      pendingWorkspaceRoute.current = null;
+      setWorkspace(null);
+      if (options.clearOptimisticRoute) {
+        setOptimisticWorkspaceRoute(null);
+      }
+      if (options.error) {
+        setState((current) => ({ ...current, error: options.error ?? null }));
+      }
+      setBusyAction((current) => current?.endsWith(":open") ? null : current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!state.session?.authenticated || canManageApps || shellRoute.workspace || shellRoute.view === "available-apps") {
+      return;
+    }
+
+    router.replace(getShellViewHref("available-apps"));
+  }, [canManageApps, router, shellRoute.view, shellRoute.workspace, state.session?.authenticated]);
+
+  useEffect(() => {
+    if (normalizedRoutePath === "/workspace" && !shellRoute.workspace) {
+      router.replace(getShellViewHref("available-apps"));
+    }
+  }, [normalizedRoutePath, router, shellRoute.workspace]);
+
+  useEffect(() => {
+    const routeWorkspace = activeWorkspaceRoute;
+    if (!routeWorkspace) {
+      const browserPath = typeof window === "undefined" ? normalizedRoutePath : normalizeShellPath(window.location.pathname);
+      if (browserPath === "/workspace" || pendingWorkspaceRoute.current) {
+        return;
+      }
+
+      resetWorkspaceLaunch({ clearOptimisticRoute: Boolean(optimisticWorkspaceRoute) });
+      return;
+    }
+
+    if (state.loading || !state.session?.authenticated) {
+      return;
+    }
+
+    const app = state.apps.find((candidate) => candidate.id === routeWorkspace.appId);
+    if (!app) {
+      resetWorkspaceLaunch({ error: `App '${routeWorkspace.appId}' is not installed or not visible to this user.` });
+      return;
+    }
+
+    if (app.id === shellAppId) {
+      resetWorkspaceLaunch();
+      router.replace(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
+      return;
+    }
+
+    if (app.runtimeState !== "running") {
+      resetWorkspaceLaunch({ error: "App must be running before it can be opened." });
+      return;
+    }
+
+    const page = findAppPageLink(app, routeWorkspace.path);
+    if (!page) {
+      resetWorkspaceLaunch({ error: `App '${app.displayName}' does not expose '${routeWorkspace.path}'.` });
+      return;
+    }
+
+    const routePath = normalizeAppPath(page.path);
+    if (workspace?.appId === app.id && workspace.path === routePath) {
+      pendingWorkspaceRoute.current = null;
+      setBusyAction((current) => current === `${app.id}:open` ? null : current);
+      return;
+    }
+
+    const routeKey = getWorkspaceRouteKey({ appId: app.id, path: routePath });
+    if (pendingWorkspaceRoute.current === routeKey) {
+      return;
+    }
+
+    const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
+    if (workspace?.appId === app.id) {
+      pendingWorkspaceRoute.current = null;
+      setBusyAction((current) => current?.endsWith(":open") ? null : current);
+      setState((current) => ({ ...current, error: null }));
+      setWorkspace({
+        appId: app.id,
+        title: app.displayName,
+        pageLabel: page.label,
+        path: routePath,
+        src: themedRedirectUri,
+        externalUrl: getStandaloneAppHref(app, page),
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const workspaceApp = app;
+    const workspacePage = page;
+    pendingWorkspaceRoute.current = routeKey;
+    setBusyAction(`${app.id}:open`);
+    setState((current) => ({ ...current, error: null }));
+
+    async function openWorkspace() {
+      try {
+        const response = await sendCsrfJson(appEndpoint(workspaceApp, "/launch-code"), { redirectUri: themedRedirectUri });
+        const launch = (await response.json()) as AppLaunchResponse;
+        if (cancelled) {
+          return;
+        }
+
+        setWorkspace({
+          appId: workspaceApp.id,
+          title: workspaceApp.displayName,
+          pageLabel: workspacePage.label,
+          path: routePath,
+          src: launch.redirectUri,
+          externalUrl: launch.redirectUri,
+        });
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error) || cancelled) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Unable to create app launch link.";
+        setWorkspace(null);
+        setState((current) => ({ ...current, error: message }));
+        toast.error("App launch failed", { description: message });
+      } finally {
+        if (!cancelled) {
+          pendingWorkspaceRoute.current = null;
+          setBusyAction(null);
+        }
+      }
+    }
+
+    void openWorkspace();
+
+    return () => {
+      cancelled = true;
+      if (pendingWorkspaceRoute.current === routeKey) {
+        pendingWorkspaceRoute.current = null;
+      }
+    };
+  }, [
+    activeWorkspaceRoute,
+    appEndpoint,
+    canManageApps,
+    getStandaloneAppHref,
+    normalizedRoutePath,
+    optimisticWorkspaceRoute,
+    resetWorkspaceLaunch,
+    router,
+    sendCsrfJson,
+    shellAppId,
+    shellResolvedTheme,
+    shellThemePreference,
+    state.apps,
+    state.loading,
+    state.session?.authenticated,
+    workspace,
+    workspaceRouteKey,
+  ]);
 
   function setCompact(compact: boolean) {
     setSidebarCompact(compact);
@@ -1248,7 +1538,7 @@ export function ShellClient({
         sidebarCompact ? "grid-cols-[72px_minmax(0,1fr)]" : "grid-cols-[280px_minmax(0,1fr)]",
       )}
     >
-      <aside className="sticky top-0 h-dvh border-r bg-sidebar text-sidebar-foreground">
+      <aside className="sticky top-0 z-30 h-dvh overflow-visible border-r bg-sidebar text-sidebar-foreground">
         <ShellSidebar
           compact={sidebarCompact}
           activeView={effectiveView}
@@ -1260,21 +1550,27 @@ export function ShellClient({
           busyAction={busyAction}
           onCompactChange={setCompact}
           onNavigate={(view) => {
-            setActiveView(view);
             setWorkspace(null);
+            setOptimisticWorkspaceRoute(null);
+            router.push(getShellViewHref(view));
           }}
           onLaunchApp={launchAppPage}
           getStandaloneHref={getStandaloneAppHref}
         />
       </aside>
 
-      <div className={cn("h-dvh min-w-0", workspace ? "overflow-hidden bg-background" : "overflow-y-auto")}>
-        <main className={cn("w-full", workspace ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
+      <div className={cn("h-dvh min-w-0", workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto")}>
+        <main className={cn("w-full", workspaceSurfaceActive ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
           {workspace ? (
             <EmbeddedWorkspacePanel
               workspace={workspace}
               theme={shellResolvedTheme}
               themePreference={shellThemePreference}
+            />
+          ) : activeWorkspaceRoute ? (
+            <EmbeddedWorkspacePendingPanel
+              appName={pendingWorkspaceApp?.displayName ?? activeWorkspaceRoute.appId}
+              error={state.error}
             />
           ) : (
             <>
@@ -1317,7 +1613,10 @@ export function ShellClient({
                   state={state}
                   runtimeApps={runtimeApps}
                   onRefresh={() => void refresh()}
-                  onOpenInstalledApps={() => setActiveView("installed-apps")}
+                  onOpenInstalledApps={() => {
+                    setOptimisticWorkspaceRoute(null);
+                    router.push(getShellViewHref("installed-apps"));
+                  }}
                 />
               ) : (
                 <AvailableAppsPage
@@ -1401,7 +1700,7 @@ function ShellSidebar({
         <button
           type="button"
           className={cn("flex min-w-0 items-center gap-3 rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]", compact && "justify-center")}
-          onClick={() => onNavigate("dashboard")}
+          onClick={() => onNavigate(canManageApps ? "dashboard" : "available-apps")}
           title="Hosty"
         >
           <BrandMark compact={compact} />
@@ -3849,6 +4148,23 @@ function CheckboxRow({ label, checked, disabled, onChange }: { label: string; ch
   );
 }
 
+function EmbeddedWorkspacePendingPanel({ appName, error }: { appName: string; error: string | null }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background px-6">
+      {error ? (
+        <div className="max-w-lg rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+          <span>Opening {appName}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EmbeddedWorkspacePanel({
   workspace,
   theme,
@@ -4128,6 +4444,18 @@ function getAppPageLinks(app: CoreApp): AppPageLink[] {
 
   const home = app.embeddedUrl || getOpenEndpoint(app)?.url;
   return home ? [{ label: "Home", path: "/", redirectUri: home }] : [];
+}
+
+function findAppPageLink(app: CoreApp, path: string) {
+  const targetPath = normalizeAppPath(path);
+  const pages = getAppPageLinks(app);
+  const exact = pages.find((page) => normalizeAppPath(page.path) === targetPath);
+  if (exact) {
+    return { ...exact, path: targetPath };
+  }
+
+  const redirectUri = buildRedirectUriFromAppPath(app, targetPath);
+  return redirectUri ? { label: targetPath, path: targetPath, redirectUri } : null;
 }
 
 function buildRedirectUriFromAppPath(app: CoreApp, path: string) {

@@ -19,6 +19,21 @@ public sealed class LocalCommandRuntimeAdapterTests
         Assert.Equal("http://localhost:7070", result["HOSTY_CORE_ORIGIN"]);
     }
 
+    [Fact]
+    public void LocalCommandLogWriter_IgnoresLateWritesAfterDispose()
+    {
+        var text = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+        var writer = new LocalCommandLogWriter(text);
+
+        writer.TryWriteLine("before");
+        writer.Dispose();
+        var exception = Record.Exception(() => writer.TryWriteLine("after"));
+
+        Assert.Null(exception);
+        Assert.Contains("before", text.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("after", text.ToString(), StringComparison.Ordinal);
+    }
+
     private static HostyCoreRuntimeConfig CreateConfig(int corePort, string listenUrl, string? corePublicOrigin)
         => new(
             DataRoot: "/tmp/hosty",

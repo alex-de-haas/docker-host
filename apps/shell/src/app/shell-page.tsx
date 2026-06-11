@@ -14,6 +14,6 @@ function getCoreOrigin() {
   return `http://localhost:${corePort}`;
 }
 
-export function HostyShellPage({ initialView = "dashboard" }: { initialView?: "available-apps" | "dashboard" }) {
-  return <ShellClient coreOrigin={getCoreOrigin()} shellAppId={process.env.HOSTY_APP_ID || "hosty.shell"} initialView={initialView} />;
+export function HostyShellPage() {
+  return <ShellClient coreOrigin={getCoreOrigin()} shellAppId={process.env.HOSTY_APP_ID || "hosty.shell"} />;
 }
