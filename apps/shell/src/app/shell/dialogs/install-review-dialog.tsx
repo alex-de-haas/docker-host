@@ -45,7 +45,7 @@ export function InstallReviewDialog({
   const selectedRuntimeLabel = selectedRuntimeProfile ? formatRuntimeProfileLabel(selectedRuntimeProfile) : selectedRuntimeValue || "Select runtime";
 
   useEffect(() => {
-    if (!detail.plan || manifestPath.trim() !== reviewedManifestPath) {
+    if (!detail.plan) {
       setSettingsDraft({});
       return;
     }
@@ -53,7 +53,7 @@ export function InstallReviewDialog({
     setSelectedRuntime(detail.plan.targetRuntime);
     setSettingsDraft(Object.fromEntries(detail.plan.settings.map((setting) => [setting.key, setting.secret ? "" : setting.defaultValue || ""])));
     setAutostartDraft(detail.plan.defaultAutostart ?? true);
-  }, [detail.plan, manifestPath, reviewedManifestPath]);
+  }, [detail.plan, reviewedManifestPath]);
 
   const submitReview = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

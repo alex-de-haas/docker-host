@@ -17,10 +17,10 @@ export function EmbeddedWorkspacePanel({
   const [loaded, setLoaded] = useState(false);
   const [loadedSrc, setLoadedSrc] = useState(workspace.src);
 
-  if (workspace.src !== loadedSrc) {
+  useEffect(() => {
     setLoadedSrc(workspace.src);
     setLoaded(false);
-  }
+  }, [workspace.src]);
 
   const postTheme = useCallback(() => {
     const frame = iframeRef.current;
@@ -52,12 +52,14 @@ export function EmbeddedWorkspacePanel({
     setLoaded(true);
   }, []);
 
+  const currentFrameLoaded = loaded && loadedSrc === workspace.src;
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-background">
       <iframe
         ref={iframeRef}
         key={`${workspace.appId}:${workspace.path}:${workspace.src}`}
-        className={cn("hosty-app-frame transition-opacity duration-100", loaded ? "opacity-100" : "opacity-0")}
+        className={cn("hosty-app-frame transition-opacity duration-100", currentFrameLoaded ? "opacity-100" : "opacity-0")}
         title={`${workspace.title}: ${workspace.pageLabel}`}
         src={workspace.src}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"

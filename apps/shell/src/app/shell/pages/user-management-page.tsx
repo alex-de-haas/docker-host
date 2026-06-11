@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "../app-helpers";
+import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import type { AssignableAppSummary, HostUserSummary, InviteTtlOption, SessionResponse, UserInvitationSummary, UserManagementResponse } from "../types";
 import { CopyField, InlineError, PageHeader, RoleBadge } from "../ui";
@@ -187,7 +188,7 @@ export function UserManagementPanel({
 
   async function copyInviteField(field: "url" | "token", value: string) {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyTextToClipboard(value);
       setCopiedInviteField(field);
       window.setTimeout(() => setCopiedInviteField(null), 1400);
     } catch {

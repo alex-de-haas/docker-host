@@ -263,7 +263,16 @@ function RuntimeAppNavigationItem({
           </Button>
         )}
         {!compact && pages.length > 1 && (
-          <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0" onClick={() => setExpanded((current) => !current)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-8 shrink-0"
+            aria-label={`${expanded ? "Collapse" : "Expand"} ${app.displayName} pages`}
+            aria-expanded={expanded}
+            title={`${expanded ? "Collapse" : "Expand"} ${app.displayName} pages`}
+            onClick={() => setExpanded((current) => !current)}
+          >
             <ChevronRight className={cn("h-4 w-4 transition-transform", expanded && "rotate-90")} />
           </Button>
         )}

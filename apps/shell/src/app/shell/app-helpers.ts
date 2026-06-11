@@ -222,7 +222,9 @@ export function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
 
   try {
     const url = new URL(base);
-    url.pathname = path.startsWith("/") ? path : `/${path}`;
+    const basePath = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
+    const appPath = path.startsWith("/") ? path : `/${path}`;
+    url.pathname = `${basePath}${appPath}`;
     url.search = "";
     url.hash = "";
     return url.toString();
