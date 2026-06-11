@@ -18,6 +18,21 @@ Shell is a thin browser client for Core APIs. Its browser-facing Core origin com
 
 When `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is not configured, Core uses local fallback origins from the configured ports: `http://localhost:<core-port>` and `http://localhost:<shell-port>`. Login redirects, Shell CORS, setup/recovery redirects, and Shell status all use these effective origins.
 
+## Client Module Structure
+
+Shell keeps one client orchestrator at `apps/shell/src/app/shell-client.tsx`. The orchestrator owns Core state loading, session/auth redirects, CSRF mutation ordering, route/query synchronization, sidebar compact state, and embedded workspace launch state.
+
+Feature UI lives under `apps/shell/src/app/shell/`:
+
+- `types.ts`, `core-api.ts`, `shell-routes.ts`, `theme.ts`, and `state.ts` define shared contracts and low-level helpers;
+- `sidebar/` contains Shell navigation and account/theme controls;
+- `pages/` contains Dashboard, Apps, Installed Apps, and User Management view components;
+- `dialogs/` contains install review and installed-app detail dialogs;
+- `workspace/` contains embedded app workspace loading and iframe surfaces;
+- `ui.tsx`, `settings.tsx`, `app-helpers.ts`, and `clipboard.ts` contain shared presentational and formatting helpers.
+
+This structure is intentionally still client-driven. Route files continue to render `HostyShellPage`; future App Router layout work can move shared Shell chrome into a route group after the current behavior is covered by regression tests.
+
 ## Navigation
 
 The Shell sidebar is a persistent desktop-style rail with an expanded and compact mode. The selected mode is stored in browser local storage.
@@ -80,6 +95,8 @@ Shell opens app UIs through the app-owned origin returned by Core. Local runtime
 The app receives a short-lived code and exchanges it with Core for app-scoped identity. Shell does not proxy app HTML, rewrite assets, or forward Hosty session cookies to the app origin.
 
 Embedded workspace iframes are hosted in a Shell-owned `bg-background` surface. Shell keeps the iframe transparent until its document fires `load`, then reveals it and posts the current Shell theme. Theme posting is best-effort because local app restarts can leave the iframe on `about:blank` or a browser error document with a different origin. This masks the browser's default white iframe canvas during dark-theme app navigation and initial app loads without surfacing transient `postMessage` origin errors.
+
+While an embedded workspace route is launching before the iframe exists, Shell shows a plain theme-background workspace surface without a spinner or opening label. Launch errors remain visible on that surface.
 
 ## Deferred Gateway UX
 
