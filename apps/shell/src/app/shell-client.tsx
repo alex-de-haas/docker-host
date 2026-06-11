@@ -1357,6 +1357,20 @@ export function ShellClient({
   const pendingWorkspaceApp = activeWorkspaceRoute ? state.apps.find((app) => app.id === activeWorkspaceRoute.appId) ?? null : null;
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
+  const resetWorkspaceLaunch = useCallback(
+    (options: { clearOptimisticRoute?: boolean; error?: string } = {}) => {
+      pendingWorkspaceRoute.current = null;
+      setWorkspace(null);
+      if (options.clearOptimisticRoute) {
+        setOptimisticWorkspaceRoute(null);
+      }
+      if (options.error) {
+        setState((current) => ({ ...current, error: options.error ?? null }));
+      }
+      setBusyAction((current) => current?.endsWith(":open") ? null : current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!state.session?.authenticated || canManageApps || shellRoute.workspace || shellRoute.view === "available-apps") {
@@ -1380,14 +1394,7 @@ export function ShellClient({
         return;
       }
 
-      pendingWorkspaceRoute.current = null;
-      if (workspace) {
-        setWorkspace(null);
-      }
-      if (optimisticWorkspaceRoute) {
-        setOptimisticWorkspaceRoute(null);
-      }
-      setBusyAction((current) => current?.endsWith(":open") ? null : current);
+      resetWorkspaceLaunch({ clearOptimisticRoute: Boolean(optimisticWorkspaceRoute) });
       return;
     }
 
@@ -1397,34 +1404,24 @@ export function ShellClient({
 
     const app = state.apps.find((candidate) => candidate.id === routeWorkspace.appId);
     if (!app) {
-      pendingWorkspaceRoute.current = null;
-      setWorkspace(null);
-      setBusyAction((current) => current?.endsWith(":open") ? null : current);
-      setState((current) => ({ ...current, error: `App '${routeWorkspace.appId}' is not installed or not visible to this user.` }));
+      resetWorkspaceLaunch({ error: `App '${routeWorkspace.appId}' is not installed or not visible to this user.` });
       return;
     }
 
     if (app.id === shellAppId) {
-      pendingWorkspaceRoute.current = null;
-      setWorkspace(null);
+      resetWorkspaceLaunch();
       router.replace(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
       return;
     }
 
     if (app.runtimeState !== "running") {
-      pendingWorkspaceRoute.current = null;
-      setWorkspace(null);
-      setBusyAction((current) => current?.endsWith(":open") ? null : current);
-      setState((current) => ({ ...current, error: "App must be running before it can be opened." }));
+      resetWorkspaceLaunch({ error: "App must be running before it can be opened." });
       return;
     }
 
     const page = findAppPageLink(app, routeWorkspace.path);
     if (!page) {
-      pendingWorkspaceRoute.current = null;
-      setWorkspace(null);
-      setBusyAction((current) => current?.endsWith(":open") ? null : current);
-      setState((current) => ({ ...current, error: `App '${app.displayName}' does not expose '${routeWorkspace.path}'.` }));
+      resetWorkspaceLaunch({ error: `App '${app.displayName}' does not expose '${routeWorkspace.path}'.` });
       return;
     }
 
@@ -1511,6 +1508,7 @@ export function ShellClient({
     getStandaloneAppHref,
     normalizedRoutePath,
     optimisticWorkspaceRoute,
+    resetWorkspaceLaunch,
     router,
     sendCsrfJson,
     shellAppId,
