@@ -224,21 +224,19 @@ print_manual_path_instruction() {
 printf '%s\n' "Downloading $ARTIFACT from $REPO@$TAG..."
 download "$BASE_URL/$ARTIFACT" "$TMP_DIR/$ARTIFACT" || fail "failed to download $BASE_URL/$ARTIFACT."
 
-if curl -fsSL "$BASE_URL/SHA256SUMS" -o "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
-  EXPECTED_SHA="$(awk -v name="$ARTIFACT" '$NF == name { print $1; exit }' "$TMP_DIR/SHA256SUMS")"
-  [ -n "$EXPECTED_SHA" ] || fail "SHA256SUMS does not contain an entry for $ARTIFACT."
+download "$BASE_URL/SHA256SUMS" "$TMP_DIR/SHA256SUMS" || fail "failed to download $BASE_URL/SHA256SUMS. Checksum verification is required; refusing to install an unverified artifact."
 
-  ACTUAL_SHA="$(sha256_file "$TMP_DIR/$ARTIFACT" || true)"
-  [ -n "$ACTUAL_SHA" ] || fail "SHA256SUMS is available, but no sha256sum, shasum, or openssl command was found."
+EXPECTED_SHA="$(awk -v name="$ARTIFACT" '$NF == name { print $1; exit }' "$TMP_DIR/SHA256SUMS")"
+[ -n "$EXPECTED_SHA" ] || fail "SHA256SUMS does not contain an entry for $ARTIFACT."
 
-  if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-    fail "checksum mismatch for $ARTIFACT."
-  fi
+ACTUAL_SHA="$(sha256_file "$TMP_DIR/$ARTIFACT" || true)"
+[ -n "$ACTUAL_SHA" ] || fail "checksum verification is required, but no sha256sum, shasum, or openssl command was found."
 
-  printf '%s\n' "Verified SHA256 checksum."
-else
-  printf '%s\n' "SHA256SUMS was not available; continuing without checksum verification." >&2
+if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+  fail "checksum mismatch for $ARTIFACT."
 fi
+
+printf '%s\n' "Verified SHA256 checksum."
 
 mkdir -p "$INSTALL_DIR"
 cp "$TMP_DIR/$ARTIFACT" "$TARGET_TMP"

@@ -28,7 +28,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<LocalPasswordAuthService>();
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
-        builder.Services.AddSingleton(_ => new AppManifestService());
+        builder.Services.AddSingleton(sp => new AppManifestService(
+            allowRemoteLocalCommand: sp.GetRequiredService<HostyCoreRuntimeConfig>().AllowRemoteLocalCommand));
         builder.Services.AddSingleton<AppBackupService>();
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<CoreLifecycleService>();
@@ -625,7 +626,9 @@ internal sealed record HostyCoreRuntimeConfig(
     string ShellBootstrapRuntime,
     string? ShellSourceOverridePath,
     bool ShellBootstrapEnabled,
-    bool ShellAutostart)
+    bool ShellAutostart,
+    string? TrustedProxySecret = null,
+    bool AllowRemoteLocalCommand = false)
 {
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
 
@@ -663,7 +666,9 @@ internal sealed record HostyCoreRuntimeConfig(
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_BOOTSTRAP_RUNTIME")) ?? "docker",
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_SOURCE_OVERRIDE_PATH")),
             ReadBoolean("HOSTY_SHELL_BOOTSTRAP_ENABLED", defaultValue: true),
-            ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true));
+            ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true),
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_TRUSTED_PROXY_SECRET")),
+            ReadBoolean("HOSTY_ALLOW_REMOTE_LOCAL_COMMAND", defaultValue: false));
     }
 
     private static string? ReadFirst(params string[] names)
@@ -1034,7 +1039,7 @@ internal sealed class ControlDiscoveryWriter(
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(config.RunDirectory);
+        SecureFileSystem.EnsurePrivateDirectory(config.RunDirectory);
         var discovery = new ControlDiscoveryDocument(
             SchemaVersion: 1,
             Component: "hosty-core",
@@ -1048,7 +1053,12 @@ internal sealed class ControlDiscoveryWriter(
             StartedAt: DateTimeOffset.UtcNow);
 
         var json = JsonSerializer.Serialize(discovery, JsonOptions);
-        await File.WriteAllTextAsync(config.ControlDiscoveryPath, json, cancellationToken);
+        await using (var stream = SecureFileSystem.CreatePrivateFile(config.ControlDiscoveryPath, FileMode.Create))
+        {
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(json), cancellationToken);
+        }
+
+        SecureFileSystem.TryRestrictFile(config.ControlDiscoveryPath);
         logger.LogInformation("Hosty Core control discovery written to {Path}", config.ControlDiscoveryPath);
     }
 

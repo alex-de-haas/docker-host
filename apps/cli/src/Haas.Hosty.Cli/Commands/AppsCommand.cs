@@ -14,52 +14,34 @@ internal sealed class AppsCommand(CommandContext context)
             return 0;
         }
 
-        try
+        return args[0] switch
         {
-            return args[0] switch
-            {
-                "list" => await ListAsync(args[1..]),
-                "install" => await InstallAsync(args[1..]),
-                "autostart" => await AutostartAsync(args[1..]),
-                "start" => await LifecycleActionAsync("start", args[1..]),
-                "stop" => await LifecycleActionAsync("stop", args[1..]),
-                "restart" => await LifecycleActionAsync("restart", args[1..]),
-                "update-plan" => await UpdatePlanAsync(args[1..]),
-                "update" => await UpdateAsync(args[1..]),
-                "switch-runtime-plan" => await SwitchRuntimePlanAsync(args[1..]),
-                "switch-runtime" => await SwitchRuntimeAsync(args[1..]),
-                "remove" => await RemoveAsync(args[1..]),
-                "backup" => await BackupAsync(args[1..]),
-                "backups" => await BackupsAsync(args[1..]),
-                "restore" => await RestoreAsync(args[1..]),
-                "logs" => await LogsAsync(args[1..]),
-                "health" => await HealthAsync(args[1..]),
-                "source" => await SourceAsync(args[1..]),
-                "source-resolve" => await SourceResolveAsync(args[1..]),
-                "source-override" => await SourceOverrideAsync(args[1..]),
-                "source-clear-override" => await SourceClearOverrideAsync(args[1..]),
-                "source-cleanup-plan" => await SourceCleanupPlanAsync(args[1..]),
-                "source-cleanup" => await SourceCleanupAsync(args[1..]),
-                "identity" => await IdentityAsync(args[1..]),
-                "open" => await OpenAsync(args[1..]),
-                _ => throw new CommandUsageException($"Unknown apps command '{args[0]}'.", Usage),
-            };
-        }
-        catch (CoreControlException ex)
-        {
-            context.Console.MarkupLine($"[red]Hosty Core API failed:[/] {Markup.Escape(ex.Message)}");
-            if (!string.IsNullOrWhiteSpace(ex.ResponseBody))
-            {
-                context.Console.MarkupLine($"[grey]Response:[/] {Markup.Escape(ex.ResponseBody)}");
-            }
-
-            return 1;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
-        {
-            context.Console.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
-            return 1;
-        }
+            "list" => await ListAsync(args[1..]),
+            "install" => await InstallAsync(args[1..]),
+            "autostart" => await AutostartAsync(args[1..]),
+            "start" => await LifecycleActionAsync("start", args[1..]),
+            "stop" => await LifecycleActionAsync("stop", args[1..]),
+            "restart" => await LifecycleActionAsync("restart", args[1..]),
+            "update-plan" => await UpdatePlanAsync(args[1..]),
+            "update" => await UpdateAsync(args[1..]),
+            "switch-runtime-plan" => await SwitchRuntimePlanAsync(args[1..]),
+            "switch-runtime" => await SwitchRuntimeAsync(args[1..]),
+            "remove" => await RemoveAsync(args[1..]),
+            "backup" => await BackupAsync(args[1..]),
+            "backups" => await BackupsAsync(args[1..]),
+            "restore" => await RestoreAsync(args[1..]),
+            "logs" => await LogsAsync(args[1..]),
+            "health" => await HealthAsync(args[1..]),
+            "source" => await SourceAsync(args[1..]),
+            "source-resolve" => await SourceResolveAsync(args[1..]),
+            "source-override" => await SourceOverrideAsync(args[1..]),
+            "source-clear-override" => await SourceClearOverrideAsync(args[1..]),
+            "source-cleanup-plan" => await SourceCleanupPlanAsync(args[1..]),
+            "source-cleanup" => await SourceCleanupAsync(args[1..]),
+            "identity" => await IdentityAsync(args[1..]),
+            "open" => await OpenAsync(args[1..]),
+            _ => throw new CommandUsageException($"Unknown apps command '{args[0]}'.", Usage),
+        };
     }
 
     private async Task<int> ListAsync(string[] args)

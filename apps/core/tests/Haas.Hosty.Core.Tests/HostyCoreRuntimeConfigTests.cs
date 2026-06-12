@@ -190,6 +190,26 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Equal("/repo", config.ShellSourceOverridePath);
     }
 
+    [Fact]
+    public void FromEnvironment_DefaultsTrustedProxySecretToDisabled()
+    {
+        using var env = TemporaryEnvironment.With("HOSTY_TRUSTED_PROXY_SECRET", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.Null(config.TrustedProxySecret);
+    }
+
+    [Fact]
+    public void FromEnvironment_UsesExplicitTrustedProxySecret()
+    {
+        using var env = TemporaryEnvironment.With("HOSTY_TRUSTED_PROXY_SECRET", " proxy-secret ");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.Equal("proxy-secret", config.TrustedProxySecret);
+    }
+
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = environmentName;

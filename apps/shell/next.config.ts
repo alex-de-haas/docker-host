@@ -8,6 +8,18 @@ const nextConfig: NextConfig = {
   },
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
+  // The Shell embeds runtime apps, but is never embedded itself.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          { key: "X-Frame-Options", value: "DENY" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

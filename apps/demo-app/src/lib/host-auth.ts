@@ -84,18 +84,39 @@ export interface AppDirectoryUser {
 }
 
 export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<DemoAuthSnapshot> {
-  const [appSession, directory, roleAssignments] = await Promise.all([
+  const [appSession, roleAssignments] = await Promise.all([
     getAppSessionSnapshot(headersList),
-    getAppDirectorySnapshot(),
     readDemoAppRoleAssignments(),
   ]);
+  const appPermissions = resolveDemoAppPermissions(appSession, roleAssignments);
+  const directory = appPermissions.permissions.includes("demo.people.read")
+    ? await getAppDirectorySnapshot()
+    : forbiddenDirectorySnapshot();
 
   return {
     generatedAt: new Date().toISOString(),
     appSession,
     gateway: getGatewayRequestSnapshot(headersList),
     directory,
-    appPermissions: resolveDemoAppPermissions(appSession, roleAssignments),
+    appPermissions,
+  };
+}
+
+function forbiddenDirectorySnapshot(): AppDirectorySnapshot {
+  const config = getDemoConfig();
+  return {
+    status: "forbidden",
+    endpoint: null,
+    coreOrigin: config.host.coreOrigin,
+    serviceTokenConfigured: config.host.appServiceTokenConfigured,
+    users: [],
+    pagination: null,
+    updatedAt: null,
+    error: {
+      status: 403,
+      code: "app_directory_forbidden",
+      message: "Sign in through the host with an app role that includes demo.people.read to view the app directory.",
+    },
   };
 }
 
@@ -140,11 +161,30 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
     };
   }
 
+  const serviceToken = process.env.HOSTY_APP_SERVICE_TOKEN;
+  if (!serviceToken) {
+    return {
+      ...baseSnapshot,
+      status: "error",
+      userId: null,
+      email: null,
+      displayName: null,
+      hostRole: null,
+      expiresAt: null,
+      error: {
+        status: null,
+        code: "app_service_token_missing",
+        message: "HOSTY_APP_SERVICE_TOKEN is not configured. Core requires it to revalidate app identity tokens.",
+      },
+    };
+  }
+
   try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceToken}`,
       },
       body: JSON.stringify({ accessToken: tokenInput.token }),
       cache: "no-store",
@@ -170,6 +210,23 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
     }
 
     const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    if (readString(record.appId) !== config.host.appId) {
+      return {
+        ...baseSnapshot,
+        status: "forbidden",
+        userId: null,
+        email: null,
+        displayName: null,
+        hostRole: null,
+        expiresAt: null,
+        error: {
+          status: null,
+          code: "app_identity_app_mismatch",
+          message: "Identity token was issued for a different app.",
+        },
+      };
+    }
+
     return {
       ...baseSnapshot,
       status: readBooleanField(record.active) ? "active" : "expired",
@@ -198,7 +255,7 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
   }
 }
 
-export async function getAppDirectorySnapshot(): Promise<AppDirectorySnapshot> {
+async function getAppDirectorySnapshot(): Promise<AppDirectorySnapshot> {
   const config = getDemoConfig();
   const endpoint = buildAppDirectoryEndpoint(config.host.coreOrigin, config.host.appId);
   const serviceToken = process.env.HOSTY_APP_SERVICE_TOKEN;

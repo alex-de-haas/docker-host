@@ -1,7 +1,13 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Haas.Hosty.Core;
 
 internal static class AuthEndpoints
 {
+    internal const string TrustedProxySecretHeader = "X-Hosty-Trusted-Proxy-Secret";
+    internal const string TrustedProxyUserIdHeader = "X-Hosty-Trusted-User-Id";
+
     public static void Map(WebApplication app)
     {
         app.MapGet("/api/auth/csrf", (HttpResponse response) =>
@@ -52,9 +58,26 @@ internal static class AuthEndpoints
                 : Results.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
         });
 
-        app.MapPost("/api/auth/trusted-proxy/session", async (HttpRequest request, HttpResponse response, UserDirectoryStore users, IClock clock, CancellationToken cancellationToken) =>
+        app.MapPost("/api/auth/trusted-proxy/session", async (
+            HttpRequest request,
+            HttpResponse response,
+            HostyCoreRuntimeConfig config,
+            UserDirectoryStore users,
+            IClock clock,
+            CancellationToken cancellationToken) =>
         {
-            var userId = request.Headers["X-Hosty-Trusted-User-Id"].ToString();
+            if (string.IsNullOrWhiteSpace(config.TrustedProxySecret))
+            {
+                return Results.Json(new ErrorResponse("trusted_proxy_disabled", "Trusted proxy session creation is disabled. Set HOSTY_TRUSTED_PROXY_SECRET to enable it."), statusCode: StatusCodes.Status404NotFound);
+            }
+
+            var submittedSecret = request.Headers[TrustedProxySecretHeader].ToString();
+            if (!FixedTimeEquals(config.TrustedProxySecret, submittedSecret))
+            {
+                return Results.Json(new ErrorResponse("trusted_proxy_unauthorized", "Trusted proxy secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            var userId = request.Headers[TrustedProxyUserIdHeader].ToString();
             if (string.IsNullOrWhiteSpace(userId))
             {
                 return Results.Json(new ErrorResponse("trusted_proxy_user_missing", "Trusted proxy user id header is missing."), statusCode: StatusCodes.Status400BadRequest);
@@ -91,8 +114,22 @@ internal static class AuthEndpoints
         app.MapPost("/api/auth/apps/token", async (AppTokenExchangeRequest input, AppIdentityService identity, CancellationToken cancellationToken) =>
             await HandleIdentityError(async () => Results.Json(await identity.ExchangeCodeAsync(input.Code, cancellationToken))));
 
-        app.MapPost("/api/auth/apps/revalidate", async (AppRevalidateRequest input, AppIdentityService identity, CancellationToken cancellationToken) =>
-            await HandleIdentityError(async () => Results.Json(await identity.RevalidateAsync(input.AccessToken, cancellationToken))));
+        app.MapPost("/api/auth/apps/revalidate", async (
+            HttpRequest request,
+            AppRevalidateRequest input,
+            AppServiceTokenService serviceTokens,
+            AppIdentityService identity,
+            CancellationToken cancellationToken) =>
+        {
+            var serviceToken = CoreSessionAuthorization.ReadBearerToken(request);
+            var callingAppId = serviceToken is null ? null : serviceTokens.ResolveAppId(serviceToken);
+            if (callingAppId is null)
+            {
+                return Results.Json(new ErrorResponse("app_service_token_invalid", "App service token is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            return await HandleIdentityError(async () => Results.Json(await identity.RevalidateAsync(input.AccessToken, callingAppId, cancellationToken)));
+        });
 
         app.MapPost("/api/apps/{appId}/launch-code", async (
             string appId,
@@ -152,7 +189,12 @@ internal static class AuthEndpoints
     }
 
     private static string CreateSessionId()
-        => Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+
+    private static bool FixedTimeEquals(string expected, string actual)
+        => CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(expected),
+            Encoding.UTF8.GetBytes(actual));
 
     internal static async Task<AuthSessionCreateResult> CreateSessionAsync(
         string userId,

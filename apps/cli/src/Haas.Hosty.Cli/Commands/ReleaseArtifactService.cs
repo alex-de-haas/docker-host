@@ -149,6 +149,12 @@ internal sealed class ReleaseArtifactService(CommandContext context)
         return output.ToArray();
     }
 
+    internal static string RequireChecksum(string? checksums, string artifact)
+        => TryFindChecksum(checksums, artifact, out var sha256)
+            ? sha256
+            : throw new InvalidOperationException(
+                $"SHA256SUMS was unavailable or has no entry for '{artifact}'. Aborting instead of installing an unverified binary.");
+
     internal static bool TryFindChecksum(string? checksums, string artifact, out string sha256)
     {
         sha256 = string.Empty;

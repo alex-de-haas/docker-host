@@ -5,6 +5,14 @@ namespace Haas.Hosty.Core;
 
 internal static class RuntimePortHelper
 {
+    // The OS can hand the same ephemeral port to two concurrent starts once the probe
+    // listener closes; remembering recent allocations excludes those self-races.
+    private const int RecentAllocationMemory = 64;
+    private const int MaxAllocationAttempts = 128;
+    private static readonly object AllocationLock = new();
+    private static readonly HashSet<int> RecentlyAllocatedPorts = [];
+    private static readonly Queue<int> RecentlyAllocatedQueue = new();
+
     public static int ResolveHostPort(RuntimeLifecycleContext context, string serviceKey, RuntimePortManifest port, string key)
     {
         if (TryResolvePinnedHostPort(context, serviceKey, port, key, out var pinnedPort))
@@ -79,8 +87,29 @@ internal static class RuntimePortHelper
 
     private static int AllocateLoopbackPort()
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
+        lock (AllocationLock)
+        {
+            for (var attempt = 0; attempt < MaxAllocationAttempts; attempt++)
+            {
+                using var listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                listener.Stop();
+                if (RecentlyAllocatedPorts.Add(port))
+                {
+                    RecentlyAllocatedQueue.Enqueue(port);
+                    while (RecentlyAllocatedQueue.Count > RecentAllocationMemory)
+                    {
+                        RecentlyAllocatedPorts.Remove(RecentlyAllocatedQueue.Dequeue());
+                    }
+
+                    return port;
+                }
+            }
+        }
+
+        throw new AppLifecycleException(
+            "runtime_port_allocation_failed",
+            "Unable to allocate a free loopback port that was not already handed to another starting service.");
     }
 }

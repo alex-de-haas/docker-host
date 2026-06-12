@@ -1,9 +1,12 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace Haas.Hosty.Core;
 
 internal sealed class AppRegistryStore(CoreDataPaths paths)
 {
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> appLocks = new(StringComparer.Ordinal);
+
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
         => (await ListAppRecordsAsync(cancellationToken))
             .Select(app => AppSummary.From(app))
@@ -42,6 +45,70 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
 
     public async Task<AppStateDocument> UpsertAppAsync(AppRecord app, CancellationToken cancellationToken = default)
     {
+        var mutex = GetAppLock(app.Id);
+        await mutex.WaitAsync(cancellationToken);
+        try
+        {
+            return await UpsertAppCoreAsync(app, cancellationToken);
+        }
+        finally
+        {
+            mutex.Release();
+        }
+    }
+
+    public async Task<AppRecord?> GetAppAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        if (!CoreDataPaths.TryResolveContainedPath(paths.AppsRoot, appId, out var appRoot))
+        {
+            return null;
+        }
+
+        var app = (await JsonStorage.ReadAsync<AppStateDocument>(Path.Combine(appRoot, "state.json"), cancellationToken))?.App;
+        return app is null
+            ? null
+            : await HydrateAppUiAsync(app, appRoot, cancellationToken);
+    }
+
+    public async Task<AppStateDocument> UpdateAppAsync(
+        string appId,
+        Func<AppRecord, AppRecord> update,
+        CancellationToken cancellationToken = default)
+    {
+        var mutex = GetAppLock(appId);
+        await mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var current = await GetAppAsync(appId, cancellationToken) ??
+                throw new InvalidOperationException($"Runtime app '{appId}' was not found.");
+            return await UpsertAppCoreAsync(update(current), cancellationToken);
+        }
+        finally
+        {
+            mutex.Release();
+        }
+    }
+
+    public async Task RemoveAppAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        var mutex = GetAppLock(appId);
+        await mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var appRoot = CoreDataPaths.ResolveContainedPath(paths.AppsRoot, appId);
+            if (Directory.Exists(appRoot))
+            {
+                Directory.Delete(appRoot, recursive: true);
+            }
+        }
+        finally
+        {
+            mutex.Release();
+        }
+    }
+
+    private async Task<AppStateDocument> UpsertAppCoreAsync(AppRecord app, CancellationToken cancellationToken)
+    {
         var now = DateTimeOffset.UtcNow;
         var normalized = app with
         {
@@ -53,37 +120,11 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
         return document;
     }
 
-    public async Task<AppRecord?> GetAppAsync(string appId, CancellationToken cancellationToken = default)
-    {
-        var app = (await JsonStorage.ReadAsync<AppStateDocument>(GetAppStatePath(appId), cancellationToken))?.App;
-        return app is null
-            ? null
-            : await HydrateAppUiAsync(app, Path.Combine(paths.AppsRoot, appId), cancellationToken);
-    }
-
-    public async Task<AppStateDocument> UpdateAppAsync(
-        string appId,
-        Func<AppRecord, AppRecord> update,
-        CancellationToken cancellationToken = default)
-    {
-        var current = await GetAppAsync(appId, cancellationToken) ??
-            throw new InvalidOperationException($"Runtime app '{appId}' was not found.");
-        return await UpsertAppAsync(update(current), cancellationToken);
-    }
-
-    public Task RemoveAppAsync(string appId, CancellationToken cancellationToken = default)
-    {
-        var appRoot = Path.Combine(paths.AppsRoot, appId);
-        if (Directory.Exists(appRoot))
-        {
-            Directory.Delete(appRoot, recursive: true);
-        }
-
-        return Task.CompletedTask;
-    }
+    private SemaphoreSlim GetAppLock(string appId)
+        => appLocks.GetOrAdd(appId, _ => new SemaphoreSlim(1, 1));
 
     private string GetAppStatePath(string appId)
-        => Path.Combine(paths.AppsRoot, appId, "state.json");
+        => Path.Combine(CoreDataPaths.ResolveContainedPath(paths.AppsRoot, appId), "state.json");
 
     private static async Task<AppRecord> HydrateAppUiAsync(AppRecord app, string appRoot, CancellationToken cancellationToken)
     {
@@ -160,7 +201,7 @@ internal sealed record AppRecord(
     bool? Autostart = null,
     IReadOnlyList<AppRuntimeProfileSummary>? RuntimeProfiles = null);
 
-internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret);
+internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret, bool Required = false);
 
 internal sealed record AppStorageMapping(string Key, string HostPath, string TargetPath, bool ReadOnly);
 
@@ -332,7 +373,7 @@ internal sealed record AppSummary(
         IReadOnlyList<AppEndpointContract> endpoints)
     {
         var summaries = settings.Values
-            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret), StringComparer.Ordinal);
+            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret, setting.Required), StringComparer.Ordinal);
         foreach (var endpoint in endpoints.Where(endpoint => endpoint.Public))
         {
             var key = PublicOriginSettings.BuildSettingKey(endpoint.Key);
@@ -421,6 +462,6 @@ internal sealed record AppSummary(
     }
 }
 
-internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret);
+internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false);
 
 internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl);

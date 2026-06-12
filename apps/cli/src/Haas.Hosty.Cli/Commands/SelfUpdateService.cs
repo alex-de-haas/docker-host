@@ -28,8 +28,8 @@ internal sealed class SelfUpdateService(CommandContext context)
             httpClient,
             cancellationToken);
 
-        var hasExpectedSha256 = ReleaseArtifactService.TryFindChecksum(checksums, artifact, out var expectedSha256);
-        if (hasExpectedSha256 && CurrentExecutableMatches(processPath, expectedSha256))
+        var expectedSha256 = ReleaseArtifactService.RequireChecksum(checksums, artifact);
+        if (CurrentExecutableMatches(processPath, expectedSha256))
         {
             context.Console.MarkupLine("[green]CLI is already up to date.[/]");
             return SelfUpdateResult.AlreadyCurrent(processPath);
@@ -41,22 +41,9 @@ internal sealed class SelfUpdateService(CommandContext context)
             cancellationToken);
 
         var artifactSha256 = CalculateSha256(artifactBytes);
-        if (hasExpectedSha256)
+        if (!string.Equals(artifactSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
         {
-            if (!string.Equals(artifactSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException("Downloaded CLI artifact failed SHA256 verification.");
-            }
-        }
-        else
-        {
-            context.Console.MarkupLine("[yellow]SHA256SUMS was not available; continuing without checksum verification.[/]");
-        }
-
-        if (CurrentExecutableMatches(processPath, artifactSha256))
-        {
-            context.Console.MarkupLine("[green]CLI is already up to date.[/]");
-            return SelfUpdateResult.AlreadyCurrent(processPath);
+            throw new InvalidOperationException("Downloaded CLI artifact failed SHA256 verification.");
         }
 
         var tempPath = processPath + ".download";

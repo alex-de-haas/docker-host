@@ -35,9 +35,12 @@ Runtime apps can validate the current Host user by calling:
 
 ```text
 POST /api/auth/apps/revalidate
+Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>
 ```
 
-Direct endpoint probes can pass the same app identity token through `Authorization: Bearer` or `X-Docker-Host-Identity`.
+Core resolves the calling app from the service token and rejects identity tokens that were issued for a different app, so a token leaked from one app cannot be replayed against another.
+
+Direct endpoint probes against an app origin can pass the app identity token through `Authorization: Bearer` or `X-Docker-Host-Identity`.
 
 ## Scoped App Directory
 

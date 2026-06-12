@@ -14,6 +14,9 @@ on:
       - "global.json"
       - ".github/workflows/cli-release.yml"
 
+permissions:
+  contents: read
+
 jobs:
   publish-artifacts:
     name: Build ${{ matrix.rid }}
@@ -52,6 +55,11 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Resolve product version
+        id: product_version
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Publish CLI executable
         shell: bash
         run: |
@@ -61,6 +69,7 @@ jobs:
             --self-contained true \
             -p:PublishSingleFile=true \
             -p:PublishTrimmed=false \
+            -p:Version=${{ steps.product_version.outputs.version }} \
             --output artifacts
 
       - name: Normalize artifact name
@@ -88,6 +97,7 @@ jobs:
             --self-contained true \
             -p:PublishSingleFile=true \
             -p:PublishTrimmed=false \
+            -p:Version=${{ steps.product_version.outputs.version }} \
             --output core-artifacts
 
       - name: Normalize Core artifact name

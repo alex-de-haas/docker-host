@@ -109,9 +109,9 @@ internal sealed class CoreCommand(CommandContext context)
 
         if (OperatingSystem.IsWindows())
         {
-            var windowsStartInfo = CreateCoreStartInfo(target, url, settings);
-            windowsStartInfo.CreateNoWindow = true;
-            using var windowsProcess = Process.Start(windowsStartInfo);
+            var windowsStartInfo = CreateWindowsBackgroundStartInfo(target, url, settings, logPath);
+            using var windowsProcess = Process.Start(windowsStartInfo) ??
+                throw new InvalidOperationException("Unable to start Hosty Core process.");
             return logPath;
         }
 
@@ -145,6 +145,32 @@ internal sealed class CoreCommand(CommandContext context)
         }
 
         return logPath;
+    }
+
+    private ProcessStartInfo CreateWindowsBackgroundStartInfo(CoreStartTarget target, string url, LaunchSettings settings, string logPath)
+    {
+        var command = string.Join(" ", [
+            .. target.GetCmdShellCommand(),
+            ">",
+            CmdQuote(logPath),
+            "2>&1",
+        ]);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+            Arguments = $"/d /s /c \"{command}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = target.WorkingDirectory,
+        };
+
+        foreach (var pair in BuildCoreEnvironment(url, settings))
+        {
+            startInfo.Environment[pair.Key] = pair.Value;
+        }
+
+        return startInfo;
     }
 
     private ProcessStartInfo CreateCoreStartInfo(CoreStartTarget target, string url, LaunchSettings settings)
@@ -441,6 +467,9 @@ internal sealed class CoreCommand(CommandContext context)
     private static string ShellQuote(string value)
         => $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
 
+    private static string CmdQuote(string value)
+        => $"\"{value}\"";
+
     private void RenderStatus(CoreStatusDocument status)
     {
         var table = new Table();
@@ -497,6 +526,15 @@ internal sealed class CoreCommand(CommandContext context)
             foreach (var argument in Arguments)
             {
                 yield return ShellQuote(argument);
+            }
+        }
+
+        public IEnumerable<string> GetCmdShellCommand()
+        {
+            yield return CmdQuote(FileName);
+            foreach (var argument in Arguments)
+            {
+                yield return CmdQuote(argument);
             }
         }
     }

@@ -12,7 +12,7 @@ internal static class AppDirectoryEndpoints
             UserDirectoryStore users,
             CancellationToken cancellationToken) =>
         {
-            var token = ReadBearerToken(request);
+            var token = CoreSessionAuthorization.ReadBearerToken(request);
             if (string.IsNullOrWhiteSpace(token) || !serviceTokens.ValidateToken(appId, token))
             {
                 return Results.Json(
@@ -49,18 +49,6 @@ internal static class AppDirectoryEndpoints
         });
     }
 
-    private static string? ReadBearerToken(HttpRequest request)
-    {
-        if (!request.Headers.TryGetValue("Authorization", out var header))
-        {
-            return null;
-        }
-
-        var value = header.ToString();
-        return value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? value["Bearer ".Length..].Trim()
-            : null;
-    }
 }
 
 internal sealed record AppDirectoryUsersResponse(

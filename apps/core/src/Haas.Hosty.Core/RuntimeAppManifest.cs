@@ -6,12 +6,13 @@ using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppManifestService(HttpClient? httpClient = null)
+internal sealed class AppManifestService(HttpClient? httpClient = null, bool allowRemoteLocalCommand = false)
 {
     private const string ManifestFileName = "manifest.json";
     private const string SupportedSchemaVersion = "app.0.1";
     private const int MaxManifestBytes = 1024 * 1024;
     private static readonly Regex ContractKeyPattern = new("^[a-z][a-z0-9-]{0,62}$", RegexOptions.Compiled);
+    private static readonly Regex AppIdPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
     private readonly HttpClient httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
 
     public async Task<RuntimeAppManifestSelection> LoadAsync(
@@ -80,7 +81,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
 
         if (!string.IsNullOrWhiteSpace(manifest.Id) && !IsSafeIdentifier(manifest.Id))
         {
-            errors.Add(new("app_manifest_id_invalid", "App id must contain only letters, numbers, '.', '_' or '-'.", "$.id"));
+            errors.Add(new("app_manifest_id_invalid", "App id must match ^[a-z0-9][a-z0-9._-]{0,62}$ and must not be a path segment such as '.' or '..'.", "$.id"));
         }
 
         if (manifest.RuntimeProfiles.Count == 0)
@@ -137,6 +138,16 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         if (selectedProfile is null)
         {
             errors.Add(new("app_manifest_selected_runtime_missing", $"Selected runtime '{resolvedRuntime}' does not reference a runtime profile.", "$.defaultRuntime"));
+        }
+
+        if (selectedProfile is { Type: "localCommand" } &&
+            !string.IsNullOrWhiteSpace(manifestUrl) &&
+            !allowRemoteLocalCommand)
+        {
+            errors.Add(new(
+                "app_manifest_remote_local_command_blocked",
+                "Remotely fetched manifests cannot select a localCommand runtime because it runs arbitrary commands on the host. Install from a reviewed local manifest path, or set HOSTY_ALLOW_REMOTE_LOCAL_COMMAND=1 to opt in.",
+                "$.runtimeProfiles[].type"));
         }
 
         if (manifest.Services.Count == 0)
@@ -433,7 +444,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             : null;
 
     private static bool IsSafeIdentifier(string value)
-        => value.All(character => char.IsLetterOrDigit(character) || character is '.' or '_' or '-');
+        => AppIdPattern.IsMatch(value) &&
+            value is not "." and not ".." &&
+            CoreDataPaths.IsSafePathSegment(value);
 
     private static void ValidateRequired(string? value, string path, List<AppManifestValidationError> errors)
     {
@@ -894,6 +907,7 @@ internal sealed class RuntimeAppSettingManifest
     public string Type { get; init; } = "string";
     public string? Default { get; init; }
     public bool Secret { get; init; }
+    public bool Required { get; init; }
 }
 
 internal sealed class RuntimeAppDependencyManifest

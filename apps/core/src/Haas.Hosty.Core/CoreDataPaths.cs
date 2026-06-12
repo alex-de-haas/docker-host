@@ -21,4 +21,41 @@ internal sealed record CoreDataPaths(
             Path.Combine(coreRoot, "auth"),
             Path.Combine(coreRoot, "audit", "audit.ndjson"));
     }
+
+    public static bool IsSafePathSegment(string segment)
+        => TryResolveContainedPath(Path.GetTempPath(), segment, out _);
+
+    public static string ResolveContainedPath(string root, string segment)
+        => TryResolveContainedPath(root, segment, out var fullPath)
+            ? fullPath
+            : throw new AppLifecycleException("app_id_invalid", $"App id '{segment}' is not a safe path segment.");
+
+    public static bool TryResolveContainedPath(string root, string segment, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(segment) ||
+            segment is "." or ".." ||
+            segment.IndexOfAny(['/', '\\']) >= 0 ||
+            segment.Contains(Path.DirectorySeparatorChar) ||
+            segment.Contains(Path.AltDirectorySeparatorChar))
+        {
+            return false;
+        }
+
+        var fullRoot = Path.GetFullPath(root);
+        var combined = Path.GetFullPath(Path.Combine(fullRoot, segment));
+        var rootPrefix = fullRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? fullRoot
+            : fullRoot + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!combined.StartsWith(rootPrefix, comparison) || combined.Length <= rootPrefix.Length)
+        {
+            return false;
+        }
+
+        fullPath = combined;
+        return true;
+    }
 }

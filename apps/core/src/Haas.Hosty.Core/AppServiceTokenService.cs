@@ -17,11 +17,14 @@ internal sealed class AppServiceTokenService(ControlSecret secret)
     }
 
     public bool ValidateToken(string appId, string token)
+        => string.Equals(ResolveAppId(token), appId, StringComparison.Ordinal);
+
+    public string? ResolveAppId(string token)
     {
         var parts = token.Split('.');
         if (parts is not [Prefix, Version, var appPart, var signature])
         {
-            return false;
+            return null;
         }
 
         string tokenAppId;
@@ -31,18 +34,14 @@ internal sealed class AppServiceTokenService(ControlSecret secret)
         }
         catch (FormatException)
         {
-            return false;
+            return null;
         }
 
-        if (!string.Equals(tokenAppId, appId, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var expected = Sign(appId);
-        return CryptographicOperations.FixedTimeEquals(
+        var expected = Sign(tokenAppId);
+        var signatureValid = CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(expected),
             Encoding.UTF8.GetBytes(signature));
+        return signatureValid ? tokenAppId : null;
     }
 
     private string Sign(string appId)

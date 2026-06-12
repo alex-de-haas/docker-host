@@ -1,5 +1,6 @@
 namespace Haas.Hosty.Cli;
 
+using System.Reflection;
 using Haas.Hosty.Cli.Commands;
 using Haas.Hosty.Cli.Configuration;
 using Spectre.Console;
@@ -63,6 +64,27 @@ public static class CommandLine
             console.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
             return 2;
         }
+        catch (CoreControlException ex)
+        {
+            console.MarkupLine($"[red]Hosty Core API failed:[/] {Markup.Escape(ex.Message)}");
+            if (!string.IsNullOrWhiteSpace(ex.ResponseBody))
+            {
+                console.MarkupLine($"[grey]Response:[/] {Markup.Escape(ex.ResponseBody)}");
+            }
+
+            return 1;
+        }
+        catch (CoreControlTimeoutException ex)
+        {
+            console.MarkupLine($"[red]Hosty Core did not respond in time:[/] {Markup.Escape(ex.Message)}");
+            console.MarkupLine("[grey]The operation may still be running in Hosty Core. Check it with [white]hosty core status[/] and [white]hosty apps list[/].[/]");
+            return 1;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+        {
+            console.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
+            return 1;
+        }
         catch (OperationCanceledException)
         {
             console.MarkupLine("[yellow]Operation cancelled.[/]");
@@ -70,7 +92,19 @@ public static class CommandLine
         }
     }
 
-    public const string Version = "0.1.0";
+    public static string Version { get; } = ResolveVersion(
+        typeof(CommandLine).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
+
+    internal static string ResolveVersion(string? informationalVersion)
+    {
+        if (string.IsNullOrWhiteSpace(informationalVersion))
+        {
+            return "0.0.0";
+        }
+
+        var metadataSeparator = informationalVersion.IndexOf('+', StringComparison.Ordinal);
+        return metadataSeparator < 0 ? informationalVersion : informationalVersion[..metadataSeparator];
+    }
 
     private static int UnknownCommand(IAnsiConsole console, string command)
     {

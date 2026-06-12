@@ -24,44 +24,26 @@ internal sealed class AppIdentityService(
         var user = await RequireAccessibleUserAsync(appId, userId, cancellationToken);
         var now = clock.UtcNow;
         var code = CreateOpaqueToken();
-        var state = await codes.ReadAsync(cancellationToken);
-        var nextCodes = state.Codes
-            .Where(candidate => candidate.ExpiresAt > now && candidate.ConsumedAt is null)
-            .Append(new AppAuthCodeRecord(code, appId, user.Id, redirectUri, now, now.Add(AuthCodeLifetime), null))
-            .ToArray();
-        await codes.WriteAsync(state with { Codes = nextCodes }, cancellationToken);
+        await codes.AppendCodeAsync(
+            new AppAuthCodeRecord(code, appId, user.Id, redirectUri, now, now.Add(AuthCodeLifetime), null),
+            now,
+            cancellationToken);
 
         return new AppAuthorizeResult(code, BuildRedirectUri(redirectUri, code), now.Add(AuthCodeLifetime));
     }
 
     public async Task<AppIdentityTokenResult> ExchangeCodeAsync(string code, CancellationToken cancellationToken = default)
     {
-        var now = clock.UtcNow;
-        var state = await codes.ReadAsync(cancellationToken);
-        var match = state.Codes.FirstOrDefault(candidate => string.Equals(candidate.Code, code, StringComparison.Ordinal));
-        if (match is null)
+        var result = await codes.ConsumeCodeAsync(code, clock.UtcNow, cancellationToken);
+        var match = result.Outcome switch
         {
-            throw new AppIdentityException("invalid_code", "Authorization code is invalid.");
-        }
-
-        if (match.ConsumedAt is not null)
-        {
-            throw new AppIdentityException("code_consumed", "Authorization code has already been consumed.");
-        }
-
-        if (match.ExpiresAt <= now)
-        {
-            throw new AppIdentityException("code_expired", "Authorization code has expired.");
-        }
+            AppAuthCodeConsumeOutcome.Consumed => result.Record!,
+            AppAuthCodeConsumeOutcome.AlreadyConsumed => throw new AppIdentityException("code_consumed", "Authorization code has already been consumed."),
+            AppAuthCodeConsumeOutcome.Expired => throw new AppIdentityException("code_expired", "Authorization code has expired."),
+            _ => throw new AppIdentityException("invalid_code", "Authorization code is invalid."),
+        };
 
         var user = await RequireAccessibleUserAsync(match.AppId, match.UserId, cancellationToken);
-        var consumed = state.Codes
-            .Select(candidate => string.Equals(candidate.Code, code, StringComparison.Ordinal)
-                ? candidate with { ConsumedAt = now }
-                : candidate)
-            .ToArray();
-        await codes.WriteAsync(state with { Codes = consumed }, cancellationToken);
-
         return await CreateIdentityTokenAsync(match.AppId, user, cancellationToken);
     }
 
@@ -76,9 +58,15 @@ internal sealed class AppIdentityService(
 
     public async Task<AppSessionValidationResult> RevalidateAsync(
         string token,
+        string callingAppId,
         CancellationToken cancellationToken = default)
     {
         var claims = await ValidateTokenAsync(token, cancellationToken);
+        if (!string.Equals(claims.Audience, callingAppId, StringComparison.Ordinal))
+        {
+            throw new AppIdentityException("token_app_mismatch", "Identity token was issued for a different app.");
+        }
+
         var user = await RequireAccessibleUserAsync(claims.Audience, claims.Subject, cancellationToken);
         return new AppSessionValidationResult(
             true,
@@ -152,7 +140,9 @@ internal sealed class AppIdentityService(
         var path = Path.Combine(paths.AuthRoot, "app-identity-signing.key");
         try
         {
-            return await ReadSigningKeyAsync(path, cancellationToken);
+            var existingKey = await ReadSigningKeyAsync(path, cancellationToken);
+            SecureFileSystem.TryRestrictFile(path);
+            return existingKey;
         }
         catch (IOException) when (File.Exists(path))
         {
@@ -163,12 +153,12 @@ internal sealed class AppIdentityService(
             // Missing key falls through to atomic creation below.
         }
 
-        Directory.CreateDirectory(paths.AuthRoot);
+        SecureFileSystem.EnsurePrivateDirectory(paths.AuthRoot);
         var key = RandomNumberGenerator.GetBytes(32);
         var encodedKey = Encoding.UTF8.GetBytes(Convert.ToBase64String(key));
         try
         {
-            await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, useAsync: true);
+            await using var stream = SecureFileSystem.CreatePrivateFile(path, FileMode.CreateNew);
             await stream.WriteAsync(encodedKey, cancellationToken);
             return key;
         }

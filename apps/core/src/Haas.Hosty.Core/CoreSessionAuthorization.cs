@@ -63,6 +63,19 @@ internal static class CoreSessionAuthorization
         return await action(authorization.User!);
     }
 
+    public static string? ReadBearerToken(HttpRequest request)
+    {
+        if (!request.Headers.TryGetValue("Authorization", out var header))
+        {
+            return null;
+        }
+
+        var value = header.ToString();
+        return value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? value["Bearer ".Length..].Trim()
+            : null;
+    }
+
     private static bool HasValidCsrfToken(HttpRequest request)
     {
         var cookie = request.Cookies[CsrfCookieName];

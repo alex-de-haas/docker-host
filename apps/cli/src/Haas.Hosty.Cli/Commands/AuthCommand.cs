@@ -22,30 +22,12 @@ internal sealed class AuthCommand(CommandContext context)
             return 0;
         }
 
-        try
+        return args[0] switch
         {
-            return args[0] switch
-            {
-                "setup-token" => await ExecuteTokenAsync(args[1..], "auth setup-token does not accept arguments.", "Usage: hosty auth setup-token", "auth/setup-token", "Setup"),
-                "recovery-token" => await ExecuteTokenAsync(args[1..], "auth recovery-token does not accept arguments.", "Usage: hosty auth recovery-token", "auth/recovery-token", "Recovery"),
-                _ => throw new CommandUsageException($"Unknown auth command '{args[0]}'.", Usage),
-            };
-        }
-        catch (CoreControlException ex)
-        {
-            context.Console.MarkupLine($"[red]Hosty Core API failed:[/] {Markup.Escape(ex.Message)}");
-            if (!string.IsNullOrWhiteSpace(ex.ResponseBody))
-            {
-                context.Console.MarkupLine($"[grey]Response:[/] {Markup.Escape(ex.ResponseBody)}");
-            }
-
-            return 1;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
-        {
-            context.Console.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
-            return 1;
-        }
+            "setup-token" => await ExecuteTokenAsync(args[1..], "auth setup-token does not accept arguments.", "Usage: hosty auth setup-token", "auth/setup-token", "Setup"),
+            "recovery-token" => await ExecuteTokenAsync(args[1..], "auth recovery-token does not accept arguments.", "Usage: hosty auth recovery-token", "auth/recovery-token", "Recovery"),
+            _ => throw new CommandUsageException($"Unknown auth command '{args[0]}'.", Usage),
+        };
     }
 
     private async Task<int> ExecuteTokenAsync(

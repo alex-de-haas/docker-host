@@ -1,7 +1,11 @@
+using System.Text.RegularExpressions;
+
 namespace Haas.Hosty.Core;
 
 internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock)
 {
+    private static readonly Regex CommitPattern = new("^[0-9a-fA-F]{4,64}$", RegexOptions.Compiled);
+
     public async Task<AppSourceResponse> GetAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
@@ -197,7 +201,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             throw new AppLifecycleException("source_checkout_not_empty", $"Managed source checkout path is not empty: {checkoutPath}");
         }
 
-        _ = await RunGitProcessAsync(null, ["clone", repository, checkoutPath], cancellationToken);
+        _ = await RunGitProcessAsync(null, ["clone", "--", repository, checkoutPath], cancellationToken);
     }
 
     internal static void ValidateManagedRepository(string repository)
@@ -208,6 +212,13 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         }
 
         var trimmed = repository.Trim();
+        if (trimmed.StartsWith('-'))
+        {
+            throw new AppLifecycleException(
+                "source_repository_invalid",
+                "Source repository must not start with '-'.");
+        }
+
         if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
         {
             if (uri.Scheme is "http" or "https")
@@ -248,7 +259,13 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
     {
         if (!string.IsNullOrWhiteSpace(request.Commit))
         {
-            return await RunGitAsync(checkoutPath, ["rev-parse", $"{request.Commit}^{{commit}}"], cancellationToken);
+            var commit = request.Commit.Trim();
+            if (!CommitPattern.IsMatch(commit))
+            {
+                throw new AppLifecycleException("source_commit_invalid", "Source commit must be a 4-64 character hexadecimal object id.");
+            }
+
+            return await RunGitAsync(checkoutPath, ["rev-parse", $"{commit}^{{commit}}"], cancellationToken);
         }
 
         if (!string.IsNullOrWhiteSpace(request.Tag))
@@ -266,6 +283,11 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             {
                 return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/remotes/origin/{request.Branch}^{{commit}}"], cancellationToken);
             }
+        }
+
+        if (fallbackRef.StartsWith('-'))
+        {
+            throw new AppLifecycleException("source_ref_invalid", "Source ref must not start with '-'.");
         }
 
         return await RunGitAsync(checkoutPath, ["rev-parse", $"{fallbackRef}^{{commit}}"], cancellationToken);
