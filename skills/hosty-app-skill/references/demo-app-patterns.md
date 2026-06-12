@@ -13,6 +13,6 @@ Use the repository Demo App as the first-party runtime app validation target.
 
 ```bash
 hosty core start
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 ```

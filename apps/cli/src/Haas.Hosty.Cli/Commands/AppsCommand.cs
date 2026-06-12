@@ -738,7 +738,7 @@ internal sealed class AppsCommand(CommandContext context)
 
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
-            throw new CommandUsageException("apps install requires a manifest path.", Usage);
+            throw new CommandUsageException("apps install requires a manifest URL, manifest file path, or app directory.", Usage);
         }
 
         return new InstallOptions(NormalizeManifestReference(manifestPath), selectedRuntime, selectedChannel, system, autostart);
@@ -1540,13 +1540,13 @@ internal sealed class AppsCommand(CommandContext context)
 
         Commands:
           list
-          install <manifest-path> [--runtime <key>] [--channel <channel>] [--system] [--autostart|--no-autostart]
+          install <manifest-url|manifest-path|app-directory> [--runtime <key>] [--channel <channel>] [--system] [--autostart|--no-autostart]
           autostart <app-id> --enabled|--disabled
           start <app-id>
           stop <app-id>
           restart <app-id>
-          update-plan <app-id> [--manifest <path>] [--runtime <key>] [--channel <channel>]
-          update <app-id> --plan-digest <digest> [--manifest <path>] [--runtime <key>] [--channel <channel>]
+          update-plan <app-id> [--manifest <manifest-url|manifest-path|app-directory>] [--runtime <key>] [--channel <channel>]
+          update <app-id> --plan-digest <digest> [--manifest <manifest-url|manifest-path|app-directory>] [--runtime <key>] [--channel <channel>]
           switch-runtime-plan <app-id> --runtime <key>
           switch-runtime <app-id> --runtime <key> --plan-digest <digest>
           remove <app-id> [--delete-data] [--delete-backups] [--delete-source] [--keep-state] [--ignore-runtime-errors]

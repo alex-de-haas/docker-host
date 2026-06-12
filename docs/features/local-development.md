@@ -82,7 +82,7 @@ For the repository demo app:
 
 ```bash
 hosty start
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 ```
 
@@ -111,7 +111,7 @@ hosty apps switch-runtime com.haas.demo-app --runtime docker --plan-digest <dige
 
 Use `hosty apps source-resolve <app-id> --branch <name> --fetch` when the app should run from a Core-managed checkout. Use `source-override` when a specific local worktree should be used instead. Local override state is stored in the Hosty installation record and is not written back to the public app manifest.
 
-When an app manifest is installed from a local filesystem path with `--runtime dev`, Core records the containing Git worktree as the local source root and starts `localCommand` services from that root. When the same runtime is selected from an HTTP(S) manifest URL, Core clones the manifest's absolute `source.repository` into `sources/<app-id>` before start.
+When an app manifest is installed from a local manifest file or app directory with `--runtime dev`, Core records the containing Git worktree as the local source root and starts `localCommand` services from that root. When the same runtime is selected from an HTTP(S) manifest URL, Core clones the manifest's absolute `source.repository` into `sources/<app-id>` before start.
 
 ## Local Command Constraints
 

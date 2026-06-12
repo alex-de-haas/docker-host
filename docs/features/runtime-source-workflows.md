@@ -47,7 +47,7 @@ Local command runtime profiles require a source root. Core resolves it in this o
 - local worktree inferred at install/update time when the manifest was loaded from a local filesystem path;
 - managed checkout under `sources/<app-id>` when the manifest was loaded from an HTTP(S) URL.
 
-When a manifest is installed from a local path, Core treats that path as a developer/operator-owned worktree. It does not clone or fetch `source.repository`; instead it records the nearest Git root above the manifest path when one exists, or falls back to the manifest directory/relative `workingDirectory` inference.
+When a manifest is installed from a local manifest file or app directory, Core treats that filesystem location as a developer/operator-owned worktree. It does not clone or fetch `source.repository`; instead it records the nearest Git root above the manifest when one exists, or falls back to the manifest directory/relative `workingDirectory` inference.
 
 When a manifest is installed from an HTTP(S) URL and the selected runtime profile is `localCommand`, Core requires an app-level `source.repository` that can be cloned as an absolute Git URL or local repository path. Relative repositories such as `.` are rejected for this remote-manifest start path because Core has no repository root to resolve them against.
 

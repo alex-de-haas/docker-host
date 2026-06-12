@@ -31,7 +31,7 @@ The intended installed flow is:
 - `.github/workflows/ci.yml` builds Shell with `npm run shell:build`, but does not build or publish a Shell Docker image.
 - `.github/workflows/demo-app-image.yml` publishes only the Demo App image.
 - `apps/shell/manifest.json` declares a Docker runtime profile, but its image is local-only: `hosty-shell:local` with `pullPolicy: never`.
-- Core can install runtime apps from local manifest paths or HTTP(S) manifest URLs through the existing app manifest loader.
+- Core can install runtime apps from local manifest files, local app directories, or HTTP(S) manifest URLs through the existing app manifest loader.
 - Core bootstraps `hosty.shell` as a system app when it can find a Shell manifest.
 - Source runs can find `apps/shell/manifest.json`, but installed Core startup currently depends on local manifest discovery or explicit `HOSTY_SHELL_MANIFEST_PATH`.
 - Outside Development, Core leaves `ShellPublicOrigin` unset unless the user configures it, so older `hosty open` behavior could not infer a Shell URL.
@@ -47,13 +47,13 @@ The intended installed flow is:
 - Add a Shell image workflow that runs only on pushes to `main` and publishes `latest` plus `sha-<commit>` tags.
 - Keep the existing CI workflow shape for pull requests. Pull requests continue to run the current Shell build, Demo App build, Core build, and CLI build checks; they do not build or publish the Shell Docker image.
 - Add a launch setting for the Shell manifest reference: `HOSTY_SHELL_MANIFEST_PATH`.
-- `HOSTY_SHELL_MANIFEST_PATH` accepts either a local manifest path or an HTTP(S) manifest URL.
+- `HOSTY_SHELL_MANIFEST_PATH` accepts a local manifest file, local app directory, or HTTP(S) manifest URL.
 - Default `HOSTY_SHELL_MANIFEST_PATH` to the raw GitHub URL for `apps/shell/manifest.json` on `main`.
 - Add `HOSTY_SHELL_BOOTSTRAP_RUNTIME` as the selected Shell runtime profile, defaulting to `docker`.
 - With the default URL manifest, `HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker` starts the latest published Shell image. If a user selects a Shell `localCommand` runtime from a URL manifest, Core clones the manifest's `source.repository` into Hosty managed sources before start.
 - Let users override the Shell manifest reference and runtime in `launch.env` to run a custom Shell implementation.
 - Keep Core as the owner of Shell system app bootstrap. The CLI writes and passes launch settings only.
-- Make Core bootstrap accept either a local Shell manifest path or URL, then use the same install/update path used by ordinary runtime apps.
+- Make Core bootstrap accept a local Shell manifest file, local app directory, or URL, then use the same install/update path used by ordinary runtime apps.
 - Make Core bootstrap reconcile an existing `hosty.shell` system app with the configured Shell manifest URL while preserving explicit runtime/source override intent where possible.
 - Set the installed launch default `HOSTY_SHELL_PORT` to `7171`, while keeping `HOSTY_SHELL_PUBLIC_ORIGIN` unset unless explicitly configured.
 
@@ -61,7 +61,7 @@ The intended installed flow is:
 
 - A new user installs Hosty through the platform installer, runs `hosty install`, then `hosty start`. Core downloads the configured Shell manifest and starts `hosty.shell` from the published `ghcr.io/alex-de-haas/hosty-shell:latest` image.
 - `hosty open` opens the configured Shell public origin after Core startup, or `http://localhost:<HOSTY_SHELL_PORT>` when no Shell public origin is configured.
-- A user replaces the Shell by setting `HOSTY_SHELL_MANIFEST_PATH` in `launch.env` to another compatible local manifest path or manifest URL, and setting `HOSTY_SHELL_BOOTSTRAP_RUNTIME` when the replacement should use a non-default runtime profile.
+- A user replaces the Shell by setting `HOSTY_SHELL_MANIFEST_PATH` in `launch.env` to another compatible local manifest file, local app directory, or manifest URL, and setting `HOSTY_SHELL_BOOTSTRAP_RUNTIME` when the replacement should use a non-default runtime profile.
 - A developer runs `npm run dev`; Core still bootstraps Shell with the repository-local manifest's `dev` local command runtime and source override.
 - An administrator sees Hosty Shell under System Apps and can inspect logs, but cannot stop, update, back up, or remove it from Shell UI.
 - An existing installation with a local-only Shell manifest is reconciled to the configured Shell manifest URL on startup or update.
@@ -113,7 +113,7 @@ The CLI launch configuration schema gains two settings:
 - Port `3000` is already occupied: Shell start fails unless the configured manifest/origin uses a different port.
 - Existing installations with `hosty-shell:local` should not remain pinned to a non-existent local image after upgrade.
 - Explicit `HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_SHELL_BOOTSTRAP_RUNTIME`, and source override settings must keep working for local development.
-- URL manifests that use a Shell `localCommand` runtime must declare an absolute clonable `source.repository`; relative repositories such as `.` work only for local manifest path installs.
+- URL manifests that use a Shell `localCommand` runtime must declare an absolute clonable `source.repository`; relative repositories such as `.` work only for local filesystem installs.
 - If Shell image publishing and CLI/Core release publishing race on the same commit, the rolling `latest` tag may briefly point to the previous image.
 - A custom Shell manifest must use the same Core API/session expectations as the built-in Shell.
 

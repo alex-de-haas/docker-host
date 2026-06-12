@@ -8,7 +8,7 @@ The `hosty apps` command group manages installed runtime apps through the local 
 
 ```bash
 hosty apps list
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 hosty apps health com.haas.demo-app
 hosty apps logs com.haas.demo-app
@@ -17,6 +17,8 @@ hosty apps identity com.haas.demo-app --user user@docker-host.local --format tok
 hosty apps stop com.haas.demo-app
 hosty apps remove com.haas.demo-app
 ```
+
+`hosty apps install` accepts an HTTP(S) URL that points directly to `manifest.json`, a local manifest file path, or a local app directory containing `manifest.json`. From inside a checked-out runtime app directory, use `hosty apps install .`.
 
 ## Control API
 

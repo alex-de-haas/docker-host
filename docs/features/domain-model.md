@@ -9,7 +9,7 @@ Hosty manages Core, Shell, CLI, and runtime apps. A runtime app is installed fro
 - **Core** - local ASP.NET Core process that owns lifecycle, auth, user directory, app registry, backups, and control APIs.
 - **Shell** - Core-managed browser runtime app that provides the user interface.
 - **CLI** - local bootstrap and Core control client exposed as `hosty`.
-- **Runtime app** - user workload installed from `apps/{app}/manifest.json` or another `app.0.1` manifest path.
+- **Runtime app** - user workload installed from an `app.0.1` manifest URL, local manifest file, or local app directory containing `manifest.json`.
 - **Runtime profile** - a selectable runtime implementation such as `docker` or `localCommand`.
 - **Service** - one process or container declared by a runtime app.
 - **Endpoint** - a service URL that Core can expose to Shell, CLI, or other apps.

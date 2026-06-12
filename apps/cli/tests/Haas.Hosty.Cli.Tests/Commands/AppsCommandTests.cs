@@ -242,6 +242,50 @@ public sealed class AppsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task InstallAsync_SendsLocalDirectoryReference()
+    {
+        var appDirectory = Path.Combine(rootDirectory, "runtime-app");
+        Directory.CreateDirectory(appDirectory);
+        using var server = new FakeCoreServer("""
+            {
+              "app": {
+                "id": "com.haas.local-app",
+                "displayName": "Local App",
+                "version": "1.0.0",
+                "kind": "runtime",
+                "system": false,
+                "source": "manifest",
+                "selectedRuntime": "dev",
+                "operationStatus": "installed",
+                "runtimeState": "stopped",
+                "capabilities": []
+              },
+              "backup": null,
+              "status": "installed"
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "install",
+            appDirectory,
+            "--runtime",
+            "dev",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/install", server.PathAndQuery);
+        using var body = JsonDocument.Parse(server.Body);
+        Assert.Equal(appDirectory, body.RootElement.GetProperty("manifestPath").GetString());
+        Assert.Equal("dev", body.RootElement.GetProperty("selectedRuntime").GetString());
+        Assert.Contains("com.haas.local-app", output.ToString());
+    }
+
+    [Fact]
     public async Task BackupDeleteAsync_UsesDeleteControlRoute()
     {
         using var server = new FakeCoreServer("""

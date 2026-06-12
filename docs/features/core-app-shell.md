@@ -77,7 +77,7 @@ The Installed Apps view is the current administrator management surface for inst
 Runtime Apps expose actions according to Core state and app capabilities:
 
 - start, stop, and restart;
-- install from an `app.0.1` manifest URL or local manifest path;
+- install from an `app.0.1` manifest URL, local manifest file path, or local app directory containing `manifest.json`;
 - configure settings and autostart;
 - plan and apply updates;
 - inspect logs and health;

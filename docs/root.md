@@ -54,5 +54,6 @@ Draft, exploratory, or backlog items that are not current implementation commitm
 - [Gateway and app wrapping ideas](ideas/gateway-and-app-wrapping.md) - future gateway, ingress, and third-party app wrapping boundaries.
 - [Auth provider extensions](ideas/auth-provider-extensions.md) - future OIDC, trusted-proxy provisioning, password reset, and durable throttling directions.
 - [Runtime source extensions](ideas/runtime-source-extensions.md) - future multi-repository source and private repository credential handling.
+- [Runtime app repository install](ideas/runtime-app-repository-install.md) - future direct Git repository install flow for runtime apps.
 - [Backup retention extensions](ideas/backup-retention-extensions.md) - future age-based and per-app backup retention policy.
 - [Future work ideas](ideas/future-work.md) - small backlog items that are not yet planned in detail.
