@@ -218,7 +218,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                 continue;
             }
 
-            var hostPort = RuntimePortHelper.ResolveHostPort(context, port, key);
+            var hostPort = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
             assignedHostPorts.Add(hostPort);
             startInfo.Environment[$"HOSTY_PORT_{RuntimePortHelper.NormalizeEnvironmentKey(key)}"] = hostPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
             endpoints.Add(new AppEndpointContract(
@@ -252,29 +252,26 @@ internal sealed class LocalCommandRuntimeAdapter(
             foreach (var port in service.Runtime.Ports)
             {
                 var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port";
-                var hostPort = RuntimePortHelper.TryReadHostPortOverride(context, key, out var overridePort)
-                    ? overridePort
-                    : port.LocalPort ?? port.HostPort;
-                if (hostPort is null)
+                if (!RuntimePortHelper.TryResolvePinnedHostPort(context, service.Key, port, key, out var hostPort))
                 {
                     continue;
                 }
 
-                if (!IsLoopbackPortAvailable(hostPort.Value))
+                if (!IsLoopbackPortAvailable(hostPort))
                 {
                     throw new AppLifecycleException(
                         "local_command_port_unavailable",
-                        $"Local command service '{service.Key}' requires local port {hostPort.Value} for port '{key}', but that port is already in use or invalid.");
+                        $"Local command service '{service.Key}' requires local port {hostPort} for port '{key}', but that port is already in use or invalid.");
                 }
 
-                if (usedPorts.TryGetValue(hostPort.Value, out var existingService))
+                if (usedPorts.TryGetValue(hostPort, out var existingService))
                 {
                     throw new AppLifecycleException(
                         "local_command_port_unavailable",
-                        $"Local command service '{service.Key}' requires local port {hostPort.Value} for port '{key}', but that port is already used by service '{existingService}' in this app.");
+                        $"Local command service '{service.Key}' requires local port {hostPort} for port '{key}', but that port is already used by service '{existingService}' in this app.");
                 }
 
-                usedPorts.Add(hostPort.Value, service.Key);
+                usedPorts.Add(hostPort, service.Key);
             }
         }
     }

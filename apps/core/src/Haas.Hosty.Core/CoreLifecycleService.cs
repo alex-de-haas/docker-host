@@ -677,7 +677,7 @@ internal sealed class CoreLifecycleService(
         var dependencies = manifest.Dependencies
             .Select(dependency => new AppDependencyContract(dependency.Id, dependency.Id, "default"))
             .ToArray();
-        var endpoints = manifest.Endpoints.Count == 0
+        var endpointContracts = manifest.Endpoints.Count == 0
             ? selection.Services.SelectMany(service => service.Runtime.Ports.Select(port => new AppEndpointContract(
                 Key: $"{service.Key}.{port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"}",
                 Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
@@ -692,6 +692,7 @@ internal sealed class CoreLifecycleService(
                 Public: endpoint.Public,
                 Service: endpoint.Service,
                 Port: endpoint.Port)).ToArray();
+        var endpoints = PreserveEndpointUrls(endpointContracts, existing?.Endpoints);
 
         return new AppRecord(
             Id: manifest.Id!,
@@ -720,6 +721,31 @@ internal sealed class CoreLifecycleService(
             Ui: AppUiContract.FromManifest(manifest.Ui),
             Autostart: existing?.Autostart ?? true,
             RuntimeProfiles: BuildRuntimeProfileSummaries(manifest));
+    }
+
+    private static IReadOnlyList<AppEndpointContract> PreserveEndpointUrls(
+        IReadOnlyList<AppEndpointContract> endpoints,
+        IReadOnlyList<AppEndpointContract>? existing)
+    {
+        if (existing is null || existing.Count == 0)
+        {
+            return endpoints;
+        }
+
+        return endpoints.Select(endpoint =>
+        {
+            var match = existing.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Key, endpoint.Key, StringComparison.Ordinal) &&
+                    !string.IsNullOrWhiteSpace(candidate.Url)) ??
+                existing.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Service, endpoint.Service, StringComparison.Ordinal) &&
+                    string.Equals(candidate.Port, endpoint.Port, StringComparison.Ordinal) &&
+                    !string.IsNullOrWhiteSpace(candidate.Url));
+
+            return string.IsNullOrWhiteSpace(match?.Url)
+                ? endpoint
+                : endpoint with { Url = match.Url };
+        }).ToArray();
     }
 
     private async Task<AppSummary> BuildAppSummaryAsync(AppRecord app, CancellationToken cancellationToken)

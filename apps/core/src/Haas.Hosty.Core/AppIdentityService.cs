@@ -241,14 +241,31 @@ internal sealed class AppIdentityService(
         var redirect = ValidateRedirectUri(redirectUri);
         var app = await RequireInstalledAppAsync(appId, cancellationToken);
         var allowed = app.Endpoints
-            .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.Url))
-            .Select(endpoint => Uri.TryCreate(endpoint.Url, UriKind.Absolute, out var uri) ? uri : null)
+            .SelectMany(endpoint => GetAllowedEndpointOrigins(endpoint, app.Settings))
+            .Where(origin => !string.IsNullOrWhiteSpace(origin))
+            .Select(origin => Uri.TryCreate(origin, UriKind.Absolute, out var uri) ? uri : null)
             .OfType<Uri>()
             .Any(endpointUri => SameOrigin(endpointUri, redirect));
 
         if (!allowed)
         {
             throw new AppIdentityException("redirect_uri_denied", "Redirect URI must target an installed app endpoint origin.");
+        }
+    }
+
+    private static IEnumerable<string?> GetAllowedEndpointOrigins(
+        AppEndpointContract endpoint,
+        IReadOnlyDictionary<string, AppSettingValue> settings)
+    {
+        yield return endpoint.Url;
+        yield return endpoint.PublicOrigin;
+
+        if (endpoint.Public &&
+            !string.IsNullOrWhiteSpace(endpoint.Url) &&
+            settings.TryGetValue(PublicOriginSettings.BuildSettingKey(endpoint.Key), out var setting) &&
+            PublicOriginSettings.TryNormalizeOrigin(setting.Value, out var publicOrigin))
+        {
+            yield return publicOrigin;
         }
     }
 

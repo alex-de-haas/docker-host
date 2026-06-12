@@ -56,6 +56,32 @@ public sealed class AppIdentityServiceTests
     }
 
     [Fact]
+    public async Task CreateAuthorizationCodeAsync_AllowsEndpointPublicOriginRedirectUris()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
+            "com.example.notes",
+            "user_1",
+            "https://notes-public.example/settings");
+
+        Assert.StartsWith("https://notes-public.example/settings?code=", authorization.RedirectUri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateAuthorizationCodeAsync_RejectsUnknownPublicOriginRedirectUris()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://attacker.example/settings"));
+
+        Assert.Equal("redirect_uri_denied", error.Code);
+    }
+
+    [Fact]
     public async Task RevalidateAsync_RejectsTokenAfterAssignmentChanges()
     {
         var fixture = await IdentityFixture.CreateAsync();
@@ -161,7 +187,10 @@ public sealed class AppIdentityServiceTests
                 LastOperation: null,
                 LastError: null,
                 Capabilities: ["open"],
-                Settings: new Dictionary<string, AppSettingValue>(),
+                Settings: new Dictionary<string, AppSettingValue>
+                {
+                    ["HOSTY_PUBLIC_ORIGIN_APP_HTTP"] = new("HOSTY_PUBLIC_ORIGIN_APP_HTTP", "url", "https://notes-public.example", Secret: false),
+                },
                 StorageMappings: [],
                 Dependencies: [],
                 Endpoints: [new AppEndpointContract("app.http", "https", "https://notes.example", Public: true)],

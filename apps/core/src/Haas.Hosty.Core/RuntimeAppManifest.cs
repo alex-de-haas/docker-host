@@ -534,7 +534,7 @@ internal sealed class DockerRuntimeAdapter(
                 }
 
                 var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                var hostPort = RuntimePortHelper.ResolveHostPort(context, port, key);
+                var hostPort = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
                 assignedPorts[key] = hostPort;
                 runArgs.Add("-p");
                 runArgs.Add($"127.0.0.1:{hostPort}:{port.ContainerPort.Value}");

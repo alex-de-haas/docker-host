@@ -1104,6 +1104,94 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_LocalCommandReusesStoredAutoPortAfterStop()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Apps.UpsertAppAsync(CreateDependencyApp());
+        var overridePath = Path.Combine(fixture.Root, "local-app");
+        Directory.CreateDirectory(overridePath);
+        var manifest = await fixture.WriteLocalCommandManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
+        _ = await fixture.Sources.SetLocalOverrideAsync("com.example.local", new AppSourceOverrideRequest(overridePath));
+
+        try
+        {
+            var first = await fixture.Service.StartAsync("com.example.local");
+            var firstUrl = Assert.Single(first.App!.Endpoints).Url;
+            _ = await fixture.Service.StopAsync("com.example.local");
+
+            var second = await fixture.Service.StartAsync("com.example.local");
+            var secondUrl = Assert.Single(second.App!.Endpoints).Url;
+
+            Assert.Equal(firstUrl, secondUrl);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.local");
+        }
+    }
+
+    [Fact]
+    public async Task RestartAsync_LocalCommandReusesStoredAutoPort()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Apps.UpsertAppAsync(CreateDependencyApp());
+        var overridePath = Path.Combine(fixture.Root, "local-app");
+        Directory.CreateDirectory(overridePath);
+        var manifest = await fixture.WriteLocalCommandManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
+        _ = await fixture.Sources.SetLocalOverrideAsync("com.example.local", new AppSourceOverrideRequest(overridePath));
+
+        try
+        {
+            var first = await fixture.Service.StartAsync("com.example.local");
+            var firstUrl = Assert.Single(first.App!.Endpoints).Url;
+
+            var restarted = await fixture.Service.RestartAsync("com.example.local");
+            var restartedUrl = Assert.Single(restarted.App!.Endpoints).Url;
+
+            Assert.Equal(firstUrl, restartedUrl);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.local");
+        }
+    }
+
+    [Fact]
+    public async Task ApplyUpdateAsync_PreservesStoredAutoPortForMatchingLocalCommandEndpoint()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Apps.UpsertAppAsync(CreateDependencyApp());
+        var overridePath = Path.Combine(fixture.Root, "local-app");
+        Directory.CreateDirectory(overridePath);
+        var manifest = await fixture.WriteLocalCommandManifestAsync(version: "1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
+        _ = await fixture.Sources.SetLocalOverrideAsync("com.example.local", new AppSourceOverrideRequest(overridePath));
+
+        try
+        {
+            var first = await fixture.Service.StartAsync("com.example.local");
+            var firstUrl = Assert.Single(first.App!.Endpoints).Url;
+            _ = await fixture.Service.StopAsync("com.example.local");
+
+            var updateManifest = await fixture.WriteLocalCommandManifestAsync(version: "1.0.1");
+            var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.local", new AppUpdatePlanRequest(updateManifest));
+            _ = await fixture.Service.ApplyUpdateAsync("com.example.local", new AppUpdateApplyRequest(plan.PlanDigest, updateManifest));
+            var updated = await fixture.Apps.GetAppAsync("com.example.local");
+
+            Assert.Equal(firstUrl, Assert.Single(updated!.Endpoints).Url);
+
+            var second = await fixture.Service.StartAsync("com.example.local");
+            Assert.Equal(firstUrl, Assert.Single(second.App!.Endpoints).Url);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.local");
+        }
+    }
+
+    [Fact]
     public async Task StartAsync_PreservesManifestEndpointPublicFlagForAliasedRuntimePort()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -1651,7 +1739,7 @@ public sealed class CoreLifecycleServiceTests
             return path;
         }
 
-        public async Task<string> WriteLocalCommandManifestAsync(int? localPort = null)
+        public async Task<string> WriteLocalCommandManifestAsync(int? localPort = null, string version = "1.0.0")
         {
             var path = Path.Combine(Root, "local-command.json");
             var localPortJson = localPort is null
@@ -1662,7 +1750,7 @@ public sealed class CoreLifecycleServiceTests
                   "schemaVersion": "app.0.1",
                   "id": "com.example.local",
                   "name": "Local App",
-                  "version": "1.0.0",
+                  "version": "{{version}}",
                   "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
                   "defaultRuntime": "dev",
                   "services": [{
