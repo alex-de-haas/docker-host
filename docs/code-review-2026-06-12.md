@@ -181,7 +181,7 @@ extraction succeeds.
 
 ### 5. File-backed JSON stores have no locking
 
-- **Files:** `apps/core/src/Haas.Hosty.Core/JsonStorage.cs:37`, `AppRegistryStore.cs:64`, `AppIdentityService.cs:37`
+- **Files:** `apps/core/src/Haas.Hosty.Core/JsonStorage.cs:37`, `apps/core/src/Haas.Hosty.Core/AppRegistryStore.cs:64`, `apps/core/src/Haas.Hosty.Core/AppIdentityService.cs:37`
 - **Category:** concurrency
 
 Three confirmed sub-issues, none of which have any synchronization in the call stack:
@@ -232,7 +232,7 @@ which is also what triggers the release/image-publish workflows.
 
 ### 7. Secrets written world-readable
 
-- **Files:** `apps/core/src/Haas.Hosty.Core/HostyCoreApplication.cs:1051`, `AppIdentityService.cs:171`
+- **Files:** `apps/core/src/Haas.Hosty.Core/HostyCoreApplication.cs:1051`, `apps/core/src/Haas.Hosty.Core/AppIdentityService.cs:171`
 - **Category:** security
 
 `control.json` (the master control secret that authorizes every `/control/v1/*`
@@ -275,7 +275,7 @@ expose async job semantics. At minimum, distinguish the timeout error message fr
 
 ### 9. CLI: several commands crash instead of erroring cleanly; Windows log lost
 
-- **Files:** `apps/cli/src/Haas.Hosty.Cli/Commands/UsersCommand.cs:46`, `CoreCommand.cs:110`
+- **Files:** `apps/cli/src/Haas.Hosty.Cli/Commands/UsersCommand.cs:46`, `apps/cli/src/Haas.Hosty.Cli/Commands/CoreCommand.cs:110`
 - **Category:** bug
 
 `hosty users` and `hosty open` have no try/catch around their Core calls (unlike
@@ -355,7 +355,7 @@ any create/delete.
 
 ### 12. git argv injection / backup-reason path traversal
 
-- **Files:** `apps/core/src/Haas.Hosty.Core/AppSourceService.cs:203` (and 251), `AppBackupService.cs:32`
+- **Files:** `apps/core/src/Haas.Hosty.Core/AppSourceService.cs:203` (and 251), `apps/core/src/Haas.Hosty.Core/AppBackupService.cs:32`
 - **Category:** security
 
 `ValidateManagedRepository` only checks URI schemes and SCP-style SSH; a value
@@ -398,7 +398,7 @@ requiring explicit operator confirmation/trust pinning; consider disallowing
 
 ### 14. Port allocation TOCTOU; start-already-running marks app stopped
 
-- **Files:** `apps/core/src/Haas.Hosty.Core/RuntimePortHelper.cs:80`, `LocalCommandRuntimeAdapter.cs:18`
+- **Files:** `apps/core/src/Haas.Hosty.Core/RuntimePortHelper.cs:80`, `apps/core/src/Haas.Hosty.Core/LocalCommandRuntimeAdapter.cs:18`
 - **Category:** concurrency / bug
 
 `AllocateLoopbackPort` binds on port 0, reads the port, then closes the listener before
@@ -430,7 +430,7 @@ running-app path, dropping the backup id and reporting `"started"` instead of
 
 ### 16. Contract drift between TS and C#
 
-- **Files:** `apps/shell/src/app/shell/types.ts:18`, `dashboard-page.tsx:24`, `types.ts:224`
+- **Files:** `apps/shell/src/app/shell/types.ts:18`, `apps/shell/src/app/shell/pages/dashboard-page.tsx:24`, `apps/shell/src/app/shell/types.ts:224`
 - **Category:** bug
 
 - `CoreSetting.required` / `CoreInstallSetting.required` exist on the TS side but have no
@@ -484,7 +484,7 @@ to the Shell/Core origin.
 
 ### 19. Missing workflow permissions; unpinned actions
 
-- **Files:** `.github/workflows/cli-release.yml:17`, `shell-image.yml:33`
+- **Files:** `.github/workflows/cli-release.yml:17`, `.github/workflows/shell-image.yml:33`
 - **Category:** security
 
 `cli-release.yml` and `ci.yml` define no top-level `permissions:` block, so their jobs
@@ -556,7 +556,7 @@ copies already disagree on 403 vs 404) should likewise collapse into one
 
 ### Q3. Duplicated primitives and grab-bag files
 
-- **Files:** `RuntimeAppManifest.cs`, plus several services
+- **Files:** `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`, plus several services
 
 Five `JsonSerializerOptions` instances, five SHA-256-hex helpers, two `IsLoopbackHost`
 implementations, two `TryDelete`, and a duplicated `GetAppDataPath`. `RuntimeAppManifest.cs`
