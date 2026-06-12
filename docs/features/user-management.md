@@ -7,12 +7,10 @@ Host users can enter the system through these implemented flows:
 - first-administrator setup creates the initial local `host.admin` with a password after a valid local setup token;
 - local administrator recovery creates or restores a `host.admin` and replaces its password after a valid local recovery token;
 - local invitations create `host.admin` or `host.user` accounts with passwords after the invite is accepted;
-- future OIDC login can provision or update external users through provider role mappings;
-- future trusted-proxy assertions can provision or update external users through trusted proxy role mappings;
 
 First-administrator bootstrap and local administrator recovery are Core auth flows, not User Management flows. The removed Legacy Host auth-token writer is not part of the current implementation.
 
-Browser account switching is a separate compatibility topic. User Management owns persisted users, invitations, assignments, sessions, and audit events.
+Browser account switching is a separate compatibility topic tracked in [Browser Account Switching](../ideas/account-switching.md). External auth provider extensions are tracked in [Auth Provider Extensions](../ideas/auth-provider-extensions.md). User Management owns persisted users, invitations, assignments, sessions, and audit events.
 
 The feature uses Core-owned auth state:
 
@@ -52,7 +50,7 @@ Administrators can:
 - disable users;
 - replace a user's app assignments.
 
-External-provider users are reserved for future auth-provider work. When enabled, they should be listed, disabled, and assigned to apps in the same surface, while their roles remain provider-managed.
+External-provider users are reserved for future auth-provider work tracked in [Auth Provider Extensions](../ideas/auth-provider-extensions.md). When enabled, they should be listed, disabled, and assigned to apps in the same surface, while their roles remain provider-managed.
 
 User Management does not add a separate permissions store. It reuses Core auth state in `auth/state.json`: users are `HostUserRecord` entries, invitations are token-hash records, and app access is stored as `AppAssignmentRecord` entries.
 
@@ -81,7 +79,7 @@ The recipient opens the URL, confirms the token, sets a password, and creates th
 
 The raw setup token is returned only once to the administrator and is never stored in auth state.
 
-Hosty does not create users directly from User Management in this version. New local users are invite-first. Password-reset invites can reuse the same token mechanics later, but they are not part of this feature.
+Hosty does not create users directly from User Management in this version. New local users are invite-first. Password-reset ideas are tracked in [Auth Provider Extensions](../ideas/auth-provider-extensions.md).
 
 After logout, local users sign in through Core `/login` with email and password. Existing users from older builds that do not have password credentials need administrator recovery or a future reset-password flow before they can use password login.
 
@@ -100,7 +98,7 @@ Hosty Core prevents disabling or demoting the last active administrator. Adminis
 
 Changing a local user's role revokes that user's active sessions.
 
-Provider-managed roles are read-only in User Management. OIDC and trusted-proxy login can overwrite stored roles from provider mappings, so external role changes belong to the provider configuration instead of this page.
+Provider-managed roles are read-only in User Management. Future OIDC and trusted-proxy login can overwrite stored roles from provider mappings, so external role changes belong to the provider configuration instead of this page.
 
 Every user, invitation, role, disable, and assignment mutation appends an auth audit event with actor, target, result, and relevant mutation details.
 
@@ -115,7 +113,7 @@ For ordinary users, an app is visible when:
 
 Administrators can see all Hosty apps. App directory responses still include only explicitly assigned, enabled users.
 
-The access picker lists installed runtime apps. Hosty access assignments are app-wide and currently control Shell visibility. Future gateway work should reuse the same assignment model for assigned-only service/API exposure policy.
+The access picker lists installed runtime apps. Hosty access assignments are app-wide and currently control Shell visibility. Future gateway work is tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md) and should reuse the same assignment model for assigned-only service/API exposure policy.
 
 Invitation assignments are stored on the invitation and applied only when the invite is accepted, because the target user id does not exist before acceptance.
 

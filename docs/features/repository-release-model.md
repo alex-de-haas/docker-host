@@ -165,4 +165,4 @@ Manual validation for the current artifact model:
 
 During early development, `cli-dev` is the main CLI/Core distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions.
 
-Runtime apps carry their own app manifest versions. Product channel metadata can coordinate CLI/Core/Shell updates later, but generated product channels are deferred. Until then, the placeholder product channel records the Core artifact family instead of a source project path.
+Runtime apps carry their own app manifest versions. Product channel metadata can coordinate CLI/Core/Shell updates later. Generated product channels are tracked as an idea in [Update Channels](../ideas/update-channels.md). Until then, the placeholder product channel records the Core artifact family instead of a source project path.

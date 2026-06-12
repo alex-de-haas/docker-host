@@ -1,5 +1,7 @@
 # Browser Account Switching
 
+Status: Idea.
+
 Browser account switching was implemented in the retired Legacy Host auth stack. It is not part of the current Hosty Core/Shell implementation.
 
 Current Core/Shell behavior uses one active Core session per browser context. Shell reads that session from `GET /api/auth/session`, uses it to filter app visibility, and redirects unauthenticated users to Core `/login`.

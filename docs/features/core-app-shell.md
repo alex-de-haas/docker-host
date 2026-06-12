@@ -98,8 +98,8 @@ Embedded workspace iframes are hosted in a Shell-owned `bg-background` surface. 
 
 While an embedded workspace route is launching before the iframe exists, Shell shows a plain theme-background workspace surface without a spinner or opening label. Launch errors remain visible on that surface.
 
-## Deferred Gateway UX
+## Gateway Boundary
 
 The removed Legacy Host included `/ingress` and gateway exposure UI. That route tree no longer exists in the repository.
 
-Gateway and external ingress readiness remain target architecture topics for service/API exposure publishing. Future work should implement them through Hosty Core or an explicit Core-managed gateway runtime. Until then, Shell documentation and UI should not present `/ingress`, `/api/gateway/*`, or `/api/ingress/*` as current implemented surfaces.
+Gateway and external ingress readiness remain target architecture topics for service/API exposure publishing. Future work is tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md). Until then, Shell documentation and UI should not present `/ingress`, `/api/gateway/*`, or `/api/ingress/*` as current implemented surfaces.

@@ -1,4 +1,6 @@
-# Future Work
+# Future Work Ideas
+
+Status: Idea.
 
 ## Runtime App Updates
 

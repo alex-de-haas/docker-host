@@ -13,7 +13,7 @@ flowchart LR
 
 ## Source State
 
-An app manifest may declare one app-level source repository. Multi-repository runtime apps are out of scope for the first source runtime implementation; split independently-owned services into separate runtime apps or defer them until a future `source.repositories[]` contract exists.
+An app manifest may declare one app-level source repository. Multi-repository runtime apps are out of scope for the first source runtime implementation; split independently-owned services into separate runtime apps. Future source extensions are tracked in [Runtime Source Extensions](../ideas/runtime-source-extensions.md).
 
 Core stores source state as Host installation state, not as public manifest metadata:
 

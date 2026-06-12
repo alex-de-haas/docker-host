@@ -1,5 +1,7 @@
 # Update Channels
 
+Status: Idea.
+
 ## Description
 
 Update channels add a discovery layer above concrete runtime app manifests, source refs, image tags, and release artifacts. Selecting a channel should resolve to a concrete manifest or source snapshot, then reuse runtime app update planning.
@@ -30,12 +32,10 @@ Runtime app channels should resolve to:
 
 The committed `channels/product-channels.json` file is a local placeholder, not a generated release index. Its Core entry identifies the `hosty-core` artifact family. It must not point at the repository Core `.csproj`, because default Core start uses the installed executable and source mode is only selected with `hosty core start --project <csproj-path>`.
 
-## Open Questions And Recommendations
+## Decisions And Recommendations
 
-- Question: Should generated channel indexes be committed?
-  Answer: No. They are release artifacts.
-  Recommendation: Generate indexes in CI and publish them alongside release artifacts.
+- Generated channel indexes should not be committed to the repository.
+  Recommendation: generate indexes in CI and publish them alongside release artifacts.
 
-- Question: Should runtime profile switching and channel switching happen together?
-  Answer: Only when a reviewed plan explicitly combines them.
-  Recommendation: Keep them separate by default.
+- Runtime profile switching and channel switching should happen together only when a reviewed plan explicitly combines them.
+  Recommendation: keep them separate by default.

@@ -90,13 +90,10 @@ The change is additive and backward compatible. Clients that ignore unknown fiel
 
 No migration is required. Existing installed app state without endpoint service metadata remains valid. Metadata appears after reinstall/update/start, and Shell falls back to endpoint key parsing for older state.
 
-## Open Questions
+## Decisions
 
-- Question: Should the compact view live on Dashboard, above Installed Apps, or inside each app row?
-  Recommended answer: inside each app row on Installed Apps, because the app row already carries the app identity and lifecycle state.
+- The compact view lives inside each app row on Installed Apps, because the app row already carries the app identity and lifecycle state.
 
-- Question: Should Hosty add a separate runtime map domain object?
-  Recommended answer: no. Runtime apps are the current Core domain model, and the requested view can be represented as a Shell projection.
+- Hosty does not add a separate runtime map domain object. Runtime apps are the current Core domain model, and the view is represented as a Shell projection.
 
-- Question: Should Shell display URL or only port?
-  Recommended answer: display the URL only. The URL is the authoritative Core-assigned endpoint, and the port is already visible inside it.
+- Shell displays the URL only. The URL is the authoritative Core-assigned endpoint, and the port is already visible inside it.

@@ -12,6 +12,8 @@ Hosty Core should support normal local email/password login for installed and ex
 - Multi-factor authentication.
 - Persistent distributed rate limiting across Core restarts.
 
+Related future auth-provider and password-reset ideas are tracked in [Auth Provider Extensions](../ideas/auth-provider-extensions.md).
+
 ## Current Behavior
 
 First-administrator setup, administrator recovery, and local invitation acceptance require a password and create a Core browser session after a valid one-time token. In non-development mode, `/login` accepts local email/password credentials. In development mode, `/login` remains a local helper that lets developers select an enabled seeded user.
@@ -86,15 +88,11 @@ No app identity token format changes are required.
 
 Existing installed users created before this feature do not have password credentials. Administrators should use `hosty auth recovery-token` once after upgrade to set a password. New users created after the feature must set a password during setup, recovery, or invitation acceptance.
 
-The in-memory throttle resets when Core restarts. A future distributed deployment can move throttling state to durable storage.
+The in-memory throttle resets when Core restarts. Durable throttling ideas are tracked in [Auth Provider Extensions](../ideas/auth-provider-extensions.md).
 
-## Open Questions
+## Decisions
 
-- Should invited ordinary users also set passwords?
-  - Answer: Yes. Recommendation: require passwords for all local invited users so they can log in after logout.
-- Should development `/login` switch to password login?
-  - Answer: No. Recommendation: keep the seeded user selector for fast local development.
-- Should Core create users directly from User Management without invitations?
-  - Answer: No for this feature. Recommendation: keep invite-first local user creation.
-- Should existing users be migrated automatically with generated passwords?
-  - Answer: No. Recommendation: require explicit recovery or a future reset flow so no recoverable or temporary password is created.
+- Invited ordinary users must set passwords so they can log in after logout.
+- Development `/login` keeps the seeded user selector for fast local development.
+- Core does not create users directly from User Management in this feature; local user creation remains invite-first.
+- Existing users are not migrated automatically with generated passwords. They must use explicit recovery or a future reset flow so no recoverable or temporary password is created.

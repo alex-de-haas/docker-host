@@ -141,7 +141,7 @@ The default manifest URL intentionally targets `main` because early Hosty develo
 
 Runtime app UI and Demo App image workflows are not changed by this feature except for shared package dependency cache behavior.
 
-Future product channels can replace the rolling `latest` reference with digest-pinned Shell manifests.
+Product channel ideas in [Update Channels](../ideas/update-channels.md) can replace the rolling `latest` reference with digest-pinned Shell manifests if approved.
 
 ## Decisions
 

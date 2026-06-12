@@ -52,4 +52,4 @@ The response includes enabled Host users explicitly assigned to the app. It does
 
 ## Gateway Status
 
-The old Legacy Host external gateway package is retired. Future gateway or ingress work should build on app identity, app assignments, and runtime app endpoints instead of legacy metadata contracts.
+The old Legacy Host external gateway package is retired. Future gateway or ingress work is tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md) and should build on app identity, app assignments, and runtime app endpoints instead of legacy metadata contracts.

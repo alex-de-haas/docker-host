@@ -87,6 +87,6 @@ When configuring public origins:
 - ensure Shell-to-Core requests use `credentials: "include"` and pass Core CSRF tokens on mutations;
 - verify logout and account switching against the Core origin, not the runtime app origin.
 
-## Deferred Scope
+## Related Ideas
 
-Gateway/proxy wrapping for arbitrary third-party browser apps is not part of this feature. Apps that cannot redirect to Core, exchange Hosty app codes, validate or revalidate app identity, and create app-local sessions need a separate future wrapping model. Service/API endpoint exposure remains distinct from browser UI app launch.
+Gateway/proxy wrapping for arbitrary third-party browser apps is not part of this feature. Apps that cannot redirect to Core, exchange Hosty app codes, validate or revalidate app identity, and create app-local sessions need a separate future wrapping model tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md). Service/API endpoint exposure remains distinct from browser UI app launch.

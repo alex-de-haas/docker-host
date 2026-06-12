@@ -84,7 +84,6 @@ Demo App no longer hard-codes dev ports in its manifest. App authors should remo
 
 Existing installed apps that already have copied manifests under Core data roots need reinstall/update/restart from an updated manifest to get auto-assigned ports.
 
-## Open Questions
+## Decision
 
-- Should Core inject endpoint URLs such as `HOSTY_ENDPOINT_HTTP_URL`?
-  Recommended answer: defer. `HOSTY_PORT_{KEY}` and stored endpoint metadata solve the current local collision problem.
+Core does not inject endpoint URLs such as `HOSTY_ENDPOINT_HTTP_URL` in this feature. `HOSTY_PORT_{KEY}` and stored endpoint metadata solve the current local collision problem.

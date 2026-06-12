@@ -14,9 +14,8 @@ flowchart LR
   D --> G["Runtime app services"]
 ```
 
-## Documents
+## Current Feature Documents
 
-- [Roadmap](roadmap.md) - active and deferred product stages.
 - [Core app shell](features/core-app-shell.md) - Shell foundation and navigation.
 - [Shell route navigation](features/shell-route-navigation.md) - route-backed Shell sections and embedded workspace deep links.
 - [Shell access and system apps](features/shell-access-and-system-apps.md) - administrator-only management views and system app visibility.
@@ -38,17 +37,22 @@ flowchart LR
 - [Core API](features/core-api.md) - current Core browser and control APIs.
 - [Domain model](features/domain-model.md) - shared app-oriented vocabulary.
 - [Repository and release model](features/repository-release-model.md) - monorepo and release workflows.
-- [Hosty Shell Docker Image](features/hosty-shell-image.md) - draft plan for publishing browser Shell as a Core-managed Docker image.
+- [Hosty Shell Docker Image](features/hosty-shell-image.md) - implemented Shell image publishing and Core-managed bootstrap behavior.
 - [Demo App](features/demo-app.md) - repository-local runtime app used for validation.
 - [Local development and testing](features/local-development.md) - Core-managed local workflows.
 - [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped agent skill.
 - [Web UI dashboard](features/web-ui-dashboard.md) - Shell dashboard and app management surface.
-- [Browser account switching](features/account-switching.md) - retired behavior and future restoration boundary.
 - [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - Core/Shell/CLI ownership boundaries.
 
-## Planning
+## Ideas
 
-Active and deferred plans:
+Draft, exploratory, or backlog items that are not current implementation commitments:
 
-- [Update Channels](planning/update-channels.md) - generated channel indexes, product/runtime channel selection, pull request channels, and channel cleanup.
-- [Agent Bridge Workflow](planning/agent-bridge-workflow.md) - Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and PR channel validation.
+- [Update Channels](ideas/update-channels.md) - concept for generated channel indexes, product/runtime channel selection, pull request channels, and channel cleanup.
+- [Agent Bridge Workflow](ideas/agent-bridge-workflow.md) - concept for Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and PR channel validation.
+- [Browser account switching](ideas/account-switching.md) - retired behavior and future restoration boundary.
+- [Gateway and app wrapping ideas](ideas/gateway-and-app-wrapping.md) - future gateway, ingress, and third-party app wrapping boundaries.
+- [Auth provider extensions](ideas/auth-provider-extensions.md) - future OIDC, trusted-proxy provisioning, password reset, and durable throttling directions.
+- [Runtime source extensions](ideas/runtime-source-extensions.md) - future multi-repository source and private repository credential handling.
+- [Backup retention extensions](ideas/backup-retention-extensions.md) - future age-based and per-app backup retention policy.
+- [Future work ideas](ideas/future-work.md) - small backlog items that are not yet planned in detail.

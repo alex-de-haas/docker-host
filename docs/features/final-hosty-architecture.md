@@ -1,6 +1,6 @@
 # Final Hosty architecture boundaries
 
-This document records the implemented Hosty final architecture boundaries. It replaces the completed planning document as the source of truth for Core, Shell, CLI, runtime apps, backups, source state, and local command runtimes. Channel and Agent Bridge concepts are deferred architecture placeholders until the Core/Shell management experience is stable.
+This document records the implemented Hosty final architecture boundaries. It replaces the completed planning document as the source of truth for Core, Shell, CLI, runtime apps, backups, source state, and local command runtimes. Channel and Agent Bridge concepts are ideas until they are approved for implementation.
 
 ## Components
 
@@ -27,7 +27,7 @@ flowchart LR
 Core owns the public and local API surface. API groups are organized around app-domain concepts:
 
 - bootstrap, health, status, and local control discovery;
-- auth pages, sessions, setup, recovery, logout, OIDC callback, trusted proxy, CSRF, and account switching;
+- auth pages, sessions, setup, recovery, logout, OIDC callback placeholder, trusted proxy session, and CSRF;
 - users, invitations, roles, disabled-user state, assignments, and audit records;
 - app registry summaries for Shell and CLI;
 - runtime app install, update, configure, remove, recovery, start, stop, restart, status, logs, backups, and restore;
@@ -35,8 +35,8 @@ Core owns the public and local API surface. API groups are organized around app-
 - app settings, secrets references, storage mappings, dependency contracts, endpoint contracts, and app data directory resolution;
 - source repository state, managed checkouts, and local source overrides;
 - runtime profile switching plans and apply;
-- deferred runtime app channel discovery and switching;
-- deferred product channel discovery and coordinated CLI/Core/Shell updates.
+- possible runtime app channel discovery and switching;
+- possible product channel discovery and coordinated CLI/Core/Shell updates.
 
 Shell calls Core APIs through the browser-facing Core public origin. Shell must not contain Core-owned backend, auth, app lifecycle, or state mutation routes. Runtime process-to-Core access uses `HOSTY_CORE_ORIGIN`; browser Shell access uses `HOSTY_CORE_PUBLIC_ORIGIN` or Core's localhost fallback, so Docker-only origins such as `host.docker.internal` never appear in Shell browser fetches or login links.
 
@@ -51,7 +51,7 @@ Core exposes local control APIs under `/control/v1` and public browser/app APIs 
 - Lifecycle: install, configure, start, stop, restart, update-plan, update, remove, logs. Browser Shell can call public start, stop, restart, logs, and backup endpoints; local control endpoints keep the complete lifecycle surface.
 - Backups: list, manual backup, restore, delete, cleanup preview, and cleanup apply; update apply creates automatic pre-update backups. Browser Shell can use backup restore, delete, and cleanup routes with Core session, CSRF, and confirmation UX.
 - Runtime switching: `switch-runtime/plan` and `switch-runtime` with plan digest review.
-- Runtime app channels: channel list, `switch-channel/plan`, and `switch-channel` exist as low-level placeholders, but channel generation and Shell channel UI are deferred.
+- Runtime app channels: channel list, `switch-channel/plan`, and `switch-channel` exist as low-level placeholders, but channel generation and Shell channel UI are tracked as an idea in [Update Channels](../ideas/update-channels.md).
 - Source state: managed checkout resolution, immutable commit storage, local source override set/clear.
 - Identity helpers: sanitized user summaries, app-scoped identity token issuance, Shell/standalone open links.
 - Auth: Core-owned session, CSRF, trusted proxy session, logout, app auth code, token exchange, and app session revalidation.
@@ -93,7 +93,7 @@ The `hosty` CLI is a bootstrap and Core API client:
 - `hosty apps identity` issues app-scoped identity through Core.
 - `hosty apps open` asks Core for Shell or standalone app launch links.
 - `hosty update` runs bootstrap CLI update first, then installs or replaces the managed Core executable, then performs Core reachability and Shell update planning through Core APIs when Core is running.
-- `hosty update --list-channels` and `hosty update --channel <channel-id>` can read the local product channel index, but full product-channel publishing is deferred.
+- `hosty update --list-channels` and `hosty update --channel <channel-id>` can read the local product channel index, but full product-channel publishing is tracked as an idea in [Update Channels](../ideas/update-channels.md).
 
 The legacy developer harness route is no longer exposed. Existing users are used for app identity helpers; deterministic development-user seeding is not part of the final workflow.
 
@@ -128,9 +128,9 @@ Local source overrides are never written back to public app manifests.
 
 For `localCommand` runtimes, Core resolves the source root before runtime start. Local manifest path installs record a local worktree and do not clone source; remote manifest URL installs require an absolute clonable source repository and prepare the managed checkout under `sources/<app-id>/`.
 
-Runtime app channel switching is a deferred feature. The low-level Core shape resolves a channel to a concrete manifest snapshot and reuses update planning/apply, but Shell UI, generated indexes, pull request channels, and remote manifest resolution are intentionally out of the current stabilization scope.
+Runtime app channel switching is tracked as an idea in [Update Channels](../ideas/update-channels.md). The low-level Core shape resolves a channel to a concrete manifest snapshot and reuses update planning/apply, but Shell UI, generated indexes, pull request channels, and remote manifest resolution are intentionally out of the current stabilization scope.
 
-Product channels are described by `channels/product-channels.json` as a local placeholder. Generated product channels and coordinated CLI/Core/Shell rollout are deferred; the current Core entry identifies the release artifact family, not a source project path.
+Product channels are described by `channels/product-channels.json` as a local placeholder. Generated product channels and coordinated CLI/Core/Shell rollout are tracked as an idea in [Update Channels](../ideas/update-channels.md); the current Core entry identifies the release artifact family, not a source project path.
 
 ## Storage layout
 
@@ -167,7 +167,7 @@ Backup rules are global in the current final plan:
 - Core keeps all manual backups until explicit deletion.
 - Start, stop, restart, configure, and open operations do not create automatic backups.
 - Runtime switch apply creates a `pre-runtime-switch` backup when the app has a primary data directory.
-- Scheduled retention cleanup runs in Core. Age-based cleanup and per-app retention overrides are deferred.
+- Scheduled retention cleanup runs in Core. Age-based cleanup and per-app retention overrides are tracked in [Backup Retention Extensions](../ideas/backup-retention-extensions.md).
 
 Runtime app update planning does not mutate app data schemas. The runtime app owns its own data migration behavior when it starts after an update.
 
@@ -185,8 +185,7 @@ The first-party demo app lives under `apps/demo-app` and uses the `app.0.1` mani
 
 Demo App is the first-party demo contract.
 
-## Open Questions And Answers
+## Architecture Decisions
 
-- Question: Should Agent Bridge live in this architecture document?
-  Answer: Only as deferred context.
-  Recommendation: Plan Agent Bridge after Shell management, auth, user management, backups, source state, pull request channels, and runtime validation are stable.
+- Agent Bridge should appear here only as architecture context.
+  Recommendation: keep detailed Agent Bridge concept work in [Agent Bridge Workflow](../ideas/agent-bridge-workflow.md).

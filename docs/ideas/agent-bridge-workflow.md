@@ -1,8 +1,10 @@
 # Agent Bridge Workflow
 
+Status: Idea.
+
 ## Description
 
-This deferred plan covers future Shell-to-agent workflows for changing runtime apps from in-context feedback. It depends on repository-backed app source support and update channels. Without a source checkout and a way to publish pull request channels, the agent bridge has nowhere safe to apply and validate changes.
+This plan covers future Shell-to-agent workflows for changing runtime apps from in-context feedback. It depends on repository-backed app source support and update channels. Without a source checkout and a way to publish pull request channels, the agent bridge has nowhere safe to apply and validate changes.
 
 Agent Bridge should not be implemented in the current Core/Shell stabilization branch. The active branch should only preserve architectural room for future agent workflows while focusing on Shell lifecycle management, authentication, user management, and backup controls.
 
@@ -68,16 +70,13 @@ flowchart LR
 - Add cancellation and cleanup behavior for stale agent requests.
 - Add audit and diagnostics views.
 
-## Open Questions And Recommendations
+## Decisions And Recommendations
 
-- Question: Can agent bridge work before repository-backed source support?
-  Answer: Not meaningfully for code changes.
-  Recommendation: Treat repository-backed source and PR channel publishing as prerequisites.
+- Agent Bridge cannot meaningfully support code changes before repository-backed source support and pull request channel publishing exist.
+  Recommendation: treat repository-backed source and PR channel publishing as prerequisites.
 
-- Question: Should the agent edit the live app data directory?
-  Answer: No.
-  Recommendation: Validate changes against copied or mounted app data through normal runtime/channel plans, not by letting the agent mutate production data directly.
+- Agent workflows should not edit the live app data directory.
+  Recommendation: validate changes against copied or mounted app data through normal runtime/channel plans, not by letting the agent mutate production data directly.
 
-- Question: Should every runtime app be agent-editable?
-  Answer: No. Docker-only and source-less apps can still be managed by Hosty, but they cannot receive source edits.
-  Recommendation: Expose agent actions only when source metadata and permissions are present.
+- Not every runtime app should be agent-editable. Docker-only and source-less apps can still be managed by Hosty, but they cannot receive source edits.
+  Recommendation: expose agent actions only when source metadata and permissions are present.

@@ -59,4 +59,4 @@ Non-admin `host.user` accounts do not see Dashboard, Installed Apps, or User Man
 
 ## Gateway Boundary
 
-Gateway exposure management and external ingress readiness were part of the retired Legacy Host UI. They are not current Shell dashboard features. Future gateway UX should be added as a Core-backed Shell view after Core or a Core-managed gateway runtime owns the underlying APIs.
+Gateway exposure management and external ingress readiness were part of the retired Legacy Host UI. They are not current Shell dashboard features. Future gateway UX is tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md).

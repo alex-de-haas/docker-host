@@ -86,7 +86,6 @@ No Core API or persistence changes are required. The existing browser endpoints 
 
 The root `/` route remains compatible and still renders Dashboard for administrators. `/apps` remains compatible as the ordinary app overview route. Newly added routes are additive and do not require Core migration.
 
-## Open Questions
+## Decision
 
-- Question: Should modal-level state such as app logs, backups, install review, or settings be addressable too?
-  Recommended answer: not in this change. Top-level navigation and workspace deep links fix the refresh and copy-link problem without expanding modal lifecycle complexity.
+Modal-level state such as app logs, backups, install review, and settings is not addressable in this feature. Top-level navigation and workspace deep links fix the refresh and copy-link problem without expanding modal lifecycle complexity.
