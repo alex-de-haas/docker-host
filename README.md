@@ -8,10 +8,18 @@ Monorepo for Hosty, including the local-first Hosty Core API, the Hosty Shell br
 
 ## Install Current CLI Build
 
-The Unix installer downloads the rolling `cli-dev` CLI release, verifies `SHA256SUMS` when available, installs `hosty` under `~/.hosty/bin`, adds that directory to your shell profile when possible, and prepares the local Hosty directories. The first `hosty start` downloads the matching Core executable into `~/.hosty/core/bin` when it is missing:
+The installers download the rolling `cli-dev` CLI release, verify `SHA256SUMS` when available, install `hosty` under the local Hosty bin directory, add that directory to PATH when possible, and prepare the local Hosty directories. The first `hosty start` downloads the matching Core executable into `~/.hosty/core/bin` when it is missing.
+
+On macOS and Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.ps1 | iex
 ```
 
 Open a new terminal, then start and open the Host:
@@ -74,6 +82,12 @@ For one-command install and start:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh -s -- --start
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:HOSTY_INSTALL_START = "1"; irm https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.ps1 | iex
 ```
 
 After the started Core is reachable, run `hosty auth setup-token` once and open

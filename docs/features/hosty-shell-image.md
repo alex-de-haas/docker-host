@@ -8,7 +8,7 @@ Publish Hosty Shell as a Docker image and let Hosty Core install and start it as
 
 The intended installed flow is:
 
-1. `scripts/install.sh` installs the `hosty` CLI.
+1. The platform installer, `scripts/install.sh` on Unix or `scripts/install.ps1` on Windows, installs the `hosty` CLI.
 2. `hosty install` prepares local Hosty directories and `~/.hosty/config/launch.env`.
 3. `hosty start` downloads and starts the managed Hosty Core executable when needed.
 4. The CLI passes the configured Shell manifest reference and runtime to Core.
@@ -59,7 +59,7 @@ The intended installed flow is:
 
 ## User/API Scenarios
 
-- A new user installs Hosty through `scripts/install.sh`, runs `hosty install`, then `hosty start`. Core downloads the configured Shell manifest and starts `hosty.shell` from the published `ghcr.io/alex-de-haas/hosty-shell:latest` image.
+- A new user installs Hosty through the platform installer, runs `hosty install`, then `hosty start`. Core downloads the configured Shell manifest and starts `hosty.shell` from the published `ghcr.io/alex-de-haas/hosty-shell:latest` image.
 - `hosty open` opens the configured Shell public origin after Core startup, or `http://localhost:<HOSTY_SHELL_PORT>` when no Shell public origin is configured.
 - A user replaces the Shell by setting `HOSTY_SHELL_MANIFEST_PATH` in `launch.env` to another compatible local manifest path or manifest URL, and setting `HOSTY_SHELL_BOOTSTRAP_RUNTIME` when the replacement should use a non-default runtime profile.
 - A developer runs `npm run dev`; Core still bootstraps Shell with the repository-local manifest's `dev` local command runtime and source override.

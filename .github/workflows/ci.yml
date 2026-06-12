@@ -11,6 +11,7 @@ on:
       - "apps/cli/**"
       - "docs/features/core-api.md"
       - "scripts/install.sh"
+      - "scripts/install.ps1"
       - "package.json"
       - "package-lock.json"
       - "global.json"
@@ -28,6 +29,7 @@ on:
       - "apps/cli/**"
       - "docs/features/core-api.md"
       - "scripts/install.sh"
+      - "scripts/install.ps1"
       - "package.json"
       - "package-lock.json"
       - "global.json"
@@ -112,7 +114,9 @@ jobs:
 
       - name: Validate installer syntax
         if: github.event_name == 'push'
-        run: sh -n scripts/install.sh
+        run: |
+          sh -n scripts/install.sh
+          pwsh -NoProfile -File scripts/install.ps1 -Help > /dev/null
 
       - name: Build CLI
         run: npm run cli:build

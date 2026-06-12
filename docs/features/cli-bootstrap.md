@@ -33,6 +33,12 @@ The installer places the CLI in:
 ~/.hosty/bin/hosty
 ```
 
+On Windows, `scripts/install.ps1` places the CLI in:
+
+```text
+%USERPROFILE%\.hosty\bin\hosty.exe
+```
+
 The installed Core executable is not placed on `PATH`. The CLI owns it under:
 
 ```text

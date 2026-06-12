@@ -10,6 +10,7 @@ on:
       - "apps/cli/**"
       - "docs/features/core-api.md"
       - "scripts/install.sh"
+      - "scripts/install.ps1"
       - "global.json"
       - ".github/workflows/cli-release.yml"
 

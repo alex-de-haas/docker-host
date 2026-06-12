@@ -73,6 +73,7 @@ CLI/Core release build:
   apps/core/**
   apps/cli/**
   scripts/install.sh
+  scripts/install.ps1
   global.json
   .github/workflows/cli-release.yml
 
@@ -81,7 +82,7 @@ Docs-only changes:
   README.md
 ```
 
-Full CI runs Shell build, Demo App lint/build, Core build/tests, installer syntax validation, CLI build, and CLI xUnit tests. The root `npm run ci` script mirrors the primary Shell, Demo App, Core, and CLI validation sequence for local validation.
+Full CI runs Shell build, Demo App lint/build, Core build/tests, installer syntax validation for shell and PowerShell installers, CLI build, and CLI xUnit tests. The root `npm run ci` script mirrors the primary Shell, Demo App, Core, and CLI validation sequence for local validation.
 
 Pull request CI is intentionally lighter than default-branch CI. Pull requests run build-only checks for Shell, Demo App, Core, and CLI so reviewers get a fast compile signal without publishing artifacts. Pushes to `main` run the fuller validation path, including lint and tests where configured.
 
@@ -134,9 +135,15 @@ Unix users install the current development CLI through `scripts/install.sh`:
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
 ```
 
+Windows users install the current development CLI through `scripts/install.ps1`:
+
+```powershell
+irm https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.ps1 | iex
+```
+
 Stable CLI/Core versions can use immutable GitHub releases such as `cli-v0.2.1` when that channel is enabled.
 
-`install.sh` detects OS/architecture, downloads the right CLI artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
+`install.sh` detects OS/architecture, downloads the right CLI artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. `install.ps1` downloads `hosty-windows-x64.exe`, verifies checksums when available, installs it to `%USERPROFILE%\.hosty\bin\hosty.exe`, and adds the install directory to the current user's PATH. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
 
 The installer does not install Core directly. `hosty start` downloads Core only when `~/.hosty/core/bin/hosty-core` is missing. `hosty update` updates the managed CLI executable first, then installs or replaces the managed Core executable. It does not pull a Host image or recreate a Host container. Shell remains a Core-managed system runtime app. Core bootstraps it from `HOSTY_SHELL_MANIFEST_PATH` and `HOSTY_SHELL_BOOTSTRAP_RUNTIME`, then Docker pulls the image according to the Shell manifest.
 
