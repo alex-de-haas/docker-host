@@ -10,6 +10,8 @@ type TokenExchangeResponse = {
   expiresInSeconds?: unknown;
 };
 
+const appIdentityCookieMaxAgeSeconds = 24 * 60 * 60;
+
 export async function POST(request: Request) {
   let body: unknown;
   try {
@@ -76,9 +78,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const maxAge = typeof payload?.expiresInSeconds === "number" && Number.isFinite(payload.expiresInSeconds)
-    ? Math.max(1, Math.min(payload.expiresInSeconds, 5 * 60))
-    : 5 * 60;
+  const maxAge = readIdentityCookieMaxAgeSeconds(payload);
   const appResponse = NextResponse.json({ ok: true }, {
     headers: {
       "Cache-Control": "no-store",
@@ -93,6 +93,12 @@ export async function POST(request: Request) {
   });
 
   return appResponse;
+}
+
+function readIdentityCookieMaxAgeSeconds(payload: TokenExchangeResponse | null) {
+  return typeof payload?.expiresInSeconds === "number" && Number.isFinite(payload.expiresInSeconds)
+    ? Math.max(1, Math.min(Math.floor(payload.expiresInSeconds), appIdentityCookieMaxAgeSeconds))
+    : appIdentityCookieMaxAgeSeconds;
 }
 
 function buildTokenEndpoint() {

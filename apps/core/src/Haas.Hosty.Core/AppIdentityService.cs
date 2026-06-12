@@ -12,7 +12,7 @@ internal sealed class AppIdentityService(
     IClock clock)
 {
     private static readonly TimeSpan AuthCodeLifetime = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan IdentityTokenLifetime = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan IdentityTokenLifetime = TimeSpan.FromHours(24);
 
     public async Task<AppAuthorizeResult> CreateAuthorizationCodeAsync(
         string appId,

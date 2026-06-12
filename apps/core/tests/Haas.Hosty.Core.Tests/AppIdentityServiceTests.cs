@@ -32,6 +32,20 @@ public sealed class AppIdentityServiceTests
     }
 
     [Fact]
+    public async Task ExchangeCodeAsync_IssuesTwentyFourHourIdentityToken()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var issuedAt = fixture.Clock.UtcNow;
+
+        var token = await fixture.Service.ExchangeCodeAsync(authorization.Code);
+
+        Assert.Equal((int)TimeSpan.FromHours(24).TotalSeconds, token.ExpiresInSeconds);
+        Assert.Equal(issuedAt.AddHours(24), token.ExpiresAt);
+    }
+
+    [Fact]
     public async Task CreateAuthorizationCodeAsync_RejectsDisabledUsers()
     {
         var fixture = await IdentityFixture.CreateAsync();

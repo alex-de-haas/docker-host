@@ -22,13 +22,14 @@ sequenceDiagram
 
 - The app audience is the installed app id.
 - Authorization and launch codes expire after five minutes and can be consumed once.
+- App identity tokens expire after 24 hours. Runtime apps should set app-origin session cookies to no more than the returned `expiresInSeconds`.
 - Code exchange rechecks the current user, disabled-user state, installed app state, and app assignments.
 - Redirect URIs must be absolute `http` or `https` URLs without fragments and must match an installed app endpoint origin.
 - Browser Shell embedded launch-code issuance is bound to the active Core session user and requires `X-Hosty-CSRF`.
 - Standalone browser links use `GET /api/apps/{appId}/open?redirectUri=...`, which validates the active Core session and redirects to the app with a one-time code.
 - Shell issues an embedded launch code when opening an app workspace from outside that app. Page-to-page navigation inside the already-open app workspace uses the app's direct URL and relies on the existing app-origin session cookie, so runtime apps do not re-exchange a code and reload on every Shell menu click.
 - Trusted local CLI/control helpers can request identity or open links for a selected existing enabled Host user, but normal app access checks still apply.
-- App identity tokens are app-scoped, short-lived bearer tokens. Apps should store only an app-local HttpOnly session cookie on their own origin.
+- App identity tokens are app-scoped bearer tokens with a 24-hour lifetime. Apps should store only an app-local HttpOnly session cookie on their own origin.
 
 ## Runtime App Integration
 
@@ -44,7 +45,7 @@ A Hosty-aware app should:
 - treat Core `401` as missing or expired Host authentication and Core `403` as denied app access;
 - keep third-party service credentials in app-owned settings or secrets, not in Hosty identity tokens.
 
-The repository Demo App is the first Next.js example. Its `/api/auth/app-code` route exchanges the code, stores a short-lived HttpOnly app cookie, and `/api/auth/identity` reports app-session revalidation status. The previous iframe/gateway identity diagnostics remain available for compatibility validation.
+The repository Demo App is the first Next.js example. Its `/api/auth/app-code` route exchanges the code, stores an HttpOnly app cookie capped to the Core token lifetime, and `/api/auth/identity` reports app-session revalidation status. The previous iframe/gateway identity diagnostics remain available for compatibility validation.
 
 ## Origins
 
