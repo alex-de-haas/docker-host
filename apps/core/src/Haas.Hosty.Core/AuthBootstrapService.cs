@@ -12,7 +12,7 @@ internal sealed class AuthBootstrapTokenStore(CoreDataPaths paths)
             new AuthBootstrapTokenState(1, []);
 
     public async Task WriteAsync(AuthBootstrapTokenState state, CancellationToken cancellationToken = default)
-        => await JsonStorage.WriteAsync(StatePath, state, cancellationToken);
+        => await JsonStorage.WriteAsync(StatePath, state, restrictToOwner: true, cancellationToken);
 }
 
 internal sealed class AuthBootstrapService(

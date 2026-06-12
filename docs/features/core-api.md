@@ -15,7 +15,8 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 - `POST /api/auth/recovery` - consume a recovery token, create or restore an administrator, replace the submitted password credential, and create a Core session.
 - `POST /api/auth/apps/authorize` - create an app authorization code for an authenticated Host user.
 - `POST /api/auth/apps/token` - exchange an app authorization code for an app identity token.
-- `POST /api/auth/apps/revalidate` - validate an app identity token.
+- `POST /api/auth/apps/revalidate` - validate an app identity token; requires the calling app's `HOSTY_APP_SERVICE_TOKEN` as a bearer token and rejects tokens issued for another app.
+- `POST /api/auth/trusted-proxy/session` - create a session for a reverse-proxy-asserted user; disabled unless `HOSTY_TRUSTED_PROXY_SECRET` is configured and the proxy presents it via `X-Hosty-Trusted-Proxy-Secret`.
 - `POST /api/apps/{appId}/switch-runtime/plan` - admin runtime switch review for browser Shell clients.
 - `POST /api/apps/{appId}/switch-runtime` - admin runtime switch apply for browser Shell clients; CSRF-protected and requires the reviewed plan digest.
 - `GET /api/internal/apps/{appId}/directory/users` - scoped app directory for runtime apps with `HOSTY_APP_SERVICE_TOKEN`.

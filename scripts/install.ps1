@@ -110,21 +110,6 @@ function Invoke-Download {
     Invoke-WebRequest @parameters
 }
 
-function Try-Download {
-    param(
-        [Parameter(Mandatory = $true)][string]$Url,
-        [Parameter(Mandatory = $true)][string]$Destination
-    )
-
-    try {
-        Invoke-Download -Url $Url -Destination $Destination
-        return $true
-    }
-    catch {
-        return $false
-    }
-}
-
 function Get-ExpectedSha256 {
     param(
         [Parameter(Mandatory = $true)][string]$ChecksumsPath,
@@ -297,22 +282,24 @@ try {
     Invoke-Download -Url "$baseUrl/$artifact" -Destination $artifactPath
 
     $checksumsPath = Join-Path $tempDirectory "SHA256SUMS"
-    if (Try-Download -Url "$baseUrl/SHA256SUMS" -Destination $checksumsPath) {
-        $expectedSha256 = Get-ExpectedSha256 -ChecksumsPath $checksumsPath -ArtifactName $artifact
-        if ([string]::IsNullOrWhiteSpace($expectedSha256)) {
-            Fail "SHA256SUMS does not contain an entry for $artifact."
-        }
-
-        $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifactPath).Hash.ToLowerInvariant()
-        if (-not [string]::Equals($expectedSha256, $actualSha256, [System.StringComparison]::OrdinalIgnoreCase)) {
-            Fail "checksum mismatch for $artifact."
-        }
-
-        Write-Host "Verified SHA256 checksum."
+    try {
+        Invoke-Download -Url "$baseUrl/SHA256SUMS" -Destination $checksumsPath
     }
-    else {
-        Write-Warning "SHA256SUMS was not available; continuing without checksum verification."
+    catch {
+        Fail "failed to download $baseUrl/SHA256SUMS. Checksum verification is required; refusing to install an unverified artifact."
     }
+
+    $expectedSha256 = Get-ExpectedSha256 -ChecksumsPath $checksumsPath -ArtifactName $artifact
+    if ([string]::IsNullOrWhiteSpace($expectedSha256)) {
+        Fail "SHA256SUMS does not contain an entry for $artifact."
+    }
+
+    $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifactPath).Hash.ToLowerInvariant()
+    if (-not [string]::Equals($expectedSha256, $actualSha256, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Fail "checksum mismatch for $artifact."
+    }
+
+    Write-Host "Verified SHA256 checksum."
 
     Install-Executable -Source $artifactPath -Target $target
     Write-Host "Installed hosty to $target"

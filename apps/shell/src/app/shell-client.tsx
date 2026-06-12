@@ -92,6 +92,9 @@ export function ShellClient({
   const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
   const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
   const pendingWorkspaceRoute = useRef<string | null>(null);
+  // Stale async resolutions must not overwrite newer shared state, so each load takes a token.
+  const refreshRequestRef = useRef(0);
+  const detailRequestRef = useRef(0);
   // Core CSRF is a cookie/header pair, so token refresh + mutation must stay ordered.
   const csrfOperationQueue = useRef<Promise<void>>(Promise.resolve());
   const shellThemePreference = normalizeThemePreference(theme);
@@ -104,6 +107,7 @@ export function ShellClient({
   }, []);
 
   const refresh = useCallback(async () => {
+    const requestToken = ++refreshRequestRef.current;
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
       const [statusResponse, sessionResponse] = await Promise.all([
@@ -123,6 +127,10 @@ export function ShellClient({
       }
 
       const session = (await sessionResponse.json()) as SessionResponse;
+      if (requestToken !== refreshRequestRef.current) {
+        return;
+      }
+
       if (!session.authenticated) {
         setState({
           loading: false,
@@ -146,6 +154,10 @@ export function ShellClient({
         apps = (await appsResponse.json()) as AppsResponse;
       }
 
+      if (requestToken !== refreshRequestRef.current) {
+        return;
+      }
+
       setState({
         loading: false,
         error: null,
@@ -155,7 +167,7 @@ export function ShellClient({
         updatedAt: new Date().toISOString(),
       });
     } catch (error) {
-      if (isAuthRequiredRedirectError(error)) {
+      if (isAuthRequiredRedirectError(error) || requestToken !== refreshRequestRef.current) {
         return;
       }
 
@@ -301,8 +313,10 @@ export function ShellClient({
         setState((current) => ({ ...current, error: message }));
         toast.error("App launch failed", { description: message });
       } finally {
-        pendingWorkspaceRoute.current = null;
-        setBusyAction(null);
+        if (pendingWorkspaceRoute.current === routeKey) {
+          pendingWorkspaceRoute.current = null;
+        }
+        setBusyAction((current) => (current === `${app.id}:open` ? null : current));
       }
     },
     [appEndpoint, canManageApps, getStandaloneAppHref, router, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference, workspace?.appId],
@@ -327,7 +341,7 @@ export function ShellClient({
         setState((current) => ({ ...current, error: message }));
         toast.error("App action failed", { description: message });
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, coreOrigin, refresh, sendCsrfJson],
@@ -372,7 +386,7 @@ export function ShellClient({
         setState((current) => ({ ...current, error: message }));
         toast.error("Runtime switch failed", { description: message });
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, coreOrigin, refresh, sendCsrfJson],
@@ -380,6 +394,7 @@ export function ShellClient({
 
   const loadAppLogs = useCallback(
     async (app: CoreApp) => {
+      const requestToken = ++detailRequestRef.current;
       setActivePanel({ appId: app.id, view: "logs" });
       setDetailPanel({ loading: true, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
@@ -390,9 +405,13 @@ export function ShellClient({
         }
 
         const payload = (await response.json()) as LogsResponse;
+        if (requestToken !== detailRequestRef.current) {
+          return;
+        }
+
         setDetailPanel({ loading: false, error: null, logs: payload.text || "", backups: null, backupCleanupPlan: null, updatePlan: null });
       } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
+        if (isAuthRequiredRedirectError(error) || requestToken !== detailRequestRef.current) {
           return;
         }
 
@@ -404,6 +423,7 @@ export function ShellClient({
 
   const loadAppBackups = useCallback(
     async (app: CoreApp, activate = true) => {
+      const requestToken = ++detailRequestRef.current;
       if (activate) {
         setActivePanel({ appId: app.id, view: "backups" });
       }
@@ -416,9 +436,13 @@ export function ShellClient({
         }
 
         const payload = (await response.json()) as BackupsResponse;
+        if (requestToken !== detailRequestRef.current) {
+          return;
+        }
+
         setDetailPanel({ loading: false, error: null, logs: null, backups: payload.backups, backupCleanupPlan: null, updatePlan: null });
       } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
+        if (isAuthRequiredRedirectError(error) || requestToken !== detailRequestRef.current) {
           return;
         }
 
@@ -430,6 +454,7 @@ export function ShellClient({
 
   const loadUpdatePlan = useCallback(
     async (app: CoreApp) => {
+      const requestToken = ++detailRequestRef.current;
       setActivePanel({ appId: app.id, view: "update" });
       setDetailPanel({ loading: true, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
@@ -445,9 +470,13 @@ export function ShellClient({
         }
 
         const payload = (await response.json()) as CoreUpdatePlan;
+        if (requestToken !== detailRequestRef.current) {
+          return;
+        }
+
         setDetailPanel({ loading: false, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: payload });
       } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
+        if (isAuthRequiredRedirectError(error) || requestToken !== detailRequestRef.current) {
           return;
         }
 
@@ -471,11 +500,17 @@ export function ShellClient({
         void loadUpdatePlan(app);
         return;
       }
+      detailRequestRef.current += 1;
       setActivePanel({ appId: app.id, view, configureSection: options?.configureSection });
       setDetailPanel(emptyDetailPanelState());
     },
     [loadAppBackups, loadAppLogs, loadUpdatePlan],
   );
+
+  const closeAppPanel = useCallback(() => {
+    detailRequestRef.current += 1;
+    setActivePanel(null);
+  }, []);
 
   const createManualBackup = useCallback(
     async (app: CoreApp) => {
@@ -493,13 +528,13 @@ export function ShellClient({
           return;
         }
 
-        setDetailPanel((current) => ({
-          ...current,
-          loading: false,
-          error: error instanceof Error ? error.message : "Backup failed.",
-        }));
+        const message = error instanceof Error ? error.message : "Backup failed.";
+        if (activePanel?.appId === app.id && activePanel.view === "backups") {
+          setDetailPanel((current) => ({ ...current, loading: false, error: message }));
+        }
+        toast.error("Backup failed", { description: message });
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [activePanel, appEndpoint, loadAppBackups, refresh, sendCsrfJson],
@@ -529,7 +564,7 @@ export function ShellClient({
           error: error instanceof Error ? error.message : "Restore failed.",
         }));
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, loadAppBackups, refresh, sendCsrfJson],
@@ -558,7 +593,7 @@ export function ShellClient({
           error: error instanceof Error ? error.message : "Backup delete failed.",
         }));
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, loadAppBackups, sendCsrfJson],
@@ -593,7 +628,7 @@ export function ShellClient({
           error: error instanceof Error ? error.message : "Backup cleanup preview failed.",
         }));
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, coreOrigin],
@@ -632,7 +667,7 @@ export function ShellClient({
           error: error instanceof Error ? error.message : "Backup cleanup failed.",
         }));
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, loadAppBackups, sendCsrfJson],
@@ -658,7 +693,7 @@ export function ShellClient({
           error: error instanceof Error ? error.message : "Configure failed.",
         }));
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, refresh, sendCsrfJson],
@@ -689,7 +724,7 @@ export function ShellClient({
           error: error instanceof Error ? error.message : "Update failed.",
         }));
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, refresh, sendCsrfJson],
@@ -728,7 +763,7 @@ export function ShellClient({
           error: error instanceof Error ? error.message : "Remove failed.",
         }));
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
     [appEndpoint, refresh, sendCsrfJson, workspace?.appId],
@@ -797,7 +832,7 @@ export function ShellClient({
           error: error instanceof Error ? error.message : "Install failed.",
         }));
       } finally {
-        setBusyAction(null);
+        setBusyAction((current) => (current === "install" ? null : current));
       }
     },
     [coreOrigin, refresh, sendCsrfJson],
@@ -944,7 +979,7 @@ export function ShellClient({
       } finally {
         if (!cancelled) {
           pendingWorkspaceRoute.current = null;
-          setBusyAction(null);
+          setBusyAction((current) => (current === `${workspaceApp.id}:open` ? null : current));
         }
       }
     }
@@ -1104,7 +1139,7 @@ export function ShellClient({
           canManageApps={Boolean(canManageApps)}
           busyAction={busyAction}
           detail={detailPanel}
-          onClose={() => setActivePanel(null)}
+          onClose={closeAppPanel}
           onRefreshLogs={loadAppLogs}
           onRefreshBackups={loadAppBackups}
           onCreateBackup={createManualBackup}

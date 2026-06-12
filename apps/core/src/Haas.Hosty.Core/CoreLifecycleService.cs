@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
@@ -11,6 +12,8 @@ internal sealed class CoreLifecycleService(
     AppSourceService sources,
     IEnumerable<IAppRuntimeAdapter> adapters)
 {
+    private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
+
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
         var records = await apps.ListAppRecordsAsync(cancellationToken);
@@ -59,7 +62,7 @@ internal sealed class CoreLifecycleService(
             RuntimeProfiles: BuildRuntimeProfileSummaries(selection.Manifest),
             Settings: selection.Manifest.Settings
                 .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
-                .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret))
+                .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret, setting.Required))
                 .ToArray());
     }
 
@@ -278,21 +281,22 @@ internal sealed class CoreLifecycleService(
         }
 
         var app = await RequireAppAsync(appId, cancellationToken);
+        var selection = await manifests.LoadAsync(plan.ManifestPath, plan.TargetRuntime, cancellationToken);
+        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
+        var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
+        var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        if (wasRunning)
+        {
+            _ = await adapter.StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
+            _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
+        }
+
         var backup = plan.WillCreatePreUpdateBackup
             ? await backups.CreateBackupAsync(appId, "pre-update", cancellationToken)
             : null;
 
-        var selection = await manifests.LoadAsync(plan.ManifestPath, plan.TargetRuntime, cancellationToken);
-        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
-        var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
-        if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
-        {
-            _ = await adapter.StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
-        }
-
         await manifests.SaveManifestCopyAsync(selection, GetAppRoot(appId), cancellationToken);
         var manifestCopyPath = Path.Combine(GetAppRoot(appId), "manifest.json");
-        var nextRuntimeState = "stopped";
         var next = BuildAppRecord(
             selection,
             manifestCopyPath,
@@ -302,14 +306,15 @@ internal sealed class CoreLifecycleService(
             existing: app) with
         {
             OperationStatus = "updated",
-            RuntimeState = nextRuntimeState,
+            RuntimeState = "stopped",
             LastOperation = "update",
             LastError = null,
         };
         var document = await apps.UpsertAppAsync(next, cancellationToken);
-        if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+        if (wasRunning)
         {
-            return await StartAsync(appId, cancellationToken);
+            var restarted = await StartAsync(appId, cancellationToken);
+            return new AppLifecycleResponse(restarted.App, backup, "updated");
         }
 
         return new AppLifecycleResponse(AppSummary.From(document.App), backup, "updated");
@@ -376,14 +381,17 @@ internal sealed class CoreLifecycleService(
         }
 
         var app = await RequireAppAsync(appId, cancellationToken);
+        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
+        var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        if (wasRunning)
+        {
+            await ResolveAdapter(currentSelection.RuntimeProfile.Type).StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
+            _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
+        }
+
         var backup = plan.AutomaticBackup
             ? await backups.CreateBackupAsync(appId, "pre-runtime-switch", cancellationToken)
             : null;
-        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
-        if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
-        {
-            await ResolveAdapter(currentSelection.RuntimeProfile.Type).StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
-        }
 
         var targetSelection = await manifests.LoadAsync(app.ManifestPath!, request.TargetRuntime, cancellationToken);
         var next = BuildAppRecord(
@@ -402,7 +410,7 @@ internal sealed class CoreLifecycleService(
         };
         await apps.UpsertAppAsync(next, cancellationToken);
 
-        if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+        if (wasRunning)
         {
             try
             {
@@ -511,7 +519,7 @@ internal sealed class CoreLifecycleService(
 
         if (request.DeleteSource)
         {
-            TryDeleteDirectory(Path.Combine(paths.SourcesRoot, appId));
+            TryDeleteDirectory(CoreDataPaths.ResolveContainedPath(paths.SourcesRoot, appId));
         }
 
         TryDeleteDirectoryIfEmpty(GetAppRoot(appId));
@@ -528,6 +536,11 @@ internal sealed class CoreLifecycleService(
     {
         _ = await RequireAppAsync(appId, cancellationToken);
         var reason = string.IsNullOrWhiteSpace(request.Reason) ? "manual" : request.Reason.Trim();
+        if (!BackupReasonPattern.IsMatch(reason))
+        {
+            throw new AppLifecycleException("backup_reason_invalid", "Backup reason must match ^[a-z0-9][a-z0-9-]{0,30}$.");
+        }
+
         if (AppBackupService.IsAutomaticReason(reason))
         {
             throw new AppLifecycleException("backup_reason_reserved", $"{reason} backup reason is reserved for Core lifecycle operations.");
@@ -661,7 +674,7 @@ internal sealed class CoreLifecycleService(
             setting =>
             {
                 var current = existing?.Settings.GetValueOrDefault(setting.Key);
-                return new AppSettingValue(setting.Key, setting.Type, current?.Value ?? setting.Default, setting.Secret);
+                return new AppSettingValue(setting.Key, setting.Type, current?.Value ?? setting.Default, setting.Secret, setting.Required);
             },
             StringComparer.Ordinal);
         var storageMappings = selection.DataTarget is null
@@ -1252,7 +1265,7 @@ internal sealed class CoreLifecycleService(
             ?? throw new AppLifecycleException("runtime_adapter_missing", $"Runtime adapter '{runtimeType}' is not available.");
 
     private string GetAppRoot(string appId)
-        => Path.Combine(paths.AppsRoot, appId);
+        => CoreDataPaths.ResolveContainedPath(paths.AppsRoot, appId);
 
     private string GetAppDataPath(string appId)
         => Path.Combine(GetAppRoot(appId), "data");
@@ -2048,7 +2061,7 @@ internal sealed record AppInstallPlan(
     IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
 
-internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret);
+internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret, bool Required = false);
 
 internal sealed record AppUpdatePlan(
     string AppId,

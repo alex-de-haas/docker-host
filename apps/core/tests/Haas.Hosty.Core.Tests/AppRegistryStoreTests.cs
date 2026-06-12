@@ -177,6 +177,23 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public async Task UpdateAppAsync_SerializesConcurrentReadModifyWrites()
+    {
+        var root = await CreateTempRootAsync();
+        var store = new AppRegistryStore(CreatePaths(root));
+        await store.UpsertAppAsync(CreateApp("com.example.notes") with { Capabilities = [] });
+
+        await Task.WhenAll(Enumerable.Range(0, 25).Select(index =>
+            store.UpdateAppAsync(
+                "com.example.notes",
+                app => app with { Capabilities = app.Capabilities.Append($"capability-{index}").ToArray() })));
+
+        var app = await store.GetAppAsync("com.example.notes");
+        Assert.NotNull(app);
+        Assert.Equal(25, app.Capabilities.Count);
+    }
+
+    [Fact]
     public async Task UserDirectoryStore_ReadAsync_ReturnsEmptyFinalStateWhenMissing()
     {
         var root = await CreateTempRootAsync();

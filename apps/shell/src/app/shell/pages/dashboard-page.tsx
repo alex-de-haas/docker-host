@@ -21,7 +21,7 @@ export function DashboardPage({
   onOpenInstalledApps: () => void;
 }) {
   const running = runtimeApps.filter((app) => app.runtimeState === "running").length;
-  const installed = runtimeApps.filter((app) => app.operationStatus === "installed").length;
+  const installed = runtimeApps.length;
   const attention = runtimeApps.filter((app) => app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown").length;
 
   return (

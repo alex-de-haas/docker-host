@@ -9,7 +9,7 @@ internal sealed class UserDirectoryStore(CoreDataPaths paths)
             new UserDirectoryState(1, [], [], [], []);
 
     public async Task WriteAsync(UserDirectoryState state, CancellationToken cancellationToken = default)
-        => await JsonStorage.WriteAsync(StatePath, state, cancellationToken);
+        => await JsonStorage.WriteAsync(StatePath, state, restrictToOwner: true, cancellationToken);
 }
 
 internal sealed record UserDirectoryState(

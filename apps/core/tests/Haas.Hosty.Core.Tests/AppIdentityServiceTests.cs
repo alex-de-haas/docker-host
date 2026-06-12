@@ -32,6 +32,45 @@ public sealed class AppIdentityServiceTests
     }
 
     [Fact]
+    public async Task ExchangeCodeAsync_ParallelExchangesConsumeCodeExactlyOnce()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(async attempt =>
+        {
+            try
+            {
+                await fixture.Service.ExchangeCodeAsync(authorization.Code);
+                return (Succeeded: true, Code: (string?)null);
+            }
+            catch (AppIdentityException ex)
+            {
+                return (Succeeded: false, Code: (string?)ex.Code);
+            }
+        }));
+
+        Assert.Equal(1, results.Count(result => result.Succeeded));
+        Assert.All(results.Where(result => !result.Succeeded), result => Assert.Equal("code_consumed", result.Code));
+    }
+
+    [Fact]
+    public async Task ExchangeCodeAsync_PrunesEarlierConsumedCodesOnLaterExchanges()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var first = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var second = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        _ = await fixture.Service.ExchangeCodeAsync(first.Code);
+        _ = await fixture.Service.ExchangeCodeAsync(second.Code);
+
+        var replay = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(first.Code));
+
+        Assert.Equal("invalid_code", replay.Code);
+    }
+
+    [Fact]
     public async Task ExchangeCodeAsync_IssuesTwentyFourHourIdentityToken()
     {
         var fixture = await IdentityFixture.CreateAsync();
@@ -105,9 +144,21 @@ public sealed class AppIdentityServiceTests
             [CreateUser("user_1"), CreateUser("user_2")],
             [new AppAssignmentRecord("com.example.notes", "user_2", fixture.Clock.UtcNow)]);
 
-        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateAsync(token.AccessToken));
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes"));
 
         Assert.Equal("app_access_denied", error.Code);
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_RejectsTokensIssuedForAnotherApp()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var token = await fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1");
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateAsync(token.AccessToken, "com.example.other"));
+
+        Assert.Equal("token_app_mismatch", error.Code);
     }
 
     [Fact]
@@ -121,7 +172,7 @@ public sealed class AppIdentityServiceTests
 
         foreach (var token in tokens)
         {
-            var session = await fixture.Service.RevalidateAsync(token.AccessToken);
+            var session = await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes");
             Assert.True(session.Active);
             Assert.Equal("user_1", session.UserId);
         }

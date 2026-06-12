@@ -15,6 +15,11 @@ internal sealed class LocalCommandRuntimeAdapter(
     {
         var endpoints = new List<AppEndpointContract>();
         var startedServices = new List<string>();
+        foreach (var service in context.Manifest.Services)
+        {
+            await StopServiceAsync(context.App.Id, service.Key, cancellationToken);
+        }
+
         EnsureExplicitPortsAvailable(context);
         try
         {
@@ -25,7 +30,6 @@ internal sealed class LocalCommandRuntimeAdapter(
                     throw new AppLifecycleException("local_command_missing", $"Local command service '{service.Key}' does not declare command.");
                 }
 
-                await StopServiceAsync(context.App.Id, service.Key, cancellationToken);
                 var workingDirectory = ResolveWorkingDirectory(context, service);
                 if (!Directory.Exists(workingDirectory))
                 {

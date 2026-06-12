@@ -41,7 +41,7 @@ A Hosty-aware app should:
 - create an app-origin session from the returned identity token;
 - use app-specific cookie names because local Shell, Core, and runtime apps all use the `localhost` host on different ports;
 - remove the code from the browser URL after starting exchange;
-- call `POST {HOSTY_CORE_ORIGIN}/api/auth/apps/revalidate` before extending trust in an existing app session;
+- call `POST {HOSTY_CORE_ORIGIN}/api/auth/apps/revalidate` with `Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>` before extending trust in an existing app session; Core rejects tokens issued for a different app than the caller;
 - treat Core `401` as missing or expired Host authentication and Core `403` as denied app access;
 - keep third-party service credentials in app-owned settings or secrets, not in Hosty identity tokens.
 

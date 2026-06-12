@@ -38,7 +38,7 @@ Use explicit `localPort` only when a fixed local port is a real requirement. If 
 
 ## Settings
 
-Manifest settings are app-owned configuration. Do not define settings with the `HOSTY_PUBLIC_ORIGIN_` prefix. That prefix is reserved for Hosty-managed public endpoint origin settings, and Core ignores manifest-provided entries with that prefix so apps cannot pre-seed redirect origins.
+Manifest settings are app-owned configuration. Each entry supports `key`, `type`, `default`, `secret`, and `required`. Settings marked `required: true` are highlighted in the Shell and surface a configuration warning until the operator provides a value. Do not define settings with the `HOSTY_PUBLIC_ORIGIN_` prefix. That prefix is reserved for Hosty-managed public endpoint origin settings, and Core ignores manifest-provided entries with that prefix so apps cannot pre-seed redirect origins.
 
 ## Storage And Backups
 

@@ -5,7 +5,7 @@ This directory contains repository-level bootstrap scripts.
 The Unix installer is `scripts/install.sh`. It stays a thin shell bootstrap:
 
 - download the matching CLI artifact from the rolling `cli-dev` GitHub Release;
-- verify `SHA256SUMS` when available and fail clearly if verification cannot be performed;
+- require `SHA256SUMS` verification: abort the install when the checksum file cannot be downloaded, has no entry for the artifact, no hashing tool is available, or the checksum does not match;
 - install the preferred executable to `~/.hosty/bin/hosty`;
 - add the install directory to the user's shell profile when a POSIX-compatible profile can be detected;
 - delegate Docker preflight and `launch.env` creation to `hosty install`;
@@ -17,7 +17,7 @@ The Unix installer is `scripts/install.sh`. It stays a thin shell bootstrap:
 The Windows installer is `scripts/install.ps1`. It follows the same bootstrap boundary:
 
 - download `hosty-windows-x64.exe` from the rolling `cli-dev` GitHub Release;
-- verify `SHA256SUMS` when available and fail clearly on checksum mismatch;
+- require `SHA256SUMS` verification: abort the install when the checksum file cannot be downloaded, has no entry for the artifact, or the checksum does not match;
 - install the executable to `%USERPROFILE%\.hosty\bin\hosty.exe` unless `HOSTY_INSTALL_DIR` is set;
 - add the install directory to the current user's PATH unless `HOSTY_INSTALL_SKIP_PATH_UPDATE=1`;
 - delegate local directory preparation to `hosty install`;

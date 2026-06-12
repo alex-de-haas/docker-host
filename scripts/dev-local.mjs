@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
@@ -80,11 +80,12 @@ process.on("exit", () => {
 });
 
 function start(label, command, args, env) {
+  // No shell: dotnet resolves directly on every platform, and a cmd.exe wrapper
+  // on Windows would make `child` track the wrapper instead of the real process.
   const child = spawn(command, args, {
     cwd: repoRoot,
     env,
     stdio: "inherit",
-    shell: process.platform === "win32",
   });
   children.push(child);
   child.on("exit", (code, signal) => {
@@ -101,7 +102,15 @@ function stopAll(signal) {
   shuttingDown = true;
   for (const child of children) {
     if (!child.killed && child.exitCode === null) {
-      child.kill(signal);
+      if (process.platform === "win32" && typeof child.pid === "number") {
+        // On Windows child.kill() terminates only the direct child, and
+        // `dotnet run` hosts the actual Core process as its own child, so kill
+        // the whole tree. Otherwise Core keeps running and the next
+        // `npm run dev` fails the port availability check.
+        spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      } else {
+        child.kill(signal);
+      }
     }
   }
 }

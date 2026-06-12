@@ -6,17 +6,28 @@ using System.Text.Json;
 
 internal sealed class CoreControlClient : IDisposable
 {
-    private readonly HttpClient httpClient;
+    private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DefaultOperationTimeout = TimeSpan.FromMinutes(10);
 
-    private CoreControlClient(string controlBaseUrl, HttpClient httpClient)
+    private readonly HttpClient httpClient;
+    private readonly TimeSpan probeTimeout;
+    private readonly TimeSpan operationTimeout;
+
+    private CoreControlClient(string controlBaseUrl, HttpClient httpClient, TimeSpan probeTimeout, TimeSpan operationTimeout)
     {
         ControlBaseUrl = controlBaseUrl.TrimEnd('/');
         this.httpClient = httpClient;
+        this.probeTimeout = probeTimeout;
+        this.operationTimeout = operationTimeout;
     }
 
     public string ControlBaseUrl { get; }
 
-    public static async Task<CoreControlClient?> TryCreateAsync(CommandContext context, CancellationToken cancellationToken = default)
+    public static async Task<CoreControlClient?> TryCreateAsync(
+        CommandContext context,
+        TimeSpan? probeTimeout = null,
+        TimeSpan? operationTimeout = null,
+        CancellationToken cancellationToken = default)
     {
         var path = Path.Combine(context.Environment.RootDirectory, "core", "run", "control.json");
         if (!File.Exists(path))
@@ -33,47 +44,61 @@ internal sealed class CoreControlClient : IDisposable
 
         var httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(10),
+            Timeout = Timeout.InfiniteTimeSpan,
         };
         foreach (var header in discovery.RequiredHeaders)
         {
             httpClient.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        return new CoreControlClient(discovery.ControlBaseUrl, httpClient);
+        return new CoreControlClient(
+            discovery.ControlBaseUrl,
+            httpClient,
+            probeTimeout ?? DefaultProbeTimeout,
+            operationTimeout ?? DefaultOperationTimeout);
     }
 
     public async Task<T?> GetAsync<T>(string path, CancellationToken cancellationToken = default)
-        => await SendAsync<T>(HttpMethod.Get, path, body: null, cancellationToken);
+        => await SendAsync<T>(HttpMethod.Get, path, body: null, probeTimeout, cancellationToken);
 
     public async Task<T?> PostAsync<T>(string path, object? body = null, CancellationToken cancellationToken = default)
-        => await SendAsync<T>(HttpMethod.Post, path, body, cancellationToken);
+        => await SendAsync<T>(HttpMethod.Post, path, body, operationTimeout, cancellationToken);
 
     public async Task<T?> DeleteAsync<T>(string path, CancellationToken cancellationToken = default)
-        => await SendAsync<T>(HttpMethod.Delete, path, body: null, cancellationToken);
+        => await SendAsync<T>(HttpMethod.Delete, path, body: null, operationTimeout, cancellationToken);
 
-    private async Task<T?> SendAsync<T>(HttpMethod method, string path, object? body, CancellationToken cancellationToken)
+    private async Task<T?> SendAsync<T>(HttpMethod method, string path, object? body, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(method, $"{ControlBaseUrl}/{path.TrimStart('/')}");
-        if (body is not null)
-        {
-            request.Content = JsonContent.Create(body, options: JsonOptions);
-        }
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new CoreControlException(method.Method, path, response.StatusCode, responseBody);
-        }
+            using var request = new HttpRequestMessage(method, $"{ControlBaseUrl}/{path.TrimStart('/')}");
+            if (body is not null)
+            {
+                request.Content = JsonContent.Create(body, options: JsonOptions);
+            }
 
-        if (response.Content.Headers.ContentLength == 0)
+            using var response = await httpClient.SendAsync(request, timeoutSource.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                var responseBody = await response.Content.ReadAsStringAsync(timeoutSource.Token);
+                throw new CoreControlException(method.Method, path, response.StatusCode, responseBody);
+            }
+
+            if (response.Content.Headers.ContentLength == 0)
+            {
+                return default;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(timeoutSource.Token);
+            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, timeoutSource.Token);
+        }
+        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            return default;
+            throw new CoreControlTimeoutException(method.Method, path, timeout);
         }
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
     }
 
     public void Dispose()
@@ -99,4 +124,21 @@ internal sealed class CoreControlException(
     public HttpStatusCode StatusCode { get; } = statusCode;
 
     public string ResponseBody { get; } = responseBody;
+}
+
+internal sealed class CoreControlTimeoutException(
+    string method,
+    string path,
+    TimeSpan timeout) : TaskCanceledException($"{method} {path} did not complete within {FormatTimeout(timeout)}.")
+{
+    public string Method { get; } = method;
+
+    public string Path { get; } = path;
+
+    public TimeSpan Timeout { get; } = timeout;
+
+    private static string FormatTimeout(TimeSpan timeout)
+        => timeout >= TimeSpan.FromMinutes(1)
+            ? $"{timeout.TotalMinutes:0} minutes"
+            : $"{timeout.TotalSeconds:0} seconds";
 }

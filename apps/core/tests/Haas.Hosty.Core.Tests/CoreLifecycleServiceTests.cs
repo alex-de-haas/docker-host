@@ -256,6 +256,27 @@ public sealed class CoreLifecycleServiceTests
         Assert.Contains(alternatePlan.RuntimeProfiles, profile => profile.Key == "docker" && profile.Default);
     }
 
+    [Fact]
+    public async Task CreateInstallPlanAsync_CarriesRequiredSettingFlag()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: """
+              "settings": [{
+                "key": "APP_MODE",
+                "type": "string",
+                "required": true
+              }],
+            """);
+
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+        var install = await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var planSetting = Assert.Single(plan.Settings);
+        Assert.True(planSetting.Required);
+        var appSetting = Assert.Single(install.App!.Settings, setting => setting.Key == "APP_MODE");
+        Assert.True(appSetting.Required);
+    }
+
     [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]
@@ -432,7 +453,12 @@ public sealed class CoreLifecycleServiceTests
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteManifestAsync("1.0.0");
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
-        Directory.CreateDirectory(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "state.json.tmp"));
+        var statePath = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "state.json");
+        fixture.Adapter.OnStarted = () =>
+        {
+            File.Delete(statePath);
+            Directory.CreateDirectory(statePath);
+        };
 
         var error = await Assert.ThrowsAnyAsync<Exception>(() =>
             fixture.Service.StartAsync("com.example.notes"));
@@ -950,7 +976,7 @@ public sealed class CoreLifecycleServiceTests
         var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(CreateRemoteLocalCommandManifestJson(repository!), Encoding.UTF8, "application/json"),
-        })));
+        })), allowRemoteLocalCommand: true);
         var fixture = await LifecycleFixture.CreateAsync(manifests);
         repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
 
@@ -988,7 +1014,7 @@ public sealed class CoreLifecycleServiceTests
         var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(CreateRemoteLocalCommandManifestJson("."), Encoding.UTF8, "application/json"),
-        })));
+        })), allowRemoteLocalCommand: true);
         var fixture = await LifecycleFixture.CreateAsync(manifests);
         await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "dev"));
 
@@ -996,6 +1022,22 @@ public sealed class CoreLifecycleServiceTests
             fixture.Service.StartAsync("com.example.remote-local"));
 
         Assert.Equal("source_repository_relative_remote_unsupported", error.Code);
+    }
+
+    [Fact]
+    public async Task InstallAsync_BlocksRemoteManifestLocalCommandRuntimeByDefault()
+    {
+        const string manifestUrl = "https://apps.example.test/remote-local/manifest.json";
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(CreateRemoteLocalCommandManifestJson("."), Encoding.UTF8, "application/json"),
+        })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() =>
+            fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "dev")));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_remote_local_command_blocked");
     }
 
     [Fact]
@@ -1892,6 +1934,8 @@ public sealed class CoreLifecycleServiceTests
 
         public int? FailOnStartCount { get; set; }
 
+        public Action? OnStarted { get; set; }
+
         public RuntimeLifecycleContext? LastContext { get; private set; }
 
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
@@ -1903,6 +1947,7 @@ public sealed class CoreLifecycleServiceTests
                 throw new AppLifecycleException("runtime_start_failed", "Runtime failed to start.");
             }
 
+            OnStarted?.Invoke();
             return Task.FromResult(new AppRuntimeStartResult("running", [
                 new AppEndpointContract("app.http", "http", "http://localhost:3100", Public: true, Service: "app", Port: "http"),
             ]));

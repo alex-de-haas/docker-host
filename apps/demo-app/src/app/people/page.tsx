@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { Users } from "lucide-react";
 import {
   DemoNavigation,
@@ -11,13 +12,13 @@ import {
   type StateTone,
 } from "@/components/DemoAppUi";
 import { getDemoConfig } from "@/lib/demo-config";
-import { getAppDirectorySnapshot, type AppDirectoryStatus } from "@/lib/host-auth";
+import { getDemoAuthSnapshot, type AppDirectoryStatus } from "@/lib/host-auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function PeoplePage() {
   const config = getDemoConfig();
-  const directory = await getAppDirectorySnapshot();
+  const { directory } = await getDemoAuthSnapshot(await headers());
   const userCount = directory.pagination?.total ?? directory.users.length;
 
   return (

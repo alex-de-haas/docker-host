@@ -118,19 +118,53 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
             return null;
         }
 
+        var currentSha256 = await ComputeSha256Async(record.ArchivePath, cancellationToken);
+        if (!string.Equals(currentSha256, record.ArchiveSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new AppLifecycleException(
+                "backup_archive_corrupt",
+                $"Backup archive for '{backupId}' does not match its recorded SHA-256 checksum; restore was aborted before touching app data.");
+        }
+
         if (createPreRestoreBackup)
         {
             _ = await CreateBackupAsync(appId, "pre-restore", cancellationToken);
         }
 
         var dataPath = GetAppDataPath(appId);
-        if (Directory.Exists(dataPath))
+        Directory.CreateDirectory(Path.GetDirectoryName(dataPath)!);
+        var stagingPath = $"{dataPath}.restore-{Guid.NewGuid():N}.tmp";
+        var replacedPath = $"{dataPath}.replaced-{Guid.NewGuid():N}.tmp";
+        try
         {
-            Directory.Delete(dataPath, recursive: true);
+            Directory.CreateDirectory(stagingPath);
+            ZipFile.ExtractToDirectory(record.ArchivePath, stagingPath, overwriteFiles: true);
+
+            if (Directory.Exists(dataPath))
+            {
+                Directory.Move(dataPath, replacedPath);
+            }
+
+            try
+            {
+                Directory.Move(stagingPath, dataPath);
+            }
+            catch
+            {
+                if (!Directory.Exists(dataPath) && Directory.Exists(replacedPath))
+                {
+                    Directory.Move(replacedPath, dataPath);
+                }
+
+                throw;
+            }
+        }
+        finally
+        {
+            TryDeleteDirectory(stagingPath);
         }
 
-        Directory.CreateDirectory(dataPath);
-        ZipFile.ExtractToDirectory(record.ArchivePath, dataPath, overwriteFiles: true);
+        TryDeleteDirectory(replacedPath);
         return record;
     }
 
@@ -495,10 +529,10 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
     }
 
     private string GetAppDataPath(string appId)
-        => Path.Combine(paths.AppsRoot, appId, "data");
+        => Path.Combine(CoreDataPaths.ResolveContainedPath(paths.AppsRoot, appId), "data");
 
     private string GetBackupRoot(string appId)
-        => Path.Combine(paths.BackupsRoot, appId);
+        => CoreDataPaths.ResolveContainedPath(paths.BackupsRoot, appId);
 
     private static bool IsSafeBackupPath(string path, string backupRoot, string extension)
     {
@@ -523,6 +557,21 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
             if (File.Exists(path))
             {
                 File.Delete(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort cleanup; explicit delete can be retried by the operator.
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

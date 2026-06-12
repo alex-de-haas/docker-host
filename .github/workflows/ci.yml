@@ -38,6 +38,9 @@ on:
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
 
+permissions:
+  contents: read
+
 jobs:
   shell:
     name: Shell
@@ -75,7 +78,6 @@ jobs:
         run: npm ci
 
       - name: Lint Demo App
-        if: github.event_name == 'push'
         run: npm run demo-app:lint
 
       - name: Build Demo App
@@ -97,7 +99,6 @@ jobs:
         run: npm run core:build
 
       - name: Test Core
-        if: github.event_name == 'push'
         run: npm run core:test
 
   cli:
@@ -113,7 +114,6 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Validate installer syntax
-        if: github.event_name == 'push'
         run: |
           sh -n scripts/install.sh
           pwsh -NoProfile -File scripts/install.ps1 -Help > /dev/null
@@ -122,5 +122,4 @@ jobs:
         run: npm run cli:build
 
       - name: Test CLI
-        if: github.event_name == 'push'
         run: npm run cli:test

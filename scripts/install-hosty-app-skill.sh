@@ -102,15 +102,19 @@ download_skill() {
   need_cmd curl
   need_cmd tar
 
-  auth_header=""
+  auth_token=""
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    auth_header="Authorization: Bearer $GITHUB_TOKEN"
+    auth_token="$GITHUB_TOKEN"
   elif [ -n "${GH_TOKEN:-}" ]; then
-    auth_header="Authorization: Bearer $GH_TOKEN"
+    auth_token="$GH_TOKEN"
   fi
 
-  if [ -n "$auth_header" ]; then
-    curl -fsSL -H "$auth_header" "$url" -o "$archive"
+  if [ -n "$auth_token" ]; then
+    # Pass the Authorization header through a stdin-fed curl config so the
+    # token is never visible in the process list.
+    curl -fsSL --config - "$url" -o "$archive" <<EOF
+header = "Authorization: Bearer $auth_token"
+EOF
   else
     curl -fsSL "$url" -o "$archive"
   fi

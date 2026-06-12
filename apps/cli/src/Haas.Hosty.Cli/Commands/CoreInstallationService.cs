@@ -39,9 +39,8 @@ internal sealed class CoreInstallationService(CommandContext context)
 
         using var httpClient = new HttpClient();
         var checksums = await releaseArtifacts.DownloadChecksumsAsync(httpClient, cancellationToken);
-        var hasExpectedSha256 = ReleaseArtifactService.TryFindChecksum(checksums, artifact, out var expectedSha256);
-        if (hasExpectedSha256 &&
-            File.Exists(executablePath) &&
+        var expectedSha256 = ReleaseArtifactService.RequireChecksum(checksums, artifact);
+        if (File.Exists(executablePath) &&
             SelfUpdateService.CurrentExecutableMatches(executablePath, expectedSha256))
         {
             context.Console.MarkupLine("[green]Hosty Core is already up to date.[/]");
@@ -50,23 +49,9 @@ internal sealed class CoreInstallationService(CommandContext context)
 
         var artifactBytes = await releaseArtifacts.DownloadArtifactAsync(httpClient, artifact, cancellationToken);
         var artifactSha256 = SelfUpdateService.CalculateSha256(artifactBytes);
-        if (hasExpectedSha256)
+        if (!string.Equals(artifactSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
         {
-            if (!string.Equals(artifactSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException("Downloaded Hosty Core artifact failed SHA256 verification.");
-            }
-        }
-        else
-        {
-            context.Console.MarkupLine("[yellow]SHA256SUMS was not available; continuing without checksum verification.[/]");
-        }
-
-        if (File.Exists(executablePath) &&
-            SelfUpdateService.CurrentExecutableMatches(executablePath, artifactSha256))
-        {
-            context.Console.MarkupLine("[green]Hosty Core is already up to date.[/]");
-            return CoreInstallationResult.AlreadyCurrent(executablePath);
+            throw new InvalidOperationException("Downloaded Hosty Core artifact failed SHA256 verification.");
         }
 
         var wasInstalled = !File.Exists(executablePath);

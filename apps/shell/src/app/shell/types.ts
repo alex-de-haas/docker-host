@@ -221,8 +221,8 @@ export type SessionResponse = {
   authenticated: boolean;
   user?: {
     id: string;
-    email: string;
-    displayName: string;
+    email: string | null;
+    displayName: string | null;
     role: string;
     disabled: boolean;
   } | null;

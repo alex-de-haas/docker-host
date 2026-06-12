@@ -8,7 +8,7 @@ Runtime apps should use Core-owned app auth and app-local sessions.
 2. Shell opens the app origin with the code.
 3. The app exchanges the code through `/api/auth/apps/token`.
 4. The app stores the returned app identity token in an app-origin HttpOnly cookie.
-5. The app revalidates through `/api/auth/apps/revalidate`.
+5. The app revalidates through `/api/auth/apps/revalidate`, authenticating with `Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>`. Core rejects revalidation when the identity token was issued for a different app.
 
 ## Direct Probes
 
