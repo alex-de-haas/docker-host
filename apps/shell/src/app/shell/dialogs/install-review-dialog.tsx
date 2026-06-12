@@ -94,12 +94,12 @@ export function InstallReviewDialog({
 
         <form onSubmit={submitReview} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="manifestPath">Manifest path or URL</Label>
+            <Label htmlFor="manifestPath">Manifest, app directory, or URL</Label>
             <Input
               id="manifestPath"
               value={manifestPath}
               onChange={(event) => setManifestPath(event.target.value)}
-              placeholder="/path/to/manifest.json or https://example.test/manifest.json"
+              placeholder="/path/to/app, /path/to/manifest.json, or https://example.test/manifest.json"
               required
             />
           </div>

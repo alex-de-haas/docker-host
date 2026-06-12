@@ -16,7 +16,7 @@ hosty core stop
 hosty auth setup-token
 hosty auth recovery-token
 hosty apps list
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 ```
 
 ## Root Selection
@@ -61,7 +61,7 @@ HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 
 `HOSTY_DATA_ROOT` defines the Hosty state root used by Core. `HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
 
-`HOSTY_SHELL_MANIFEST_PATH` can be a local manifest path or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
+`HOSTY_SHELL_MANIFEST_PATH` can be a local manifest file path, local app directory, or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
 
 Legacy `HOST_DATA_ROOT_HOST`, `HOSTY_CORE_DATA_ROOT`, `HOST_CORE_PUBLIC_ORIGIN`, `HOST_SHELL_PUBLIC_ORIGIN`, and `HOST_PUBLIC_ORIGIN` settings are not read.
 

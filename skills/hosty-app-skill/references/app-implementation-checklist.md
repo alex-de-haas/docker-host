@@ -8,5 +8,5 @@
 - Apps read `HOSTY_APP_ID`, `HOSTY_CORE_ORIGIN`, `HOSTY_APP_DATA_DIR`, `HOSTY_PORT_{KEY}`, and `PORT` instead of hard-coding local paths or ports.
 - Apps that need assigned users call `/api/internal/apps/{appId}/directory/users` with `HOSTY_APP_SERVICE_TOKEN`.
 - App-owned roles are stored under the app data directory.
-- Local validation uses `hosty apps install apps/demo-app/manifest.json --runtime dev` or the target app's manifest path.
+- Local validation uses `hosty apps install apps/demo-app --runtime dev` or `hosty apps install . --runtime <profile>` from the target app directory.
 - Documentation links point to `docs/features/runtime-app-manifest.md` when the manifest contract changes.

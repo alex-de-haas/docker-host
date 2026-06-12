@@ -14,11 +14,19 @@ The Demo App uses:
 
 - `apps/demo-app/manifest.json`
 
-Install it locally through Core:
+Runtime apps can be installed from:
+
+- an HTTP(S) URL that points directly to a manifest file;
+- a local manifest file path;
+- a local app directory that contains `manifest.json` directly inside that directory.
+
+For local development, prefer the app directory form so a checked-out runtime app repository can be installed with `hosty apps install .`.
+
+Install the Demo App locally through Core:
 
 ```bash
 hosty core start
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 ```
 
@@ -62,11 +70,11 @@ For `docker` runtime profiles, Core starts the declared image and does not need 
 
 For `localCommand` runtime profiles, Core resolves a source root before starting services:
 
-- local manifest path installs use the local worktree that contains the manifest, without cloning `source.repository`;
+- local manifest file and app directory installs use the local worktree that contains the manifest, without cloning `source.repository`;
 - HTTP(S) manifest URL installs require `source.repository` to be an absolute clonable Git URL or local repository path;
 - administrator `source-override` state takes priority over both local inference and managed checkouts.
 
-Relative source repositories such as `.` are only meaningful for local manifest path installs. They are rejected when starting a `localCommand` runtime from a remote manifest URL.
+Relative source repositories such as `.` are only meaningful for local filesystem installs. They are rejected when starting a `localCommand` runtime from a remote manifest URL.
 
 ## Storage
 

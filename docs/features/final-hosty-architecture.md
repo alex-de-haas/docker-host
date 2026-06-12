@@ -126,7 +126,7 @@ Runtime apps can declare one app-level source repository. Core stores source sta
 
 Local source overrides are never written back to public app manifests.
 
-For `localCommand` runtimes, Core resolves the source root before runtime start. Local manifest path installs record a local worktree and do not clone source; remote manifest URL installs require an absolute clonable source repository and prepare the managed checkout under `sources/<app-id>/`.
+For `localCommand` runtimes, Core resolves the source root before runtime start. Local manifest file and app directory installs record a local worktree and do not clone source; remote manifest URL installs require an absolute clonable source repository and prepare the managed checkout under `sources/<app-id>/`.
 
 Runtime app channel switching is tracked as an idea in [Update Channels](../ideas/update-channels.md). The low-level Core shape resolves a channel to a concrete manifest snapshot and reuses update planning/apply, but Shell UI, generated indexes, pull request channels, and remote manifest resolution are intentionally out of the current stabilization scope.
 

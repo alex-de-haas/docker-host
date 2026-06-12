@@ -39,7 +39,7 @@ hosty open
 From a local checkout, install the repository Demo App:
 
 ```bash
-hosty apps install apps/demo-app/manifest.json
+hosty apps install apps/demo-app
 ```
 
 ## Install Hosty App Skill
@@ -133,7 +133,7 @@ manifest with its local runtime profile and start it through Core:
 
 ```bash
 npm run core:dev
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 ```
 

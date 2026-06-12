@@ -28,7 +28,7 @@ flowchart LR
 
 ```bash
 hosty core start
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 hosty apps health com.haas.demo-app
 hosty apps open com.haas.demo-app --user user@docker-host.local --mode shell
@@ -62,10 +62,10 @@ The published manifest image uses:
 ghcr.io/alex-de-haas/demo-app:latest
 ```
 
-For local install testing, pass the manifest path directly to Core:
+For local install testing, pass the app directory to Core:
 
 ```bash
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 ```
 
 The removed Legacy Host fixture route at `http://localhost:3000/fixtures/apps/demo-app` is no longer available. Local Docker image testing should use `hosty-demo-app:dev` together with a manifest or channel entry that selects the local image and `pullPolicy: ifNotPresent`.

@@ -3,7 +3,7 @@
   "id": "com.haas.demo-app",
   "name": "Demo App",
   "description": "Hosty-aware demo runtime app for validating lifecycle, settings, storage, identity, and app-owned role flows.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",

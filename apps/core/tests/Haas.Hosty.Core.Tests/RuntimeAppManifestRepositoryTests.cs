@@ -27,6 +27,34 @@ public sealed class RuntimeAppManifestRepositoryTests
     }
 
     [Fact]
+    public async Task LoadAsync_UsesManifestJsonFromLocalDirectory()
+    {
+        var appDirectory = Path.Combine(Path.GetTempPath(), $"hosty-manifest-directory-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(appDirectory);
+        var manifestPath = Path.Combine(appDirectory, "manifest.json");
+        var manifestJson = CreateManifestJson("1.0.0");
+        await File.WriteAllTextAsync(manifestPath, manifestJson);
+        var service = new AppManifestService();
+
+        try
+        {
+            var selection = await service.LoadAsync(appDirectory);
+
+            Assert.Equal("com.example.notes", selection.Manifest.Id);
+            Assert.Equal(manifestPath, selection.ManifestPath);
+            Assert.Null(selection.ManifestUrl);
+            Assert.Equal(manifestJson, selection.ManifestJson);
+        }
+        finally
+        {
+            if (Directory.Exists(appDirectory))
+            {
+                Directory.Delete(appDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task LoadAsync_DownloadsHttpManifestAndSavesLocalCopy()
     {
         const string manifestUrl = "https://apps.example.test/notes/manifest.json";

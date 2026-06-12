@@ -8,7 +8,7 @@ Hosty runs local and Docker-backed runtime apps under Core-managed lifecycle. Th
 
 - `hosty` CLI bootstrap and Core control discovery.
 - Core-managed Shell runtime app.
-- Runtime app installation from `app.0.1` manifests.
+- Runtime app installation from `app.0.1` manifest URLs, local manifest files, or local app directories containing `manifest.json`.
 - Docker and local command runtime profiles.
 - Runtime profile switching with reviewed plans.
 - Source checkout and local source override workflows.
@@ -54,6 +54,6 @@ Local runtime URLs are published as `http://localhost:<assigned-port>`. Public U
 
 ```bash
 hosty core start
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 ```

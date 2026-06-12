@@ -8,6 +8,7 @@ namespace Haas.Hosty.Core;
 
 internal sealed class AppManifestService(HttpClient? httpClient = null)
 {
+    private const string ManifestFileName = "manifest.json";
     private const string SupportedSchemaVersion = "app.0.1";
     private const int MaxManifestBytes = 1024 * 1024;
     private static readonly Regex ContractKeyPattern = new("^[a-z][a-z0-9-]{0,62}$", RegexOptions.Compiled);
@@ -270,12 +271,24 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     private static async Task<AppManifestSource> ReadLocalManifestAsync(string manifestPath, CancellationToken cancellationToken)
     {
         var fullPath = Path.GetFullPath(manifestPath);
-        if (!File.Exists(fullPath))
+        var isDirectory = Directory.Exists(fullPath);
+        var resolvedPath = isDirectory
+            ? Path.Combine(fullPath, ManifestFileName)
+            : fullPath;
+
+        if (!File.Exists(resolvedPath))
         {
+            if (isDirectory)
+            {
+                throw new AppManifestException(
+                    "manifest_not_found",
+                    $"Runtime app manifest directory '{fullPath}' does not contain a {ManifestFileName} file.");
+            }
+
             throw new AppManifestException("manifest_not_found", $"Runtime app manifest was not found at '{fullPath}'.");
         }
 
-        return new AppManifestSource(fullPath, await File.ReadAllTextAsync(fullPath, cancellationToken), ManifestUrl: null);
+        return new AppManifestSource(resolvedPath, await File.ReadAllTextAsync(resolvedPath, cancellationToken), ManifestUrl: null);
     }
 
     private async Task<AppManifestSource> DownloadManifestAsync(Uri uri, CancellationToken cancellationToken)

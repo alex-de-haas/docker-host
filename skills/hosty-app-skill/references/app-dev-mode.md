@@ -14,7 +14,7 @@ For this repository's demo app:
 
 ```bash
 npm run core:dev
-hosty apps install apps/demo-app/manifest.json --runtime dev
+hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 ```
 

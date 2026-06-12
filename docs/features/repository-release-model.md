@@ -157,7 +157,7 @@ Manual validation for the current artifact model:
 - start source Core explicitly with `hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj` when validating repository Core changes;
 - run Shell locally with `npm run shell:dev` or through the Core-managed `hosty.shell` runtime app;
 - verify `docker pull ghcr.io/alex-de-haas/hosty-shell:latest` succeeds after `shell-image.yml` runs on `main`;
-- install the Demo App through `hosty apps install apps/demo-app/manifest.json`;
+- install the Demo App through `hosty apps install apps/demo-app`;
 - start, stop, restart, log, update-plan, update, backup, restore, and remove the Demo App through `hosty apps`;
 - run `hosty update` and confirm the CLI channel works.
 
