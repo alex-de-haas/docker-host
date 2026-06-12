@@ -53,6 +53,8 @@ internal sealed class AppAuthCodeStore(CoreDataPaths paths)
             var consumed = match with { ConsumedAt = now };
             var nextCodes = state.Codes
                 .Select(candidate => string.Equals(candidate.Code, code, StringComparison.Ordinal) ? consumed : candidate)
+                .Where(candidate => string.Equals(candidate.Code, code, StringComparison.Ordinal) ||
+                    (candidate.ExpiresAt > now && candidate.ConsumedAt is null))
                 .ToArray();
             await JsonStorage.WriteAsync(StatePath, state with { Codes = nextCodes }, restrictToOwner: true, cancellationToken);
             return new AppAuthCodeConsumeResult(AppAuthCodeConsumeOutcome.Consumed, consumed);

@@ -56,6 +56,21 @@ public sealed class AppIdentityServiceTests
     }
 
     [Fact]
+    public async Task ExchangeCodeAsync_PrunesEarlierConsumedCodesOnLaterExchanges()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var first = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var second = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        _ = await fixture.Service.ExchangeCodeAsync(first.Code);
+        _ = await fixture.Service.ExchangeCodeAsync(second.Code);
+
+        var replay = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(first.Code));
+
+        Assert.Equal("invalid_code", replay.Code);
+    }
+
+    [Fact]
     public async Task ExchangeCodeAsync_IssuesTwentyFourHourIdentityToken()
     {
         var fixture = await IdentityFixture.CreateAsync();
