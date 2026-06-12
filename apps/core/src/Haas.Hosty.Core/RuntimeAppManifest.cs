@@ -271,17 +271,18 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     private static async Task<AppManifestSource> ReadLocalManifestAsync(string manifestPath, CancellationToken cancellationToken)
     {
         var fullPath = Path.GetFullPath(manifestPath);
-        var resolvedPath = Directory.Exists(fullPath)
+        var isDirectory = Directory.Exists(fullPath);
+        var resolvedPath = isDirectory
             ? Path.Combine(fullPath, ManifestFileName)
             : fullPath;
 
         if (!File.Exists(resolvedPath))
         {
-            if (Directory.Exists(fullPath))
+            if (isDirectory)
             {
                 throw new AppManifestException(
                     "manifest_not_found",
-                    $"Runtime app manifest directory '{fullPath}' does not contain a manifest.json file.");
+                    $"Runtime app manifest directory '{fullPath}' does not contain a {ManifestFileName} file.");
             }
 
             throw new AppManifestException("manifest_not_found", $"Runtime app manifest was not found at '{fullPath}'.");
