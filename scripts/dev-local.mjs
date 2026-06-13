@@ -10,8 +10,6 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const dataRoot = path.resolve(process.env.HOSTY_DEV_DATA_ROOT || path.join(repoRoot, ".hosty-dev"));
 const coreUrl = process.env.HOSTY_CORE_URL || `http://localhost:${resolvePort("HOSTY_CORE_PORT", 3001)}`;
 const shellOrigin = process.env.HOSTY_SHELL_PUBLIC_ORIGIN || `http://localhost:${resolvePort("HOSTY_SHELL_PORT", 3000)}`;
-const coreEndpoint = parseEndpoint(coreUrl);
-const shellEndpoint = parseEndpoint(shellOrigin);
 const developmentUsers = [
   {
     id: process.env.HOSTY_DEV_USER_ID || "user_dev_admin",
@@ -28,7 +26,12 @@ const developmentUsers = [
 ];
 const devAdmin = developmentUsers[0];
 
+let coreEndpoint;
+let shellEndpoint;
+
 try {
+  coreEndpoint = parseEndpoint(coreUrl);
+  shellEndpoint = parseEndpoint(shellOrigin);
   await seedDevelopmentUsers();
   await assertPortAvailable("Core", coreEndpoint);
   await assertPortAvailable("Shell", shellEndpoint);

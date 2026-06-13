@@ -101,6 +101,13 @@ copy_skill() {
   fi
 }
 
+# Codex cannot load a skill without its agents/openai.yaml metadata, so require
+# it before installing into a Codex destination (Claude Code only needs SKILL.md).
+require_codex_assets() {
+  [ -f "$1/agents/openai.yaml" ] || \
+    die "agents/openai.yaml not found in $1; Codex needs it. Use --agent claude to install for Claude Code only."
+}
+
 install_to_targets() {
   src="$1"
 
@@ -116,6 +123,7 @@ install_to_targets() {
     return 0
   fi
   if [ "$AGENT" = "codex" ]; then
+    require_codex_assets "$src"
     copy_skill "$src" "$CODEX_SKILLS_ROOT/$SKILL_NAME"
     return 0
   fi
@@ -128,6 +136,7 @@ install_to_targets() {
     installed=1
   fi
   if [ -d "$(dirname "$CODEX_SKILLS_ROOT")" ]; then
+    require_codex_assets "$src"
     copy_skill "$src" "$CODEX_SKILLS_ROOT/$SKILL_NAME"
     installed=1
   fi
@@ -244,4 +253,6 @@ else
   download_skill
 fi
 
-printf '%s\n' "Restart your agent (Claude Code or Codex) to pick up the installed or updated skill."
+if [ "$DRY_RUN" != "true" ]; then
+  printf '%s\n' "Restart your agent (Claude Code or Codex) to pick up the installed or updated skill."
+fi
