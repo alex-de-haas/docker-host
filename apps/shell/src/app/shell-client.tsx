@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -10,12 +11,10 @@ import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
-import { AvailableAppsPage } from "./shell/pages/available-apps-page";
-import { DashboardPage } from "./shell/pages/dashboard-page";
-import { InstalledAppsPage } from "./shell/pages/installed-apps-page";
-import { UserManagementPanel } from "./shell/pages/user-management-page";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
+import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
+  getAuthorizedShellView,
   getShellViewHref,
   getWorkspaceHref,
   getWorkspaceRouteKey,
@@ -23,6 +22,7 @@ import {
   normalizeShellPath,
   readShellRoute,
   SIDEBAR_COMPACT_STORAGE_KEY,
+  shellViewRequiresAdmin,
 } from "./shell/shell-routes";
 import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
 import { appendHostyThemeParams, normalizeThemePreference, resolveShellTheme } from "./shell/theme";
@@ -60,9 +60,11 @@ import type {
 export function ShellClient({
   coreOrigin,
   shellAppId,
+  children,
 }: {
   coreOrigin: string;
   shellAppId: string;
+  children: ReactNode;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -845,7 +847,7 @@ export function ShellClient({
   const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
   const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
-  const effectiveView = canManageApps ? shellRoute.view : "available-apps";
+  const effectiveView = getAuthorizedShellView(shellRoute.view, Boolean(canManageApps));
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
   const resetWorkspaceLaunch = useCallback(
@@ -864,7 +866,7 @@ export function ShellClient({
   );
 
   useEffect(() => {
-    if (!state.session?.authenticated || canManageApps || shellRoute.workspace || shellRoute.view === "available-apps") {
+    if (!state.session?.authenticated || canManageApps || shellRoute.workspace || !shellViewRequiresAdmin(shellRoute.view)) {
       return;
     }
 
@@ -1017,142 +1019,169 @@ export function ShellClient({
     window.localStorage.setItem(SIDEBAR_COMPACT_STORAGE_KEY, String(compact));
   }
 
-  function openInstallDialog() {
+  const openInstallDialog = useCallback(() => {
     setInstallOpen(true);
     setInstallPanel(emptyInstallPanelState());
-  }
+  }, []);
+
+  const openInstalledApps = useCallback(() => {
+    setOptimisticWorkspaceRoute(null);
+    router.push(getShellViewHref("installed-apps"));
+  }, [router]);
+
+  const shellStateContextValue = useMemo(
+    () => ({
+      state,
+      runtimeApps,
+      systemApps,
+      uiRuntimeApps,
+      activeUser,
+      canManageApps: Boolean(canManageApps),
+      busyAction,
+    }),
+    [
+      activeUser,
+      busyAction,
+      canManageApps,
+      state,
+      runtimeApps,
+      systemApps,
+      uiRuntimeApps,
+    ],
+  );
+
+  const shellActionsContextValue = useMemo(
+    () => ({
+      coreOrigin,
+      shellAppId,
+      refresh,
+      sendCsrfJson,
+      launchAppPage,
+      getStandaloneAppHref,
+      openInstallDialog,
+      runAppAction,
+      switchAppRuntime,
+      createManualBackup,
+      openAppPanel,
+      openInstalledApps,
+    }),
+    [
+      coreOrigin,
+      createManualBackup,
+      getStandaloneAppHref,
+      launchAppPage,
+      openAppPanel,
+      openInstalledApps,
+      openInstallDialog,
+      refresh,
+      runAppAction,
+      sendCsrfJson,
+      shellAppId,
+      switchAppRuntime,
+    ],
+  );
 
   return (
-    <div
-      className={cn(
-        "grid min-h-dvh bg-muted/30 transition-[grid-template-columns] duration-200",
-        sidebarCompact ? "grid-cols-[72px_minmax(0,1fr)]" : "grid-cols-[280px_minmax(0,1fr)]",
-      )}
-    >
-      <aside className="sticky top-0 z-30 h-dvh overflow-visible border-r bg-sidebar text-sidebar-foreground">
-        <ShellSidebar
-          compact={sidebarCompact}
-          activeView={effectiveView}
-          workspace={workspace}
-          coreOrigin={coreOrigin}
-          activeUser={activeUser}
-          canManageApps={Boolean(canManageApps)}
-          runtimeApps={uiRuntimeApps}
+    <ShellActionsContext.Provider value={shellActionsContextValue}>
+      <ShellStateContext.Provider value={shellStateContextValue}>
+      <div
+        className={cn(
+          "grid min-h-dvh bg-muted/30 transition-[grid-template-columns] duration-200",
+          sidebarCompact ? "grid-cols-[72px_minmax(0,1fr)]" : "grid-cols-[280px_minmax(0,1fr)]",
+        )}
+      >
+        <aside className="sticky top-0 z-30 h-dvh overflow-visible border-r bg-sidebar text-sidebar-foreground">
+          <ShellSidebar
+            compact={sidebarCompact}
+            activeView={effectiveView}
+            workspace={workspace}
+            coreOrigin={coreOrigin}
+            activeUser={activeUser}
+            canManageApps={Boolean(canManageApps)}
+            runtimeApps={uiRuntimeApps}
+            busyAction={busyAction}
+            onCompactChange={setCompact}
+            onNavigate={(view) => {
+              setWorkspace(null);
+              setOptimisticWorkspaceRoute(null);
+              router.push(getShellViewHref(view));
+            }}
+            onLaunchApp={launchAppPage}
+            getStandaloneHref={getStandaloneAppHref}
+          />
+        </aside>
+
+        <div className={cn("h-dvh min-w-0", workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto")}>
+          <main className={cn("w-full", workspaceSurfaceActive ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
+            {workspace ? (
+              <EmbeddedWorkspacePanel
+                workspace={workspace}
+                theme={shellResolvedTheme}
+                themePreference={shellThemePreference}
+              />
+            ) : activeWorkspaceRoute ? (
+              <EmbeddedWorkspacePendingPanel
+                error={state.error}
+              />
+            ) : (
+              <>
+                {state.error && (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {state.error}
+                  </div>
+                )}
+
+                {state.status?.warnings?.length ? (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                    {state.status.warnings.map((warning) => (
+                      <p key={warning}>{warning}</p>
+                    ))}
+                  </div>
+                ) : null}
+
+                {state.loading && !state.status ? (
+                  <EmptyState icon={LoaderCircle} title="Loading Core state" description="Waiting for Core status and current session." iconClassName="animate-spin" />
+                ) : (
+                  children
+                )}
+              </>
+            )}
+          </main>
+        </div>
+
+        <InstallReviewDialog
+          opened={installOpen}
+          detail={installPanel}
           busyAction={busyAction}
-          onCompactChange={setCompact}
-          onNavigate={(view) => {
-            setWorkspace(null);
-            setOptimisticWorkspaceRoute(null);
-            router.push(getShellViewHref(view));
-          }}
-          onLaunchApp={launchAppPage}
-          getStandaloneHref={getStandaloneAppHref}
+          onClose={() => setInstallOpen(false)}
+          onReview={loadInstallPlan}
+          onApply={applyInstall}
         />
-      </aside>
 
-      <div className={cn("h-dvh min-w-0", workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto")}>
-        <main className={cn("w-full", workspaceSurfaceActive ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
-          {workspace ? (
-            <EmbeddedWorkspacePanel
-              workspace={workspace}
-              theme={shellResolvedTheme}
-              themePreference={shellThemePreference}
-            />
-          ) : activeWorkspaceRoute ? (
-            <EmbeddedWorkspacePendingPanel
-              error={state.error}
-            />
-          ) : (
-            <>
-              {state.error && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {state.error}
-                </div>
-              )}
-
-              {state.status?.warnings?.length ? (
-                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-                  {state.status.warnings.map((warning) => (
-                    <p key={warning}>{warning}</p>
-                  ))}
-                </div>
-              ) : null}
-
-              {state.loading && !state.status ? (
-                <EmptyState icon={LoaderCircle} title="Loading Core state" description="Waiting for Core status and current session." iconClassName="animate-spin" />
-              ) : effectiveView === "users" && canManageApps ? (
-                <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
-              ) : effectiveView === "installed-apps" && canManageApps ? (
-                <InstalledAppsPage
-                  coreOrigin={coreOrigin}
-                  runtimeApps={runtimeApps}
-                  systemApps={systemApps}
-                  shellAppId={shellAppId}
-                  canManageApps={Boolean(canManageApps)}
-                  loading={state.loading}
-                  busyAction={busyAction}
-                  onRefresh={() => void refresh()}
-                  onInstall={openInstallDialog}
-                  onAction={runAppAction}
-                  onSwitchRuntime={switchAppRuntime}
-                  onCreateBackup={createManualBackup}
-                  onOpenPanel={openAppPanel}
-                />
-              ) : effectiveView === "dashboard" && canManageApps ? (
-                <DashboardPage
-                  state={state}
-                  runtimeApps={runtimeApps}
-                  onRefresh={() => void refresh()}
-                  onOpenInstalledApps={() => {
-                    setOptimisticWorkspaceRoute(null);
-                    router.push(getShellViewHref("installed-apps"));
-                  }}
-                />
-              ) : (
-                <AvailableAppsPage
-                  apps={uiRuntimeApps}
-                  loading={state.loading}
-                  busyAction={busyAction}
-                  onLaunchApp={launchAppPage}
-                  getStandaloneHref={getStandaloneAppHref}
-                />
-              )}
-            </>
-          )}
-        </main>
+        {selectedApp && activePanel && (
+          <AppDetailsDialog
+            app={selectedApp}
+            view={activePanel.view}
+            configureSection={activePanel.configureSection}
+            canManageApps={Boolean(canManageApps)}
+            busyAction={busyAction}
+            detail={detailPanel}
+            onClose={closeAppPanel}
+            onRefreshLogs={loadAppLogs}
+            onRefreshBackups={loadAppBackups}
+            onCreateBackup={createManualBackup}
+            onRestoreBackup={restoreBackup}
+            onDeleteBackup={deleteBackup}
+            onPreviewBackupCleanup={previewBackupCleanup}
+            onApplyBackupCleanup={applyBackupCleanup}
+            onConfigure={configureApp}
+            onReloadUpdatePlan={loadUpdatePlan}
+            onApplyUpdate={applyUpdate}
+            onRemove={removeApp}
+          />
+        )}
       </div>
-
-      <InstallReviewDialog
-        opened={installOpen}
-        detail={installPanel}
-        busyAction={busyAction}
-        onClose={() => setInstallOpen(false)}
-        onReview={loadInstallPlan}
-        onApply={applyInstall}
-      />
-
-      {selectedApp && activePanel && (
-        <AppDetailsDialog
-          app={selectedApp}
-          view={activePanel.view}
-          configureSection={activePanel.configureSection}
-          canManageApps={Boolean(canManageApps)}
-          busyAction={busyAction}
-          detail={detailPanel}
-          onClose={closeAppPanel}
-          onRefreshLogs={loadAppLogs}
-          onRefreshBackups={loadAppBackups}
-          onCreateBackup={createManualBackup}
-          onRestoreBackup={restoreBackup}
-          onDeleteBackup={deleteBackup}
-          onPreviewBackupCleanup={previewBackupCleanup}
-          onApplyBackupCleanup={applyBackupCleanup}
-          onConfigure={configureApp}
-          onReloadUpdatePlan={loadUpdatePlan}
-          onApplyUpdate={applyUpdate}
-          onRemove={removeApp}
-        />
-      )}
-    </div>
+      </ShellStateContext.Provider>
+    </ShellActionsContext.Provider>
   );
 }

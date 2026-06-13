@@ -9,6 +9,16 @@ const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   users: "/users",
 };
 
+const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "installed-apps", "users"]);
+
+export function shellViewRequiresAdmin(view: ShellView) {
+  return ADMIN_SHELL_VIEWS.has(view);
+}
+
+export function getAuthorizedShellView(view: ShellView, canManageApps: boolean): ShellView {
+  return canManageApps || !shellViewRequiresAdmin(view) ? view : "available-apps";
+}
+
 export function normalizeShellPath(pathname: string) {
   if (!pathname || pathname === "/") {
     return "/";

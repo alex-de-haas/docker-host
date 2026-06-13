@@ -13,11 +13,9 @@ Make Hosty Shell navigation addressable and refresh-safe. Users should be able t
 
 ## Current Behavior
 
-Shell renders a persistent sidebar but stores the selected management view and embedded workspace only in React state. The `/` route defaults to Dashboard, and `/apps` starts on the app overview. Installed Apps, User Management, and embedded app workspaces are not encoded in the browser URL. Refreshing the page clears the in-memory state and returns users to the route default.
+Shell top-level navigation is route-backed and refresh-safe. The root App Router layout renders one persistent Shell client around route children, so the sidebar, current session, Core status, app registry, dialogs, and workspace launch state remain mounted while users move between Shell routes.
 
-## Proposed Behavior
-
-Shell should use route and query state as the source of truth for top-level navigation:
+Shell uses route and query state as the source of truth for top-level navigation:
 
 - `/` and `/dashboard` render Dashboard for administrators.
 - `/apps` renders the non-management app overview.
@@ -28,6 +26,8 @@ Shell should use route and query state as the source of truth for top-level navi
 Sidebar clicks update the browser URL. Browser refresh restores the selected view. Workspace URLs store only the app id and manifest/app path; on load Shell asks Core for a fresh embedded launch code before loading the iframe.
 
 Unauthorized management routes must fall back to `/apps` for non-admin sessions.
+
+The persistent layout prevents sidebar flicker during page switches: route children change, but the Shell sidebar does not remount or temporarily lose the already-loaded authenticated session.
 
 ## User/API Scenarios
 
@@ -40,7 +40,7 @@ Unauthorized management routes must fall back to `/apps` for non-admin sessions.
 
 ## Technical Design
 
-Shell derives top-level route state from `usePathname()` and `useSearchParams()` in the client component. Route state maps to the same Shell views already used by the main content renderer.
+Shell derives top-level route state from `usePathname()` and `useSearchParams()` in the persistent client layout component. Route files render focused route components, and those components consume shared Shell state and actions through separate contexts.
 
 Navigation helpers build stable Shell URLs:
 

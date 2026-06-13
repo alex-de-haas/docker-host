@@ -1,6 +1,6 @@
-import { ShellClient } from "./shell-client";
+import "server-only";
 
-function getCoreOrigin() {
+export function getCoreOrigin() {
   const configuredOrigin = (
     process.env.HOSTY_CORE_PUBLIC_ORIGIN ||
     process.env.NEXT_PUBLIC_HOSTY_CORE_PUBLIC_ORIGIN ||
@@ -14,6 +14,6 @@ function getCoreOrigin() {
   return `http://localhost:${corePort}`;
 }
 
-export function HostyShellPage() {
-  return <ShellClient coreOrigin={getCoreOrigin()} shellAppId={process.env.HOSTY_APP_ID || "hosty.shell"} />;
+export function getShellAppId() {
+  return process.env.HOSTY_APP_ID || "hosty.shell";
 }
