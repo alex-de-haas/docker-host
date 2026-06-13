@@ -12,8 +12,9 @@ import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLogin, redire
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
-import { ShellContext } from "./shell/shell-context";
+import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
+  getAuthorizedShellView,
   getShellViewHref,
   getWorkspaceHref,
   getWorkspaceRouteKey,
@@ -21,6 +22,7 @@ import {
   normalizeShellPath,
   readShellRoute,
   SIDEBAR_COMPACT_STORAGE_KEY,
+  shellViewRequiresAdmin,
 } from "./shell/shell-routes";
 import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
 import { appendHostyThemeParams, normalizeThemePreference, resolveShellTheme } from "./shell/theme";
@@ -845,7 +847,7 @@ export function ShellClient({
   const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
   const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
-  const effectiveView = canManageApps ? shellRoute.view : "available-apps";
+  const effectiveView = getAuthorizedShellView(shellRoute.view, Boolean(canManageApps));
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
   const resetWorkspaceLaunch = useCallback(
@@ -864,7 +866,7 @@ export function ShellClient({
   );
 
   useEffect(() => {
-    if (!state.session?.authenticated || canManageApps || shellRoute.workspace || shellRoute.view === "available-apps") {
+    if (!state.session?.authenticated || canManageApps || shellRoute.workspace || !shellViewRequiresAdmin(shellRoute.view)) {
       return;
     }
 
@@ -1027,10 +1029,8 @@ export function ShellClient({
     router.push(getShellViewHref("installed-apps"));
   }, [router]);
 
-  const contextValue = useMemo(
+  const shellStateContextValue = useMemo(
     () => ({
-      coreOrigin,
-      shellAppId,
       state,
       runtimeApps,
       systemApps,
@@ -1038,6 +1038,22 @@ export function ShellClient({
       activeUser,
       canManageApps: Boolean(canManageApps),
       busyAction,
+    }),
+    [
+      activeUser,
+      busyAction,
+      canManageApps,
+      state,
+      runtimeApps,
+      systemApps,
+      uiRuntimeApps,
+    ],
+  );
+
+  const shellActionsContextValue = useMemo(
+    () => ({
+      coreOrigin,
+      shellAppId,
       refresh,
       sendCsrfJson,
       launchAppPage,
@@ -1050,9 +1066,6 @@ export function ShellClient({
       openInstalledApps,
     }),
     [
-      activeUser,
-      busyAction,
-      canManageApps,
       coreOrigin,
       createManualBackup,
       getStandaloneAppHref,
@@ -1064,16 +1077,13 @@ export function ShellClient({
       runAppAction,
       sendCsrfJson,
       shellAppId,
-      state,
       switchAppRuntime,
-      runtimeApps,
-      systemApps,
-      uiRuntimeApps,
     ],
   );
 
   return (
-    <ShellContext.Provider value={contextValue}>
+    <ShellActionsContext.Provider value={shellActionsContextValue}>
+      <ShellStateContext.Provider value={shellStateContextValue}>
       <div
         className={cn(
           "grid min-h-dvh bg-muted/30 transition-[grid-template-columns] duration-200",
@@ -1171,6 +1181,7 @@ export function ShellClient({
           />
         )}
       </div>
-    </ShellContext.Provider>
+      </ShellStateContext.Provider>
+    </ShellActionsContext.Provider>
   );
 }

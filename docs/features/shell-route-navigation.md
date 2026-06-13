@@ -40,7 +40,7 @@ The persistent layout prevents sidebar flicker during page switches: route child
 
 ## Technical Design
 
-Shell derives top-level route state from `usePathname()` and `useSearchParams()` in the persistent client layout component. Route files render focused route components, and those components consume shared Shell state and actions through context.
+Shell derives top-level route state from `usePathname()` and `useSearchParams()` in the persistent client layout component. Route files render focused route components, and those components consume shared Shell state and actions through separate contexts.
 
 Navigation helpers build stable Shell URLs:
 

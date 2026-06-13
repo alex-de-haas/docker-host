@@ -1,7 +1,7 @@
-import { ShellAvailableAppsRoute } from "../shell/shell-route-pages";
+import { ShellWorkspaceRoute } from "../shell/shell-route-pages";
 
 export const dynamic = "force-dynamic";
 
 export default function WorkspacePage() {
-  return <ShellAvailableAppsRoute />;
+  return <ShellWorkspaceRoute />;
 }

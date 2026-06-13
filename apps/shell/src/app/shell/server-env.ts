@@ -1,3 +1,5 @@
+import "server-only";
+
 export function getCoreOrigin() {
   const configuredOrigin = (
     process.env.HOSTY_CORE_PUBLIC_ORIGIN ||

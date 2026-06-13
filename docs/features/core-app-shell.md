@@ -25,7 +25,7 @@ Shell keeps one persistent client orchestrator at `apps/shell/src/app/shell-clie
 Feature UI lives under `apps/shell/src/app/shell/`:
 
 - `types.ts`, `core-api.ts`, `shell-routes.ts`, `theme.ts`, `state.ts`, and `server-env.ts` define shared contracts, low-level helpers, and server-side Shell environment resolution;
-- `shell-context.tsx` exposes the persistent Shell state and actions to route pages;
+- `shell-context.tsx` exposes separate persistent Shell state and action contexts to route pages;
 - `shell-route-pages.tsx` adapts individual App Router pages to Shell feature components;
 - `sidebar/` contains Shell navigation and account/theme controls;
 - `pages/` contains Dashboard, Apps, Installed Apps, and User Management view components;

@@ -12,8 +12,6 @@ import type {
 } from "./types";
 
 export type ShellContextValue = {
-  coreOrigin: string;
-  shellAppId: string;
   state: LoadState;
   runtimeApps: CoreApp[];
   systemApps: CoreApp[];
@@ -21,6 +19,11 @@ export type ShellContextValue = {
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   busyAction: string | null;
+};
+
+export type ShellActionsContextValue = {
+  coreOrigin: string;
+  shellAppId: string;
   refresh: () => Promise<void>;
   sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
   launchAppPage: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
@@ -33,12 +36,22 @@ export type ShellContextValue = {
   openInstalledApps: () => void;
 };
 
-export const ShellContext = createContext<ShellContextValue | null>(null);
+export const ShellStateContext = createContext<ShellContextValue | null>(null);
+export const ShellActionsContext = createContext<ShellActionsContextValue | null>(null);
 
-export function useShell() {
-  const context = useContext(ShellContext);
+export function useShellState() {
+  const context = useContext(ShellStateContext);
   if (!context) {
-    throw new Error("useShell must be used within ShellClient.");
+    throw new Error("useShellState must be used within ShellClient.");
+  }
+
+  return context;
+}
+
+export function useShellActions() {
+  const context = useContext(ShellActionsContext);
+  if (!context) {
+    throw new Error("useShellActions must be used within ShellClient.");
   }
 
   return context;
