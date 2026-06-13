@@ -84,6 +84,7 @@ export function ShellUsersRoute() {
 }
 
 export function ShellWorkspaceRoute() {
-  // The persistent Shell layout renders active workspaces from the /workspace query state.
-  return null;
+  // Active workspace URLs are rendered by the persistent Shell layout from query state.
+  // A bare /workspace route falls back here while the client-side route normalization runs.
+  return <ShellAvailableAppsRoute />;
 }
