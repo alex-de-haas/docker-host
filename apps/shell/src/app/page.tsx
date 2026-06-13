@@ -1,7 +1,7 @@
-import { HostyShellPage } from "./shell-page";
+import { ShellDashboardRoute } from "./shell/shell-route-pages";
 
 export const dynamic = "force-dynamic";
 
 export default function Home() {
-  return <HostyShellPage />;
+  return <ShellDashboardRoute />;
 }

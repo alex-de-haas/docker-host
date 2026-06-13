@@ -20,18 +20,28 @@ When `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is not configured
 
 ## Client Module Structure
 
-Shell keeps one client orchestrator at `apps/shell/src/app/shell-client.tsx`. The orchestrator owns Core state loading, session/auth redirects, CSRF mutation ordering, route/query synchronization, sidebar compact state, and embedded workspace launch state.
+Shell keeps one persistent client orchestrator at `apps/shell/src/app/shell-client.tsx`. The root App Router layout creates this orchestrator once around the route `children`, so Core state, session/auth state, sidebar compact state, app registry data, CSRF mutation ordering, dialogs, and embedded workspace launch state survive navigation between Shell routes.
 
 Feature UI lives under `apps/shell/src/app/shell/`:
 
-- `types.ts`, `core-api.ts`, `shell-routes.ts`, `theme.ts`, and `state.ts` define shared contracts and low-level helpers;
+- `types.ts`, `core-api.ts`, `shell-routes.ts`, `theme.ts`, `state.ts`, and `server-env.ts` define shared contracts, low-level helpers, and server-side Shell environment resolution;
+- `shell-context.tsx` exposes the persistent Shell state and actions to route pages;
+- `shell-route-pages.tsx` adapts individual App Router pages to Shell feature components;
 - `sidebar/` contains Shell navigation and account/theme controls;
 - `pages/` contains Dashboard, Apps, Installed Apps, and User Management view components;
 - `dialogs/` contains install review and installed-app detail dialogs;
 - `workspace/` contains embedded app workspace loading and iframe surfaces;
 - `ui.tsx`, `settings.tsx`, `app-helpers.ts`, and `clipboard.ts` contain shared presentational and formatting helpers.
 
-This structure is intentionally still client-driven. Route files continue to render `HostyShellPage`; future App Router layout work can move shared Shell chrome into a route group after the current behavior is covered by regression tests.
+Each top-level Shell route file renders only its route surface:
+
+- `/` and `/dashboard` render the Dashboard route surface for administrators;
+- `/apps` renders the Apps route surface;
+- `/installed-apps` renders the Installed Apps route surface for administrators;
+- `/users` renders the User Management route surface for administrators;
+- `/workspace` delegates the visible content to the persistent Shell workspace state when a workspace query is present.
+
+Administrator-only route surfaces fall back to the Apps route while the persistent Shell orchestrator redirects non-admin sessions to `/apps`.
 
 ## Navigation
 
@@ -51,6 +61,8 @@ The Shell sidebar is a persistent desktop-style rail with an expanded and compac
 The Core navigation group is visible only to `host.admin`. Non-admin `host.user` principals can load Shell but see only non-system runtime app navigation and the `/apps` app overview. Dashboard, Installed Apps, User Management, system apps, and app mutation controls are restricted to `host.admin`.
 
 Shell top-level navigation is route-backed. Sidebar clicks update the browser URL, and refresh restores the active route. Workspace URLs store only the app id and app path; Shell requests a fresh Core launch code after loading the current Core session and app registry.
+
+Because the sidebar and Core/session state are owned by the root Shell layout, switching between `/dashboard`, `/apps`, `/installed-apps`, `/users`, and `/workspace` does not remount the sidebar or briefly render the unauthenticated navigation state.
 
 Hosty Shell is installed as a system runtime app and does not appear as a normal entry in the Apps sidebar.
 
