@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataRoot = path.resolve(process.env.HOSTY_DEV_DATA_ROOT || path.join(repoRoot, ".hosty-dev"));
-const coreUrl = process.env.HOSTY_CORE_URL || `http://localhost:${process.env.HOSTY_CORE_PORT || 3001}`;
-const shellOrigin = process.env.HOSTY_SHELL_PUBLIC_ORIGIN || `http://localhost:${process.env.HOSTY_SHELL_PORT || 3000}`;
+const coreUrl = process.env.HOSTY_CORE_URL || `http://localhost:${resolvePort("HOSTY_CORE_PORT", 3001)}`;
+const shellOrigin = process.env.HOSTY_SHELL_PUBLIC_ORIGIN || `http://localhost:${resolvePort("HOSTY_SHELL_PORT", 3000)}`;
 const coreEndpoint = parseEndpoint(coreUrl);
 const shellEndpoint = parseEndpoint(shellOrigin);
 const developmentUsers = [
@@ -182,6 +182,21 @@ function isSameDevelopmentUser(candidate, developmentUser) {
 
   return candidate.id === developmentUser.id ||
     (typeof candidate.email === "string" && candidate.email.toLowerCase() === developmentUser.email.toLowerCase());
+}
+
+function resolvePort(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") {
+    return fallback;
+  }
+
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`${name} must be an integer between 1 and 65535 (got "${raw}").`);
+    process.exit(1);
+  }
+
+  return port;
 }
 
 function parseEndpoint(origin) {

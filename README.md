@@ -78,7 +78,7 @@ It detects your installed agents and keeps a single canonical copy, so re-runnin
 
 ### With the bundled installer (no dependencies)
 
-Otherwise, the repository script copies the skill into each agent's skills directory — Claude Code (`~/.claude/skills`) and Codex (`~/.codex/skills`):
+Otherwise, the repository script copies the skill into the skills directory of each agent you have installed — Claude Code (`~/.claude/skills`) and Codex (`~/.codex/skills`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-hosty-app-skill.sh | sh

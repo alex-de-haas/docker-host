@@ -34,7 +34,7 @@ Options:
   --dry-run           Print what would happen without changing files
   -h, --help          Show this help
 
-Default destinations (--agent all):
+Default destinations (--agent all installs only into agents already present):
   Claude Code: $CLAUDE_SKILLS_ROOT/$SKILL_NAME
   Codex:       $CODEX_SKILLS_ROOT/$SKILL_NAME
 
@@ -109,11 +109,31 @@ install_to_targets() {
     return 0
   fi
 
-  if [ "$AGENT" = "claude" ] || [ "$AGENT" = "all" ]; then
+  # An explicit --agent is a deliberate request, so install (and create the
+  # directory) even if that agent is not set up yet.
+  if [ "$AGENT" = "claude" ]; then
     copy_skill "$src" "$CLAUDE_SKILLS_ROOT/$SKILL_NAME"
+    return 0
   fi
-  if [ "$AGENT" = "codex" ] || [ "$AGENT" = "all" ]; then
+  if [ "$AGENT" = "codex" ]; then
     copy_skill "$src" "$CODEX_SKILLS_ROOT/$SKILL_NAME"
+    return 0
+  fi
+
+  # --agent all: only install into agents that are already present, so we never
+  # create an unused ~/.claude or ~/.codex on a machine that uses just one.
+  installed=0
+  if [ -d "$(dirname "$CLAUDE_SKILLS_ROOT")" ]; then
+    copy_skill "$src" "$CLAUDE_SKILLS_ROOT/$SKILL_NAME"
+    installed=1
+  fi
+  if [ -d "$(dirname "$CODEX_SKILLS_ROOT")" ]; then
+    copy_skill "$src" "$CODEX_SKILLS_ROOT/$SKILL_NAME"
+    installed=1
+  fi
+
+  if [ "$installed" -eq 0 ]; then
+    die "No supported agent found (looked for $(dirname "$CLAUDE_SKILLS_ROOT") and $(dirname "$CODEX_SKILLS_ROOT")). Re-run with --agent claude or --agent codex to install anyway."
   fi
 }
 
