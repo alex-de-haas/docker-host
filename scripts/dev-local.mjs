@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataRoot = path.resolve(process.env.HOSTY_DEV_DATA_ROOT || path.join(repoRoot, ".hosty-dev"));
-const coreUrl = process.env.HOSTY_CORE_URL || "http://localhost:3001";
-const shellOrigin = process.env.HOSTY_SHELL_PUBLIC_ORIGIN || "http://localhost:3000";
+const coreUrl = process.env.HOSTY_CORE_URL || `http://localhost:${process.env.HOSTY_CORE_PORT || 3001}`;
+const shellOrigin = process.env.HOSTY_SHELL_PUBLIC_ORIGIN || `http://localhost:${process.env.HOSTY_SHELL_PORT || 3000}`;
 const coreEndpoint = parseEndpoint(coreUrl);
 const shellEndpoint = parseEndpoint(shellOrigin);
 const developmentUsers = [
@@ -35,7 +35,7 @@ try {
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   console.error("Example with alternate ports:");
-  console.error("  HOSTY_CORE_URL=http://localhost:3301 HOSTY_SHELL_PUBLIC_ORIGIN=http://localhost:3300 npm run dev");
+  console.error("  HOSTY_CORE_PORT=3301 HOSTY_SHELL_PORT=3300 npm run dev");
   process.exit(1);
 }
 

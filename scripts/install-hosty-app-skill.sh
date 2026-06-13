@@ -5,30 +5,42 @@ REPO="alex-de-haas/docker-host"
 REF="main"
 SKILL_PATH="skills/hosty-app-skill"
 SKILL_NAME="hosty-app-skill"
-DEST_ROOT="${CODEX_HOME:-$HOME/.codex}/skills"
+AGENT="all"
+DEST_OVERRIDE=""
 SOURCE_DIR=""
 DRY_RUN="false"
 
+# Skills directories read by each supported agent. The skill ships both a
+# SKILL.md (Claude Code) and agents/openai.yaml (Codex), so the same directory
+# works for every agent.
+CLAUDE_SKILLS_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills"
+CODEX_SKILLS_ROOT="${CODEX_HOME:-$HOME/.codex}/skills"
+
 usage() {
-  cat <<'EOF'
-Install or update the Hosty App Codex skill.
+  cat <<EOF
+Install or update the Hosty App agent skill for all installed agents.
 
 Usage:
   install-hosty-app-skill.sh [options]
 
 Options:
-  --repo OWNER/REPO       GitHub repository to install from. Default: alex-de-haas/docker-host
-  --ref REF               Git branch, tag, or commit SHA. Default: main
-  --path PATH             Skill path inside the repository. Default: skills/hosty-app-skill
-  --name NAME             Destination skill name. Default: hosty-app-skill
-  --dest DIR              Destination skills root. Default: ${CODEX_HOME:-$HOME/.codex}/skills
-  --source-dir DIR        Install from a local skill directory instead of GitHub
-  --dry-run               Print what would happen without changing files
-  -h, --help              Show this help
+  --agent NAME        Target agent: claude, codex, or all. Default: all
+  --repo OWNER/REPO   GitHub repository to install from. Default: $REPO
+  --ref REF           Git branch, tag, or commit SHA. Default: $REF
+  --path PATH         Skill path inside the repository. Default: $SKILL_PATH
+  --name NAME         Destination skill name. Default: $SKILL_NAME
+  --dest DIR          Install into a single skills root instead of per-agent ones
+  --source-dir DIR    Install from a local skill directory instead of GitHub
+  --dry-run           Print what would happen without changing files
+  -h, --help          Show this help
+
+Default destinations (--agent all):
+  Claude Code: $CLAUDE_SKILLS_ROOT/$SKILL_NAME
+  Codex:       $CODEX_SKILLS_ROOT/$SKILL_NAME
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-hosty-app-skill.sh | sh
-  curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install-hosty-app-skill.sh | sh -s -- --ref main
+  curl -fsSL https://raw.githubusercontent.com/$REPO/$REF/scripts/install-hosty-app-skill.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/$REPO/$REF/scripts/install-hosty-app-skill.sh | sh -s -- --agent codex
   scripts/install-hosty-app-skill.sh --source-dir skills/hosty-app-skill
 EOF
 }
@@ -59,7 +71,6 @@ copy_skill() {
   backup_dest="${dest}.backup.$$"
 
   [ -f "$src/SKILL.md" ] || die "SKILL.md not found in $src"
-  [ -f "$src/agents/openai.yaml" ] || die "agents/openai.yaml not found in $src"
 
   if [ "$DRY_RUN" = "true" ]; then
     if [ -e "$dest" ]; then
@@ -90,14 +101,29 @@ copy_skill() {
   fi
 }
 
+install_to_targets() {
+  src="$1"
+
+  if [ -n "$DEST_OVERRIDE" ]; then
+    copy_skill "$src" "$DEST_OVERRIDE/$SKILL_NAME"
+    return 0
+  fi
+
+  if [ "$AGENT" = "claude" ] || [ "$AGENT" = "all" ]; then
+    copy_skill "$src" "$CLAUDE_SKILLS_ROOT/$SKILL_NAME"
+  fi
+  if [ "$AGENT" = "codex" ] || [ "$AGENT" = "all" ]; then
+    copy_skill "$src" "$CODEX_SKILLS_ROOT/$SKILL_NAME"
+  fi
+}
+
 download_skill() {
   tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/hosty-app-skill.XXXXXX")"
   archive="$tmp_root/repo.tar.gz"
   extract_dir="$tmp_root/extract"
   mkdir -p "$extract_dir"
 
-  owner_repo="$REPO"
-  url="https://codeload.github.com/$owner_repo/tar.gz/$REF"
+  url="https://codeload.github.com/$REPO/tar.gz/$REF"
 
   need_cmd curl
   need_cmd tar
@@ -123,13 +149,17 @@ EOF
   repo_root="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   [ -n "$repo_root" ] || die "Downloaded archive was empty"
 
-  skill_src="$repo_root/$SKILL_PATH"
-  copy_skill "$skill_src" "$DEST_ROOT/$SKILL_NAME"
+  install_to_targets "$repo_root/$SKILL_PATH"
   safe_rm_dir "$tmp_root"
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --agent)
+      [ "$#" -ge 2 ] || die "--agent requires a value"
+      AGENT="$2"
+      shift 2
+      ;;
     --repo)
       [ "$#" -ge 2 ] || die "--repo requires a value"
       REPO="$2"
@@ -152,7 +182,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --dest)
       [ "$#" -ge 2 ] || die "--dest requires a value"
-      DEST_ROOT="$2"
+      DEST_OVERRIDE="$2"
       shift 2
       ;;
     --source-dir)
@@ -174,6 +204,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+case "$AGENT" in
+  claude|codex|all) ;;
+  *) die "--agent must be one of: claude, codex, all" ;;
+esac
+
 case "$REPO" in
   */*) ;;
   *) die "--repo must be in OWNER/REPO format" ;;
@@ -184,9 +219,9 @@ case "$SKILL_NAME" in
 esac
 
 if [ -n "$SOURCE_DIR" ]; then
-  copy_skill "$SOURCE_DIR" "$DEST_ROOT/$SKILL_NAME"
+  install_to_targets "$SOURCE_DIR"
 else
   download_skill
 fi
 
-printf '%s\n' "Restart Codex to pick up the installed or updated skill."
+printf '%s\n' "Restart your agent (Claude Code or Codex) to pick up the installed or updated skill."

@@ -102,7 +102,7 @@ The legacy developer harness route is no longer exposed. Existing users are used
 Core includes two runtime adapters:
 
 - Docker runtime adapter:
-  - starts selected Docker runtime profile services;
+  - starts selected Docker runtime profile services by shelling out to the `docker` CLI (`docker pull`/`run`/`stop`/`rm`), so it uses whatever daemon the `docker` command is configured to reach;
   - injects settings, dependency URLs, assigned ports, Core origin, app id, service key, and `HOSTY_APP_DATA_DIR`;
   - binds the app data directory when the manifest declares data;
   - reads Docker logs.
