@@ -84,10 +84,14 @@ export async function POST(request: Request) {
       "Cache-Control": "no-store",
     },
   });
+  // Secure + SameSite=None survives only on https (or trustworthy localhost in
+  // some browsers); over plain http the browser silently drops the cookie, so
+  // fall back to Lax, which still works for the Shell's same-site embed.
+  const secure = isSecureRequest(request);
   appResponse.cookies.set(appIdentityCookieName, accessToken, {
     httpOnly: true,
-    sameSite: "none",
-    secure: true,
+    sameSite: secure ? "none" : "lax",
+    secure,
     path: "/",
     maxAge,
   });
@@ -99,6 +103,19 @@ function readIdentityCookieMaxAgeSeconds(payload: TokenExchangeResponse | null) 
   return typeof payload?.expiresInSeconds === "number" && Number.isFinite(payload.expiresInSeconds)
     ? Math.max(1, Math.min(Math.floor(payload.expiresInSeconds), appIdentityCookieMaxAgeSeconds))
     : appIdentityCookieMaxAgeSeconds;
+}
+
+function isSecureRequest(request: Request) {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  if (forwardedProto) {
+    return forwardedProto.split(",")[0]?.trim().toLowerCase() === "https";
+  }
+
+  try {
+    return new URL(request.url).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function buildTokenEndpoint() {
