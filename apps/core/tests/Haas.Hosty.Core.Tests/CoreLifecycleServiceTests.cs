@@ -1501,6 +1501,44 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("app_mount_path_in_data_root", error.Code);
     }
 
+    [Fact]
+    public async Task ConfigureMountsAsync_RejectsHostPathWithComma()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureMountsAsync(
+                "com.example.notes",
+                new AppMountsRequest([new AppMountBindingInput("catalogRoots", "movies", "/srv/with,comma")])));
+
+        Assert.Equal("app_mount_path_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task StartAsync_ThrowsWhenConfiguredMountSymlinkRepointsIntoDataRoot()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var host = CreateExternalDirectory();
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", "movies", host)]));
+
+        // Repoint the already-validated host path at the Hosty data root after configuration (TOCTOU).
+        var forbidden = Path.Combine(fixture.Paths.DataRoot, "secret");
+        Directory.CreateDirectory(forbidden);
+        Directory.Delete(host);
+        Directory.CreateSymbolicLink(host, forbidden);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.StartAsync("com.example.notes"));
+
+        Assert.Equal("app_mount_path_in_data_root", error.Code);
+    }
+
     [Theory]
     [InlineData("missing", "movies", "app_mount_slot_unknown")]
     [InlineData("catalogRoots", "Bad Label", "app_mount_label_invalid")]

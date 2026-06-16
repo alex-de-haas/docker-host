@@ -212,6 +212,13 @@ internal sealed class CoreLifecycleService(
             throw new AppLifecycleException("app_mount_path_invalid", $"External mount host path may not contain ':': {value}");
         }
 
+        // Paths are injected as a comma-separated HOSTY_MOUNT_{KEY} list, so a ',' would break the
+        // contract the app relies on when it splits the variable.
+        if (value.Contains(','))
+        {
+            throw new AppLifecycleException("app_mount_path_invalid", $"External mount host path may not contain ',': {value}");
+        }
+
         var normalized = Path.GetFullPath(value);
         EnsureMountPathAllowed(normalized);
         EnsureMountPathAllowed(ResolveRealPath(normalized));
@@ -1330,7 +1337,10 @@ internal sealed class CoreLifecycleService(
         RuntimeMountPlanner.EnsureRequiredConfigured(context.App.MountSlots, context.App.Mounts);
         foreach (var mount in context.Mounts)
         {
+            // Re-check both the stored path and its symlink-resolved target: a path validated at
+            // config time could have been repointed at a forbidden location since (TOCTOU).
             EnsureMountPathAllowed(mount.HostPath);
+            EnsureMountPathAllowed(ResolveRealPath(mount.HostPath));
             if (!Directory.Exists(mount.HostPath))
             {
                 throw new AppLifecycleException(

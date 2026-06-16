@@ -51,6 +51,7 @@ public sealed class AppManifestServiceTests
     [InlineData(""", "externalMounts": { "catalogRoots": { "kind": "named-volume" } }""", "app_manifest_external_mount_kind_unsupported")]
     [InlineData(""", "externalMounts": { "catalogRoots": { "service": "nope" } }""", "app_manifest_external_mount_service_unknown")]
     [InlineData(""", "externalMounts": { "bad.key": {} }""", "app_manifest_external_mount_key_invalid")]
+    [InlineData(""", "externalMounts": { "catalog-roots": {}, "catalog_roots": {} }""", "app_manifest_external_mount_key_collision")]
     public async Task LoadAsync_RejectsInvalidExternalMounts(string externalMounts, string expectedCode)
     {
         var manifestPath = await WriteManifestAsync("com.example.notes", externalMounts);

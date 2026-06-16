@@ -343,9 +343,7 @@ function MountsPanel({
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
 }) {
   const slots: CoreMountSlot[] = app.mounts || [];
-  const slotsSignature = slots
-    .map((slot) => `${slot.key} ${slot.bindings.map((binding) => `${binding.label}${binding.hostPath}`).join("")}`)
-    .join("");
+  const slotsSignature = JSON.stringify(slots.map((slot) => [slot.key, slot.bindings.map((binding) => [binding.label, binding.hostPath])]));
   const [rows, setRows] = useState<Record<string, Array<{ label: string; hostPath: string }>>>({});
 
   useEffect(() => {

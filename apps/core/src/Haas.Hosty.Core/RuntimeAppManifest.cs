@@ -227,11 +227,18 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             errors.Add(new("app_manifest_selected_services_missing", "The selected runtime does not produce any runnable services.", "$.services"));
         }
 
+        var normalizedMountKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (mountKey, mount) in manifest.ExternalMounts)
         {
             if (!ExternalMountKeyPattern.IsMatch(mountKey))
             {
                 errors.Add(new("app_manifest_external_mount_key_invalid", "externalMounts keys must match ^[A-Za-z][A-Za-z0-9_-]{0,62}$.", "$.externalMounts"));
+            }
+            else if (!normalizedMountKeys.Add(RuntimePortHelper.NormalizeEnvironmentKey(mountKey)))
+            {
+                // Two keys that normalize to the same HOSTY_MOUNT_{KEY} env name would silently
+                // overwrite each other when injected, so reject the collision up front.
+                errors.Add(new("app_manifest_external_mount_key_collision", $"externalMounts key '{mountKey}' normalizes to the same HOSTY_MOUNT_ environment name as another slot.", "$.externalMounts"));
             }
 
             if (!string.Equals(mount.Kind, "host-path", StringComparison.Ordinal))
