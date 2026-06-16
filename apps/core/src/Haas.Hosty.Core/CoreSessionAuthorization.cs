@@ -16,7 +16,7 @@ internal static class CoreSessionAuthorization
     {
         if (requireCsrf && !HasValidCsrfToken(request))
         {
-            return Results.Json(
+            return CoreJson.Json(
                 new ErrorResponse("csrf_invalid", "CSRF token is missing or invalid."),
                 statusCode: StatusCodes.Status403Forbidden);
         }
@@ -29,7 +29,7 @@ internal static class CoreSessionAuthorization
             {
                 if (!string.Equals(user.Role, "host.admin", StringComparison.Ordinal))
                 {
-                    return Task.FromResult<IResult>(Results.Json(
+                    return Task.FromResult<IResult>(CoreJson.Json(
                         new ErrorResponse("admin_required", "This Core operation requires a Host administrator session."),
                         statusCode: StatusCodes.Status403Forbidden));
                 }
@@ -49,7 +49,7 @@ internal static class CoreSessionAuthorization
     {
         if (requireCsrf && !HasValidCsrfToken(request))
         {
-            return Results.Json(
+            return CoreJson.Json(
                 new ErrorResponse("csrf_invalid", "CSRF token is missing or invalid."),
                 statusCode: StatusCodes.Status403Forbidden);
         }
@@ -117,7 +117,7 @@ internal static class CoreSessionAuthorization
         {
             return new CoreSessionAuthorizationResult(
                 null,
-                Results.Json(
+                CoreJson.Json(
                     new ErrorResponse("user_disabled", "Core session user is disabled."),
                     statusCode: StatusCodes.Status403Forbidden));
         }
@@ -128,7 +128,7 @@ internal static class CoreSessionAuthorization
     private static CoreSessionAuthorizationResult Unauthorized(string code, string message)
         => new(
             null,
-            Results.Json(
+            CoreJson.Json(
                 new ErrorResponse(code, message),
                 statusCode: StatusCodes.Status401Unauthorized));
 }

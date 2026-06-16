@@ -244,19 +244,17 @@ internal sealed class CoreLifecycleService(
 
         var willCreateBackup = Directory.Exists(GetAppDataPath(appId));
         var changes = BuildUpdateChanges(app, currentSelection, selection);
-        var seed = new
-        {
+        var seed = new AppUpdatePlanDigestSeed(
             appId,
-            currentVersion = app.Version,
-            targetVersion = selection.Manifest.Version,
-            currentRuntime = app.SelectedRuntime,
-            targetRuntime = selection.RuntimeProfile.Key,
-            targetChannel = request.TargetChannel ?? app.SelectedChannel,
-            currentManifestDigest = currentSelection.ManifestDigest,
-            targetManifestDigest = selection.ManifestDigest,
+            app.Version,
+            selection.Manifest.Version,
+            app.SelectedRuntime,
+            selection.RuntimeProfile.Key,
+            request.TargetChannel ?? app.SelectedChannel,
+            currentSelection.ManifestDigest,
+            selection.ManifestDigest,
             willCreateBackup,
-            changes,
-        };
+            changes);
         var digest = HashPlanSeed(seed);
         return new AppUpdatePlan(
             AppId: appId,
@@ -349,16 +347,14 @@ internal sealed class CoreLifecycleService(
         }
 
         var changes = BuildRuntimeSwitchChanges(app, currentSelection, selection);
-        var seed = new
-        {
+        var seed = new AppRuntimeSwitchDigestSeed(
             appId,
-            currentRuntime = app.SelectedRuntime,
-            targetRuntime = selection.RuntimeProfile.Key,
+            app.SelectedRuntime,
+            selection.RuntimeProfile.Key,
             app.Version,
             selection.ManifestDigest,
-            automaticBackup = willCreateBackup,
-            changes,
-        };
+            willCreateBackup,
+            changes);
         return new AppRuntimeSwitchPlan(
             AppId: appId,
             CurrentRuntime: app.SelectedRuntime,
@@ -1270,9 +1266,9 @@ internal sealed class CoreLifecycleService(
     private string GetAppDataPath(string appId)
         => Path.Combine(GetAppRoot(appId), "data");
 
-    private static string HashPlanSeed(object seed)
+    private static string HashPlanSeed<T>(T seed)
     {
-        var json = JsonSerializer.Serialize(seed, JsonOptions);
+        var json = JsonSerializer.Serialize(seed, CoreJson.TypeInfo<T>());
         return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
     }
 
@@ -1822,7 +1818,7 @@ internal sealed class CoreLifecycleService(
         }
 
         await using var stream = File.OpenRead(path);
-        return await System.Text.Json.JsonSerializer.DeserializeAsync<AppChannelIndex>(stream, JsonStorage.Options, cancellationToken) ??
+        return await System.Text.Json.JsonSerializer.DeserializeAsync(stream, CoreJsonSerializerContext.Default.AppChannelIndex, cancellationToken) ??
             throw new AppLifecycleException("channels_index_invalid", "Runtime app channel index is invalid.");
     }
 
@@ -1838,7 +1834,7 @@ internal sealed class CoreLifecycleService(
             return null;
         }
 
-        var manifest = System.Text.Json.JsonSerializer.Deserialize<RuntimeAppManifest>(File.ReadAllText(manifestPath), JsonStorage.Options);
+        var manifest = System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(manifestPath), CoreJsonSerializerContext.Default.RuntimeAppManifest);
         if (string.IsNullOrWhiteSpace(manifest?.ChannelsUrl))
         {
             return null;
@@ -1976,10 +1972,29 @@ internal sealed class CoreLifecycleService(
         }
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
     private static readonly string[] DefaultCapabilities = ["open", "update", "restart", "stop", "remove", "backup", "restore", "logs"];
 }
+
+internal sealed record AppUpdatePlanDigestSeed(
+    string AppId,
+    string CurrentVersion,
+    string? TargetVersion,
+    string? CurrentRuntime,
+    string TargetRuntime,
+    string? TargetChannel,
+    string? CurrentManifestDigest,
+    string TargetManifestDigest,
+    bool WillCreateBackup,
+    IReadOnlyList<string> Changes);
+
+internal sealed record AppRuntimeSwitchDigestSeed(
+    string AppId,
+    string? CurrentRuntime,
+    string TargetRuntime,
+    string Version,
+    string ManifestDigest,
+    bool AutomaticBackup,
+    IReadOnlyList<string> Changes);
 
 internal sealed record AppInstallPlanRequest(
     string ManifestPath,

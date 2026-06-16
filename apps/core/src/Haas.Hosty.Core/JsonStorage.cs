@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Haas.Hosty.Core;
 
@@ -7,14 +8,20 @@ internal static class JsonStorage
     public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
+        TypeInfoResolver = CoreJsonSerializerContext.Default,
     };
+
+    // AOT-safe JsonTypeInfo lookup: resolves through the source-generated context configured on
+    // Options. Throws NotSupportedException at runtime for a type missing from the context, which
+    // is the same fail-fast behavior Native AOT enforces.
+    private static JsonTypeInfo<T> TypeInfo<T>() => (JsonTypeInfo<T>)Options.GetTypeInfo(typeof(T));
 
     public static async Task<T?> ReadAsync<T>(string path, CancellationToken cancellationToken = default)
     {
         try
         {
             await using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync<T>(stream, Options, cancellationToken);
+            return await JsonSerializer.DeserializeAsync(stream, TypeInfo<T>(), cancellationToken);
         }
         catch (FileNotFoundException)
         {
@@ -51,7 +58,7 @@ internal static class JsonStorage
                 ? SecureFileSystem.CreatePrivateFile(tempPath, FileMode.CreateNew)
                 : File.Create(tempPath))
             {
-                await JsonSerializer.SerializeAsync(stream, value, Options, cancellationToken);
+                await JsonSerializer.SerializeAsync(stream, value, TypeInfo<T>(), cancellationToken);
                 await stream.FlushAsync(cancellationToken);
             }
 

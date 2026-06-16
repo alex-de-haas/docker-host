@@ -30,7 +30,7 @@ internal static class UserManagementEndpoints
                 async () =>
                 {
                     var state = await management.ListAsync(cancellationToken);
-                    return Results.Json(new { state.Invitations });
+                    return CoreJson.Json(new UserInvitationsResponse(state.Invitations));
                 },
                 cancellationToken: cancellationToken));
 
@@ -162,15 +162,17 @@ internal static class UserManagementEndpoints
     {
         try
         {
-            return Results.Json(await action());
+            return CoreJson.Json(await action());
         }
         catch (UserManagementException ex)
         {
-            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
         }
         catch (LocalPasswordAuthException ex)
         {
-            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
         }
     }
 }
+
+internal sealed record UserInvitationsResponse(IReadOnlyList<UserInvitationSummary> Invitations);

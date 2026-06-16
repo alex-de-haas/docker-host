@@ -15,14 +15,14 @@ internal static class AppDirectoryEndpoints
             var token = CoreSessionAuthorization.ReadBearerToken(request);
             if (string.IsNullOrWhiteSpace(token) || !serviceTokens.ValidateToken(appId, token))
             {
-                return Results.Json(
+                return CoreJson.Json(
                     new ErrorResponse("app_directory_unauthorized", "App service token is missing or invalid."),
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
             if (await apps.GetAppAsync(appId, cancellationToken) is null)
             {
-                return Results.Json(
+                return CoreJson.Json(
                     new ErrorResponse("app_not_found", "Runtime app was not found."),
                     statusCode: StatusCodes.Status404NotFound);
             }
@@ -42,7 +42,7 @@ internal static class AppDirectoryEndpoints
                     HostRole: user.Role))
                 .ToArray();
 
-            return Results.Json(new AppDirectoryUsersResponse(
+            return CoreJson.Json(new AppDirectoryUsersResponse(
                 Users: directoryUsers,
                 Pagination: new AppDirectoryPagination(100, 0, directoryUsers.Length),
                 UpdatedAt: DateTimeOffset.UtcNow));

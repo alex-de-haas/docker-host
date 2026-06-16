@@ -115,7 +115,7 @@ internal sealed class AppIdentityService(
             throw new AppIdentityException("token_invalid", "Identity token signature is invalid.");
         }
 
-        var claims = JsonSerializer.Deserialize<AppIdentityClaims>(Base64UrlDecode(parts[1]), JsonStorage.Options) ??
+        var claims = JsonSerializer.Deserialize(Base64UrlDecode(parts[1]), CoreJsonSerializerContext.Default.AppIdentityClaims) ??
             throw new AppIdentityException("token_invalid", "Identity token claims are invalid.");
         if (claims.ExpiresAt <= clock.UtcNow)
         {
@@ -127,8 +127,8 @@ internal sealed class AppIdentityService(
 
     private async Task<string> SignTokenAsync(AppIdentityClaims claims, CancellationToken cancellationToken)
     {
-        var header = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new JwtHeader("HS256", "JWT"), JsonStorage.Options));
-        var payload = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(claims, JsonStorage.Options));
+        var header = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new JwtHeader("HS256", "JWT"), CoreJsonSerializerContext.Default.JwtHeader));
+        var payload = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJsonSerializerContext.Default.AppIdentityClaims));
         var signingInput = $"{header}.{payload}";
         var signingKey = await GetSigningKeyAsync(cancellationToken);
         var signature = Base64UrlEncode(HMACSHA256.HashData(signingKey, Encoding.UTF8.GetBytes(signingInput)));

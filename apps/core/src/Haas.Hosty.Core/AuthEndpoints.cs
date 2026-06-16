@@ -20,7 +20,7 @@ internal static class AuthEndpoints
                 Secure = false,
             });
 
-            return Results.Json(new CsrfResponse(token));
+            return CoreJson.Json(new CsrfResponse(token));
         });
 
         app.MapGet("/api/auth/session", async (HttpRequest request, UserDirectoryStore users, CancellationToken cancellationToken) =>
@@ -36,7 +36,7 @@ internal static class AuthEndpoints
                 ? null
                 : state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, session.UserId, StringComparison.Ordinal));
 
-            return Results.Json(new AuthSessionResponse(user is not null && !user.Disabled, user));
+            return CoreJson.Json(new AuthSessionResponse(user is not null && !user.Disabled, user));
         });
 
         app.MapPost("/api/auth/session", async (
@@ -49,13 +49,13 @@ internal static class AuthEndpoints
         {
             if (!environment.IsDevelopment())
             {
-                return Results.Json(new ErrorResponse("session_create_unavailable", "Direct session creation is available only in development."), statusCode: StatusCodes.Status404NotFound);
+                return CoreJson.Json(new ErrorResponse("session_create_unavailable", "Direct session creation is available only in development."), statusCode: StatusCodes.Status404NotFound);
             }
 
             var result = await CreateSessionAsync(input.UserId, input.SecureCookie, response, users, clock, cancellationToken);
             return result.Succeeded
-                ? Results.Json(new AuthSessionResponse(true, result.User))
-                : Results.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
+                ? CoreJson.Json(new AuthSessionResponse(true, result.User))
+                : CoreJson.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
         });
 
         app.MapPost("/api/auth/trusted-proxy/session", async (
@@ -68,31 +68,31 @@ internal static class AuthEndpoints
         {
             if (string.IsNullOrWhiteSpace(config.TrustedProxySecret))
             {
-                return Results.Json(new ErrorResponse("trusted_proxy_disabled", "Trusted proxy session creation is disabled. Set HOSTY_TRUSTED_PROXY_SECRET to enable it."), statusCode: StatusCodes.Status404NotFound);
+                return CoreJson.Json(new ErrorResponse("trusted_proxy_disabled", "Trusted proxy session creation is disabled. Set HOSTY_TRUSTED_PROXY_SECRET to enable it."), statusCode: StatusCodes.Status404NotFound);
             }
 
             var submittedSecret = request.Headers[TrustedProxySecretHeader].ToString();
             if (!FixedTimeEquals(config.TrustedProxySecret, submittedSecret))
             {
-                return Results.Json(new ErrorResponse("trusted_proxy_unauthorized", "Trusted proxy secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+                return CoreJson.Json(new ErrorResponse("trusted_proxy_unauthorized", "Trusted proxy secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
             }
 
             var userId = request.Headers[TrustedProxyUserIdHeader].ToString();
             if (string.IsNullOrWhiteSpace(userId))
             {
-                return Results.Json(new ErrorResponse("trusted_proxy_user_missing", "Trusted proxy user id header is missing."), statusCode: StatusCodes.Status400BadRequest);
+                return CoreJson.Json(new ErrorResponse("trusted_proxy_user_missing", "Trusted proxy user id header is missing."), statusCode: StatusCodes.Status400BadRequest);
             }
 
             var result = await CreateSessionAsync(userId, secureCookie: true, response, users, clock, cancellationToken);
             return result.Succeeded
-                ? Results.Json(new AuthSessionResponse(true, result.User))
-                : Results.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
+                ? CoreJson.Json(new AuthSessionResponse(true, result.User))
+                : CoreJson.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
         });
 
         app.MapPost("/api/auth/logout", async (HttpRequest request, HttpResponse response, UserDirectoryStore users, IClock clock, CancellationToken cancellationToken) =>
         {
             await LogoutAsync(request, response, users, clock, cancellationToken);
-            return Results.Json(new LogoutResponse("logged_out"));
+            return CoreJson.Json(new LogoutResponse("logged_out"));
         });
 
         app.MapPost("/api/auth/apps/authorize", async (
@@ -107,12 +107,12 @@ internal static class AuthEndpoints
                 users,
                 clock,
                 async user => await HandleIdentityError(async () =>
-                    Results.Json(await identity.CreateAuthorizationCodeAsync(input.AppId, user.Id, input.RedirectUri, cancellationToken))),
+                    CoreJson.Json(await identity.CreateAuthorizationCodeAsync(input.AppId, user.Id, input.RedirectUri, cancellationToken))),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
         app.MapPost("/api/auth/apps/token", async (AppTokenExchangeRequest input, AppIdentityService identity, CancellationToken cancellationToken) =>
-            await HandleIdentityError(async () => Results.Json(await identity.ExchangeCodeAsync(input.Code, cancellationToken))));
+            await HandleIdentityError(async () => CoreJson.Json(await identity.ExchangeCodeAsync(input.Code, cancellationToken))));
 
         app.MapPost("/api/auth/apps/revalidate", async (
             HttpRequest request,
@@ -125,10 +125,10 @@ internal static class AuthEndpoints
             var callingAppId = serviceToken is null ? null : serviceTokens.ResolveAppId(serviceToken);
             if (callingAppId is null)
             {
-                return Results.Json(new ErrorResponse("app_service_token_invalid", "App service token is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+                return CoreJson.Json(new ErrorResponse("app_service_token_invalid", "App service token is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            return await HandleIdentityError(async () => Results.Json(await identity.RevalidateAsync(input.AccessToken, callingAppId, cancellationToken)));
+            return await HandleIdentityError(async () => CoreJson.Json(await identity.RevalidateAsync(input.AccessToken, callingAppId, cancellationToken)));
         });
 
         app.MapPost("/api/apps/{appId}/launch-code", async (
@@ -144,7 +144,7 @@ internal static class AuthEndpoints
                 users,
                 clock,
                 async user => await HandleIdentityError(async () =>
-                    Results.Json(await identity.CreateAuthorizationCodeAsync(appId, user.Id, input.RedirectUri, cancellationToken))),
+                    CoreJson.Json(await identity.CreateAuthorizationCodeAsync(appId, user.Id, input.RedirectUri, cancellationToken))),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -159,7 +159,7 @@ internal static class AuthEndpoints
         {
             if (string.IsNullOrWhiteSpace(redirectUri))
             {
-                return Results.Json(new ErrorResponse("redirect_uri_missing", "Redirect URI is required."), statusCode: StatusCodes.Status400BadRequest);
+                return CoreJson.Json(new ErrorResponse("redirect_uri_missing", "Redirect URI is required."), statusCode: StatusCodes.Status400BadRequest);
             }
 
             return await CoreSessionAuthorization.RequireSessionAsync(
@@ -184,7 +184,7 @@ internal static class AuthEndpoints
         }
         catch (AppIdentityException ex)
         {
-            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: StatusCodes.Status403Forbidden);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: StatusCodes.Status403Forbidden);
         }
     }
 

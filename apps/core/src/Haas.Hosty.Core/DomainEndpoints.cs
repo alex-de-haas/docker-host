@@ -18,13 +18,13 @@ internal static class DomainEndpoints
                 {
                     var state = await users.ReadAsync(cancellationToken);
                     var apps = await lifecycle.ListAppsAsync(cancellationToken);
-                    return Results.Json(new AppsResponse(FilterAppsForUser(apps, state, user)));
+                    return CoreJson.Json(new AppsResponse(FilterAppsForUser(apps, state, user)));
                 },
                 cancellationToken: cancellationToken));
 
         app.MapGet("/control/v1/apps", async (HttpRequest request, ControlSecret secret, CoreLifecycleService lifecycle, CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                Results.Json(new AppsResponse(await lifecycle.ListAppsAsync(cancellationToken)))));
+                CoreJson.Json(new AppsResponse(await lifecycle.ListAppsAsync(cancellationToken)))));
 
         app.MapGet("/api/users", async (
             HttpRequest request,
@@ -38,7 +38,7 @@ internal static class DomainEndpoints
                 async () =>
                 {
                     var state = await store.ReadAsync(cancellationToken);
-                    return Results.Json(new UsersResponse(state.Users, state.Invitations, state.Assignments, state.Sessions));
+                    return CoreJson.Json(new UsersResponse(state.Users, state.Invitations, state.Assignments, state.Sessions));
                 },
                 cancellationToken: cancellationToken));
 
@@ -46,12 +46,12 @@ internal static class DomainEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
             {
                 var state = await store.ReadAsync(cancellationToken);
-                return Results.Json(new UsersResponse(state.Users, state.Invitations, state.Assignments, state.Sessions));
+                return CoreJson.Json(new UsersResponse(state.Users, state.Invitations, state.Assignments, state.Sessions));
             }));
 
         app.MapGet("/control/v1/audit/recent", async (HttpRequest request, ControlSecret secret, AuditStore store, CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                Results.Json(new AuditResponse(await store.ReadRecentAsync(cancellationToken: cancellationToken)))));
+                CoreJson.Json(new AuditResponse(await store.ReadRecentAsync(cancellationToken: cancellationToken)))));
     }
 
     private static IReadOnlyList<AppSummary> FilterAppsForUser(

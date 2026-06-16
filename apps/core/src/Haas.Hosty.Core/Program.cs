@@ -1,6 +1,6 @@
 using Haas.Hosty.Core;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateSlimBuilder(args);
 HostyCoreApplication.ConfigureServices(builder);
 
 var app = builder.Build();

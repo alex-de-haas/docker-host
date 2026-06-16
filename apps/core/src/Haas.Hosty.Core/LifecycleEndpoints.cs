@@ -529,11 +529,11 @@ internal static class LifecycleEndpoints
     {
         try
         {
-            return Results.Json(await action());
+            return CoreJson.Json(await action());
         }
         catch (AppManifestException ex)
         {
-            return Results.Json(
+            return CoreJson.Json(
                 new ManifestErrorResponse(ex.Code, ex.Message, ex.Errors),
                 statusCode: StatusCodes.Status400BadRequest);
         }
@@ -542,11 +542,11 @@ internal static class LifecycleEndpoints
             var statusCode = string.Equals(ex.Code, "app_not_found", StringComparison.Ordinal)
                 ? StatusCodes.Status404NotFound
                 : StatusCodes.Status400BadRequest;
-            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
         }
         catch (InvalidOperationException ex)
         {
-            return Results.Json(new ErrorResponse("lifecycle_operation_failed", ex.Message), statusCode: StatusCodes.Status400BadRequest);
+            return CoreJson.Json(new ErrorResponse("lifecycle_operation_failed", ex.Message), statusCode: StatusCodes.Status400BadRequest);
         }
     }
 }

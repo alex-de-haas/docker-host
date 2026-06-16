@@ -33,7 +33,7 @@ jobs:
             rid: osx-x64
             artifact: hosty-darwin-x64
             core_artifact: hosty-core-darwin-x64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             rid: linux-arm64
             artifact: hosty-linux-arm64
             core_artifact: hosty-core-linux-arm64
@@ -59,6 +59,12 @@ jobs:
         id: product_version
         shell: bash
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Install Native AOT prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
 
       - name: Publish CLI executable
         shell: bash
@@ -88,15 +94,13 @@ jobs:
           name: ${{ matrix.artifact }}
           path: artifacts/${{ matrix.artifact }}
 
-      - name: Publish Core executable
+      - name: Publish Core executable (Native AOT)
         shell: bash
         run: |
           dotnet publish apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj \
             --configuration Release \
             --runtime "${{ matrix.rid }}" \
             --self-contained true \
-            -p:PublishSingleFile=true \
-            -p:PublishTrimmed=false \
             -p:Version=${{ steps.product_version.outputs.version }} \
             --output core-artifacts
 

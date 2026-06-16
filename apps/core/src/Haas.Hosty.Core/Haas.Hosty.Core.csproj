@@ -6,5 +6,10 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Haas.Hosty.Core</RootNamespace>
     <AssemblyName>hosty-core</AssemblyName>
+    <!-- Native AOT. Implies self-contained publish, trim/AOT analyzers on every build, and the
+         Minimal API Request Delegate Generator. `dotnet publish -r <rid>` produces a single native
+         executable; `dotnet build`/`dotnet test` stay IL (no native toolchain needed). -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 </Project>

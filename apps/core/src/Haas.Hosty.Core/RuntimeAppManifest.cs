@@ -30,7 +30,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         RuntimeAppManifest? manifest;
         try
         {
-            manifest = JsonSerializer.Deserialize<RuntimeAppManifest>(source.Json, JsonOptions);
+            manifest = JsonSerializer.Deserialize(source.Json, CoreJsonSerializerContext.Default.RuntimeAppManifest);
         }
         catch (JsonException ex)
         {
@@ -255,7 +255,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             RuntimeProfile: selectedProfile!,
             Services: selectedServices,
             DataTarget: dataTarget,
-            ManifestJson: manifestJson ?? JsonSerializer.Serialize(manifest, JsonOptions),
+            ManifestJson: manifestJson ?? JsonSerializer.Serialize(manifest, CoreJsonSerializerContext.Default.RuntimeAppManifest),
             ManifestUrl: manifestUrl);
     }
 
@@ -456,10 +456,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         }
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = true,
-    };
 }
 
 internal interface IAppRuntimeAdapter
@@ -810,6 +806,9 @@ internal sealed record RuntimeDockerImage(string Repository, string Tag, string?
 
 internal sealed class RuntimeAppManifest
 {
+    // Collection properties coalesce null to empty in the getter so that members absent
+    // from the JSON behave the same under the source generator (used for Native AOT) as
+    // under the reflection serializer, which preserved the `= []` initializer.
     public string? SchemaVersion { get; init; }
     public string? Id { get; init; }
     public string? Name { get; init; }
@@ -817,15 +816,15 @@ internal sealed class RuntimeAppManifest
     public string? Version { get; init; }
     public RuntimeAppSource? Source { get; init; }
     public string? ChannelsUrl { get; init; }
-    public IReadOnlyList<RuntimeProfileManifest> RuntimeProfiles { get; init; } = [];
+    public IReadOnlyList<RuntimeProfileManifest> RuntimeProfiles { get => field ?? []; init; } = [];
     public string? DefaultRuntime { get; init; }
-    public IReadOnlyList<RuntimeAppServiceManifest> Services { get; init; } = [];
+    public IReadOnlyList<RuntimeAppServiceManifest> Services { get => field ?? []; init; } = [];
     public RuntimeAppDataManifest? Data { get; init; }
     public RuntimeAppUiManifest? Ui { get; init; }
-    public IReadOnlyList<RuntimeAppSettingManifest> Settings { get; init; } = [];
-    public IReadOnlyList<RuntimeAppDependencyManifest> Dependencies { get; init; } = [];
-    public IReadOnlyList<RuntimeAppEndpointManifest> Endpoints { get; init; } = [];
-    public IReadOnlyList<string> Capabilities { get; init; } = [];
+    public IReadOnlyList<RuntimeAppSettingManifest> Settings { get => field ?? []; init; } = [];
+    public IReadOnlyList<RuntimeAppDependencyManifest> Dependencies { get => field ?? []; init; } = [];
+    public IReadOnlyList<RuntimeAppEndpointManifest> Endpoints { get => field ?? []; init; } = [];
+    public IReadOnlyList<string> Capabilities { get => field ?? []; init; } = [];
 }
 
 internal sealed record RuntimeAppSource(
@@ -837,16 +836,16 @@ internal sealed record RuntimeAppSource(
 
 internal sealed class RuntimeProfileManifest
 {
-    public string Key { get; init; } = "";
-    public string Type { get; init; } = "";
+    public string Key { get => field ?? ""; init; } = "";
+    public string Type { get => field ?? ""; init; } = "";
     public bool Default { get; init; }
 }
 
 internal sealed class RuntimeAppServiceManifest
 {
-    public string Key { get; init; } = "";
-    public IReadOnlyList<string> DependsOn { get; init; } = [];
-    public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get; init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
+    public string Key { get => field ?? ""; init; } = "";
+    public IReadOnlyList<string> DependsOn { get => field ?? []; init; } = [];
+    public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get => field ?? new Dictionary<string, RuntimeServiceProfileManifest>(); init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
 }
 
 internal sealed record RuntimeServiceProfileManifest
@@ -855,8 +854,8 @@ internal sealed record RuntimeServiceProfileManifest
     public JsonElement? Image { get; init; }
     public string? Command { get; init; }
     public string? WorkingDirectory { get; init; }
-    public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
-    public IReadOnlyList<RuntimePortManifest> Ports { get; init; } = [];
+    public IReadOnlyDictionary<string, string> Environment { get => field ?? new Dictionary<string, string>(); init; } = new Dictionary<string, string>();
+    public IReadOnlyList<RuntimePortManifest> Ports { get => field ?? []; init; } = [];
 }
 
 internal sealed class RuntimePortManifest
@@ -872,7 +871,7 @@ internal sealed class RuntimePortManifest
 internal sealed class RuntimeAppDataManifest
 {
     public bool Enabled { get; init; }
-    public IReadOnlyList<RuntimeAppDataTarget> Targets { get; init; } = [];
+    public IReadOnlyList<RuntimeAppDataTarget> Targets { get => field ?? []; init; } = [];
 }
 
 internal sealed class RuntimeAppDataTarget
@@ -890,7 +889,7 @@ internal sealed class RuntimeAppUiManifest
     public JsonElement? Entrypoint { get; init; }
     public string? Path { get; init; }
     public string? PortKey { get; init; }
-    public IReadOnlyList<RuntimeAppUiNavigationItemManifest> Navigation { get; init; } = [];
+    public IReadOnlyList<RuntimeAppUiNavigationItemManifest> Navigation { get => field ?? []; init; } = [];
 }
 
 internal sealed class RuntimeAppUiNavigationItemManifest
@@ -903,8 +902,8 @@ internal sealed class RuntimeAppUiNavigationItemManifest
 
 internal sealed class RuntimeAppSettingManifest
 {
-    public string Key { get; init; } = "";
-    public string Type { get; init; } = "string";
+    public string Key { get => field ?? ""; init; } = "";
+    public string Type { get => field ?? "string"; init; } = "string";
     public string? Default { get; init; }
     public bool Secret { get; init; }
     public bool Required { get; init; }
@@ -912,14 +911,14 @@ internal sealed class RuntimeAppSettingManifest
 
 internal sealed class RuntimeAppDependencyManifest
 {
-    public string Id { get; init; } = "";
+    public string Id { get => field ?? ""; init; } = "";
     public string? Version { get; init; }
     public bool Required { get; init; }
 }
 
 internal sealed class RuntimeAppEndpointManifest
 {
-    public string Key { get; init; } = "";
+    public string Key { get => field ?? ""; init; } = "";
     public string? Service { get; init; }
     public string? Port { get; init; }
     public string? Protocol { get; init; }
