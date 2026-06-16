@@ -1,39 +1,35 @@
 {
   "brand": "Hosty",
-  "assetsVersion": "2.0.0-png",
-  "format": "PNG + ICO",
-  "iconSizesPx": [
-    16,
-    20,
-    24,
-    32,
-    48,
-    64,
-    96,
-    128,
-    256,
-    512
-  ],
-  "faviconSizesPx": [
-    16,
-    32,
-    48,
-    64,
-    128,
-    256
-  ],
+  "assetsVersion": "3.0.0-svg",
+  "format": "SVG (source) + PNG/ICO (generated)",
+  "generator": "build-assets.mjs",
+  "logomark": "H-graph: five rounded-square nodes (four corners + center) wired into the letter H.",
+  "iconSizesPx": [16, 20, 24, 32, 48, 64, 96, 128, 256, 512],
+  "faviconSizesPx": [16, 32, 48, 64, 128, 256],
   "colors": {
-    "ink": "#071221",
+    "ink": "#0F1B2D",
     "offWhite": "#F8FAFC",
     "white": "#FFFFFF",
     "blue": "#1C68FF",
     "cyan": "#28D5E5",
-    "darkSurface": "#0B1118"
+    "darkSurface": "#0F1B2D"
+  },
+  "stroke": {
+    "viewBox": "0 0 100 100",
+    "width": 6,
+    "linecap": "round",
+    "linejoin": "round"
   },
   "usage": {
-    "icons/light": "Dark PNG icons with transparent negative-space details for light backgrounds.",
-    "icons/dark": "Light PNG icons with transparent negative-space details for dark backgrounds.",
-    "logos/hosty-logo-color-large-1024.png": "Primary large color logo on white background.",
+    "svg/hosty-mark-light.svg": "Ink mark (transparent) for light backgrounds.",
+    "svg/hosty-mark-dark.svg": "Off-white mark (transparent) for dark backgrounds.",
+    "svg/hosty-icon-brand.svg": "Brand-blue rounded tile with white mark.",
+    "svg/hosty-icon-light.svg": "White tile with ink mark.",
+    "svg/hosty-icon-dark.svg": "Dark tile with off-white mark.",
+    "svg/hosty-favicon.svg": "Theme-aware transparent mark (prefers-color-scheme): ink mark in light theme, off-white in dark theme. Scaled up for small-size legibility.",
+    "svg/hosty-logo-horizontal-*.svg": "Mark + Hosty wordmark lockup (light / dark / on-white).",
+    "icons/light": "PNG ink marks (transparent) for light backgrounds.",
+    "icons/dark": "PNG off-white marks (transparent) for dark backgrounds.",
     "favicon.ico": "Multi-size ICO: 16, 32, 48, 64, 128, 256 px."
   }
 }
