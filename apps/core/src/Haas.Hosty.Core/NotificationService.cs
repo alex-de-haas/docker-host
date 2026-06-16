@@ -263,3 +263,58 @@ internal sealed record NotificationsResponse(
 internal sealed record NotificationMarkReadResponse(
     int Updated,
     int UnreadCount);
+
+// Background retention pass: prunes read/old notifications and caps per-user volume after startup
+// and then periodically. Mirrors AppBackupRetentionScheduler.
+internal sealed class NotificationRetentionScheduler(
+    NotificationService notifications,
+    AuditStore audit,
+    IClock clock,
+    ILogger<NotificationRetentionScheduler> logger) : BackgroundService
+{
+    private static readonly TimeSpan CleanupInterval = TimeSpan.FromHours(6);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        await RunCleanupAsync(stoppingToken);
+
+        using var timer = new PeriodicTimer(CleanupInterval);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            await RunCleanupAsync(stoppingToken);
+        }
+    }
+
+    internal async Task RunCleanupAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var pruned = await notifications.ApplyRetentionAsync(cancellationToken);
+            if (pruned == 0)
+            {
+                logger.LogDebug("Hosty notification retention found no candidates.");
+                return;
+            }
+
+            await audit.AppendAsync(
+                new AuditRecord(
+                    Id: $"audit_{Guid.NewGuid():N}",
+                    Action: "notification.retention.cleanup",
+                    ResourceType: "notification.retention",
+                    ResourceId: null,
+                    Outcome: "succeeded",
+                    ActorUserId: null,
+                    CreatedAt: clock.UtcNow,
+                    Details: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["pruned"] = pruned.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    }),
+                cancellationToken);
+            logger.LogInformation("Hosty notification retention pruned {PrunedCount} notifications.", pruned);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+}

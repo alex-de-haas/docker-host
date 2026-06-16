@@ -45,6 +45,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IClock, SystemClock>();
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
+        builder.Services.AddHostedService<NotificationRetentionScheduler>();
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("HostyShell", policy =>
