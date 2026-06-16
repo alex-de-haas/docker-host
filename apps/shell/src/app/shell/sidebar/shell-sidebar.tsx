@@ -132,7 +132,7 @@ export function ShellSidebar({
 
 function BrandMark() {
   return (
-    <span className="flex size-10 shrink-0 items-center justify-center text-[#0F1B2D] dark:text-[#F8FAFC]">
+    <span className="flex size-10 shrink-0 items-center justify-center text-sidebar-foreground">
       <svg
         viewBox="0 0 100 100"
         aria-hidden

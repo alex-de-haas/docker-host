@@ -83,49 +83,30 @@ const favicon = (scale = 1.16) =>
       `</g>`,
   );
 
-// Horizontal lockup: mark + "Hosty" wordmark, tightly framed. The viewBox
-// width is computed from the measured wordmark width so framing stays balanced.
+// Horizontal lockup: mark + "Hosty" wordmark, tightly framed.
+//
+// The wordmark is a live <text> element, so glyph widths depend on whichever
+// font in the stack the renderer has installed (Inter is not bundled with this
+// generator). To keep the lockup framing and the committed SVG viewBoxes
+// deterministic across machines/CI, the viewBox is sized from a fixed wordmark
+// width rather than from a per-run measurement. `width` is the measured render
+// of "Hosty" at these type settings (~131px); `pad` carries enough right margin
+// to absorb small per-font differences without clipping.
 const WORDMARK = {
   fontFamily: "Inter, 'Helvetica Neue', Arial, sans-serif",
   fontSize: 52,
   fontWeight: 600,
   letterSpacing: -1.5,
   text: "Hosty",
+  width: 132,
 };
-const LOCKUP = { markScale: 0.76, markX: 6, gap: 16, pad: 6, height: 100 };
+const LOCKUP = { markScale: 0.76, markX: 6, gap: 16, pad: 10, height: 100 };
 
-// Measure the rendered wordmark width (px) at the exact type settings.
-async function measureWordmark() {
-  const { fontFamily, fontSize, fontWeight, letterSpacing, text } = WORDMARK;
-  const probe = svg(
-    "0 0 600 200",
-    `<text x="10" y="100" dominant-baseline="central" font-family="${fontFamily}" ` +
-      `font-size="${fontSize}" font-weight="${fontWeight}" letter-spacing="${letterSpacing}" ` +
-      `fill="#000">${text}</text>`,
-  );
-  const { data, info } = await sharp(Buffer.from(probe))
-    .resize(600, 200)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const { width: W, height: H, channels } = info;
-  let minx = W, maxx = 0;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      if (data[(y * W + x) * channels + 3] > 20) {
-        if (x < minx) minx = x;
-        if (x > maxx) maxx = x;
-      }
-    }
-  }
-  return maxx - minx + 1;
-}
-
-function horizontal(color, textWidth, bg) {
+function horizontal(color, bg) {
   const { markScale, markX, gap, pad, height } = LOCKUP;
   const markY = (height - 100 * markScale) / 2;
   const textX = markX + 100 * markScale + gap;
-  const vbWidth = Math.round(textX + textWidth + pad);
+  const vbWidth = Math.round(textX + WORDMARK.width + pad);
   const { fontFamily, fontSize, fontWeight, letterSpacing, text } = WORDMARK;
   const bgEl = bg ? `<rect width="${vbWidth}" height="${height}" fill="${bg}"/>` : "";
   return svg(
@@ -139,12 +120,11 @@ function horizontal(color, textWidth, bg) {
 }
 
 // ---------------------------------------------------------------------------
-// SVG masters (the horizontal lockups are sized after measuring the wordmark).
+// SVG masters
 // ---------------------------------------------------------------------------
 const SVG_DIR = join(BRAND, "svg");
 
-async function buildMasters() {
-  const w = await measureWordmark();
+function buildMasters() {
   return {
     "hosty-mark-light.svg": markOnly(C.ink), // dark mark for light backgrounds
     "hosty-mark-dark.svg": markOnly(C.offWhite), // light mark for dark backgrounds
@@ -152,9 +132,9 @@ async function buildMasters() {
     "hosty-icon-light.svg": tile(C.white, C.ink),
     "hosty-icon-dark.svg": tile(C.ink, C.offWhite),
     "hosty-favicon.svg": favicon(),
-    "hosty-logo-horizontal-light.svg": horizontal(C.ink, w),
-    "hosty-logo-horizontal-dark.svg": horizontal(C.offWhite, w),
-    "hosty-logo-horizontal-on-white.svg": horizontal(C.ink, w, C.white),
+    "hosty-logo-horizontal-light.svg": horizontal(C.ink),
+    "hosty-logo-horizontal-dark.svg": horizontal(C.offWhite),
+    "hosty-logo-horizontal-on-white.svg": horizontal(C.ink, C.white),
   };
 }
 
@@ -210,7 +190,7 @@ const pngH = (svgStr, h) =>
   sharp(Buffer.from(svgStr)).resize({ height: h }).png().toBuffer();
 
 async function run() {
-  const masters = await buildMasters();
+  const masters = buildMasters();
   mkdirSync(SVG_DIR, { recursive: true });
   for (const [name, content] of Object.entries(masters)) {
     writeFileSync(join(SVG_DIR, name), content);
