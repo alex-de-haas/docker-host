@@ -8,9 +8,12 @@ using Spectre.Console;
 public static class CommandLine
 {
     public static Task<int> RunAsync(string[] args)
-        => RunAsync(args, AnsiConsole.Console);
+        => RunAsync(args, AnsiConsole.Console, CreateErrorConsole());
 
-    internal static async Task<int> RunAsync(string[] args, IAnsiConsole console)
+    internal static Task<int> RunAsync(string[] args, IAnsiConsole console)
+        => RunAsync(args, console, console);
+
+    internal static async Task<int> RunAsync(string[] args, IAnsiConsole console, IAnsiConsole error)
     {
         if (args is ["--version"] or ["-v"] or ["version"])
         {
@@ -26,7 +29,7 @@ public static class CommandLine
 
         var environment = HostyEnvironment.Current();
         var settingsStore = new LaunchSettingsStore(environment);
-        var commandContext = new CommandContext(console, environment, settingsStore);
+        var commandContext = new CommandContext(console, environment, settingsStore, error);
 
         try
         {
@@ -46,51 +49,57 @@ public static class CommandLine
                 "apps" => await new AppsCommand(commandContext).ExecuteAsync(args[1..]),
                 "users" => await new UsersCommand(commandContext).ExecuteAsync(args[1..]),
                 "auth" => await new AuthCommand(commandContext).ExecuteAsync(args[1..]),
-                _ => UnknownCommand(console, args[0]),
+                _ => UnknownCommand(console, error, args[0]),
             };
         }
         catch (CommandUsageException ex)
         {
-            console.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
+            error.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
             if (!string.IsNullOrWhiteSpace(ex.Usage))
             {
-                console.WriteLine(ex.Usage);
+                error.WriteLine(ex.Usage);
             }
 
             return 2;
         }
         catch (ConfigurationException ex)
         {
-            console.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
+            error.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
             return 2;
         }
         catch (CoreControlException ex)
         {
-            console.MarkupLine($"[red]Hosty Core API failed:[/] {Markup.Escape(ex.Message)}");
+            error.MarkupLine($"[red]Hosty Core API failed:[/] {Markup.Escape(ex.Message)}");
             if (!string.IsNullOrWhiteSpace(ex.ResponseBody))
             {
-                console.MarkupLine($"[grey]Response:[/] {Markup.Escape(ex.ResponseBody)}");
+                error.MarkupLine($"[grey]Response:[/] {Markup.Escape(ex.ResponseBody)}");
             }
 
             return 1;
         }
         catch (CoreControlTimeoutException ex)
         {
-            console.MarkupLine($"[red]Hosty Core did not respond in time:[/] {Markup.Escape(ex.Message)}");
-            console.MarkupLine("[grey]The operation may still be running in Hosty Core. Check it with [white]hosty core status[/] and [white]hosty apps list[/].[/]");
+            error.MarkupLine($"[red]Hosty Core did not respond in time:[/] {Markup.Escape(ex.Message)}");
+            error.MarkupLine("[grey]The operation may still be running in Hosty Core. Check it with [white]hosty core status[/] and [white]hosty apps list[/].[/]");
             return 1;
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
         {
-            console.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
+            error.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
             return 1;
         }
         catch (OperationCanceledException)
         {
-            console.MarkupLine("[yellow]Operation cancelled.[/]");
+            error.MarkupLine("[yellow]Operation cancelled.[/]");
             return 130;
         }
     }
+
+    private static IAnsiConsole CreateErrorConsole()
+        => AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Out = new AnsiConsoleOutput(System.Console.Error),
+        });
 
     public static string Version { get; } = ResolveVersion(
         typeof(CommandLine).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
@@ -106,44 +115,64 @@ public static class CommandLine
         return metadataSeparator < 0 ? informationalVersion : informationalVersion[..metadataSeparator];
     }
 
-    private static int UnknownCommand(IAnsiConsole console, string command)
+    private static int UnknownCommand(IAnsiConsole console, IAnsiConsole error, string command)
     {
-        console.MarkupLine($"[red]Unknown command:[/] {Markup.Escape(command)}");
+        error.MarkupLine($"[red]Unknown command:[/] {Markup.Escape(command)}");
         WriteHelp(console);
         return 2;
     }
 
     private static void WriteHelp(IAnsiConsole console)
     {
-        console.WriteLine(HelpText);
+        console.MarkupLine("[bold]hosty[/] — manage Hosty Core, Shell, and apps");
+        console.WriteLine();
+        console.MarkupLine("[grey]Usage:[/] hosty <command> [[options]]");
+        console.WriteLine();
+
+        WriteCommandGroup(console, "Lifecycle",
+        [
+            ("install", "Install Hosty Core and Shell"),
+            ("uninstall", "Uninstall Hosty (optionally delete data)"),
+            ("start", "Start the local Hosty Core process"),
+            ("stop", "Stop the local Hosty Core process"),
+            ("restart", "Restart the local Hosty Core process"),
+            ("update", "Update the CLI, Core, and Shell"),
+            ("status", "Show Hosty Core status"),
+            ("logs", "Tail Hosty Core logs"),
+        ]);
+
+        WriteCommandGroup(console, "Apps & users",
+        [
+            ("apps", "Install, update, back up, and inspect apps"),
+            ("users", "List app users"),
+            ("auth", "Create setup and recovery tokens"),
+            ("open", "Open Hosty Shell in the browser"),
+        ]);
+
+        WriteCommandGroup(console, "Configuration",
+        [
+            ("config", "Read and write launch settings"),
+            ("core", "Manage the local Core process directly"),
+        ]);
+
+        console.MarkupLine("Run [grey]hosty <command> --help[/] for command-specific options.");
     }
 
-    public const string HelpText = """
-        hosty
+    private static void WriteCommandGroup(
+        IAnsiConsole console,
+        string title,
+        (string Command, string Description)[] commands)
+    {
+        console.MarkupLine($"[bold]{title}[/]");
+        var grid = new Grid();
+        grid.AddColumn(new GridColumn().PadLeft(2).PadRight(2));
+        grid.AddColumn();
+        foreach (var (command, description) in commands)
+        {
+            grid.AddRow($"[green]{command}[/]", $"[grey]{Markup.Escape(description)}[/]");
+        }
 
-        Usage:
-          hosty <command> [options]
-
-        Commands:
-          install
-          uninstall
-          start
-          stop
-          restart
-          update
-          status
-          logs
-          open
-          core
-          config
-          apps
-          users
-          auth
-
-        Run hosty config --help for configuration commands.
-        Run hosty core --help for local Core process commands.
-        Run hosty apps --help for app commands.
-        Run hosty users --help for user commands.
-        Run hosty auth --help for authentication commands.
-        """;
+        console.Write(grid);
+        console.WriteLine();
+    }
 }

@@ -64,15 +64,16 @@ internal sealed partial class UsersCommand(CommandContext context)
             throw new CommandUsageException("users list --format must be table or json.", Usage);
         }
 
-        var table = new Table();
-        table.AddColumn("User");
-        table.AddColumn("Email");
-        table.AddColumn("Role");
-        table.AddColumn("Disabled");
-        if (!string.IsNullOrWhiteSpace(appId))
+        if (users.Count == 0)
         {
-            table.AddColumn("Assigned");
+            context.Console.MarkupLine("[grey]No users found.[/]");
+            return 0;
         }
+
+        var scoped = !string.IsNullOrWhiteSpace(appId);
+        var table = scoped
+            ? ConsoleUi.CreateTable("User", "Email", "Role", "Disabled", "Assigned")
+            : ConsoleUi.CreateTable("User", "Email", "Role", "Disabled");
 
         foreach (var user in users)
         {
@@ -81,11 +82,11 @@ internal sealed partial class UsersCommand(CommandContext context)
                 Markup.Escape(user.Id),
                 Markup.Escape(user.Email),
                 Markup.Escape(user.Role),
-                user.Disabled ? "yes" : "no",
+                user.Disabled ? "[yellow]yes[/]" : "[grey]no[/]",
             };
-            if (!string.IsNullOrWhiteSpace(appId))
+            if (scoped)
             {
-                row.Add(user.Assigned == true ? "yes" : "no");
+                row.Add(ConsoleUi.YesNo(user.Assigned == true));
             }
 
             table.AddRow(row.ToArray());

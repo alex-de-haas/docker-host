@@ -53,7 +53,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
-            context.Console.MarkupLine($"[red]Hosty Core bootstrap failed:[/] {Markup.Escape(ex.Message)}");
+            context.Error.MarkupLine($"[red]Hosty Core bootstrap failed:[/] {Markup.Escape(ex.Message)}");
             return 1;
         }
 
@@ -251,14 +251,14 @@ internal sealed partial class CoreCommand(CommandContext context)
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or JsonException)
         {
-            context.Console.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
+            context.Error.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
             return 1;
         }
 
         if (status is null)
         {
-            context.Console.MarkupLine("[yellow]Hosty Core is not running or local control discovery is unavailable.[/]");
-            context.Console.MarkupLine($"[grey]Discovery path:[/] {Markup.Escape(GetControlDiscoveryPath())}");
+            context.Error.MarkupLine("[yellow]Hosty Core is not running or local control discovery is unavailable.[/]");
+            context.Error.MarkupLine($"[grey]Discovery path:[/] {Markup.Escape(GetControlDiscoveryPath())}");
             return 1;
         }
 
@@ -276,7 +276,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         var discovery = await ReadControlDiscoveryAsync();
         if (discovery is null)
         {
-            context.Console.MarkupLine("[yellow]Hosty Core is not running or local control discovery is unavailable.[/]");
+            context.Error.MarkupLine("[yellow]Hosty Core is not running or local control discovery is unavailable.[/]");
             return 1;
         }
 
@@ -288,7 +288,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
         {
-            context.Console.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
+            context.Error.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
             return 1;
         }
 
@@ -299,13 +299,13 @@ internal sealed partial class CoreCommand(CommandContext context)
                 var body = await response.Content.ReadAsStringAsync();
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
                 {
-                    context.Console.MarkupLine("[red]Unable to stop Hosty Core:[/] local control secret was rejected.");
-                    context.Console.MarkupLine($"[grey]This usually means the control discovery file is stale or belongs to another Core process: {Markup.Escape(GetControlDiscoveryPath())}[/]");
-                    context.Console.MarkupLine("[grey]Run `hosty core status` to verify the active Core. If no matching Core is running, remove the stale discovery file and start Core again.[/]");
+                    context.Error.MarkupLine("[red]Unable to stop Hosty Core:[/] local control secret was rejected.");
+                    context.Error.MarkupLine($"[grey]This usually means the control discovery file is stale or belongs to another Core process: {Markup.Escape(GetControlDiscoveryPath())}[/]");
+                    context.Error.MarkupLine("[grey]Run `hosty core status` to verify the active Core. If no matching Core is running, remove the stale discovery file and start Core again.[/]");
                     return 1;
                 }
 
-                context.Console.MarkupLine($"[red]Unable to stop Hosty Core:[/] HTTP {(int)response.StatusCode}: {Markup.Escape(body)}");
+                context.Error.MarkupLine($"[red]Unable to stop Hosty Core:[/] HTTP {(int)response.StatusCode}: {Markup.Escape(body)}");
                 return 1;
             }
 
@@ -481,30 +481,29 @@ internal sealed partial class CoreCommand(CommandContext context)
 
     private void RenderStatus(CoreStatusDocument status)
     {
-        var table = new Table();
-        table.AddColumn("Field");
-        table.AddColumn("Value");
-        table.AddRow("Status", Markup.Escape(status.Status ?? "unknown"));
-        table.AddRow("Component", Markup.Escape(status.Component ?? "hosty-core"));
-        table.AddRow("Listen URL", Markup.Escape(status.ListenUrl ?? ""));
+        var table = ConsoleUi.CreateDetail()
+            .Field("Status", ConsoleUi.State(status.Status ?? "unknown"))
+            .Field("Component", Markup.Escape(status.Component ?? "hosty-core"))
+            .Field("Listen URL", Markup.Escape(status.ListenUrl ?? ""));
         if (status.CorePort > 0)
         {
-            table.AddRow("Core port", status.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            table.Field("Core port", status.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         if (status.ShellPort > 0)
         {
-            table.AddRow("Shell port", status.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            table.Field("Shell port", status.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
-        table.AddRow("Data root", Markup.Escape(status.DataRoot ?? ""));
-        table.AddRow("Core origin", Markup.Escape(status.CorePublicOrigin ?? "not configured"));
-        table.AddRow("Shell origin", Markup.Escape(status.ShellPublicOrigin ?? "not configured"));
+        table
+            .Field("Data root", Markup.Escape(status.DataRoot ?? ""))
+            .Field("Core origin", Markup.Escape(status.CorePublicOrigin ?? "not configured"))
+            .Field("Shell origin", Markup.Escape(status.ShellPublicOrigin ?? "not configured"));
         context.Console.Write(table);
 
         foreach (var warning in status.Warnings ?? [])
         {
-            context.Console.MarkupLine($"[yellow]Warning:[/] {Markup.Escape(warning)}");
+            context.Error.MarkupLine($"[yellow]Warning:[/] {Markup.Escape(warning)}");
         }
     }
 

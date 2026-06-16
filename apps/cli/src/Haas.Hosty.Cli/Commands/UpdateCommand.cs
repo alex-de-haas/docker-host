@@ -38,8 +38,8 @@ internal sealed partial class UpdateCommand(CommandContext context)
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
-            context.Console.MarkupLine($"[red]CLI update failed:[/] {Markup.Escape(ex.Message)}");
-            context.Console.MarkupLine("Hosty Core and Shell were not changed. Retry later, then restart Core with [grey]hosty restart[/].");
+            context.Error.MarkupLine($"[red]CLI update failed:[/] {Markup.Escape(ex.Message)}");
+            context.Error.MarkupLine("Hosty Core and Shell were not changed. Retry later, then restart Core with [grey]hosty restart[/].");
             return 1;
         }
 
@@ -51,8 +51,8 @@ internal sealed partial class UpdateCommand(CommandContext context)
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
-            context.Console.MarkupLine($"[red]Core update failed:[/] {Markup.Escape(ex.Message)}");
-            context.Console.MarkupLine("Hosty Shell was not changed. Retry later, then restart Core with [grey]hosty restart[/].");
+            context.Error.MarkupLine($"[red]Core update failed:[/] {Markup.Escape(ex.Message)}");
+            context.Error.MarkupLine("Hosty Shell was not changed. Retry later, then restart Core with [grey]hosty restart[/].");
             return 1;
         }
 
@@ -84,18 +84,20 @@ internal sealed partial class UpdateCommand(CommandContext context)
         }
         catch (Exception ex) when (ex is CoreControlException or HttpRequestException or IOException or JsonException or OperationCanceledException)
         {
-            context.Console.MarkupLine($"[yellow]Could not stop Hosty Core before Windows executable update:[/] {Markup.Escape(ex.Message)}");
+            context.Error.MarkupLine($"[yellow]Could not stop Hosty Core before Windows executable update:[/] {Markup.Escape(ex.Message)}");
         }
     }
 
     private async Task<int> ListChannelsAsync(UpdateOptions options)
     {
         var index = await LoadProductChannelsAsync(options.IndexPath);
-        var table = new Table();
-        table.AddColumn("Channel");
-        table.AddColumn("Label");
-        table.AddColumn("CLI");
-        table.AddColumn("Shell manifest");
+        if (index.Channels.Count == 0)
+        {
+            context.Console.MarkupLine("[grey]No channels available.[/]");
+            return 0;
+        }
+
+        var table = ConsoleUi.CreateTable("Channel", "Label", "CLI", "Shell manifest");
         foreach (var channel in index.Channels)
         {
             table.AddRow(

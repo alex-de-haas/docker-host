@@ -35,18 +35,14 @@ internal sealed class ConfigCommand(CommandContext context)
     private int List()
     {
         var settings = context.SettingsStore.EnsureInstalled();
-        var table = new Table()
-            .RoundedBorder()
-            .AddColumn("Key")
-            .AddColumn("Value")
-            .AddColumn("Editable");
+        var table = ConsoleUi.CreateTable("Key", "Value", "Editable");
 
         foreach (var definition in LaunchSettingDefinitions.All)
         {
             table.AddRow(
                 Markup.Escape(definition.Key),
                 Markup.Escape(settings[definition.Key]),
-                definition.IsEditable ? "yes" : "no");
+                ConsoleUi.YesNo(definition.IsEditable));
         }
 
         context.Console.Write(table);
