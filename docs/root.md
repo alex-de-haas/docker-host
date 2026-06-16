@@ -32,6 +32,7 @@ flowchart LR
 - [User Management](features/user-management.md) - users, invitations, roles, and app access assignment.
 - [Local Password Login](features/local-password-login.md) - Core-owned local password setup, recovery, invitations, and login.
 - [App Data Backup Retention](features/app-data-backup-retention.md) - backup cleanup and retention.
+- [Notifications](features/notifications.md) - design draft: Core-owned user-targeted notification stream, opt-in app producers, client-agnostic / MCP-legible consumer.
 - [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command setup and Core control discovery.
 - [CLI app commands](features/cli-app-commands.md) - runtime app CLI commands.
 - [Core API](features/core-api.md) - current Core browser and control APIs.
