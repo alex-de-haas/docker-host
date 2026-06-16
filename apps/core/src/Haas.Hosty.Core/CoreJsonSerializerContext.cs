@@ -73,6 +73,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppManualBackupRequest))]
 [JsonSerializable(typeof(AppInitiatedBackupRequest))]
 [JsonSerializable(typeof(AppNotificationCreateRequest))]
+[JsonSerializable(typeof(NotificationMarkReadRequest))]
 [JsonSerializable(typeof(AppRestoreBackupRequest))]
 [JsonSerializable(typeof(AppChannelSwitchPlanRequest))]
 [JsonSerializable(typeof(AppChannelSwitchApplyRequest))]

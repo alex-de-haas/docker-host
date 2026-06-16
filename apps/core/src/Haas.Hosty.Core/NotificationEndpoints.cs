@@ -20,6 +20,25 @@ internal static class NotificationEndpoints
             IClock clock,
             CancellationToken cancellationToken) =>
             PublishFromAppAsync(appId, request, input, serviceTokens, apps, notifications, audit, clock, cancellationToken));
+
+        // Session-authenticated consumer: the signed-in Host user's own inbox. Client-agnostic —
+        // the Shell bell and any other Core-session client read this same stream.
+        app.MapGet("/api/notifications", (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            NotificationService notifications,
+            CancellationToken cancellationToken) =>
+            ListForSessionAsync(request, users, clock, notifications, cancellationToken));
+
+        app.MapPost("/api/notifications/read", (
+            HttpRequest request,
+            NotificationMarkReadRequest? input,
+            UserDirectoryStore users,
+            IClock clock,
+            NotificationService notifications,
+            CancellationToken cancellationToken) =>
+            MarkReadForSessionAsync(request, input, users, clock, notifications, cancellationToken));
     }
 
     public static async Task<IResult> PublishFromAppAsync(
@@ -157,6 +176,54 @@ internal static class NotificationEndpoints
         "notification_target_required" => "Notification target is required.",
         _ => "Invalid notification request.",
     };
+
+    public static Task<IResult> ListForSessionAsync(
+        HttpRequest request,
+        UserDirectoryStore users,
+        IClock clock,
+        NotificationService notifications,
+        CancellationToken cancellationToken)
+        => CoreSessionAuthorization.RequireSessionAsync(
+            request,
+            users,
+            clock,
+            async user =>
+            {
+                var unreadOnly = string.Equals(request.Query["unread"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+                var limit = ParseBoundedInt(request.Query["limit"].ToString(), defaultValue: 50, min: 1, max: 200);
+                var offset = ParseBoundedInt(request.Query["offset"].ToString(), defaultValue: 0, min: 0, max: int.MaxValue);
+                var response = await notifications.QueryAsync(
+                    user.Id,
+                    includeHostAdmin: string.Equals(user.Role, NotificationService.HostAdminRole, StringComparison.Ordinal),
+                    unreadOnly,
+                    limit,
+                    offset,
+                    cancellationToken);
+                return CoreJson.Json(response);
+            },
+            cancellationToken: cancellationToken);
+
+    public static Task<IResult> MarkReadForSessionAsync(
+        HttpRequest request,
+        NotificationMarkReadRequest? input,
+        UserDirectoryStore users,
+        IClock clock,
+        NotificationService notifications,
+        CancellationToken cancellationToken)
+        => CoreSessionAuthorization.RequireSessionAsync(
+            request,
+            users,
+            clock,
+            async user =>
+            {
+                var response = await notifications.MarkReadAsync(user.Id, input?.Ids, cancellationToken);
+                return CoreJson.Json(response);
+            },
+            requireCsrf: true,
+            cancellationToken: cancellationToken);
+
+    private static int ParseBoundedInt(string? raw, int defaultValue, int min, int max)
+        => int.TryParse(raw, out var value) ? Math.Clamp(value, min, max) : defaultValue;
 }
 
 internal sealed record AppNotificationCreateRequest(
@@ -175,3 +242,5 @@ internal sealed record ValidatedNotification(
     string? Body,
     string? Link,
     string? DedupeKey);
+
+internal sealed record NotificationMarkReadRequest(IReadOnlyList<string>? Ids);
