@@ -75,6 +75,18 @@ public sealed class NotificationConsumerEndpointsTests
         Assert.Equal(0, body.UnreadCount);
     }
 
+    [Fact]
+    public async Task StreamForSessionAsync_WithoutSession_Returns401()
+    {
+        var fixture = await Fixture.CreateAsync();
+        var context = new DefaultHttpContext();
+
+        var result = await NotificationEndpoints.StreamForSessionAsync(
+            context.Request, context.Response, fixture.Users, fixture.Clock, new NotificationBroadcaster(), CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(result));
+    }
+
     private static HttpRequest Request(bool session = true, bool csrf = false)
     {
         var context = new DefaultHttpContext();

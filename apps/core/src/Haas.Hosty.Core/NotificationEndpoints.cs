@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Haas.Hosty.Core;
 
 internal static class NotificationEndpoints
@@ -39,6 +41,17 @@ internal static class NotificationEndpoints
             NotificationService notifications,
             CancellationToken cancellationToken) =>
             MarkReadForSessionAsync(request, input, users, clock, notifications, cancellationToken));
+
+        // Live delivery for session clients (e.g. the Shell bell). Durable history stays in
+        // GET /api/notifications, so a missed live event is always recoverable.
+        app.MapGet("/api/notifications/stream", (
+            HttpRequest request,
+            HttpResponse response,
+            UserDirectoryStore users,
+            IClock clock,
+            NotificationBroadcaster broadcaster,
+            CancellationToken cancellationToken) =>
+            StreamForSessionAsync(request, response, users, clock, broadcaster, cancellationToken));
     }
 
     public static async Task<IResult> PublishFromAppAsync(
@@ -220,6 +233,44 @@ internal static class NotificationEndpoints
                 return CoreJson.Json(response);
             },
             requireCsrf: true,
+            cancellationToken: cancellationToken);
+
+    public static Task<IResult> StreamForSessionAsync(
+        HttpRequest request,
+        HttpResponse response,
+        UserDirectoryStore users,
+        IClock clock,
+        NotificationBroadcaster broadcaster,
+        CancellationToken cancellationToken)
+        => CoreSessionAuthorization.RequireSessionAsync(
+            request,
+            users,
+            clock,
+            async user =>
+            {
+                response.Headers.ContentType = "text/event-stream";
+                response.Headers.CacheControl = "no-cache";
+                response.Headers["X-Accel-Buffering"] = "no";
+
+                using var subscription = broadcaster.Subscribe(user.Id);
+                await response.Body.FlushAsync(cancellationToken);
+
+                try
+                {
+                    await foreach (var view in subscription.Reader.ReadAllAsync(cancellationToken))
+                    {
+                        var json = JsonSerializer.Serialize(view, CoreJsonSerializerContext.Default.NotificationView);
+                        await response.WriteAsync($"data: {json}\n\n", cancellationToken);
+                        await response.Body.FlushAsync(cancellationToken);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Client disconnected; end the stream.
+                }
+
+                return Results.Empty;
+            },
             cancellationToken: cancellationToken);
 
     private static int ParseBoundedInt(string? raw, int defaultValue, int min, int max)
