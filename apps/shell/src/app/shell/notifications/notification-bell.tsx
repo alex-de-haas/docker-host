@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -139,8 +140,9 @@ export function NotificationBell({ compact }: { compact: boolean }) {
         }
       }
 
-      if (notification.link) {
-        window.open(notification.link, "_blank", "noopener,noreferrer");
+      const href = notification.link ? safeHttpUrl(notification.link) : null;
+      if (href) {
+        window.open(href, "_blank", "noopener,noreferrer");
         setOpen(false);
       }
     },
@@ -217,12 +219,18 @@ function NotificationRow({
   notification: ShellNotification;
   onActivate: () => void;
 }) {
+  const willNavigate = notification.link !== null && safeHttpUrl(notification.link) !== null;
   return (
-    <button
-      type="button"
-      onClick={onActivate}
+    <DropdownMenuItem
+      onSelect={(event) => {
+        // Keep the panel open when a click only marks the item read (nothing to navigate to).
+        if (!willNavigate) {
+          event.preventDefault();
+        }
+        onActivate();
+      }}
       className={cn(
-        "flex w-full gap-2 border-b px-3 py-2 text-left last:border-b-0 hover:bg-accent",
+        "flex cursor-pointer items-start gap-2 rounded-none border-b px-3 py-2 last:border-b-0",
         !notification.read && "bg-accent/40",
       )}
     >
@@ -236,8 +244,19 @@ function NotificationRow({
           <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">{notification.body}</span>
         )}
       </span>
-    </button>
+    </DropdownMenuItem>
   );
+}
+
+// Only allow http(s) (relative links resolve against the Shell origin). Blocks app-provided
+// links using dangerous schemes such as javascript: or data:.
+function safeHttpUrl(link: string): string | null {
+  try {
+    const url = new URL(link, window.location.origin);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
 }
 
 function levelDotClass(level: string): string {
