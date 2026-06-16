@@ -49,7 +49,7 @@ public static class CommandLine
                 "apps" => await new AppsCommand(commandContext).ExecuteAsync(args[1..]),
                 "users" => await new UsersCommand(commandContext).ExecuteAsync(args[1..]),
                 "auth" => await new AuthCommand(commandContext).ExecuteAsync(args[1..]),
-                _ => UnknownCommand(console, error, args[0]),
+                _ => UnknownCommand(error, args[0]),
             };
         }
         catch (CommandUsageException ex)
@@ -115,10 +115,10 @@ public static class CommandLine
         return metadataSeparator < 0 ? informationalVersion : informationalVersion[..metadataSeparator];
     }
 
-    private static int UnknownCommand(IAnsiConsole console, IAnsiConsole error, string command)
+    private static int UnknownCommand(IAnsiConsole error, string command)
     {
         error.MarkupLine($"[red]Unknown command:[/] {Markup.Escape(command)}");
-        WriteHelp(console);
+        WriteHelp(error);
         return 2;
     }
 

@@ -50,9 +50,13 @@ internal static class ConsoleUi
     /// </summary>
     public static string State(string? value)
     {
-        var text = value ?? string.Empty;
-        var escaped = Markup.Escape(text);
-        return text.ToLowerInvariant() switch
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        var escaped = Markup.Escape(value);
+        return value.ToLowerInvariant() switch
         {
             "running" or "active" or "ok" or "healthy" or "ready" or "succeeded" or "completed" or "installed"
                 => $"[green]{escaped}[/]",
@@ -60,7 +64,7 @@ internal static class ConsoleUi
                 => $"[red]{escaped}[/]",
             "starting" or "pending" or "updating" or "restarting" or "degraded" or "stopping"
                 => $"[yellow]{escaped}[/]",
-            "stopped" or "inactive" or "exited" or "disabled" or "none" or "unknown" or ""
+            "stopped" or "inactive" or "exited" or "disabled" or "none" or "unknown"
                 => $"[grey]{escaped}[/]",
             _ => escaped,
         };

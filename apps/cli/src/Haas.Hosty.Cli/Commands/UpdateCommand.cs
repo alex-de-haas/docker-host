@@ -91,7 +91,7 @@ internal sealed partial class UpdateCommand(CommandContext context)
     private async Task<int> ListChannelsAsync(UpdateOptions options)
     {
         var index = await LoadProductChannelsAsync(options.IndexPath);
-        if (index.Channels.Count == 0)
+        if (index.Channels?.Count is null or 0)
         {
             context.Console.MarkupLine("[grey]No channels available.[/]");
             return 0;
