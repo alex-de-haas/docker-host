@@ -23,8 +23,8 @@ internal sealed partial class OpenCommand(CommandContext context)
         using var core = await CoreControlClient.TryCreateAsync(context);
         if (core is null)
         {
-            context.Console.MarkupLine("[red]Hosty Core is not running or local control discovery is unavailable.[/]");
-            context.Console.MarkupLine("Run [grey]hosty start[/] first.");
+            context.Error.MarkupLine("[red]Hosty Core is not running or local control discovery is unavailable.[/]");
+            context.Error.MarkupLine("Run [grey]hosty start[/] first.");
             return 1;
         }
 
@@ -32,8 +32,8 @@ internal sealed partial class OpenCommand(CommandContext context)
         var url = ResolveShellOpenUrl(status);
         if (string.IsNullOrWhiteSpace(url))
         {
-            context.Console.MarkupLine("[red]Hosty Shell origin is not configured.[/]");
-            context.Console.MarkupLine("Set [grey]HOSTY_SHELL_PUBLIC_ORIGIN[/] when starting Core, or run [grey]npm run dev[/] for local Core/Shell development.");
+            context.Error.MarkupLine("[red]Hosty Shell origin is not configured.[/]");
+            context.Error.MarkupLine("Set [grey]HOSTY_SHELL_PUBLIC_ORIGIN[/] when starting Core, or run [grey]npm run dev[/] for local Core/Shell development.");
             return 1;
         }
 

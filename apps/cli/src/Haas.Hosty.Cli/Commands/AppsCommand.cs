@@ -397,22 +397,22 @@ internal sealed partial class AppsCommand(CommandContext context)
 
     private void RenderApps(IReadOnlyList<AppSummary> apps)
     {
-        var table = new Table();
-        table.AddColumn("App");
-        table.AddColumn("Version");
-        table.AddColumn("Runtime");
-        table.AddColumn("Autostart");
-        table.AddColumn("State");
-        table.AddColumn("Status");
+        if (apps.Count == 0)
+        {
+            context.Console.MarkupLine("[grey]No apps installed.[/]");
+            return;
+        }
+
+        var table = ConsoleUi.CreateTable("App", "Version", "Runtime", "Autostart", "State", "Status");
         foreach (var app in apps)
         {
             table.AddRow(
                 Markup.Escape(app.Id),
                 Markup.Escape(app.Version),
                 Markup.Escape(app.SelectedRuntime ?? ""),
-                app.Autostart ? "yes" : "no",
-                Markup.Escape(app.RuntimeState),
-                Markup.Escape(app.OperationStatus));
+                ConsoleUi.Enabled(app.Autostart),
+                ConsoleUi.State(app.RuntimeState),
+                ConsoleUi.State(app.OperationStatus));
         }
 
         context.Console.Write(table);
@@ -443,16 +443,14 @@ internal sealed partial class AppsCommand(CommandContext context)
             return;
         }
 
-        var table = new Table();
-        table.AddColumn("Field");
-        table.AddColumn("Value");
-        table.AddRow("App", Markup.Escape(plan.AppId));
-        table.AddRow("Version", Markup.Escape($"{plan.CurrentVersion} -> {plan.TargetVersion}"));
-        table.AddRow("Runtime", Markup.Escape($"{plan.CurrentRuntime ?? "none"} -> {plan.TargetRuntime}"));
-        table.AddRow("Channel", Markup.Escape(plan.TargetChannel ?? "not configured"));
-        table.AddRow("Pre-update backup", plan.WillCreatePreUpdateBackup ? "yes" : "no");
-        table.AddRow("Manifest digest", Markup.Escape(plan.ManifestDigest));
-        table.AddRow("Plan digest", Markup.Escape(plan.PlanDigest));
+        var table = ConsoleUi.CreateDetail()
+            .Field("App", Markup.Escape(plan.AppId))
+            .Field("Version", Markup.Escape($"{plan.CurrentVersion} -> {plan.TargetVersion}"))
+            .Field("Runtime", Markup.Escape($"{plan.CurrentRuntime ?? "none"} -> {plan.TargetRuntime}"))
+            .Field("Channel", Markup.Escape(plan.TargetChannel ?? "not configured"))
+            .Field("Pre-update backup", ConsoleUi.Enabled(plan.WillCreatePreUpdateBackup))
+            .Field("Manifest digest", Markup.Escape(plan.ManifestDigest))
+            .Field("Plan digest", Markup.Escape(plan.PlanDigest));
         context.Console.Write(table);
     }
 
@@ -464,19 +462,17 @@ internal sealed partial class AppsCommand(CommandContext context)
             return;
         }
 
-        var table = new Table();
-        table.AddColumn("Field");
-        table.AddColumn("Value");
-        table.AddRow("App", Markup.Escape(plan.AppId));
-        table.AddRow("Runtime", Markup.Escape($"{plan.CurrentRuntime ?? "none"} -> {plan.TargetRuntime}"));
-        table.AddRow("Runtime type", Markup.Escape(plan.TargetRuntimeType));
-        table.AddRow("Automatic backup", plan.AutomaticBackup ? "yes" : "no");
+        var table = ConsoleUi.CreateDetail()
+            .Field("App", Markup.Escape(plan.AppId))
+            .Field("Runtime", Markup.Escape($"{plan.CurrentRuntime ?? "none"} -> {plan.TargetRuntime}"))
+            .Field("Runtime type", Markup.Escape(plan.TargetRuntimeType))
+            .Field("Automatic backup", ConsoleUi.Enabled(plan.AutomaticBackup));
         if (plan.Changes.Count > 0)
         {
-            table.AddRow("Changes", Markup.Escape(string.Join(Environment.NewLine, plan.Changes)));
+            table.Field("Changes", Markup.Escape(string.Join(Environment.NewLine, plan.Changes)));
         }
 
-        table.AddRow("Plan digest", Markup.Escape(plan.PlanDigest));
+        table.Field("Plan digest", Markup.Escape(plan.PlanDigest));
         context.Console.Write(table);
     }
 
@@ -495,19 +491,20 @@ internal sealed partial class AppsCommand(CommandContext context)
 
     private void RenderBackups(IReadOnlyList<AppBackupRecord> backups)
     {
-        var table = new Table();
-        table.AddColumn("Backup");
-        table.AddColumn("Reason");
-        table.AddColumn("Created");
-        table.AddColumn("Size");
-        table.AddColumn("Retention");
+        if (backups.Count == 0)
+        {
+            context.Console.MarkupLine("[grey]No backups found.[/]");
+            return;
+        }
+
+        var table = ConsoleUi.CreateTable("Backup", "Reason", "Created", "Size", "Retention");
         foreach (var backup in backups)
         {
             table.AddRow(
                 Markup.Escape(backup.BackupId),
                 Markup.Escape(backup.Reason),
                 Markup.Escape(backup.CreatedAt.ToString("u")),
-                backup.ArchiveSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ConsoleUi.Bytes(backup.ArchiveSize),
                 Markup.Escape(backup.Retention?.Reason ?? ""));
         }
 
@@ -567,11 +564,7 @@ internal sealed partial class AppsCommand(CommandContext context)
 
     private void RenderBackupCleanupCandidates(IReadOnlyList<AppBackupCleanupCandidate> candidates, string title)
     {
-        var table = new Table();
-        table.AddColumn(title);
-        table.AddColumn("Reason");
-        table.AddColumn("Cleanup");
-        table.AddColumn("Path");
+        var table = ConsoleUi.CreateTable(title, "Reason", "Cleanup", "Path");
         foreach (var candidate in candidates)
         {
             table.AddRow(
@@ -604,17 +597,15 @@ internal sealed partial class AppsCommand(CommandContext context)
         }
 
         var source = response.Source;
-        var table = new Table();
-        table.AddColumn("Field");
-        table.AddColumn("Value");
-        table.AddRow("App", Markup.Escape(response.AppId));
-        table.AddRow("Type", Markup.Escape(source.Type ?? ""));
-        table.AddRow("Repository", Markup.Escape(source.Repository ?? ""));
-        table.AddRow("Resolved ref", Markup.Escape(source.ResolvedRef ?? ""));
-        table.AddRow("Commit", Markup.Escape(source.Commit ?? ""));
-        table.AddRow("Managed checkout", Markup.Escape(source.ManagedCheckoutPath ?? ""));
-        table.AddRow("Local override", Markup.Escape(source.LocalOverridePath ?? ""));
-        table.AddRow("Updated", Markup.Escape(source.UpdatedAt?.ToString("u") ?? ""));
+        var table = ConsoleUi.CreateDetail()
+            .Field("App", Markup.Escape(response.AppId))
+            .Field("Type", Markup.Escape(source.Type ?? ""))
+            .Field("Repository", Markup.Escape(source.Repository ?? ""))
+            .Field("Resolved ref", Markup.Escape(source.ResolvedRef ?? ""))
+            .Field("Commit", Markup.Escape(source.Commit ?? ""))
+            .Field("Managed checkout", Markup.Escape(source.ManagedCheckoutPath ?? ""))
+            .Field("Local override", Markup.Escape(source.LocalOverridePath ?? ""))
+            .Field("Updated", Markup.Escape(source.UpdatedAt?.ToString("u") ?? ""));
         context.Console.Write(table);
     }
 
@@ -637,20 +628,14 @@ internal sealed partial class AppsCommand(CommandContext context)
             return;
         }
 
-        context.Console.MarkupLine($"[green]{Markup.Escape(response.Status)}:[/] {Markup.Escape(response.AppId)}");
+        context.Console.MarkupLine($"{ConsoleUi.State(response.Status)}: {Markup.Escape(response.AppId)}");
         context.Console.MarkupLine($"[grey]Runtime:[/] {Markup.Escape(response.Runtime)} / {Markup.Escape(response.RuntimeType)}");
-        var table = new Table();
-        table.AddColumn("Service");
-        table.AddColumn("Status");
-        table.AddColumn("PID");
-        table.AddColumn("Exit");
-        table.AddColumn("Log");
-        table.AddColumn("Working directory");
+        var table = ConsoleUi.CreateTable("Service", "Status", "PID", "Exit", "Log", "Working directory");
         foreach (var service in response.Services)
         {
             table.AddRow(
                 Markup.Escape(service.Service),
-                Markup.Escape(service.Status),
+                ConsoleUi.State(service.Status),
                 Markup.Escape(service.ProcessId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
                 Markup.Escape(service.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
                 Markup.Escape(service.LogPath ?? ""),
@@ -673,10 +658,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             throw new CommandUsageException("apps source cleanup --format must be table or json.", Usage);
         }
 
-        var table = new Table();
-        table.AddColumn(title);
-        table.AddColumn("Path");
-        table.AddColumn("Reason");
+        var table = ConsoleUi.CreateTable(title, "Path", "Reason");
         foreach (var candidate in candidates)
         {
             table.AddRow(

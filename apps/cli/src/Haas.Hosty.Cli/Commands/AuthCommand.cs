@@ -53,15 +53,15 @@ internal sealed partial class AuthCommand(CommandContext context)
         using var core = await CoreControlClient.TryCreateAsync(context);
         if (core is null)
         {
-            context.Console.MarkupLine("[red]Hosty Core is not running or local control discovery is unavailable.[/]");
-            context.Console.MarkupLine("Run [grey]hosty core start[/] first.");
+            context.Error.MarkupLine("[red]Hosty Core is not running or local control discovery is unavailable.[/]");
+            context.Error.MarkupLine("Run [grey]hosty core start[/] first.");
             return 1;
         }
 
         var response = await core.PostAsync<AuthTokenResponse>(path);
         if (response is null || string.IsNullOrWhiteSpace(response.Token))
         {
-            context.Console.MarkupLine("[red]Hosty Core returned an empty auth token response.[/]");
+            context.Error.MarkupLine("[red]Hosty Core returned an empty auth token response.[/]");
             return 1;
         }
 
