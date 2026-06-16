@@ -251,7 +251,7 @@ function ConfigurePanel({
   // Reset the draft/section state while rendering when the app identity or its
   // settings change, instead of in an effect.
   // https://react.dev/learn/you-might-not-need-an-effect
-  const resetSignature = `${app.id} ${app.autostart} ${initialOpenSection ?? ""} ${settingsSignature}`;
+  const resetSignature = `${app.id}\u0001${app.autostart}\u0001${initialOpenSection ?? ""}\u0001${settingsSignature}`;
   const [prevResetSignature, setPrevResetSignature] = useState<string | null>(null);
   if (prevResetSignature !== resetSignature) {
     setPrevResetSignature(resetSignature);

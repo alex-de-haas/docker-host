@@ -36,21 +36,18 @@ export function InstallReviewDialog({
 
   // Reset the settings draft while rendering when the reviewed plan changes, instead
   // of in an effect. https://react.dev/learn/you-might-not-need-an-effect
-  const [prevPlan, setPrevPlan] = useState(detail.plan);
-  const [prevReviewedManifestPath, setPrevReviewedManifestPath] = useState(reviewedManifestPath);
-  if (prevPlan !== detail.plan || prevReviewedManifestPath !== reviewedManifestPath) {
-    setPrevPlan(detail.plan);
-    setPrevReviewedManifestPath(reviewedManifestPath);
-    if (!detail.plan) {
+  const reviewedPlan = detail.plan && manifestPath.trim() === reviewedManifestPath ? detail.plan : null;
+  const [prevReviewedPlan, setPrevReviewedPlan] = useState<CoreInstallPlan | null>(null);
+  if (prevReviewedPlan !== reviewedPlan) {
+    setPrevReviewedPlan(reviewedPlan);
+    if (!reviewedPlan) {
       setSettingsDraft({});
     } else {
-      setSelectedRuntime(detail.plan.targetRuntime);
-      setSettingsDraft(Object.fromEntries(detail.plan.settings.map((setting) => [setting.key, setting.secret ? "" : setting.defaultValue || ""])));
-      setAutostartDraft(detail.plan.defaultAutostart ?? true);
+      setSelectedRuntime(reviewedPlan.targetRuntime);
+      setSettingsDraft(Object.fromEntries(reviewedPlan.settings.map((setting) => [setting.key, setting.secret ? "" : setting.defaultValue || ""])));
+      setAutostartDraft(reviewedPlan.defaultAutostart ?? true);
     }
   }
-
-  const reviewedPlan = detail.plan && manifestPath.trim() === reviewedManifestPath ? detail.plan : null;
   const runtimeProfiles =
     reviewedPlan?.runtimeProfiles && reviewedPlan.runtimeProfiles.length > 0
       ? reviewedPlan.runtimeProfiles
