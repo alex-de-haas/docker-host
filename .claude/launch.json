@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Hosty Dev (Core + Shell)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/dev-local.mjs"],
+      "port": 3000
+    },
+    {
+      "name": "Core API",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "core:dev"],
+      "port": 3001
+    }
+  ]
+}
