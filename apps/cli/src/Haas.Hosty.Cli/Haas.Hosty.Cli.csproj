@@ -8,9 +8,10 @@
     <AssemblyName>hosty</AssemblyName>
     <RootNamespace>Haas.Hosty.Cli</RootNamespace>
     <!-- Native AOT. Implies self-contained publish and trim/AOT analyzers on every build. All JSON
-         routes through the source-generated CliJsonSerializerContext (see Commands/CliJson.cs), so
-         `dotnet publish -r <rid>` produces a single native executable with no IL2026/IL3050 warnings;
-         `dotnet build`/`dotnet test` stay IL (no native toolchain needed). -->
+         routes through the CliJson helper and its per-command source-generated JsonSerializerContext
+         types (see Commands/CliJson.cs), so `dotnet publish -r <rid>` produces a single native
+         executable with no IL2026/IL3050 warnings; `dotnet build`/`dotnet test` stay IL (no native
+         toolchain needed). -->
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>

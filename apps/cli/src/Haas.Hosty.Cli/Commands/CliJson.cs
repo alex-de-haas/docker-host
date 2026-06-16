@@ -32,7 +32,9 @@ internal static class CliJson
         => JsonSerializer.DeserializeAsync(stream, TypeInfo<T>(), cancellationToken);
 
     public static JsonTypeInfo<T> TypeInfo<T>()
-        => (JsonTypeInfo<T>)Options.GetTypeInfo(typeof(T));
+        => Options.GetTypeInfo(typeof(T)) as JsonTypeInfo<T>
+            ?? throw new NotSupportedException(
+                $"Type {typeof(T).FullName} is not registered in the source-generated JSON contexts (see Commands/CliJson.cs).");
 
     public static JsonTypeInfo TypeInfo(Type type)
         => Options.GetTypeInfo(type);
