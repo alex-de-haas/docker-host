@@ -52,12 +52,25 @@ internal static class AppBackupEndpoints
             AppBackupRecord? record;
             try
             {
-                record = await backups.CreateBackupAsync(appId, AppBackupService.AppInitiatedReason, note, cancellationToken);
+                record = await backups.CreateBackupAsync(appId, AppBackupService.AppInitiatedReason, note: note, cancellationToken: cancellationToken);
             }
             catch (AppLifecycleException ex)
             {
+                // Match the status mapping used by LifecycleEndpoints.HandleLifecycleError:
+                // these are caller errors, not server faults.
+                var statusCode = string.Equals(ex.Code, "app_not_found", StringComparison.Ordinal)
+                    ? StatusCodes.Status404NotFound
+                    : StatusCodes.Status400BadRequest;
+                return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Convert filesystem failures into the standard JSON error contract instead of
+                // letting them bubble out as a non-JSON 500. Deliberately not a blanket catch:
+                // OperationCanceledException must keep propagating so client cancellation is not
+                // reported as a backup failure.
                 return CoreJson.Json(
-                    new ErrorResponse(ex.Code, ex.Message),
+                    new ErrorResponse("app_backup_failed", "The backup could not be created due to a storage error."),
                     statusCode: StatusCodes.Status500InternalServerError);
             }
 

@@ -36,7 +36,10 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
 
         var backupRoot = GetBackupRoot(appId);
         Directory.CreateDirectory(backupRoot);
-        var backupId = $"{clock.UtcNow:yyyyMMddHHmmssfff}_{reason}";
+        // A short random suffix keeps the id unique even when two backups are requested in the
+        // same millisecond (more likely now that apps can trigger backups programmatically),
+        // so the CreateNew-based ZipFile.CreateFromDirectory below never collides.
+        var backupId = $"{clock.UtcNow:yyyyMMddHHmmssfff}_{reason}_{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}";
         var archivePath = Path.Combine(backupRoot, $"{backupId}.zip");
         var metadataPath = Path.Combine(backupRoot, $"{backupId}.json");
 
