@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { getAccountInitials, getAppPageLinks } from "../app-helpers";
+import { NotificationBell } from "../notifications/notification-bell";
 import type { AppOpenTarget, AppPageLink, CoreApp, EmbeddedWorkspace, SessionResponse, ShellView } from "../types";
 
 export function ShellSidebar({
@@ -328,6 +329,7 @@ function SidebarFooterAccount({
 
   return (
     <div className="space-y-2">
+      <NotificationBell compact={compact} />
       <ThemeMenuButton compact={compact} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
