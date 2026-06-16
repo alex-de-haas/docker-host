@@ -351,3 +351,34 @@ export type RuntimeServiceRow = {
   message?: string | null;
   endpoints: CoreEndpoint[];
 };
+
+export type NotificationSource = {
+  kind: string;
+  appId: string | null;
+};
+
+// Named ShellNotification to avoid shadowing the DOM `Notification` global.
+export type ShellNotification = {
+  id: string;
+  source: NotificationSource;
+  audience: string;
+  level: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  createdAt: string;
+  read: boolean;
+  readAt: string | null;
+};
+
+export type NotificationsResponse = {
+  notifications: ShellNotification[];
+  unreadCount: number;
+  pagination: { limit: number; offset: number; total: number };
+  updatedAt: string;
+};
+
+export type NotificationMarkReadResponse = {
+  updated: number;
+  unreadCount: number;
+};
