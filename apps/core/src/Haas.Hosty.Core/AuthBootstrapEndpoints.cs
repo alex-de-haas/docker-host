@@ -57,15 +57,15 @@ internal static class AuthBootstrapEndpoints
     {
         try
         {
-            return Results.Json(await action());
+            return CoreJson.Json(await action());
         }
         catch (AuthBootstrapException ex)
         {
-            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
         }
         catch (LocalPasswordAuthException ex)
         {
-            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: ex.StatusCode);
         }
     }
 }

@@ -4,8 +4,6 @@ namespace Haas.Hosty.Core;
 
 internal sealed class AuditStore(CoreDataPaths paths)
 {
-    private static readonly JsonSerializerOptions AuditJsonOptions = new(JsonSerializerDefaults.Web);
-
     public async Task AppendAsync(AuditRecord record, CancellationToken cancellationToken = default)
     {
         var directory = Path.GetDirectoryName(paths.AuditLogPath);
@@ -14,7 +12,7 @@ internal sealed class AuditStore(CoreDataPaths paths)
             Directory.CreateDirectory(directory);
         }
 
-        var line = JsonSerializer.Serialize(record, AuditJsonOptions);
+        var line = JsonSerializer.Serialize(record, CoreJsonSerializerContext.Default.AuditRecord);
         await File.AppendAllTextAsync(paths.AuditLogPath, $"{line}{Environment.NewLine}", cancellationToken);
     }
 
@@ -30,7 +28,7 @@ internal sealed class AuditStore(CoreDataPaths paths)
             .Where(line => !string.IsNullOrWhiteSpace(line))
             .Reverse()
             .Take(Math.Clamp(limit, 1, 500))
-            .Select(line => JsonSerializer.Deserialize<AuditRecord>(line, AuditJsonOptions))
+            .Select(line => JsonSerializer.Deserialize(line, CoreJsonSerializerContext.Default.AuditRecord))
             .OfType<AuditRecord>()
             .ToArray();
     }

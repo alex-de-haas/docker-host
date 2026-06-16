@@ -502,11 +502,9 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
 
     private static string CreatePlanDigest(IReadOnlyList<AppBackupCleanupCandidate> candidates)
     {
-        var payload = new
-        {
-            Policy = DefaultRetentionPolicy,
-            Candidates = candidates.Select(candidate => new
-            {
+        var payload = new AppBackupRetentionDigestPayload(
+            DefaultRetentionPolicy,
+            candidates.Select(candidate => new AppBackupRetentionDigestCandidate(
                 candidate.AppId,
                 candidate.BackupId,
                 candidate.Reason,
@@ -515,10 +513,8 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
                 candidate.MetadataPath,
                 candidate.ArchiveSha256,
                 candidate.ArchiveSize,
-                candidate.Automatic,
-            }),
-        };
-        var json = System.Text.Json.JsonSerializer.Serialize(payload, JsonStorage.Options);
+                candidate.Automatic)).ToArray());
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, CoreJsonSerializerContext.Default.AppBackupRetentionDigestPayload);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
     }
 
@@ -637,6 +633,21 @@ internal sealed record AppBackupCleanupCandidate(
     string Reason,
     string CleanupReason,
     DateTimeOffset CreatedAt,
+    string? ArchivePath,
+    string? MetadataPath,
+    string? ArchiveSha256,
+    long? ArchiveSize,
+    bool Automatic);
+
+internal sealed record AppBackupRetentionDigestPayload(
+    AppBackupRetentionPolicy Policy,
+    IReadOnlyList<AppBackupRetentionDigestCandidate> Candidates);
+
+internal sealed record AppBackupRetentionDigestCandidate(
+    string AppId,
+    string BackupId,
+    string Reason,
+    string CleanupReason,
     string? ArchivePath,
     string? MetadataPath,
     string? ArchiveSha256,

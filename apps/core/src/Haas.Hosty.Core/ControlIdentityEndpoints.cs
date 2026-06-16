@@ -24,7 +24,7 @@ internal static class ControlIdentityEndpoints
                         user.Disabled,
                         string.IsNullOrWhiteSpace(appId) ? null : IsUserAssignedToApp(state, user, appId)))
                     .ToArray();
-                return Results.Json(new HostUsersSummaryResponse(summaries));
+                return CoreJson.Json(new HostUsersSummaryResponse(summaries));
             }));
 
         app.MapPost("/control/v1/apps/{appId}/identity", async (
@@ -40,7 +40,7 @@ internal static class ControlIdentityEndpoints
                 {
                     var user = await ResolveUserAsync(users, input.User, cancellationToken);
                     var token = await identity.CreateLaunchTokenAsync(appId, user.Id, cancellationToken);
-                    return Results.Json(new AppIdentityIssueResponse(appId, user.Id, token));
+                    return CoreJson.Json(new AppIdentityIssueResponse(appId, user.Id, token));
                 })));
 
         app.MapPost("/control/v1/apps/{appId}/open-link", async (
@@ -61,7 +61,7 @@ internal static class ControlIdentityEndpoints
                     if (string.Equals(mode, "shell", StringComparison.OrdinalIgnoreCase))
                     {
                         var shellOrigin = config.EffectiveShellPublicOrigin;
-                        return Results.Json(new AppOpenLinkResponse(
+                        return CoreJson.Json(new AppOpenLinkResponse(
                             AppId: appId,
                             UserId: user.Id,
                             Mode: "shell",
@@ -71,12 +71,12 @@ internal static class ControlIdentityEndpoints
 
                     if (!string.Equals(mode, "standalone", StringComparison.OrdinalIgnoreCase))
                     {
-                        return Results.Json(new ErrorResponse("open_mode_invalid", "Open mode must be shell or standalone."), statusCode: StatusCodes.Status400BadRequest);
+                        return CoreJson.Json(new ErrorResponse("open_mode_invalid", "Open mode must be shell or standalone."), statusCode: StatusCodes.Status400BadRequest);
                     }
 
                     var redirectUri = input.RedirectUri ?? await ResolveDefaultRedirectUriAsync(apps, appId, cancellationToken);
                     var authorization = await identity.CreateAuthorizationCodeAsync(appId, user.Id, redirectUri, cancellationToken);
-                    return Results.Json(new AppOpenLinkResponse(
+                    return CoreJson.Json(new AppOpenLinkResponse(
                         AppId: appId,
                         UserId: user.Id,
                         Mode: "standalone",
@@ -131,7 +131,7 @@ internal static class ControlIdentityEndpoints
             var status = ex.Code is "user_not_found" or "app_not_found"
                 ? StatusCodes.Status404NotFound
                 : StatusCodes.Status403Forbidden;
-            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: status);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: status);
         }
     }
 }

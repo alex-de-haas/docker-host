@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.HttpOverrides;
 
 namespace Haas.Hosty.Core;
@@ -15,6 +16,8 @@ internal static class HostyCoreApplication
     {
         var config = HostyCoreRuntimeConfig.FromEnvironment(builder.Environment);
         builder.WebHost.UseUrls(config.ListenUrl);
+        builder.Services.ConfigureHttpJsonOptions(options =>
+            options.SerializerOptions.TypeInfoResolverChain.Insert(0, CoreJsonSerializerContext.Default));
         builder.Services.AddSingleton(config);
         builder.Services.AddSingleton(sp => CoreDataPaths.FromConfig(sp.GetRequiredService<HostyCoreRuntimeConfig>()));
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
@@ -64,15 +67,15 @@ internal static class HostyCoreApplication
         app.UseForwardedHeaders();
         app.UseCors("HostyShell");
 
-        app.MapGet("/healthz", () => Results.Json(new HealthResponse("ok")));
-        app.MapGet("/api/core/status", (HostyCoreRuntimeConfig config) => Results.Json(CoreStatusResponse.From(config)));
+        app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok")));
+        app.MapGet("/api/core/status", (HostyCoreRuntimeConfig config) => CoreJson.Json(CoreStatusResponse.From(config)));
         app.MapGet("/control/v1/core/status", (HttpRequest request, HostyCoreRuntimeConfig config, ControlSecret secret) =>
-            RequireControlSecret(request, secret, () => Results.Json(CoreStatusResponse.From(config))));
+            RequireControlSecret(request, secret, () => CoreJson.Json(CoreStatusResponse.From(config))));
         app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime) =>
             RequireControlSecret(request, secret, () =>
             {
                 lifetime.StopApplication();
-                return Results.Json(new StopResponse("stopping"));
+                return CoreJson.Json(new StopResponse("stopping"));
             }));
 
         if (app.Environment.IsDevelopment())
@@ -204,7 +207,7 @@ internal static class HostyCoreApplication
         if (!request.Headers.TryGetValue(ControlSecretHeader, out var submitted) ||
             !string.Equals(submitted.ToString(), secret.Value, StringComparison.Ordinal))
         {
-            return Results.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+            return CoreJson.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
         }
 
         return action();
@@ -215,7 +218,7 @@ internal static class HostyCoreApplication
         if (!request.Headers.TryGetValue(ControlSecretHeader, out var submitted) ||
             !string.Equals(submitted.ToString(), secret.Value, StringComparison.Ordinal))
         {
-            return Results.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
+            return CoreJson.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
         }
 
         return await action();
@@ -1052,7 +1055,9 @@ internal sealed class ControlDiscoveryWriter(
             },
             StartedAt: DateTimeOffset.UtcNow);
 
-        var json = JsonSerializer.Serialize(discovery, JsonOptions);
+        var json = JsonSerializer.Serialize(
+            discovery,
+            (JsonTypeInfo<ControlDiscoveryDocument>)JsonOptions.GetTypeInfo(typeof(ControlDiscoveryDocument)));
         await using (var stream = SecureFileSystem.CreatePrivateFile(config.ControlDiscoveryPath, FileMode.Create))
         {
             await stream.WriteAsync(Encoding.UTF8.GetBytes(json), cancellationToken);
@@ -1082,6 +1087,7 @@ internal sealed class ControlDiscoveryWriter(
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
+        TypeInfoResolver = CoreJsonSerializerContext.Default,
     };
 }
 

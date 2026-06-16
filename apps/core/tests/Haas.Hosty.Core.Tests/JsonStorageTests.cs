@@ -1,3 +1,4 @@
+using System.Globalization;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -11,12 +12,12 @@ public sealed class JsonStorageTests
         var path = Path.Combine(root, "state.json");
 
         await Task.WhenAll(Enumerable.Range(0, 32)
-            .Select(index => JsonStorage.WriteAsync(path, new SampleDocument(index, new string('x', 4096)))));
+            .Select(index => JsonStorage.WriteAsync(path, CreateSampleRecord(index, new string('x', 4096)))));
 
-        var document = await JsonStorage.ReadAsync<SampleDocument>(path);
+        var document = await JsonStorage.ReadAsync<AuditRecord>(path);
         Assert.NotNull(document);
-        Assert.InRange(document.Value, 0, 31);
-        Assert.Equal(4096, document.Payload.Length);
+        Assert.InRange(int.Parse(document.Action, CultureInfo.InvariantCulture), 0, 31);
+        Assert.Equal(4096, document.Details["payload"].Length);
         Assert.Empty(Directory.EnumerateFiles(root, "*.tmp"));
     }
 
@@ -43,7 +44,7 @@ public sealed class JsonStorageTests
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-json-tests-{Guid.NewGuid():N}");
         var path = Path.Combine(root, "auth", "state.json");
 
-        await JsonStorage.WriteAsync(path, new SampleDocument(1, "secret"), restrictToOwner: true);
+        await JsonStorage.WriteAsync(path, CreateSampleRecord(1, "secret"), restrictToOwner: true);
 
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
         Assert.Equal(
@@ -51,7 +52,17 @@ public sealed class JsonStorageTests
             File.GetUnixFileMode(Path.Combine(root, "auth")));
     }
 
-    private sealed record SampleDocument(int Value, string Payload);
+    // Uses a production storage type registered in CoreJsonSerializerContext so the storage
+    // round-trip exercises the same source-generated path that Native AOT requires.
+    private static AuditRecord CreateSampleRecord(int index, string payload) => new(
+        Id: $"audit_{index.ToString(CultureInfo.InvariantCulture)}",
+        Action: index.ToString(CultureInfo.InvariantCulture),
+        ResourceType: "test",
+        ResourceId: null,
+        Outcome: "ok",
+        ActorUserId: null,
+        CreatedAt: DateTimeOffset.UnixEpoch,
+        Details: new Dictionary<string, string> { ["payload"] = payload });
 
     private sealed class ThrowingDocument
     {

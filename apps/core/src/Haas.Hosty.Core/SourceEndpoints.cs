@@ -63,14 +63,14 @@ internal static class SourceEndpoints
     {
         try
         {
-            return Results.Json(await action());
+            return CoreJson.Json(await action());
         }
         catch (AppLifecycleException ex)
         {
             var statusCode = string.Equals(ex.Code, "app_not_found", StringComparison.Ordinal)
                 ? StatusCodes.Status404NotFound
                 : StatusCodes.Status400BadRequest;
-            return Results.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
         }
     }
 }
