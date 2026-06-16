@@ -66,15 +66,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang zlib1g-dev
 
-      - name: Publish CLI executable
+      - name: Publish CLI executable (Native AOT)
         shell: bash
         run: |
           dotnet publish apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj \
             --configuration Release \
             --runtime "${{ matrix.rid }}" \
             --self-contained true \
-            -p:PublishSingleFile=true \
-            -p:PublishTrimmed=false \
             -p:Version=${{ steps.product_version.outputs.version }} \
             --output artifacts
 

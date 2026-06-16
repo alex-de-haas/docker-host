@@ -95,7 +95,7 @@ The CLI does not scan the current directory or repository parents for a Core pro
 
 `hosty update` updates the managed CLI executable first. If that succeeds, it checks the current platform Core artifact, installs it when missing, or replaces the installed Core executable when a newer artifact is available. A running Core process uses the updated executable after the next restart.
 
-Before replacing the running single-file CLI executable, `hosty update` preloads the CLI assembly dependency closure. This keeps the current update process from lazily loading managed assemblies from the replaced bundle while it continues into the Core and Shell checks.
+The CLI ships as a single Native AOT executable, so the running process holds no separate managed assemblies and never lazily loads code from its own file. `hosty update` can therefore replace the on-disk executable and continue straight into the Core and Shell checks without any dependency preloading.
 
 On Windows, if the installed Core executable already exists, `hosty update` first makes a best-effort Core stop request before replacing the executable because a running `.exe` is normally locked by the process.
 

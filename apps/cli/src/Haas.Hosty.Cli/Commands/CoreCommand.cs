@@ -4,10 +4,19 @@ using Haas.Hosty.Cli.Configuration;
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Spectre.Console;
 
-internal sealed class CoreCommand(CommandContext context)
+internal sealed partial class CoreCommand(CommandContext context)
 {
+    [JsonSourceGenerationOptions(
+        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(ControlDiscoveryDocument))]
+    [JsonSerializable(typeof(CoreStatusDocument))]
+    internal partial class CoreJsonContext : JsonSerializerContext;
+
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
 
     public async Task<int> ExecuteAsync(string[] args)
@@ -387,7 +396,7 @@ internal sealed class CoreCommand(CommandContext context)
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync();
-            return await JsonSerializer.DeserializeAsync<CoreStatusDocument>(stream, JsonOptions);
+            return await CliJson.DeserializeAsync<CoreStatusDocument>(stream);
         }
         catch (Exception ex) when (suppressErrors && ex is HttpRequestException or IOException or TaskCanceledException or JsonException)
         {
@@ -419,7 +428,7 @@ internal sealed class CoreCommand(CommandContext context)
         }
 
         await using var stream = File.OpenRead(path);
-        return await JsonSerializer.DeserializeAsync<ControlDiscoveryDocument>(stream, JsonOptions);
+        return await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream);
     }
 
     private string GetControlDiscoveryPath()
@@ -499,11 +508,9 @@ internal sealed class CoreCommand(CommandContext context)
         }
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    internal sealed record StartOptions(string? ProjectPath, string? Url, bool Foreground);
 
-    private sealed record StartOptions(string? ProjectPath, string? Url, bool Foreground);
-
-    private sealed record CoreStartTarget(
+    internal sealed record CoreStartTarget(
         string FileName,
         string WorkingDirectory,
         IReadOnlyList<string> Arguments)
@@ -539,11 +546,11 @@ internal sealed class CoreCommand(CommandContext context)
         }
     }
 
-    private sealed record ControlDiscoveryDocument(
+    internal sealed record ControlDiscoveryDocument(
         string ControlBaseUrl,
         IReadOnlyDictionary<string, string> RequiredHeaders);
 
-    private sealed record CoreStatusDocument(
+    internal sealed record CoreStatusDocument(
         string? Status,
         string? Component,
         string? DataRoot,
