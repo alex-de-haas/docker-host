@@ -43,6 +43,7 @@ flowchart LR
 - [Demo App](features/demo-app.md) - repository-local runtime app used for validation.
 - [Local development and testing](features/local-development.md) - Core-managed local workflows.
 - [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped agent skill.
+- [AI Agent Bridge](features/ai-agent-bridge.md) - draft concept for development agents and runtime app action agents.
 - [Web UI dashboard](features/web-ui-dashboard.md) - Shell dashboard and app management surface.
 - [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - Core/Shell/CLI ownership boundaries.
 
