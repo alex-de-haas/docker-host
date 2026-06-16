@@ -204,6 +204,7 @@ internal static class HostyCoreApplication
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
         AppBackupEndpoints.Map(app);
+        NotificationEndpoints.Map(app);
     }
 
     internal static IResult RequireControlSecret(HttpRequest request, ControlSecret secret, Func<IResult> action)
