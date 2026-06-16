@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Boxes,
   ChevronDown,
@@ -227,11 +227,17 @@ function RuntimeAppNavigationItem({
   const canOpen = running && primaryPage !== null;
   const canOpenStandalone = canOpen;
 
-  useEffect(() => {
+  // Auto-expand the active app's page list when it becomes active, while still
+  // letting the user collapse it. Adjust during render instead of in an effect.
+  // https://react.dev/learn/you-might-not-need-an-effect
+  const autoExpandSignature = `${active}:${compact}:${pages.length}`;
+  const [prevAutoExpandSignature, setPrevAutoExpandSignature] = useState<string | null>(null);
+  if (prevAutoExpandSignature !== autoExpandSignature) {
+    setPrevAutoExpandSignature(autoExpandSignature);
     if (active && !compact && pages.length > 1) {
       setExpanded(true);
     }
-  }, [active, compact, pages.length]);
+  }
 
   return (
     <div className="space-y-1">

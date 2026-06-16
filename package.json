@@ -14,14 +14,19 @@
   },
   "scripts": {
     "dev": "node scripts/dev-local.mjs",
-    "dev:local": "node scripts/dev-local.mjs",
+    "lint": "npm run shell:lint && npm run demo-app:lint",
+    "build": "npm run core:build && npm run cli:build && npm run shell:build && npm run demo-app:build",
+    "test": "npm run core:test && npm run cli:test",
+    "ci": "npm run lint && npm run build && npm run test",
     "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --launch-profile dev",
-    "core-dev": "npm run core:dev",
     "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
     "core:test": "dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj",
+    "cli:build": "dotnet build apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj",
+    "cli:test": "dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj",
     "shell:dev": "npm run dev --workspace @haas/hosty-shell",
     "shell:build": "npm run build --workspace @haas/hosty-shell",
     "shell:start": "npm run start --workspace @haas/hosty-shell",
+    "shell:lint": "npm run lint --workspace @haas/hosty-shell",
     "shell:docker:build": "docker build -f apps/shell/Dockerfile -t ghcr.io/alex-de-haas/hosty-shell:latest .",
     "shell:docker:build:local": "docker build -f apps/shell/Dockerfile -t hosty-shell:dev .",
     "demo-app:dev": "npm run dev --workspace @haas/hosty-demo-app",
@@ -29,9 +34,6 @@
     "demo-app:start": "npm run start --workspace @haas/hosty-demo-app",
     "demo-app:lint": "npm run lint --workspace @haas/hosty-demo-app",
     "demo-app:docker:build": "docker build -f apps/demo-app/Dockerfile -t ghcr.io/alex-de-haas/demo-app:latest .",
-    "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev .",
-    "cli:build": "dotnet build apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj",
-    "cli:test": "dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj",
-    "ci": "npm run shell:build && npm run demo-app:build && npm run core:build && npm run core:test && npm run cli:build && npm run cli:test"
+    "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev ."
   }
 }

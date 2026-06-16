@@ -46,7 +46,7 @@ import {
 } from "../app-helpers";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
-import type { AppAction, AppHealthResponse, CoreApp, CoreEndpoint, OpenAppPanel, RuntimeHealthState } from "../types";
+import type { AppAction, AppHealthResponse, CoreApp, OpenAppPanel, RuntimeHealthState } from "../types";
 import { EmptyState, IconButton, PageHeader, StatusBadge } from "../ui";
 
 export function InstalledAppsPage({
