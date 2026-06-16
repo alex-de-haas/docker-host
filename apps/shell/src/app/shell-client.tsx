@@ -347,7 +347,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, coreOrigin, refresh, sendCsrfJson],
+    [appEndpoint, refresh, sendCsrfJson],
   );
 
   const switchAppRuntime = useCallback(

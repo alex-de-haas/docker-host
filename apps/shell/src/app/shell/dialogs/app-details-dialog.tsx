@@ -248,14 +248,19 @@ function ConfigurePanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publicOriginsOpen, setPublicOriginsOpen] = useState(false);
 
-  useEffect(() => {
+  // Reset the draft/section state while rendering when the app identity or its
+  // settings change, instead of in an effect.
+  // https://react.dev/learn/you-might-not-need-an-effect
+  const resetSignature = `${app.id} ${app.autostart} ${initialOpenSection ?? ""} ${settingsSignature}`;
+  const [prevResetSignature, setPrevResetSignature] = useState<string | null>(null);
+  if (prevResetSignature !== resetSignature) {
+    setPrevResetSignature(resetSignature);
     const nextDraft = Object.fromEntries(settings.map((setting) => [setting.key, setting.secret ? "" : setting.value || ""]));
-    const nextAppSettings = settings.filter((setting) => !isPublicOriginSettingKey(setting.key));
     setDraft(nextDraft);
     setAutostartDraft(isAppAutostartEnabled(app));
-    setSettingsOpen(hasMissingRequiredSettings(nextAppSettings, nextDraft));
+    setSettingsOpen(hasMissingRequiredSettings(appSettings, nextDraft));
     setPublicOriginsOpen(initialOpenSection === "publicOrigins");
-  }, [app.id, app.autostart, settingsSignature, initialOpenSection]);
+  }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

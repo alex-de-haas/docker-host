@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -33,6 +33,23 @@ export function InstallReviewDialog({
   const [reviewedManifestPath, setReviewedManifestPath] = useState<string | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Record<string, string>>({});
   const [autostartDraft, setAutostartDraft] = useState(true);
+
+  // Reset the settings draft while rendering when the reviewed plan changes, instead
+  // of in an effect. https://react.dev/learn/you-might-not-need-an-effect
+  const [prevPlan, setPrevPlan] = useState(detail.plan);
+  const [prevReviewedManifestPath, setPrevReviewedManifestPath] = useState(reviewedManifestPath);
+  if (prevPlan !== detail.plan || prevReviewedManifestPath !== reviewedManifestPath) {
+    setPrevPlan(detail.plan);
+    setPrevReviewedManifestPath(reviewedManifestPath);
+    if (!detail.plan) {
+      setSettingsDraft({});
+    } else {
+      setSelectedRuntime(detail.plan.targetRuntime);
+      setSettingsDraft(Object.fromEntries(detail.plan.settings.map((setting) => [setting.key, setting.secret ? "" : setting.defaultValue || ""])));
+      setAutostartDraft(detail.plan.defaultAutostart ?? true);
+    }
+  }
+
   const reviewedPlan = detail.plan && manifestPath.trim() === reviewedManifestPath ? detail.plan : null;
   const runtimeProfiles =
     reviewedPlan?.runtimeProfiles && reviewedPlan.runtimeProfiles.length > 0
@@ -43,17 +60,6 @@ export function InstallReviewDialog({
   const selectedRuntimeValue = selectedRuntime || reviewedPlan?.targetRuntime || "";
   const selectedRuntimeProfile = runtimeProfiles.find((profile) => profile.key === selectedRuntimeValue);
   const selectedRuntimeLabel = selectedRuntimeProfile ? formatRuntimeProfileLabel(selectedRuntimeProfile) : selectedRuntimeValue || "Select runtime";
-
-  useEffect(() => {
-    if (!detail.plan) {
-      setSettingsDraft({});
-      return;
-    }
-
-    setSelectedRuntime(detail.plan.targetRuntime);
-    setSettingsDraft(Object.fromEntries(detail.plan.settings.map((setting) => [setting.key, setting.secret ? "" : setting.defaultValue || ""])));
-    setAutostartDraft(detail.plan.defaultAutostart ?? true);
-  }, [detail.plan, reviewedManifestPath]);
 
   const submitReview = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

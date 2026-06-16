@@ -17,10 +17,12 @@ export function EmbeddedWorkspacePanel({
   const [loaded, setLoaded] = useState(false);
   const [loadedSrc, setLoadedSrc] = useState(workspace.src);
 
-  useEffect(() => {
+  // Reset the loaded flag while rendering when the iframe source changes, instead
+  // of in an effect. https://react.dev/learn/you-might-not-need-an-effect
+  if (loadedSrc !== workspace.src) {
     setLoadedSrc(workspace.src);
     setLoaded(false);
-  }, [workspace.src]);
+  }
 
   const postTheme = useCallback(() => {
     const frame = iframeRef.current;
