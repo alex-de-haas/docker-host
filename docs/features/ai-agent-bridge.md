@@ -101,7 +101,7 @@ flowchart LR
 
 ### Development Agent Bridge
 
-Development Agent Bridge is the source-changing layer. It should build on the existing deferred plan in `docs/planning/agent-bridge-workflow.md`.
+Development Agent Bridge is the source-changing layer. It should build on the existing deferred plan in [Agent Bridge Workflow](../ideas/agent-bridge-workflow.md).
 
 Primary flow:
 
@@ -134,7 +134,7 @@ Hosty should not require the app to duplicate every MCP tool schema in the Hosty
 
 For simple Hosty-only apps, a narrower Hosty App Actions HTTP contract may still be useful later. It should be optional, not the primary assumption for portable agent integration.
 
-When the Shell chat feature is used, Shell should send the user request to the installed `ai.gateway` interface. The AI Gateway then uses Core MCP/discovery and app-owned MCP endpoints. Hosty clients should preserve MCP semantics and avoid rewriting app-owned tool behavior.
+When the Shell chat feature is used, Shell should send the user request to the installed `ai-gateway` interface. The AI Gateway then uses Core MCP/discovery and app-owned MCP endpoints. Hosty clients should preserve MCP semantics and avoid rewriting app-owned tool behavior.
 
 ### Manifest Interfaces And Registry
 
@@ -144,10 +144,10 @@ Examples:
 
 - `ui`: the app has Shell-readable navigation entries and app pages.
 - `mcp`: the app exposes an agent/action MCP endpoint.
-- `ai.gateway`: a system app exposes a model gateway API.
+- `ai-gateway`: a system app exposes a model gateway API.
 - future interfaces may include notifications, scheduler, search, media index, or other replaceable platform modules.
 
-The `ui` interface tells Shell what user-facing pages are available. The `mcp` interface tells agent clients that the app can participate in agent workflows. If an app does not declare `mcp`, agent clients should not treat it as a target for domain actions. If no installed system app declares `ai.gateway`, Shell should hide or disable built-in chat/agent features and runtime apps should disable app-to-model features.
+The `ui` interface tells Shell what user-facing pages are available. The `mcp` interface tells agent clients that the app can participate in agent workflows. If an app does not declare `mcp`, agent clients should not treat it as a target for domain actions. If no installed system app declares `ai-gateway`, Shell should hide or disable built-in chat/agent features and runtime apps should disable app-to-model features.
 
 Potential manifest shape:
 
@@ -163,7 +163,7 @@ Potential manifest shape:
         "skills": ["./agents/project-manager.md"]
       }
     ],
-    "ai.gateway": [
+    "ai-gateway": [
       {
         "key": "default",
         "endpoint": "http",
@@ -174,7 +174,7 @@ Potential manifest shape:
 }
 ```
 
-This draft keeps `ui` as the existing Shell integration surface, while considering whether `mcp` and `ai.gateway` should live under a new `interfaces` object or under narrower top-level sections. Core should expose the resolved interface registry to authorized clients without hardcoding module-specific behavior beyond validation and lifecycle state.
+This draft keeps `ui` as the existing Shell integration surface, while considering whether `mcp` and `ai-gateway` should live under a new `interfaces` object or under narrower top-level sections. Core should expose the resolved interface registry to authorized clients without hardcoding module-specific behavior beyond validation and lifecycle state.
 
 ### MCP Integration
 
@@ -229,7 +229,7 @@ An agent client is any authorized component that can use Core discovery/Core MCP
 
 `hosty.ai-gateway` is optional and replaceable. It can use Vercel AI SDK, OpenAI Agents SDK, direct Responses API calls, local providers, or another provider stack internally. Core should treat it like any other system runtime app: install, start, stop, update, inspect health/logs, and expose its declared interfaces. Core should not need to know its prompt logic, model routing, provider configuration, or app-domain orchestration logic.
 
-Shell can discover an installed `ai.gateway` interface and send user chat/voice input directly to that system app. If no `ai.gateway` interface is installed and available, Shell should hide or disable the agent/chat mode. A different UI client could use the same discovery mechanism.
+Shell can discover an installed `ai-gateway` interface and send user chat/voice input directly to that system app. If no `ai-gateway` interface is installed and available, Shell should hide or disable the agent/chat mode. A different UI client could use the same discovery mechanism.
 
 ### Runtime App AI Gateway
 
@@ -340,7 +340,7 @@ Jobs must store their delegation scope, budget, status, last observation, next c
 
 Likely new or changed contracts:
 
-- `app.0.1` or successor manifest extension for explicit app interfaces such as `mcp` and `ai.gateway`.
+- `app.0.1` or successor manifest extension for explicit app interfaces such as `mcp` and `ai-gateway`.
 - Optional app-owned agent skill or instruction descriptor references.
 - Core app record storage for resolved interface metadata and digests.
 - Core MCP or equivalent discovery API for agent clients.
@@ -384,7 +384,7 @@ This draft does not choose whether these records live in the current JSON stores
 - Development Agent Bridge and Runtime App Action Bridge are both plausible for a request; the selected agent client must route explicitly and may ask the user to confirm.
 - Two installed runtime apps match a user's natural-language target, and only one exposes `mcp`.
 - An app declares an `mcp` interface but its runtime endpoint is unhealthy, disabled, or not visible to the current user.
-- No installed system app declares `ai.gateway`, so Shell and runtime apps must disable model-backed features cleanly.
+- No installed system app declares `ai-gateway`, so Shell and runtime apps must disable model-backed features cleanly.
 - Core MCP exposes too much platform control to a general-purpose agent client.
 
 ## Testing Plan
@@ -416,7 +416,7 @@ This is a large multi-stage feature and should be rolled out incrementally:
 2. Add manifest interface discovery metadata design without model execution.
 3. Add one demo app MCP interface, preferably a project/task/time-tracking domain.
 4. Add Core MCP or equivalent discovery API for interface-aware agent clients.
-5. Add `hosty.ai-gateway` as an optional system app that declares `ai.gateway`.
+5. Add `hosty.ai-gateway` as an optional system app that declares `ai-gateway`.
 6. Replace one app-local model integration, such as an LM Studio checklist generator, with discovered AI Gateway usage.
 7. Build Shell-to-AI-Gateway chat flow and AI-Gateway-to-Core-MCP discovery.
 8. Add approval-gated writes through AI Gateway and app-owned MCP.
@@ -428,7 +428,7 @@ Backward compatibility should be preserved. Apps without an `mcp` interface rema
 
 ## Open Questions
 
-- Question: Should app interfaces such as `mcp` and `ai.gateway` be added to `app.0.1` as optional extensions or wait for `app.0.2`?
+- Question: Should app interfaces such as `mcp` and `ai-gateway` be added to `app.0.1` as optional extensions or wait for `app.0.2`?
   Answer: The current manifest can likely tolerate an optional draft extension only if Core validation explicitly supports it.
   Recommendation: Treat interface metadata as a draft extension first, then formalize it in the next manifest version when the contract stabilizes.
 
@@ -462,7 +462,7 @@ Backward compatibility should be preserved. Apps without an `mcp` interface rema
 
 - Question: Should Core know about `hosty.ai-gateway` specifically?
   Answer: Only as an installed system app and declared interface provider, not as a hardcoded module with special runtime calls.
-  Recommendation: Use generic interface discovery, such as `ai.gateway`, so future system modules can follow the same pattern.
+  Recommendation: Use generic interface discovery, such as `ai-gateway`, so future system modules can follow the same pattern.
 
 - Question: Who owns audit for direct agent-client-to-app MCP calls?
   Answer: Core can audit token issuance and revocation, but it may not see every direct MCP call unless the client or app reports it.
