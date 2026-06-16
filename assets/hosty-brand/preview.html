@@ -1,42 +1,58 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hosty PNG Brand Assets</title>
-  <link rel="icon" href="favicon.ico">
+  <title>Hosty Brand Assets</title>
+  <link rel="icon" type="image/svg+xml" href="svg/hosty-favicon.svg">
   <style>
-    body { margin: 0; background: #f8fafc; color: #071221; font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial, sans-serif; }
+    body { margin: 0; background: #f8fafc; color: #0f1b2d; font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial, sans-serif; }
     main { max-width: 1080px; margin: 0 auto; padding: 44px 28px; }
     h1 { margin: 0 0 8px; font-size: 34px; letter-spacing: -0.04em; }
+    h2 { margin: 0 0 18px; font-size: 16px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; }
+    .dark h2 { color: #94a3b8; }
     p { margin: 0 0 28px; color: #64748b; }
     section { background: #fff; border: 1px solid #e2e8f0; border-radius: 24px; padding: 28px; margin: 22px 0; box-shadow: 0 18px 60px rgba(15, 23, 42, .07); }
-    .dark { background: #0b1118; color: #f8fafc; border-color: #1e293b; }
+    .dark { background: #0f1b2d; color: #f8fafc; border-color: #1e293b; }
     .row { display: flex; gap: 34px; align-items: flex-end; flex-wrap: wrap; }
     .asset { display: grid; gap: 10px; justify-items: center; color: #64748b; font-weight: 700; }
     .dark .asset { color: #cbd5e1; }
-    .logo { width: min(720px, 100%); display: block; }
+    .tiles { display: flex; gap: 22px; flex-wrap: wrap; }
+    .tile { width: 96px; height: 96px; border-radius: 22px; }
+    .logo { width: min(560px, 100%); display: block; }
   </style>
 </head>
 <body>
 <main>
-  <h1>Hosty PNG Brand Assets</h1>
-  <p>PNG-ассеты без SVG: два набора иконок, цветное лого и favicon.ico.</p>
+  <h1>Hosty Brand Assets</h1>
+  <p>SVG-first. PNG and favicon.ico are generated from the SVG masters via build-assets.mjs.</p>
+
   <section>
-    <h2>Light theme</h2>
-    <div class="row">
-      <div class="asset"><img src="icons/light/hosty-icon-light-16.png" width="16" height="16" alt="16px"><span>16×16</span></div><div class="asset"><img src="icons/light/hosty-icon-light-20.png" width="20" height="20" alt="20px"><span>20×20</span></div><div class="asset"><img src="icons/light/hosty-icon-light-24.png" width="24" height="24" alt="24px"><span>24×24</span></div><div class="asset"><img src="icons/light/hosty-icon-light-32.png" width="32" height="32" alt="32px"><span>32×32</span></div><div class="asset"><img src="icons/light/hosty-icon-light-48.png" width="48" height="48" alt="48px"><span>48×48</span></div><div class="asset"><img src="icons/light/hosty-icon-light-64.png" width="64" height="64" alt="64px"><span>64×64</span></div><div class="asset"><img src="icons/light/hosty-icon-light-96.png" width="96" height="96" alt="96px"><span>96×96</span></div><div class="asset"><img src="icons/light/hosty-icon-light-128.png" width="128" height="128" alt="128px"><span>128×128</span></div>
+    <h2>Logomark + Wordmark</h2>
+    <img class="logo" src="svg/hosty-logo-horizontal-light.svg" alt="Hosty horizontal logo">
+  </section>
+
+  <section>
+    <h2>App icon tiles</h2>
+    <div class="tiles">
+      <img class="tile" src="svg/hosty-icon-brand.svg" alt="Brand tile">
+      <img class="tile" src="svg/hosty-icon-dark.svg" alt="Dark tile">
+      <img class="tile" src="svg/hosty-icon-light.svg" alt="Light tile">
     </div>
   </section>
+
+  <section>
+    <h2>Light theme — sizes</h2>
+    <div class="row">
+      <div class="asset"><img src="icons/light/hosty-icon-light-16.png" width="16" height="16" alt="16px"><span>16</span></div><div class="asset"><img src="icons/light/hosty-icon-light-24.png" width="24" height="24" alt="24px"><span>24</span></div><div class="asset"><img src="icons/light/hosty-icon-light-32.png" width="32" height="32" alt="32px"><span>32</span></div><div class="asset"><img src="icons/light/hosty-icon-light-48.png" width="48" height="48" alt="48px"><span>48</span></div><div class="asset"><img src="icons/light/hosty-icon-light-64.png" width="64" height="64" alt="64px"><span>64</span></div><div class="asset"><img src="icons/light/hosty-icon-light-96.png" width="96" height="96" alt="96px"><span>96</span></div><div class="asset"><img src="icons/light/hosty-icon-light-128.png" width="128" height="128" alt="128px"><span>128</span></div>
+    </div>
+  </section>
+
   <section class="dark">
-    <h2>Dark theme</h2>
+    <h2>Dark theme — sizes</h2>
     <div class="row">
-      <div class="asset"><img src="icons/dark/hosty-icon-dark-16.png" width="16" height="16" alt="16px"><span>16×16</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-20.png" width="20" height="20" alt="20px"><span>20×20</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-24.png" width="24" height="24" alt="24px"><span>24×24</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-32.png" width="32" height="32" alt="32px"><span>32×32</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-48.png" width="48" height="48" alt="48px"><span>48×48</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-64.png" width="64" height="64" alt="64px"><span>64×64</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-96.png" width="96" height="96" alt="96px"><span>96×96</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-128.png" width="128" height="128" alt="128px"><span>128×128</span></div>
+      <div class="asset"><img src="icons/dark/hosty-icon-dark-16.png" width="16" height="16" alt="16px"><span>16</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-24.png" width="24" height="24" alt="24px"><span>24</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-32.png" width="32" height="32" alt="32px"><span>32</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-48.png" width="48" height="48" alt="48px"><span>48</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-64.png" width="64" height="64" alt="64px"><span>64</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-96.png" width="96" height="96" alt="96px"><span>96</span></div><div class="asset"><img src="icons/dark/hosty-icon-dark-128.png" width="128" height="128" alt="128px"><span>128</span></div>
     </div>
-  </section>
-  <section>
-    <h2>Color logo</h2>
-    <img class="logo" src="logos/hosty-logo-color-horizontal-on-white-900x300.png" alt="Hosty horizontal logo">
   </section>
 </main>
 </body>

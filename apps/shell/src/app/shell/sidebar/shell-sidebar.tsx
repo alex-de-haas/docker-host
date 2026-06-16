@@ -75,7 +75,7 @@ export function ShellSidebar({
           onClick={() => onNavigate(canManageApps ? "dashboard" : "available-apps")}
           title="Hosty"
         >
-          <BrandMark compact={compact} />
+          <BrandMark />
           {!compact && (
             <span className="block truncate text-sm font-semibold uppercase">Hosty</span>
           )}
@@ -130,11 +130,26 @@ export function ShellSidebar({
   );
 }
 
-function BrandMark({ compact }: { compact: boolean }) {
+function BrandMark() {
   return (
-    <span className={cn("flex shrink-0 items-center justify-center rounded-md", compact ? "size-10" : "size-10")}>
-      <img src="/hosty-icon-light-64.png" alt="" className="size-10 rounded-md dark:hidden" />
-      <img src="/hosty-icon-dark-64.png" alt="" className="hidden size-10 rounded-md dark:block" />
+    <span className="flex size-10 shrink-0 items-center justify-center text-sidebar-foreground">
+      <svg
+        viewBox="0 0 100 100"
+        aria-hidden
+        className="size-9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M25 36 V64 M75 36 V64 M25 50 H39 M61 50 H75" />
+        <rect x="17" y="17" width="16" height="16" rx="4.5" />
+        <rect x="67" y="17" width="16" height="16" rx="4.5" />
+        <rect x="17" y="67" width="16" height="16" rx="4.5" />
+        <rect x="67" y="67" width="16" height="16" rx="4.5" />
+        <rect x="42" y="42" width="16" height="16" rx="4.5" />
+      </svg>
     </span>
   );
 }
