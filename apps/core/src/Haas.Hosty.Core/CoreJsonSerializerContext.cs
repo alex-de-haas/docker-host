@@ -11,7 +11,9 @@ namespace Haas.Hosty.Core;
 internal static class CoreJson
 {
     public static JsonTypeInfo<T> TypeInfo<T>()
-        => (JsonTypeInfo<T>)CoreJsonSerializerContext.Default.Options.GetTypeInfo(typeof(T));
+        => CoreJsonSerializerContext.Default.Options.GetTypeInfo(typeof(T)) as JsonTypeInfo<T>
+            ?? throw new NotSupportedException(
+                $"Type '{typeof(T).FullName}' is not registered in {nameof(CoreJsonSerializerContext)}.");
 
     public static IResult Json<T>(T value, int? statusCode = null)
         => Results.Json(value, TypeInfo<T>(), statusCode: statusCode);

@@ -845,7 +845,7 @@ internal sealed class RuntimeAppServiceManifest
 {
     public string Key { get => field ?? ""; init; } = "";
     public IReadOnlyList<string> DependsOn { get => field ?? []; init; } = [];
-    public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get => field ?? new Dictionary<string, RuntimeServiceProfileManifest>(); init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
+    public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get => field ??= new Dictionary<string, RuntimeServiceProfileManifest>(); init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
 }
 
 internal sealed record RuntimeServiceProfileManifest
@@ -854,7 +854,7 @@ internal sealed record RuntimeServiceProfileManifest
     public JsonElement? Image { get; init; }
     public string? Command { get; init; }
     public string? WorkingDirectory { get; init; }
-    public IReadOnlyDictionary<string, string> Environment { get => field ?? new Dictionary<string, string>(); init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, string> Environment { get => field ??= new Dictionary<string, string>(); init; } = new Dictionary<string, string>();
     public IReadOnlyList<RuntimePortManifest> Ports { get => field ?? []; init; } = [];
 }
 

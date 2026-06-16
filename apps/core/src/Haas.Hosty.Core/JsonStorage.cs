@@ -14,7 +14,10 @@ internal static class JsonStorage
     // AOT-safe JsonTypeInfo lookup: resolves through the source-generated context configured on
     // Options. Throws NotSupportedException at runtime for a type missing from the context, which
     // is the same fail-fast behavior Native AOT enforces.
-    private static JsonTypeInfo<T> TypeInfo<T>() => (JsonTypeInfo<T>)Options.GetTypeInfo(typeof(T));
+    private static JsonTypeInfo<T> TypeInfo<T>()
+        => Options.GetTypeInfo(typeof(T)) as JsonTypeInfo<T>
+            ?? throw new NotSupportedException(
+                $"Type '{typeof(T).FullName}' is not registered in {nameof(CoreJsonSerializerContext)}.");
 
     public static async Task<T?> ReadAsync<T>(string path, CancellationToken cancellationToken = default)
     {
