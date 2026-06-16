@@ -1,6 +1,6 @@
 # Notifications
 
-Status: Draft (design contract). Not yet implemented.
+Status: v1 backend implemented (Core store/service/endpoints/SSE + retention). Shell bell UI and the MCP facade remain (the latter gated on the `ai-core` branch).
 
 ## Description
 
@@ -172,7 +172,7 @@ GET /api/internal/apps/{appId}/notifications?user={userId}
 Live delivery (phase 1.5) — Server-Sent Events, AOT-safe `text/event-stream`:
 
 ```text
-GET /api/notifications/stream                        # Core session; supports Last-Event-ID / ?since=
+GET /api/notifications/stream                        # Core session; live-only (no replay)
 ```
 Polling `GET /api/notifications` is the fallback and the v1 starting point; SSE is an additive
 upgrade, not a prerequisite.
@@ -210,9 +210,9 @@ without changing the consumer contract.
   DI in `HostyCoreApplication`; endpoints mapped like `AppBackupEndpoints.Map(app)`.
 - Retention (mirrors backup retention's "keep latest N + background pass"):
   - keep the latest N (default 100) records per recipient user;
-  - prune `Read` records older than 30 days;
+  - prune `Read` records read more than 30 days ago (cutoff applied to `ReadAt`, not `CreatedAt`);
   - never prune below the unread set.
-  - Background pass after startup and periodically; emits a `notification.prune` audit with counts.
+  - Background pass after startup and periodically; emits a `notification.retention.cleanup` audit with counts.
 - Dedupe: if an **unread** record with the same `(source, recipientUserId, dedupeKey)` exists, the
   publish is reported `deduplicated` and no new record is created.
 
@@ -235,7 +235,7 @@ persisted `NotificationState`. Endpoints return via `CoreJson.Json(...)`.
   `source.appId` gracefully.
 - User loses app assignment after a notification was created → the notification stays in their
   inbox (it is already theirs).
-- SSE reconnect → replay since `Last-Event-ID` / `?since=` from the store.
+- SSE reconnect → the stream is live-only; clients re-read missed history via `GET /api/notifications`.
 - Retention must never delete unread records.
 
 ## Testing Plan

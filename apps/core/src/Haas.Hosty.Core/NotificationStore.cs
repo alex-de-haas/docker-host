@@ -36,8 +36,12 @@ internal sealed class NotificationStore(CoreDataPaths paths)
     }
 }
 
-internal sealed record NotificationState(int SchemaVersion, IReadOnlyList<NotificationRecord> Notifications)
+internal sealed record NotificationState(int SchemaVersion, IReadOnlyList<NotificationRecord>? Notifications)
 {
+    // Guard against a persisted file that omits the property: a positional non-null record property
+    // would otherwise deserialize as null and NRE on the first query/update.
+    public IReadOnlyList<NotificationRecord> Notifications { get; init; } = Notifications ?? [];
+
     public static readonly NotificationState Empty = new(1, []);
 }
 

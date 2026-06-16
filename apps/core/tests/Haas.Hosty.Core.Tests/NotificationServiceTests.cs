@@ -161,6 +161,45 @@ public sealed class NotificationServiceTests
         Assert.Equal("Old unread", remaining.Notifications[0].Title);
     }
 
+    [Fact]
+    public async Task ApplyRetentionAsync_KeepsRecentlyReadNotificationCreatedLongAgo()
+    {
+        var fixture = await Fixture.CreateAsync();
+        await fixture.Service.PublishAsync(new CoreScope(), "user_alice", NotificationService.AudienceUser, "info", "Created long ago", null, null, null);
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(59);
+        var page = await fixture.Service.QueryAsync("user_alice", false, false, 50, 0);
+        await fixture.Service.MarkReadAsync("user_alice", [page.Notifications[0].Id]); // ReadAt = T0 + 59d
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(1); // now T0 + 60d; cutoff T0 + 30d; ReadAt is within the window
+
+        var pruned = await fixture.Service.ApplyRetentionAsync();
+
+        var remaining = await fixture.Service.QueryAsync("user_alice", false, false, 50, 0);
+        Assert.Equal(0, pruned); // not pruned: read recently, even though created 60 days ago
+        Assert.Single(remaining.Notifications);
+    }
+
+    [Fact]
+    public async Task NotificationState_DeserializesMissingNotificationsAsEmpty()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-notification-null-tests-{Guid.NewGuid():N}");
+        var statePath = Path.Combine(root, "core", "notifications", "notifications.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+        await File.WriteAllTextAsync(statePath, "{\"schemaVersion\":1}");
+        var store = new NotificationStore(new CoreDataPaths(
+            DataRoot: root,
+            CoreRoot: Path.Combine(root, "core"),
+            AppsRoot: Path.Combine(root, "apps"),
+            BackupsRoot: Path.Combine(root, "backups"),
+            SourcesRoot: Path.Combine(root, "sources"),
+            AuthRoot: Path.Combine(root, "core", "auth"),
+            AuditLogPath: Path.Combine(root, "core", "audit", "audit.ndjson")));
+
+        var state = await store.ReadAsync();
+
+        Assert.NotNull(state.Notifications);
+        Assert.Empty(state.Notifications);
+    }
+
     private sealed class Fixture
     {
         private Fixture(NotificationService service, NotificationStore store, FakeClock clock)

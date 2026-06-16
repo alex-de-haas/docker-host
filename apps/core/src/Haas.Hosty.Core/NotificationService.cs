@@ -178,7 +178,7 @@ internal sealed class NotificationService(
 
                 var readSlots = Math.Max(0, MaxPerUser - unread.Count);
                 var read = group
-                    .Where(n => n.ReadAt is not null && n.CreatedAt >= cutoff)
+                    .Where(n => n.ReadAt is not null && n.ReadAt.Value >= cutoff)
                     .OrderByDescending(n => n.CreatedAt)
                     .Take(readSlots);
                 kept.AddRange(read);
@@ -315,6 +315,12 @@ internal sealed class NotificationRetentionScheduler(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            // A transient storage error must not crash the host: an unhandled exception in a
+            // BackgroundService loop tears down the application in .NET 6+.
+            logger.LogWarning(ex, "Hosty notification retention cleanup did not complete.");
         }
     }
 }
