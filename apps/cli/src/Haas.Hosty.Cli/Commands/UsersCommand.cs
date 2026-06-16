@@ -1,10 +1,17 @@
 namespace Haas.Hosty.Cli.Commands;
 
-using System.Text.Json;
+using System.Text.Json.Serialization;
 using Spectre.Console;
 
-internal sealed class UsersCommand(CommandContext context)
+internal sealed partial class UsersCommand(CommandContext context)
 {
+    [JsonSourceGenerationOptions(
+        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(HostUsersSummaryResponse))]
+    internal partial class UsersJsonContext : JsonSerializerContext;
+
     public async Task<int> ExecuteAsync(string[] args)
     {
         if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"])
@@ -48,7 +55,7 @@ internal sealed class UsersCommand(CommandContext context)
 
         if (format == "json")
         {
-            context.Console.WriteLine(JsonSerializer.Serialize(response ?? new HostUsersSummaryResponse(users), JsonOptions));
+            context.Console.WriteLine(CliJson.Serialize(response ?? new HostUsersSummaryResponse(users)));
             return 0;
         }
 
@@ -112,17 +119,15 @@ internal sealed class UsersCommand(CommandContext context)
         return args[index];
     }
 
-    private sealed record HostUsersSummaryResponse(IReadOnlyList<HostUserSummary> Users);
+    internal sealed record HostUsersSummaryResponse(IReadOnlyList<HostUserSummary> Users);
 
-    private sealed record HostUserSummary(
+    internal sealed record HostUserSummary(
         string Id,
         string Email,
         string? DisplayName,
         string Role,
         bool Disabled,
         bool? Assigned);
-
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private const string Usage = """
         hosty users

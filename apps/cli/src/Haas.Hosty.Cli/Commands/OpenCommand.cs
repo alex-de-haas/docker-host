@@ -1,10 +1,18 @@
 namespace Haas.Hosty.Cli.Commands;
 
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 using Spectre.Console;
 
-internal sealed class OpenCommand(CommandContext context)
+internal sealed partial class OpenCommand(CommandContext context)
 {
+    [JsonSourceGenerationOptions(
+        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(CoreStatusDocument))]
+    internal partial class OpenJsonContext : JsonSerializerContext;
+
     public async Task<int> ExecuteAsync(string[] args)
     {
         if (args.Length > 0)
@@ -41,7 +49,7 @@ internal sealed class OpenCommand(CommandContext context)
         return 0;
     }
 
-    private sealed record CoreStatusDocument(string? ShellPublicOrigin, int? ShellPort);
+    internal sealed record CoreStatusDocument(string? ShellPublicOrigin, int? ShellPort);
 
     private static string? ResolveShellOpenUrl(CoreStatusDocument? status)
     {

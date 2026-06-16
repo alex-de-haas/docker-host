@@ -41,7 +41,7 @@ internal sealed class UninstallCommand(CommandContext context)
 
         try
         {
-            await core.PostAsync<object>("core/stop");
+            await core.PostAsync("core/stop");
             context.Console.MarkupLine("[grey]Hosty Core stop requested.[/]");
             await Task.Delay(750);
         }

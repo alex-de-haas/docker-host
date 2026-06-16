@@ -1,9 +1,17 @@
 namespace Haas.Hosty.Cli.Commands;
 
+using System.Text.Json.Serialization;
 using Spectre.Console;
 
-internal sealed class AuthCommand(CommandContext context)
+internal sealed partial class AuthCommand(CommandContext context)
 {
+    [JsonSourceGenerationOptions(
+        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(AuthTokenResponse))]
+    internal partial class AuthJsonContext : JsonSerializerContext;
+
     private const string Usage = """
         Usage:
           hosty auth setup-token
@@ -69,7 +77,7 @@ internal sealed class AuthCommand(CommandContext context)
         return 0;
     }
 
-    private sealed record AuthTokenResponse(
+    internal sealed record AuthTokenResponse(
         string Token,
         string? SetupUrl,
         string? RecoveryUrl,

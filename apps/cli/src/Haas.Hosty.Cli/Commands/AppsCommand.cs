@@ -1,11 +1,48 @@
 namespace Haas.Hosty.Cli.Commands;
 
-using System.Text.Json;
+using System.Text.Json.Serialization;
 using Haas.Hosty.Cli.Configuration;
 using Spectre.Console;
 
-internal sealed class AppsCommand(CommandContext context)
+internal sealed partial class AppsCommand(CommandContext context)
 {
+    [JsonSourceGenerationOptions(
+        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(AppsResponse))]
+    [JsonSerializable(typeof(AppInstallRequest))]
+    [JsonSerializable(typeof(AppAutostartRequest))]
+    [JsonSerializable(typeof(AppUpdatePlanRequest))]
+    [JsonSerializable(typeof(AppUpdateApplyRequest))]
+    [JsonSerializable(typeof(AppRemoveRequest))]
+    [JsonSerializable(typeof(AppRuntimeSwitchPlanRequest))]
+    [JsonSerializable(typeof(AppRuntimeSwitchApplyRequest))]
+    [JsonSerializable(typeof(AppManualBackupRequest))]
+    [JsonSerializable(typeof(AppRestoreBackupRequest))]
+    [JsonSerializable(typeof(AppLifecycleResponse))]
+    [JsonSerializable(typeof(AppUpdatePlan))]
+    [JsonSerializable(typeof(AppRuntimeSwitchPlan))]
+    [JsonSerializable(typeof(AppBackupsResponse))]
+    [JsonSerializable(typeof(AppBackupResponse))]
+    [JsonSerializable(typeof(AppBackupDeleteResponse))]
+    [JsonSerializable(typeof(AppBackupCleanupPlan))]
+    [JsonSerializable(typeof(AppBackupCleanupApplyRequest))]
+    [JsonSerializable(typeof(AppBackupCleanupApplyResponse))]
+    [JsonSerializable(typeof(AppLogsResponse))]
+    [JsonSerializable(typeof(AppRuntimeHealthResponse))]
+    [JsonSerializable(typeof(AppSourceResolveRequest))]
+    [JsonSerializable(typeof(AppSourceOverrideRequest))]
+    [JsonSerializable(typeof(AppSourceResponse))]
+    [JsonSerializable(typeof(AppSourceCleanupPlan))]
+    [JsonSerializable(typeof(AppSourceCleanupApplyResponse))]
+    [JsonSerializable(typeof(AppSourceCleanupOutput))]
+    [JsonSerializable(typeof(AppIdentityIssueRequest))]
+    [JsonSerializable(typeof(AppIdentityIssueResponse))]
+    [JsonSerializable(typeof(AppOpenLinkRequest))]
+    [JsonSerializable(typeof(AppOpenLinkResponse))]
+    internal partial class AppsJsonContext : JsonSerializerContext;
+
     public async Task<int> ExecuteAsync(string[] args)
     {
         if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"])
@@ -335,7 +372,7 @@ internal sealed class AppsCommand(CommandContext context)
 
         if (options.Format == "json")
         {
-            context.Console.WriteLine(JsonSerializer.Serialize(response, JsonOptions));
+            context.Console.WriteLine(CliJson.Serialize(response));
         }
         else
         {
@@ -481,7 +518,7 @@ internal sealed class AppsCommand(CommandContext context)
     {
         if (format == "json")
         {
-            context.Console.WriteLine(JsonSerializer.Serialize(plan, JsonOptions));
+            context.Console.WriteLine(CliJson.Serialize(plan));
             return;
         }
 
@@ -504,7 +541,7 @@ internal sealed class AppsCommand(CommandContext context)
     {
         if (format == "json")
         {
-            context.Console.WriteLine(JsonSerializer.Serialize(response, JsonOptions));
+            context.Console.WriteLine(CliJson.Serialize(response));
             return;
         }
 
@@ -551,7 +588,7 @@ internal sealed class AppsCommand(CommandContext context)
     {
         if (format == "json")
         {
-            context.Console.WriteLine(JsonSerializer.Serialize(response ?? new AppSourceResponse("", null), JsonOptions));
+            context.Console.WriteLine(CliJson.Serialize(response ?? new AppSourceResponse("", null)));
             return;
         }
 
@@ -585,7 +622,7 @@ internal sealed class AppsCommand(CommandContext context)
     {
         if (format == "json")
         {
-            context.Console.WriteLine(JsonSerializer.Serialize(response ?? new AppRuntimeHealthResponse("", "", "", "unknown", []), JsonOptions));
+            context.Console.WriteLine(CliJson.Serialize(response ?? new AppRuntimeHealthResponse("", "", "", "unknown", [])));
             return;
         }
 
@@ -627,7 +664,7 @@ internal sealed class AppsCommand(CommandContext context)
     {
         if (format == "json")
         {
-            context.Console.WriteLine(JsonSerializer.Serialize(new AppSourceCleanupOutput(candidates), JsonOptions));
+            context.Console.WriteLine(CliJson.Serialize(new AppSourceCleanupOutput(candidates)));
             return;
         }
 
@@ -667,7 +704,7 @@ internal sealed class AppsCommand(CommandContext context)
                 context.Console.WriteLine($"HOSTY_APP_IDENTITY_TOKEN={response.Token.AccessToken}");
                 break;
             case "json":
-                context.Console.WriteLine(JsonSerializer.Serialize(response, JsonOptions));
+                context.Console.WriteLine(CliJson.Serialize(response));
                 break;
             default:
                 throw new CommandUsageException("--format must be token, header, env, or json.", Usage);
@@ -1309,43 +1346,43 @@ internal sealed class AppsCommand(CommandContext context)
         return Path.GetFullPath(manifestReference);
     }
 
-    private sealed record InstallOptions(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
+    internal sealed record InstallOptions(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
 
-    private sealed record AutostartOptions(string AppId, bool Autostart);
+    internal sealed record AutostartOptions(string AppId, bool Autostart);
 
-    private sealed record UpdateOptions(string AppId, string? ManifestPath, string? SelectedRuntime, string? TargetChannel, string? PlanDigest);
+    internal sealed record UpdateOptions(string AppId, string? ManifestPath, string? SelectedRuntime, string? TargetChannel, string? PlanDigest);
 
-    private sealed record RemoveOptions(string AppId, bool DeleteRuntimeState, bool DeleteData, bool DeleteBackups, bool DeleteSource, bool IgnoreRuntimeErrors);
+    internal sealed record RemoveOptions(string AppId, bool DeleteRuntimeState, bool DeleteData, bool DeleteBackups, bool DeleteSource, bool IgnoreRuntimeErrors);
 
-    private sealed record SwitchRuntimeOptions(string AppId, string TargetRuntime, string? PlanDigest);
+    internal sealed record SwitchRuntimeOptions(string AppId, string TargetRuntime, string? PlanDigest);
 
-    private sealed record BackupOptions(string AppId, string? Reason);
+    internal sealed record BackupOptions(string AppId, string? Reason);
 
-    private sealed record RestoreOptions(string AppId, string BackupId, bool CreatePreRestoreBackup);
+    internal sealed record RestoreOptions(string AppId, string BackupId, bool CreatePreRestoreBackup);
 
-    private sealed record DeleteBackupOptions(string AppId, string BackupId);
+    internal sealed record DeleteBackupOptions(string AppId, string BackupId);
 
-    private sealed record BackupCleanupPlanOptions(string AppId, string Format);
+    internal sealed record BackupCleanupPlanOptions(string AppId, string Format);
 
-    private sealed record BackupCleanupOptions(string AppId, string PlanDigest, string Format);
+    internal sealed record BackupCleanupOptions(string AppId, string PlanDigest, string Format);
 
-    private sealed record LogsOptions(string AppId, int Tail);
+    internal sealed record LogsOptions(string AppId, int Tail);
 
-    private sealed record SourceOptions(string AppId, string Format);
+    internal sealed record SourceOptions(string AppId, string Format);
 
-    private sealed record SourceResolveOptions(string AppId, string? Branch, string? Tag, string? Commit, bool Fetch, string Format);
+    internal sealed record SourceResolveOptions(string AppId, string? Branch, string? Tag, string? Commit, bool Fetch, string Format);
 
-    private sealed record SourceOverrideOptions(string AppId, string Path, string? Commit, string Format);
+    internal sealed record SourceOverrideOptions(string AppId, string Path, string? Commit, string Format);
 
-    private sealed record SourceCleanupOptions(string Format);
+    internal sealed record SourceCleanupOptions(string Format);
 
-    private sealed record IdentityOptions(string AppId, string User, string Format);
+    internal sealed record IdentityOptions(string AppId, string User, string Format);
 
-    private sealed record OpenOptions(string AppId, string User, string Mode, string? RedirectUri, string Format);
+    internal sealed record OpenOptions(string AppId, string User, string Mode, string? RedirectUri, string Format);
 
-    private sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
+    internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
 
-    private sealed record AppSummary(
+    internal sealed record AppSummary(
         string Id,
         string DisplayName,
         string? Description,
@@ -1362,27 +1399,27 @@ internal sealed class AppsCommand(CommandContext context)
         string? LastError,
         IReadOnlyList<string> Capabilities);
 
-    private sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
+    internal sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
 
-    private sealed record AppAutostartRequest(bool Autostart);
+    internal sealed record AppAutostartRequest(bool Autostart);
 
-    private sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
+    internal sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
 
-    private sealed record AppUpdateApplyRequest(string PlanDigest, string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
+    internal sealed record AppUpdateApplyRequest(string PlanDigest, string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
 
-    private sealed record AppRemoveRequest(bool DeleteRuntimeState, bool DeleteData, bool DeleteBackups, bool DeleteSource, bool IgnoreRuntimeErrors);
+    internal sealed record AppRemoveRequest(bool DeleteRuntimeState, bool DeleteData, bool DeleteBackups, bool DeleteSource, bool IgnoreRuntimeErrors);
 
-    private sealed record AppRuntimeSwitchPlanRequest(string TargetRuntime);
+    internal sealed record AppRuntimeSwitchPlanRequest(string TargetRuntime);
 
-    private sealed record AppRuntimeSwitchApplyRequest(string TargetRuntime, string PlanDigest);
+    internal sealed record AppRuntimeSwitchApplyRequest(string TargetRuntime, string PlanDigest);
 
-    private sealed record AppManualBackupRequest(string? Reason);
+    internal sealed record AppManualBackupRequest(string? Reason);
 
-    private sealed record AppRestoreBackupRequest(bool CreatePreRestoreBackup);
+    internal sealed record AppRestoreBackupRequest(bool CreatePreRestoreBackup);
 
-    private sealed record AppLifecycleResponse(AppSummary? App, AppBackupRecord? Backup, string Status);
+    internal sealed record AppLifecycleResponse(AppSummary? App, AppBackupRecord? Backup, string Status);
 
-    private sealed record AppUpdatePlan(
+    internal sealed record AppUpdatePlan(
         string AppId,
         string CurrentVersion,
         string TargetVersion,
@@ -1395,7 +1432,7 @@ internal sealed class AppsCommand(CommandContext context)
         bool WillCreatePreUpdateBackup,
         IReadOnlyList<string> Changes);
 
-    private sealed record AppRuntimeSwitchPlan(
+    internal sealed record AppRuntimeSwitchPlan(
         string AppId,
         string? CurrentRuntime,
         string TargetRuntime,
@@ -1404,13 +1441,13 @@ internal sealed class AppsCommand(CommandContext context)
         bool AutomaticBackup,
         IReadOnlyList<string> Changes);
 
-    private sealed record AppBackupsResponse(IReadOnlyList<AppBackupRecord> Backups);
+    internal sealed record AppBackupsResponse(IReadOnlyList<AppBackupRecord> Backups);
 
-    private sealed record AppBackupResponse(AppBackupRecord? Backup);
+    internal sealed record AppBackupResponse(AppBackupRecord? Backup);
 
-    private sealed record AppBackupDeleteResponse(bool Deleted);
+    internal sealed record AppBackupDeleteResponse(bool Deleted);
 
-    private sealed record AppBackupRecord(
+    internal sealed record AppBackupRecord(
         string AppId,
         string BackupId,
         string Reason,
@@ -1422,27 +1459,27 @@ internal sealed class AppsCommand(CommandContext context)
         int FileCount,
         AppBackupRetentionStatus? Retention = null);
 
-    private sealed record AppBackupRetentionStatus(
+    internal sealed record AppBackupRetentionStatus(
         bool Eligible,
         string Reason,
         bool WouldDeleteInCurrentPlan);
 
-    private sealed record AppBackupCleanupPlan(
+    internal sealed record AppBackupCleanupPlan(
         string? AppId,
         string PlanDigest,
         DateTimeOffset CreatedAt,
         AppBackupRetentionPolicy Policy,
         IReadOnlyList<AppBackupCleanupCandidate> Candidates);
 
-    private sealed record AppBackupRetentionPolicy(
+    internal sealed record AppBackupRetentionPolicy(
         IReadOnlyDictionary<string, AppBackupRetentionRule> Rules,
         bool DeleteOnlyKnownBackup);
 
-    private sealed record AppBackupRetentionRule(
+    internal sealed record AppBackupRetentionRule(
         int? KeepLast,
         int? MaxAgeDays);
 
-    private sealed record AppBackupCleanupCandidate(
+    internal sealed record AppBackupCleanupCandidate(
         string AppId,
         string BackupId,
         string Reason,
@@ -1454,23 +1491,23 @@ internal sealed class AppsCommand(CommandContext context)
         long? ArchiveSize,
         bool Automatic);
 
-    private sealed record AppBackupCleanupApplyRequest(string PlanDigest);
+    internal sealed record AppBackupCleanupApplyRequest(string PlanDigest);
 
-    private sealed record AppBackupCleanupApplyResponse(
+    internal sealed record AppBackupCleanupApplyResponse(
         string PlanDigest,
         IReadOnlyList<AppBackupCleanupCandidate> Deleted,
         IReadOnlyList<AppBackupCleanupCandidate> Skipped);
 
-    private sealed record AppLogsResponse(string AppId, string Text);
+    internal sealed record AppLogsResponse(string AppId, string Text);
 
-    private sealed record AppRuntimeHealthResponse(
+    internal sealed record AppRuntimeHealthResponse(
         string AppId,
         string Runtime,
         string RuntimeType,
         string Status,
         IReadOnlyList<AppRuntimeServiceHealth> Services);
 
-    private sealed record AppRuntimeServiceHealth(
+    internal sealed record AppRuntimeServiceHealth(
         string Service,
         string Status,
         int? ProcessId,
@@ -1479,13 +1516,13 @@ internal sealed class AppsCommand(CommandContext context)
         string? WorkingDirectory,
         string? Message);
 
-    private sealed record AppSourceResolveRequest(string? Branch, string? Tag, string? Commit, bool Fetch);
+    internal sealed record AppSourceResolveRequest(string? Branch, string? Tag, string? Commit, bool Fetch);
 
-    private sealed record AppSourceOverrideRequest(string Path, string? Commit);
+    internal sealed record AppSourceOverrideRequest(string Path, string? Commit);
 
-    private sealed record AppSourceResponse(string AppId, AppSourceState? Source);
+    internal sealed record AppSourceResponse(string AppId, AppSourceState? Source);
 
-    private sealed record AppSourceState(
+    internal sealed record AppSourceState(
         string? Type,
         string? Repository,
         string? ResolvedRef,
@@ -1494,25 +1531,23 @@ internal sealed class AppsCommand(CommandContext context)
         string? LocalOverridePath,
         DateTimeOffset? UpdatedAt);
 
-    private sealed record AppSourceCleanupPlan(IReadOnlyList<AppSourceCleanupCandidate> Candidates);
+    internal sealed record AppSourceCleanupPlan(IReadOnlyList<AppSourceCleanupCandidate> Candidates);
 
-    private sealed record AppSourceCleanupApplyResponse(IReadOnlyList<AppSourceCleanupCandidate> Deleted);
+    internal sealed record AppSourceCleanupApplyResponse(IReadOnlyList<AppSourceCleanupCandidate> Deleted);
 
-    private sealed record AppSourceCleanupCandidate(string AppId, string Path, string Reason);
+    internal sealed record AppSourceCleanupCandidate(string AppId, string Path, string Reason);
 
-    private sealed record AppSourceCleanupOutput(IReadOnlyList<AppSourceCleanupCandidate> Items);
+    internal sealed record AppSourceCleanupOutput(IReadOnlyList<AppSourceCleanupCandidate> Items);
 
-    private sealed record AppIdentityIssueRequest(string User);
+    internal sealed record AppIdentityIssueRequest(string User);
 
-    private sealed record AppIdentityIssueResponse(string AppId, string UserId, AppIdentityTokenResult Token);
+    internal sealed record AppIdentityIssueResponse(string AppId, string UserId, AppIdentityTokenResult Token);
 
-    private sealed record AppIdentityTokenResult(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, int ExpiresInSeconds);
+    internal sealed record AppIdentityTokenResult(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, int ExpiresInSeconds);
 
-    private sealed record AppOpenLinkRequest(string User, string? Mode, string? RedirectUri);
+    internal sealed record AppOpenLinkRequest(string User, string? Mode, string? RedirectUri);
 
-    private sealed record AppOpenLinkResponse(string AppId, string UserId, string Mode, string Url, DateTimeOffset? ExpiresAt);
-
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    internal sealed record AppOpenLinkResponse(string AppId, string UserId, string Mode, string Url, DateTimeOffset? ExpiresAt);
 
     private const string Usage = """
         hosty apps

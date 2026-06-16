@@ -1,10 +1,23 @@
 namespace Haas.Hosty.Cli.Commands;
 
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Spectre.Console;
 
-internal sealed class UpdateCommand(CommandContext context)
+internal sealed partial class UpdateCommand(CommandContext context)
 {
+    [JsonSourceGenerationOptions(
+        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(CoreStatusDocument))]
+    [JsonSerializable(typeof(AppsResponse))]
+    [JsonSerializable(typeof(AppUpdatePlanRequest))]
+    [JsonSerializable(typeof(AppUpdatePlan))]
+    [JsonSerializable(typeof(ProductChannelIndex))]
+    [JsonSerializable(typeof(ProductChannel))]
+    internal partial class UpdateJsonContext : JsonSerializerContext;
+
     public async Task<int> ExecuteAsync(string[] args)
     {
         var options = ParseOptions(args);
@@ -65,7 +78,7 @@ internal sealed class UpdateCommand(CommandContext context)
                 return;
             }
 
-            await core.PostAsync<object>("core/stop");
+            await core.PostAsync("core/stop");
             context.Console.MarkupLine("[grey]Hosty Core stop requested before Windows executable update.[/]");
             await Task.Delay(750);
         }
@@ -103,7 +116,7 @@ internal sealed class UpdateCommand(CommandContext context)
             throw new CommandUsageException($"Product channel '{options.Channel}' was not found.", Usage);
         var statePath = Path.Combine(context.Environment.RootDirectory, "core", "product-channel.json");
         Directory.CreateDirectory(Path.GetDirectoryName(statePath) ?? context.Environment.RootDirectory);
-        await File.WriteAllTextAsync(statePath, JsonSerializer.Serialize(channel, JsonOptions));
+        await File.WriteAllTextAsync(statePath, CliJson.Serialize(channel));
         context.Console.MarkupLine($"[green]Selected product channel:[/] {Markup.Escape(channel.Id)}");
         return channel;
     }
@@ -165,7 +178,7 @@ internal sealed class UpdateCommand(CommandContext context)
         }
 
         await using var stream = File.OpenRead(path);
-        return await JsonSerializer.DeserializeAsync<ProductChannelIndex>(stream, JsonOptions) ??
+        return await CliJson.DeserializeAsync<ProductChannelIndex>(stream) ??
             throw new CommandUsageException("Product channel index is invalid.", Usage);
     }
 
@@ -239,28 +252,26 @@ internal sealed class UpdateCommand(CommandContext context)
         return args[index];
     }
 
-    private sealed record CoreStatusDocument(string? Status);
+    internal sealed record CoreStatusDocument(string? Status);
 
-    private sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
+    internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
 
-    private sealed record AppSummary(string Id, string? SelectedChannel, string? SelectedRuntime);
+    internal sealed record AppSummary(string Id, string? SelectedChannel, string? SelectedRuntime);
 
-    private sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
+    internal sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
 
-    private sealed record AppUpdatePlan(string PlanDigest);
+    internal sealed record AppUpdatePlan(string PlanDigest);
 
-    private sealed record UpdateOptions(bool ListChannels, string? Channel, string? IndexPath);
+    internal sealed record UpdateOptions(bool ListChannels, string? Channel, string? IndexPath);
 
-    private sealed record ProductChannelIndex(IReadOnlyList<ProductChannel> Channels);
+    internal sealed record ProductChannelIndex(IReadOnlyList<ProductChannel> Channels);
 
-    private sealed record ProductChannel(
+    internal sealed record ProductChannel(
         string Id,
         string Label,
         string? CliVersion,
         string? CoreArtifactPrefix,
         string? ShellManifestPath);
-
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private const string Usage = """
         Usage:

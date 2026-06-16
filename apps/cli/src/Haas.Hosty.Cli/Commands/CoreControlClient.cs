@@ -1,11 +1,19 @@
 namespace Haas.Hosty.Cli.Commands;
 
 using System.Net;
-using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
-internal sealed class CoreControlClient : IDisposable
+internal sealed partial class CoreControlClient : IDisposable
 {
+    [JsonSourceGenerationOptions(
+        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(ControlDiscoveryDocument))]
+    internal partial class ControlJsonContext : JsonSerializerContext;
+
     private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan DefaultOperationTimeout = TimeSpan.FromMinutes(10);
 
@@ -36,7 +44,7 @@ internal sealed class CoreControlClient : IDisposable
         }
 
         await using var stream = File.OpenRead(path);
-        var discovery = await JsonSerializer.DeserializeAsync<ControlDiscoveryDocument>(stream, JsonOptions, cancellationToken);
+        var discovery = await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream, cancellationToken);
         if (discovery is null || string.IsNullOrWhiteSpace(discovery.ControlBaseUrl))
         {
             return null;
@@ -67,6 +75,9 @@ internal sealed class CoreControlClient : IDisposable
     public async Task<T?> DeleteAsync<T>(string path, CancellationToken cancellationToken = default)
         => await SendAsync<T>(HttpMethod.Delete, path, body: null, operationTimeout, cancellationToken);
 
+    public Task PostAsync(string path, CancellationToken cancellationToken = default)
+        => SendNoContentAsync(HttpMethod.Post, path, operationTimeout, cancellationToken);
+
     private async Task<T?> SendAsync<T>(HttpMethod method, string path, object? body, TimeSpan timeout, CancellationToken cancellationToken)
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -77,7 +88,8 @@ internal sealed class CoreControlClient : IDisposable
             using var request = new HttpRequestMessage(method, $"{ControlBaseUrl}/{path.TrimStart('/')}");
             if (body is not null)
             {
-                request.Content = JsonContent.Create(body, options: JsonOptions);
+                var json = JsonSerializer.Serialize(body, CliJson.TypeInfo(body.GetType()));
+                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
             }
 
             using var response = await httpClient.SendAsync(request, timeoutSource.Token);
@@ -93,7 +105,28 @@ internal sealed class CoreControlClient : IDisposable
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(timeoutSource.Token);
-            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, timeoutSource.Token);
+            return await CliJson.DeserializeAsync<T>(stream, timeoutSource.Token);
+        }
+        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new CoreControlTimeoutException(method.Method, path, timeout);
+        }
+    }
+
+    private async Task SendNoContentAsync(HttpMethod method, string path, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+
+        try
+        {
+            using var request = new HttpRequestMessage(method, $"{ControlBaseUrl}/{path.TrimStart('/')}");
+            using var response = await httpClient.SendAsync(request, timeoutSource.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                var responseBody = await response.Content.ReadAsStringAsync(timeoutSource.Token);
+                throw new CoreControlException(method.Method, path, response.StatusCode, responseBody);
+            }
         }
         catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -104,9 +137,7 @@ internal sealed class CoreControlClient : IDisposable
     public void Dispose()
         => httpClient.Dispose();
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
-    private sealed record ControlDiscoveryDocument(
+    internal sealed record ControlDiscoveryDocument(
         string ControlBaseUrl,
         IReadOnlyDictionary<string, string> RequiredHeaders);
 }
