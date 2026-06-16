@@ -24,6 +24,7 @@ Core injects:
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_HTTP`
 - `PORT`
+- `HOSTY_MOUNT_CATALOGROOTS` - comma-separated external mount paths (see External Mounts)
 
 The app also reads demo settings from the manifest:
 
@@ -31,6 +32,20 @@ The app also reads demo settings from the manifest:
 - `DEMO_RELEASE_CHANNEL`
 - `DEMO_REFRESH_SECONDS`
 - `DEMO_AUTH_PREVIEW`
+
+## External Mounts
+
+The manifest declares an optional `catalogRoots` external-mount slot (`multiple`, `rw`). It is not
+required, so the app starts before any path is configured. An admin can bind operator host folders to
+it after install:
+
+- Shell: the "External storage" panel on the Installed Apps page.
+- CLI: `hosty apps mounts set com.haas.demo-app --mount catalogRoots=movies=/srv/movies`.
+
+Core injects the active paths as `HOSTY_MOUNT_CATALOGROOTS` (container paths under `docker`, host
+paths under `dev`). The demo reads every `HOSTY_MOUNT_*` variable and lists each path under "Storage
+probes" with a mounted/missing badge and its visible entries, so a configured bind is visible after a
+restart. Use the `dev` runtime to exercise this from source without rebuilding the image.
 
 ## API Routes
 

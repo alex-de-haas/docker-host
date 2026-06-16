@@ -199,11 +199,22 @@ internal sealed record AppRecord(
     AppSourceState? SourceState = null,
     AppUiContract? Ui = null,
     bool? Autostart = null,
-    IReadOnlyList<AppRuntimeProfileSummary>? RuntimeProfiles = null);
+    IReadOnlyList<AppRuntimeProfileSummary>? RuntimeProfiles = null,
+    IReadOnlyList<AppMountSlot>? MountSlots = null,
+    IReadOnlyList<AppMountBinding>? Mounts = null);
 
 internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret, bool Required = false);
 
 internal sealed record AppStorageMapping(string Key, string HostPath, string TargetPath, bool ReadOnly);
+
+// External host-path mount slot declared by the manifest, denormalized onto the app record
+// (like AppRuntimeProfileSummary) so the API can describe slots without re-loading the manifest.
+internal sealed record AppMountSlot(string Key, string Mode, bool Multiple, bool Required, string? Service);
+
+// Operator-configured binding of a host path into a declared mount slot. The container path
+// is derived deterministically from the operator-chosen Label (`/mnt/{Key}/{Label}`) so it is
+// stable across sibling add/remove. Read-only/-write comes from the slot's Mode, not stored here.
+internal sealed record AppMountBinding(string Key, string Label, string HostPath);
 
 internal sealed record AppDependencyContract(string Key, string AppId, string Endpoint);
 
@@ -328,7 +339,8 @@ internal sealed record AppSummary(
     IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     string? EntryPath,
     string? EmbeddedUrl,
-    IReadOnlyList<AppNavigationSummary> Navigation)
+    IReadOnlyList<AppNavigationSummary> Navigation,
+    IReadOnlyList<AppMountSummary> Mounts)
 {
     public static AppSummary From(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null)
     {
@@ -365,7 +377,36 @@ internal sealed record AppSummary(
             profiles,
             ui?.EntryPath,
             entryUrl,
-            navigation);
+            navigation,
+            BuildMountSummaries(app.MountSlots, app.Mounts));
+    }
+
+    private static IReadOnlyList<AppMountSummary> BuildMountSummaries(
+        IReadOnlyList<AppMountSlot>? slots,
+        IReadOnlyList<AppMountBinding>? bindings)
+    {
+        if (slots is null || slots.Count == 0)
+        {
+            return [];
+        }
+
+        return slots
+            .OrderBy(slot => slot.Key, StringComparer.Ordinal)
+            .Select(slot => new AppMountSummary(
+                slot.Key,
+                slot.Mode,
+                slot.Multiple,
+                slot.Required,
+                slot.Service,
+                (bindings ?? [])
+                    .Where(binding => string.Equals(binding.Key, slot.Key, StringComparison.Ordinal))
+                    .OrderBy(binding => binding.Label, StringComparer.Ordinal)
+                    .Select(binding => new AppMountBindingSummary(
+                        binding.Label,
+                        binding.HostPath,
+                        RuntimeMountPlanner.BuildContainerPath(binding.Key, binding.Label)))
+                    .ToArray()))
+            .ToArray();
     }
 
     private static IReadOnlyList<AppSettingSummary> BuildSettingSummaries(
@@ -465,3 +506,13 @@ internal sealed record AppSummary(
 internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false);
 
 internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl);
+
+internal sealed record AppMountSummary(
+    string Key,
+    string Mode,
+    bool Multiple,
+    bool Required,
+    string? Service,
+    IReadOnlyList<AppMountBindingSummary> Bindings);
+
+internal sealed record AppMountBindingSummary(string Label, string HostPath, string ContainerPath);

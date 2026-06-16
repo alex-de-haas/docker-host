@@ -48,6 +48,7 @@ import type {
   DetailPanelState,
   DetailView,
   EmbeddedWorkspace,
+  MountBindingInput,
   InstallPanelState,
   LoadState,
   LogsResponse,
@@ -701,6 +702,32 @@ export function ShellClient({
     [appEndpoint, refresh, sendCsrfJson],
   );
 
+  const configureMounts = useCallback(
+    async (app: CoreApp, mounts: MountBindingInput[]) => {
+      const actionKey = `${app.id}:mounts`;
+      setBusyAction(actionKey);
+      try {
+        await sendCsrfJson(appEndpoint(app, "/mounts"), { mounts });
+        await refresh();
+        setActivePanel(null);
+        toast.success("External storage saved", { description: app.displayName });
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
+        setDetailPanel((current) => ({
+          ...current,
+          loading: false,
+          error: error instanceof Error ? error.message : "Saving external storage failed.",
+        }));
+      } finally {
+        setBusyAction((current) => (current === actionKey ? null : current));
+      }
+    },
+    [appEndpoint, refresh, sendCsrfJson],
+  );
+
   const applyUpdate = useCallback(
     async (app: CoreApp, plan: CoreUpdatePlan) => {
       const actionKey = `${app.id}:update`;
@@ -1175,6 +1202,7 @@ export function ShellClient({
             onPreviewBackupCleanup={previewBackupCleanup}
             onApplyBackupCleanup={applyBackupCleanup}
             onConfigure={configureApp}
+            onConfigureMounts={configureMounts}
             onReloadUpdatePlan={loadUpdatePlan}
             onApplyUpdate={applyUpdate}
             onRemove={removeApp}

@@ -53,6 +53,7 @@ hosty apps start com.haas.demo-app
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_{KEY}`
 - `HOSTY_DEPENDENCY_{KEY}_URL`
+- `HOSTY_MOUNT_{KEY}` (one per configured `externalMounts` slot)
 
 `HOSTY_CORE_PUBLIC_ORIGIN` is the browser-facing Core origin. `HOSTY_CORE_ORIGIN` is the runtime process-to-Core origin. For `docker` profiles, loopback Core origins are injected into `HOSTY_CORE_ORIGIN` as a container-reachable origin using `host.docker.internal`, so app server code can exchange Hosty app codes and revalidate identity with Core from inside the container. For `localCommand` profiles, `HOSTY_CORE_ORIGIN` uses Core's listen URL. Published runtime endpoint URLs remain browser-facing `localhost` URLs unless a generated public origin setting overrides them.
 
@@ -85,6 +86,10 @@ When `data.enabled` is true, Core creates a primary app data directory:
 ```
 
 Backups cover only this primary app data directory. External mounts and dependency-owned data are outside the backup scope.
+
+## External Mounts
+
+When the app needs large operator-owned host folders outside app data (for example media catalog roots), declare `externalMounts` slots. The manifest declares the slot; the operator binds concrete host paths after install. Core injects each configured slot as `HOSTY_MOUNT_{KEY}` — container paths under `docker`, host paths under `localCommand`. See [External host-path mounts](external-mounts.md) for the full contract.
 
 ## User Directory
 

@@ -346,6 +346,8 @@ export function detailTitle(view: DetailView) {
       return "Backups";
     case "configure":
       return "Configure";
+    case "mounts":
+      return "External storage";
     case "update":
       return "Update";
     case "remove":

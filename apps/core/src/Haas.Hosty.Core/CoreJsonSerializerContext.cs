@@ -64,6 +64,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppInstallRequest))]
 [JsonSerializable(typeof(AppConfigureRequest))]
 [JsonSerializable(typeof(AppAutostartRequest))]
+[JsonSerializable(typeof(AppMountsRequest))]
 [JsonSerializable(typeof(AppUpdatePlanRequest))]
 [JsonSerializable(typeof(AppUpdateApplyRequest))]
 [JsonSerializable(typeof(AppRuntimeSwitchPlanRequest))]

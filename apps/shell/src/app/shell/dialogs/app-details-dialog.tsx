@@ -2,9 +2,10 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
-import { Archive, Database, FileText, LoaderCircle, RefreshCw, Settings2, Trash2, Upload } from "lucide-react";
+import { Archive, Database, FileText, HardDrive, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, formatUpdateChange, isAppAutostartEnabled } from "../app-helpers";
@@ -20,9 +21,11 @@ import type {
   CoreApp,
   CoreBackup,
   CoreBackupCleanupPlan,
+  CoreMountSlot,
   CoreUpdatePlan,
   DetailPanelState,
   DetailView,
+  MountBindingInput,
   RemoveOptions,
 } from "../types";
 import { CheckboxRow, EmptyState, FactCard, IconButton, InlineError } from "../ui";
@@ -43,6 +46,7 @@ export function AppDetailsDialog({
   onPreviewBackupCleanup,
   onApplyBackupCleanup,
   onConfigure,
+  onConfigureMounts,
   onReloadUpdatePlan,
   onApplyUpdate,
   onRemove,
@@ -62,6 +66,7 @@ export function AppDetailsDialog({
   onPreviewBackupCleanup: (app: CoreApp) => void;
   onApplyBackupCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onReloadUpdatePlan: (app: CoreApp) => void;
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
@@ -92,6 +97,11 @@ export function AppDetailsDialog({
         )}
         {view === "backups" && !canMutateApp && <InlineError message="System app backup controls are not available in Shell." />}
         {view === "configure" && <ConfigurePanel app={app} busyAction={busyAction} canManageApps={canMutateApp} initialOpenSection={configureSection} onConfigure={onConfigure} />}
+        {view === "mounts" && (canMutateApp ? (
+          <MountsPanel app={app} busyAction={busyAction} onConfigureMounts={onConfigureMounts} />
+        ) : (
+          <InlineError message="System app external storage controls are not available in Shell." />
+        ))}
         {view === "update" && (canMutateApp ? (
           <UpdatePanel app={app} detail={detail} busyAction={busyAction} onReloadPlan={onReloadUpdatePlan} onApplyUpdate={onApplyUpdate} />
         ) : (
@@ -317,6 +327,127 @@ function ConfigurePanel({
         <Button type="submit" disabled={!canManageApps || busyAction === `${app.id}:configure`}>
           {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Settings2 className="h-4 w-4" />}
           Save settings
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+function MountsPanel({
+  app,
+  busyAction,
+  onConfigureMounts,
+}: {
+  app: CoreApp;
+  busyAction: string | null;
+  onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
+}) {
+  const slots: CoreMountSlot[] = app.mounts || [];
+  const slotsSignature = JSON.stringify(slots.map((slot) => [slot.key, slot.bindings.map((binding) => [binding.label, binding.hostPath])]));
+  const [rows, setRows] = useState<Record<string, Array<{ label: string; hostPath: string }>>>({});
+
+  useEffect(() => {
+    setRows(Object.fromEntries(slots.map((slot) => [slot.key, slot.bindings.map((binding) => ({ label: binding.label, hostPath: binding.hostPath }))])));
+    // slots is derived from app.mounts; slotsSignature captures its contents so user edits are not reset on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.id, slotsSignature]);
+
+  if (slots.length === 0) {
+    return <EmptyState icon={HardDrive} title="No external storage" description="This app does not declare any external mount slots." />;
+  }
+
+  const updateRow = (key: string, index: number, field: "label" | "hostPath", value: string) => {
+    setRows((current) => {
+      const next = (current[key] ?? []).slice();
+      next[index] = { ...next[index], [field]: value };
+      return { ...current, [key]: next };
+    });
+  };
+
+  const addRow = (key: string) => {
+    setRows((current) => ({ ...current, [key]: [...(current[key] ?? []), { label: "", hostPath: "" }] }));
+  };
+
+  const removeRow = (key: string, index: number) => {
+    setRows((current) => ({ ...current, [key]: (current[key] ?? []).filter((_, rowIndex) => rowIndex !== index) }));
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const mounts: MountBindingInput[] = [];
+    for (const slot of slots) {
+      for (const row of rows[slot.key] ?? []) {
+        const label = row.label.trim();
+        const hostPath = row.hostPath.trim();
+        if (label.length > 0 && hostPath.length > 0) {
+          mounts.push({ key: slot.key, label, hostPath });
+        }
+      }
+    }
+    onConfigureMounts(app, mounts);
+  };
+
+  const busy = busyAction === `${app.id}:mounts`;
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        External folders live outside app data and are never backed up or deleted by Hosty. Host paths must be absolute and outside the Hosty data root.
+      </p>
+      {slots.map((slot) => {
+        const slotRows = rows[slot.key] ?? [];
+        const canAdd = slot.multiple || slotRows.length === 0;
+        return (
+          <div key={slot.key} className="space-y-2 rounded-md border p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <HardDrive className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">{slot.key}</span>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {[slot.mode, slot.multiple ? "multiple" : "single", slot.required ? "required" : "optional", slot.service ? `service: ${slot.service}` : null].filter(Boolean).join(" · ")}
+              </span>
+            </div>
+            {slotRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No host paths configured.</p>
+            ) : (
+              <div className="space-y-2">
+                {slotRows.map((row, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      aria-label={`${slot.key} label`}
+                      placeholder="label"
+                      className="w-40"
+                      value={row.label}
+                      onChange={(event) => updateRow(slot.key, index, "label", event.target.value)}
+                    />
+                    <Input
+                      aria-label={`${slot.key} host path`}
+                      placeholder="/srv/path"
+                      className="flex-1"
+                      value={row.hostPath}
+                      onChange={(event) => updateRow(slot.key, index, "hostPath", event.target.value)}
+                    />
+                    <IconButton title="Remove path" destructive onClick={() => removeRow(slot.key, index)}>
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
+                  </div>
+                ))}
+              </div>
+            )}
+            {canAdd && (
+              <Button type="button" variant="outline" size="sm" onClick={() => addRow(slot.key)}>
+                <Plus className="h-4 w-4" />
+                Add path
+              </Button>
+            )}
+          </div>
+        );
+      })}
+      <DialogFooter>
+        <Button type="submit" disabled={busy}>
+          {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
+          Save external storage
         </Button>
       </DialogFooter>
     </form>

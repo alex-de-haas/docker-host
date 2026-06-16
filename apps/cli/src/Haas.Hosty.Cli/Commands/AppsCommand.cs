@@ -19,6 +19,7 @@ internal sealed partial class AppsCommand(CommandContext context)
     [JsonSerializable(typeof(AppRuntimeSwitchPlanRequest))]
     [JsonSerializable(typeof(AppRuntimeSwitchApplyRequest))]
     [JsonSerializable(typeof(AppManualBackupRequest))]
+    [JsonSerializable(typeof(AppMountsRequest))]
     [JsonSerializable(typeof(AppRestoreBackupRequest))]
     [JsonSerializable(typeof(AppLifecycleResponse))]
     [JsonSerializable(typeof(AppUpdatePlan))]
@@ -66,6 +67,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             "remove" => await RemoveAsync(args[1..]),
             "backup" => await BackupAsync(args[1..]),
             "backups" => await BackupsAsync(args[1..]),
+            "mounts" => await MountsAsync(args[1..]),
             "restore" => await RestoreAsync(args[1..]),
             "logs" => await LogsAsync(args[1..]),
             "health" => await HealthAsync(args[1..]),
@@ -219,6 +221,54 @@ internal sealed partial class AppsCommand(CommandContext context)
         using var core = await OpenCoreAsync();
         var response = await core.GetAsync<AppBackupsResponse>($"apps/{Uri.EscapeDataString(appId)}/backups");
         RenderBackups(response?.Backups ?? []);
+        return 0;
+    }
+
+    private async Task<int> MountsAsync(string[] args)
+    {
+        if (args is ["set", ..])
+        {
+            return await MountsSetAsync(args[1..]);
+        }
+
+        if (args is ["clear", ..])
+        {
+            return await MountsClearAsync(args[1..]);
+        }
+
+        var appId = RequireSingleAppId(args, "apps mounts");
+        using var core = await OpenCoreAsync();
+        var response = await core.GetAsync<AppsResponse>("apps");
+        var app = (response?.Apps ?? []).FirstOrDefault(candidate => string.Equals(candidate.Id, appId, StringComparison.Ordinal));
+        if (app is null)
+        {
+            context.Console.MarkupLine($"[yellow]App not found:[/] {Markup.Escape(appId)}");
+            return 1;
+        }
+
+        RenderMounts(app);
+        return 0;
+    }
+
+    private async Task<int> MountsSetAsync(string[] args)
+    {
+        var options = ParseMountsSetOptions(args);
+        using var core = await OpenCoreAsync();
+        var response = await core.PostAsync<AppLifecycleResponse>(
+            $"apps/{Uri.EscapeDataString(options.AppId)}/mounts",
+            new AppMountsRequest(options.Bindings));
+        RenderMountsResult(response);
+        return 0;
+    }
+
+    private async Task<int> MountsClearAsync(string[] args)
+    {
+        var appId = RequireSingleAppId(args, "apps mounts clear");
+        using var core = await OpenCoreAsync();
+        var response = await core.PostAsync<AppLifecycleResponse>(
+            $"apps/{Uri.EscapeDataString(appId)}/mounts",
+            new AppMountsRequest([]));
+        RenderMountsResult(response);
         return 0;
     }
 
@@ -509,6 +559,65 @@ internal sealed partial class AppsCommand(CommandContext context)
         }
 
         context.Console.Write(table);
+    }
+
+    private void RenderMountsResult(AppLifecycleResponse? response)
+    {
+        if (response?.App is null)
+        {
+            context.Console.MarkupLine($"[green]{Markup.Escape(response?.Status ?? "ok")}[/]");
+            return;
+        }
+
+        context.Console.MarkupLine($"[green]{Markup.Escape(response.Status)}:[/] {Markup.Escape(response.App.Id)}");
+        RenderMounts(response.App);
+    }
+
+    private void RenderMounts(AppSummary app)
+    {
+        var mounts = app.Mounts ?? [];
+        if (mounts.Count == 0)
+        {
+            context.Console.MarkupLine("[grey]This app declares no external mounts.[/]");
+            return;
+        }
+
+        foreach (var slot in mounts)
+        {
+            var flags = new List<string> { slot.Mode };
+            if (slot.Multiple)
+            {
+                flags.Add("multiple");
+            }
+
+            if (slot.Required)
+            {
+                flags.Add("required");
+            }
+
+            if (!string.IsNullOrWhiteSpace(slot.Service))
+            {
+                flags.Add($"service={slot.Service}");
+            }
+
+            context.Console.MarkupLine($"[grey]Slot:[/] {Markup.Escape(slot.Key)} [grey]({Markup.Escape(string.Join(", ", flags))})[/]");
+            if (slot.Bindings.Count == 0)
+            {
+                context.Console.MarkupLine("  [grey]no host paths configured[/]");
+                continue;
+            }
+
+            var table = ConsoleUi.CreateTable("Label", "Host path", "Container path");
+            foreach (var binding in slot.Bindings)
+            {
+                table.AddRow(
+                    Markup.Escape(binding.Label),
+                    Markup.Escape(binding.HostPath),
+                    Markup.Escape(binding.ContainerPath));
+            }
+
+            context.Console.Write(table);
+        }
     }
 
     private void RenderBackupCleanupPlan(AppBackupCleanupPlan? plan, string format)
@@ -976,6 +1085,42 @@ internal sealed partial class AppsCommand(CommandContext context)
         return new DeleteBackupOptions(args[0], args[1]);
     }
 
+    private static MountsSetOptions ParseMountsSetOptions(string[] args)
+    {
+        if (args.Length == 0)
+        {
+            throw new CommandUsageException("apps mounts set requires an app id.", Usage);
+        }
+
+        var appId = args[0];
+        var bindings = new List<AppMountBindingInput>();
+        for (var index = 1; index < args.Length; index++)
+        {
+            if (args[index] == "--mount")
+            {
+                var spec = RequireOptionValue(args, ref index, "--mount");
+                var parts = spec.Split('=', 3);
+                if (parts.Length != 3 || parts.Any(string.IsNullOrWhiteSpace))
+                {
+                    throw new CommandUsageException("apps mounts set --mount must be <key>=<label>=<host-path>.", Usage);
+                }
+
+                bindings.Add(new AppMountBindingInput(parts[0], parts[1], parts[2]));
+            }
+            else
+            {
+                throw new CommandUsageException($"Unknown apps mounts set argument '{args[index]}'.", Usage);
+            }
+        }
+
+        if (bindings.Count == 0)
+        {
+            throw new CommandUsageException("apps mounts set requires at least one --mount <key>=<label>=<host-path>.", Usage);
+        }
+
+        return new MountsSetOptions(appId, bindings);
+    }
+
     private static BackupCleanupPlanOptions ParseBackupCleanupPlanOptions(string[] args, string commandName)
     {
         if (args.Length == 0)
@@ -1379,7 +1524,24 @@ internal sealed partial class AppsCommand(CommandContext context)
         string RuntimeState,
         string? LastOperation,
         string? LastError,
-        IReadOnlyList<string> Capabilities);
+        IReadOnlyList<string> Capabilities,
+        IReadOnlyList<AppMountSummary>? Mounts = null);
+
+    internal sealed record AppMountSummary(
+        string Key,
+        string Mode,
+        bool Multiple,
+        bool Required,
+        string? Service,
+        IReadOnlyList<AppMountBindingSummary> Bindings);
+
+    internal sealed record AppMountBindingSummary(string Label, string HostPath, string ContainerPath);
+
+    internal sealed record AppMountsRequest(IReadOnlyList<AppMountBindingInput> Mounts);
+
+    internal sealed record AppMountBindingInput(string Key, string Label, string HostPath);
+
+    internal sealed record MountsSetOptions(string AppId, IReadOnlyList<AppMountBindingInput> Bindings);
 
     internal sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
 
@@ -1554,6 +1716,9 @@ internal sealed partial class AppsCommand(CommandContext context)
           backups <app-id>
           backups prune-plan <app-id> [--format table|json]
           backups prune <app-id> --plan-digest <digest> --yes [--format table|json]
+          mounts <app-id>
+          mounts set <app-id> --mount <key>=<label>=<host-path> [--mount ...]
+          mounts clear <app-id>
           restore <app-id> <backup-id> [--pre-restore-backup]
           logs <app-id> [--tail <count>]
           health <app-id> [--format table|json]

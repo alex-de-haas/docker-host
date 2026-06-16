@@ -19,8 +19,15 @@ export interface DemoConfig {
   paths: {
     data: string;
     logs: string;
-    externalSourcesRoot: string;
   };
+  mounts: DemoMount[];
+}
+
+export interface DemoMount {
+  // Slot key (lower-cased from the HOSTY_MOUNT_{KEY} env name) and one host/container path.
+  key: string;
+  envName: string;
+  path: string;
 }
 
 export interface StorageInspection {
@@ -57,15 +64,36 @@ export function getDemoConfig(): DemoConfig {
     paths: {
       data: process.env.DEMO_DATA_DIR || defaultRuntimePath("data"),
       logs: process.env.DEMO_LOG_DIR || defaultRuntimePath("logs"),
-      externalSourcesRoot: process.env.DEMO_EXTERNAL_SOURCES_ROOT || "/mnt/sources",
     },
+    mounts: discoverHostyMounts(),
   };
+}
+
+// Discovers the external mounts Hosty injected as HOSTY_MOUNT_{KEY}=path1,path2. Under docker
+// these are container paths (each a bind mount); under localCommand they are the operator host
+// paths read directly. The demo declares a `catalogRoots` slot, so a configured slot surfaces as
+// HOSTY_MOUNT_CATALOGROOTS — but discovery is generic over any declared slot.
+function discoverHostyMounts(): DemoMount[] {
+  const prefix = "HOSTY_MOUNT_";
+  const mounts: DemoMount[] = [];
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!name.startsWith(prefix) || !value) {
+      continue;
+    }
+
+    const key = name.slice(prefix.length).toLowerCase();
+    for (const mountPath of value.split(",").map(part => part.trim()).filter(Boolean)) {
+      mounts.push({ key, envName: name, path: mountPath });
+    }
+  }
+
+  return mounts.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 export async function inspectStorage(options: { writeProbe?: boolean } = {}) {
   const config = getDemoConfig();
 
-  return Promise.all([
+  const managed = await Promise.all([
     inspectDirectory({
       key: "data",
       label: "Data",
@@ -80,14 +108,24 @@ export async function inspectStorage(options: { writeProbe?: boolean } = {}) {
       writable: true,
       writeProbe: options.writeProbe,
     }),
-    inspectDirectory({
-      key: "external-sources",
-      label: "External sources",
-      directoryPath: config.paths.externalSourcesRoot,
-      writable: false,
-      writeProbe: false,
-    }),
   ]);
+
+  // External mounts are operator-owned, so they are inspected read-only (never write-probed) to
+  // avoid littering the operator's folders. A "mounted" badge plus the entry listing is enough to
+  // confirm the bind reached the container.
+  const mounts = await Promise.all(
+    config.mounts.map((mount, index) =>
+      inspectDirectory({
+        key: `mount-${mount.key}-${index}`,
+        label: `Mount: ${mount.key}`,
+        directoryPath: mount.path,
+        writable: false,
+        writeProbe: false,
+      })
+    )
+  );
+
+  return [...managed, ...mounts];
 }
 
 function defaultRuntimePath(name: string) {

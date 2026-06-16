@@ -501,6 +501,163 @@ public sealed class AppsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task MountsAsync_ListsSlotsAndBindingsFromAppsResponse()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "apps": [
+                {
+                  "id": "com.haas.demo-app",
+                  "displayName": "Demo App",
+                  "version": "1.0.0",
+                  "kind": "runtime",
+                  "system": false,
+                  "source": "manifest",
+                  "selectedRuntime": "docker",
+                  "autostart": true,
+                  "operationStatus": "installed",
+                  "runtimeState": "stopped",
+                  "capabilities": [],
+                  "mounts": [
+                    {
+                      "key": "catalogRoots",
+                      "mode": "rw",
+                      "multiple": true,
+                      "required": true,
+                      "service": "api",
+                      "bindings": [
+                        { "label": "movies", "hostPath": "/srv/movies", "containerPath": "/mnt/catalogRoots/movies" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["apps", "mounts", "com.haas.demo-app"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("GET", server.Method);
+        Assert.Equal("/control/v1/apps", server.PathAndQuery);
+        Assert.Contains("catalogRoots", output.ToString());
+        Assert.Contains("/mnt/catalogRoots/movies", output.ToString());
+    }
+
+    [Fact]
+    public async Task MountsSetAsync_SendsExpectedControlRequest()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "app": {
+                "id": "com.haas.demo-app",
+                "displayName": "Demo App",
+                "version": "1.0.0",
+                "kind": "runtime",
+                "system": false,
+                "source": "manifest",
+                "selectedRuntime": "docker",
+                "operationStatus": "configured",
+                "runtimeState": "stopped",
+                "capabilities": [],
+                "mounts": [
+                  {
+                    "key": "catalogRoots",
+                    "mode": "rw",
+                    "multiple": true,
+                    "required": true,
+                    "service": "api",
+                    "bindings": [
+                      { "label": "movies", "hostPath": "/srv/movies", "containerPath": "/mnt/catalogRoots/movies" }
+                    ]
+                  }
+                ]
+              },
+              "backup": null,
+              "status": "configured"
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "mounts",
+            "set",
+            "com.haas.demo-app",
+            "--mount",
+            "catalogRoots=movies=/srv/movies",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/mounts", server.PathAndQuery);
+        using var body = JsonDocument.Parse(server.Body);
+        var binding = body.RootElement.GetProperty("mounts")[0];
+        Assert.Equal("catalogRoots", binding.GetProperty("key").GetString());
+        Assert.Equal("movies", binding.GetProperty("label").GetString());
+        Assert.Equal("/srv/movies", binding.GetProperty("hostPath").GetString());
+        Assert.Contains("/mnt/catalogRoots/movies", output.ToString());
+    }
+
+    [Fact]
+    public async Task MountsClearAsync_SendsEmptyMountsList()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "app": {
+                "id": "com.haas.demo-app",
+                "displayName": "Demo App",
+                "version": "1.0.0",
+                "kind": "runtime",
+                "system": false,
+                "source": "manifest",
+                "selectedRuntime": "docker",
+                "operationStatus": "configured",
+                "runtimeState": "stopped",
+                "capabilities": [],
+                "mounts": []
+              },
+              "backup": null,
+              "status": "configured"
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, _) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["apps", "mounts", "clear", "com.haas.demo-app"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("POST", server.Method);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/mounts", server.PathAndQuery);
+        using var body = JsonDocument.Parse(server.Body);
+        Assert.Equal(0, body.RootElement.GetProperty("mounts").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task MountsSetAsync_RejectsMalformedMountSpecBeforeCallingCore()
+    {
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "mounts",
+            "set",
+            "com.haas.demo-app",
+            "--mount",
+            "catalogRoots:/srv/movies",
+        ], console);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("<key>=<label>=<host-path>", output.ToString());
+    }
+
+    [Fact]
     public async Task SourceResolveAsync_RejectsAmbiguousRefsBeforeCallingCore()
     {
         var (console, output) = CreateConsole();

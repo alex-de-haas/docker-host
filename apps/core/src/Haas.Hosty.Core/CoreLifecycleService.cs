@@ -13,6 +13,7 @@ internal sealed class CoreLifecycleService(
     IEnumerable<IAppRuntimeAdapter> adapters)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
+    private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
 
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
@@ -135,6 +136,154 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(AppSummary.From(document.App), null, "configured");
     }
 
+    // Operator-configured external mount bindings. Replaces the full set for the app (idempotent
+    // PUT semantics), validating each host path against the manifest-declared slots and the path
+    // policy before persisting. Existence of the host paths is enforced lazily at start time.
+    public async Task<AppLifecycleResponse> ConfigureMountsAsync(
+        string appId,
+        AppMountsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await apps.UpdateAppAsync(appId, app => app with
+        {
+            Mounts = ValidateMountBindings(app, request.Mounts ?? []),
+            OperationStatus = "configured",
+            LastOperation = "configure-mounts",
+            LastError = null,
+        }, cancellationToken);
+
+        return new AppLifecycleResponse(AppSummary.From(document.App), null, "configured");
+    }
+
+    private IReadOnlyList<AppMountBinding> ValidateMountBindings(AppRecord app, IReadOnlyList<AppMountBindingInput> inputs)
+    {
+        var slots = (app.MountSlots ?? []).ToDictionary(slot => slot.Key, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var perKeyCount = new Dictionary<string, int>(StringComparer.Ordinal);
+        var result = new List<AppMountBinding>(inputs.Count);
+
+        foreach (var input in inputs)
+        {
+            var key = input.Key?.Trim() ?? string.Empty;
+            if (!slots.TryGetValue(key, out var slot))
+            {
+                throw new AppLifecycleException("app_mount_slot_unknown", $"App '{app.Id}' does not declare an external mount slot '{key}'.");
+            }
+
+            var label = input.Label?.Trim() ?? string.Empty;
+            if (!MountLabelPattern.IsMatch(label) || label is "." or "..")
+            {
+                throw new AppLifecycleException("app_mount_label_invalid", $"External mount label '{label}' must match ^[a-z0-9][a-z0-9._-]{{0,62}}$.");
+            }
+
+            if (!seen.Add($"{key}/{label}"))
+            {
+                throw new AppLifecycleException("app_mount_label_duplicate", $"External mount '{key}' declares the label '{label}' more than once.");
+            }
+
+            perKeyCount[key] = perKeyCount.GetValueOrDefault(key) + 1;
+            if (!slot.Multiple && perKeyCount[key] > 1)
+            {
+                throw new AppLifecycleException("app_mount_multiple_not_allowed", $"External mount '{key}' does not allow more than one host path.");
+            }
+
+            result.Add(new AppMountBinding(key, label, NormalizeAndValidateMountHostPath(input.HostPath)));
+        }
+
+        return result;
+    }
+
+    private string NormalizeAndValidateMountHostPath(string? raw)
+    {
+        var value = raw?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new AppLifecycleException("app_mount_path_required", "External mount host path is required.");
+        }
+
+        if (!Path.IsPathFullyQualified(value))
+        {
+            throw new AppLifecycleException("app_mount_path_not_absolute", $"External mount host path must be absolute: {value}");
+        }
+
+        // A ':' in a non-Windows host path would break the docker `-v host:container` argument.
+        if (!OperatingSystem.IsWindows() && value.Contains(':'))
+        {
+            throw new AppLifecycleException("app_mount_path_invalid", $"External mount host path may not contain ':': {value}");
+        }
+
+        // Paths are injected as a comma-separated HOSTY_MOUNT_{KEY} list, so a ',' would break the
+        // contract the app relies on when it splits the variable.
+        if (value.Contains(','))
+        {
+            throw new AppLifecycleException("app_mount_path_invalid", $"External mount host path may not contain ',': {value}");
+        }
+
+        var normalized = Path.GetFullPath(value);
+        EnsureMountPathAllowed(normalized);
+        EnsureMountPathAllowed(ResolveRealPath(normalized));
+        return normalized;
+    }
+
+    // Rejects host paths that would breach isolation: anything inside the Hosty data root (would
+    // expose core/backups/other-app data) or a sensitive system root. Applied to both the
+    // operator path and its symlink-resolved target.
+    private void EnsureMountPathAllowed(string fullPath)
+    {
+        if (PathEqualsOrWithin(paths.DataRoot, fullPath))
+        {
+            throw new AppLifecycleException("app_mount_path_in_data_root", $"External mount host path may not be inside the Hosty data root: {fullPath}");
+        }
+
+        if (IsFileSystemRoot(fullPath))
+        {
+            throw new AppLifecycleException("app_mount_path_forbidden", $"External mount host path may not be the filesystem root: {fullPath}");
+        }
+
+        foreach (var denied in MountDenyRoots)
+        {
+            if (PathEqualsOrWithin(denied, fullPath))
+            {
+                throw new AppLifecycleException("app_mount_path_forbidden", $"External mount host path may not be inside the system path '{denied}': {fullPath}");
+            }
+        }
+    }
+
+    private static string ResolveRealPath(string fullPath)
+    {
+        try
+        {
+            return new DirectoryInfo(fullPath).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? fullPath;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return fullPath;
+        }
+    }
+
+    private static bool IsFileSystemRoot(string fullPath)
+        => string.Equals(Path.GetFullPath(fullPath), Path.GetPathRoot(fullPath), PathComparison);
+
+    private static bool PathEqualsOrWithin(string root, string candidate)
+    {
+        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+        var fullCandidate = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar);
+        if (string.Equals(fullRoot, fullCandidate, PathComparison))
+        {
+            return true;
+        }
+
+        return fullCandidate.StartsWith(fullRoot + Path.DirectorySeparatorChar, PathComparison);
+    }
+
+    private static StringComparison PathComparison
+        => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    private static readonly string[] MountDenyRoots =
+        OperatingSystem.IsWindows()
+            ? []
+            : ["/etc", "/proc", "/sys", "/dev", "/boot", "/run", "/var/run"];
+
     public async Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
@@ -147,6 +296,7 @@ internal sealed class CoreLifecycleService(
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            EnsureMountsReadyForStart(context);
             var result = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
             var updated = await apps.UpdateAppAsync(appId, current => current with
@@ -200,6 +350,7 @@ internal sealed class CoreLifecycleService(
             var selection = await LoadSelectionForAppAsync(app, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            EnsureMountsReadyForStart(context);
             _ = await adapter.StopAsync(context, cancellationToken);
             var start = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
@@ -729,7 +880,33 @@ internal sealed class CoreLifecycleService(
             SourceState: BuildSourceState(selection, existing),
             Ui: AppUiContract.FromManifest(manifest.Ui),
             Autostart: existing?.Autostart ?? true,
-            RuntimeProfiles: BuildRuntimeProfileSummaries(manifest));
+            RuntimeProfiles: BuildRuntimeProfileSummaries(manifest),
+            MountSlots: BuildMountSlots(manifest),
+            Mounts: PreserveMounts(manifest, existing?.Mounts));
+    }
+
+    // External-mount slots are redeclared from the manifest on every (re)build, like runtime
+    // profiles. Operator bindings are preserved from the existing record (like settings) so they
+    // survive update / runtime-switch; bindings whose slot the manifest no longer declares are
+    // dropped here so they cannot linger as orphans.
+    private static IReadOnlyList<AppMountSlot> BuildMountSlots(RuntimeAppManifest manifest)
+        => manifest.ExternalMounts
+            .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+            .Select(entry => new AppMountSlot(entry.Key, entry.Value.Mode, entry.Value.Multiple, entry.Value.Required, entry.Value.Service))
+            .ToArray();
+
+    private static IReadOnlyList<AppMountBinding> PreserveMounts(
+        RuntimeAppManifest manifest,
+        IReadOnlyList<AppMountBinding>? existing)
+    {
+        if (existing is null || existing.Count == 0)
+        {
+            return [];
+        }
+
+        return existing
+            .Where(binding => manifest.ExternalMounts.ContainsKey(binding.Key))
+            .ToArray();
     }
 
     private static IReadOnlyList<AppEndpointContract> PreserveEndpointUrls(
@@ -1143,7 +1320,35 @@ internal sealed class CoreLifecycleService(
         AppRecord app,
         RuntimeAppManifestSelection selection,
         CancellationToken cancellationToken)
-        => new(app, selection, GetAppRoot(app.Id), GetAppDataPath(app.Id), await ResolveDependencyUrlsAsync(app, cancellationToken));
+        => new(
+            app,
+            selection,
+            GetAppRoot(app.Id),
+            GetAppDataPath(app.Id),
+            await ResolveDependencyUrlsAsync(app, cancellationToken),
+            RuntimeMountPlanner.Resolve(app.MountSlots, app.Mounts));
+
+    // Start-time gate for external mounts: a declared-required slot must have a binding, every
+    // configured host path must still pass the path policy (defense-in-depth against a binding
+    // tampered on disk), and must exist as a directory. We check existence in Core rather than
+    // let docker bind a missing path, which would silently create an empty root-owned dir.
+    private void EnsureMountsReadyForStart(RuntimeLifecycleContext context)
+    {
+        RuntimeMountPlanner.EnsureRequiredConfigured(context.App.MountSlots, context.App.Mounts);
+        foreach (var mount in context.Mounts)
+        {
+            // Re-check both the stored path and its symlink-resolved target: a path validated at
+            // config time could have been repointed at a forbidden location since (TOCTOU).
+            EnsureMountPathAllowed(mount.HostPath);
+            EnsureMountPathAllowed(ResolveRealPath(mount.HostPath));
+            if (!Directory.Exists(mount.HostPath))
+            {
+                throw new AppLifecycleException(
+                    "app_mount_source_missing",
+                    $"External mount '{mount.Key}/{mount.Label}' host path was not found or is not a directory: {mount.HostPath}");
+            }
+        }
+    }
 
     private async Task<AppRecord> EnsureLocalCommandSourceReadyAsync(
         AppRecord app,
@@ -2016,6 +2221,10 @@ internal sealed record AppConfigureRequest(
     bool? Autostart = null);
 
 internal sealed record AppAutostartRequest(bool Autostart);
+
+internal sealed record AppMountsRequest(IReadOnlyList<AppMountBindingInput>? Mounts = null);
+
+internal sealed record AppMountBindingInput(string Key, string Label, string HostPath);
 
 internal sealed record AppUpdatePlanRequest(
     string? ManifestPath = null,
