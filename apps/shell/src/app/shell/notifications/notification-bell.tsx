@@ -26,6 +26,9 @@ export function NotificationBell({ compact }: { compact: boolean }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const mounted = useRef(true);
+  // Ids already counted toward `unread`, so a re-delivered or already-loaded notification
+  // is not double-counted by the SSE stream.
+  const knownIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mounted.current = true;
@@ -49,6 +52,7 @@ export function NotificationBell({ compact }: { compact: boolean }) {
         return;
       }
 
+      data.notifications.forEach((n) => knownIds.current.add(n.id));
       setItems(data.notifications);
       setUnread(data.unreadCount);
     } catch {
@@ -75,8 +79,12 @@ export function NotificationBell({ compact }: { compact: boolean }) {
 
         try {
           const view = JSON.parse(event.data) as ShellNotification;
+          const isNew = !knownIds.current.has(view.id);
+          knownIds.current.add(view.id);
           setItems((current) => [view, ...current.filter((n) => n.id !== view.id)].slice(0, LIST_LIMIT));
-          setUnread((current) => (view.read ? current : current + 1));
+          if (isNew && !view.read) {
+            setUnread((current) => current + 1);
+          }
         } catch {
           // Ignore malformed events.
         }
