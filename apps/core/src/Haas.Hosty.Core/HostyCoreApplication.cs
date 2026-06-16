@@ -34,6 +34,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton(sp => new AppManifestService(
             allowRemoteLocalCommand: sp.GetRequiredService<HostyCoreRuntimeConfig>().AllowRemoteLocalCommand));
         builder.Services.AddSingleton<AppBackupService>();
+        builder.Services.AddSingleton<NotificationStore>();
+        builder.Services.AddSingleton<NotificationBroadcaster>();
+        builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
@@ -42,6 +45,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IClock, SystemClock>();
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
+        builder.Services.AddHostedService<NotificationRetentionScheduler>();
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("HostyShell", policy =>
@@ -201,6 +205,7 @@ internal static class HostyCoreApplication
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
         AppBackupEndpoints.Map(app);
+        NotificationEndpoints.Map(app);
     }
 
     internal static IResult RequireControlSecret(HttpRequest request, ControlSecret secret, Func<IResult> action)
