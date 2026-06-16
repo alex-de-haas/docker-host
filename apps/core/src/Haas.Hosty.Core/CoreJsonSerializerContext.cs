@@ -48,6 +48,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppBackupRetentionDigestPayload))]
 [JsonSerializable(typeof(AppUpdatePlanDigestSeed))]
 [JsonSerializable(typeof(AppRuntimeSwitchDigestSeed))]
+[JsonSerializable(typeof(NotificationState))]
 
 // HTTP request bodies.
 [JsonSerializable(typeof(AuthSessionCreateRequest))]
@@ -116,6 +117,10 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppBackupsResponse))]
 [JsonSerializable(typeof(AppBackupResponse))]
 [JsonSerializable(typeof(AppInitiatedBackupResponse))]
+[JsonSerializable(typeof(NotificationView))]
+[JsonSerializable(typeof(AppNotificationCreateResponse))]
+[JsonSerializable(typeof(NotificationsResponse))]
+[JsonSerializable(typeof(NotificationMarkReadResponse))]
 [JsonSerializable(typeof(AppBackupDeleteResponse))]
 [JsonSerializable(typeof(AppBackupCleanupPlan))]
 [JsonSerializable(typeof(AppBackupCleanupApplyResponse))]
