@@ -71,7 +71,9 @@ export default async function SettingsPage() {
             items={[
               { label: "Data", value: config.paths.data },
               { label: "Logs", value: config.paths.logs },
-              { label: "External sources", value: config.paths.externalSourcesRoot },
+              ...(config.mounts.length > 0
+                ? config.mounts.map(mount => ({ label: `Mount: ${mount.key}`, value: mount.path }))
+                : [{ label: "External mounts", value: "none configured" }]),
             ]}
           />
         </SectionCard>

@@ -29,7 +29,38 @@ public sealed class AppManifestServiceTests
         Assert.Equal("com.example.notes", selection.Manifest.Id);
     }
 
-    private static async Task<string> WriteManifestAsync(string appId)
+    [Fact]
+    public async Task LoadAsync_AcceptsExternalMountsAndDefaultsKindAndMode()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            externalMounts: """, "externalMounts": { "catalogRoots": { "multiple": true, "required": true, "service": "app" } }""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var slot = selection.Manifest.ExternalMounts["catalogRoots"];
+        Assert.Equal("host-path", slot.Kind);
+        Assert.Equal("rw", slot.Mode);
+        Assert.True(slot.Multiple);
+        Assert.True(slot.Required);
+        Assert.Equal("app", slot.Service);
+    }
+
+    [Theory]
+    [InlineData(""", "externalMounts": { "catalogRoots": { "mode": "rx" } }""", "app_manifest_external_mount_mode_invalid")]
+    [InlineData(""", "externalMounts": { "catalogRoots": { "kind": "named-volume" } }""", "app_manifest_external_mount_kind_unsupported")]
+    [InlineData(""", "externalMounts": { "catalogRoots": { "service": "nope" } }""", "app_manifest_external_mount_service_unknown")]
+    [InlineData(""", "externalMounts": { "bad.key": {} }""", "app_manifest_external_mount_key_invalid")]
+    public async Task LoadAsync_RejectsInvalidExternalMounts(string externalMounts, string expectedCode)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", externalMounts);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -49,7 +80,7 @@ public sealed class AppManifestServiceTests
                     "image": "ghcr.io/example/notes:1.0.0"
                   }
                 }
-              }]
+              }]{{externalMounts ?? ""}}
             }
             """);
         return path;

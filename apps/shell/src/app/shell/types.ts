@@ -57,6 +57,28 @@ export type CoreApp = {
   navigation?: CoreNavigationItem[];
   entryPath?: string | null;
   embeddedUrl?: string | null;
+  mounts?: CoreMountSlot[];
+};
+
+export type CoreMountBinding = {
+  label: string;
+  hostPath: string;
+  containerPath: string;
+};
+
+export type CoreMountSlot = {
+  key: string;
+  mode: string;
+  multiple: boolean;
+  required: boolean;
+  service?: string | null;
+  bindings: CoreMountBinding[];
+};
+
+export type MountBindingInput = {
+  key: string;
+  label: string;
+  hostPath: string;
 };
 
 export type AppsResponse = {
@@ -200,7 +222,7 @@ export type CoreError = {
 };
 
 export type AppAction = "start" | "stop" | "restart" | "backup";
-export type DetailView = "logs" | "backups" | "configure" | "update" | "remove";
+export type DetailView = "logs" | "backups" | "configure" | "mounts" | "update" | "remove";
 export type ShellView = "available-apps" | "dashboard" | "installed-apps" | "users";
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";

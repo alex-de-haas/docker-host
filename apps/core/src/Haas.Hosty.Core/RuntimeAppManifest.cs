@@ -12,6 +12,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
     private const string SupportedSchemaVersion = "app.0.1";
     private const int MaxManifestBytes = 1024 * 1024;
     private static readonly Regex ContractKeyPattern = new("^[a-z][a-z0-9-]{0,62}$", RegexOptions.Compiled);
+    // External-mount keys allow camelCase (e.g. "catalogRoots") since they surface as
+    // HOSTY_MOUNT_{KEY} env names and `/mnt/{key}/...` container paths, not lowercase contract keys.
+    private static readonly Regex ExternalMountKeyPattern = new("^[A-Za-z][A-Za-z0-9_-]{0,62}$", RegexOptions.Compiled);
     private static readonly Regex AppIdPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
     private readonly HttpClient httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
 
@@ -222,6 +225,29 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         if (selectedProfile is not null && selectedServices.Count == 0)
         {
             errors.Add(new("app_manifest_selected_services_missing", "The selected runtime does not produce any runnable services.", "$.services"));
+        }
+
+        foreach (var (mountKey, mount) in manifest.ExternalMounts)
+        {
+            if (!ExternalMountKeyPattern.IsMatch(mountKey))
+            {
+                errors.Add(new("app_manifest_external_mount_key_invalid", "externalMounts keys must match ^[A-Za-z][A-Za-z0-9_-]{0,62}$.", "$.externalMounts"));
+            }
+
+            if (!string.Equals(mount.Kind, "host-path", StringComparison.Ordinal))
+            {
+                errors.Add(new("app_manifest_external_mount_kind_unsupported", $"externalMounts['{mountKey}'].kind '{mount.Kind}' is not supported; only 'host-path' is allowed.", "$.externalMounts"));
+            }
+
+            if (mount.Mode is not "ro" and not "rw")
+            {
+                errors.Add(new("app_manifest_external_mount_mode_invalid", $"externalMounts['{mountKey}'].mode must be 'ro' or 'rw'.", "$.externalMounts"));
+            }
+
+            if (!string.IsNullOrWhiteSpace(mount.Service) && !serviceKeys.Contains(mount.Service))
+            {
+                errors.Add(new("app_manifest_external_mount_service_unknown", $"externalMounts['{mountKey}'].service references unknown service '{mount.Service}'.", "$.externalMounts"));
+            }
         }
 
         RuntimeAppDataTarget? dataTarget = null;
@@ -585,6 +611,14 @@ internal sealed class DockerRuntimeAdapter(
                 runArgs.Add($"{environmentName}={containerPath}");
             }
 
+            var serviceMounts = RuntimeMountPlanner.ForService(context.Mounts, service.Key);
+            runArgs.AddRange(RuntimeMountPlanner.BuildDockerVolumeArguments(serviceMounts));
+            foreach (var mountEnvironment in RuntimeMountPlanner.BuildMountEnvironment(serviceMounts, useContainerPath: true))
+            {
+                runArgs.Add("-e");
+                runArgs.Add($"{mountEnvironment.Key}={mountEnvironment.Value}");
+            }
+
             runArgs.Add(service.Image.Reference);
             _ = await RunDockerAsync(runArgs, ignoreFailures: false, cancellationToken);
 
@@ -781,7 +815,8 @@ internal sealed record RuntimeLifecycleContext(
     RuntimeAppManifestSelection Manifest,
     string AppRoot,
     string AppDataPath,
-    IReadOnlyDictionary<string, string> DependencyUrls);
+    IReadOnlyDictionary<string, string> DependencyUrls,
+    IReadOnlyList<RuntimeMount> Mounts);
 
 internal sealed record RuntimeAppManifestSelection(
     RuntimeAppManifest Manifest,
@@ -825,6 +860,19 @@ internal sealed class RuntimeAppManifest
     public IReadOnlyList<RuntimeAppDependencyManifest> Dependencies { get => field ?? []; init; } = [];
     public IReadOnlyList<RuntimeAppEndpointManifest> Endpoints { get => field ?? []; init; } = [];
     public IReadOnlyList<string> Capabilities { get => field ?? []; init; } = [];
+    public IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> ExternalMounts { get => field ??= new Dictionary<string, RuntimeAppExternalMountManifest>(); init; } = new Dictionary<string, RuntimeAppExternalMountManifest>();
+}
+
+// Operator-configured external host-path mount slot. The manifest declares the slot
+// (what the app can accept); the operator later binds concrete host paths to it. `mode`
+// is authoritative for whether the bind is read-only — the operator only picks paths.
+internal sealed record RuntimeAppExternalMountManifest
+{
+    public string Kind { get => field ?? "host-path"; init; } = "host-path";
+    public bool Multiple { get; init; }
+    public string Mode { get => field ?? "rw"; init; } = "rw";
+    public string? Service { get; init; }
+    public bool Required { get; init; }
 }
 
 internal sealed record RuntimeAppSource(

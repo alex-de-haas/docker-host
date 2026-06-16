@@ -1,6 +1,6 @@
 ---
 name: hosty-app-skill
-description: Build, wrap, or update Hosty runtime apps. Use when creating app manifests under schemaVersion app.0.1, configuring Docker or localCommand runtime profiles, app data directories and backups, Shell UI metadata, Hosty Core identity, scoped app directory access, runtime-app roles, dependencies, channels, or validating apps with Core-managed local runtime profiles.
+description: Build, wrap, or update Hosty runtime apps. Use when creating app manifests under schemaVersion app.0.1, configuring Docker or localCommand runtime profiles, app data directories and backups, external host-path mounts (externalMounts / catalog roots), Shell UI metadata, Hosty Core identity, scoped app directory access, runtime-app roles, dependencies, channels, or validating apps with Core-managed local runtime profiles.
 ---
 
 # Hosty App Skill

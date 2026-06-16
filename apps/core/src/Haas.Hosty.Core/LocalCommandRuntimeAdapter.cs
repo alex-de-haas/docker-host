@@ -193,6 +193,14 @@ internal sealed class LocalCommandRuntimeAdapter(
         startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.AppDataPath;
         Directory.CreateDirectory(context.AppDataPath);
 
+        // External mounts: localCommand has no container, so the app reads the operator host
+        // paths directly (vs the container paths the docker runtime injects).
+        var serviceMounts = RuntimeMountPlanner.ForService(context.Mounts, service.Key);
+        foreach (var mountEnvironment in RuntimeMountPlanner.BuildMountEnvironment(serviceMounts, useContainerPath: false))
+        {
+            startInfo.Environment[mountEnvironment.Key] = mountEnvironment.Value;
+        }
+
         foreach (var environment in service.Runtime.Environment)
         {
             startInfo.Environment[environment.Key] = environment.Value;

@@ -1449,6 +1449,176 @@ public sealed class CoreLifecycleServiceTests
         Assert.Null(fixture.LocalProcesses.Get("com.example.local-fail", "second"));
     }
 
+    [Fact]
+    public async Task InstallAsync_DenormalizesExternalMountSlotsAndSurfacesEmptyBindings()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var summary = (await fixture.Service.ListAppsAsync()).Single();
+        var mount = Assert.Single(summary.Mounts);
+        Assert.Equal("catalogRoots", mount.Key);
+        Assert.Equal("rw", mount.Mode);
+        Assert.True(mount.Multiple);
+        Assert.True(mount.Required);
+        Assert.Empty(mount.Bindings);
+    }
+
+    [Fact]
+    public async Task ConfigureMountsAsync_PersistsBindingsAndExposesLabelStableContainerPaths()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var host = CreateExternalDirectory();
+
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", "movies-4k", host)]));
+
+        var summary = (await fixture.Service.ListAppsAsync()).Single();
+        var binding = Assert.Single(summary.Mounts.Single().Bindings);
+        Assert.Equal("movies-4k", binding.Label);
+        Assert.Equal(Path.GetFullPath(host), binding.HostPath);
+        Assert.Equal("/mnt/catalogRoots/movies-4k", binding.ContainerPath);
+    }
+
+    [Fact]
+    public async Task ConfigureMountsAsync_RejectsHostPathInsideDataRoot()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var inside = Path.Combine(fixture.Paths.DataRoot, "stolen");
+        Directory.CreateDirectory(inside);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureMountsAsync(
+                "com.example.notes",
+                new AppMountsRequest([new AppMountBindingInput("catalogRoots", "inside", inside)])));
+
+        Assert.Equal("app_mount_path_in_data_root", error.Code);
+    }
+
+    [Theory]
+    [InlineData("missing", "movies", "app_mount_slot_unknown")]
+    [InlineData("catalogRoots", "Bad Label", "app_mount_label_invalid")]
+    public async Task ConfigureMountsAsync_RejectsInvalidBindings(string key, string label, string expectedCode)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureMountsAsync(
+                "com.example.notes",
+                new AppMountsRequest([new AppMountBindingInput(key, label, CreateExternalDirectory())])));
+
+        Assert.Equal(expectedCode, error.Code);
+    }
+
+    [Fact]
+    public async Task ConfigureMountsAsync_RejectsSecondPathWhenSlotIsNotMultiple()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync(
+            "1.0.0",
+            externalMountsJson: """ "externalMounts": { "config": { "multiple": false, "mode": "ro" } },""");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureMountsAsync(
+                "com.example.notes",
+                new AppMountsRequest(
+                [
+                    new AppMountBindingInput("config", "a", CreateExternalDirectory()),
+                    new AppMountBindingInput("config", "b", CreateExternalDirectory()),
+                ])));
+
+        Assert.Equal("app_mount_multiple_not_allowed", error.Code);
+    }
+
+    [Fact]
+    public async Task ConfigureMountsAsync_BindingsSurviveUpdate()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestV1 = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        var manifestV2 = await fixture.WriteManifestAsync("2.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestV1));
+        var host = CreateExternalDirectory();
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", "movies", host)]));
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+        await fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest, manifestV2));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var binding = Assert.Single(app!.Mounts!);
+        Assert.Equal("movies", binding.Label);
+        Assert.Equal(Path.GetFullPath(host), binding.HostPath);
+    }
+
+    [Fact]
+    public async Task StartAsync_ThrowsWhenRequiredMountUnconfigured()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.StartAsync("com.example.notes"));
+
+        Assert.Equal("app_mount_required_unconfigured", error.Code);
+    }
+
+    [Fact]
+    public async Task StartAsync_ResolvesConfiguredMountsIntoRuntimeContext()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var host = CreateExternalDirectory();
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", "movies", host)]));
+
+        await fixture.Service.StartAsync("com.example.notes");
+
+        var mount = Assert.Single(fixture.Adapter.LastContext!.Mounts);
+        Assert.Equal("/mnt/catalogRoots/movies", mount.ContainerPath);
+        Assert.Equal("app", mount.Service);
+    }
+
+    [Fact]
+    public async Task StartAsync_ThrowsWhenConfiguredMountSourceMissing()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var host = CreateExternalDirectory();
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", "movies", host)]));
+        Directory.Delete(host, recursive: true);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.StartAsync("com.example.notes"));
+
+        Assert.Equal("app_mount_source_missing", error.Code);
+    }
+
+    private const string RequiredCatalogMountsJson =
+        """ "externalMounts": { "catalogRoots": { "multiple": true, "required": true, "service": "app" } },""";
+
+    private static string CreateExternalDirectory()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"hosty-mount-src-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
     private static string CreateRemoteManifestJson(string version)
         => $$"""
             {
@@ -1614,7 +1784,8 @@ public sealed class CoreLifecycleServiceTests
             string version,
             bool includeDependency = false,
             string? sourceRepository = null,
-            string? settingsJson = null)
+            string? settingsJson = null,
+            string? externalMountsJson = null)
         {
             var path = Path.Combine(Root, $"notes-{version}.json");
             var dependencyJson = includeDependency
@@ -1676,6 +1847,7 @@ public sealed class CoreLifecycleServiceTests
                   }],
                   {{manifestSettingsJson}}
                   {{dependencyJson}}
+                  {{externalMountsJson ?? ""}}
                   "data": {
                     "enabled": true,
                     "targets": [{

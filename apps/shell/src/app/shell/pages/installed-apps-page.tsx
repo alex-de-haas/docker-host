@@ -12,6 +12,7 @@ import {
   Database,
   ExternalLink,
   FileText,
+  HardDrive,
   LoaderCircle,
   MoreHorizontal,
   Play,
@@ -469,6 +470,7 @@ function InstalledAppRow({
   const canInspect = canManageApps;
   const canBackup = canControl && app.capabilities.includes("backup");
   const canConfigure = canControl;
+  const canConfigureMounts = canControl && (app.mounts?.length ?? 0) > 0;
   const canUpdate = canControl && app.capabilities.includes("update");
   const canRemove = canControl && app.capabilities.includes("remove");
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
@@ -542,6 +544,7 @@ function InstalledAppRow({
             canInspect={canInspect}
             canBackup={canBackup}
             canConfigure={canConfigure}
+            canConfigureMounts={canConfigureMounts}
             canUpdate={canUpdate}
             canRemove={canRemove}
             busyAction={busyAction}
@@ -622,6 +625,7 @@ function InstalledAppActionsMenu({
   canInspect,
   canBackup,
   canConfigure,
+  canConfigureMounts,
   canUpdate,
   canRemove,
   busyAction,
@@ -632,6 +636,7 @@ function InstalledAppActionsMenu({
   canInspect: boolean;
   canBackup: boolean;
   canConfigure: boolean;
+  canConfigureMounts: boolean;
   canUpdate: boolean;
   canRemove: boolean;
   busyAction: string | null;
@@ -640,7 +645,7 @@ function InstalledAppActionsMenu({
 }) {
   const hasLogs = canInspect && app.capabilities.includes("logs");
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
-  const hasMenuActions = hasLogs || canBackup || canConfigure || canUpdate || canRemove;
+  const hasMenuActions = hasLogs || canBackup || canConfigure || canConfigureMounts || canUpdate || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -677,6 +682,12 @@ function InstalledAppActionsMenu({
           <DropdownMenuItem onClick={() => onOpenPanel(app, "configure")}>
             <Settings2 className="h-4 w-4" />
             Configure
+          </DropdownMenuItem>
+        )}
+        {canConfigureMounts && (
+          <DropdownMenuItem onClick={() => onOpenPanel(app, "mounts")}>
+            <HardDrive className="h-4 w-4" />
+            External storage
           </DropdownMenuItem>
         )}
         {canUpdate && (
