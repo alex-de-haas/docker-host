@@ -8,9 +8,15 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
 {
     private const int AutomaticRetentionCount = 5;
     private const string ManualReason = "manual";
+
+    // Reason recorded for backups an app triggers through its service token (e.g. before
+    // applying its own migrations). Unlike "manual", these are kept-last-N retention-managed:
+    // an app may request one on every startup, so retaining them forever would leak storage.
+    public const string AppInitiatedReason = "app-initiated";
     private static readonly string[] AutomaticReasons = ["pre-update", "pre-restore", "pre-runtime-switch", "scheduled"];
+    private static readonly string[] RetentionManagedReasons = [.. AutomaticReasons, AppInitiatedReason];
     private static readonly AppBackupRetentionPolicy DefaultRetentionPolicy = new(
-        Rules: AutomaticReasons.ToDictionary(
+        Rules: RetentionManagedReasons.ToDictionary(
             reason => reason,
             _ => new AppBackupRetentionRule(KeepLast: AutomaticRetentionCount, MaxAgeDays: null),
             StringComparer.Ordinal),
@@ -19,6 +25,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
     public async Task<AppBackupRecord?> CreateBackupAsync(
         string appId,
         string reason,
+        string? note = null,
         CancellationToken cancellationToken = default)
     {
         var dataPath = GetAppDataPath(appId);
@@ -29,7 +36,10 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
 
         var backupRoot = GetBackupRoot(appId);
         Directory.CreateDirectory(backupRoot);
-        var backupId = $"{clock.UtcNow:yyyyMMddHHmmssfff}_{reason}";
+        // A short random suffix keeps the id unique even when two backups are requested in the
+        // same millisecond (more likely now that apps can trigger backups programmatically),
+        // so the CreateNew-based ZipFile.CreateFromDirectory below never collides.
+        var backupId = $"{clock.UtcNow:yyyyMMddHHmmssfff}_{reason}_{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}";
         var archivePath = Path.Combine(backupRoot, $"{backupId}.zip");
         var metadataPath = Path.Combine(backupRoot, $"{backupId}.json");
 
@@ -45,10 +55,11 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
             ArchiveSha256: await ComputeSha256Async(archivePath, cancellationToken),
             ArchiveSize: archiveInfo.Length,
             FileCount: Directory.EnumerateFiles(dataPath, "*", SearchOption.AllDirectories).Count(),
+            Note: note,
             Retention: null);
         await JsonStorage.WriteAsync(metadataPath, record, cancellationToken);
 
-        if (IsAutomaticReason(reason))
+        if (IsRetentionManagedReason(reason))
         {
             await ApplyAutomaticRetentionAsync(appId, cancellationToken);
         }
@@ -128,7 +139,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
 
         if (createPreRestoreBackup)
         {
-            _ = await CreateBackupAsync(appId, "pre-restore", cancellationToken);
+            _ = await CreateBackupAsync(appId, "pre-restore", cancellationToken: cancellationToken);
         }
 
         var dataPath = GetAppDataPath(appId);
@@ -170,6 +181,14 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
 
     public static bool IsAutomaticReason(string reason)
         => AutomaticReasons.Contains(reason, StringComparer.Ordinal);
+
+    // Reasons the operator/app may not pass explicitly: Core owns these lifecycle reasons
+    // and the app-initiated reason has retention semantics callers must not impersonate.
+    public static bool IsReservedReason(string reason)
+        => IsAutomaticReason(reason) || string.Equals(reason, AppInitiatedReason, StringComparison.Ordinal);
+
+    private static bool IsRetentionManagedReason(string reason)
+        => DefaultRetentionPolicy.Rules.ContainsKey(reason);
 
     public async Task<AppBackupCleanupPlan> CreateCleanupPlanAsync(
         string? appId = null,
@@ -605,6 +624,7 @@ internal sealed record AppBackupRecord(
     string ArchiveSha256,
     long ArchiveSize,
     int FileCount,
+    string? Note = null,
     AppBackupRetentionStatus? Retention = null);
 
 internal sealed record AppBackupRetentionStatus(

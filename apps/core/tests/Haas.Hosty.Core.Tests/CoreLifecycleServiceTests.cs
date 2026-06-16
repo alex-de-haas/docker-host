@@ -44,6 +44,38 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateBackupAsync_AppInitiated_KeepsLastFiveAndPersistsNote()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var dataDir = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data");
+        Directory.CreateDirectory(dataDir);
+
+        AppBackupRecord? oldest = null;
+        for (var index = 0; index < 7; index++)
+        {
+            fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddSeconds(1);
+            await File.WriteAllTextAsync(Path.Combine(dataDir, "notes.db"), $"app-{index}");
+            var backup = await fixture.Backups.CreateBackupAsync(
+                "com.example.notes",
+                AppBackupService.AppInitiatedReason,
+                note: $"pre-migration-{index}");
+            oldest ??= backup;
+        }
+
+        var backups = await fixture.Backups.ListBackupsAsync("com.example.notes");
+        var appInitiated = backups
+            .Where(backup => backup.Reason == AppBackupService.AppInitiatedReason)
+            .ToArray();
+
+        // Unlike "manual", app-initiated backups are retention-managed so an app that requests
+        // one on every startup cannot accumulate archives without bound.
+        Assert.Equal(5, appInitiated.Length);
+        Assert.DoesNotContain(backups, backup => backup.BackupId == oldest!.BackupId);
+        // The descriptive note round-trips through the persisted metadata.
+        Assert.All(appInitiated, backup => Assert.StartsWith("pre-migration-", backup.Note!));
+    }
+
+    [Fact]
     public async Task ListBackupsAsync_IncludesRetentionStatus()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -282,6 +314,7 @@ public sealed class CoreLifecycleServiceTests
     [InlineData("pre-restore")]
     [InlineData("pre-runtime-switch")]
     [InlineData("scheduled")]
+    [InlineData("app-initiated")]
     public async Task CreateManualBackupAsync_RejectsReservedLifecycleReasons(string reason)
     {
         var fixture = await LifecycleFixture.CreateAsync();

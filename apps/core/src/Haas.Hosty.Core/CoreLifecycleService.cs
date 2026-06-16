@@ -290,7 +290,7 @@ internal sealed class CoreLifecycleService(
         }
 
         var backup = plan.WillCreatePreUpdateBackup
-            ? await backups.CreateBackupAsync(appId, "pre-update", cancellationToken)
+            ? await backups.CreateBackupAsync(appId, "pre-update", cancellationToken: cancellationToken)
             : null;
 
         await manifests.SaveManifestCopyAsync(selection, GetAppRoot(appId), cancellationToken);
@@ -386,7 +386,7 @@ internal sealed class CoreLifecycleService(
         }
 
         var backup = plan.AutomaticBackup
-            ? await backups.CreateBackupAsync(appId, "pre-runtime-switch", cancellationToken)
+            ? await backups.CreateBackupAsync(appId, "pre-runtime-switch", cancellationToken: cancellationToken)
             : null;
 
         var targetSelection = await manifests.LoadAsync(app.ManifestPath!, request.TargetRuntime, cancellationToken);
@@ -537,12 +537,12 @@ internal sealed class CoreLifecycleService(
             throw new AppLifecycleException("backup_reason_invalid", "Backup reason must match ^[a-z0-9][a-z0-9-]{0,30}$.");
         }
 
-        if (AppBackupService.IsAutomaticReason(reason))
+        if (AppBackupService.IsReservedReason(reason))
         {
-            throw new AppLifecycleException("backup_reason_reserved", $"{reason} backup reason is reserved for Core lifecycle operations.");
+            throw new AppLifecycleException("backup_reason_reserved", $"{reason} backup reason is reserved for Core lifecycle and app-initiated operations.");
         }
 
-        return new AppBackupResponse(await backups.CreateBackupAsync(appId, reason, cancellationToken));
+        return new AppBackupResponse(await backups.CreateBackupAsync(appId, reason, cancellationToken: cancellationToken));
     }
 
     public async Task<AppBackupResponse> RestoreBackupAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken = default)

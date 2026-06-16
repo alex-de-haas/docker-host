@@ -25,6 +25,23 @@ public sealed class AppBackupServiceTests
     }
 
     [Fact]
+    public async Task CreateBackupAsync_SameInstant_ProducesDistinctBackups()
+    {
+        // The fixture clock does not advance between calls, so both backups share a timestamp.
+        // Without the random id suffix the second create would collide on the archive path.
+        var fixture = BackupFixture.Create();
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "data");
+
+        var first = await fixture.Service.CreateBackupAsync("com.example.notes", "manual");
+        var second = await fixture.Service.CreateBackupAsync("com.example.notes", "manual");
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.NotEqual(first.BackupId, second.BackupId);
+        Assert.Equal(2, (await fixture.Service.ListBackupsAsync("com.example.notes")).Count);
+    }
+
+    [Fact]
     public async Task RestoreBackupAsync_RejectsCorruptArchiveBeforeTouchingData()
     {
         var fixture = BackupFixture.Create();
