@@ -22,6 +22,7 @@ flowchart LR
 - [Hosty runtime app platform](features/hosty-runtime-app-platform.md) - current runtime app lifecycle platform.
 - [Runtime app manifest](features/runtime-app-manifest.md) - `app.0.1` manifest contract.
 - [Automatic runtime app ports](features/automatic-runtime-app-ports.md) - Core-assigned local ports and `PORT` compatibility behavior.
+- [Raw L4 ports](features/raw-ports.md) - opt-in `expose: host` / `transport` publishing of a docker port on all interfaces over TCP/UDP.
 - [External host-path mounts](features/external-mounts.md) - operator-configured external folders (`externalMounts`) injected as `HOSTY_MOUNT_{KEY}`.
 - [Runtime app update](features/runtime-app-update.md) - update plan and apply behavior.
 - [Runtime source workflows](features/runtime-source-workflows.md) - source checkout, local override, and runtime switching.

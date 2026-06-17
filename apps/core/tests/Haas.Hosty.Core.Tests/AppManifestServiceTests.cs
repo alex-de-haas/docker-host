@@ -61,7 +61,36 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null)
+    [Fact]
+    public async Task LoadAsync_AcceptsHostExposedRawPort()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            ports: """, "ports": [{ "key": "torrent", "containerPort": 6881, "hostPort": 6881, "expose": "host", "transport": ["tcp", "udp"] }]""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var port = selection.Services.Single().Runtime.Ports.Single();
+        Assert.Equal("host", port.Expose);
+        Assert.Equal(["tcp", "udp"], port.Transport);
+    }
+
+    [Theory]
+    [InlineData(""", "ports": [{ "containerPort": 6881, "expose": "everywhere" }]""", "app_manifest_port_expose_invalid")]
+    [InlineData(""", "ports": [{ "containerPort": 6881, "transport": ["sctp"] }]""", "app_manifest_port_transport_invalid")]
+    [InlineData(""", "ports": [{ "containerPort": 6881, "transport": [] }]""", "app_manifest_port_transport_invalid")]
+    [InlineData(""", "ports": [{ "containerPort": 6881, "transport": ["tcp", "tcp"] }]""", "app_manifest_port_transport_duplicate")]
+    [InlineData(""", "ports": [{ "containerPort": 6881, "expose": "host" }]""", "app_manifest_port_host_requires_pinned_port")]
+    public async Task LoadAsync_RejectsInvalidRawPorts(string ports, string expectedCode)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", ports: ports);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -78,7 +107,7 @@ public sealed class AppManifestServiceTests
                 "runtimes": {
                   "docker": {
                     "type": "docker",
-                    "image": "ghcr.io/example/notes:1.0.0"
+                    "image": "ghcr.io/example/notes:1.0.0"{{ports ?? ""}}
                   }
                 }
               }]{{externalMounts ?? ""}}

@@ -1933,7 +1933,11 @@ internal sealed class CoreLifecycleService(
         var hostPort = port.LocalPort ?? port.HostPort;
         var host = hostPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "auto";
         var isPublic = port.Public ?? false;
-        return $"{protocol}:{host}->{containerPort}:public={isPublic}";
+        var expose = string.IsNullOrWhiteSpace(port.Expose) ? "loopback" : port.Expose.ToLowerInvariant();
+        var transport = port.Transport is { Count: > 0 } transports
+            ? string.Join("+", transports.Select(value => value.ToLowerInvariant()).OrderBy(value => value, StringComparer.Ordinal))
+            : "tcp";
+        return $"{protocol}:{host}->{containerPort}:public={isPublic}:expose={expose}:transport={transport}";
     }
 
     private static string EndpointSignature(AppEndpointContract endpoint)

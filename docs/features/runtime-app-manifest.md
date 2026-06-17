@@ -63,6 +63,20 @@ Use explicit `localPort` / `hostPort` only as an override. If an explicit local 
 
 Core publishes local runtime endpoint URLs as `http://localhost:<assigned-port>`. It does not use `127.0.0.1` or `app.localhost` in app URLs. Install review only asks for manifest-owned settings. After installation, each public endpoint gets a Hosty-managed optional setting named `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}`, where the endpoint key is normalized to uppercase env style. For example, `http` becomes `HOSTY_PUBLIC_ORIGIN_HTTP` and `app.http` becomes `HOSTY_PUBLIC_ORIGIN_APP_HTTP`. The `HOSTY_PUBLIC_ORIGIN_` prefix is reserved for Hosty-managed settings; manifest-provided settings with that prefix are ignored and cannot pre-seed public origins. Leave the generated setting empty for local `localhost` URLs, or set it to an absolute `http`/`https` origin such as `https://project.example.com` when Shell and standalone links should use an externally exposed origin. The public origin setting must be an origin only, without a path, query, or fragment.
 
+### Port fields
+
+Each entry in a service runtime's `ports` array accepts:
+
+- `key` - stable port key; surfaced to the app as `HOSTY_PORT_{KEY}`.
+- `containerPort` - the port the service listens on inside the container.
+- `localPort` / `hostPort` - explicit host port to pin (otherwise Core assigns one).
+- `protocol` - the URL scheme for the published HTTP endpoint (default `http`); not a transport.
+- `public` - whether the endpoint is externally visible.
+- `expose` - `loopback` (default) or `host`. `host` binds the published port on `0.0.0.0` (all interfaces) instead of `127.0.0.1`, for raw L4 listeners reachable off the host. A `host`-exposed port **must** pin `hostPort` (or `localPort`); recommended `hostPort == containerPort`. Docker runtime only.
+- `transport` - subset of `["tcp"]` / `["udp"]`, default `["tcp"]`. Each transport is published as a separate `-p` rule. Docker runtime only.
+
+`expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](raw-ports.md).
+
 ## Source
 
 `source` is optional app-level metadata that describes where Core can obtain the app source when a runtime needs it.
