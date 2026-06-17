@@ -10,7 +10,8 @@ internal sealed class CoreLifecycleService(
     AppManifestService manifests,
     AppBackupService backups,
     AppSourceService sources,
-    IEnumerable<IAppRuntimeAdapter> adapters)
+    IEnumerable<IAppRuntimeAdapter> adapters,
+    IIngressController ingress)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -294,6 +295,7 @@ internal sealed class CoreLifecycleService(
         {
             var selection = await LoadSelectionForAppAsync(app, cancellationToken);
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
+            app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             EnsureMountsReadyForStart(context);
@@ -308,6 +310,7 @@ internal sealed class CoreLifecycleService(
                 Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
             }, cancellationToken);
 
+            await ReconcileIngressAsync(cancellationToken);
             return new AppLifecycleResponse(AppSummary.From(updated.App), null, "started");
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
@@ -336,6 +339,7 @@ internal sealed class CoreLifecycleService(
             LastError = null,
         }, cancellationToken);
 
+        await ReconcileIngressAsync(cancellationToken);
         return new AppLifecycleResponse(AppSummary.From(updated.App), null, "stopped");
     }
 
@@ -670,6 +674,7 @@ internal sealed class CoreLifecycleService(
         }
 
         TryDeleteDirectoryIfEmpty(GetAppRoot(appId));
+        await ReconcileIngressAsync(cancellationToken);
         return new AppLifecycleResponse(app is null ? null : AppSummary.From(app), null, "removed");
     }
 
@@ -1929,6 +1934,69 @@ internal sealed class CoreLifecycleService(
             Public: port.Public ?? false,
             Service: service.Key,
             Port: port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"))).ToArray();
+    }
+
+    // When an ingress provider manages public origins (e.g. cloudflared), persist the derived
+    // HOSTY_PUBLIC_ORIGIN_<endpoint> values before start so the existing settings->env pipeline
+    // injects them. The host is deterministic, so this runs before the runtime port is known.
+    private async Task<AppRecord> EnsureIngressPublicOriginsAsync(
+        AppRecord app,
+        RuntimeAppManifestSelection selection,
+        CancellationToken cancellationToken)
+    {
+        if (!ingress.ManagesPublicOrigins)
+        {
+            return app;
+        }
+
+        var publicEndpointKeys = BuildEndpointContracts(selection)
+            .Where(endpoint => endpoint.Public && !string.IsNullOrWhiteSpace(endpoint.Key))
+            .Select(endpoint => endpoint.Key)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (publicEndpointKeys.Length == 0)
+        {
+            return app;
+        }
+
+        var subdomainOverride = app.Settings.TryGetValue(CloudflaredIngressPlanner.SubdomainSettingKey, out var subdomain)
+            ? subdomain.Value
+            : null;
+        var desired = ingress.ResolvePublicOrigins(app.Id, subdomainOverride, publicEndpointKeys);
+        var changed = desired.Any(entry =>
+            !app.Settings.TryGetValue(entry.Key, out var current) ||
+            !string.Equals(current.Value, entry.Value, StringComparison.Ordinal));
+        if (!changed)
+        {
+            return app;
+        }
+
+        var updated = await apps.UpdateAppAsync(app.Id, current =>
+        {
+            var settings = new Dictionary<string, AppSettingValue>(current.Settings, StringComparer.Ordinal);
+            foreach (var entry in desired)
+            {
+                settings[entry.Key] = new AppSettingValue(entry.Key, "url", entry.Value, Secret: false);
+            }
+
+            return current with { Settings = settings };
+        }, cancellationToken);
+        return updated.App;
+    }
+
+    // Re-render the ingress provider's config from the current set of apps. Best-effort: an ingress
+    // failure must never fail the lifecycle operation that triggered it.
+    public async Task ReconcileIngressAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var records = await apps.ListAppRecordsAsync(cancellationToken);
+            await ingress.ReconcileAsync(records, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Swallowed: the ingress controller already logs its own write failures.
+        }
     }
 
     private static IReadOnlyList<RuntimeAppSettingManifest> BuildSettingDefinitions(RuntimeAppManifestSelection selection)

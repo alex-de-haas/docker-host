@@ -43,6 +43,13 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();
+        builder.Services.AddSingleton<IIngressController>(sp =>
+        {
+            var ingressConfig = sp.GetRequiredService<HostyCoreRuntimeConfig>();
+            return string.Equals(ingressConfig.IngressProvider, "cloudflared", StringComparison.OrdinalIgnoreCase)
+                ? new CloudflaredIngressController(ingressConfig, sp.GetRequiredService<ILogger<CloudflaredIngressController>>())
+                : new NoneIngressController();
+        });
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
@@ -637,11 +644,18 @@ internal sealed record HostyCoreRuntimeConfig(
     bool ShellBootstrapEnabled,
     bool ShellAutostart,
     string? TrustedProxySecret = null,
-    bool AllowRemoteLocalCommand = false)
+    bool AllowRemoteLocalCommand = false,
+    string IngressProvider = "none",
+    string? IngressBaseDomain = null,
+    string? IngressConfigPath = null,
+    string? IngressTunnelId = null,
+    string? IngressCredentialsFile = null)
 {
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
 
     public string EffectiveShellPublicOrigin => ShellPublicOrigin ?? $"http://localhost:{ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
+    public string EffectiveIngressConfigPath => IngressConfigPath ?? Path.Combine(DataRoot, "core", "ingress", "config.yml");
 
     public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment)
     {
@@ -677,7 +691,12 @@ internal sealed record HostyCoreRuntimeConfig(
             ReadBoolean("HOSTY_SHELL_BOOTSTRAP_ENABLED", defaultValue: true),
             ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_TRUSTED_PROXY_SECRET")),
-            ReadBoolean("HOSTY_ALLOW_REMOTE_LOCAL_COMMAND", defaultValue: false));
+            ReadBoolean("HOSTY_ALLOW_REMOTE_LOCAL_COMMAND", defaultValue: false),
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_PROVIDER")) ?? "none",
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_BASE_DOMAIN")),
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CONFIG_PATH")),
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_TUNNEL_ID")),
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CREDENTIALS_FILE")));
     }
 
     private static string? ReadFirst(params string[] names)
@@ -744,6 +763,32 @@ internal sealed record HostyCoreRuntimeConfig(
         var warnings = new List<string>();
         AddPublicOriginWarnings(warnings, "Core", CorePublicOrigin);
         AddPublicOriginWarnings(warnings, "Shell", ShellPublicOrigin);
+        return warnings;
+    }
+
+    public IReadOnlyList<string> BuildIngressWarnings()
+    {
+        if (!string.Equals(IngressProvider, "cloudflared", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var warnings = new List<string>();
+        if (string.IsNullOrWhiteSpace(IngressBaseDomain))
+        {
+            warnings.Add("Ingress provider 'cloudflared' requires HOSTY_INGRESS_BASE_DOMAIN; tunnel config will not be written.");
+        }
+
+        if (string.IsNullOrWhiteSpace(IngressTunnelId))
+        {
+            warnings.Add("Ingress provider 'cloudflared' requires HOSTY_INGRESS_TUNNEL_ID; tunnel config will not be written.");
+        }
+
+        if (string.IsNullOrWhiteSpace(IngressCredentialsFile))
+        {
+            warnings.Add("Ingress provider 'cloudflared' requires HOSTY_INGRESS_CREDENTIALS_FILE; tunnel config will not be written.");
+        }
+
         return warnings;
     }
 
@@ -821,6 +866,7 @@ internal sealed class RuntimeAppSupervisorService(
         await EnsureShellInstalledAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
+        await lifecycle.ReconcileIngressAsync(stoppingToken);
 
         try
         {
@@ -1183,6 +1229,8 @@ internal sealed record CoreStatusResponse(
     string RuntimePublicHost,
     string? ShellManifestPath,
     bool ShellAutostart,
+    string IngressProvider,
+    string? IngressConfigPath,
     IReadOnlyList<string> Warnings,
     DateTimeOffset ServerTime)
 {
@@ -1199,7 +1247,11 @@ internal sealed record CoreStatusResponse(
             config.RuntimePublicHost,
             config.ShellManifestPath,
             config.ShellAutostart,
-            config.BuildPublicOriginWarnings(),
+            config.IngressProvider,
+            string.Equals(config.IngressProvider, "cloudflared", StringComparison.OrdinalIgnoreCase)
+                ? config.EffectiveIngressConfigPath
+                : null,
+            [.. config.BuildPublicOriginWarnings(), .. config.BuildIngressWarnings()],
             DateTimeOffset.UtcNow);
 }
 
