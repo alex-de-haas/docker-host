@@ -1,0 +1,259 @@
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
+
+namespace Haas.Hosty.Core;
+
+// Ingress turns a runtime app's loopback ports into externally reachable, TLS-terminated URLs.
+// Core does not run a reverse proxy itself; the cloudflared provider drives an operator-run
+// Cloudflare Tunnel by writing its config file and auto-deriving HOSTY_PUBLIC_ORIGIN_* values.
+// "none" (the default) keeps today's behaviour: the operator manages exposure and origins.
+internal interface IIngressController
+{
+    // True when Core derives HOSTY_PUBLIC_ORIGIN_* itself; false when the operator owns them.
+    bool ManagesPublicOrigins { get; }
+
+    // Desired HOSTY_PUBLIC_ORIGIN_<endpoint> settings for an app's public endpoints. The host
+    // is deterministic (subdomain + base domain), so this is known before the app starts.
+    IReadOnlyDictionary<string, string> ResolvePublicOrigins(
+        string appId,
+        string? subdomainOverride,
+        IReadOnlyList<string> publicEndpointKeys);
+
+    // Re-render the whole tunnel config from the set of running apps. Declarative and idempotent;
+    // best-effort (never throws into a lifecycle operation).
+    Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default);
+}
+
+internal sealed class NoneIngressController : IIngressController
+{
+    private static readonly IReadOnlyDictionary<string, string> Empty =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    public bool ManagesPublicOrigins => false;
+
+    public IReadOnlyDictionary<string, string> ResolvePublicOrigins(
+        string appId,
+        string? subdomainOverride,
+        IReadOnlyList<string> publicEndpointKeys)
+        => Empty;
+
+    public Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+}
+
+internal sealed class CloudflaredIngressController(
+    HostyCoreRuntimeConfig config,
+    ILogger<CloudflaredIngressController> logger) : IIngressController
+{
+    private static readonly IReadOnlyDictionary<string, string> Empty =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    public bool ManagesPublicOrigins => true;
+
+    public IReadOnlyDictionary<string, string> ResolvePublicOrigins(
+        string appId,
+        string? subdomainOverride,
+        IReadOnlyList<string> publicEndpointKeys)
+    {
+        if (string.IsNullOrWhiteSpace(config.IngressBaseDomain) || publicEndpointKeys.Count == 0)
+        {
+            return Empty;
+        }
+
+        var subdomain = CloudflaredIngressPlanner.ResolveSubdomain(appId, subdomainOverride);
+        return CloudflaredIngressPlanner.ResolveOrigins(config.IngressBaseDomain, subdomain, publicEndpointKeys);
+    }
+
+    public async Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default)
+    {
+        // Missing identity/domain is surfaced to the operator via /api/core/status warnings; do not
+        // write a half-formed config that cloudflared would reject.
+        if (string.IsNullOrWhiteSpace(config.IngressBaseDomain) ||
+            string.IsNullOrWhiteSpace(config.IngressTunnelId) ||
+            string.IsNullOrWhiteSpace(config.IngressCredentialsFile))
+        {
+            return;
+        }
+
+        var path = config.EffectiveIngressConfigPath;
+        try
+        {
+            var ingressApps = apps
+                .Where(app => string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+                .Select(app => new IngressApp(
+                    CloudflaredIngressPlanner.ResolveSubdomain(app.Id, ReadSubdomainOverride(app)),
+                    (app.Endpoints ?? [])
+                        .Where(endpoint => endpoint.Public && !string.IsNullOrWhiteSpace(endpoint.Url))
+                        .Select(endpoint => new IngressEndpoint(endpoint.Key, endpoint.Url!))
+                        .ToArray()))
+                .Where(app => app.Endpoints.Count > 0)
+                .ToArray();
+
+            var routes = CloudflaredIngressPlanner.BuildRoutes(config.IngressBaseDomain, config.CorePort, ingressApps);
+            var yaml = CloudflaredIngressPlanner.RenderConfig(config.IngressTunnelId, config.IngressCredentialsFile, routes);
+
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                SecureFileSystem.EnsurePrivateDirectory(directory);
+            }
+
+            await File.WriteAllTextAsync(path, yaml, cancellationToken);
+            logger.LogInformation("Hosty ingress config written to {Path} with {RouteCount} route(s).", path, routes.Count);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            // ArgumentException/NotSupportedException guard against a malformed configured path
+            // (Path.GetDirectoryName / File.WriteAllTextAsync) escaping the best-effort boundary.
+            logger.LogWarning(ex, "Hosty ingress config could not be written to {Path}.", path);
+        }
+    }
+
+    private static string? ReadSubdomainOverride(AppRecord app)
+        => app.Settings.TryGetValue(CloudflaredIngressPlanner.SubdomainSettingKey, out var setting)
+            ? setting.Value
+            : null;
+}
+
+// Pure helpers for hostname/origin derivation and cloudflared config rendering, so the lifecycle
+// integration stays thin and the routing logic is unit-tested without touching the filesystem.
+internal static class CloudflaredIngressPlanner
+{
+    // Per-app operator override for the auto-derived subdomain (e.g. "pm" -> pm.example.com).
+    public const string SubdomainSettingKey = "HOSTY_INGRESS_SUBDOMAIN";
+
+    // Core's own UI/API is seeded under this subdomain so apps can reach it via the tunnel too.
+    public const string CoreSubdomain = "core";
+
+    private static readonly Regex HostLabelPattern =
+        new("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", RegexOptions.Compiled);
+
+    // Single-level subdomains keep everything under one wildcard CNAME (`*.example.com`), which
+    // Cloudflare Universal SSL covers; two-level names would need a per-host certificate.
+    public static string Hostname(string subdomain, string baseDomain, string? endpointLabel)
+        => endpointLabel is null
+            ? $"{subdomain}.{baseDomain}"
+            : $"{subdomain}-{endpointLabel}.{baseDomain}";
+
+    public static string ResolveSubdomain(string appId, string? overrideValue)
+        => string.IsNullOrWhiteSpace(overrideValue)
+            ? ToLabel(appId, "app")
+            : ToLabel(overrideValue, ToLabel(appId, "app"));
+
+    public static bool IsValidHostname(string hostname)
+        => hostname.Length <= 253 &&
+            hostname.Split('.').All(label => HostLabelPattern.IsMatch(label));
+
+    public static IReadOnlyDictionary<string, string> ResolveOrigins(
+        string baseDomain,
+        string subdomain,
+        IReadOnlyList<string> publicEndpointKeys)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var single = publicEndpointKeys.Count == 1;
+        foreach (var key in publicEndpointKeys)
+        {
+            var hostname = Hostname(subdomain, baseDomain, single ? null : ToLabel(key, "endpoint"));
+            if (IsValidHostname(hostname))
+            {
+                result[PublicOriginSettings.BuildSettingKey(key)] = $"https://{hostname}";
+            }
+        }
+
+        return result;
+    }
+
+    public static IReadOnlyList<CloudflaredRoute> BuildRoutes(
+        string baseDomain,
+        int corePort,
+        IReadOnlyList<IngressApp> apps)
+    {
+        var routes = new List<CloudflaredRoute>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string hostname, string service)
+        {
+            if (IsValidHostname(hostname) && seen.Add(hostname))
+            {
+                routes.Add(new CloudflaredRoute(hostname, service));
+            }
+        }
+
+        Add($"{CoreSubdomain}.{baseDomain}", $"http://localhost:{corePort.ToString(CultureInfo.InvariantCulture)}");
+
+        foreach (var app in apps.OrderBy(app => app.Subdomain, StringComparer.Ordinal))
+        {
+            var single = app.Endpoints.Count == 1;
+            foreach (var endpoint in app.Endpoints.OrderBy(endpoint => endpoint.Key, StringComparer.Ordinal))
+            {
+                Add(Hostname(app.Subdomain, baseDomain, single ? null : ToLabel(endpoint.Key, "endpoint")), endpoint.ServiceUrl);
+            }
+        }
+
+        return routes;
+    }
+
+    public static string RenderConfig(
+        string tunnelId,
+        string credentialsFile,
+        IReadOnlyList<CloudflaredRoute> routes)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("# Managed by Hosty Core - do not edit. Regenerated on runtime app lifecycle changes.");
+        builder.AppendLine($"tunnel: {YamlQuote(tunnelId)}");
+        builder.AppendLine($"credentials-file: {YamlQuote(credentialsFile)}");
+        builder.AppendLine("ingress:");
+        foreach (var route in routes)
+        {
+            // Hostnames are validated to a strict DNS-label charset, so they are safe unquoted;
+            // operator-supplied paths and service URLs are quoted to avoid YAML scalar edge cases.
+            builder.AppendLine($"  - hostname: {route.Hostname}");
+            builder.AppendLine($"    service: {YamlQuote(route.Service)}");
+        }
+
+        // cloudflared requires a catch-all rule as the final ingress entry.
+        builder.AppendLine("  - service: http_status:404");
+        return builder.ToString();
+    }
+
+    // Double-quoted YAML scalar with the minimal escaping double-quoted style requires.
+    private static string YamlQuote(string value)
+        => $"\"{value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+
+    // Lowercase, collapse non-alphanumerics to single hyphens, trim to a valid DNS label.
+    public static string ToLabel(string value, string fallback)
+    {
+        var lowered = value.Trim().ToLowerInvariant();
+        var builder = new StringBuilder(lowered.Length);
+        var lastWasHyphen = false;
+        foreach (var character in lowered)
+        {
+            if (char.IsAsciiLetterOrDigit(character))
+            {
+                builder.Append(character);
+                lastWasHyphen = false;
+            }
+            else if (!lastWasHyphen)
+            {
+                builder.Append('-');
+                lastWasHyphen = true;
+            }
+        }
+
+        var label = builder.ToString().Trim('-');
+        if (label.Length > 63)
+        {
+            label = label[..63].Trim('-');
+        }
+
+        return string.IsNullOrEmpty(label) ? fallback : label;
+    }
+}
+
+internal sealed record CloudflaredRoute(string Hostname, string Service);
+
+internal sealed record IngressEndpoint(string Key, string ServiceUrl);
+
+internal sealed record IngressApp(string Subdomain, IReadOnlyList<IngressEndpoint> Endpoints);

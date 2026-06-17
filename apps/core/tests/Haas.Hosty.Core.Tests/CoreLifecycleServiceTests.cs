@@ -481,6 +481,30 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_CloudflaredIngress_PersistsPublicOriginAndWritesTunnelConfig()
+    {
+        var fixture = await LifecycleFixture.CreateAsync(ingressBaseDomain: "apps.example.test");
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        await fixture.Service.StartAsync("com.example.notes");
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        // Core derives and persists the public origin so the existing settings -> env path injects it.
+        Assert.Equal(
+            "https://com-example-notes.apps.example.test",
+            app!.Settings["HOSTY_PUBLIC_ORIGIN_APP_HTTP"].Value);
+
+        // The cloudflared tunnel config is rendered from the running apps plus the Core seed.
+        var configPath = Path.Combine(fixture.Root, "core", "ingress", "config.yml");
+        Assert.True(File.Exists(configPath));
+        var yaml = await File.ReadAllTextAsync(configPath);
+        Assert.Contains("hostname: core.apps.example.test", yaml);
+        Assert.Contains("hostname: com-example-notes.apps.example.test", yaml);
+        Assert.Contains("service: http_status:404", yaml);
+    }
+
+    [Fact]
     public async Task StartAsync_StopsRuntimeWhenPersistingStartedStateFails()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -1777,7 +1801,7 @@ public sealed class CoreLifecycleServiceTests
 
         public FakeClock Clock { get; }
 
-        public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null)
+        public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null, string? ingressBaseDomain = null)
         {
             var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -1810,11 +1834,19 @@ public sealed class CoreLifecycleServiceTests
                 ShellBootstrapRuntime: "docker",
                 ShellSourceOverridePath: null,
                 ShellBootstrapEnabled: false,
-                ShellAutostart: false);
+                ShellAutostart: false,
+                IngressProvider: ingressBaseDomain is null ? "none" : "cloudflared",
+                IngressBaseDomain: ingressBaseDomain,
+                IngressConfigPath: Path.Combine(root, "core", "ingress", "config.yml"),
+                IngressTunnelId: ingressBaseDomain is null ? null : "test-tunnel",
+                IngressCredentialsFile: ingressBaseDomain is null ? null : Path.Combine(root, "creds.json"));
             var localProcesses = new LocalCommandProcessRegistry();
             var appServiceTokens = new AppServiceTokenService(new ControlSecret("test-control-secret"));
             var localAdapter = new LocalCommandRuntimeAdapter(runtimeConfig, localProcesses, appServiceTokens);
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter]);
+            IIngressController ingress = ingressBaseDomain is null
+                ? new NoneIngressController()
+                : new CloudflaredIngressController(runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }
 
