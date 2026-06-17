@@ -30,10 +30,20 @@ Core injects:
 - `HOSTY_CORE_ORIGIN`
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_{KEY}`
-- `HOSTY_DEPENDENCY_{KEY}_URL`
+- `HOSTY_DEPENDENCY_{KEY}_URL` (cross-app: another installed app's public endpoint)
+- `HOSTY_SERVICE_{KEY}_URL` (intra-app: a sibling service's internal base URL — see Service Dependencies)
 - `HOSTY_MOUNT_{KEY}` (one per declared `externalMounts` slot — see External Mounts)
 
 For `localCommand` runtime profiles, do not hard-code development ports by default. Omit `localPort` and `hostPort` so Core assigns an available loopback port and injects it as `HOSTY_PORT_{KEY}`. If a service declares exactly one port and the app did not explicitly set `PORT`, Core also injects `PORT=<assigned-port>` for common dev servers such as Next.js.
+
+### Service Dependencies
+
+A service's `dependsOn` lists sibling services. Each entry is a service-key string (`"api"`) or a `{ "service", "port" }` object naming a specific port. From that one declaration Core both **orders** startup (the depended-on service starts first) and injects the sibling's **internal** base URL as `HOSTY_SERVICE_{KEY}_URL` (e.g. `HOSTY_SERVICE_API_URL`). Use this for a BFF/proxy service to reach an internal API service without pinning ports or exposing the internal port publicly:
+
+- Target port = the named port, else the sibling's first non-`public` port.
+- `docker`: resolves by service-name DNS on a per-app network, e.g. `http://api:3000` (internal port not host-published).
+- `localCommand`: resolves over loopback, e.g. `http://localhost:43210`.
+- Distinct from `HOSTY_DEPENDENCY_{KEY}_URL` (cross-app public endpoint); the two namespaces never collide.
 
 Use explicit `localPort` only when a fixed local port is a real requirement. If that port is occupied, Core fails start with a lifecycle error instead of silently routing Shell to another app.
 

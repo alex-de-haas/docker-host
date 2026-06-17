@@ -13,14 +13,22 @@ internal static class RuntimePortHelper
     private static readonly HashSet<int> RecentlyAllocatedPorts = [];
     private static readonly Queue<int> RecentlyAllocatedQueue = new();
 
-    public static int ResolveHostPort(RuntimeLifecycleContext context, string serviceKey, RuntimePortManifest port, string key)
+    // `exclude` lets a caller resolving several ports in one pass (before any is bound) keep
+    // dynamic allocations off ports it has already handed out — pinned or dynamic — closing the
+    // window where two not-yet-started siblings could be probed onto the same loopback port.
+    public static int ResolveHostPort(
+        RuntimeLifecycleContext context,
+        string serviceKey,
+        RuntimePortManifest port,
+        string key,
+        IReadOnlySet<int>? exclude = null)
     {
         if (TryResolvePinnedHostPort(context, serviceKey, port, key, out var pinnedPort))
         {
             return pinnedPort;
         }
 
-        return AllocateLoopbackPort();
+        return AllocateLoopbackPort(exclude);
     }
 
     public static bool TryResolvePinnedHostPort(
@@ -85,7 +93,7 @@ internal static class RuntimePortHelper
         return true;
     }
 
-    private static int AllocateLoopbackPort()
+    private static int AllocateLoopbackPort(IReadOnlySet<int>? exclude = null)
     {
         lock (AllocationLock)
         {
@@ -95,6 +103,11 @@ internal static class RuntimePortHelper
                 listener.Start();
                 var port = ((IPEndPoint)listener.LocalEndpoint).Port;
                 listener.Stop();
+                if (exclude is not null && exclude.Contains(port))
+                {
+                    continue;
+                }
+
                 if (RecentlyAllocatedPorts.Add(port))
                 {
                     RecentlyAllocatedQueue.Enqueue(port);

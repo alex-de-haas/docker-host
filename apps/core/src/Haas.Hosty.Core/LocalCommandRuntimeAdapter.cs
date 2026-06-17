@@ -21,6 +21,11 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
 
         EnsureExplicitPortsAvailable(context);
+
+        // Resolve every service's host ports up front so the assignment is deterministic and
+        // shared: a service reads its own HOSTY_PORT_* from the same map a dependent reads to
+        // build HOSTY_SERVICE_{KEY}_URL, regardless of declaration/start order.
+        var servicePorts = ResolveServicePorts(context);
         try
         {
             foreach (var service in context.Manifest.Services)
@@ -46,7 +51,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                 });
 
                 var startInfo = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
-                InjectEnvironment(startInfo, context, service, endpoints);
+                InjectEnvironment(startInfo, context, service, endpoints, servicePorts);
                 var process = new System.Diagnostics.Process
                 {
                     StartInfo = startInfo,
@@ -181,7 +186,8 @@ internal sealed class LocalCommandRuntimeAdapter(
         System.Diagnostics.ProcessStartInfo startInfo,
         RuntimeLifecycleContext context,
         RuntimeSelectedService service,
-        List<AppEndpointContract> endpoints)
+        List<AppEndpointContract> endpoints,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> servicePorts)
     {
         startInfo.Environment["HOSTY_APP_ID"] = context.App.Id;
         startInfo.Environment["HOSTY_APP_SERVICE_KEY"] = service.Key;
@@ -221,16 +227,30 @@ internal sealed class LocalCommandRuntimeAdapter(
             startInfo.Environment[$"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL"] = dependency.Value;
         }
 
+        // Intra-app discovery: a sibling is reached on the loopback host at the port it was
+        // assigned in `servicePorts` (the same map drives every service's own HOSTY_PORT_*). A
+        // missing entry yields null, which BuildEnvironment skips rather than emitting `:0`.
+        foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(
+            context.Manifest.Services,
+            service,
+            (target, port) => servicePorts.TryGetValue(target.Key, out var targetPorts) &&
+                    targetPorts.TryGetValue(RuntimeServiceDiscovery.PortKey(port), out var hostPort)
+                ? $"{RuntimeServiceDiscovery.Scheme(port)}://{config.RuntimePublicHost}:{hostPort}"
+                : null))
+        {
+            startInfo.Environment[serviceUrl.Key] = serviceUrl.Value;
+        }
+
+        var ports = servicePorts[service.Key];
         var assignedHostPorts = new List<int>();
         foreach (var port in service.Runtime.Ports)
         {
             var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (string.IsNullOrWhiteSpace(key))
+            if (string.IsNullOrWhiteSpace(key) || !ports.TryGetValue(key, out var hostPort))
             {
                 continue;
             }
 
-            var hostPort = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
             assignedHostPorts.Add(hostPort);
             startInfo.Environment[$"HOSTY_PORT_{RuntimePortHelper.NormalizeEnvironmentKey(key)}"] = hostPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
             endpoints.Add(new AppEndpointContract(
@@ -246,6 +266,37 @@ internal sealed class LocalCommandRuntimeAdapter(
         {
             startInfo.Environment["PORT"] = assignedHostPorts[0].ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
+    }
+
+    // Resolves every service's host ports once so the assignment is stable and shared across
+    // services within a single start (a dependent must see the exact port its sibling binds).
+    private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> ResolveServicePorts(RuntimeLifecycleContext context)
+    {
+        // Track every port handed out across services so a dynamic allocation never lands on a
+        // port already assigned to a sibling (pinned or dynamic) — the assignments here happen
+        // before any process binds, so the OS alone cannot keep them distinct.
+        var assigned = new HashSet<int>();
+        var map = new Dictionary<string, IReadOnlyDictionary<string, int>>(StringComparer.Ordinal);
+        foreach (var service in context.Manifest.Services)
+        {
+            var ports = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var port in service.Runtime.Ports)
+            {
+                var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (string.IsNullOrWhiteSpace(key) || ports.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                var hostPort = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key, assigned);
+                ports[key] = hostPort;
+                assigned.Add(hostPort);
+            }
+
+            map[service.Key] = ports;
+        }
+
+        return map;
     }
 
     internal static IReadOnlyDictionary<string, string> BuildCoreEnvironment(HostyCoreRuntimeConfig config)

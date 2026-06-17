@@ -90,6 +90,95 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
     }
 
+    [Fact]
+    public async Task LoadAsync_AcceptsDependsOnStringAndObjectForms()
+    {
+        var manifestPath = await WriteTwoServiceManifestAsync("""[ "api", { "service": "api", "port": "internal" } ]""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var web = selection.Services.Single(service => service.Key == "web");
+        Assert.Collection(
+            web.DependsOn,
+            first =>
+            {
+                Assert.Equal("api", first.Service);
+                Assert.Null(first.Port);
+            },
+            second =>
+            {
+                Assert.Equal("api", second.Service);
+                Assert.Equal("internal", second.Port);
+            });
+    }
+
+    [Fact]
+    public async Task LoadAsync_AcceptsDependsOnPortByContainerNumber()
+    {
+        // "internal" port has containerPort 3000; targeting it numerically must resolve.
+        var manifestPath = await WriteTwoServiceManifestAsync("""[ { "service": "api", "port": 3000 } ]""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var dependency = Assert.Single(selection.Services.Single(service => service.Key == "web").DependsOn);
+        Assert.Equal("3000", dependency.Port);
+    }
+
+    [Theory]
+    [InlineData("""[ "web" ]""", "app_manifest_service_depends_on_self")]
+    [InlineData("""[ "missing" ]""", "app_manifest_service_depends_on_unknown")]
+    [InlineData("""[ { "service": "api", "port": "nope" } ]""", "app_manifest_service_depends_on_port_unknown")]
+    // A wrong-typed `service` value is skipped by the converter, leaving no service named.
+    [InlineData("""[ { "service": ["api"] } ]""", "app_manifest_service_depends_on_required")]
+    public async Task LoadAsync_RejectsInvalidDependsOn(string dependsOn, string expectedCode)
+    {
+        var manifestPath = await WriteTwoServiceManifestAsync(dependsOn);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    private static async Task<string> WriteTwoServiceManifestAsync(string dependsOn)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "manifest.json");
+        await File.WriteAllTextAsync(path, $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.app",
+              "name": "App",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [
+                {
+                  "key": "api",
+                  "runtimes": {
+                    "docker": {
+                      "type": "docker",
+                      "image": "ghcr.io/example/api:1.0.0",
+                      "ports": [{ "key": "internal", "containerPort": 3000 }]
+                    }
+                  }
+                },
+                {
+                  "key": "web",
+                  "dependsOn": {{dependsOn}},
+                  "runtimes": {
+                    "docker": {
+                      "type": "docker",
+                      "image": "ghcr.io/example/web:1.0.0",
+                      "ports": [{ "key": "http", "containerPort": 3000, "public": true }]
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+        return path;
+    }
+
     private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
