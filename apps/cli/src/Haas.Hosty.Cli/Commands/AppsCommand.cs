@@ -200,6 +200,16 @@ internal sealed partial class AppsCommand(CommandContext context)
 
         var options = ParseBackupOptions(args);
         using var core = await OpenCoreAsync();
+
+        // Core briefly stops a running app while copying its data so the snapshot is consistent,
+        // then restarts it. Warn first so the short downtime is not a surprise.
+        var apps = await core.GetAsync<AppsResponse>("apps");
+        var app = (apps?.Apps ?? []).FirstOrDefault(candidate => string.Equals(candidate.Id, options.AppId, StringComparison.Ordinal));
+        if (app is not null && string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+        {
+            context.Console.MarkupLine("[yellow]Note:[/] the app will be briefly stopped while its data is backed up, then restarted.");
+        }
+
         var response = await core.PostAsync<AppBackupResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/backups", new AppManualBackupRequest(options.Reason));
         RenderBackup(response?.Backup);
         return 0;

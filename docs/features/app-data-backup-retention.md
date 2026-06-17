@@ -24,6 +24,16 @@ The default retention policy is conservative:
 
 Backup list responses include retention status so Shell and CLI can show whether each backup is retained by policy, manually kept, or part of the current cleanup plan.
 
+## Backup Consistency
+
+Core copies the app `data/` directory with no app-side coordination, so every backup is taken against a non-live directory to keep the archive internally consistent (e.g. so an open SQLite transaction cannot produce a torn snapshot):
+
+- `pre-update`, `pre-runtime-switch`, and `pre-restore` backups already run after the app is stopped as part of their lifecycle flow.
+- An operator-triggered `manual` backup of a running app stops the app for the duration of the copy and restarts it afterwards. Apps that are already stopped are copied in place with no lifecycle change. If the restart fails, the failure surfaces through the normal start path (recorded and reported) and the app is left stopped.
+- `app-initiated` backups are requested by the app itself, which is expected to flush or checkpoint its own state before calling, so Core does not stop the app.
+
+A `scheduled` backup creation path is not implemented; if added, it should also copy stopped data (briefly stopping the app per run) rather than copying a live directory.
+
 ## Cleanup Preview And Apply
 
 Core exposes cleanup preview and apply endpoints for browser Shell and trusted local control callers:
