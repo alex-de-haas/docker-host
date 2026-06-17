@@ -54,3 +54,5 @@ App backups cover the primary app data directory only:
 ```
 
 External mounts are excluded.
+
+An operator-triggered manual backup of a running app briefly stops it to copy a consistent snapshot, then restarts it; the Core-managed `pre-update`/`pre-runtime-switch`/`pre-restore` backups already run against stopped data. See [App Data Backup Retention](app-data-backup-retention.md) for the full consistency behavior.

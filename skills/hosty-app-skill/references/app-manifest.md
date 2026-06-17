@@ -45,6 +45,8 @@ Manifest settings are app-owned configuration. Each entry supports `key`, `type`
 
 Use `data.enabled: true` when the app needs a primary persistent data directory. Backups cover that primary app data directory only.
 
+When an operator takes a manual backup of a running app, Core briefly stops and restarts the app to copy a consistent snapshot (the same happens for updates and runtime switches). Design the app to tolerate a clean stop/restart at any time and to flush or checkpoint persistent state on shutdown.
+
 ## External Mounts
 
 Use `externalMounts` when the app needs large operator-owned host folders that live **outside** app data — for example media catalog roots. Unlike `data`, external mounts are operator-configured after install, are never backed up or deleted by Hosty, and survive update / restart / runtime-switch / app removal.
