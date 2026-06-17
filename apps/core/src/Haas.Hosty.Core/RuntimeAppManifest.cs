@@ -845,7 +845,10 @@ internal sealed class DockerRuntimeAdapter(
 
     private static IEnumerable<string> BuildPortPublishValues(RuntimePortManifest port, int hostPort, int containerPort)
     {
-        if (port.Expose is null && (port.Transport is null || port.Transport.Count == 0))
+        // Legacy publish only when BOTH opt-in fields are truly absent. An explicit transport
+        // list (even an empty one, which validation rejects) counts as opting in and falls
+        // through to the explicit `bind:host:container/proto` form below.
+        if (port.Expose is null && port.Transport is null)
         {
             return [$"127.0.0.1:{hostPort}:{containerPort}"];
         }

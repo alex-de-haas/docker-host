@@ -73,7 +73,7 @@ Each entry in a service runtime's `ports` array accepts:
 - `protocol` - the URL scheme for the published HTTP endpoint (default `http`); not a transport.
 - `public` - whether the endpoint is externally visible.
 - `expose` - `loopback` (default) or `host`. `host` binds the published port on `0.0.0.0` (all interfaces) instead of `127.0.0.1`, for raw L4 listeners reachable off the host. A `host`-exposed port **must** pin `hostPort` (or `localPort`); recommended `hostPort == containerPort`. Docker runtime only.
-- `transport` - subset of `["tcp"]` / `["udp"]`, default `["tcp"]`. Each transport is published as a separate `-p` rule. Docker runtime only.
+- `transport` - subset of `["tcp", "udp"]`, default `["tcp"]`. Each transport is published as a separate `-p` rule. Docker runtime only.
 
 `expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](raw-ports.md).
 
