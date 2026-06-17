@@ -202,12 +202,21 @@ internal sealed partial class AppsCommand(CommandContext context)
         using var core = await OpenCoreAsync();
 
         // Core briefly stops a running app while copying its data so the snapshot is consistent,
-        // then restarts it. Warn first so the short downtime is not a surprise.
-        var apps = await core.GetAsync<AppsResponse>("apps");
-        var app = (apps?.Apps ?? []).FirstOrDefault(candidate => string.Equals(candidate.Id, options.AppId, StringComparison.Ordinal));
-        if (app is not null && string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+        // then restarts it. Warn first so the short downtime is not a surprise. This pre-flight
+        // probe is best-effort: a slow/unavailable app list must never block the backup itself,
+        // so any failure (incl. the shorter probe timeout) is swallowed and the warning skipped.
+        try
         {
-            context.Console.MarkupLine("[yellow]Note:[/] the app will be briefly stopped while its data is backed up, then restarted.");
+            var apps = await core.GetAsync<AppsResponse>("apps");
+            var app = (apps?.Apps ?? []).FirstOrDefault(candidate => string.Equals(candidate.Id, options.AppId, StringComparison.Ordinal));
+            if (app is not null && string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+            {
+                context.Console.MarkupLine("[yellow]Note:[/] the app will be briefly stopped while its data is backed up, then restarted.");
+            }
+        }
+        catch (Exception ex) when (ex is CoreControlException or HttpRequestException or IOException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            // Ignore: the warning is optional and must not prevent the backup.
         }
 
         var response = await core.PostAsync<AppBackupResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/backups", new AppManualBackupRequest(options.Reason));

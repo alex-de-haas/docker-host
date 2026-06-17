@@ -706,26 +706,29 @@ internal sealed class CoreLifecycleService(
         // The other Core-initiated backups (pre-update/-runtime-switch/-restore) already copy
         // stopped data; this mirrors that stop->operate->restart pattern for operator backups.
         var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
-        if (wasRunning)
-        {
-            var selection = await LoadSelectionForAppAsync(app, cancellationToken);
-            _ = await ResolveAdapter(selection.RuntimeProfile.Type)
-                .StopAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
-            _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
-        }
-
         try
         {
+            // Stop inside the try so the finally restart still runs if the stop sequence itself
+            // throws partway (e.g. UpdateAppAsync fails after the runtime is already stopped).
+            if (wasRunning)
+            {
+                var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+                _ = await ResolveAdapter(selection.RuntimeProfile.Type)
+                    .StopAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
+                _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
+            }
+
             return new AppBackupResponse(await backups.CreateBackupAsync(appId, reason, cancellationToken: cancellationToken));
         }
         finally
         {
-            // Always attempt to restore the prior running state, even if the backup failed, so
-            // an operator-triggered backup never silently leaves a running app stopped. A restart
-            // failure surfaces through StartAsync (recorded + thrown), which is the right signal.
+            // Always attempt to restore the prior running state, even if the backup failed or was
+            // cancelled, so an operator-triggered backup never silently leaves a running app stopped.
+            // Use CancellationToken.None so a cancelled backup still restarts; a restart failure
+            // surfaces through StartAsync (recorded + thrown), which is the right signal.
             if (wasRunning)
             {
-                _ = await StartAsync(appId, cancellationToken);
+                _ = await StartAsync(appId, CancellationToken.None);
             }
         }
     }

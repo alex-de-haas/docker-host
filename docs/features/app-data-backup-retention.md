@@ -26,7 +26,7 @@ Backup list responses include retention status so Shell and CLI can show whether
 
 ## Backup Consistency
 
-Core copies the app `data/` directory with no app-side coordination, so every backup is taken against a non-live directory to keep the archive internally consistent (e.g. so an open SQLite transaction cannot produce a torn snapshot):
+Core copies the app `data/` directory with no app-side coordination, so Core-initiated backups are taken against a non-live directory to keep the archive internally consistent (e.g. so an open SQLite transaction cannot produce a torn snapshot):
 
 - `pre-update`, `pre-runtime-switch`, and `pre-restore` backups already run after the app is stopped as part of their lifecycle flow.
 - An operator-triggered `manual` backup of a running app stops the app for the duration of the copy and restarts it afterwards. Apps that are already stopped are copied in place with no lifecycle change. If the restart fails, the failure surfaces through the normal start path (recorded and reported) and the app is left stopped.
