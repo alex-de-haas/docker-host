@@ -219,6 +219,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                 continue;
             }
 
+            ValidatePorts(service.Key, runtime.Ports, errors);
+
             selectedServices.Add(new RuntimeSelectedService(service.Key, service.DependsOn, runtime with { Type = runtimeType }, image));
         }
 
@@ -489,6 +491,53 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         }
     }
 
+    // Validates the opt-in raw-port fields. `Expose`/`Transport` only have meaning under the
+    // docker runtime, but the values are validated for whichever runtime is selected so a
+    // misconfiguration surfaces at install time rather than silently doing nothing.
+    private static void ValidatePorts(string serviceKey, IReadOnlyList<RuntimePortManifest> ports, List<AppManifestValidationError> errors)
+    {
+        const string path = "$.services[].runtimes[].ports";
+        foreach (var port in ports)
+        {
+            if (port.Expose is not null &&
+                !string.Equals(port.Expose, "loopback", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add(new("app_manifest_port_expose_invalid", $"Service '{serviceKey}' port expose '{port.Expose}' must be 'loopback' or 'host'.", path));
+            }
+
+            if (port.Transport is not null)
+            {
+                if (port.Transport.Count == 0)
+                {
+                    errors.Add(new("app_manifest_port_transport_invalid", $"Service '{serviceKey}' port transport must list at least one of 'tcp' or 'udp' when declared.", path));
+                }
+
+                var seenTransports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var transport in port.Transport)
+                {
+                    if (!string.Equals(transport, "tcp", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(transport, "udp", StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors.Add(new("app_manifest_port_transport_invalid", $"Service '{serviceKey}' port transport '{transport}' must be 'tcp' or 'udp'.", path));
+                    }
+                    else if (!seenTransports.Add(transport))
+                    {
+                        errors.Add(new("app_manifest_port_transport_duplicate", $"Service '{serviceKey}' port transport '{transport}' is declared more than once.", path));
+                    }
+                }
+            }
+
+            // A host-exposed port must pin its host port so router forwarding and the app's
+            // advertised port stay constant across restarts (recommend hostPort == containerPort).
+            if (string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase) &&
+                port.LocalPort is null && port.HostPort is null)
+            {
+                errors.Add(new("app_manifest_port_host_requires_pinned_port", $"Service '{serviceKey}' port with expose 'host' must declare an explicit hostPort (recommended equal to containerPort) so router forwarding and the advertised port stay constant.", path));
+            }
+        }
+    }
+
 }
 
 internal interface IAppRuntimeAdapter
@@ -591,13 +640,7 @@ internal sealed class DockerRuntimeAdapter(
                 var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 var hostPort = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
                 assignedPorts[key] = hostPort;
-                runArgs.Add("-p");
-                runArgs.Add($"127.0.0.1:{hostPort}:{port.ContainerPort.Value}");
-                if (!string.IsNullOrWhiteSpace(port.Key))
-                {
-                    runArgs.Add("-e");
-                    runArgs.Add($"HOSTY_PORT_{RuntimePortHelper.NormalizeEnvironmentKey(port.Key)}={hostPort}");
-                }
+                runArgs.AddRange(BuildPortArguments(port, hostPort, port.ContainerPort.Value));
             }
 
             if (context.Manifest.DataTarget is not null &&
@@ -773,6 +816,50 @@ internal sealed class DockerRuntimeAdapter(
     internal static string BuildContainerName(string appId, string serviceKey)
         => $"hosty-{NormalizeDockerName(appId)}-{NormalizeDockerName(serviceKey)}";
 
+    // Transport used when a port opts into the new publish format without naming one.
+    private static readonly IReadOnlyList<string> DefaultTransports = ["tcp"];
+
+    // Builds the docker `run` arguments that publish a single port and inject its HOSTY_PORT_*.
+    // A port that declares neither `expose` nor `transport` keeps the exact legacy publish
+    // (`127.0.0.1:{host}:{container}`, no protocol suffix) so existing apps are byte-for-byte
+    // unaffected. Opting into either field switches to explicit `bind:host:container/proto`
+    // publishing — `0.0.0.0` for `expose:host`, one `-p` per transport (tcp/udp). HOSTY_PORT_*
+    // is injected exactly once regardless of how many transports are published.
+    internal static IReadOnlyList<string> BuildPortArguments(RuntimePortManifest port, int hostPort, int containerPort)
+    {
+        var args = new List<string>();
+        foreach (var publish in BuildPortPublishValues(port, hostPort, containerPort))
+        {
+            args.Add("-p");
+            args.Add(publish);
+        }
+
+        if (!string.IsNullOrWhiteSpace(port.Key))
+        {
+            args.Add("-e");
+            args.Add($"HOSTY_PORT_{RuntimePortHelper.NormalizeEnvironmentKey(port.Key)}={hostPort}");
+        }
+
+        return args;
+    }
+
+    private static IEnumerable<string> BuildPortPublishValues(RuntimePortManifest port, int hostPort, int containerPort)
+    {
+        // Legacy publish only when BOTH opt-in fields are truly absent. An explicit transport
+        // list (even an empty one, which validation rejects) counts as opting in and falls
+        // through to the explicit `bind:host:container/proto` form below.
+        if (port.Expose is null && port.Transport is null)
+        {
+            return [$"127.0.0.1:{hostPort}:{containerPort}"];
+        }
+
+        var bind = string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase)
+            ? "0.0.0.0"
+            : "127.0.0.1";
+        var transports = port.Transport is { Count: > 0 } declared ? declared : DefaultTransports;
+        return transports.Select(transport => $"{bind}:{hostPort}:{containerPort}/{transport.ToLowerInvariant()}");
+    }
+
     internal static IReadOnlyList<string> BuildDockerCoreEnvironment(HostyCoreRuntimeConfig config)
         => [
             $"HOSTY_CORE_PORT={config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
@@ -921,6 +1008,13 @@ internal sealed class RuntimePortManifest
     public int? HostPort { get; init; }
     public string? Protocol { get; init; }
     public bool? Public { get; init; }
+
+    // Opt-in raw L4 publishing (docker runtime only; off by default). `Expose` null/"loopback"
+    // keeps the default 127.0.0.1 bind; "host" binds 0.0.0.0 so the port is reachable off-host.
+    // `Transport` is left nullable (not coalesced to []) so validation can tell an absent field
+    // from an explicit empty list; null/absent means the legacy TCP-only publish.
+    public string? Expose { get; init; }
+    public IReadOnlyList<string>? Transport { get; init; }
 }
 
 internal sealed class RuntimeAppDataManifest
