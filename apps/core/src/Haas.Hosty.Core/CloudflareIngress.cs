@@ -84,7 +84,7 @@ internal sealed class CloudflaredIngressController(
                 .Where(app => string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
                 .Select(app => new IngressApp(
                     CloudflaredIngressPlanner.ResolveSubdomain(app.Id, ReadSubdomainOverride(app)),
-                    app.Endpoints
+                    (app.Endpoints ?? [])
                         .Where(endpoint => endpoint.Public && !string.IsNullOrWhiteSpace(endpoint.Url))
                         .Select(endpoint => new IngressEndpoint(endpoint.Key, endpoint.Url!))
                         .ToArray()))
@@ -103,8 +103,10 @@ internal sealed class CloudflaredIngressController(
             await File.WriteAllTextAsync(path, yaml, cancellationToken);
             logger.LogInformation("Hosty ingress config written to {Path} with {RouteCount} route(s).", path, routes.Count);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
+            // ArgumentException/NotSupportedException guard against a malformed configured path
+            // (Path.GetDirectoryName / File.WriteAllTextAsync) escaping the best-effort boundary.
             logger.LogWarning(ex, "Hosty ingress config could not be written to {Path}.", path);
         }
     }
@@ -200,19 +202,25 @@ internal static class CloudflaredIngressPlanner
     {
         var builder = new StringBuilder();
         builder.AppendLine("# Managed by Hosty Core - do not edit. Regenerated on runtime app lifecycle changes.");
-        builder.AppendLine($"tunnel: {tunnelId}");
-        builder.AppendLine($"credentials-file: {credentialsFile}");
+        builder.AppendLine($"tunnel: {YamlQuote(tunnelId)}");
+        builder.AppendLine($"credentials-file: {YamlQuote(credentialsFile)}");
         builder.AppendLine("ingress:");
         foreach (var route in routes)
         {
+            // Hostnames are validated to a strict DNS-label charset, so they are safe unquoted;
+            // operator-supplied paths and service URLs are quoted to avoid YAML scalar edge cases.
             builder.AppendLine($"  - hostname: {route.Hostname}");
-            builder.AppendLine($"    service: {route.Service}");
+            builder.AppendLine($"    service: {YamlQuote(route.Service)}");
         }
 
         // cloudflared requires a catch-all rule as the final ingress entry.
         builder.AppendLine("  - service: http_status:404");
         return builder.ToString();
     }
+
+    // Double-quoted YAML scalar with the minimal escaping double-quoted style requires.
+    private static string YamlQuote(string value)
+        => $"\"{value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 
     // Lowercase, collapse non-alphanumerics to single hyphens, trim to a valid DNS label.
     public static string ToLabel(string value, string fallback)

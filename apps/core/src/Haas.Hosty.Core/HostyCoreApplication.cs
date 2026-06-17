@@ -674,6 +674,14 @@ internal sealed record HostyCoreRuntimeConfig(
         var runtimePublicHost = "localhost";
         var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
             ResolveDefaultShellManifestPath();
+        // Resolve to absolute paths: the credentials path is written verbatim into config.yml and
+        // cloudflared (run from another cwd / as a service) cannot resolve relative or ~ paths.
+        var ingressConfigPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CONFIG_PATH")) is { } configPath
+            ? NormalizePath(configPath)
+            : null;
+        var ingressCredentialsFile = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CREDENTIALS_FILE")) is { } credentialsPath
+            ? NormalizePath(credentialsPath)
+            : null;
 
         return new HostyCoreRuntimeConfig(
             dataRoot,
@@ -694,9 +702,9 @@ internal sealed record HostyCoreRuntimeConfig(
             ReadBoolean("HOSTY_ALLOW_REMOTE_LOCAL_COMMAND", defaultValue: false),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_PROVIDER")) ?? "none",
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_BASE_DOMAIN")),
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CONFIG_PATH")),
+            ingressConfigPath,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_TUNNEL_ID")),
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CREDENTIALS_FILE")));
+            ingressCredentialsFile);
     }
 
     private static string? ReadFirst(params string[] names)
@@ -777,6 +785,10 @@ internal sealed record HostyCoreRuntimeConfig(
         if (string.IsNullOrWhiteSpace(IngressBaseDomain))
         {
             warnings.Add("Ingress provider 'cloudflared' requires HOSTY_INGRESS_BASE_DOMAIN; tunnel config will not be written.");
+        }
+        else if (!CloudflaredIngressPlanner.IsValidHostname(IngressBaseDomain))
+        {
+            warnings.Add($"HOSTY_INGRESS_BASE_DOMAIN '{IngressBaseDomain}' is not a valid lowercase domain; ingress hostnames will be skipped.");
         }
 
         if (string.IsNullOrWhiteSpace(IngressTunnelId))

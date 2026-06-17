@@ -90,10 +90,10 @@ public sealed class CloudflaredIngressPlannerTests
             "/etc/hosty/creds.json",
             [new CloudflaredRoute("media.example.com", "http://localhost:8080")]);
 
-        Assert.Contains("tunnel: tunnel-123", yaml);
-        Assert.Contains("credentials-file: /etc/hosty/creds.json", yaml);
+        Assert.Contains("tunnel: \"tunnel-123\"", yaml);
+        Assert.Contains("credentials-file: \"/etc/hosty/creds.json\"", yaml);
         Assert.Contains("  - hostname: media.example.com", yaml);
-        Assert.Contains("    service: http://localhost:8080", yaml);
+        Assert.Contains("    service: \"http://localhost:8080\"", yaml);
         // cloudflared requires the catch-all to be the final ingress rule.
         Assert.EndsWith($"  - service: http_status:404{Environment.NewLine}", yaml);
     }

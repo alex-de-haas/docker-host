@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
@@ -11,7 +12,8 @@ internal sealed class CoreLifecycleService(
     AppBackupService backups,
     AppSourceService sources,
     IEnumerable<IAppRuntimeAdapter> adapters,
-    IIngressController ingress)
+    IIngressController ingress,
+    ILogger<CoreLifecycleService> logger)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -1993,9 +1995,12 @@ internal sealed class CoreLifecycleService(
             var records = await apps.ListAppRecordsAsync(cancellationToken);
             await ingress.ReconcileAsync(records, cancellationToken);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            // Swallowed: the ingress controller already logs its own write failures.
+            // Best-effort: ingress reconciliation runs on the startup BackgroundService path too,
+            // so it must never throw (an unhandled exception there would crash the host). Log for
+            // visibility rather than swallowing silently.
+            logger.LogWarning(ex, "Hosty ingress reconciliation did not complete.");
         }
     }
 
