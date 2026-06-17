@@ -91,6 +91,35 @@ public sealed class DockerRuntimeAdapterTests
         Assert.Contains($"{expectedBind}:6881:6881/tcp", args);
     }
 
+    [Fact]
+    public void BuildDockerServiceUrl_TargetsSiblingAliasAtContainerPort()
+    {
+        var service = new RuntimeSelectedService(
+            "api",
+            [],
+            new RuntimeServiceProfileManifest { Type = "docker", Ports = [new RuntimePortManifest { Key = "internal", ContainerPort = 3000 }] },
+            null);
+        var port = new RuntimePortManifest { Key = "internal", ContainerPort = 3000 };
+
+        var url = DockerRuntimeAdapter.BuildDockerServiceUrl(service, port);
+
+        Assert.Equal("http://api:3000", url);
+    }
+
+    [Fact]
+    public void BuildNetworkName_DerivesStableDockerSafeName()
+        => Assert.Equal("hosty-com-example-app-net", DockerRuntimeAdapter.BuildNetworkName("com.example.app"));
+
+    [Fact]
+    public void RequiresUserNetwork_OnlyWhenAServiceDependsOnAnother()
+    {
+        var api = new RuntimeSelectedService("api", [], new RuntimeServiceProfileManifest { Type = "docker" }, null);
+        var web = new RuntimeSelectedService("web", [new RuntimeServiceDependency("api", null)], new RuntimeServiceProfileManifest { Type = "docker" }, null);
+
+        Assert.False(DockerRuntimeAdapter.RequiresUserNetwork([api]));
+        Assert.True(DockerRuntimeAdapter.RequiresUserNetwork([api, web]));
+    }
+
     private static HostyCoreRuntimeConfig CreateConfig(int corePort, string listenUrl, string? corePublicOrigin)
         => new(
             DataRoot: "/tmp/hosty",

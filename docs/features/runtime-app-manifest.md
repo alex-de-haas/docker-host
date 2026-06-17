@@ -52,7 +52,8 @@ hosty apps start com.haas.demo-app
 - `HOSTY_CORE_ORIGIN`
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_{KEY}`
-- `HOSTY_DEPENDENCY_{KEY}_URL`
+- `HOSTY_DEPENDENCY_{KEY}_URL` (cross-app: another installed app's public endpoint)
+- `HOSTY_SERVICE_{KEY}_URL` (intra-app: a sibling service's internal base URL — see below)
 - `HOSTY_MOUNT_{KEY}` (one per configured `externalMounts` slot)
 
 `HOSTY_CORE_PUBLIC_ORIGIN` is the browser-facing Core origin. `HOSTY_CORE_ORIGIN` is the runtime process-to-Core origin. For `docker` profiles, loopback Core origins are injected into `HOSTY_CORE_ORIGIN` as a container-reachable origin using `host.docker.internal`, so app server code can exchange Hosty app codes and revalidate identity with Core from inside the container. For `localCommand` profiles, `HOSTY_CORE_ORIGIN` uses Core's listen URL. Published runtime endpoint URLs remain browser-facing `localhost` URLs unless a generated public origin setting overrides them.
@@ -76,6 +77,27 @@ Each entry in a service runtime's `ports` array accepts:
 - `transport` - subset of `["tcp", "udp"]`, default `["tcp"]`. Each transport is published as a separate `-p` rule. Docker runtime only.
 
 `expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](raw-ports.md).
+
+### Service dependencies and intra-app discovery
+
+A service may declare `dependsOn` to reference one or more sibling services in the same app. Each entry is either a service-key string or a `{ "service", "port" }` object that names a specific port:
+
+```jsonc
+{ "key": "web", "dependsOn": ["api"] }
+{ "key": "web", "dependsOn": [{ "service": "api", "port": "internal" }] }
+```
+
+`dependsOn` does two things from one declaration:
+
+- **Ordering** — Core starts a depended-on service before its dependents (topological order).
+- **Intra-app discovery** — Core injects the depended-on service's **internal** base URL into the dependent as `HOSTY_SERVICE_{KEY}_URL`, where `{KEY}` is the sibling's service key normalized to env style (e.g. `HOSTY_SERVICE_API_URL`). This is distinct from the cross-app `HOSTY_DEPENDENCY_{KEY}_URL` namespace, which resolves a *different* installed app's public endpoint.
+
+The target port is the one named in the object form, otherwise the sibling's first non-`public` port (falling back to its first declared port). A dependency on a sibling that declares no ports is ordering-only and injects no URL. The reachable URL differs by runtime:
+
+- `docker` — siblings join a per-app user network and are reached by service-name DNS at the container port, e.g. `http://api:3000`. The internal port is **not** published to the host, so the management surface stays private.
+- `localCommand` — siblings are reached on the loopback host at the sibling's assigned port, e.g. `http://localhost:43210`.
+
+This lets a BFF/proxy service (`web`) reach an internal API service (`api`) without pinning ports app-side or exposing the internal port publicly.
 
 ## Source
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
@@ -227,6 +228,45 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         if (selectedProfile is not null && selectedServices.Count == 0)
         {
             errors.Add(new("app_manifest_selected_services_missing", "The selected runtime does not produce any runnable services.", "$.services"));
+        }
+
+        // dependsOn drives both startup ordering and intra-app URL discovery (HOSTY_SERVICE_{KEY}_URL),
+        // so each entry must name a real sibling service (not itself), and a named port must exist on
+        // that sibling under the selected runtime.
+        foreach (var service in manifest.Services)
+        {
+            foreach (var dependency in service.DependsOn)
+            {
+                if (string.IsNullOrWhiteSpace(dependency.Service))
+                {
+                    errors.Add(new("app_manifest_service_depends_on_required", "services[].dependsOn entries must name a service.", "$.services[].dependsOn"));
+                    continue;
+                }
+
+                if (string.Equals(dependency.Service, service.Key, StringComparison.Ordinal))
+                {
+                    errors.Add(new("app_manifest_service_depends_on_self", $"Service '{service.Key}' cannot depend on itself.", "$.services[].dependsOn"));
+                    continue;
+                }
+
+                if (!serviceKeys.Contains(dependency.Service))
+                {
+                    errors.Add(new("app_manifest_service_depends_on_unknown", $"Service '{service.Key}' depends on unknown service '{dependency.Service}'.", "$.services[].dependsOn"));
+                    continue;
+                }
+
+                if (selectedProfile is not null && !string.IsNullOrWhiteSpace(dependency.Port))
+                {
+                    var target = manifest.Services.FirstOrDefault(candidate => string.Equals(candidate.Key, dependency.Service, StringComparison.Ordinal));
+                    var hasPort = target is not null &&
+                        target.Runtimes.TryGetValue(selectedProfile.Key, out var targetRuntime) &&
+                        targetRuntime.Ports.Any(port => string.Equals(RuntimeServiceDiscovery.PortKey(port), dependency.Port, StringComparison.Ordinal));
+                    if (!hasPort)
+                    {
+                        errors.Add(new("app_manifest_service_depends_on_port_unknown", $"Service '{service.Key}' depends on port '{dependency.Port}' of '{dependency.Service}', which does not declare it under runtime '{selectedProfile.Key}'.", "$.services[].dependsOn"));
+                    }
+                }
+            }
         }
 
         var normalizedMountKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -566,6 +606,15 @@ internal sealed class DockerRuntimeAdapter(
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
 
+        // Siblings that `dependsOn` one another reach each other by service-name DNS over a
+        // per-app user network, so the internal port never needs host publishing. Containers
+        // run standalone otherwise, so only create the network when discovery is actually used.
+        var dependencyNetwork = RequiresUserNetwork(services) ? BuildNetworkName(context.App.Id) : null;
+        if (dependencyNetwork is not null)
+        {
+            _ = await RunDockerAsync(["network", "create", dependencyNetwork], ignoreFailures: true, cancellationToken);
+        }
+
         foreach (var service in services)
         {
             if (service.Image is null)
@@ -599,6 +648,16 @@ internal sealed class DockerRuntimeAdapter(
                 "-e",
                 $"HOSTY_APP_SERVICE_KEY={service.Key}",
             };
+            if (dependencyNetwork is not null)
+            {
+                // The service key is a DNS-safe contract key, used directly as the network alias
+                // so siblings resolve `http://{service.Key}:{containerPort}`.
+                runArgs.Add("--network");
+                runArgs.Add(dependencyNetwork);
+                runArgs.Add("--network-alias");
+                runArgs.Add(service.Key);
+            }
+
             foreach (var environment in BuildDockerCoreEnvironment(config))
             {
                 runArgs.Add("-e");
@@ -627,6 +686,12 @@ internal sealed class DockerRuntimeAdapter(
             {
                 runArgs.Add("-e");
                 runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={dependency.Value}");
+            }
+
+            foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(services, service, BuildDockerServiceUrl))
+            {
+                runArgs.Add("-e");
+                runArgs.Add($"{serviceUrl.Key}={serviceUrl.Value}");
             }
 
             var assignedPorts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -710,6 +775,10 @@ internal sealed class DockerRuntimeAdapter(
             _ = await RunDockerAsync(["rm", "-f", BuildContainerName(context.App.Id, service.Key)], ignoreFailures: true, cancellationToken);
         }
 
+        // Drop the per-app discovery network (no-op when it was never created); containers are
+        // already removed above so detachment cannot fail.
+        _ = await RunDockerAsync(["network", "rm", BuildNetworkName(context.App.Id)], ignoreFailures: true, cancellationToken);
+
         return new AppRuntimeOperationResult("removed");
     }
 
@@ -753,7 +822,7 @@ internal sealed class DockerRuntimeAdapter(
         while (remaining.Count > 0)
         {
             var ready = remaining.Values
-                .Where(service => service.DependsOn.All(dependency => !remaining.ContainsKey(dependency)))
+                .Where(service => service.DependsOn.All(dependency => !remaining.ContainsKey(dependency.Service)))
                 .OrderBy(service => service.Key, StringComparer.Ordinal)
                 .ToArray();
             if (ready.Length == 0)
@@ -815,6 +884,19 @@ internal sealed class DockerRuntimeAdapter(
 
     internal static string BuildContainerName(string appId, string serviceKey)
         => $"hosty-{NormalizeDockerName(appId)}-{NormalizeDockerName(serviceKey)}";
+
+    internal static string BuildNetworkName(string appId)
+        => $"hosty-{NormalizeDockerName(appId)}-net";
+
+    // A user network is only needed when some service `dependsOn` another, i.e. when intra-app
+    // service-name DNS is actually used; single-service and ordering-free apps stay standalone.
+    internal static bool RequiresUserNetwork(IReadOnlyList<RuntimeSelectedService> services)
+        => services.Any(service => service.DependsOn.Count > 0);
+
+    // Discovery URL for the docker runtime: reach the sibling by its network alias (service key)
+    // at its container port, over the per-app user network — no host publishing of the port.
+    internal static string BuildDockerServiceUrl(RuntimeSelectedService service, RuntimePortManifest port)
+        => $"{RuntimeServiceDiscovery.Scheme(port)}://{service.Key}:{port.ContainerPort}";
 
     // Transport used when a port opts into the new publish format without naming one.
     private static readonly IReadOnlyList<string> DefaultTransports = ["tcp"];
@@ -924,9 +1006,16 @@ internal sealed record RuntimeAppManifestSelection(
 
 internal sealed record RuntimeSelectedService(
     string Key,
-    IReadOnlyList<string> DependsOn,
+    IReadOnlyList<RuntimeServiceDependency> DependsOn,
     RuntimeServiceProfileManifest Runtime,
     RuntimeDockerImage? Image);
+
+// A `services[].dependsOn` entry. Accepts either a bare service-key string (`"api"`) or an
+// object that names a specific port (`{ "service": "api", "port": "internal" }`). One
+// declaration drives both startup ordering and intra-app URL discovery; see
+// [RuntimeServiceDiscovery].
+[JsonConverter(typeof(RuntimeServiceDependencyJsonConverter))]
+internal sealed record RuntimeServiceDependency(string Service, string? Port);
 
 internal sealed record RuntimeDockerImage(string Repository, string Tag, string? PullPolicy)
 {
@@ -986,7 +1075,7 @@ internal sealed class RuntimeProfileManifest
 internal sealed class RuntimeAppServiceManifest
 {
     public string Key { get => field ?? ""; init; } = "";
-    public IReadOnlyList<string> DependsOn { get => field ?? []; init; } = [];
+    public IReadOnlyList<RuntimeServiceDependency> DependsOn { get => field ?? []; init; } = [];
     public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get => field ??= new Dictionary<string, RuntimeServiceProfileManifest>(); init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
 }
 
