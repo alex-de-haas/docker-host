@@ -688,7 +688,7 @@ internal sealed class CoreLifecycleService(
 
     public async Task<AppBackupResponse> CreateManualBackupAsync(string appId, AppManualBackupRequest request, CancellationToken cancellationToken = default)
     {
-        _ = await RequireAppAsync(appId, cancellationToken);
+        var app = await RequireAppAsync(appId, cancellationToken);
         var reason = string.IsNullOrWhiteSpace(request.Reason) ? "manual" : request.Reason.Trim();
         if (!BackupReasonPattern.IsMatch(reason))
         {
@@ -700,7 +700,37 @@ internal sealed class CoreLifecycleService(
             throw new AppLifecycleException("backup_reason_reserved", $"{reason} backup reason is reserved for Core lifecycle and app-initiated operations.");
         }
 
-        return new AppBackupResponse(await backups.CreateBackupAsync(appId, reason, cancellationToken: cancellationToken));
+        // Stop the app while its data directory is copied so the snapshot is consistent.
+        // Core zips the live data directory with no app-side coordination, so a running app
+        // could be mid-write (e.g. an open SQLite transaction) and produce a torn archive.
+        // The other Core-initiated backups (pre-update/-runtime-switch/-restore) already copy
+        // stopped data; this mirrors that stop->operate->restart pattern for operator backups.
+        var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        try
+        {
+            // Stop inside the try so the finally restart still runs if the stop sequence itself
+            // throws partway (e.g. UpdateAppAsync fails after the runtime is already stopped).
+            if (wasRunning)
+            {
+                var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+                _ = await ResolveAdapter(selection.RuntimeProfile.Type)
+                    .StopAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
+                _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
+            }
+
+            return new AppBackupResponse(await backups.CreateBackupAsync(appId, reason, cancellationToken: cancellationToken));
+        }
+        finally
+        {
+            // Always attempt to restore the prior running state, even if the backup failed or was
+            // cancelled, so an operator-triggered backup never silently leaves a running app stopped.
+            // Use CancellationToken.None so a cancelled backup still restarts; a restart failure
+            // surfaces through StartAsync (recorded + thrown), which is the right signal.
+            if (wasRunning)
+            {
+                _ = await StartAsync(appId, CancellationToken.None);
+            }
+        }
     }
 
     public async Task<AppBackupResponse> RestoreBackupAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken = default)

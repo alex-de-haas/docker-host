@@ -328,6 +328,50 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateManualBackupAsync_StopsRunningAppForConsistentSnapshotThenRestarts()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data", "notes.db"),
+            "local-data");
+        await fixture.Service.StartAsync("com.example.notes");
+
+        var result = await fixture.Service.CreateManualBackupAsync(
+            "com.example.notes",
+            new AppManualBackupRequest("manual"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        Assert.Equal("manual", result.Backup?.Reason);
+        // App was stopped for the copy and restarted afterwards.
+        Assert.Equal("running", app?.RuntimeState);
+        Assert.Equal(1, fixture.Adapter.StopCount);
+        Assert.Equal(2, fixture.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task CreateManualBackupAsync_DoesNotTouchLifecycleWhenAppAlreadyStopped()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data", "notes.db"),
+            "local-data");
+
+        var result = await fixture.Service.CreateManualBackupAsync(
+            "com.example.notes",
+            new AppManualBackupRequest("manual"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        Assert.Equal("manual", result.Backup?.Reason);
+        Assert.Equal("stopped", app?.RuntimeState);
+        Assert.Equal(0, fixture.Adapter.StopCount);
+        Assert.Equal(0, fixture.Adapter.StartCount);
+    }
+
+    [Fact]
     public async Task ApplyRuntimeSwitchAsync_CreatesPreRuntimeSwitchBackupAndPreservesData()
     {
         var fixture = await LifecycleFixture.CreateAsync();

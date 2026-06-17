@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
-import { Archive, Database, FileText, HardDrive, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, Upload } from "lucide-react";
+import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -168,6 +168,12 @@ function BackupsPanel({
           Preview prune
         </Button>
       </div>
+      {isRunning && (
+        <div className="flex items-start gap-2 rounded-md border p-3 text-sm text-muted-foreground">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Creating a backup briefly stops this running app while its data is copied, then restarts it.</span>
+        </div>
+      )}
       {cleanupPlan && (
         <div className="rounded-md border p-3">
           <div className="flex items-start justify-between gap-3">
