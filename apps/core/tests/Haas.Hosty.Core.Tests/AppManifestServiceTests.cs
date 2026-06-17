@@ -112,10 +112,24 @@ public sealed class AppManifestServiceTests
             });
     }
 
+    [Fact]
+    public async Task LoadAsync_AcceptsDependsOnPortByContainerNumber()
+    {
+        // "internal" port has containerPort 3000; targeting it numerically must resolve.
+        var manifestPath = await WriteTwoServiceManifestAsync("""[ { "service": "api", "port": 3000 } ]""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var dependency = Assert.Single(selection.Services.Single(service => service.Key == "web").DependsOn);
+        Assert.Equal("3000", dependency.Port);
+    }
+
     [Theory]
     [InlineData("""[ "web" ]""", "app_manifest_service_depends_on_self")]
     [InlineData("""[ "missing" ]""", "app_manifest_service_depends_on_unknown")]
     [InlineData("""[ { "service": "api", "port": "nope" } ]""", "app_manifest_service_depends_on_port_unknown")]
+    // A wrong-typed `service` value is skipped by the converter, leaving no service named.
+    [InlineData("""[ { "service": ["api"] } ]""", "app_manifest_service_depends_on_required")]
     public async Task LoadAsync_RejectsInvalidDependsOn(string dependsOn, string expectedCode)
     {
         var manifestPath = await WriteTwoServiceManifestAsync(dependsOn);

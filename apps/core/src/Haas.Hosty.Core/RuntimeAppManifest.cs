@@ -260,7 +260,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                     var target = manifest.Services.FirstOrDefault(candidate => string.Equals(candidate.Key, dependency.Service, StringComparison.Ordinal));
                     var hasPort = target is not null &&
                         target.Runtimes.TryGetValue(selectedProfile.Key, out var targetRuntime) &&
-                        targetRuntime.Ports.Any(port => string.Equals(RuntimeServiceDiscovery.PortKey(port), dependency.Port, StringComparison.Ordinal));
+                        targetRuntime.Ports.Any(port => RuntimeServiceDiscovery.PortMatches(port, dependency.Port));
                     if (!hasPort)
                     {
                         errors.Add(new("app_manifest_service_depends_on_port_unknown", $"Service '{service.Key}' depends on port '{dependency.Port}' of '{dependency.Service}', which does not declare it under runtime '{selectedProfile.Key}'.", "$.services[].dependsOn"));

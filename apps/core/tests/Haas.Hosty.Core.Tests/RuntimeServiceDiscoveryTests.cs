@@ -50,6 +50,29 @@ public sealed class RuntimeServiceDiscoveryTests
     }
 
     [Fact]
+    public void ChooseInternalPort_MatchesNamedPortByContainerPortNumber()
+    {
+        var service = Service("api", Port("internal", 3000), Port("metrics", 9000));
+
+        var chosen = RuntimeServiceDiscovery.ChooseInternalPort(service, namedPort: "3000");
+
+        Assert.Equal("internal", chosen?.Key);
+    }
+
+    [Fact]
+    public void BuildEnvironment_SkipsWhenUrlFactoryReturnsNull()
+    {
+        var api = Service("api", Port("internal", 3000));
+        var web = Service("web", dependsOn: new RuntimeServiceDependency("api", null));
+
+        var environment = RuntimeServiceDiscovery
+            .BuildEnvironment([api, web], web, (_, _) => null)
+            .ToList();
+
+        Assert.Empty(environment);
+    }
+
+    [Fact]
     public void BuildEnvironment_InjectsUrlPerResolvedDependency()
     {
         var api = Service("api", Port("internal", 3000));

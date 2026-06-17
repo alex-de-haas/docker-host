@@ -26,6 +26,12 @@ internal static class RuntimeServiceDiscovery
     public static string Scheme(RuntimePortManifest port)
         => string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol;
 
+    // Whether `name` identifies this port — by its stable key or its numeric container port,
+    // so a dependency can target `{ "port": "internal" }` or `{ "port": 3000 }` equivalently.
+    public static bool PortMatches(RuntimePortManifest port, string name)
+        => string.Equals(PortKey(port), name, StringComparison.Ordinal) ||
+            string.Equals(port.ContainerPort?.ToString(CultureInfo.InvariantCulture), name, StringComparison.Ordinal);
+
     // The sibling port a dependent should target: the explicitly named port when given,
     // otherwise the first non-public ("internal") port, falling back to the first declared
     // port. Returns null when the sibling declares no addressable port — an ordering-only
@@ -40,7 +46,7 @@ internal static class RuntimeServiceDiscovery
 
         if (!string.IsNullOrWhiteSpace(namedPort))
         {
-            return ports.FirstOrDefault(port => string.Equals(PortKey(port), namedPort, StringComparison.Ordinal));
+            return ports.FirstOrDefault(port => PortMatches(port, namedPort));
         }
 
         return ports.FirstOrDefault(port => port.Public != true) ?? ports[0];
@@ -48,11 +54,12 @@ internal static class RuntimeServiceDiscovery
 
     // Builds the HOSTY_SERVICE_{KEY}_URL environment for one dependent service. `urlFactory`
     // renders the reachable base URL for a chosen (sibling, port) pair; it differs by runtime,
-    // so each adapter supplies its own.
+    // so each adapter supplies its own. A null/empty factory result is skipped (e.g. the port
+    // could not be resolved) rather than emitting a malformed URL.
     public static IEnumerable<KeyValuePair<string, string>> BuildEnvironment(
         IReadOnlyList<RuntimeSelectedService> services,
         RuntimeSelectedService dependent,
-        Func<RuntimeSelectedService, RuntimePortManifest, string> urlFactory)
+        Func<RuntimeSelectedService, RuntimePortManifest, string?> urlFactory)
     {
         foreach (var dependency in dependent.DependsOn)
         {
@@ -68,7 +75,13 @@ internal static class RuntimeServiceDiscovery
                 continue;
             }
 
-            yield return new KeyValuePair<string, string>(EnvironmentName(dependency.Service), urlFactory(target, port));
+            var url = urlFactory(target, port);
+            if (string.IsNullOrEmpty(url))
+            {
+                continue;
+            }
+
+            yield return new KeyValuePair<string, string>(EnvironmentName(dependency.Service), url);
         }
     }
 }
@@ -101,19 +114,25 @@ internal sealed class RuntimeServiceDependencyJsonConverter : JsonConverter<Runt
 
             var property = reader.GetString();
             reader.Read();
-            if (string.Equals(property, "service", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(property, "service", StringComparison.OrdinalIgnoreCase) && reader.TokenType == JsonTokenType.String)
             {
                 service = reader.GetString();
             }
-            else if (string.Equals(property, "port", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(property, "port", StringComparison.OrdinalIgnoreCase) && reader.TokenType == JsonTokenType.String)
             {
-                // A port may be named by its string key or its numeric container port.
-                port = reader.TokenType == JsonTokenType.Number
-                    ? reader.GetInt32().ToString(CultureInfo.InvariantCulture)
-                    : reader.GetString();
+                // A port may be named by its string key...
+                port = reader.GetString();
+            }
+            else if (string.Equals(property, "port", StringComparison.OrdinalIgnoreCase) && reader.TokenType == JsonTokenType.Number)
+            {
+                // ...or by its numeric container port.
+                port = reader.GetInt32().ToString(CultureInfo.InvariantCulture);
             }
             else
             {
+                // Unexpected value (object/array/bool/null, or a wrong-typed known field): skip
+                // the whole subtree so the reader stays aligned instead of throwing on Get* or
+                // mis-reading nested members as sibling properties.
                 reader.Skip();
             }
         }

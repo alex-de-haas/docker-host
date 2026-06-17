@@ -228,11 +228,15 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
 
         // Intra-app discovery: a sibling is reached on the loopback host at the port it was
-        // assigned in `servicePorts` (the same map drives every service's own HOSTY_PORT_*).
+        // assigned in `servicePorts` (the same map drives every service's own HOSTY_PORT_*). A
+        // missing entry yields null, which BuildEnvironment skips rather than emitting `:0`.
         foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(
             context.Manifest.Services,
             service,
-            (target, port) => $"{RuntimeServiceDiscovery.Scheme(port)}://{config.RuntimePublicHost}:{servicePorts[target.Key][RuntimeServiceDiscovery.PortKey(port)]}"))
+            (target, port) => servicePorts.TryGetValue(target.Key, out var targetPorts) &&
+                    targetPorts.TryGetValue(RuntimeServiceDiscovery.PortKey(port), out var hostPort)
+                ? $"{RuntimeServiceDiscovery.Scheme(port)}://{config.RuntimePublicHost}:{hostPort}"
+                : null))
         {
             startInfo.Environment[serviceUrl.Key] = serviceUrl.Value;
         }
@@ -268,6 +272,10 @@ internal sealed class LocalCommandRuntimeAdapter(
     // services within a single start (a dependent must see the exact port its sibling binds).
     private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> ResolveServicePorts(RuntimeLifecycleContext context)
     {
+        // Track every port handed out across services so a dynamic allocation never lands on a
+        // port already assigned to a sibling (pinned or dynamic) — the assignments here happen
+        // before any process binds, so the OS alone cannot keep them distinct.
+        var assigned = new HashSet<int>();
         var map = new Dictionary<string, IReadOnlyDictionary<string, int>>(StringComparer.Ordinal);
         foreach (var service in context.Manifest.Services)
         {
@@ -280,7 +288,9 @@ internal sealed class LocalCommandRuntimeAdapter(
                     continue;
                 }
 
-                ports[key] = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
+                var hostPort = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key, assigned);
+                ports[key] = hostPort;
+                assigned.Add(hostPort);
             }
 
             map[service.Key] = ports;
