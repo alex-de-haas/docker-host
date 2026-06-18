@@ -51,7 +51,7 @@ GET /api/internal/apps/{appId}/directory/users
 Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>
 ```
 
-The response includes enabled Host users explicitly assigned to the app. It does not expose the full Host user directory.
+The response includes enabled Host users explicitly assigned to the app, plus enabled Host admins (who have implicit access to every app and are never stored as explicit assignments). It does not expose the full Host user directory.
 
 ## Gateway Status
 
