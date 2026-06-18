@@ -26,4 +26,4 @@ GET /api/internal/apps/{appId}/directory/users
 Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>
 ```
 
-The directory is scoped to enabled users explicitly assigned to the app.
+The directory is scoped to enabled users explicitly assigned to the app, plus enabled Host admins (who have implicit access to every app and are never stored as explicit assignments).
