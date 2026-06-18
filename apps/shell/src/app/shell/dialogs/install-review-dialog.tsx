@@ -4,7 +4,7 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { ChevronDown, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -95,7 +95,7 @@ export function InstallReviewDialog({
           <DialogDescription>Review a runtime app manifest before installing it into Core.</DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={submitReview} className="space-y-4">
+        <form onSubmit={submitReview} className="shrink-0 space-y-4">
           <div className="space-y-2">
             <Label htmlFor="manifestPath">Manifest, app directory, or URL</Label>
             <Input
@@ -114,68 +114,73 @@ export function InstallReviewDialog({
           </div>
         </form>
 
-        {detail.error && <InlineError message={detail.error} />}
-        {detail.loading && !reviewedPlan && <EmptyState icon={LoaderCircle} title="Loading install review" iconClassName="animate-spin" />}
+        <DialogBody className="space-y-4">
+          {detail.error && <InlineError message={detail.error} />}
+          {detail.loading && !reviewedPlan && <EmptyState icon={LoaderCircle} title="Loading install review" iconClassName="animate-spin" />}
+
+          {reviewedPlan && (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-medium">{reviewedPlan.displayName}</h3>
+                  <p className="text-sm text-muted-foreground">{reviewedPlan.description || "Runtime app manifest reviewed."}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="selectedRuntime">Runtime</Label>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        id="selectedRuntime"
+                        type="button"
+                        variant="outline"
+                        className="w-full justify-between px-3 font-normal"
+                        disabled={detail.loading || runtimeProfiles.length <= 1}
+                      >
+                        <span className="truncate">{selectedRuntimeLabel}</span>
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+                      <DropdownMenuRadioGroup value={selectedRuntimeValue} onValueChange={changeRuntime}>
+                        {runtimeProfiles.map((profile) => (
+                          <DropdownMenuRadioItem key={profile.key} value={profile.key}>
+                            {formatRuntimeProfileLabel(profile)}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FactCard label="App" value={reviewedPlan.displayName} />
+                <FactCard label="Version" value={reviewedPlan.currentVersion ? `${reviewedPlan.currentVersion} to ${reviewedPlan.targetVersion}` : reviewedPlan.targetVersion} />
+                <FactCard label="Runtime" value={reviewedPlan.targetRuntime} />
+                <FactCard label="Manifest digest" value={reviewedPlan.targetManifestDigest.slice(0, 16)} />
+              </div>
+              {reviewedPlan.settings.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-medium">Settings</h3>
+                  {reviewedPlan.settings.map((setting) => (
+                    <SettingInput key={setting.key} setting={setting} value={settingsDraft[setting.key] ?? ""} onChange={(value) => setSettingsDraft((current) => ({ ...current, [setting.key]: value }))} />
+                  ))}
+                </div>
+              )}
+              <div className="rounded-md border bg-muted/30 p-3">
+                <CheckboxRow label="Start at Core startup" checked={autostartDraft} onChange={setAutostartDraft} />
+              </div>
+            </div>
+          )}
+        </DialogBody>
 
         {reviewedPlan && (
-          <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
-              <div className="space-y-1">
-                <h3 className="text-sm font-medium">{reviewedPlan.displayName}</h3>
-                <p className="text-sm text-muted-foreground">{reviewedPlan.description || "Runtime app manifest reviewed."}</p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="selectedRuntime">Runtime</Label>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      id="selectedRuntime"
-                      type="button"
-                      variant="outline"
-                      className="w-full justify-between px-3 font-normal"
-                      disabled={detail.loading || runtimeProfiles.length <= 1}
-                    >
-                      <span className="truncate">{selectedRuntimeLabel}</span>
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-[var(--radix-dropdown-menu-trigger-width)]">
-                    <DropdownMenuRadioGroup value={selectedRuntimeValue} onValueChange={changeRuntime}>
-                      {runtimeProfiles.map((profile) => (
-                        <DropdownMenuRadioItem key={profile.key} value={profile.key}>
-                          {formatRuntimeProfileLabel(profile)}
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <FactCard label="App" value={reviewedPlan.displayName} />
-              <FactCard label="Version" value={reviewedPlan.currentVersion ? `${reviewedPlan.currentVersion} to ${reviewedPlan.targetVersion}` : reviewedPlan.targetVersion} />
-              <FactCard label="Runtime" value={reviewedPlan.targetRuntime} />
-              <FactCard label="Manifest digest" value={reviewedPlan.targetManifestDigest.slice(0, 16)} />
-            </div>
-            {reviewedPlan.settings.length > 0 && (
-              <div className="space-y-3">
-                <h3 className="text-sm font-medium">Settings</h3>
-                {reviewedPlan.settings.map((setting) => (
-                  <SettingInput key={setting.key} setting={setting} value={settingsDraft[setting.key] ?? ""} onChange={(value) => setSettingsDraft((current) => ({ ...current, [setting.key]: value }))} />
-                ))}
-              </div>
-            )}
-            <div className="rounded-md border bg-muted/30 p-3">
-              <CheckboxRow label="Start at Core startup" checked={autostartDraft} onChange={setAutostartDraft} />
-            </div>
-            <DialogFooter>
-              {reviewedPlan.action !== "install" && <p className="text-sm text-muted-foreground">Already installed</p>}
-              <Button onClick={apply} disabled={reviewedPlan.action !== "install" || detail.loading || busyAction === "install"}>
-                {busyAction === "install" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Install App
-              </Button>
-            </DialogFooter>
-          </div>
+          <DialogFooter>
+            {reviewedPlan.action !== "install" && <p className="text-sm text-muted-foreground">Already installed</p>}
+            <Button onClick={apply} disabled={reviewedPlan.action !== "install" || detail.loading || busyAction === "install"}>
+              {busyAction === "install" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              Install App
+            </Button>
+          </DialogFooter>
         )}
       </DialogContent>
     </Dialog>

@@ -6,7 +6,7 @@ import { Check, CheckCircle2, LoaderCircle, MoreHorizontal, RefreshCw, Trash2, U
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -316,39 +316,41 @@ export function UserManagementPanel({
             <DialogTitle>Invite User</DialogTitle>
             <DialogDescription>Create a setup link and assign app access.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={submitInvite} className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="inviteEmail">Email</Label>
-                <Input id="inviteEmail" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required />
+          <form onSubmit={submitInvite} className="flex min-h-0 flex-1 flex-col gap-4">
+            <DialogBody className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="inviteEmail">Email</Label>
+                  <Input id="inviteEmail" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="inviteDisplayName">Display name</Label>
+                  <Input id="inviteDisplayName" value={inviteDisplayName} onChange={(event) => setInviteDisplayName(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="inviteRole">Role</Label>
+                  <select id="inviteRole" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={inviteRole} onChange={(event) => {
+                    const role = event.target.value === "host.admin" ? "host.admin" : "host.user";
+                    setInviteRole(role);
+                    if (role === "host.admin") {
+                      setInviteAppIds([]);
+                    }
+                  }}>
+                    <option value="host.user">User</option>
+                    <option value="host.admin">Admin</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="inviteTtl">Expires</Label>
+                  <select id="inviteTtl" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={inviteTtlMs} onChange={(event) => setInviteTtlMs(Number(event.target.value))}>
+                    {ttlOptions.map((option) => <option key={option.ttlMs} value={option.ttlMs}>{option.label}</option>)}
+                  </select>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="inviteDisplayName">Display name</Label>
-                <Input id="inviteDisplayName" value={inviteDisplayName} onChange={(event) => setInviteDisplayName(event.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="inviteRole">Role</Label>
-                <select id="inviteRole" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={inviteRole} onChange={(event) => {
-                  const role = event.target.value === "host.admin" ? "host.admin" : "host.user";
-                  setInviteRole(role);
-                  if (role === "host.admin") {
-                    setInviteAppIds([]);
-                  }
-                }}>
-                  <option value="host.user">User</option>
-                  <option value="host.admin">Admin</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="inviteTtl">Expires</Label>
-                <select id="inviteTtl" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={inviteTtlMs} onChange={(event) => setInviteTtlMs(Number(event.target.value))}>
-                  {ttlOptions.map((option) => <option key={option.ttlMs} value={option.ttlMs}>{option.label}</option>)}
-                </select>
-              </div>
-            </div>
-            {inviteRole === "host.user" && (
-              <AppAccessPicker apps={apps} selectedAppIds={inviteAppIds} onChange={setInviteAppIds} />
-            )}
+              {inviteRole === "host.user" && (
+                <AppAccessPicker apps={apps} selectedAppIds={inviteAppIds} onChange={setInviteAppIds} />
+              )}
+            </DialogBody>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setInviteOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={pendingAction === "invite"}>
@@ -367,10 +369,10 @@ export function UserManagementPanel({
             <DialogDescription>Send this link to the invited user.</DialogDescription>
           </DialogHeader>
           {createdInvite && (
-            <div className="space-y-3">
+            <DialogBody className="space-y-3">
               <CopyField label="Setup URL" value={createdInvite.setupUrl} copied={copiedInviteField === "url"} onCopy={() => void copyInviteField("url", createdInvite.setupUrl)} />
               <CopyField label="Token" value={createdInvite.token} copied={copiedInviteField === "token"} onCopy={() => void copyInviteField("token", createdInvite.token)} />
-            </div>
+            </DialogBody>
           )}
         </DialogContent>
       </Dialog>
@@ -382,8 +384,10 @@ export function UserManagementPanel({
             <DialogDescription>Select runtime apps this user can open.</DialogDescription>
           </DialogHeader>
           {accessUser && (
-            <div className="space-y-4">
-              <AppAccessPicker apps={apps} selectedAppIds={accessAppIds} onChange={setAccessAppIds} />
+            <div className="flex min-h-0 flex-1 flex-col gap-4">
+              <DialogBody className="space-y-4">
+                <AppAccessPicker apps={apps} selectedAppIds={accessAppIds} onChange={setAccessAppIds} />
+              </DialogBody>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setAccessUserId(null)}>Cancel</Button>
                 <Button type="button" onClick={saveAccess} disabled={pendingAction === `access:${accessUser.id}`}>

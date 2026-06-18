@@ -4,7 +4,7 @@ import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
@@ -75,7 +75,7 @@ export function AppDetailsDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className={cn("sm:max-w-3xl", view === "logs" && "max-h-[calc(100vh-2rem)] overflow-hidden sm:max-w-5xl")}>
+      <DialogContent className={cn("sm:max-w-3xl", view === "logs" && "sm:max-w-5xl")}>
         <DialogHeader>
           <DialogTitle>{detailTitle(view)} · {app.displayName}</DialogTitle>
           <DialogDescription>{app.id}</DialogDescription>
@@ -115,14 +115,14 @@ export function AppDetailsDialog({
 
 function LogsPanel({ app, detail, onRefresh }: { app: CoreApp; detail: DetailPanelState; onRefresh: (app: CoreApp) => void }) {
   return (
-    <div className="flex min-h-0 min-w-0 flex-col gap-3">
-      <div className="flex justify-end">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <div className="flex shrink-0 justify-end">
         <Button variant="outline" onClick={() => onRefresh(app)} disabled={detail.loading}>
           <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin")} />
           Refresh
         </Button>
       </div>
-      <pre className="max-h-[min(480px,calc(100vh-14rem))] min-w-0 max-w-full overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">{detail.loading ? "Loading logs" : detail.logs || "No logs"}</pre>
+      <pre className="min-h-0 min-w-0 max-w-full flex-1 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">{detail.loading ? "Loading logs" : detail.logs || "No logs"}</pre>
     </div>
   );
 }
@@ -153,7 +153,7 @@ function BackupsPanel({
   const isRunning = app.runtimeState === "running";
 
   return (
-    <div className="space-y-4">
+    <DialogBody className="space-y-4">
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => onCreateBackup(app)} disabled={busyAction === `${app.id}:backup`}>
           {busyAction === `${app.id}:backup` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
@@ -225,7 +225,7 @@ function BackupsPanel({
           </TableBody>
         </Table>
       )}
-    </div>
+    </DialogBody>
   );
 }
 
@@ -281,59 +281,61 @@ function ConfigurePanel({
   };
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <div className="rounded-md border bg-muted/30 p-3">
-        <CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} />
-      </div>
-      <ConfigureSection
-        title="App settings"
-        testId="configure-app-settings"
-        count={appSettings.length}
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        attention={hasMissingRequiredSettings(appSettings, draft)}
-      >
-        {appSettings.length > 0 ? (
-          <div className="space-y-3">
-            {appSettings.map((setting) => (
-              <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">This app has no app-owned settings.</p>
-        )}
-      </ConfigureSection>
-      <ConfigureSection
-        title="Public origins"
-        testId="configure-public-origins"
-        count={publicOriginSettings.length}
-        open={publicOriginsOpen}
-        onOpenChange={setPublicOriginsOpen}
-      >
-        {publicOriginSettings.length > 0 ? (
-          <div className="space-y-4">
-            {publicOriginGroups.map((group) => (
-              <div key={group.service} className="space-y-2">
-                <h3 className="text-sm font-medium">{group.service}</h3>
-                <div className="space-y-2">
-                  {group.items.map(({ setting, endpoint }) => (
-                    <PublicOriginInput
-                      key={setting.key}
-                      setting={setting}
-                      endpoint={endpoint}
-                      value={draft[setting.key] ?? ""}
-                      disabled={!canManageApps}
-                      onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
-                    />
-                  ))}
+    <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+      <DialogBody className="space-y-4">
+        <div className="rounded-md border bg-muted/30 p-3">
+          <CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} />
+        </div>
+        <ConfigureSection
+          title="App settings"
+          testId="configure-app-settings"
+          count={appSettings.length}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          attention={hasMissingRequiredSettings(appSettings, draft)}
+        >
+          {appSettings.length > 0 ? (
+            <div className="space-y-3">
+              {appSettings.map((setting) => (
+                <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">This app has no app-owned settings.</p>
+          )}
+        </ConfigureSection>
+        <ConfigureSection
+          title="Public origins"
+          testId="configure-public-origins"
+          count={publicOriginSettings.length}
+          open={publicOriginsOpen}
+          onOpenChange={setPublicOriginsOpen}
+        >
+          {publicOriginSettings.length > 0 ? (
+            <div className="space-y-4">
+              {publicOriginGroups.map((group) => (
+                <div key={group.service} className="space-y-2">
+                  <h3 className="text-sm font-medium">{group.service}</h3>
+                  <div className="space-y-2">
+                    {group.items.map(({ setting, endpoint }) => (
+                      <PublicOriginInput
+                        key={setting.key}
+                        setting={setting}
+                        endpoint={endpoint}
+                        value={draft[setting.key] ?? ""}
+                        disabled={!canManageApps}
+                        onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">This app has no public endpoints.</p>
-        )}
-      </ConfigureSection>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">This app has no public endpoints.</p>
+          )}
+        </ConfigureSection>
+      </DialogBody>
       <DialogFooter>
         <Button type="submit" disabled={!canManageApps || busyAction === `${app.id}:configure`}>
           {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Settings2 className="h-4 w-4" />}
@@ -401,60 +403,62 @@ function MountsPanel({
   const busy = busyAction === `${app.id}:mounts`;
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        External folders live outside app data and are never backed up or deleted by Hosty. Host paths must be absolute and outside the Hosty data root.
-      </p>
-      {slots.map((slot) => {
-        const slotRows = rows[slot.key] ?? [];
-        const canAdd = slot.multiple || slotRows.length === 0;
-        return (
-          <div key={slot.key} className="space-y-2 rounded-md border p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <HardDrive className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">{slot.key}</span>
+    <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+      <DialogBody className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          External folders live outside app data and are never backed up or deleted by Hosty. Host paths must be absolute and outside the Hosty data root.
+        </p>
+        {slots.map((slot) => {
+          const slotRows = rows[slot.key] ?? [];
+          const canAdd = slot.multiple || slotRows.length === 0;
+          return (
+            <div key={slot.key} className="space-y-2 rounded-md border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">{slot.key}</span>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {[slot.mode, slot.multiple ? "multiple" : "single", slot.required ? "required" : "optional", slot.service ? `service: ${slot.service}` : null].filter(Boolean).join(" · ")}
+                </span>
               </div>
-              <span className="text-xs text-muted-foreground">
-                {[slot.mode, slot.multiple ? "multiple" : "single", slot.required ? "required" : "optional", slot.service ? `service: ${slot.service}` : null].filter(Boolean).join(" · ")}
-              </span>
+              {slotRows.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No host paths configured.</p>
+              ) : (
+                <div className="space-y-2">
+                  {slotRows.map((row, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <Input
+                        aria-label={`${slot.key} label`}
+                        placeholder="label"
+                        className="w-40"
+                        value={row.label}
+                        onChange={(event) => updateRow(slot.key, index, "label", event.target.value)}
+                      />
+                      <Input
+                        aria-label={`${slot.key} host path`}
+                        placeholder="/srv/path"
+                        className="flex-1"
+                        value={row.hostPath}
+                        onChange={(event) => updateRow(slot.key, index, "hostPath", event.target.value)}
+                      />
+                      <IconButton title="Remove path" destructive onClick={() => removeRow(slot.key, index)}>
+                        <Trash2 className="h-4 w-4" />
+                      </IconButton>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {canAdd && (
+                <Button type="button" variant="outline" size="sm" onClick={() => addRow(slot.key)}>
+                  <Plus className="h-4 w-4" />
+                  Add path
+                </Button>
+              )}
             </div>
-            {slotRows.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No host paths configured.</p>
-            ) : (
-              <div className="space-y-2">
-                {slotRows.map((row, index) => (
-                  <div key={index} className="flex items-center gap-2">
-                    <Input
-                      aria-label={`${slot.key} label`}
-                      placeholder="label"
-                      className="w-40"
-                      value={row.label}
-                      onChange={(event) => updateRow(slot.key, index, "label", event.target.value)}
-                    />
-                    <Input
-                      aria-label={`${slot.key} host path`}
-                      placeholder="/srv/path"
-                      className="flex-1"
-                      value={row.hostPath}
-                      onChange={(event) => updateRow(slot.key, index, "hostPath", event.target.value)}
-                    />
-                    <IconButton title="Remove path" destructive onClick={() => removeRow(slot.key, index)}>
-                      <Trash2 className="h-4 w-4" />
-                    </IconButton>
-                  </div>
-                ))}
-              </div>
-            )}
-            {canAdd && (
-              <Button type="button" variant="outline" size="sm" onClick={() => addRow(slot.key)}>
-                <Plus className="h-4 w-4" />
-                Add path
-              </Button>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </DialogBody>
       <DialogFooter>
         <Button type="submit" disabled={busy}>
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
@@ -469,42 +473,46 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
   const plan = detail.updatePlan;
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="flex shrink-0 justify-end">
         <Button variant="outline" onClick={() => onReloadPlan(app)} disabled={detail.loading}>
           <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin")} />
           Recheck
         </Button>
       </div>
-      {detail.loading ? (
-        <EmptyState icon={LoaderCircle} title="Loading update plan" iconClassName="animate-spin" />
-      ) : plan ? (
-        <>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FactCard label="Version" value={`${plan.currentVersion} to ${plan.targetVersion}`} />
-            <FactCard label="Runtime" value={`${plan.currentRuntime || "none"} to ${plan.targetRuntime}`} />
-            <FactCard label="Backup" value={plan.willCreatePreUpdateBackup ? "pre-update" : "none"} />
-            <FactCard label="Plan digest" value={plan.planDigest.slice(0, 16)} />
-          </div>
-          <div className="rounded-md border p-4">
-            <h3 className="mb-2 text-sm font-medium">Changes</h3>
-            {plan.changes.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No changes reported.</p>
-            ) : (
-              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                {plan.changes.map((change) => <li key={change}>{formatUpdateChange(change)}</li>)}
-              </ul>
-            )}
-          </div>
-          <DialogFooter>
-            <Button onClick={() => onApplyUpdate(app, plan)} disabled={plan.changes.length === 0 || busyAction === `${app.id}:update`}>
-              {busyAction === `${app.id}:update` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              Apply update
-            </Button>
-          </DialogFooter>
-        </>
-      ) : (
-        <EmptyState icon={Upload} title="No update plan" />
+      <DialogBody className="space-y-4">
+        {detail.loading ? (
+          <EmptyState icon={LoaderCircle} title="Loading update plan" iconClassName="animate-spin" />
+        ) : plan ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FactCard label="Version" value={`${plan.currentVersion} to ${plan.targetVersion}`} />
+              <FactCard label="Runtime" value={`${plan.currentRuntime || "none"} to ${plan.targetRuntime}`} />
+              <FactCard label="Backup" value={plan.willCreatePreUpdateBackup ? "pre-update" : "none"} />
+              <FactCard label="Plan digest" value={plan.planDigest.slice(0, 16)} />
+            </div>
+            <div className="rounded-md border p-4">
+              <h3 className="mb-2 text-sm font-medium">Changes</h3>
+              {plan.changes.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No changes reported.</p>
+              ) : (
+                <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                  {plan.changes.map((change) => <li key={change}>{formatUpdateChange(change)}</li>)}
+                </ul>
+              )}
+            </div>
+          </>
+        ) : (
+          <EmptyState icon={Upload} title="No update plan" />
+        )}
+      </DialogBody>
+      {!detail.loading && plan && (
+        <DialogFooter>
+          <Button onClick={() => onApplyUpdate(app, plan)} disabled={plan.changes.length === 0 || busyAction === `${app.id}:update`}>
+            {busyAction === `${app.id}:update` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            Apply update
+          </Button>
+        </DialogFooter>
       )}
     </div>
   );
@@ -519,16 +527,18 @@ function RemovePanel({ app, busyAction, canRemove, onRemove }: { app: CoreApp; b
   });
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-        Runtime state is always removed. Optional cleanup controls app data, backups, and source checkout.
-      </div>
-      <div className="space-y-2">
-        <CheckboxRow label="Delete app data" checked={options.deleteData} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteData: checked }))} />
-        <CheckboxRow label="Delete backups" checked={options.deleteBackups} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteBackups: checked }))} />
-        <CheckboxRow label="Delete source checkout" checked={options.deleteSource} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteSource: checked }))} />
-        <CheckboxRow label="Ignore runtime errors" checked={options.ignoreRuntimeErrors} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, ignoreRuntimeErrors: checked }))} />
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <DialogBody className="space-y-4">
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Runtime state is always removed. Optional cleanup controls app data, backups, and source checkout.
+        </div>
+        <div className="space-y-2">
+          <CheckboxRow label="Delete app data" checked={options.deleteData} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteData: checked }))} />
+          <CheckboxRow label="Delete backups" checked={options.deleteBackups} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteBackups: checked }))} />
+          <CheckboxRow label="Delete source checkout" checked={options.deleteSource} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteSource: checked }))} />
+          <CheckboxRow label="Ignore runtime errors" checked={options.ignoreRuntimeErrors} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, ignoreRuntimeErrors: checked }))} />
+        </div>
+      </DialogBody>
       <DialogFooter>
         <Button variant="destructive" onClick={() => onRemove(app, options)} disabled={!canRemove || busyAction === `${app.id}:remove`}>
           {busyAction === `${app.id}:remove` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
