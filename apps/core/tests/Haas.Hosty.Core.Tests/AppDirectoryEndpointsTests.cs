@@ -76,6 +76,17 @@ public sealed class AppDirectoryEndpointsTests
     }
 
     [Fact]
+    public void BuildDirectoryUsers_ToleratesNullCollections()
+    {
+        // A hand-edited or legacy state document may deserialize with null collections.
+        var state = new UserDirectoryState(1, null!, [], null!, []);
+
+        var result = AppDirectoryEndpoints.BuildDirectoryUsers(state, "com.example.app");
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
     public void BuildDirectoryUsers_ExcludesUsersAssignedToOtherApps()
     {
         var state = new UserDirectoryState(

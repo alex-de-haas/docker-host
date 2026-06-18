@@ -47,12 +47,14 @@ internal static class AppDirectoryEndpoints
     /// </summary>
     internal static AppDirectoryUser[] BuildDirectoryUsers(UserDirectoryState state, string appId)
     {
-        var assignedUserIds = state.Assignments
+        // Collections are non-null by contract, but this helper takes arbitrary state, and the
+        // persisted document could be hand-edited or predate a field — guard against null.
+        var assignedUserIds = (state.Assignments ?? [])
             .Where(assignment => string.Equals(assignment.AppId, appId, StringComparison.Ordinal))
             .Select(assignment => assignment.UserId)
             .ToHashSet(StringComparer.Ordinal);
 
-        return state.Users
+        return (state.Users ?? [])
             .Where(user => !user.Disabled &&
                 (string.Equals(user.Role, "host.admin", StringComparison.Ordinal) || assignedUserIds.Contains(user.Id)))
             .OrderBy(user => user.Email ?? user.Id, StringComparer.OrdinalIgnoreCase)
