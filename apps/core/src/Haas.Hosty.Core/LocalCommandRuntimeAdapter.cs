@@ -124,21 +124,38 @@ internal sealed class LocalCommandRuntimeAdapter(
 
     public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
     {
+        var services = new List<AppRuntimeServiceLogs>();
         var lines = new List<string>();
         foreach (var service in context.Manifest.Services)
         {
             var process = registry.Get(context.App.Id, service.Key);
             var logPath = process?.LogPath ?? Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
-            if (!File.Exists(logPath))
+            var fileExists = File.Exists(logPath);
+            List<string> serviceLines = [];
+            if (fileExists)
             {
-                continue;
+                // A failing read for one service must not break log retrieval for the rest.
+                try
+                {
+                    serviceLines = File.ReadLines(logPath).TakeLast(Math.Clamp(tail, 1, 1000)).ToList();
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    serviceLines = [$"[error reading log file: {ex.Message}]"];
+                }
             }
 
-            lines.Add($"== {service.Key} ==");
-            lines.AddRange(File.ReadLines(logPath).TakeLast(Math.Clamp(tail, 1, 1000)));
+            services.Add(new AppRuntimeServiceLogs(service.Key, string.Join(Environment.NewLine, serviceLines)));
+            // Match the prior combined-text behavior: a header is emitted whenever the
+            // log file exists, even if it is empty, so CLI/control output stays stable.
+            if (fileExists)
+            {
+                lines.Add($"== {service.Key} ==");
+                lines.AddRange(serviceLines);
+            }
         }
 
-        return Task.FromResult(new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines)));
+        return Task.FromResult(new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines), services));
     }
 
     public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)

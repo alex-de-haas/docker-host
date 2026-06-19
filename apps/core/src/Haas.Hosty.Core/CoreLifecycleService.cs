@@ -770,7 +770,10 @@ internal sealed class CoreLifecycleService(
         var app = await RequireAppAsync(appId, cancellationToken);
         var selection = await LoadSelectionForAppAsync(app, cancellationToken);
         var logs = await ResolveAdapter(selection.RuntimeProfile.Type).GetLogsAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), tail, cancellationToken);
-        return new AppLogsResponse(appId, logs.Text);
+        var services = (logs.Services ?? [])
+            .Select(segment => new AppLogsServiceSegment(segment.Service, segment.Text))
+            .ToArray();
+        return new AppLogsResponse(appId, logs.Text, services);
     }
 
     public async Task<AppRuntimeHealthResponse> GetHealthAsync(string appId, CancellationToken cancellationToken = default)
@@ -2450,7 +2453,9 @@ internal sealed record AppBackupResponse(AppBackupRecord? Backup);
 
 internal sealed record AppBackupDeleteResponse(bool Deleted);
 
-internal sealed record AppLogsResponse(string AppId, string Text);
+internal sealed record AppLogsResponse(string AppId, string Text, IReadOnlyList<AppLogsServiceSegment> Services);
+
+internal sealed record AppLogsServiceSegment(string Service, string Text);
 
 internal sealed record AppRuntimeHealthResponse(
     string AppId,

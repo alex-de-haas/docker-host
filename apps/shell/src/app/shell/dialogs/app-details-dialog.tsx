@@ -25,6 +25,7 @@ import type {
   CoreUpdatePlan,
   DetailPanelState,
   DetailView,
+  LogsServiceSegment,
   MountBindingInput,
   RemoveOptions,
 } from "../types";
@@ -114,15 +115,52 @@ export function AppDetailsDialog({
 }
 
 function LogsPanel({ app, detail, onRefresh }: { app: CoreApp; detail: DetailPanelState; onRefresh: (app: CoreApp) => void }) {
+  const services: LogsServiceSegment[] = detail.logServices ?? [];
+  const hasTabs = services.length > 1;
+
+  // Track the selected service across refreshes; reset when the set of services
+  // changes instead of in an effect.
+  // https://react.dev/learn/you-might-not-need-an-effect
+  const serviceSignature = services.map((segment) => segment.service).join("\u0001");
+  const [activeService, setActiveService] = useState<string | null>(services[0]?.service ?? null);
+  const [prevSignature, setPrevSignature] = useState<string>(serviceSignature);
+  if (prevSignature !== serviceSignature) {
+    setPrevSignature(serviceSignature);
+    setActiveService(services[0]?.service ?? null);
+  }
+
+  const activeSegment = services.find((segment) => segment.service === activeService) ?? services[0];
+  const body = detail.loading
+    ? "Loading logs"
+    : services.length > 0
+      ? activeSegment?.text || "No logs"
+      : detail.logs || "No logs";
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-      <div className="flex shrink-0 justify-end">
+      <div className="flex shrink-0 items-center justify-between gap-2">
+        {hasTabs ? (
+          <div className="flex min-w-0 flex-wrap gap-1">
+            {services.map((segment) => (
+              <Button
+                key={segment.service}
+                variant={segment.service === activeService ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setActiveService(segment.service)}
+              >
+                {segment.service}
+              </Button>
+            ))}
+          </div>
+        ) : (
+          <span className="truncate text-sm text-muted-foreground">{activeSegment?.service ?? ""}</span>
+        )}
         <Button variant="outline" onClick={() => onRefresh(app)} disabled={detail.loading}>
           <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin")} />
           Refresh
         </Button>
       </div>
-      <pre className="min-h-0 min-w-0 max-w-full flex-1 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">{detail.loading ? "Loading logs" : detail.logs || "No logs"}</pre>
+      <pre className="min-h-0 min-w-0 max-w-full flex-1 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">{body}</pre>
     </div>
   );
 }

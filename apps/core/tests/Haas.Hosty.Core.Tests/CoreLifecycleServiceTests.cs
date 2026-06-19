@@ -196,6 +196,22 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task GetLogsAsync_ReturnsPerServiceSegmentsAlongsideCombinedText()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var response = await fixture.Service.GetLogsAsync("com.example.notes", 200);
+
+        var segment = Assert.Single(response.Services);
+        Assert.Equal("app", segment.Service);
+        Assert.Equal("app log line", segment.Text);
+        Assert.Contains("== app ==", response.Text, StringComparison.Ordinal);
+        Assert.Contains("app log line", response.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CreateUpdatePlanAsync_UsesStoredManifestUrlForRemoteInstalls()
     {
         const string manifestUrl = "https://apps.example.test/notes/manifest.json";
@@ -2345,7 +2361,13 @@ public sealed class CoreLifecycleServiceTests
             => Task.FromResult(new AppRuntimeOperationResult("removed"));
 
         public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
-            => Task.FromResult(new AppRuntimeLogsResult("log line"));
+        {
+            var services = context.Manifest.Services
+                .Select(service => new AppRuntimeServiceLogs(service.Key, $"{service.Key} log line"))
+                .ToList();
+            var text = string.Join(Environment.NewLine, services.SelectMany(segment => new[] { $"== {segment.Service} ==", segment.Text }));
+            return Task.FromResult(new AppRuntimeLogsResult(text, services));
+        }
 
         public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeHealthResult("unknown", []));
