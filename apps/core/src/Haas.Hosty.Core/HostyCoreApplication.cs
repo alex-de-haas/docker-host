@@ -870,6 +870,7 @@ internal sealed class RuntimeAppSupervisorService(
     ILogger<RuntimeAppSupervisorService> logger) : BackgroundService
 {
     private const string ShellAppId = "hosty.shell";
+    private static readonly TimeSpan RuntimeAppShutdownTimeout = TimeSpan.FromSeconds(15);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -1077,9 +1078,14 @@ internal sealed class RuntimeAppSupervisorService(
 
     private async Task StopRuntimeAppsAsync(CancellationToken cancellationToken)
     {
+        // Bound the per-shutdown app stop so a wedged app can never hold the process
+        // (and therefore the listening port) open indefinitely. When the bound is hit
+        // we abandon the remaining stops and let shutdown continue so the port frees.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(RuntimeAppShutdownTimeout);
         try
         {
-            var results = await lifecycle.StopRuntimeAppsAsync(cancellationToken);
+            var results = await lifecycle.StopRuntimeAppsAsync(timeoutCts.Token);
             foreach (var result in results.Where(result => !result.Succeeded))
             {
                 logger.LogWarning(
@@ -1088,6 +1094,12 @@ internal sealed class RuntimeAppSupervisorService(
                     result.ErrorCode,
                     result.Message);
             }
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                "Hosty runtime app shutdown stop exceeded {Timeout} and was abandoned so Core can release its port.",
+                RuntimeAppShutdownTimeout);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1102,36 +1114,58 @@ internal sealed class RuntimeAppSupervisorService(
 internal sealed class ControlDiscoveryWriter(
     HostyCoreRuntimeConfig config,
     ControlSecret secret,
+    IHostApplicationLifetime lifetime,
     ILogger<ControlDiscoveryWriter> logger) : IHostedService
 {
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
-        SecureFileSystem.EnsurePrivateDirectory(config.RunDirectory);
-        var discovery = new ControlDiscoveryDocument(
-            SchemaVersion: 1,
-            Component: "hosty-core",
-            Transport: "http-loopback",
-            Endpoint: config.ListenUrl,
-            ControlBaseUrl: $"{config.ListenUrl.TrimEnd('/')}/control/v1",
-            RequiredHeaders: new Dictionary<string, string>
-            {
-                ["X-Hosty-Control-Secret"] = secret.Value,
-            },
-            StartedAt: DateTimeOffset.UtcNow);
-
-        var json = JsonSerializer.Serialize(
-            discovery,
-            (JsonTypeInfo<ControlDiscoveryDocument>)JsonOptions.GetTypeInfo(typeof(ControlDiscoveryDocument)));
-        await using (var stream = SecureFileSystem.CreatePrivateFile(config.ControlDiscoveryPath, FileMode.Create))
-        {
-            await stream.WriteAsync(Encoding.UTF8.GetBytes(json), cancellationToken);
-        }
-
-        SecureFileSystem.TryRestrictFile(config.ControlDiscoveryPath);
-        logger.LogInformation("Hosty Core control discovery written to {Path}", config.ControlDiscoveryPath);
+        // Tie the discovery file to the host lifecycle rather than to hosted-service
+        // start/stop. ApplicationStarted only fires once the listener has bound, so a
+        // failed start (e.g. the port is already taken by another Core) never writes —
+        // and therefore can never clobber the running Core's discovery and strand the
+        // CLI. ApplicationStopped removes it once shutdown has fully completed.
+        lifetime.ApplicationStarted.Register(WriteDiscovery);
+        lifetime.ApplicationStopped.Register(RemoveDiscovery);
+        return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private void WriteDiscovery()
+    {
+        try
+        {
+            SecureFileSystem.EnsurePrivateDirectory(config.RunDirectory);
+            var discovery = new ControlDiscoveryDocument(
+                SchemaVersion: 1,
+                Component: "hosty-core",
+                Transport: "http-loopback",
+                Endpoint: config.ListenUrl,
+                ControlBaseUrl: $"{config.ListenUrl.TrimEnd('/')}/control/v1",
+                RequiredHeaders: new Dictionary<string, string>
+                {
+                    ["X-Hosty-Control-Secret"] = secret.Value,
+                },
+                StartedAt: DateTimeOffset.UtcNow);
+
+            var json = JsonSerializer.Serialize(
+                discovery,
+                (JsonTypeInfo<ControlDiscoveryDocument>)JsonOptions.GetTypeInfo(typeof(ControlDiscoveryDocument)));
+            using (var stream = SecureFileSystem.CreatePrivateFile(config.ControlDiscoveryPath, FileMode.Create))
+            {
+                stream.Write(Encoding.UTF8.GetBytes(json));
+            }
+
+            SecureFileSystem.TryRestrictFile(config.ControlDiscoveryPath);
+            logger.LogInformation("Hosty Core control discovery written to {Path}", config.ControlDiscoveryPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Unable to write Hosty Core control discovery at {Path}", config.ControlDiscoveryPath);
+        }
+    }
+
+    private void RemoveDiscovery()
     {
         try
         {
@@ -1144,8 +1178,6 @@ internal sealed class ControlDiscoveryWriter(
         {
             logger.LogWarning(ex, "Unable to remove Hosty Core control discovery at {Path}", config.ControlDiscoveryPath);
         }
-
-        return Task.CompletedTask;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -1177,12 +1209,19 @@ internal sealed class AppBackupRetentionScheduler(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Yield();
-        await RunCleanupAsync(stoppingToken);
-
-        using var timer = new PeriodicTimer(CleanupInterval);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        try
         {
             await RunCleanupAsync(stoppingToken);
+
+            using var timer = new PeriodicTimer(CleanupInterval);
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                await RunCleanupAsync(stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Host is shutting down; exit quietly so we don't trip StopHost crit logging.
         }
     }
 
