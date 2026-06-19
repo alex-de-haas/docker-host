@@ -277,12 +277,19 @@ internal sealed class NotificationRetentionScheduler(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Yield();
-        await RunCleanupAsync(stoppingToken);
-
-        using var timer = new PeriodicTimer(CleanupInterval);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        try
         {
             await RunCleanupAsync(stoppingToken);
+
+            using var timer = new PeriodicTimer(CleanupInterval);
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                await RunCleanupAsync(stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Host is shutting down; exit quietly so we don't trip StopHost crit logging.
         }
     }
 

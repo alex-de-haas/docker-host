@@ -40,6 +40,21 @@ public sealed class CoreCommandTests : IDisposable
         Assert.Contains("control discovery file is stale", output.ToString());
     }
 
+    [Fact]
+    public async Task StartAsync_WhenCoreAlreadyHealthy_ReusesItWithoutSpawning()
+    {
+        using var server = new FakeCoreServer(HttpStatusCode.OK, """{"status":"ok"}""");
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["start", "--url", server.Endpoint], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("GET", server.Method);
+        Assert.Equal("/healthz", server.PathAndQuery);
+        Assert.Contains("already running", output.ToString());
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);
@@ -91,9 +106,12 @@ public sealed class CoreCommandTests : IDisposable
             listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            ControlBaseUrl = $"http://127.0.0.1:{port}/control/v1";
+            Endpoint = $"http://127.0.0.1:{port}";
+            ControlBaseUrl = $"{Endpoint}/control/v1";
             serverTask = Task.Run(HandleOneRequestAsync);
         }
+
+        public string Endpoint { get; }
 
         public string ControlBaseUrl { get; }
 

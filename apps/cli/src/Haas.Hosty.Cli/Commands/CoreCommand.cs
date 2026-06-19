@@ -18,6 +18,7 @@ internal sealed partial class CoreCommand(CommandContext context)
     internal partial class CoreJsonContext : JsonSerializerContext;
 
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan HealthProbeTimeout = TimeSpan.FromSeconds(2);
 
     public async Task<int> ExecuteAsync(string[] args)
     {
@@ -45,6 +46,14 @@ internal sealed partial class CoreCommand(CommandContext context)
         var settings = context.SettingsStore.Load();
         settings.Validate(context.Environment);
         var url = options.Url ?? BuildDefaultCoreUrl(settings);
+
+        // Idempotent start: if a Core already answers /healthz on this URL, reuse it
+        // instead of spawning a duplicate that would fail to bind the port and leave
+        // the caller staring at a control-discovery timeout.
+        if (await IsCoreHealthyAsync(url))
+        {
+            return ReportAlreadyRunning(url, await ReadCoreStatusAsync(suppressErrors: true));
+        }
 
         CoreStartTarget target;
         try
@@ -316,10 +325,22 @@ internal sealed partial class CoreCommand(CommandContext context)
 
     private async Task<int> RestartAsync(string[] args)
     {
+        var options = ParseStartOptions(args);
+        var settings = context.SettingsStore.Load();
+        var url = options.Url ?? BuildDefaultCoreUrl(settings);
+
         var stopResult = await StopAsync([]);
         if (stopResult == 0)
         {
-            await Task.Delay(750);
+            // Wait for the old Core to actually release its port before starting a new
+            // one, otherwise the idempotent start would just re-detect the dying Core
+            // and report a false-positive "already running".
+            if (!await WaitForCoreStoppedAsync(url))
+            {
+                context.Console.MarkupLine(
+                    $"[red]Hosty Core is still responding on {Markup.Escape(url)} after stop; restart aborted.[/]");
+                return 1;
+            }
         }
 
         return await StartAsync(args);
@@ -359,6 +380,56 @@ internal sealed partial class CoreCommand(CommandContext context)
         }
 
         return Task.FromResult(0);
+    }
+
+    private async Task<bool> IsCoreHealthyAsync(string url)
+    {
+        try
+        {
+            using var httpClient = new HttpClient { Timeout = HealthProbeTimeout };
+            using var response = await httpClient.GetAsync($"{url.TrimEnd('/')}/healthz");
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException
+            or InvalidOperationException or UriFormatException)
+        {
+            // A malformed --url (UriFormatException/InvalidOperationException) is treated as
+            // "not healthy" so the probe can never crash the CLI; the start path handles the
+            // bad URL from there.
+            return false;
+        }
+    }
+
+    // Returns true once the Core at <url> stops answering /healthz, or false if it is still
+    // responding when the timeout elapses.
+    private async Task<bool> WaitForCoreStoppedAsync(string url)
+    {
+        var deadline = DateTimeOffset.UtcNow + StartTimeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (!await IsCoreHealthyAsync(url))
+            {
+                return true;
+            }
+
+            await Task.Delay(250);
+        }
+
+        return !await IsCoreHealthyAsync(url);
+    }
+
+    private int ReportAlreadyRunning(string url, CoreStatusDocument? status)
+    {
+        if (status is not null)
+        {
+            context.Console.MarkupLine("[green]Hosty Core is already running.[/]");
+            RenderStatus(status);
+            return 0;
+        }
+
+        context.Console.MarkupLine($"[green]Hosty Core is already running.[/] URL {Markup.Escape(url)}");
+        context.Console.MarkupLine("[grey]Local control discovery is unavailable; run [white]hosty core restart[/] if you need CLI control.[/]");
+        return 0;
     }
 
     private async Task<CoreStatusDocument?> WaitForStatusAsync()
