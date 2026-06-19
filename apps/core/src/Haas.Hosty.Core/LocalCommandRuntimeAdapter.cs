@@ -130,12 +130,25 @@ internal sealed class LocalCommandRuntimeAdapter(
         {
             var process = registry.Get(context.App.Id, service.Key);
             var logPath = process?.LogPath ?? Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
-            List<string> serviceLines = File.Exists(logPath)
-                ? File.ReadLines(logPath).TakeLast(Math.Clamp(tail, 1, 1000)).ToList()
-                : [];
+            var fileExists = File.Exists(logPath);
+            List<string> serviceLines = [];
+            if (fileExists)
+            {
+                // A failing read for one service must not break log retrieval for the rest.
+                try
+                {
+                    serviceLines = File.ReadLines(logPath).TakeLast(Math.Clamp(tail, 1, 1000)).ToList();
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    serviceLines = [$"[error reading log file: {ex.Message}]"];
+                }
+            }
 
             services.Add(new AppRuntimeServiceLogs(service.Key, string.Join(Environment.NewLine, serviceLines)));
-            if (serviceLines.Count > 0)
+            // Match the prior combined-text behavior: a header is emitted whenever the
+            // log file exists, even if it is empty, so CLI/control output stays stable.
+            if (fileExists)
             {
                 lines.Add($"== {service.Key} ==");
                 lines.AddRange(serviceLines);

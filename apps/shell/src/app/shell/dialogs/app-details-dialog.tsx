@@ -121,9 +121,9 @@ function LogsPanel({ app, detail, onRefresh }: { app: CoreApp; detail: DetailPan
   // Track the selected service across refreshes; reset when the set of services
   // changes instead of in an effect.
   // https://react.dev/learn/you-might-not-need-an-effect
-  const serviceSignature = services.map((segment) => segment.service).join("");
-  const [activeService, setActiveService] = useState<string | null>(null);
-  const [prevSignature, setPrevSignature] = useState<string | null>(null);
+  const serviceSignature = services.map((segment) => segment.service).join("\u0001");
+  const [activeService, setActiveService] = useState<string | null>(services[0]?.service ?? null);
+  const [prevSignature, setPrevSignature] = useState<string>(serviceSignature);
   if (prevSignature !== serviceSignature) {
     setPrevSignature(serviceSignature);
     setActiveService(services[0]?.service ?? null);
