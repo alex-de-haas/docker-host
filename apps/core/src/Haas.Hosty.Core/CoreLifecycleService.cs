@@ -1323,6 +1323,17 @@ internal sealed class CoreLifecycleService(
             return endpoint;
         }).ToArray();
 
+        // When the manifest declares an explicit endpoint set, that set is authoritative: persist
+        // only the declared endpoints (enriched with runtime URLs above). Runtime-reported ports
+        // that have no declared endpoint — e.g. an internal-only HTTP port or a raw TCP/UDP port —
+        // must NOT be appended here. Otherwise they linger in the persisted record while the update
+        // plan rebuilds its target from the manifest (declared endpoints only), so every check
+        // reports them as "removed" and the plan never converges.
+        if (selection.Manifest.Endpoints.Count > 0)
+        {
+            return merged;
+        }
+
         return merged
             .Concat(started.Where(endpoint =>
                 !usedStartedKeys.Contains(endpoint.Key) &&

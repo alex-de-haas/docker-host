@@ -1392,6 +1392,69 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_DropsRuntimePortsWithoutDeclaredEndpointSoUpdatePlanConverges()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "undeclared-port.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.undeclared-port",
+              "name": "Undeclared Port",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "backend",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "sleep 5",
+                    "workingDirectory": ".",
+                    "ports": [
+                      { "key": "http", "containerPort": 5173, "protocol": "http" },
+                      { "key": "internal", "containerPort": 8080, "protocol": "http" }
+                    ]
+                  }
+                }
+              }],
+              "endpoints": [{
+                "key": "api",
+                "service": "backend",
+                "port": "http",
+                "protocol": "http",
+                "public": true
+              }]
+            }
+            """);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+
+        try
+        {
+            var start = await fixture.Service.StartAsync("com.example.undeclared-port");
+
+            Assert.NotNull(start.App);
+            // Only the declared endpoint is persisted; the undeclared `backend.internal` runtime
+            // port is not appended to the record.
+            var endpoint = Assert.Single(start.App.Endpoints);
+            Assert.Equal("api", endpoint.Key);
+
+            // Re-checking the same manifest must report no changes. The plan target is rebuilt from
+            // the manifest (declared endpoints only), so a lingering backend.internal endpoint would
+            // surface as a perpetual "removed" change and the update plan would never converge.
+            var plan = await fixture.Service.CreateUpdatePlanAsync(
+                "com.example.undeclared-port",
+                new AppUpdatePlanRequest(manifestPath, SelectedRuntime: "dev"));
+            Assert.Empty(plan.Changes);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.undeclared-port");
+        }
+    }
+
+    [Fact]
     public async Task GetHealthAsync_ReportsLocalCommandProcessState()
     {
         var fixture = await LifecycleFixture.CreateAsync();
