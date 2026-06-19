@@ -412,7 +412,7 @@ export function ShellClient({
           return;
         }
 
-        setDetailPanel({ loading: false, error: null, logs: payload.text || "", backups: null, backupCleanupPlan: null, updatePlan: null });
+        setDetailPanel({ loading: false, error: null, logs: payload.text || "", logServices: payload.services ?? null, backups: null, backupCleanupPlan: null, updatePlan: null });
       } catch (error) {
         if (isAuthRequiredRedirectError(error) || requestToken !== detailRequestRef.current) {
           return;

@@ -784,6 +784,7 @@ internal sealed class DockerRuntimeAdapter(
 
     public async Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
     {
+        var services = new List<AppRuntimeServiceLogs>();
         var lines = new List<string>();
         foreach (var service in context.Manifest.Services)
         {
@@ -791,14 +792,16 @@ internal sealed class DockerRuntimeAdapter(
                 ["logs", "--tail", Math.Clamp(tail, 1, 1000).ToString(System.Globalization.CultureInfo.InvariantCulture), BuildContainerName(context.App.Id, service.Key)],
                 ignoreFailures: true,
                 cancellationToken);
-            if (!string.IsNullOrWhiteSpace(output))
+            var text = string.IsNullOrWhiteSpace(output) ? string.Empty : output.TrimEnd();
+            services.Add(new AppRuntimeServiceLogs(service.Key, text));
+            if (text.Length > 0)
             {
                 lines.Add($"== {service.Key} ==");
-                lines.Add(output.TrimEnd());
+                lines.Add(text);
             }
         }
 
-        return new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines));
+        return new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines), services);
     }
 
     public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
@@ -1167,7 +1170,9 @@ internal sealed record AppRuntimeStartResult(string RuntimeState, IReadOnlyList<
 
 internal sealed record AppRuntimeOperationResult(string RuntimeState);
 
-internal sealed record AppRuntimeLogsResult(string Text);
+internal sealed record AppRuntimeLogsResult(string Text, IReadOnlyList<AppRuntimeServiceLogs>? Services = null);
+
+internal sealed record AppRuntimeServiceLogs(string Service, string Text);
 
 internal sealed record AppRuntimeHealthResult(string Status, IReadOnlyList<AppRuntimeServiceHealth> Services);
 

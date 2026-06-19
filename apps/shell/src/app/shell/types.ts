@@ -134,9 +134,15 @@ export type CoreBackupCleanupApplyResponse = {
   skipped: CoreBackupCleanupCandidate[];
 };
 
+export type LogsServiceSegment = {
+  service: string;
+  text: string;
+};
+
 export type LogsResponse = {
   appId: string;
   text: string;
+  services?: LogsServiceSegment[];
 };
 
 export type CoreRuntimeServiceHealth = {
@@ -316,6 +322,7 @@ export type DetailPanelState = {
   loading: boolean;
   error: string | null;
   logs: string | null;
+  logServices?: LogsServiceSegment[] | null;
   backups: CoreBackup[] | null;
   backupCleanupPlan: CoreBackupCleanupPlan | null;
   updatePlan: CoreUpdatePlan | null;

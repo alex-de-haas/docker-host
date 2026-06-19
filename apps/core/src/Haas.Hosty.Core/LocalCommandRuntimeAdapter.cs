@@ -124,21 +124,25 @@ internal sealed class LocalCommandRuntimeAdapter(
 
     public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
     {
+        var services = new List<AppRuntimeServiceLogs>();
         var lines = new List<string>();
         foreach (var service in context.Manifest.Services)
         {
             var process = registry.Get(context.App.Id, service.Key);
             var logPath = process?.LogPath ?? Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
-            if (!File.Exists(logPath))
-            {
-                continue;
-            }
+            List<string> serviceLines = File.Exists(logPath)
+                ? File.ReadLines(logPath).TakeLast(Math.Clamp(tail, 1, 1000)).ToList()
+                : [];
 
-            lines.Add($"== {service.Key} ==");
-            lines.AddRange(File.ReadLines(logPath).TakeLast(Math.Clamp(tail, 1, 1000)));
+            services.Add(new AppRuntimeServiceLogs(service.Key, string.Join(Environment.NewLine, serviceLines)));
+            if (serviceLines.Count > 0)
+            {
+                lines.Add($"== {service.Key} ==");
+                lines.AddRange(serviceLines);
+            }
         }
 
-        return Task.FromResult(new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines)));
+        return Task.FromResult(new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines), services));
     }
 
     public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
