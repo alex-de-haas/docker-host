@@ -333,8 +333,14 @@ internal sealed partial class CoreCommand(CommandContext context)
         if (stopResult == 0)
         {
             // Wait for the old Core to actually release its port before starting a new
-            // one, otherwise the idempotent start would just re-detect the dying Core.
-            await WaitForCoreStoppedAsync(url);
+            // one, otherwise the idempotent start would just re-detect the dying Core
+            // and report a false-positive "already running".
+            if (!await WaitForCoreStoppedAsync(url))
+            {
+                context.Console.MarkupLine(
+                    $"[red]Hosty Core is still responding on {Markup.Escape(url)} after stop; restart aborted.[/]");
+                return 1;
+            }
         }
 
         return await StartAsync(args);
@@ -384,24 +390,32 @@ internal sealed partial class CoreCommand(CommandContext context)
             using var response = await httpClient.GetAsync($"{url.TrimEnd('/')}/healthz");
             return response.IsSuccessStatusCode;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException
+            or InvalidOperationException or UriFormatException)
         {
+            // A malformed --url (UriFormatException/InvalidOperationException) is treated as
+            // "not healthy" so the probe can never crash the CLI; the start path handles the
+            // bad URL from there.
             return false;
         }
     }
 
-    private async Task WaitForCoreStoppedAsync(string url)
+    // Returns true once the Core at <url> stops answering /healthz, or false if it is still
+    // responding when the timeout elapses.
+    private async Task<bool> WaitForCoreStoppedAsync(string url)
     {
         var deadline = DateTimeOffset.UtcNow + StartTimeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
             if (!await IsCoreHealthyAsync(url))
             {
-                return;
+                return true;
             }
 
             await Task.Delay(250);
         }
+
+        return !await IsCoreHealthyAsync(url);
     }
 
     private int ReportAlreadyRunning(string url, CoreStatusDocument? status)

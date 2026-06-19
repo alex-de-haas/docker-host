@@ -16,7 +16,7 @@ try
 {
     await app.RunAsync();
 }
-catch (IOException ex) when (IsAddressInUse(ex))
+catch (Exception ex) when (IsAddressInUse(ex))
 {
     await Console.Error.WriteLineAsync(
         $"Hosty Core cannot bind {listenUrl}: another process is already listening on it. " +

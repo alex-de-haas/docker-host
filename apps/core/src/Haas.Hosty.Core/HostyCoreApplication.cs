@@ -1150,7 +1150,9 @@ internal sealed class ControlDiscoveryWriter(
 
             var json = JsonSerializer.Serialize(
                 discovery,
-                (JsonTypeInfo<ControlDiscoveryDocument>)JsonOptions.GetTypeInfo(typeof(ControlDiscoveryDocument)));
+                JsonOptions.GetTypeInfo(typeof(ControlDiscoveryDocument)) as JsonTypeInfo<ControlDiscoveryDocument>
+                    ?? throw new NotSupportedException(
+                        $"Type '{nameof(ControlDiscoveryDocument)}' is not registered in {nameof(CoreJsonSerializerContext)}."));
             using (var stream = SecureFileSystem.CreatePrivateFile(config.ControlDiscoveryPath, FileMode.Create))
             {
                 stream.Write(Encoding.UTF8.GetBytes(json));
