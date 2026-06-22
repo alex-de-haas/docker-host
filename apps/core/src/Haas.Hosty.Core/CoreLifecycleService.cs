@@ -1590,6 +1590,7 @@ internal sealed class CoreLifecycleService(
 
             AddImageChange(changes, key, current, target);
             AddCommandChanges(changes, key, current, target);
+            AddNetworkChange(changes, key, current, target);
             AddPortChanges(changes, key, current.Runtime.Ports, target.Runtime.Ports);
             AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
         }
@@ -1642,6 +1643,7 @@ internal sealed class CoreLifecycleService(
             {
                 AddImageChange(changes, key, current!, target!);
                 AddCommandChanges(changes, key, current!, target!);
+                AddNetworkChange(changes, key, current!, target!);
                 AddPortChanges(changes, key, current!.Runtime.Ports, target!.Runtime.Ports);
                 AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
             }
@@ -1680,6 +1682,26 @@ internal sealed class CoreLifecycleService(
             changes.Add($"workingDirectory:{serviceKey}:{current.Runtime.WorkingDirectory ?? "."}->{target.Runtime.WorkingDirectory ?? "."}");
         }
     }
+
+    private static void AddNetworkChange(
+        List<string> changes,
+        string serviceKey,
+        RuntimeSelectedService current,
+        RuntimeSelectedService target)
+    {
+        // Toggling the docker network mode (bridge<->host) changes how the container is launched
+        // (`--network host` vs the user/bridge network and `-p` publishing), so it must trigger a
+        // restart. null/empty normalizes to "bridge" so declaring the default explicitly is inert.
+        var currentNetwork = NormalizeNetwork(current.Runtime.Network);
+        var targetNetwork = NormalizeNetwork(target.Runtime.Network);
+        if (!string.Equals(currentNetwork, targetNetwork, StringComparison.Ordinal))
+        {
+            changes.Add($"network:{serviceKey}:{currentNetwork}->{targetNetwork}");
+        }
+    }
+
+    private static string NormalizeNetwork(string? network)
+        => string.IsNullOrWhiteSpace(network) ? "bridge" : network.ToLowerInvariant();
 
     private static void AddPortChanges(
         List<string> changes,

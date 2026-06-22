@@ -11,6 +11,7 @@ Let a runtime app opt a service port into being published on **all** network int
 - Changing the `localCommand` runtime. A localCommand process binds whatever address it chooses; Core still injects `HOSTY_PORT_{KEY}` and otherwise stays out of the way.
 - Repurposing `protocol`. `protocol` remains the HTTP **URL scheme** used when building endpoint URLs; transport (TCP/UDP) is a separate field.
 - Firewall configuration on the host. Reaching a host-exposed port still requires the host firewall to allow it.
+- Sharing the whole host network namespace. `expose: "host"` widens a **single** port to all interfaces while the rest stay loopback. A service that needs the whole namespace — e.g. high-churn peer-to-peer where the docker bridge NAT itself is the throughput bottleneck — should use [Host Networking](host-networking.md) instead.
 
 ## Current Behavior
 
