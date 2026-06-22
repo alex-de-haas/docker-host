@@ -223,6 +223,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             }
 
             ValidateNetwork(service.Key, runtimeType, runtime.Network, errors);
+            ValidateCapabilities(service.Key, runtimeType, runtime.Capabilities, errors);
+            ValidateDevices(service.Key, runtimeType, runtime.Devices, errors);
             ValidatePorts(service.Key, runtime.Ports, runtime.IsHostNetwork, errors);
 
             selectedServices.Add(new RuntimeSelectedService(service.Key, service.DependsOn, runtime with { Type = runtimeType }, image));
@@ -559,6 +561,71 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         }
     }
 
+    // Validates the privileged `capabilities` list (`--cap-add`). Docker runtime only; each entry
+    // must be a known Linux capability name (with or without the CAP_ prefix); no duplicates. These
+    // widen container privilege, so they are surfaced for install review — see container-capabilities.md.
+    private static void ValidateCapabilities(string serviceKey, string runtimeType, IReadOnlyList<string> capabilities, List<AppManifestValidationError> errors)
+    {
+        const string path = "$.services[].runtimes[].capabilities";
+        if (capabilities.Count == 0)
+        {
+            return;
+        }
+
+        if (!string.Equals(runtimeType, "docker", StringComparison.Ordinal))
+        {
+            errors.Add(new("app_manifest_service_capabilities_require_docker", $"Service '{serviceKey}' capabilities are only supported under the docker runtime.", path));
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var capability in capabilities)
+        {
+            if (string.IsNullOrWhiteSpace(capability) || !LinuxCapabilities.IsKnown(capability))
+            {
+                errors.Add(new("app_manifest_service_capability_invalid", $"Service '{serviceKey}' capability '{capability}' is not a known Linux capability.", path));
+            }
+            else if (!seen.Add(LinuxCapabilities.Normalize(capability)))
+            {
+                errors.Add(new("app_manifest_service_capability_duplicate", $"Service '{serviceKey}' capability '{capability}' is declared more than once.", path));
+            }
+        }
+    }
+
+    // Validates the privileged `devices` list (`--device`). Docker runtime only; each entry must be
+    // an absolute path under /dev (no `..`, no `:` mapping in v1 — host path == container path); no
+    // duplicates. Surfaced for install review — see container-capabilities.md.
+    private static void ValidateDevices(string serviceKey, string runtimeType, IReadOnlyList<string> devices, List<AppManifestValidationError> errors)
+    {
+        const string path = "$.services[].runtimes[].devices";
+        if (devices.Count == 0)
+        {
+            return;
+        }
+
+        if (!string.Equals(runtimeType, "docker", StringComparison.Ordinal))
+        {
+            errors.Add(new("app_manifest_service_devices_require_docker", $"Service '{serviceKey}' devices are only supported under the docker runtime.", path));
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var device in devices)
+        {
+            var trimmed = device?.Trim() ?? string.Empty;
+            if (!trimmed.StartsWith("/dev/", StringComparison.Ordinal) ||
+                trimmed.Contains("..", StringComparison.Ordinal) ||
+                trimmed.Contains(':', StringComparison.Ordinal))
+            {
+                errors.Add(new("app_manifest_service_device_invalid", $"Service '{serviceKey}' device '{device}' must be an absolute path under /dev (no '..' or ':' mapping).", path));
+            }
+            else if (!seen.Add(trimmed))
+            {
+                errors.Add(new("app_manifest_service_device_duplicate", $"Service '{serviceKey}' device '{device}' is declared more than once.", path));
+            }
+        }
+    }
+
     // Validates the opt-in raw-port fields. `Expose`/`Transport` only have meaning under the
     // docker runtime, but the values are validated for whichever runtime is selected so a
     // misconfiguration surfaces at install time rather than silently doing nothing. Under host
@@ -711,6 +778,10 @@ internal sealed class DockerRuntimeAdapter(
                 runArgs.Add("--network-alias");
                 runArgs.Add(service.Key);
             }
+
+            // Privileged extras (validated + install-review gated): Linux capabilities and host
+            // device nodes, e.g. NET_ADMIN + /dev/net/tun for an in-container VPN.
+            runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
 
             foreach (var environment in BuildDockerCoreEnvironment(config))
             {
@@ -1076,6 +1147,28 @@ internal sealed class DockerRuntimeAdapter(
         return false;
     }
 
+    // Builds the docker `run` arguments for a service's privileged extras: `--cap-add {CAP}` per
+    // declared Linux capability (normalized to docker's prefixless uppercase form) and `--device
+    // {path}` per declared host device. Empty when neither is declared, so the default launch is
+    // byte-for-byte unchanged.
+    internal static IReadOnlyList<string> BuildPrivilegedArguments(RuntimeServiceProfileManifest runtime)
+    {
+        var args = new List<string>();
+        foreach (var capability in runtime.Capabilities)
+        {
+            args.Add("--cap-add");
+            args.Add(LinuxCapabilities.Normalize(capability));
+        }
+
+        foreach (var device in runtime.Devices)
+        {
+            args.Add("--device");
+            args.Add(device.Trim());
+        }
+
+        return args;
+    }
+
     internal static IReadOnlyList<string> BuildDockerCoreEnvironment(HostyCoreRuntimeConfig config)
         => [
             $"HOSTY_CORE_PORT={config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
@@ -1233,6 +1326,40 @@ internal sealed record RuntimeServiceProfileManifest
     // derived view of Network, and emitting it would pollute the round-tripped manifest JSON.
     [JsonIgnore]
     public bool IsHostNetwork => string.Equals(Network, "host", StringComparison.OrdinalIgnoreCase);
+
+    // Linux capabilities to grant the container (`--cap-add`; docker runtime only; empty by
+    // default). Privileged: surfaced for install review like a host-exposed port. The canonical
+    // use is NET_ADMIN for an in-container VPN. See container-capabilities.md.
+    public IReadOnlyList<string> Capabilities { get => field ?? []; init; } = [];
+
+    // Host device nodes to expose to the container (`--device`; docker runtime only; empty by
+    // default). Each must be an absolute path under /dev (host path == container path). The
+    // canonical use is /dev/net/tun for a VPN tunnel. See container-capabilities.md.
+    public IReadOnlyList<string> Devices { get => field ?? []; init; } = [];
+}
+
+// The canonical Linux capability vocabulary, used to validate `capabilities` (typo protection) and
+// to normalize a declared name to docker's `--cap-add` form. Names are stored without the optional
+// `CAP_` prefix, uppercased; both `NET_ADMIN` and `CAP_NET_ADMIN` normalize to `NET_ADMIN`.
+internal static class LinuxCapabilities
+{
+    private static readonly HashSet<string> Canonical = new(StringComparer.Ordinal)
+    {
+        "CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER", "FSETID", "KILL", "SETGID", "SETUID",
+        "SETPCAP", "LINUX_IMMUTABLE", "NET_BIND_SERVICE", "NET_BROADCAST", "NET_ADMIN", "NET_RAW",
+        "IPC_LOCK", "IPC_OWNER", "SYS_MODULE", "SYS_RAWIO", "SYS_CHROOT", "SYS_PTRACE", "SYS_PACCT",
+        "SYS_ADMIN", "SYS_BOOT", "SYS_NICE", "SYS_RESOURCE", "SYS_TIME", "SYS_TTY_CONFIG", "MKNOD",
+        "LEASE", "AUDIT_WRITE", "AUDIT_CONTROL", "SETFCAP", "MAC_OVERRIDE", "MAC_ADMIN", "SYSLOG",
+        "WAKE_ALARM", "BLOCK_SUSPEND", "AUDIT_READ", "PERFMON", "BPF", "CHECKPOINT_RESTORE",
+    };
+
+    public static string Normalize(string capability)
+    {
+        var trimmed = capability.Trim().ToUpperInvariant();
+        return trimmed.StartsWith("CAP_", StringComparison.Ordinal) ? trimmed[4..] : trimmed;
+    }
+
+    public static bool IsKnown(string capability) => Canonical.Contains(Normalize(capability));
 }
 
 internal sealed class RuntimePortManifest

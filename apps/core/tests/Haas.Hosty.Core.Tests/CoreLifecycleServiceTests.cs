@@ -293,6 +293,20 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateUpdatePlanAsync_ReportsCapabilityToggle()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestV1 = await fixture.WriteManifestAsync("1.0.0");
+        var manifestV2 = await fixture.WriteManifestAsync("1.0.1", networkJson: """ "capabilities": ["NET_ADMIN"], """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestV1));
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+
+        // Granting a capability changes the container launch args, so it must drive a restart.
+        Assert.Contains("capabilities:app:none->NET_ADMIN", plan.Changes);
+    }
+
+    [Fact]
     public async Task CreateInstallPlanAsync_ReturnsRuntimeProfilesAndSelectsManifestDefault()
     {
         var fixture = await LifecycleFixture.CreateAsync();

@@ -86,6 +86,15 @@ A `docker` service runtime accepts an optional `network` field:
 
 Host networking is for high-churn peer-to-peer workloads (e.g. BitTorrent) where the docker bridge NAT — and, on Docker Desktop/WSL2, the VM network layer — collapses throughput. It exposes **all** of the service's ports on the host (no per-port isolation), and on Windows/WSL2 also requires WSL2 mirrored networking. See [Host networking](host-networking.md).
 
+### Service capabilities and devices
+
+A `docker` service runtime accepts two optional privileged lists (empty by default):
+
+- `capabilities` - Linux capabilities to add (`--cap-add`), e.g. `["NET_ADMIN"]`. Accepted with or without the `CAP_` prefix; must be real capability names. No blanket `--privileged`.
+- `devices` - host device nodes to expose (`--device`), each an absolute path under `/dev`, e.g. `["/dev/net/tun"]`.
+
+Both are docker-only (rejected under `localCommand`), widen container privilege, and are surfaced for install review. The canonical use is an in-container VPN (`NET_ADMIN` + `/dev/net/tun`). See [Container capabilities & devices](container-capabilities.md).
+
 ### Service dependencies and intra-app discovery
 
 A service may declare `dependsOn` to reference one or more sibling services in the same app. Each entry is either a service-key string or a `{ "service", "port" }` object that names a specific port:
