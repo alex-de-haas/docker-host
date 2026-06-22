@@ -1485,39 +1485,65 @@ internal sealed class CoreLifecycleService(
     // error, otherwise warning). Never blocks the start; failures to publish are swallowed.
     private async Task NotifyMissingDependenciesAsync(AppRecord app, CancellationToken cancellationToken)
     {
-        if (notifications is null || app.Dependencies.Count == 0)
+        if (notifications is null || app.Dependencies?.Count is null or 0)
         {
             return;
         }
 
-        foreach (var dependency in app.Dependencies)
+        // Publishes one advisory; never throws (a notification failure must not break start).
+        async Task PublishAsync(string level, string title, string body, string dedupeKey)
         {
-            var dependencyApp = await apps.GetAppAsync(dependency.AppId, cancellationToken);
-            var issue = dependencyApp is null
-                ? "is not installed"
-                : string.Equals(dependencyApp.RuntimeState, "running", StringComparison.Ordinal) ? null : "is not running";
-            if (issue is null)
-            {
-                continue;
-            }
-
-            var version = dependency.Version is { Length: > 0 } v ? $" ({v})" : string.Empty;
             try
             {
                 await notifications.PublishAsync(
-                    new CoreScope(),
-                    NotificationService.BroadcastTarget,
-                    NotificationService.AudienceHostAdmin,
-                    dependencyApp is null && dependency.Required ? "error" : "warning",
-                    $"Dependency '{dependency.AppId}' {issue}",
-                    $"'{app.Id}' depends on '{dependency.AppId}'{version}, which {issue}. Hosty does not auto-install or auto-start dependencies — install/start it so the wired endpoints resolve.",
-                    link: null,
-                    dedupeKey: $"dependency-{(dependencyApp is null ? "missing" : "stopped")}:{app.Id}:{dependency.AppId}",
-                    cancellationToken);
+                    new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                    level, title, body, link: null, dedupeKey, cancellationToken);
             }
             catch (Exception exception)
             {
-                logger.LogWarning(exception, "Failed to publish dependency advisory for {AppId} -> {DependencyId}.", app.Id, dependency.AppId);
+                logger.LogWarning(exception, "Failed to publish dependency advisory for {AppId}.", app.Id);
+            }
+        }
+
+        foreach (var dependency in app.Dependencies ?? [])
+        {
+            var version = dependency.Version is { Length: > 0 } v ? $" ({v})" : string.Empty;
+            var dependencyApp = await apps.GetAppAsync(dependency.AppId, cancellationToken);
+
+            if (dependencyApp is null)
+            {
+                await PublishAsync(
+                    dependency.Required ? "error" : "warning",
+                    $"Dependency '{dependency.AppId}' is not installed",
+                    $"'{app.Id}' depends on '{dependency.AppId}'{version}, which is not installed. Hosty does not auto-install dependencies — install it so the wired endpoints resolve.",
+                    $"dependency-missing:{app.Id}:{dependency.AppId}");
+                continue;
+            }
+
+            if (!string.Equals(dependencyApp.RuntimeState, "running", StringComparison.Ordinal))
+            {
+                await PublishAsync(
+                    "warning",
+                    $"Dependency '{dependency.AppId}' is not running",
+                    $"'{app.Id}' depends on '{dependency.AppId}'{version}, which is installed but not running. Start it so the wired endpoints resolve.",
+                    $"dependency-stopped:{app.Id}:{dependency.AppId}");
+                continue;
+            }
+
+            // Running: warn about any wired endpoint that does not resolve to a URL (e.g. a typo'd key),
+            // since that endpoint's HOSTY_DEPENDENCY_{ALIAS}_URL is silently skipped during injection.
+            foreach (var wired in dependency.Endpoints ?? [])
+            {
+                var resolved = (dependencyApp.Endpoints ?? []).Any(endpoint =>
+                    string.Equals(endpoint.Key, wired.EndpointKey, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(endpoint.Url));
+                if (!resolved)
+                {
+                    await PublishAsync(
+                        "warning",
+                        $"Dependency endpoint '{dependency.AppId}/{wired.EndpointKey}' is unavailable",
+                        $"'{app.Id}' wires endpoint '{wired.EndpointKey}' of '{dependency.AppId}', but it has no resolvable URL — HOSTY_DEPENDENCY_{wired.Alias}_URL will be missing.",
+                        $"dependency-endpoint:{app.Id}:{dependency.AppId}:{wired.EndpointKey}");
+                }
             }
         }
     }
@@ -1525,7 +1551,7 @@ internal sealed class CoreLifecycleService(
     private async Task<IReadOnlyDictionary<string, string>> ResolveDependencyUrlsAsync(AppRecord app, CancellationToken cancellationToken)
     {
         var urls = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var dependency in app.Dependencies)
+        foreach (var dependency in app.Dependencies ?? [])
         {
             var dependencyApp = await apps.GetAppAsync(dependency.AppId, cancellationToken);
             if (dependencyApp is null)
@@ -1533,9 +1559,9 @@ internal sealed class CoreLifecycleService(
                 continue;
             }
 
-            foreach (var wired in dependency.Endpoints)
+            foreach (var wired in dependency.Endpoints ?? [])
             {
-                var endpoint = dependencyApp.Endpoints.FirstOrDefault(candidate =>
+                var endpoint = (dependencyApp.Endpoints ?? []).FirstOrDefault(candidate =>
                     string.Equals(candidate.Key, wired.EndpointKey, StringComparison.Ordinal));
                 if (!string.IsNullOrWhiteSpace(endpoint?.Url))
                 {
@@ -1906,7 +1932,7 @@ internal sealed class CoreLifecycleService(
         IReadOnlyList<AppDependencyContract> currentDependencies,
         IReadOnlyList<RuntimeAppDependencyManifest> targetDependencies)
     {
-        var current = currentDependencies.ToDictionary(dependency => dependency.AppId, StringComparer.Ordinal);
+        var current = (currentDependencies ?? []).ToDictionary(dependency => dependency.AppId, StringComparer.Ordinal);
         var target = targetDependencies
             .Select(ToDependencyContract)
             .ToDictionary(dependency => dependency.AppId, StringComparer.Ordinal);
@@ -2078,7 +2104,7 @@ internal sealed class CoreLifecycleService(
 
     private static string DependencySignature(AppDependencyContract dependency)
     {
-        var endpoints = string.Join(",", dependency.Endpoints
+        var endpoints = string.Join(",", (dependency.Endpoints ?? [])
             .Select(endpoint => $"{endpoint.EndpointKey}={endpoint.Alias}")
             .Order(StringComparer.Ordinal));
         return $"{dependency.AppId}:{dependency.Version ?? "*"}:required={dependency.Required}:{endpoints}";

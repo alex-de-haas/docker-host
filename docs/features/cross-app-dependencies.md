@@ -46,8 +46,8 @@ authentication** in this model.
 `HOSTY_DEPENDENCY_{ALIAS}_URL` names must be unique across the whole app. The dependency app's
 existence and the endpoint's existence are **not** checked at manifest-validation time (the
 dependency may not be installed yet) — that surfaces as the start-time advisory. Error codes:
-`app_manifest_dependency_id_required`, `app_manifest_dependency_endpoint_key_required`,
-`app_manifest_dependency_alias_collision`.
+`app_manifest_dependency_id_required`, `app_manifest_dependency_duplicate_id`,
+`app_manifest_dependency_endpoint_key_required`, `app_manifest_dependency_alias_collision`.
 
 ## Discovery (URL injection)
 
@@ -68,10 +68,11 @@ it (and the advisory fires).
 ## Advisory (no auto-install/start)
 
 When an app with declared dependencies starts, Core publishes a one-time notification (deduped per
-app + dependency) to host admins for each dependency that is **not installed** or **not running**:
+app + dependency/endpoint) to host admins:
 
-- not installed + `required: true` → **error**
-- otherwise (optional, or installed-but-stopped) → **warning**
+- dependency not installed + `required: true` → **error**
+- dependency not installed (optional) or installed-but-stopped → **warning**
+- dependency running but a wired endpoint does not resolve to a URL (e.g. a typo'd key) → **warning**
 
 The start is **not** blocked — this is purely advisory, replacing auto-install/auto-start.
 
@@ -95,7 +96,7 @@ The start is **not** blocked — this is purely advisory, replacing auto-install
 ## Testing
 
 - `AppManifestServiceTests`: accepts a dependency with endpoints (and `required` defaults true);
-  rejects empty id, an endpoint with no key, and an alias collision.
+  rejects empty id, a duplicate dependency id, an endpoint with no key, and an alias collision.
 - `CoreLifecycleServiceTests`: dependency URLs resolve per alias into the runtime context; the
   injected env for a localCommand consumer uses the alias (`HOSTY_DEPENDENCY_CACHE_URL`).
 

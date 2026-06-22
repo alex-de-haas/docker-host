@@ -572,11 +572,17 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
     {
         const string path = "$.dependencies";
         var seenAliases = new HashSet<string>(StringComparer.Ordinal);
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var dependency in dependencies)
         {
             if (string.IsNullOrWhiteSpace(dependency.Id))
             {
                 errors.Add(new("app_manifest_dependency_id_required", "dependencies[].id is required.", path));
+            }
+            else if (!seenIds.Add(dependency.Id))
+            {
+                // A duplicate id would also crash change-detection's ToDictionary(AppId); reject it here.
+                errors.Add(new("app_manifest_dependency_duplicate_id", $"Dependency '{dependency.Id}' is declared more than once.", path));
             }
 
             foreach (var endpoint in dependency.Endpoints)

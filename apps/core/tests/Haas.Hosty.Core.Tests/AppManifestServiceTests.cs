@@ -169,6 +169,7 @@ public sealed class AppManifestServiceTests
     [InlineData(""", "dependencies": [{ "id": "" }]""", "app_manifest_dependency_id_required")]
     [InlineData(""", "dependencies": [{ "id": "com.haas.torrent-engine", "endpoints": [{ "key": "" }] }]""", "app_manifest_dependency_endpoint_key_required")]
     [InlineData(""", "dependencies": [{ "id": "com.haas.torrent-engine", "endpoints": [{ "key": "control" }, { "key": "metrics", "as": "control" }] }]""", "app_manifest_dependency_alias_collision")]
+    [InlineData(""", "dependencies": [{ "id": "com.haas.torrent-engine" }, { "id": "com.haas.torrent-engine" }]""", "app_manifest_dependency_duplicate_id")]
     public async Task LoadAsync_RejectsInvalidDependencies(string dependencies, string expectedCode)
     {
         var manifestPath = await WriteManifestAsync("com.example.notes", dependencies: dependencies);
