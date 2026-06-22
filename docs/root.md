@@ -23,6 +23,7 @@ flowchart LR
 - [Runtime app manifest](features/runtime-app-manifest.md) - `app.0.1` manifest contract.
 - [Automatic runtime app ports](features/automatic-runtime-app-ports.md) - Core-assigned local ports and `PORT` compatibility behavior.
 - [Raw L4 ports](features/raw-ports.md) - opt-in `expose: host` / `transport` publishing of a docker port on all interfaces over TCP/UDP.
+- [Host networking](features/host-networking.md) - opt-in `network: host` for a docker service (full host namespace, no NAT) for high-churn peer-to-peer workloads; WSL2 mirrored-networking advisory.
 - [External host-path mounts](features/external-mounts.md) - operator-configured external folders (`externalMounts`) injected as `HOSTY_MOUNT_{KEY}`.
 - [Runtime app update](features/runtime-app-update.md) - update plan and apply behavior.
 - [Runtime source workflows](features/runtime-source-workflows.md) - source checkout, local override, and runtime switching.

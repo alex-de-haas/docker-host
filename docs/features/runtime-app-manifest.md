@@ -78,6 +78,14 @@ Each entry in a service runtime's `ports` array accepts:
 
 `expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](raw-ports.md).
 
+### Service network mode
+
+A `docker` service runtime accepts an optional `network` field:
+
+- `network` - `"bridge"` (default) or `"host"`. `"host"` runs the container with `--network host`: it shares the host's network namespace, so its listeners bind the host interfaces directly with no NAT and no `-p` publishing (each declared port's `HOSTY_PORT_{KEY}` carries its `containerPort`). Docker runtime only; `"host"` under `localCommand` is rejected. Off by default.
+
+Host networking is for high-churn peer-to-peer workloads (e.g. BitTorrent) where the docker bridge NAT — and, on Docker Desktop/WSL2, the VM network layer — collapses throughput. It exposes **all** of the service's ports on the host (no per-port isolation), and on Windows/WSL2 also requires WSL2 mirrored networking. See [Host networking](host-networking.md).
+
 ### Service dependencies and intra-app discovery
 
 A service may declare `dependsOn` to reference one or more sibling services in the same app. Each entry is either a service-key string or a `{ "service", "port" }` object that names a specific port:

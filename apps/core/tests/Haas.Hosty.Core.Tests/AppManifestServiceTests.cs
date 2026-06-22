@@ -91,6 +91,64 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsHostNetworkAndRelaxesPortPinRequirement()
+    {
+        // network "host" emits no `-p`, so a host-exposed port no longer needs a pinned hostPort —
+        // the same manifest would be rejected under bridge networking.
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            ports: """, "ports": [{ "key": "torrent", "containerPort": 6881, "expose": "host" }]""",
+            runtimeNetwork: """, "network": "host" """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var service = selection.Services.Single();
+        Assert.Equal("host", service.Runtime.Network);
+        Assert.True(service.Runtime.IsHostNetwork);
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsInvalidNetwork()
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", runtimeNetwork: """, "network": "lan" """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_service_network_invalid");
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsHostNetworkUnderLocalCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var manifestPath = Path.Combine(root, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "dotnet run",
+                    "network": "host"
+                  }
+                }
+              }]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_service_network_host_requires_docker");
+    }
+
+    [Fact]
     public async Task LoadAsync_AcceptsDependsOnStringAndObjectForms()
     {
         var manifestPath = await WriteTwoServiceManifestAsync("""[ "api", { "service": "api", "port": "internal" } ]""");
@@ -179,7 +237,7 @@ public sealed class AppManifestServiceTests
         return path;
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null)
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -196,7 +254,7 @@ public sealed class AppManifestServiceTests
                 "runtimes": {
                   "docker": {
                     "type": "docker",
-                    "image": "ghcr.io/example/notes:1.0.0"{{ports ?? ""}}
+                    "image": "ghcr.io/example/notes:1.0.0"{{runtimeNetwork ?? ""}}{{ports ?? ""}}
                   }
                 }
               }]{{externalMounts ?? ""}}

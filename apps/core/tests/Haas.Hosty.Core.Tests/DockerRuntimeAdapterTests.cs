@@ -92,6 +92,41 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
+    public void BuildPortArguments_HostNetwork_OmitsPublishButKeepsHostPortEnv()
+    {
+        // Under `--network host` docker discards `-p`, so Core emits none; HOSTY_PORT_* still carries
+        // the container port the listener already binds directly on the host.
+        var port = new RuntimePortManifest { Key = "torrent", ContainerPort = 6881, Expose = "host", Transport = ["tcp", "udp"] };
+
+        var args = DockerRuntimeAdapter.BuildPortArguments(port, hostPort: 6881, containerPort: 6881, hostNetwork: true);
+
+        Assert.DoesNotContain("-p", args);
+        Assert.Equal(["-e", "HOSTY_PORT_TORRENT=6881"], args);
+    }
+
+    [Fact]
+    public void BuildDockerServiceUrl_HostNetworkedTarget_UsesHostDockerInternal()
+    {
+        // A host-networked sibling is not on the per-app user network, so a dependent reaches it via
+        // host.docker.internal at its container port rather than the service-name alias.
+        var service = new RuntimeSelectedService(
+            "api",
+            [],
+            new RuntimeServiceProfileManifest
+            {
+                Type = "docker",
+                Network = "host",
+                Ports = [new RuntimePortManifest { Key = "internal", ContainerPort = 8080 }],
+            },
+            null);
+        var port = new RuntimePortManifest { Key = "internal", ContainerPort = 8080 };
+
+        var url = DockerRuntimeAdapter.BuildDockerServiceUrl(service, port);
+
+        Assert.Equal("http://host.docker.internal:8080", url);
+    }
+
+    [Fact]
     public void BuildDockerServiceUrl_TargetsSiblingAliasAtContainerPort()
     {
         var service = new RuntimeSelectedService(

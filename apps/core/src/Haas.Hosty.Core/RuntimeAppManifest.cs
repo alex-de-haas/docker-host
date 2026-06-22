@@ -1,9 +1,11 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
@@ -220,7 +222,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                 continue;
             }
 
-            ValidatePorts(service.Key, runtime.Ports, errors);
+            ValidateNetwork(service.Key, runtimeType, runtime.Network, errors);
+            ValidatePorts(service.Key, runtime.Ports, runtime.IsHostNetwork, errors);
 
             selectedServices.Add(new RuntimeSelectedService(service.Key, service.DependsOn, runtime with { Type = runtimeType }, image));
         }
@@ -531,10 +534,37 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         }
     }
 
+    // Validates a service's docker network mode. `network` is meaningful only under the docker
+    // runtime; "host" anywhere else is rejected so the mistake surfaces at install time. null is
+    // the default (bridge) and needs no declaration.
+    private static void ValidateNetwork(string serviceKey, string runtimeType, string? network, List<AppManifestValidationError> errors)
+    {
+        const string path = "$.services[].runtimes[].network";
+        if (network is null)
+        {
+            return;
+        }
+
+        if (!string.Equals(network, "bridge", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(network, "host", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add(new("app_manifest_service_network_invalid", $"Service '{serviceKey}' network '{network}' must be 'bridge' or 'host'.", path));
+            return;
+        }
+
+        if (string.Equals(network, "host", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runtimeType, "docker", StringComparison.Ordinal))
+        {
+            errors.Add(new("app_manifest_service_network_host_requires_docker", $"Service '{serviceKey}' network 'host' is only supported under the docker runtime.", path));
+        }
+    }
+
     // Validates the opt-in raw-port fields. `Expose`/`Transport` only have meaning under the
     // docker runtime, but the values are validated for whichever runtime is selected so a
-    // misconfiguration surfaces at install time rather than silently doing nothing.
-    private static void ValidatePorts(string serviceKey, IReadOnlyList<RuntimePortManifest> ports, List<AppManifestValidationError> errors)
+    // misconfiguration surfaces at install time rather than silently doing nothing. Under host
+    // networking (`hostNetwork`) the container binds the host directly and Core emits no `-p`, so
+    // the host-port pin requirement does not apply — the listener's port is the container port.
+    private static void ValidatePorts(string serviceKey, IReadOnlyList<RuntimePortManifest> ports, bool hostNetwork, List<AppManifestValidationError> errors)
     {
         const string path = "$.services[].runtimes[].ports";
         foreach (var port in ports)
@@ -570,7 +600,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
 
             // A host-exposed port must pin its host port so router forwarding and the app's
             // advertised port stay constant across restarts (recommend hostPort == containerPort).
-            if (string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase) &&
+            // Skipped under host networking, where there is no `-p` mapping to keep stable.
+            if (!hostNetwork &&
+                string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase) &&
                 port.LocalPort is null && port.HostPort is null)
             {
                 errors.Add(new("app_manifest_port_host_requires_pinned_port", $"Service '{serviceKey}' port with expose 'host' must declare an explicit hostPort (recommended equal to containerPort) so router forwarding and the advertised port stay constant.", path));
@@ -597,14 +629,21 @@ internal interface IAppRuntimeAdapter
 
 internal sealed class DockerRuntimeAdapter(
     HostyCoreRuntimeConfig config,
-    AppServiceTokenService serviceTokens) : IAppRuntimeAdapter
+    AppServiceTokenService serviceTokens,
+    ILogger<DockerRuntimeAdapter> logger) : IAppRuntimeAdapter
 {
+    // App ids already advised about WSL2 P2P throttling, so the warning is logged once per app
+    // per Core process rather than on every (health-driven) restart.
+    private static readonly ConcurrentDictionary<string, byte> WslMirroredAdvised = new(StringComparer.Ordinal);
+
     public string Type => "docker";
 
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
+
+        MaybeAdviseWslMirroredNetworking(context, services);
 
         // Siblings that `dependsOn` one another reach each other by service-name DNS over a
         // per-app user network, so the internal port never needs host publishing. Containers
@@ -622,6 +661,7 @@ internal sealed class DockerRuntimeAdapter(
                 throw new AppLifecycleException("runtime_profile_invalid", $"Docker service '{service.Key}' does not declare an image.");
             }
 
+            var hostNetwork = service.Runtime.IsHostNetwork;
             var containerName = BuildContainerName(context.App.Id, service.Key);
             _ = await RunDockerAsync(["rm", "-f", containerName], ignoreFailures: true, cancellationToken);
             if (string.Equals(service.Image.PullPolicy, "always", StringComparison.OrdinalIgnoreCase))
@@ -648,7 +688,16 @@ internal sealed class DockerRuntimeAdapter(
                 "-e",
                 $"HOSTY_APP_SERVICE_KEY={service.Key}",
             };
-            if (dependencyNetwork is not null)
+            if (hostNetwork)
+            {
+                // Host networking shares the host's network namespace: the container's listeners
+                // bind the host interfaces directly (no NAT, no `-p`). It is mutually exclusive
+                // with a user network, so siblings reach this service via host.docker.internal at
+                // its container port (see BuildDockerServiceUrl) rather than a network alias.
+                runArgs.Add("--network");
+                runArgs.Add("host");
+            }
+            else if (dependencyNetwork is not null)
             {
                 // The service key is a DNS-safe contract key, used directly as the network alias
                 // so siblings resolve `http://{service.Key}:{containerPort}`.
@@ -703,9 +752,13 @@ internal sealed class DockerRuntimeAdapter(
                 }
 
                 var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                var hostPort = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
+                // Under host networking the listener binds the host directly on its container port,
+                // so that *is* the reachable host port — there is nothing to publish or allocate.
+                var hostPort = hostNetwork
+                    ? port.ContainerPort.Value
+                    : RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
                 assignedPorts[key] = hostPort;
-                runArgs.AddRange(BuildPortArguments(port, hostPort, port.ContainerPort.Value));
+                runArgs.AddRange(BuildPortArguments(port, hostPort, port.ContainerPort.Value, hostNetwork));
             }
 
             if (context.Manifest.DataTarget is not null &&
@@ -897,9 +950,13 @@ internal sealed class DockerRuntimeAdapter(
         => services.Any(service => service.DependsOn.Count > 0);
 
     // Discovery URL for the docker runtime: reach the sibling by its network alias (service key)
-    // at its container port, over the per-app user network — no host publishing of the port.
+    // at its container port, over the per-app user network — no host publishing of the port. A
+    // host-networked sibling is not on the user network, so it is reached via host.docker.internal
+    // at its container port (which it binds directly on the host under `--network host`).
     internal static string BuildDockerServiceUrl(RuntimeSelectedService service, RuntimePortManifest port)
-        => $"{RuntimeServiceDiscovery.Scheme(port)}://{service.Key}:{port.ContainerPort}";
+        => service.Runtime.IsHostNetwork
+            ? $"{RuntimeServiceDiscovery.Scheme(port)}://host.docker.internal:{port.ContainerPort}"
+            : $"{RuntimeServiceDiscovery.Scheme(port)}://{service.Key}:{port.ContainerPort}";
 
     // Transport used when a port opts into the new publish format without naming one.
     private static readonly IReadOnlyList<string> DefaultTransports = ["tcp"];
@@ -909,14 +966,19 @@ internal sealed class DockerRuntimeAdapter(
     // (`127.0.0.1:{host}:{container}`, no protocol suffix) so existing apps are byte-for-byte
     // unaffected. Opting into either field switches to explicit `bind:host:container/proto`
     // publishing — `0.0.0.0` for `expose:host`, one `-p` per transport (tcp/udp). HOSTY_PORT_*
-    // is injected exactly once regardless of how many transports are published.
-    internal static IReadOnlyList<string> BuildPortArguments(RuntimePortManifest port, int hostPort, int containerPort)
+    // is injected exactly once regardless of how many transports are published. Under host
+    // networking no `-p` is emitted (docker discards published ports with `--network host`); only
+    // HOSTY_PORT_* is injected, carrying the container port the listener already binds on the host.
+    internal static IReadOnlyList<string> BuildPortArguments(RuntimePortManifest port, int hostPort, int containerPort, bool hostNetwork = false)
     {
         var args = new List<string>();
-        foreach (var publish in BuildPortPublishValues(port, hostPort, containerPort))
+        if (!hostNetwork)
         {
-            args.Add("-p");
-            args.Add(publish);
+            foreach (var publish in BuildPortPublishValues(port, hostPort, containerPort))
+            {
+                args.Add("-p");
+                args.Add(publish);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(port.Key))
@@ -943,6 +1005,70 @@ internal sealed class DockerRuntimeAdapter(
             : "127.0.0.1";
         var transports = port.Transport is { Count: > 0 } declared ? declared : DefaultTransports;
         return transports.Select(transport => $"{bind}:{hostPort}:{containerPort}/{transport.ToLowerInvariant()}");
+    }
+
+    // Warns once per app when a peer-to-peer-shaped service (host networking, or a host-exposed
+    // UDP port) runs against Docker Desktop on Windows/WSL2. Default WSL2 NAT networking severely
+    // throttles the high connection churn of P2P traffic; WSL2 mirrored networking fixes it. Core
+    // cannot set that host-level mode itself, so the best it can do is make the requirement loud
+    // instead of leaving the operator with a silently near-zero download. See host-networking.md.
+    private void MaybeAdviseWslMirroredNetworking(RuntimeLifecycleContext context, IReadOnlyList<RuntimeSelectedService> services)
+    {
+        if (!IsLikelyDockerDesktopOnWindows())
+        {
+            return;
+        }
+
+        var peerToPeerShaped = services.Any(service =>
+            service.Runtime.IsHostNetwork ||
+            service.Runtime.Ports.Any(port =>
+                string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase) &&
+                port.Transport is { Count: > 0 } transports &&
+                transports.Any(transport => string.Equals(transport, "udp", StringComparison.OrdinalIgnoreCase))));
+
+        if (!peerToPeerShaped || !WslMirroredAdvised.TryAdd(context.App.Id, 0))
+        {
+            return;
+        }
+
+        logger.LogWarning(
+            "App '{AppId}' uses host networking or a host-exposed UDP port for peer-to-peer traffic, and Core appears to be running " +
+            "against Docker Desktop on Windows/WSL2. Default WSL2 NAT networking severely throttles peer-to-peer throughput. Enable WSL2 " +
+            "mirrored networking: add 'networkingMode=mirrored' under [wsl2] in %UserProfile%\\.wslconfig, run 'wsl --shutdown', then restart " +
+            "Docker Desktop. See docs/features/host-networking.md.",
+            context.App.Id);
+    }
+
+    // Heuristic: are we talking to Docker Desktop's WSL2 backend? True when Core runs on Windows
+    // (Docker Desktop is the only practical daemon there) or inside a WSL distro (the kernel
+    // release string carries "microsoft"/"WSL"). Native Linux returns false — bridge/host
+    // networking there is kernel-native and needs no advisory.
+    private static bool IsLikelyDockerDesktopOnWindows()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return true;
+        }
+
+        try
+        {
+            foreach (var path in new[] { "/proc/sys/kernel/osrelease", "/proc/version" })
+            {
+                if (File.Exists(path) &&
+                    File.ReadAllText(path) is var text &&
+                    (text.Contains("microsoft", StringComparison.OrdinalIgnoreCase) ||
+                        text.Contains("WSL", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort detection; if the kernel files are unreadable, skip the advisory.
+        }
+
+        return false;
     }
 
     internal static IReadOnlyList<string> BuildDockerCoreEnvironment(HostyCoreRuntimeConfig config)
@@ -1090,6 +1216,18 @@ internal sealed record RuntimeServiceProfileManifest
     public string? WorkingDirectory { get; init; }
     public IReadOnlyDictionary<string, string> Environment { get => field ??= new Dictionary<string, string>(); init; } = new Dictionary<string, string>();
     public IReadOnlyList<RuntimePortManifest> Ports { get => field ?? []; init; } = [];
+
+    // Docker network mode (docker runtime only; off by default). null/"bridge" keeps the current
+    // behaviour (per-app user network for service discovery, else the default bridge). "host" runs
+    // the container with `--network host` so its listeners bind the host's interfaces directly —
+    // no NAT, no `-p` publishing — which is the right fit for high-churn peer-to-peer traffic
+    // (e.g. BitTorrent) where the docker bridge NAT collapses throughput. See host-networking.md.
+    public string? Network { get; init; }
+
+    // Convenience predicate used by validation and the docker adapter. Not serialized — it is a
+    // derived view of Network, and emitting it would pollute the round-tripped manifest JSON.
+    [JsonIgnore]
+    public bool IsHostNetwork => string.Equals(Network, "host", StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed class RuntimePortManifest

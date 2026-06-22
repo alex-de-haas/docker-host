@@ -278,6 +278,21 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateUpdatePlanAsync_ReportsNetworkModeToggle()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestV1 = await fixture.WriteManifestAsync("1.0.0");
+        var manifestV2 = await fixture.WriteManifestAsync("1.0.1", networkJson: """ "network": "host", """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestV1));
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+
+        // Switching to host networking changes how the container launches, so it must be a detected
+        // change (which drives a restart) rather than an unclassified "manifest" digest difference.
+        Assert.Contains("network:app:bridge->host", plan.Changes);
+    }
+
+    [Fact]
     public async Task CreateInstallPlanAsync_ReturnsRuntimeProfilesAndSelectsManifestDefault()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -1978,7 +1993,8 @@ public sealed class CoreLifecycleServiceTests
             bool includeDependency = false,
             string? sourceRepository = null,
             string? settingsJson = null,
-            string? externalMountsJson = null)
+            string? externalMountsJson = null,
+            string? networkJson = null)
         {
             var path = Path.Combine(Root, $"notes-{version}.json");
             var dependencyJson = includeDependency
@@ -2022,6 +2038,7 @@ public sealed class CoreLifecycleServiceTests
                       "docker": {
                         "type": "docker",
                         "image": "ghcr.io/example/notes:{{version}}",
+                        {{networkJson ?? ""}}
                         "ports": [{
                           "key": "http",
                           "containerPort": 3000,
