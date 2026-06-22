@@ -614,10 +614,11 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         {
             var trimmed = device?.Trim() ?? string.Empty;
             if (!trimmed.StartsWith("/dev/", StringComparison.Ordinal) ||
+                trimmed.EndsWith('/') ||
                 trimmed.Contains("..", StringComparison.Ordinal) ||
                 trimmed.Contains(':', StringComparison.Ordinal))
             {
-                errors.Add(new("app_manifest_service_device_invalid", $"Service '{serviceKey}' device '{device}' must be an absolute path under /dev (no '..' or ':' mapping).", path));
+                errors.Add(new("app_manifest_service_device_invalid", $"Service '{serviceKey}' device '{device}' must be an absolute path to a node under /dev (not a directory, no '..' or ':' mapping).", path));
             }
             else if (!seen.Add(trimmed))
             {

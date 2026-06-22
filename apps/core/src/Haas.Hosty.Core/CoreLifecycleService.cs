@@ -1591,7 +1591,7 @@ internal sealed class CoreLifecycleService(
             AddImageChange(changes, key, current, target);
             AddCommandChanges(changes, key, current, target);
             AddNetworkChange(changes, key, current, target);
-            AddCapabilityChanges(changes, key, current, target);
+            AddServicePrivilegedChanges(changes, key, current, target);
             AddPortChanges(changes, key, current.Runtime.Ports, target.Runtime.Ports);
             AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
         }
@@ -1645,7 +1645,7 @@ internal sealed class CoreLifecycleService(
                 AddImageChange(changes, key, current!, target!);
                 AddCommandChanges(changes, key, current!, target!);
                 AddNetworkChange(changes, key, current!, target!);
-                AddCapabilityChanges(changes, key, current!, target!);
+                AddServicePrivilegedChanges(changes, key, current!, target!);
                 AddPortChanges(changes, key, current!.Runtime.Ports, target!.Runtime.Ports);
                 AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
             }
@@ -1705,7 +1705,10 @@ internal sealed class CoreLifecycleService(
     private static string NormalizeNetwork(string? network)
         => string.IsNullOrWhiteSpace(network) ? "bridge" : network.ToLowerInvariant();
 
-    private static void AddCapabilityChanges(
+    // Detects changes to a service's privileged docker extras — Linux capabilities (`--cap-add`)
+    // and host devices (`--device`). Named distinctly from the app-level AddCapabilityChanges
+    // (open/update/restart permissions) to avoid confusing the two.
+    private static void AddServicePrivilegedChanges(
         List<string> changes,
         string serviceKey,
         RuntimeSelectedService current,

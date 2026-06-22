@@ -167,6 +167,7 @@ public sealed class AppManifestServiceTests
     [InlineData(""", "capabilities": ["NET_ADMIN", "CAP_NET_ADMIN"]""", "app_manifest_service_capability_duplicate")]
     [InlineData(""", "devices": ["/etc/passwd"]""", "app_manifest_service_device_invalid")]
     [InlineData(""", "devices": ["/dev/net/tun:/dev/tun"]""", "app_manifest_service_device_invalid")]
+    [InlineData(""", "devices": ["/dev/net/"]""", "app_manifest_service_device_invalid")]
     public async Task LoadAsync_RejectsInvalidCapabilitiesOrDevices(string fragment, string expectedCode)
     {
         var manifestPath = await WriteManifestAsync("com.example.notes", runtimeNetwork: fragment);

@@ -111,7 +111,7 @@ existing apps gain no new privilege.
 
 ## Decision
 
-Capabilities and devices are explicit enumerated lists rather than a `privileged`
+Capabilities and devices are explicitly enumerated lists rather than a `privileged`
 boolean, because least-privilege is the whole point: an in-container VPN needs exactly
 `NET_ADMIN` + `/dev/net/tun`, not root-equivalent access. They are docker-only because
 `localCommand` already runs with the host user's privileges. Validation rejects unknown
