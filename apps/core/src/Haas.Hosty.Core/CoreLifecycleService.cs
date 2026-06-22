@@ -1591,6 +1591,7 @@ internal sealed class CoreLifecycleService(
             AddImageChange(changes, key, current, target);
             AddCommandChanges(changes, key, current, target);
             AddNetworkChange(changes, key, current, target);
+            AddServicePrivilegedChanges(changes, key, current, target);
             AddPortChanges(changes, key, current.Runtime.Ports, target.Runtime.Ports);
             AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
         }
@@ -1644,6 +1645,7 @@ internal sealed class CoreLifecycleService(
                 AddImageChange(changes, key, current!, target!);
                 AddCommandChanges(changes, key, current!, target!);
                 AddNetworkChange(changes, key, current!, target!);
+                AddServicePrivilegedChanges(changes, key, current!, target!);
                 AddPortChanges(changes, key, current!.Runtime.Ports, target!.Runtime.Ports);
                 AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
             }
@@ -1702,6 +1704,38 @@ internal sealed class CoreLifecycleService(
 
     private static string NormalizeNetwork(string? network)
         => string.IsNullOrWhiteSpace(network) ? "bridge" : network.ToLowerInvariant();
+
+    // Detects changes to a service's privileged docker extras — Linux capabilities (`--cap-add`)
+    // and host devices (`--device`). Named distinctly from the app-level AddCapabilityChanges
+    // (open/update/restart permissions) to avoid confusing the two.
+    private static void AddServicePrivilegedChanges(
+        List<string> changes,
+        string serviceKey,
+        RuntimeSelectedService current,
+        RuntimeSelectedService target)
+    {
+        // Capabilities (`--cap-add`) and devices (`--device`) are container launch args, so adding or
+        // removing any must trigger a restart. Compare order-insensitively on the normalized set.
+        var currentCaps = NormalizeList(current.Runtime.Capabilities, LinuxCapabilities.Normalize);
+        var targetCaps = NormalizeList(target.Runtime.Capabilities, LinuxCapabilities.Normalize);
+        if (!string.Equals(currentCaps, targetCaps, StringComparison.Ordinal))
+        {
+            changes.Add($"capabilities:{serviceKey}:{currentCaps}->{targetCaps}");
+        }
+
+        var currentDevices = NormalizeList(current.Runtime.Devices, device => device.Trim());
+        var targetDevices = NormalizeList(target.Runtime.Devices, device => device.Trim());
+        if (!string.Equals(currentDevices, targetDevices, StringComparison.Ordinal))
+        {
+            changes.Add($"devices:{serviceKey}:{currentDevices}->{targetDevices}");
+        }
+    }
+
+    private static string NormalizeList(IReadOnlyList<string> values, Func<string, string> normalize)
+    {
+        var joined = string.Join(",", values.Select(normalize).Order(StringComparer.Ordinal));
+        return joined.Length == 0 ? "none" : joined;
+    }
 
     private static void AddPortChanges(
         List<string> changes,

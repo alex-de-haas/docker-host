@@ -149,6 +149,66 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsCapabilitiesAndDevices()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            runtimeNetwork: """, "capabilities": ["NET_ADMIN"], "devices": ["/dev/net/tun"] """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var runtime = selection.Services.Single().Runtime;
+        Assert.Equal(["NET_ADMIN"], runtime.Capabilities);
+        Assert.Equal(["/dev/net/tun"], runtime.Devices);
+    }
+
+    [Theory]
+    [InlineData(""", "capabilities": ["NOT_A_CAP"]""", "app_manifest_service_capability_invalid")]
+    [InlineData(""", "capabilities": ["NET_ADMIN", "CAP_NET_ADMIN"]""", "app_manifest_service_capability_duplicate")]
+    [InlineData(""", "devices": ["/etc/passwd"]""", "app_manifest_service_device_invalid")]
+    [InlineData(""", "devices": ["/dev/net/tun:/dev/tun"]""", "app_manifest_service_device_invalid")]
+    [InlineData(""", "devices": ["/dev/net/"]""", "app_manifest_service_device_invalid")]
+    public async Task LoadAsync_RejectsInvalidCapabilitiesOrDevices(string fragment, string expectedCode)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", runtimeNetwork: fragment);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsCapabilitiesUnderLocalCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var manifestPath = Path.Combine(root, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "dotnet run",
+                    "capabilities": ["NET_ADMIN"]
+                  }
+                }
+              }]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_service_capabilities_require_docker");
+    }
+
+    [Fact]
     public async Task LoadAsync_AcceptsDependsOnStringAndObjectForms()
     {
         var manifestPath = await WriteTwoServiceManifestAsync("""[ "api", { "service": "api", "port": "internal" } ]""");
