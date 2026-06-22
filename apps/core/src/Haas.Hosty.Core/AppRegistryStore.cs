@@ -216,7 +216,15 @@ internal sealed record AppMountSlot(string Key, string Mode, bool Multiple, bool
 // stable across sibling add/remove. Read-only/-write comes from the slot's Mode, not stored here.
 internal sealed record AppMountBinding(string Key, string Label, string HostPath);
 
-internal sealed record AppDependencyContract(string Key, string AppId, string Endpoint);
+internal sealed record AppDependencyContract(
+    string AppId,
+    string? Version,
+    bool Required,
+    IReadOnlyList<AppDependencyEndpointContract> Endpoints);
+
+// A wired endpoint of a cross-app dependency: the dependency app's endpoint key, and the env alias
+// it is injected under (HOSTY_DEPENDENCY_{ALIAS}_URL) in the dependent app.
+internal sealed record AppDependencyEndpointContract(string EndpointKey, string Alias);
 
 internal sealed record AppEndpointContract(
     string Key,

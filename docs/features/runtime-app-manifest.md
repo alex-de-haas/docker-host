@@ -52,7 +52,7 @@ hosty apps start com.haas.demo-app
 - `HOSTY_CORE_ORIGIN`
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_{KEY}`
-- `HOSTY_DEPENDENCY_{KEY}_URL` (cross-app: another installed app's public endpoint)
+- `HOSTY_DEPENDENCY_{ALIAS}_URL` (cross-app: a wired endpoint of another installed app — see [Cross-app dependencies](cross-app-dependencies.md))
 - `HOSTY_SERVICE_{KEY}_URL` (intra-app: a sibling service's internal base URL — see below)
 - `HOSTY_MOUNT_{KEY}` (one per configured `externalMounts` slot)
 
@@ -107,7 +107,7 @@ A service may declare `dependsOn` to reference one or more sibling services in t
 `dependsOn` does two things from one declaration:
 
 - **Ordering** — Core starts a depended-on service before its dependents (topological order).
-- **Intra-app discovery** — Core injects the depended-on service's **internal** base URL into the dependent as `HOSTY_SERVICE_{KEY}_URL`, where `{KEY}` is the sibling's service key normalized to env style (e.g. `HOSTY_SERVICE_API_URL`). This is distinct from the cross-app `HOSTY_DEPENDENCY_{KEY}_URL` namespace, which resolves a *different* installed app's public endpoint.
+- **Intra-app discovery** — Core injects the depended-on service's **internal** base URL into the dependent as `HOSTY_SERVICE_{KEY}_URL`, where `{KEY}` is the sibling's service key normalized to env style (e.g. `HOSTY_SERVICE_API_URL`). This is distinct from the cross-app `HOSTY_DEPENDENCY_{ALIAS}_URL` namespace, which wires an endpoint of a *different* installed app (see [Cross-app dependencies](cross-app-dependencies.md)).
 
 The target port is the one named in the object form, otherwise the sibling's first non-`public` port (falling back to its first declared port). A dependency on a sibling that declares no ports is ordering-only and injects no URL. The reachable URL differs by runtime:
 
@@ -115,6 +115,18 @@ The target port is the one named in the object form, otherwise the sibling's fir
 - `localCommand` — siblings are reached on the loopback host at the sibling's assigned port, e.g. `http://localhost:43210`.
 
 This lets a BFF/proxy service (`web`) reach an internal API service (`api`) without pinning ports app-side or exposing the internal port publicly.
+
+### Cross-app dependencies
+
+A top-level `dependencies` array declares dependencies on **other installed apps** (distinct from intra-app `dependsOn`):
+
+```jsonc
+"dependencies": [
+  { "id": "com.haas.torrent-engine", "required": true, "endpoints": [{ "key": "control", "as": "torrent" }] }
+]
+```
+
+Each wired endpoint is injected into this app as `HOSTY_DEPENDENCY_{ALIAS}_URL` (alias defaults to the endpoint `key`). A cross-app dependency is discovery + a start-time advisory only — Core does not auto-install/auto-start the dependency, and it is **not** an access barrier. See [Cross-app dependencies](cross-app-dependencies.md).
 
 ## Source
 

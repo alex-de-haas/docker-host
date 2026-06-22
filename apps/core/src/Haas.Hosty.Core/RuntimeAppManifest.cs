@@ -304,6 +304,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             }
         }
 
+        ValidateDependencies(manifest.Dependencies, errors);
+
         RuntimeAppDataTarget? dataTarget = null;
         if (manifest.Data?.Enabled == true && selectedProfile is not null)
         {
@@ -561,6 +563,45 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         }
     }
 
+    // Validates cross-app dependencies: each needs a non-empty app id; each wired endpoint a
+    // non-empty key; and the env aliases (HOSTY_DEPENDENCY_{ALIAS}_URL) must be unique across the
+    // whole app so two wired endpoints never collide on the same injected variable. The dependency
+    // app's existence and the endpoint's existence are NOT checked here (the dependency may not be
+    // installed yet) — that surfaces as a start-time notification.
+    private static void ValidateDependencies(IReadOnlyList<RuntimeAppDependencyManifest> dependencies, List<AppManifestValidationError> errors)
+    {
+        const string path = "$.dependencies";
+        var seenAliases = new HashSet<string>(StringComparer.Ordinal);
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var dependency in dependencies)
+        {
+            if (string.IsNullOrWhiteSpace(dependency.Id))
+            {
+                errors.Add(new("app_manifest_dependency_id_required", "dependencies[].id is required.", path));
+            }
+            else if (!seenIds.Add(dependency.Id))
+            {
+                // A duplicate id would also crash change-detection's ToDictionary(AppId); reject it here.
+                errors.Add(new("app_manifest_dependency_duplicate_id", $"Dependency '{dependency.Id}' is declared more than once.", path));
+            }
+
+            foreach (var endpoint in dependency.Endpoints)
+            {
+                if (string.IsNullOrWhiteSpace(endpoint.Key))
+                {
+                    errors.Add(new("app_manifest_dependency_endpoint_key_required", $"Dependency '{dependency.Id}' has an endpoint with no key.", path));
+                    continue;
+                }
+
+                var alias = RuntimePortHelper.NormalizeEnvironmentKey(endpoint.Alias);
+                if (!seenAliases.Add(alias))
+                {
+                    errors.Add(new("app_manifest_dependency_alias_collision", $"Dependency endpoint alias '{endpoint.Alias}' normalizes to the same HOSTY_DEPENDENCY_ variable as another wired endpoint.", path));
+                }
+            }
+        }
+    }
+
     // Validates the privileged `capabilities` list (`--cap-add`). Docker runtime only; each entry
     // must be a known Linux capability name (with or without the CAP_ prefix); no duplicates. These
     // widen container privilege, so they are surfaced for install review — see container-capabilities.md.
@@ -811,7 +852,11 @@ internal sealed class DockerRuntimeAdapter(
             foreach (var dependency in context.DependencyUrls)
             {
                 runArgs.Add("-e");
-                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={dependency.Value}");
+                // A dependency endpoint published on the host's loopback is unreachable from inside
+                // this container, so rewrite a loopback URL to host.docker.internal (same rewrite
+                // used for HOSTY_CORE_ORIGIN). The dependency must publish the endpoint host-reachable
+                // (expose:host) for this to connect — see cross-app-dependencies.md.
+                runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={BuildDockerCoreOrigin(dependency.Value)}");
             }
 
             foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(services, service, BuildDockerServiceUrl))
@@ -1425,7 +1470,27 @@ internal sealed class RuntimeAppDependencyManifest
 {
     public string Id { get => field ?? ""; init; } = "";
     public string? Version { get; init; }
-    public bool Required { get; init; }
+
+    // Whether the dependency must be present: drives the level of the start-time advisory when it is
+    // missing/not running (error vs warning). Absent defaults to true (see RequiredOrDefault) — a
+    // plain bool initializer does not survive source-gen deserialization. Hosty does not
+    // auto-install/auto-start a dependency, it only notifies; see cross-app-dependencies.md.
+    public bool? Required { get; init; }
+
+    [JsonIgnore]
+    public bool RequiredOrDefault => Required ?? true;
+
+    // Which of the dependency app's endpoints to wire into this app, and under which env alias each
+    // is injected (`HOSTY_DEPENDENCY_{ALIAS}_URL`). Empty = lifecycle awareness only, no URL.
+    public IReadOnlyList<RuntimeAppDependencyEndpoint> Endpoints { get => field ?? []; init; } = [];
+}
+
+// One wired endpoint of a cross-app dependency. `Key` is the endpoint key as declared in the
+// dependency app's manifest; `As` is the env alias for the injected URL (defaults to `Key`).
+internal sealed record RuntimeAppDependencyEndpoint(string Key, string? As)
+{
+    [JsonIgnore]
+    public string Alias => string.IsNullOrWhiteSpace(As) ? Key : As;
 }
 
 internal sealed class RuntimeAppEndpointManifest
