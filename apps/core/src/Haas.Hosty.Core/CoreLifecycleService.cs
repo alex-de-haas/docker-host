@@ -13,7 +13,8 @@ internal sealed class CoreLifecycleService(
     AppSourceService sources,
     IEnumerable<IAppRuntimeAdapter> adapters,
     IIngressController ingress,
-    ILogger<CoreLifecycleService> logger)
+    ILogger<CoreLifecycleService> logger,
+    NotificationService? notifications = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -301,6 +302,7 @@ internal sealed class CoreLifecycleService(
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             EnsureMountsReadyForStart(context);
+            await NotifyMissingDependenciesAsync(app, cancellationToken);
             var result = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
             var updated = await apps.UpdateAppAsync(appId, current => current with
@@ -874,9 +876,7 @@ internal sealed class CoreLifecycleService(
                     TargetPath: selection.DataTarget.ContainerPath ?? GetAppDataPath(manifest.Id!),
                     ReadOnly: false),
             };
-        var dependencies = manifest.Dependencies
-            .Select(dependency => new AppDependencyContract(dependency.Id, dependency.Id, "default"))
-            .ToArray();
+        var dependencies = manifest.Dependencies.Select(ToDependencyContract).ToArray();
         var endpointContracts = manifest.Endpoints.Count == 0
             ? selection.Services.SelectMany(service => service.Runtime.Ports.Select(port => new AppEndpointContract(
                 Key: $"{service.Key}.{port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"}",
@@ -1480,18 +1480,68 @@ internal sealed class CoreLifecycleService(
         return true;
     }
 
+    // Best-effort advisory at start: Hosty does not auto-install/auto-start cross-app dependencies,
+    // so warn host admins when a declared dependency is missing or not running (required + missing =
+    // error, otherwise warning). Never blocks the start; failures to publish are swallowed.
+    private async Task NotifyMissingDependenciesAsync(AppRecord app, CancellationToken cancellationToken)
+    {
+        if (notifications is null || app.Dependencies.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var dependency in app.Dependencies)
+        {
+            var dependencyApp = await apps.GetAppAsync(dependency.AppId, cancellationToken);
+            var issue = dependencyApp is null
+                ? "is not installed"
+                : string.Equals(dependencyApp.RuntimeState, "running", StringComparison.Ordinal) ? null : "is not running";
+            if (issue is null)
+            {
+                continue;
+            }
+
+            var version = dependency.Version is { Length: > 0 } v ? $" ({v})" : string.Empty;
+            try
+            {
+                await notifications.PublishAsync(
+                    new CoreScope(),
+                    NotificationService.BroadcastTarget,
+                    NotificationService.AudienceHostAdmin,
+                    dependencyApp is null && dependency.Required ? "error" : "warning",
+                    $"Dependency '{dependency.AppId}' {issue}",
+                    $"'{app.Id}' depends on '{dependency.AppId}'{version}, which {issue}. Hosty does not auto-install or auto-start dependencies — install/start it so the wired endpoints resolve.",
+                    link: null,
+                    dedupeKey: $"dependency-{(dependencyApp is null ? "missing" : "stopped")}:{app.Id}:{dependency.AppId}",
+                    cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Failed to publish dependency advisory for {AppId} -> {DependencyId}.", app.Id, dependency.AppId);
+            }
+        }
+    }
+
     private async Task<IReadOnlyDictionary<string, string>> ResolveDependencyUrlsAsync(AppRecord app, CancellationToken cancellationToken)
     {
         var urls = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var dependency in app.Dependencies)
         {
             var dependencyApp = await apps.GetAppAsync(dependency.AppId, cancellationToken);
-            var endpoint = dependencyApp?.Endpoints.FirstOrDefault(candidate =>
-                    string.Equals(candidate.Key, dependency.Endpoint, StringComparison.Ordinal)) ??
-                dependencyApp?.Endpoints.FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate.Url));
-            if (!string.IsNullOrWhiteSpace(endpoint?.Url))
+            if (dependencyApp is null)
             {
-                urls[dependency.Key] = endpoint.Url;
+                continue;
+            }
+
+            foreach (var wired in dependency.Endpoints)
+            {
+                var endpoint = dependencyApp.Endpoints.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Key, wired.EndpointKey, StringComparison.Ordinal));
+                if (!string.IsNullOrWhiteSpace(endpoint?.Url))
+                {
+                    // Keyed by the consumer-chosen alias → injected as HOSTY_DEPENDENCY_{ALIAS}_URL.
+                    urls[wired.Alias] = endpoint.Url;
+                }
             }
         }
 
@@ -1822,10 +1872,10 @@ internal sealed class CoreLifecycleService(
         IReadOnlyList<AppDependencyContract> currentDependencies,
         IReadOnlyList<RuntimeAppDependencyManifest> targetDependencies)
     {
-        var current = currentDependencies.ToDictionary(dependency => dependency.Key, StringComparer.Ordinal);
+        var current = currentDependencies.ToDictionary(dependency => dependency.AppId, StringComparer.Ordinal);
         var target = targetDependencies
-            .Select(dependency => new AppDependencyContract(dependency.Id, dependency.Id, "default"))
-            .ToDictionary(dependency => dependency.Key, StringComparer.Ordinal);
+            .Select(ToDependencyContract)
+            .ToDictionary(dependency => dependency.AppId, StringComparer.Ordinal);
         foreach (var key in current.Keys.Concat(target.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
         {
             var hasCurrent = current.TryGetValue(key, out var currentDependency);
@@ -1983,8 +2033,22 @@ internal sealed class CoreLifecycleService(
         return $"{endpoint.Protocol}:public={endpoint.Public}:service={service}:port={port}";
     }
 
+    private static AppDependencyContract ToDependencyContract(RuntimeAppDependencyManifest dependency)
+        => new(
+            dependency.Id,
+            dependency.Version,
+            dependency.RequiredOrDefault,
+            dependency.Endpoints
+                .Select(endpoint => new AppDependencyEndpointContract(endpoint.Key, endpoint.Alias))
+                .ToArray());
+
     private static string DependencySignature(AppDependencyContract dependency)
-        => $"{dependency.AppId}:{dependency.Endpoint}";
+    {
+        var endpoints = string.Join(",", dependency.Endpoints
+            .Select(endpoint => $"{endpoint.EndpointKey}={endpoint.Alias}")
+            .Order(StringComparer.Ordinal));
+        return $"{dependency.AppId}:{dependency.Version ?? "*"}:required={dependency.Required}:{endpoints}";
+    }
 
     private static IReadOnlyList<AppEndpointContract> BuildEndpointContracts(RuntimeAppManifestSelection selection)
     {

@@ -149,6 +149,36 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsCrossAppDependencyWithEndpoints()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            dependencies: """, "dependencies": [{ "id": "com.haas.torrent-engine", "endpoints": [{ "key": "control", "as": "torrent" }] }]""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var dependency = Assert.Single(selection.Manifest.Dependencies);
+        Assert.Equal("com.haas.torrent-engine", dependency.Id);
+        Assert.True(dependency.RequiredOrDefault); // absent defaults to true
+        var endpoint = Assert.Single(dependency.Endpoints);
+        Assert.Equal("control", endpoint.Key);
+        Assert.Equal("torrent", endpoint.Alias);
+    }
+
+    [Theory]
+    [InlineData(""", "dependencies": [{ "id": "" }]""", "app_manifest_dependency_id_required")]
+    [InlineData(""", "dependencies": [{ "id": "com.haas.torrent-engine", "endpoints": [{ "key": "" }] }]""", "app_manifest_dependency_endpoint_key_required")]
+    [InlineData(""", "dependencies": [{ "id": "com.haas.torrent-engine", "endpoints": [{ "key": "control" }, { "key": "metrics", "as": "control" }] }]""", "app_manifest_dependency_alias_collision")]
+    public async Task LoadAsync_RejectsInvalidDependencies(string dependencies, string expectedCode)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", dependencies: dependencies);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    [Fact]
     public async Task LoadAsync_AcceptsDependsOnStringAndObjectForms()
     {
         var manifestPath = await WriteTwoServiceManifestAsync("""[ "api", { "service": "api", "port": "internal" } ]""");
@@ -237,7 +267,7 @@ public sealed class AppManifestServiceTests
         return path;
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null)
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -257,7 +287,7 @@ public sealed class AppManifestServiceTests
                     "image": "ghcr.io/example/notes:1.0.0"{{runtimeNetwork ?? ""}}{{ports ?? ""}}
                   }
                 }
-              }]{{externalMounts ?? ""}}
+              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}
             }
             """);
         return path;

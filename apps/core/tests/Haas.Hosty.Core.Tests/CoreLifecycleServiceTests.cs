@@ -678,7 +678,7 @@ public sealed class CoreLifecycleServiceTests
         Assert.NotNull(fixture.Adapter.LastContext);
         Assert.Equal(
             "http://127.0.0.1:6379",
-            fixture.Adapter.LastContext!.DependencyUrls["com.example.cache"]);
+            fixture.Adapter.LastContext!.DependencyUrls["cache"]);
     }
 
 
@@ -2002,7 +2002,8 @@ public sealed class CoreLifecycleServiceTests
                   "dependencies": [{
                     "id": "com.example.cache",
                     "version": "1",
-                    "required": true
+                    "required": true,
+                    "endpoints": [{ "key": "default", "as": "cache" }]
                   }],
                 """
                 : "";
@@ -2215,7 +2216,7 @@ public sealed class CoreLifecycleServiceTests
                     "runtimes": {
                       "dev": {
                         "type": "localCommand",
-                        "command": "printf \"$APP_MODE|$HOSTY_APP_DATA_DIR|$HOSTY_DEPENDENCY_COM_EXAMPLE_CACHE_URL|$PORT|$HOSTY_PORT_HTTP\" > \"$HOSTY_APP_DATA_DIR/local-output.txt\"; sleep 5",
+                        "command": "printf \"$APP_MODE|$HOSTY_APP_DATA_DIR|$HOSTY_DEPENDENCY_CACHE_URL|$PORT|$HOSTY_PORT_HTTP\" > \"$HOSTY_APP_DATA_DIR/local-output.txt\"; sleep 5",
                         "workingDirectory": ".",
                         "environment": {
                           "APP_MODE": "manifest"
@@ -2237,7 +2238,8 @@ public sealed class CoreLifecycleServiceTests
                   "dependencies": [{
                     "id": "com.example.cache",
                     "version": "1",
-                    "required": true
+                    "required": true,
+                    "endpoints": [{ "key": "default", "as": "cache" }]
                   }],
                   "data": {
                     "enabled": true,

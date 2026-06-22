@@ -25,6 +25,7 @@ flowchart LR
 - [Raw L4 ports](features/raw-ports.md) - opt-in `expose: host` / `transport` publishing of a docker port on all interfaces over TCP/UDP.
 - [Host networking](features/host-networking.md) - opt-in `network: host` for a docker service (full host namespace, no NAT) for high-churn peer-to-peer workloads; WSL2 mirrored-networking advisory.
 - [External host-path mounts](features/external-mounts.md) - operator-configured external folders (`externalMounts`) injected as `HOSTY_MOUNT_{KEY}`.
+- [Cross-app dependencies](features/cross-app-dependencies.md) - declare a dependency on another installed app; Core wires `HOSTY_DEPENDENCY_{ALIAS}_URL` and warns when a dependency is missing/not running (no auth, no auto-install).
 - [Runtime app update](features/runtime-app-update.md) - update plan and apply behavior.
 - [Runtime source workflows](features/runtime-source-workflows.md) - source checkout, local override, and runtime switching.
 - [Multi-service runtime apps](features/multi-service-runtime-apps.md) - multiple services per app.
