@@ -633,8 +633,13 @@ internal sealed class DockerRuntimeAdapter(
     ILogger<DockerRuntimeAdapter> logger) : IAppRuntimeAdapter
 {
     // App ids already advised about WSL2 P2P throttling, so the warning is logged once per app
-    // per Core process rather than on every (health-driven) restart.
-    private static readonly ConcurrentDictionary<string, byte> WslMirroredAdvised = new(StringComparer.Ordinal);
+    // per Core process rather than on every (health-driven) restart. Instance field on the DI
+    // singleton: its lifetime is the process, and it is bounded by the number of distinct apps
+    // ever started (small), so it does not need explicit eviction.
+    private readonly ConcurrentDictionary<string, byte> wslMirroredAdvised = new(StringComparer.Ordinal);
+
+    // Kernel info files whose contents mark a WSL2 environment; allocated once, not per check.
+    private static readonly string[] WslKernelInfoPaths = ["/proc/sys/kernel/osrelease", "/proc/version"];
 
     public string Type => "docker";
 
@@ -1026,7 +1031,7 @@ internal sealed class DockerRuntimeAdapter(
                 port.Transport is { Count: > 0 } transports &&
                 transports.Any(transport => string.Equals(transport, "udp", StringComparison.OrdinalIgnoreCase))));
 
-        if (!peerToPeerShaped || !WslMirroredAdvised.TryAdd(context.App.Id, 0))
+        if (!peerToPeerShaped || !wslMirroredAdvised.TryAdd(context.App.Id, 0))
         {
             return;
         }
@@ -1052,7 +1057,7 @@ internal sealed class DockerRuntimeAdapter(
 
         try
         {
-            foreach (var path in new[] { "/proc/sys/kernel/osrelease", "/proc/version" })
+            foreach (var path in WslKernelInfoPaths)
             {
                 if (File.Exists(path) &&
                     File.ReadAllText(path) is var text &&
