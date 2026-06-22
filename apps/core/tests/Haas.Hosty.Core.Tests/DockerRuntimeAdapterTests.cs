@@ -142,6 +142,33 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
+    public void BuildPrivilegedArguments_EmitsCapAddAndDevice_NormalizingCapabilityNames()
+    {
+        var runtime = new RuntimeServiceProfileManifest
+        {
+            Type = "docker",
+            Capabilities = ["NET_ADMIN", "cap_mknod"],
+            Devices = ["/dev/net/tun"],
+        };
+
+        var args = DockerRuntimeAdapter.BuildPrivilegedArguments(runtime);
+
+        Assert.Equal(["--cap-add", "NET_ADMIN", "--cap-add", "MKNOD", "--device", "/dev/net/tun"], args);
+    }
+
+    [Fact]
+    public void BuildPrivilegedArguments_EmptyWhenNoneDeclared()
+        => Assert.Empty(DockerRuntimeAdapter.BuildPrivilegedArguments(new RuntimeServiceProfileManifest { Type = "docker" }));
+
+    [Theory]
+    [InlineData("NET_ADMIN", "NET_ADMIN")]
+    [InlineData("net_admin", "NET_ADMIN")]
+    [InlineData("CAP_NET_ADMIN", "NET_ADMIN")]
+    [InlineData("  cap_sys_time ", "SYS_TIME")]
+    public void LinuxCapabilities_Normalize_StripsPrefixAndUppercases(string input, string expected)
+        => Assert.Equal(expected, LinuxCapabilities.Normalize(input));
+
+    [Fact]
     public void BuildNetworkName_DerivesStableDockerSafeName()
         => Assert.Equal("hosty-com-example-app-net", DockerRuntimeAdapter.BuildNetworkName("com.example.app"));
 
