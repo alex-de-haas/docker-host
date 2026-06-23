@@ -22,6 +22,7 @@ import {
   Settings2,
   Square,
   Trash2,
+  TriangleAlert,
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -38,6 +39,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import {
+  appHasMissingRequiredSettings,
   buildRuntimeServiceRows,
   formatRuntimeProfileLabel,
   getAppPageLinks,
@@ -475,6 +477,7 @@ function InstalledAppRow({
   const canRemove = canControl && app.capabilities.includes("remove");
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
   const autostartEnabled = isAppAutostartEnabled(app);
+  const needsRequiredSettings = !running && appHasMissingRequiredSettings(app);
 
   return (
     <TableRow data-testid={`app-row-${app.id}`}>
@@ -503,6 +506,11 @@ function InstalledAppRow({
               <span className="truncate font-medium">{app.displayName}</span>
               {app.system && <Badge variant="secondary">System</Badge>}
               {isShell && <Badge variant="outline">Shell</Badge>}
+              {needsRequiredSettings && (
+                <span title="Configure required settings before starting" className="inline-flex shrink-0">
+                  <TriangleAlert className="h-4 w-4 text-amber-500" aria-label="Configure required settings before starting" />
+                </span>
+              )}
               {app.lastError && <CircleAlert className="h-4 w-4 text-destructive" />}
             </div>
             <div className="truncate text-xs text-muted-foreground">{app.id}</div>

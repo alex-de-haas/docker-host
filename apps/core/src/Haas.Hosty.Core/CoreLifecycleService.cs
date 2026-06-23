@@ -96,6 +96,21 @@ internal sealed class CoreLifecycleService(
             LastOperation = "install",
             Autostart = request.Autostart ?? true,
         };
+
+        // Restore operator config retained from a prior uninstall-that-kept-data, before applying
+        // any settings supplied in this install request (which take precedence). Only keys the new
+        // manifest still declares survive; mounts are filtered to still-declared slots.
+        var retained = await TryReadRetainedConfigAsync(selection.Manifest.Id!, cancellationToken);
+        if (retained is not null)
+        {
+            record = record with
+            {
+                Settings = OverlayRetainedSettings(record.Settings, retained.Settings),
+                Mounts = PreserveMounts(selection.Manifest, retained.Mounts),
+                Autostart = request.Autostart ?? retained.Autostart ?? record.Autostart,
+            };
+        }
+
         if (request.Settings is { Count: > 0 })
         {
             ValidatePublicOriginSettings(request.Settings);
@@ -103,6 +118,14 @@ internal sealed class CoreLifecycleService(
         }
 
         var document = await apps.UpsertAppAsync(record, cancellationToken);
+        // Consume the snapshot only once it has been applied. A null `retained` may mean a transient
+        // read failure (IO/permissions), so leaving the file lets a later reinstall recover the
+        // config instead of permanently discarding it over a hiccup.
+        if (retained is not null)
+        {
+            TryDelete(GetRetainedConfigPath(selection.Manifest.Id!));
+        }
+
         return new AppLifecycleResponse(AppSummary.From(document.App), null, "installed");
     }
 
@@ -296,6 +319,7 @@ internal sealed class CoreLifecycleService(
         var runtimeStarted = false;
         try
         {
+            await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
             var selection = await LoadSelectionForAppAsync(app, cancellationToken);
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
@@ -388,7 +412,7 @@ internal sealed class CoreLifecycleService(
     public async Task<AppUpdatePlan> CreateUpdatePlanAsync(string appId, AppUpdatePlanRequest request, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
-        var manifestPath = request.ManifestPath ?? app.ManifestUrl ?? app.ManifestPath;
+        var manifestPath = request.ManifestPath ?? app.ManifestUrl ?? ResolveLocalUpdateManifestPath(app);
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
             throw new AppLifecycleException("manifest_path_required", "Installed app has no manifest path and update request did not provide one.");
@@ -654,6 +678,28 @@ internal sealed class CoreLifecycleService(
                     throw;
                 }
             }
+        }
+
+        // Keep the operator's configuration alongside retained app data so a reinstall restores it.
+        // Written before state.json is deleted; skipped (and any stale snapshot purged) when data is
+        // being deleted, since the whole app root is then removed. The snapshot keeps the app root
+        // non-empty, so it survives TryDeleteDirectoryIfEmpty even for data-less apps.
+        if (!request.DeleteData && app is not null)
+        {
+            // Best-effort: a disk/permission failure to snapshot config must not abort the
+            // uninstall the operator asked for. The cost is losing config retention on reinstall.
+            try
+            {
+                await WriteRetainedConfigAsync(app, cancellationToken);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+                logger.LogWarning(ex, "Failed to retain configuration for app {AppId} during uninstall.", appId);
+            }
+        }
+        else if (request.DeleteData)
+        {
+            TryDelete(GetRetainedConfigPath(appId));
         }
 
         if (request.DeleteRuntimeState)
@@ -922,7 +968,16 @@ internal sealed class CoreLifecycleService(
             Autostart: existing?.Autostart ?? true,
             RuntimeProfiles: BuildRuntimeProfileSummaries(manifest),
             MountSlots: BuildMountSlots(manifest),
-            Mounts: PreserveMounts(manifest, existing?.Mounts));
+            Mounts: PreserveMounts(manifest, existing?.Mounts),
+            // Sticky once captured at install; URL installs leave it null (covered by ManifestUrl).
+            // At install selection.ManifestPath is the operator's original path, resolved before
+            // the internal copy is written; on update/switch we keep the first captured value.
+            // Normalized to an absolute path so it still resolves if Core later runs from a
+            // different working directory (e.g. as a background service).
+            InstallManifestPath: existing?.InstallManifestPath ??
+                (string.IsNullOrWhiteSpace(selection.ManifestUrl) && !string.IsNullOrWhiteSpace(selection.ManifestPath)
+                    ? Path.GetFullPath(selection.ManifestPath)
+                    : null));
     }
 
     // External-mount slots are redeclared from the manifest on every (re)build, like runtime
@@ -1548,6 +1603,61 @@ internal sealed class CoreLifecycleService(
         }
     }
 
+    // Start-time gate: a runtime app must not launch while a required setting is unset,
+    // otherwise it comes up misconfigured with no clear signal to the operator. Checks the
+    // stored settings (so it covers required secrets too, whose values Core holds but the UI
+    // cannot see). Throws a recordable lifecycle failure — surfaced as a Shell toast on a manual
+    // start, recorded as LastError, and (via the advisory below) as a host-admin notification,
+    // which is the only signal on the autostart path.
+    private async Task EnsureRequiredSettingsConfiguredAsync(AppRecord app, CancellationToken cancellationToken)
+    {
+        var missing = CollectMissingRequiredSettings(app);
+        if (missing.Count == 0)
+        {
+            return;
+        }
+
+        await NotifyRequiredSettingsMissingAsync(app, missing, cancellationToken);
+        throw new AppLifecycleException(
+            "app_required_settings_missing",
+            $"Runtime app '{app.Id}' is missing required setting(s): {string.Join(", ", missing)}. Configure them before starting.");
+    }
+
+    private static IReadOnlyList<string> CollectMissingRequiredSettings(AppRecord app)
+        => (app.Settings?.Values ?? [])
+            .Where(setting => setting.Required && string.IsNullOrWhiteSpace(setting.Value))
+            .Select(setting => setting.Key)
+            .OrderBy(key => key, StringComparer.Ordinal)
+            .ToArray();
+
+    // Host-admin advisory mirroring NotifyMissingDependenciesAsync: best-effort, never throws so a
+    // notification failure cannot mask the start error. Dedupe key is per-app so re-attempts coalesce.
+    private async Task NotifyRequiredSettingsMissingAsync(AppRecord app, IReadOnlyList<string> missing, CancellationToken cancellationToken)
+    {
+        if (notifications is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await notifications.PublishAsync(
+                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                "error",
+                $"'{app.Id}' can't start: required settings missing",
+                $"'{app.DisplayName}' cannot start until required setting(s) are configured: {string.Join(", ", missing)}.",
+                link: null,
+                $"required-settings-missing:{app.Id}",
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Best-effort advisory: swallow disk/IO/store failures so they cannot mask the start
+            // error, but let a genuine cancellation propagate naturally instead of being absorbed.
+            logger.LogWarning(exception, "Failed to publish required-settings advisory for {AppId}.", app.Id);
+        }
+    }
+
     private async Task<IReadOnlyDictionary<string, string>> ResolveDependencyUrlsAsync(AppRecord app, CancellationToken cancellationToken)
     {
         var urls = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1588,6 +1698,20 @@ internal sealed class CoreLifecycleService(
         return await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
     }
 
+    // Update source for a local install: prefer the operator's original folder/file so a folder
+    // install picks up manifest edits. Falls back to the internal copy (app.ManifestPath) when the
+    // original source is gone, so "Recheck" never breaks — it just reports no changes.
+    private static string? ResolveLocalUpdateManifestPath(AppRecord app)
+    {
+        if (!string.IsNullOrWhiteSpace(app.InstallManifestPath) &&
+            (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath)))
+        {
+            return app.InstallManifestPath;
+        }
+
+        return app.ManifestPath;
+    }
+
     private IAppRuntimeAdapter ResolveAdapter(string? runtimeType)
         => adapters.FirstOrDefault(adapter => string.Equals(adapter.Type, runtimeType, StringComparison.Ordinal))
             ?? throw new AppLifecycleException("runtime_adapter_missing", $"Runtime adapter '{runtimeType}' is not available.");
@@ -1597,6 +1721,51 @@ internal sealed class CoreLifecycleService(
 
     private string GetAppDataPath(string appId)
         => Path.Combine(GetAppRoot(appId), "data");
+
+    private string GetRetainedConfigPath(string appId)
+        => Path.Combine(GetAppRoot(appId), "retained-config.json");
+
+    private async Task WriteRetainedConfigAsync(AppRecord app, CancellationToken cancellationToken)
+        => await JsonStorage.WriteAsync(
+            GetRetainedConfigPath(app.Id),
+            new RetainedAppConfig(1, app.Settings, app.Mounts ?? [], app.Autostart),
+            // Holds secret setting values, so keep it owner-only on Unix like other secret stores.
+            restrictToOwner: true,
+            cancellationToken);
+
+    private async Task<RetainedAppConfig?> TryReadRetainedConfigAsync(string appId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await JsonStorage.ReadAsync<RetainedAppConfig>(GetRetainedConfigPath(appId), cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    // Overlays retained setting values onto the freshly built (manifest-default) settings, keeping
+    // only keys the new manifest still declares. The retained value wins whenever the key was held
+    // — including an operator's intentional clear (empty/null) — so a reinstall faithfully restores
+    // the last configuration instead of silently reverting to a non-empty manifest default. Guards
+    // against a corrupt/legacy snapshot whose map deserialized as null (or empty): nothing to apply.
+    private static IReadOnlyDictionary<string, AppSettingValue> OverlayRetainedSettings(
+        IReadOnlyDictionary<string, AppSettingValue> current,
+        IReadOnlyDictionary<string, AppSettingValue>? retained)
+    {
+        if (retained is null || retained.Count == 0)
+        {
+            return current;
+        }
+
+        return current.ToDictionary(
+            pair => pair.Key,
+            pair => retained.TryGetValue(pair.Key, out var value)
+                ? pair.Value with { Value = value.Value }
+                : pair.Value,
+            StringComparer.Ordinal);
+    }
 
     private static string HashPlanSeed<T>(T seed)
     {

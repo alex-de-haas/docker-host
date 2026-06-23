@@ -354,6 +354,136 @@ public sealed class CoreLifecycleServiceTests
         Assert.True(appSetting.Required);
     }
 
+    [Fact]
+    public async Task StartAsync_RefusesWhenRequiredSettingMissing()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: """
+              "settings": [{ "key": "APP_MODE", "type": "string", "required": true }],
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.StartAsync("com.example.notes"));
+
+        Assert.Equal("app_required_settings_missing", error.Code);
+        Assert.Contains("APP_MODE", error.Message);
+        // The runtime is never invoked and the app stays stopped with the failure recorded.
+        Assert.Equal(0, fixture.Adapter.StartCount);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("stopped", app!.RuntimeState);
+        Assert.Contains("APP_MODE", app.LastError);
+    }
+
+    [Fact]
+    public async Task StartAsync_SucceedsAfterRequiredSettingConfigured()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: """
+              "settings": [{ "key": "APP_MODE", "type": "string", "required": true }],
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["APP_MODE"] = "staging" }));
+
+        var result = await fixture.Service.StartAsync("com.example.notes");
+
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal(1, fixture.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task RemoveAsync_RetainsConfigWhenDataKept_RestoredOnReinstall()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["APP_MODE"] = "staging" }, Autostart: false));
+        var host = CreateExternalDirectory();
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", "movies", host)]));
+
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(DeleteData: false));
+
+        var retainedPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "retained-config.json");
+        Assert.False(File.Exists(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "state.json")));
+        Assert.True(File.Exists(retainedPath));
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("staging", app!.Settings["APP_MODE"].Value);
+        Assert.False(app.Autostart);
+        var summary = (await fixture.Service.ListAppsAsync()).Single();
+        var binding = Assert.Single(summary.Mounts.Single().Bindings);
+        Assert.Equal("movies", binding.Label);
+        Assert.Equal(Path.GetFullPath(host), binding.HostPath);
+        // The snapshot is consumed by the reinstall so it does not linger.
+        Assert.False(File.Exists(retainedPath));
+    }
+
+    [Fact]
+    public async Task RemoveAsync_RetainsClearedSettingOverManifestDefault()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        // APP_MODE defaults to "production" in the manifest; the operator intentionally clears it.
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["APP_MODE"] = "" }));
+
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(DeleteData: false));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // The cleared value must survive the reinstall rather than reverting to the manifest default.
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(string.Empty, app!.Settings["APP_MODE"].Value);
+    }
+
+    [Fact]
+    public async Task RemoveAsync_DiscardsConfigWhenDataDeleted()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["APP_MODE"] = "staging" }));
+
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(DeleteData: true));
+        Assert.False(File.Exists(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "retained-config.json")));
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("production", app!.Settings["APP_MODE"].Value);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_FolderInstall_DetectsUpdatedManifest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "folder-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // The operator edits the same source folder; an update with no explicit path must re-read it
+        // rather than the internal copy Core saved at install.
+        await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("2.0.0"));
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        Assert.Equal("1.0.0", plan.CurrentVersion);
+        Assert.Equal("2.0.0", plan.TargetVersion);
+        Assert.Contains(plan.Changes, change => change.StartsWith("version:", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]
