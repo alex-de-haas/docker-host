@@ -163,6 +163,28 @@ Manual validation for the current artifact model:
 
 ## Versioning
 
-During early development, `cli-dev` is the main CLI/Core distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions.
+Every component uses semantic versioning `major.minor.patch`, applied per release artifact rather than as one global number. There are two tiers.
 
-Runtime apps carry their own app manifest versions. Product channel metadata can coordinate CLI/Core/Shell updates later. Generated product channels are tracked as an idea in [Update Channels](../ideas/update-channels.md). Until then, the placeholder product channel records the Core artifact family instead of a source project path.
+### Tier 1 - Platform (`apps/core` + `apps/cli`)
+
+Core and CLI are tightly coupled and ship together as one bundle (`cli-dev` / `cli-v*`), so they share a single version. The shared version lives in the root `Directory.Build.props` (`<Version>`). Individual `.csproj` files do not set their own `<Version>`; they inherit it.
+
+### Tier 2 - Runtime apps (`apps/shell`, `apps/demo-app`, and external apps such as project-manager, media-server, torrent-engine)
+
+Each runtime app is its own release artifact (its own image / repository) and versions independently through the `version` field in its `manifest.json`. Shell is versioned exactly like any other runtime app, not as part of the platform.
+
+`version` is a separate axis from `schemaVersion` (`app.0.1`), which is the manifest *contract* version owned by Core (`RuntimeAppManifest.cs`). Bump `schemaVersion` only when the manifest format changes; it is unrelated to any single app's `version`. An app declares the `schemaVersion` it targets, and that declaration is the compatibility handshake, so no cross-repository version matrix is required.
+
+### Bump rules
+
+While the project is in `0.x` (current), breaking changes go in `minor` per semver:
+
+| Level | In `0.x` (current) | After `1.0` |
+| --- | --- | --- |
+| **patch** (`x.y.Z`) | bug fix or small enhancement to existing functionality | same, backward-compatible |
+| **minor** (`x.Y.0`) | new functionality, or a large/breaking change to existing functionality | new functionality, backward-compatible |
+| **major** (`X.0.0`) | not used; move to `1.0.0` only when the surface is declared stable | breaking change: Core HTTP API, removed/renamed CLI command or flag, breaking manifest/data migration, or requiring a higher `schemaVersion` |
+
+Bump the relevant component's version in the same change that ships the work.
+
+During early development, `cli-dev` is the main platform distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions. Product channel metadata can coordinate platform/app updates later. Generated product channels are tracked as an idea in [Update Channels](../ideas/update-channels.md). Until then, the placeholder product channel records the Core artifact family instead of a source project path.

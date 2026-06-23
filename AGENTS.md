@@ -1,5 +1,19 @@
 # Agent Instructions
 
+## Versioning
+
+Hosty uses semantic versioning `major.minor.patch`, applied per release artifact. See `docs/features/repository-release-model.md` for the full policy. When a change ships in one of these components, bump its version in the same commit:
+
+- **patch** - bug fix or small enhancement to existing functionality.
+- **minor** - new functionality, or a large/breaking change (while the project is in `0.x`).
+- **major** - reserved until `1.0`; then breaking changes (Core HTTP API, removed/renamed CLI command or flag).
+
+Where the version lives:
+
+- **Platform (`apps/core` + `apps/cli`)** share one version in the root `Directory.Build.props`. Bump it there; do not add `<Version>` to individual `.csproj` files.
+- **`apps/shell`** is a runtime app: bump `version` in `apps/shell/manifest.json` (the artifact source of truth) and keep `apps/shell/package.json` in step. It versions independently from the platform.
+- **Runtime app manifests** (including external apps like project-manager, media-server, torrent-engine) follow the hosty-app-skill rules in `skills/hosty-app-skill/references/app-manifest.md`. Do not bump `schemaVersion` for ordinary changes - it only tracks the manifest contract format.
+
 ## Hosty Runtime App Development
 
 - Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
