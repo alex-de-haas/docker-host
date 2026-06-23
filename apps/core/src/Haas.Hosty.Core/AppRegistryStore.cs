@@ -369,7 +369,13 @@ internal sealed record AppSummary(
         var ui = app.Ui;
         var endpoints = AttachPublicOrigins(app.Endpoints, app.Settings);
         var profiles = runtimeProfiles ?? app.RuntimeProfiles ?? [];
-        var entryUrl = BuildUiUrl(ResolveEndpointUrl(endpoints, ui?.EndpointKey), ui?.EntryPath);
+        // The UI entry URL is only meaningful when the app declares a `ui` section. A headless
+        // app (e.g. a backend service that exposes only a control endpoint for other apps to
+        // consume) must not be treated as openable just because it has an HTTP endpoint, so we
+        // never fall back to an arbitrary endpoint here.
+        var entryUrl = ui is null
+            ? null
+            : BuildUiUrl(ResolveEndpointUrl(endpoints, ui.EndpointKey), ui.EntryPath);
         var navigation = ui?.Navigation
             .Select(item => new AppNavigationSummary(
                 Label: item.Label,

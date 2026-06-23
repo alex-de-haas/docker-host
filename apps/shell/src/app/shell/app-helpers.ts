@@ -207,7 +207,10 @@ export function getAppPageLinks(app: CoreApp): AppPageLink[] {
       .filter((item): item is AppPageLink => item !== null);
   }
 
-  const home = app.embeddedUrl || getOpenEndpoint(app)?.url;
+  // A "Home" page is only derived from the app's declared UI entry URL. Headless apps (no
+  // `ui` section in the manifest) expose endpoints for other apps to consume, not a browser
+  // UI, so they must not surface an openable page — in the sidebar or anywhere else.
+  const home = app.embeddedUrl;
   return home ? [{ label: "Home", path: "/", redirectUri: home }] : [];
 }
 
@@ -224,7 +227,10 @@ export function findAppPageLink(app: CoreApp, path: string) {
 }
 
 export function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
-  const base = app.embeddedUrl || getOpenEndpoint(app)?.url;
+  // Deep links are built from the declared UI entry URL only. Without it the app has no UI,
+  // so we must not fabricate a route from an arbitrary endpoint (this is the path findAppPageLink
+  // falls back to — a headless app must stay non-openable here too).
+  const base = app.embeddedUrl;
   if (!base) {
     return null;
   }
@@ -240,10 +246,6 @@ export function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
   } catch {
     return base;
   }
-}
-
-export function getOpenEndpoint(app: CoreApp) {
-  return app.endpoints?.find((endpoint) => endpoint.public && endpoint.url) ?? app.endpoints?.find((endpoint) => endpoint.url);
 }
 
 export function getConfiguredPublicOrigin(app: CoreApp, endpointKey: string) {

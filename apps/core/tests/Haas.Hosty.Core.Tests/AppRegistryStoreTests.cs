@@ -85,6 +85,33 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public async Task ListAppsAsync_HeadlessAppWithEndpointHasNoUiEntry()
+    {
+        // A headless app declares no `ui` section but still exposes an endpoint for other apps
+        // to drive over its API. It must not be reported as openable: no entry path, no embedded
+        // URL, and no navigation, so the Shell never surfaces it in the app sidebar.
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var store = new AppRegistryStore(paths);
+        await store.UpsertAppAsync(CreateApp("com.example.engine") with
+        {
+            Endpoints =
+            [
+                new AppEndpointContract("control", "http", "http://localhost:8080", Public: false),
+            ],
+        });
+
+        var apps = await store.ListAppsAsync();
+
+        var app = Assert.Single(apps);
+        Assert.Null(app.EntryPath);
+        Assert.Null(app.EmbeddedUrl);
+        Assert.Empty(app.Navigation);
+        // The endpoint itself is still surfaced so other apps can resolve it as a dependency.
+        Assert.Equal("http://localhost:8080", Assert.Single(app.Endpoints).Url);
+    }
+
+    [Fact]
     public async Task ListAppsAsync_AddsPublicOriginToSummariesWithoutReplacingLocalEndpointUrl()
     {
         var root = await CreateTempRootAsync();
