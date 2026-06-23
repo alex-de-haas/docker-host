@@ -15,7 +15,7 @@ Runtime app updates are reviewed changes from the currently installed `app.0.1` 
 
 ## Digest Semantics
 
-`manifestDigest` is the SHA-256 of the exact manifest JSON text loaded from a local manifest file, local app directory, `file://` URL, or HTTP(S) URL. For a locally installed `dev` runtime app, Core hashes the manifest JSON, not the app source folder or local command working directory. If an update request does not provide a manifest reference, Core uses the stored manifest URL for remote installs, otherwise the installed manifest copy under the app's Core state directory.
+`manifestDigest` is the SHA-256 of the exact manifest JSON text loaded from a local manifest file, local app directory, `file://` URL, or HTTP(S) URL. For a locally installed `dev` runtime app, Core hashes the manifest JSON, not the app source folder or local command working directory. If an update request does not provide a manifest reference, Core resolves the source in this order: the stored manifest URL for remote installs; otherwise the original local manifest path or directory captured at install (so edits to the source folder are picked up on recheck); and finally the installed manifest copy under the app's Core state directory when that original source is no longer present.
 
 `planDigest` is the SHA-256 of the reviewed update plan seed: app id, current and target versions, current and target runtimes, target channel, current and target manifest digests, whether a pre-update backup will be created, and the reported changes. Update apply recomputes the current plan and rejects stale input when the supplied plan digest no longer matches.
 

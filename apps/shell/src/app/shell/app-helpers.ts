@@ -15,6 +15,15 @@ export function isAppAutostartEnabled(app: CoreApp) {
   return app.autostart ?? true;
 }
 
+// Whether the app has a required setting we can see is unset. Non-secret only: the API never
+// surfaces secret values, so a required secret can't be judged here — Core is the authoritative
+// gate that refuses the start (app_required_settings_missing). Used to flag the app row.
+export function appHasMissingRequiredSettings(app: CoreApp) {
+  return (app.settings ?? []).some(
+    (setting) => setting.required && !setting.secret && (setting.value ?? "").trim().length === 0,
+  );
+}
+
 export function formatUpdateChange(change: string): string {
   if (change === "manifest") {
     return "Manifest content changed";

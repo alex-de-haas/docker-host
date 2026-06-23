@@ -173,6 +173,16 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
 
 internal sealed record AppStateDocument(int SchemaVersion, AppRecord App);
 
+// Operator-configured state retained across an uninstall that keeps app data, so a later reinstall
+// restores it instead of resetting to manifest defaults. Written to apps/<id>/retained-config.json
+// by RemoveAsync (when data is kept) and consumed by InstallAsync. Holds setting values (including
+// secrets), external mount bindings, and the autostart toggle.
+internal sealed record RetainedAppConfig(
+    int SchemaVersion,
+    IReadOnlyDictionary<string, AppSettingValue> Settings,
+    IReadOnlyList<AppMountBinding> Mounts,
+    bool? Autostart);
+
 internal sealed record AppRecord(
     string Id,
     string DisplayName,
@@ -201,7 +211,11 @@ internal sealed record AppRecord(
     bool? Autostart = null,
     IReadOnlyList<AppRuntimeProfileSummary>? RuntimeProfiles = null,
     IReadOnlyList<AppMountSlot>? MountSlots = null,
-    IReadOnlyList<AppMountBinding>? Mounts = null);
+    IReadOnlyList<AppMountBinding>? Mounts = null,
+    // The operator's original local manifest source (file or directory) captured at install,
+    // set only for non-URL installs. Lets a folder-installed app re-read its source folder on
+    // update instead of the stale internal copy (app.ManifestPath). See CreateUpdatePlanAsync.
+    string? InstallManifestPath = null);
 
 internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret, bool Required = false);
 

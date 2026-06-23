@@ -36,6 +36,7 @@ internal static class CoreJson
 // Persisted state / internal serialization roots.
 [JsonSerializable(typeof(UserDirectoryState))]
 [JsonSerializable(typeof(AppStateDocument))]
+[JsonSerializable(typeof(RetainedAppConfig))]
 [JsonSerializable(typeof(RuntimeAppManifest))]
 [JsonSerializable(typeof(AppChannelIndex))]
 [JsonSerializable(typeof(AuditRecord))]
