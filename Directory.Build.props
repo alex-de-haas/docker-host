@@ -1,0 +1,16 @@
+<Project>
+  <!--
+    Platform tier version (Hosty Core + Hosty CLI). See docs/features/repository-release-model.md.
+
+    Core and CLI are tightly coupled and ship together as one release bundle (cli-dev / cli-v*),
+    so they share a single semantic version here. Individual .csproj files must NOT set <Version>;
+    they inherit it from this file. Bump rules (while in 0.x): patch = fix or small change,
+    minor = new functionality or a large/breaking change. major is reserved until 1.0.
+
+    Runtime apps (shell, demo-app, and external apps such as project-manager, media-server,
+    torrent-engine) version independently via the "version" field in their own manifest.json.
+  -->
+  <PropertyGroup>
+    <Version>0.4.0</Version>
+  </PropertyGroup>
+</Project>

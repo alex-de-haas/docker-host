@@ -20,6 +20,18 @@ Use this reference when authoring or reviewing Hosty runtime app manifests, stor
 - Define endpoints for service access.
 - Define `ui.entrypoint` when the app has a Shell UI.
 
+## Versioning
+
+The manifest carries two independent version fields:
+
+- `schemaVersion` - the manifest *contract* version, owned by Hosty Core (the required value is fixed under Required Contract above). Do not change it for ordinary app changes; it moves only when the manifest format itself changes.
+- `version` - the app's own release version, in `major.minor.patch` semver. Bump it in the same change that ships the work:
+  - **patch** (`x.y.Z`) - bug fix or small enhancement to existing functionality.
+  - **minor** (`x.Y.0`) - new functionality, or a large change to existing functionality. While the app is in `0.x`, breaking changes also go here.
+  - **major** (`X.0.0`) - reserved until the app declares a stable `1.0.0`; after that, breaking changes for the app's users (breaking data migration, removed endpoint/behavior, or requiring a higher `schemaVersion`).
+
+Each runtime app versions independently from Hosty Core/CLI and from other apps. See `docs/features/repository-release-model.md` for the repository-wide policy.
+
 ## Runtime Environment
 
 Core injects:
