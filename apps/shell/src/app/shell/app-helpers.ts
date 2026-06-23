@@ -207,7 +207,10 @@ export function getAppPageLinks(app: CoreApp): AppPageLink[] {
       .filter((item): item is AppPageLink => item !== null);
   }
 
-  const home = app.embeddedUrl || getOpenEndpoint(app)?.url;
+  // A "Home" page is only derived from the app's declared UI entry URL. Headless apps (no
+  // `ui` section in the manifest) expose endpoints for other apps to consume, not a browser
+  // UI, so they must not surface an openable page — in the sidebar or anywhere else.
+  const home = app.embeddedUrl;
   return home ? [{ label: "Home", path: "/", redirectUri: home }] : [];
 }
 
