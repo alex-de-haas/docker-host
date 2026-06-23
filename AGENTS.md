@@ -11,7 +11,7 @@ Hosty uses semantic versioning `major.minor.patch`, applied per release artifact
 Where the version lives:
 
 - **Platform (`apps/core` + `apps/cli`)** share one version in the root `Directory.Build.props`. Bump it there; do not add `<Version>` to individual `.csproj` files.
-- **`apps/shell`** is a runtime app: bump `version` in `apps/shell/manifest.json` (the artifact source of truth) and keep `apps/shell/package.json` in step. It versions independently from the platform.
+- **`apps/shell`** and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
 - **Runtime app manifests** (including external apps like project-manager, media-server, torrent-engine) follow the hosty-app-skill rules in `skills/hosty-app-skill/references/app-manifest.md`. Do not bump `schemaVersion` for ordinary changes - it only tracks the manifest contract format.
 
 ## Hosty Runtime App Development

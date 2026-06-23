@@ -24,7 +24,7 @@ Use this reference when authoring or reviewing Hosty runtime app manifests, stor
 
 The manifest carries two independent version fields:
 
-- `schemaVersion` - the manifest *contract* version, owned by Hosty Core. It must be `app.0.1`. Do not change it for ordinary app changes; it moves only when the manifest format itself changes.
+- `schemaVersion` - the manifest *contract* version, owned by Hosty Core (the required value is fixed under Required Contract above). Do not change it for ordinary app changes; it moves only when the manifest format itself changes.
 - `version` - the app's own release version, in `major.minor.patch` semver. Bump it in the same change that ships the work:
   - **patch** (`x.y.Z`) - bug fix or small enhancement to existing functionality.
   - **minor** (`x.Y.0`) - new functionality, or a large change to existing functionality. While the app is in `0.x`, breaking changes also go here.
