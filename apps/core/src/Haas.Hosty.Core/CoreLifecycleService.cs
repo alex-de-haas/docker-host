@@ -118,7 +118,14 @@ internal sealed class CoreLifecycleService(
         }
 
         var document = await apps.UpsertAppAsync(record, cancellationToken);
-        TryDelete(GetRetainedConfigPath(selection.Manifest.Id!));
+        // Consume the snapshot only once it has been applied. A null `retained` may mean a transient
+        // read failure (IO/permissions), so leaving the file lets a later reinstall recover the
+        // config instead of permanently discarding it over a hiccup.
+        if (retained is not null)
+        {
+            TryDelete(GetRetainedConfigPath(selection.Manifest.Id!));
+        }
+
         return new AppLifecycleResponse(AppSummary.From(document.App), null, "installed");
     }
 
@@ -679,7 +686,16 @@ internal sealed class CoreLifecycleService(
         // non-empty, so it survives TryDeleteDirectoryIfEmpty even for data-less apps.
         if (!request.DeleteData && app is not null)
         {
-            await WriteRetainedConfigAsync(app, cancellationToken);
+            // Best-effort: a disk/permission failure to snapshot config must not abort the
+            // uninstall the operator asked for. The cost is losing config retention on reinstall.
+            try
+            {
+                await WriteRetainedConfigAsync(app, cancellationToken);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+                logger.LogWarning(ex, "Failed to retain configuration for app {AppId} during uninstall.", appId);
+            }
         }
         else if (request.DeleteData)
         {
@@ -956,8 +972,12 @@ internal sealed class CoreLifecycleService(
             // Sticky once captured at install; URL installs leave it null (covered by ManifestUrl).
             // At install selection.ManifestPath is the operator's original path, resolved before
             // the internal copy is written; on update/switch we keep the first captured value.
+            // Normalized to an absolute path so it still resolves if Core later runs from a
+            // different working directory (e.g. as a background service).
             InstallManifestPath: existing?.InstallManifestPath ??
-                (string.IsNullOrWhiteSpace(selection.ManifestUrl) ? selection.ManifestPath : null));
+                (string.IsNullOrWhiteSpace(selection.ManifestUrl) && !string.IsNullOrWhiteSpace(selection.ManifestPath)
+                    ? Path.GetFullPath(selection.ManifestPath)
+                    : null));
     }
 
     // External-mount slots are redeclared from the manifest on every (re)build, like runtime
@@ -1604,7 +1624,7 @@ internal sealed class CoreLifecycleService(
     }
 
     private static IReadOnlyList<string> CollectMissingRequiredSettings(AppRecord app)
-        => app.Settings.Values
+        => (app.Settings?.Values ?? [])
             .Where(setting => setting.Required && string.IsNullOrWhiteSpace(setting.Value))
             .Select(setting => setting.Key)
             .OrderBy(key => key, StringComparer.Ordinal)
@@ -1630,8 +1650,10 @@ internal sealed class CoreLifecycleService(
                 $"required-settings-missing:{app.Id}",
                 cancellationToken);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            // Best-effort advisory: swallow disk/IO/store failures so they cannot mask the start
+            // error, but let a genuine cancellation propagate naturally instead of being absorbed.
             logger.LogWarning(exception, "Failed to publish required-settings advisory for {AppId}.", app.Id);
         }
     }
@@ -1707,6 +1729,8 @@ internal sealed class CoreLifecycleService(
         => await JsonStorage.WriteAsync(
             GetRetainedConfigPath(app.Id),
             new RetainedAppConfig(1, app.Settings, app.Mounts ?? [], app.Autostart),
+            // Holds secret setting values, so keep it owner-only on Unix like other secret stores.
+            restrictToOwner: true,
             cancellationToken);
 
     private async Task<RetainedAppConfig?> TryReadRetainedConfigAsync(string appId, CancellationToken cancellationToken)
@@ -1722,16 +1746,26 @@ internal sealed class CoreLifecycleService(
     }
 
     // Overlays retained setting values onto the freshly built (manifest-default) settings, keeping
-    // only keys the new manifest still declares and only when the retained value is non-empty.
+    // only keys the new manifest still declares. The retained value wins whenever the key was held
+    // — including an operator's intentional clear (empty/null) — so a reinstall faithfully restores
+    // the last configuration instead of silently reverting to a non-empty manifest default. Guards
+    // against a corrupt/legacy snapshot whose map deserialized as null (or empty): nothing to apply.
     private static IReadOnlyDictionary<string, AppSettingValue> OverlayRetainedSettings(
         IReadOnlyDictionary<string, AppSettingValue> current,
-        IReadOnlyDictionary<string, AppSettingValue> retained)
-        => current.ToDictionary(
+        IReadOnlyDictionary<string, AppSettingValue>? retained)
+    {
+        if (retained is null || retained.Count == 0)
+        {
+            return current;
+        }
+
+        return current.ToDictionary(
             pair => pair.Key,
-            pair => retained.TryGetValue(pair.Key, out var value) && !string.IsNullOrEmpty(value.Value)
+            pair => retained.TryGetValue(pair.Key, out var value)
                 ? pair.Value with { Value = value.Value }
                 : pair.Value,
             StringComparer.Ordinal);
+    }
 
     private static string HashPlanSeed<T>(T seed)
     {

@@ -427,6 +427,25 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task RemoveAsync_RetainsClearedSettingOverManifestDefault()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        // APP_MODE defaults to "production" in the manifest; the operator intentionally clears it.
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["APP_MODE"] = "" }));
+
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(DeleteData: false));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // The cleared value must survive the reinstall rather than reverting to the manifest default.
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(string.Empty, app!.Settings["APP_MODE"].Value);
+    }
+
+    [Fact]
     public async Task RemoveAsync_DiscardsConfigWhenDataDeleted()
     {
         var fixture = await LifecycleFixture.CreateAsync();
