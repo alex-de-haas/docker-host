@@ -227,7 +227,10 @@ export function findAppPageLink(app: CoreApp, path: string) {
 }
 
 export function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
-  const base = app.embeddedUrl || getOpenEndpoint(app)?.url;
+  // Deep links are built from the declared UI entry URL only. Without it the app has no UI,
+  // so we must not fabricate a route from an arbitrary endpoint (this is the path findAppPageLink
+  // falls back to — a headless app must stay non-openable here too).
+  const base = app.embeddedUrl;
   if (!base) {
     return null;
   }
@@ -243,10 +246,6 @@ export function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
   } catch {
     return base;
   }
-}
-
-export function getOpenEndpoint(app: CoreApp) {
-  return app.endpoints?.find((endpoint) => endpoint.public && endpoint.url) ?? app.endpoints?.find((endpoint) => endpoint.url);
 }
 
 export function getConfiguredPublicOrigin(app: CoreApp, endpointKey: string) {
