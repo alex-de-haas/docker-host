@@ -44,6 +44,9 @@ export function ShellSidebar({
   activeView,
   workspace,
   coreOrigin,
+  coreOnline,
+  coreVersion,
+  shellVersion,
   activeUser,
   canManageApps,
   runtimeApps,
@@ -57,6 +60,9 @@ export function ShellSidebar({
   activeView: ShellView;
   workspace: EmbeddedWorkspace | null;
   coreOrigin: string;
+  coreOnline: boolean;
+  coreVersion: string | null;
+  shellVersion: string;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   runtimeApps: CoreApp[];
@@ -125,7 +131,45 @@ export function ShellSidebar({
 
       <div className={cn("shrink-0 border-t", compact ? "space-y-2 px-2 py-3" : "space-y-3 p-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
+        <SidebarVersionInfo compact={compact} coreOnline={coreOnline} coreVersion={coreVersion} shellVersion={shellVersion} />
       </div>
+    </div>
+  );
+}
+
+function SidebarVersionInfo({
+  compact,
+  coreOnline,
+  coreVersion,
+  shellVersion,
+}: {
+  compact: boolean;
+  coreOnline: boolean;
+  coreVersion: string | null;
+  shellVersion: string;
+}) {
+  // A reachable Core that predates the version field reports no version, so only call it
+  // "offline" when Core is genuinely unreachable; otherwise the version is just unknown.
+  const platformLabel = coreVersion
+    ? `Core/CLI v${coreVersion}`
+    : coreOnline
+      ? "Core/CLI version unknown"
+      : "Core/CLI offline";
+  const shellLabel = shellVersion ? `Shell v${shellVersion}` : null;
+  const title = shellLabel ? `${platformLabel} · ${shellLabel}` : platformLabel;
+
+  if (compact) {
+    return (
+      <p className="text-center text-[10px] leading-tight text-muted-foreground" title={title}>
+        {coreVersion ? `v${coreVersion}` : "—"}
+      </p>
+    );
+  }
+
+  return (
+    <div className="px-2 text-[11px] leading-tight text-muted-foreground" title={title}>
+      <p className="truncate">{platformLabel}</p>
+      {shellLabel && <p className="truncate">{shellLabel}</p>}
     </div>
   );
 }

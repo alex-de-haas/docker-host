@@ -1,6 +1,7 @@
 export type CoreStatus = {
   status: string;
   component: string;
+  version?: string;
   dataRoot: string;
   listenUrl: string;
   corePublicOrigin?: string | null;

@@ -121,6 +121,7 @@ public sealed class HostyCoreRuntimeConfigTests
 
         Assert.Equal("http://localhost:7070", response.CorePublicOrigin);
         Assert.Equal("http://localhost:7171", response.ShellPublicOrigin);
+        Assert.False(string.IsNullOrWhiteSpace(response.Version));
     }
 
     [Fact]
