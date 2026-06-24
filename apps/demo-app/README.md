@@ -24,7 +24,7 @@ Core injects:
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_HTTP`
 - `PORT`
-- `HOSTY_MOUNT_CATALOGROOTS` - comma-separated external mount paths (see External Mounts)
+- `HOSTY_MOUNT_CATALOGROOTS` - comma-separated `label=path` external mounts (see External Mounts)
 
 The app also reads demo settings from the manifest:
 

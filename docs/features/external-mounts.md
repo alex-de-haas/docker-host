@@ -34,19 +34,19 @@ A manifest declares external-mount **slots**. The slot describes what the app ca
 
 The operator configures paths after install (`POST /api/apps/{appId}/mounts`, admin-only; `/control/v1/apps/{appId}/mounts` for the CLI). Each path is given a stable **label**; Core exposes it at the deterministic container path `/mnt/{key}/{label}` so a given path keeps the same container path even when sibling paths are added or removed.
 
-For each slot that has configured paths, Core injects `HOSTY_MOUNT_{KEY}` (key uppercased, non-alphanumerics → `_`) with the active paths comma-joined and sorted by label:
+For each slot that has configured paths, Core injects `HOSTY_MOUNT_{KEY}` (key uppercased, non-alphanumerics → `_`) with the active bindings comma-joined as `label=path` and sorted by label:
 
 - Under `docker`: container paths, each path bind-mounted (`-v host:/mnt/{key}/{label}[:ro]`):
-  `HOSTY_MOUNT_CATALOGROOTS=/mnt/catalogRoots/anime,/mnt/catalogRoots/movies-4k`
+  `HOSTY_MOUNT_CATALOGROOTS=anime=/mnt/catalogRoots/anime,movies-4k=/mnt/catalogRoots/movies-4k`
 - Under `localCommand`/`dev`: the operator host paths directly (no container):
-  `HOSTY_MOUNT_CATALOGROOTS=/srv/anime,/srv/movies-4k`
+  `HOSTY_MOUNT_CATALOGROOTS=anime=/srv/anime,movies-4k=/srv/movies-4k`
 
-The app reads the variable, splits on `,`, and uses whatever paths it contains — the contract is identical across runtimes.
+The app reads the variable, splits on `,`, and splits each entry on the **first** `=` into `label` and `path` — the contract is identical across runtimes. The label is each bind's stable key; a consumer that must address a specific mount across apps (e.g. pair a catalog root with a sibling app's downloads mount on the same host path) matches on the label. A host path may itself contain `=`, so always split on the first `=` only (labels match `^[a-z0-9][a-z0-9._-]{0,62}$` and never contain `=`).
 
 ## User/API Scenarios
 
 - An operator installs a media app whose manifest declares a required `catalogRoots` slot. Start is blocked with `app_mount_required_unconfigured` until the operator configures at least one path.
-- The operator binds `/srv/movies-4k` (label `movies-4k`) and `/srv/anime` (label `anime`). Under docker the app sees `/mnt/catalogRoots/anime,/mnt/catalogRoots/movies-4k`; the binds are read-write so the app can hardlink within each root.
+- The operator binds `/srv/movies-4k` (label `movies-4k`) and `/srv/anime` (label `anime`). Under docker the app sees `anime=/mnt/catalogRoots/anime,movies-4k=/mnt/catalogRoots/movies-4k`; the binds are read-write so the app can hardlink within each root.
 - The app is updated to a new version. The configured paths persist; no reconfiguration is needed.
 - The operator removes the app. The external media folders are untouched.
 - The operator tries to bind a path inside the Hosty data root or a system path (`/etc`, `/proc`, …). Core rejects it (`app_mount_path_in_data_root` / `app_mount_path_forbidden`).
@@ -66,7 +66,7 @@ The app reads the variable, splits on `,`, and uses whatever paths it contains �
 - `AppRecord`: new `MountSlots` (denormalized declarations) and `Mounts` (operator bindings).
 - `AppSummary`: new `mounts` array (`key`, `mode`, `multiple`, `required`, `service`, `bindings[]` with `label`, `hostPath`, `containerPath`).
 - Endpoints: `POST /api/apps/{appId}/mounts` (admin session + CSRF) and `POST /control/v1/apps/{appId}/mounts` (control secret), body `{ "mounts": [{ "key", "label", "hostPath" }] }` (replace-all semantics).
-- Runtime environment: new `HOSTY_MOUNT_{KEY}` per configured slot.
+- Runtime environment: new `HOSTY_MOUNT_{KEY}` per configured slot (comma-joined `label=path` entries).
 
 ## Clients
 

@@ -90,14 +90,14 @@ Declare slots in the manifest. The manifest declares *what the app can accept*; 
 - Slot keys match `^[A-Za-z][A-Za-z0-9_-]{0,62}$` (camelCase is allowed).
 - The operator configures each path with a stable **label**; Core exposes it at a deterministic container path `/mnt/{key}/{label}` so it does not move when sibling paths are added or removed.
 
-**How Core injects it.** For each slot that has configured paths, Core injects `HOSTY_MOUNT_{KEY}` (the key uppercased, non-alphanumerics → `_`) with the active paths comma-joined and sorted by label:
+**How Core injects it.** For each slot that has configured paths, Core injects `HOSTY_MOUNT_{KEY}` (the key uppercased, non-alphanumerics → `_`) with the active bindings comma-joined as `label=path` and sorted by label:
 
-- Under the `docker` runtime the value is the container paths, and each path is bind-mounted (`-v host:/mnt/{key}/{label}[:ro]`):
-  `HOSTY_MOUNT_CATALOGROOTS=/mnt/catalogRoots/anime,/mnt/catalogRoots/movies-4k`
-- Under `localCommand`/`dev` there is no container, so the value is the operator host paths read directly:
-  `HOSTY_MOUNT_CATALOGROOTS=/srv/anime,/srv/movies-4k`
+- Under the `docker` runtime the path is the container path, and each path is bind-mounted (`-v host:/mnt/{key}/{label}[:ro]`):
+  `HOSTY_MOUNT_CATALOGROOTS=anime=/mnt/catalogRoots/anime,movies-4k=/mnt/catalogRoots/movies-4k`
+- Under `localCommand`/`dev` there is no container, so the path is the operator host path read directly:
+  `HOSTY_MOUNT_CATALOGROOTS=anime=/srv/anime,movies-4k=/srv/movies-4k`
 
-Read the variable, split on `,`, and use whatever paths it contains — the contract is identical across runtimes. Each path is a single bind/mount point, so hardlinks work within one path but not across two different paths.
+Read the variable, split on `,`, then split each entry on the **first** `=` into `label` and `path` — the contract is identical across runtimes. Each path is a single bind/mount point, so hardlinks work within one path but not across two different paths. The label is each bind's stable key; use it to address a specific mount (e.g. to pair a root with a sibling app's mount on the same host path). A host path may contain `=`, so split on the first `=` only (labels match `^[a-z0-9][a-z0-9._-]{0,62}$`).
 
 **App responsibilities.** Validate each injected root yourself (e.g. exists, is a single filesystem via `st_dev` if you hardlink within it). Do not assume two roots share a filesystem.
 

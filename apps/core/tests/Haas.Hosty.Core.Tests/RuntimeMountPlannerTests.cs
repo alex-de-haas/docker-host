@@ -76,8 +76,8 @@ public sealed class RuntimeMountPlannerTests
         var docker = RuntimeMountPlanner.BuildMountEnvironment(mounts, useContainerPath: true);
         var local = RuntimeMountPlanner.BuildMountEnvironment(mounts, useContainerPath: false);
 
-        Assert.Equal("/mnt/catalogRoots/anime,/mnt/catalogRoots/movies", docker["HOSTY_MOUNT_CATALOGROOTS"]);
-        Assert.Equal("/srv/anime,/srv/movies", local["HOSTY_MOUNT_CATALOGROOTS"]);
+        Assert.Equal("anime=/mnt/catalogRoots/anime,movies=/mnt/catalogRoots/movies", docker["HOSTY_MOUNT_CATALOGROOTS"]);
+        Assert.Equal("anime=/srv/anime,movies=/srv/movies", local["HOSTY_MOUNT_CATALOGROOTS"]);
     }
 
     [Fact]
