@@ -24,9 +24,11 @@ export interface DemoConfig {
 }
 
 export interface DemoMount {
-  // Slot key (lower-cased from the HOSTY_MOUNT_{KEY} env name) and one host/container path.
+  // Slot key (lower-cased from the HOSTY_MOUNT_{KEY} env name), the operator-chosen per-bind
+  // label, and one host/container path.
   key: string;
   envName: string;
+  label: string;
   path: string;
 }
 
@@ -69,10 +71,12 @@ export function getDemoConfig(): DemoConfig {
   };
 }
 
-// Discovers the external mounts Hosty injected as HOSTY_MOUNT_{KEY}=path1,path2. Under docker
-// these are container paths (each a bind mount); under localCommand they are the operator host
-// paths read directly. The demo declares a `catalogRoots` slot, so a configured slot surfaces as
-// HOSTY_MOUNT_CATALOGROOTS — but discovery is generic over any declared slot.
+// Discovers the external mounts Hosty injected as HOSTY_MOUNT_{KEY}=label1=path1,label2=path2.
+// Under docker the paths are container paths (each a bind mount); under localCommand they are the
+// operator host paths read directly. Each comma-separated entry is `label=path`; a host path may
+// contain '=', so split on the FIRST '=' only (labels never contain '='). The demo declares a
+// `catalogRoots` slot, so a configured slot surfaces as HOSTY_MOUNT_CATALOGROOTS — but discovery
+// is generic over any declared slot.
 function discoverHostyMounts(): DemoMount[] {
   const prefix = "HOSTY_MOUNT_";
   const mounts: DemoMount[] = [];
@@ -82,8 +86,11 @@ function discoverHostyMounts(): DemoMount[] {
     }
 
     const key = name.slice(prefix.length).toLowerCase();
-    for (const mountPath of value.split(",").map(part => part.trim()).filter(Boolean)) {
-      mounts.push({ key, envName: name, path: mountPath });
+    for (const entry of value.split(",").map(part => part.trim()).filter(Boolean)) {
+      const separator = entry.indexOf("=");
+      const label = separator >= 0 ? entry.slice(0, separator) : "";
+      const mountPath = separator >= 0 ? entry.slice(separator + 1) : entry;
+      mounts.push({ key, envName: name, label, path: mountPath });
     }
   }
 
@@ -117,7 +124,7 @@ export async function inspectStorage(options: { writeProbe?: boolean } = {}) {
     config.mounts.map((mount, index) =>
       inspectDirectory({
         key: `mount-${mount.key}-${index}`,
-        label: `Mount: ${mount.key}`,
+        label: mount.label ? `Mount: ${mount.key}/${mount.label}` : `Mount: ${mount.key}`,
         directoryPath: mount.path,
         writable: false,
         writeProbe: false,

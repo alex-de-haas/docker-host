@@ -71,8 +71,12 @@ internal static class RuntimeMountPlanner
     }
 
     // Builds the `HOSTY_MOUNT_{KEY}` environment variables, one per slot key that has bindings,
-    // value = comma-joined paths. Under docker the app sees container paths; under localCommand
-    // it reads the host paths directly. Mounts arrive already sorted by (key, label).
+    // value = comma-joined `label=path` entries. The operator-chosen label is the stable per-bind
+    // key a consumer addresses a mount by — e.g. to pair a catalog root with a sibling app's
+    // downloads mount that shares the same host path. Under docker the path is the container path;
+    // under localCommand the host path. A host path may itself contain '=', so consumers must split
+    // each entry on the FIRST '=' only (labels match ^[a-z0-9][a-z0-9._-]{0,62}$ and never contain
+    // '='). Mounts arrive already sorted by (key, label).
     public static IReadOnlyDictionary<string, string> BuildMountEnvironment(
         IReadOnlyList<RuntimeMount> mounts,
         bool useContainerPath)
@@ -81,7 +85,8 @@ internal static class RuntimeMountPlanner
         foreach (var group in mounts.GroupBy(mount => mount.Key, StringComparer.Ordinal))
         {
             var name = $"HOSTY_MOUNT_{RuntimePortHelper.NormalizeEnvironmentKey(group.Key)}";
-            environment[name] = string.Join(',', group.Select(mount => useContainerPath ? mount.ContainerPath : mount.HostPath));
+            environment[name] = string.Join(',', group.Select(mount =>
+                $"{mount.Label}={(useContainerPath ? mount.ContainerPath : mount.HostPath)}"));
         }
 
         return environment;
