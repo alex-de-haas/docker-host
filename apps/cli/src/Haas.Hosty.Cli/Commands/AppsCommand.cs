@@ -521,7 +521,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             .Field("Manifest digest", Markup.Escape(plan.ManifestDigest))
             .Field("Plan digest", Markup.Escape(plan.PlanDigest));
         context.Console.Write(table);
-        if (!plan.SourceConfigured)
+        if (plan.SourceConfigured == false)
         {
             context.Console.MarkupLine(
                 "[yellow]Source not configured: Recheck compared the app against Core's internal copy, " +
@@ -1601,7 +1601,10 @@ internal sealed partial class AppsCommand(CommandContext context)
         string PlanDigest,
         bool WillCreatePreUpdateBackup,
         IReadOnlyList<string> Changes,
-        bool SourceConfigured = true);
+        // Nullable so a response from an older Core that omits the property deserializes to null
+        // (treated as "configured"/no warning) rather than false. STJ does not apply the C# default
+        // value of a constructor parameter for a missing JSON property.
+        bool? SourceConfigured = null);
 
     internal sealed record AppRuntimeSwitchPlan(
         string AppId,

@@ -529,6 +529,29 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("1.0.0", plan.TargetVersion);
     }
 
+    [Fact]
+    public async Task CreateUpdatePlanAsync_ReportsSourceNotConfigured_WhenRequestedManifestPathIsInternalCopy()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "folder-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // Drop the real source pointer so only the explicitly-passed internal copy path remains.
+        var internalCopy = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json");
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(app! with { InstallManifestPath = internalCopy });
+
+        // Even an explicit manifest path is not an external source when it points back into the app root.
+        var plan = await fixture.Service.CreateUpdatePlanAsync(
+            "com.example.notes",
+            new AppUpdatePlanRequest(internalCopy));
+
+        Assert.False(plan.SourceConfigured);
+    }
+
     [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]

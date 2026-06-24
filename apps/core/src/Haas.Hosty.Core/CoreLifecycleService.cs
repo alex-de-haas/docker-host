@@ -1735,26 +1735,20 @@ internal sealed class CoreLifecycleService(
     // can only read Core's own internal copy and will always report no changes — the plan flags
     // this so the UI/CLI can prompt for a source instead of implying the app is up to date.
     private bool HasExternalUpdateSource(AppRecord app, string? requestedManifestPath)
-        => !string.IsNullOrWhiteSpace(requestedManifestPath)
+        => (!string.IsNullOrWhiteSpace(requestedManifestPath)
+                // A requested path that points back into Core's own copy is not an external source.
+                && !IsInternalAppPath(app.Id, requestedManifestPath))
             || !string.IsNullOrWhiteSpace(app.ManifestUrl)
             || (!string.IsNullOrWhiteSpace(app.InstallManifestPath)
                 && !IsInternalAppPath(app.Id, app.InstallManifestPath)
                 && (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath)));
 
     // True when the path resolves inside the app's Core-managed root (e.g. the internal manifest
-    // copy under {AppsRoot}/{id}). Such a path is never a real external source.
+    // copy under {AppsRoot}/{id}). Such a path is never a real external source. Reuses
+    // PathEqualsOrWithin so casing/trailing-separator handling matches the OS (case-insensitive on
+    // Windows) and stays consistent with the rest of the path-containment checks in this file.
     private bool IsInternalAppPath(string appId, string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return false;
-        }
-
-        var appRoot = Path.GetFullPath(GetAppRoot(appId));
-        var full = Path.GetFullPath(path);
-        return string.Equals(full, appRoot, StringComparison.Ordinal)
-            || full.StartsWith(appRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
-    }
+        => !string.IsNullOrWhiteSpace(path) && PathEqualsOrWithin(GetAppRoot(appId), path);
 
     private IAppRuntimeAdapter ResolveAdapter(string? runtimeType)
         => adapters.FirstOrDefault(adapter => string.Equals(adapter.Type, runtimeType, StringComparison.Ordinal))
