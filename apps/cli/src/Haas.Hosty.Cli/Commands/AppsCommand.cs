@@ -521,6 +521,13 @@ internal sealed partial class AppsCommand(CommandContext context)
             .Field("Manifest digest", Markup.Escape(plan.ManifestDigest))
             .Field("Plan digest", Markup.Escape(plan.PlanDigest));
         context.Console.Write(table);
+        if (!plan.SourceConfigured)
+        {
+            context.Console.MarkupLine(
+                "[yellow]Source not configured: Recheck compared the app against Core's internal copy, " +
+                "so it cannot detect manifest edits. Re-run with --manifest <folder> or set a local " +
+                "override via `apps source-override <app-id> --path <folder>`.[/]");
+        }
     }
 
     private void RenderRuntimeSwitchPlan(AppRuntimeSwitchPlan? plan)
@@ -1593,7 +1600,8 @@ internal sealed partial class AppsCommand(CommandContext context)
         string ManifestDigest,
         string PlanDigest,
         bool WillCreatePreUpdateBackup,
-        IReadOnlyList<string> Changes);
+        IReadOnlyList<string> Changes,
+        bool SourceConfigured = true);
 
     internal sealed record AppRuntimeSwitchPlan(
         string AppId,

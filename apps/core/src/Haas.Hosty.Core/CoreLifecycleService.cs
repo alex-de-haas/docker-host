@@ -426,6 +426,7 @@ internal sealed class CoreLifecycleService(
         }
 
         var willCreateBackup = Directory.Exists(GetAppDataPath(appId));
+        var sourceConfigured = HasExternalUpdateSource(app, request.ManifestPath);
         var changes = BuildUpdateChanges(app, currentSelection, selection);
         var seed = new AppUpdatePlanDigestSeed(
             appId,
@@ -450,7 +451,8 @@ internal sealed class CoreLifecycleService(
             ManifestDigest: selection.ManifestDigest,
             PlanDigest: digest,
             WillCreatePreUpdateBackup: willCreateBackup,
-            Changes: changes);
+            Changes: changes,
+            SourceConfigured: sourceConfigured);
     }
 
     public async Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
@@ -975,7 +977,11 @@ internal sealed class CoreLifecycleService(
             // Normalized to an absolute path so it still resolves if Core later runs from a
             // different working directory (e.g. as a background service).
             InstallManifestPath: existing?.InstallManifestPath ??
-                (string.IsNullOrWhiteSpace(selection.ManifestUrl) && !string.IsNullOrWhiteSpace(selection.ManifestPath)
+                (string.IsNullOrWhiteSpace(selection.ManifestUrl)
+                    && !string.IsNullOrWhiteSpace(selection.ManifestPath)
+                    // Never treat Core's own internal copy as the operator source. Capturing it here
+                    // is what made folder installs silently re-read their stale snapshot on Recheck.
+                    && !IsInternalAppPath(manifest.Id!, selection.ManifestPath)
                     ? Path.GetFullPath(selection.ManifestPath)
                     : null));
     }
@@ -1197,6 +1203,14 @@ internal sealed class CoreLifecycleService(
     {
         if (!string.IsNullOrWhiteSpace(selection.ManifestUrl) ||
             string.IsNullOrWhiteSpace(selection.ManifestPath))
+        {
+            return null;
+        }
+
+        // A manifest path inside the app's own Core-managed root is the internal copy, not a real
+        // source checkout. Using it as the local override pins localCommand working dirs to the app
+        // data folder instead of the operator's repository.
+        if (IsInternalAppPath(selection.Manifest.Id!, selection.ManifestPath))
         {
             return null;
         }
@@ -1700,16 +1714,46 @@ internal sealed class CoreLifecycleService(
 
     // Update source for a local install: prefer the operator's original folder/file so a folder
     // install picks up manifest edits. Falls back to the internal copy (app.ManifestPath) when the
-    // original source is gone, so "Recheck" never breaks — it just reports no changes.
-    private static string? ResolveLocalUpdateManifestPath(AppRecord app)
+    // original source is gone or was never captured, so "Recheck" never breaks — it just reports no
+    // changes, and the plan's SourceConfigured flag tells callers the comparison was against Core's
+    // own copy. An InstallManifestPath that points inside the app root is itself the internal copy
+    // (legacy/corrupted capture) and is ignored here.
+    private string? ResolveLocalUpdateManifestPath(AppRecord app)
     {
         if (!string.IsNullOrWhiteSpace(app.InstallManifestPath) &&
+            !IsInternalAppPath(app.Id, app.InstallManifestPath) &&
             (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath)))
         {
             return app.InstallManifestPath;
         }
 
         return app.ManifestPath;
+    }
+
+    // An update has a real external source when the caller supplies a manifest path, the app was
+    // installed from a URL, or it still retains a usable operator folder. Without one, "Recheck"
+    // can only read Core's own internal copy and will always report no changes — the plan flags
+    // this so the UI/CLI can prompt for a source instead of implying the app is up to date.
+    private bool HasExternalUpdateSource(AppRecord app, string? requestedManifestPath)
+        => !string.IsNullOrWhiteSpace(requestedManifestPath)
+            || !string.IsNullOrWhiteSpace(app.ManifestUrl)
+            || (!string.IsNullOrWhiteSpace(app.InstallManifestPath)
+                && !IsInternalAppPath(app.Id, app.InstallManifestPath)
+                && (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath)));
+
+    // True when the path resolves inside the app's Core-managed root (e.g. the internal manifest
+    // copy under {AppsRoot}/{id}). Such a path is never a real external source.
+    private bool IsInternalAppPath(string appId, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var appRoot = Path.GetFullPath(GetAppRoot(appId));
+        var full = Path.GetFullPath(path);
+        return string.Equals(full, appRoot, StringComparison.Ordinal)
+            || full.StartsWith(appRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
     private IAppRuntimeAdapter ResolveAdapter(string? runtimeType)
@@ -2734,7 +2778,11 @@ internal sealed record AppUpdatePlan(
     string ManifestDigest,
     string PlanDigest,
     bool WillCreatePreUpdateBackup,
-    IReadOnlyList<string> Changes);
+    IReadOnlyList<string> Changes,
+    // False when no external source is configured and Recheck could only read Core's internal copy,
+    // so an empty Changes list does not mean the app is up to date. Excluded from the plan digest
+    // (informational only). Defaulted so older callers/payloads stay compatible.
+    bool SourceConfigured = true);
 
 internal sealed record AppRuntimeSwitchPlan(
     string AppId,

@@ -482,6 +482,51 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("1.0.0", plan.CurrentVersion);
         Assert.Equal("2.0.0", plan.TargetVersion);
         Assert.Contains(plan.Changes, change => change.StartsWith("version:", StringComparison.Ordinal));
+        Assert.True(plan.SourceConfigured);
+    }
+
+    [Fact]
+    public async Task InstallAsync_FolderInstall_CapturesOperatorFolderAsInstallManifestPath()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "folder-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        // The operator folder is captured, never Core's internal copy under AppsRoot.
+        Assert.Equal(Path.GetFullPath(manifestPath), app?.InstallManifestPath);
+        var internalCopy = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json");
+        Assert.NotEqual(Path.GetFullPath(internalCopy), app?.InstallManifestPath);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_ReportsSourceNotConfigured_WhenOnlyInternalCopyAvailable()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "folder-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // Simulate a legacy/corrupted record whose source pointer is Core's own internal copy.
+        var internalCopy = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json");
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(app! with { InstallManifestPath = internalCopy });
+
+        // Operator edits the real folder, but the record no longer points at it.
+        await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("2.0.0"));
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        // The internal copy is ignored as a source: Recheck reads its own snapshot, finds no changes,
+        // and the plan flags that there is no external source to compare against.
+        Assert.False(plan.SourceConfigured);
+        Assert.Empty(plan.Changes);
+        Assert.Equal("1.0.0", plan.TargetVersion);
     }
 
     [Theory]
