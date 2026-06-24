@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -1273,6 +1274,7 @@ internal sealed record HealthResponse(string Status);
 internal sealed record CoreStatusResponse(
     string Status,
     string Component,
+    string Version,
     string DataRoot,
     string ListenUrl,
     int CorePort,
@@ -1287,10 +1289,29 @@ internal sealed record CoreStatusResponse(
     IReadOnlyList<string> Warnings,
     DateTimeOffset ServerTime)
 {
+    // Core and CLI ship as one release bundle and share this version (see Directory.Build.props),
+    // so reporting Core's assembly version also tells the Shell which CLI release is in play.
+    private static readonly string PlatformVersion = ResolvePlatformVersion();
+
+    private static string ResolvePlatformVersion()
+    {
+        var informational = typeof(CoreStatusResponse).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            // Strip the SourceLink "+<commit>" suffix to keep a clean semantic version.
+            var plus = informational.IndexOf('+');
+            return plus >= 0 ? informational[..plus] : informational;
+        }
+
+        return typeof(CoreStatusResponse).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+    }
+
     public static CoreStatusResponse From(HostyCoreRuntimeConfig config)
         => new(
             "running",
             "hosty-core",
+            PlatformVersion,
             config.DataRoot,
             config.ListenUrl,
             config.CorePort,

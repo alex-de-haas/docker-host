@@ -44,6 +44,8 @@ export function ShellSidebar({
   activeView,
   workspace,
   coreOrigin,
+  coreVersion,
+  shellVersion,
   activeUser,
   canManageApps,
   runtimeApps,
@@ -57,6 +59,8 @@ export function ShellSidebar({
   activeView: ShellView;
   workspace: EmbeddedWorkspace | null;
   coreOrigin: string;
+  coreVersion: string | null;
+  shellVersion: string;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   runtimeApps: CoreApp[];
@@ -125,7 +129,37 @@ export function ShellSidebar({
 
       <div className={cn("shrink-0 border-t", compact ? "space-y-2 px-2 py-3" : "space-y-3 p-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
+        <SidebarVersionInfo compact={compact} coreVersion={coreVersion} shellVersion={shellVersion} />
       </div>
+    </div>
+  );
+}
+
+function SidebarVersionInfo({
+  compact,
+  coreVersion,
+  shellVersion,
+}: {
+  compact: boolean;
+  coreVersion: string | null;
+  shellVersion: string;
+}) {
+  const platformLabel = coreVersion ? `Core/CLI v${coreVersion}` : "Core/CLI offline";
+  const shellLabel = shellVersion ? `Shell v${shellVersion}` : null;
+  const title = shellLabel ? `${platformLabel} · ${shellLabel}` : platformLabel;
+
+  if (compact) {
+    return (
+      <p className="text-center text-[10px] leading-tight text-muted-foreground" title={title}>
+        {coreVersion ? `v${coreVersion}` : "—"}
+      </p>
+    );
+  }
+
+  return (
+    <div className="px-2 text-[11px] leading-tight text-muted-foreground" title={title}>
+      <p className="truncate">{platformLabel}</p>
+      {shellLabel && <p className="truncate">{shellLabel}</p>}
     </div>
   );
 }

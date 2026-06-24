@@ -61,10 +61,12 @@ import type {
 export function ShellClient({
   coreOrigin,
   shellAppId,
+  shellVersion,
   children,
 }: {
   coreOrigin: string;
   shellAppId: string;
+  shellVersion: string;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -1123,6 +1125,8 @@ export function ShellClient({
             activeView={effectiveView}
             workspace={workspace}
             coreOrigin={coreOrigin}
+            coreVersion={state.status?.version ?? null}
+            shellVersion={shellVersion}
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
             runtimeApps={uiRuntimeApps}

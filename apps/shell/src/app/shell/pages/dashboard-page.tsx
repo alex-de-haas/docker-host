@@ -134,6 +134,7 @@ function InstalledAppsWidget({
 function CoreStatusWidget({ status, loading }: { status: CoreStatus | null; loading: boolean }) {
   const facts = [
     ["Component", status?.component || "unknown"],
+    ["Version", status?.version ? `v${status.version}` : "unknown"],
     ["Listen URL", status?.listenUrl || "unknown"],
     ["Core origin", status?.corePublicOrigin || "not configured"],
     ["Shell origin", status?.shellPublicOrigin || "not configured"],

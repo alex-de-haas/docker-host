@@ -17,3 +17,7 @@ export function getCoreOrigin() {
 export function getShellAppId() {
   return process.env.HOSTY_APP_ID || "hosty.shell";
 }
+
+export function getShellVersion() {
+  return process.env.NEXT_PUBLIC_SHELL_VERSION?.trim() || "";
+}
