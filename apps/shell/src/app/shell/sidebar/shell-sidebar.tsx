@@ -44,6 +44,7 @@ export function ShellSidebar({
   activeView,
   workspace,
   coreOrigin,
+  coreOnline,
   coreVersion,
   shellVersion,
   activeUser,
@@ -59,6 +60,7 @@ export function ShellSidebar({
   activeView: ShellView;
   workspace: EmbeddedWorkspace | null;
   coreOrigin: string;
+  coreOnline: boolean;
   coreVersion: string | null;
   shellVersion: string;
   activeUser: SessionResponse["user"] | null;
@@ -129,7 +131,7 @@ export function ShellSidebar({
 
       <div className={cn("shrink-0 border-t", compact ? "space-y-2 px-2 py-3" : "space-y-3 p-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
-        <SidebarVersionInfo compact={compact} coreVersion={coreVersion} shellVersion={shellVersion} />
+        <SidebarVersionInfo compact={compact} coreOnline={coreOnline} coreVersion={coreVersion} shellVersion={shellVersion} />
       </div>
     </div>
   );
@@ -137,14 +139,22 @@ export function ShellSidebar({
 
 function SidebarVersionInfo({
   compact,
+  coreOnline,
   coreVersion,
   shellVersion,
 }: {
   compact: boolean;
+  coreOnline: boolean;
   coreVersion: string | null;
   shellVersion: string;
 }) {
-  const platformLabel = coreVersion ? `Core/CLI v${coreVersion}` : "Core/CLI offline";
+  // A reachable Core that predates the version field reports no version, so only call it
+  // "offline" when Core is genuinely unreachable; otherwise the version is just unknown.
+  const platformLabel = coreVersion
+    ? `Core/CLI v${coreVersion}`
+    : coreOnline
+      ? "Core/CLI version unknown"
+      : "Core/CLI offline";
   const shellLabel = shellVersion ? `Shell v${shellVersion}` : null;
   const title = shellLabel ? `${platformLabel} · ${shellLabel}` : platformLabel;
 

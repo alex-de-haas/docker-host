@@ -1304,7 +1304,15 @@ internal sealed record CoreStatusResponse(
             return plus >= 0 ? informational[..plus] : informational;
         }
 
-        return typeof(CoreStatusResponse).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+        // Format manually instead of Version.ToString(3): the latter throws when the assembly
+        // version has fewer than three defined components (e.g. "1.0"), and Build is -1 when unset.
+        var version = typeof(CoreStatusResponse).Assembly.GetName().Version;
+        if (version is null)
+        {
+            return "0.0.0";
+        }
+
+        return $"{version.Major}.{version.Minor}.{(version.Build >= 0 ? version.Build : 0)}";
     }
 
     public static CoreStatusResponse From(HostyCoreRuntimeConfig config)

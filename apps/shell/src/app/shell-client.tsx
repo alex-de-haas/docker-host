@@ -1125,6 +1125,7 @@ export function ShellClient({
             activeView={effectiveView}
             workspace={workspace}
             coreOrigin={coreOrigin}
+            coreOnline={state.status !== null}
             coreVersion={state.status?.version ?? null}
             shellVersion={shellVersion}
             activeUser={activeUser}
