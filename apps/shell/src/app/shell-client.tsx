@@ -458,16 +458,17 @@ export function ShellClient({
   );
 
   const loadUpdatePlan = useCallback(
-    async (app: CoreApp) => {
+    async (app: CoreApp, manifestPath?: string) => {
       const requestToken = ++detailRequestRef.current;
       setActivePanel({ appId: app.id, view: "update" });
       setDetailPanel({ loading: true, error: null, logs: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
+        const source = manifestPath?.trim();
         const response = await fetch(appEndpoint(app, "/update/plan"), {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: "{}",
+          body: JSON.stringify({ manifestPath: source ? source : null }),
         });
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
@@ -731,13 +732,14 @@ export function ShellClient({
   );
 
   const applyUpdate = useCallback(
-    async (app: CoreApp, plan: CoreUpdatePlan) => {
+    async (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => {
       const actionKey = `${app.id}:update`;
       setBusyAction(actionKey);
       try {
+        const source = manifestPath?.trim();
         await sendCsrfJson(appEndpoint(app, "/update"), {
           planDigest: plan.planDigest,
-          manifestPath: plan.manifestPath,
+          manifestPath: source ? source : plan.manifestPath,
           selectedRuntime: plan.targetRuntime,
           targetChannel: plan.targetChannel,
         });

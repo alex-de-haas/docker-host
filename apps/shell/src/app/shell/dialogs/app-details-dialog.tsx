@@ -2,10 +2,11 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
-import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, Upload } from "lucide-react";
+import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, formatUpdateChange, isAppAutostartEnabled } from "../app-helpers";
@@ -68,8 +69,8 @@ export function AppDetailsDialog({
   onApplyBackupCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
-  onReloadUpdatePlan: (app: CoreApp) => void;
-  onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan) => void;
+  onReloadUpdatePlan: (app: CoreApp, manifestPath?: string) => void;
+  onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
 }) {
   const canMutateApp = canManageApps && !app.system;
@@ -507,18 +508,60 @@ function MountsPanel({
   );
 }
 
-function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: { app: CoreApp; detail: DetailPanelState; busyAction: string | null; onReloadPlan: (app: CoreApp) => void; onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan) => void }) {
+function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: { app: CoreApp; detail: DetailPanelState; busyAction: string | null; onReloadPlan: (app: CoreApp, manifestPath?: string) => void; onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void }) {
   const plan = detail.updatePlan;
+
+  // Operator-supplied source folder or manifest URL, plus the source the shown plan was built
+  // from. Reset while rendering when the app identity changes instead of in an effect.
+  // https://react.dev/learn/you-might-not-need-an-effect
+  const [source, setSource] = useState("");
+  const [lastCheckedSource, setLastCheckedSource] = useState("");
+  const [prevAppId, setPrevAppId] = useState(app.id);
+  if (prevAppId !== app.id) {
+    setPrevAppId(app.id);
+    setSource("");
+    setLastCheckedSource("");
+  }
+
+  const trimmedSource = source.trim();
+  const manifestPath = trimmedSource || undefined;
+  // sourceConfigured is optional; only treat an explicit `false` from Core as "not configured".
+  const sourceMissing = plan?.sourceConfigured === false;
+  // The shown plan was built from `lastCheckedSource`; if the field changed since, applying would
+  // hit Core's plan-digest guard, so require a Recheck first instead of failing with a raw error.
+  const planStale = Boolean(plan) && trimmedSource !== lastCheckedSource;
+  const updateInputId = `${app.id}-update-source`;
+
+  const recheck = () => {
+    setLastCheckedSource(trimmedSource);
+    onReloadPlan(app, manifestPath);
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="flex shrink-0 justify-end">
-        <Button variant="outline" onClick={() => onReloadPlan(app)} disabled={detail.loading}>
+      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div className="w-full space-y-1.5 sm:max-w-md">
+          <Label htmlFor={updateInputId}>Source folder or manifest URL</Label>
+          <Input
+            id={updateInputId}
+            placeholder="/srv/apps/my-app or https://example.com/manifest.json"
+            value={source}
+            onChange={(event) => setSource(event.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">Leave blank to use the source Core recorded when the app was installed.</p>
+        </div>
+        <Button variant="outline" onClick={recheck} disabled={detail.loading}>
           <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin")} />
           Recheck
         </Button>
       </div>
       <DialogBody className="space-y-4">
+        {sourceMissing && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>Recheck only read Core&apos;s internal copy of this app, so it cannot detect edits to the original source. Enter the source folder or manifest URL above and Recheck again to compare against it.</span>
+          </div>
+        )}
         {detail.loading ? (
           <EmptyState icon={LoaderCircle} title="Loading update plan" iconClassName="animate-spin" />
         ) : plan ? (
@@ -545,8 +588,11 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
         )}
       </DialogBody>
       {!detail.loading && plan && (
-        <DialogFooter>
-          <Button onClick={() => onApplyUpdate(app, plan)} disabled={plan.changes.length === 0 || busyAction === `${app.id}:update`}>
+        <DialogFooter className="sm:items-center">
+          {planStale && (
+            <p className="text-xs text-amber-700 dark:text-amber-300 sm:mr-auto">Source changed since the last check. Recheck before applying.</p>
+          )}
+          <Button onClick={() => onApplyUpdate(app, plan, manifestPath)} disabled={plan.changes.length === 0 || planStale || busyAction === `${app.id}:update`}>
             {busyAction === `${app.id}:update` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Apply update
           </Button>

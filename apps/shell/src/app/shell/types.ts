@@ -176,6 +176,10 @@ export type CoreUpdatePlan = {
   planDigest: string;
   willCreatePreUpdateBackup: boolean;
   changes: string[];
+  // False when no external source is configured and Recheck could only read Core's internal copy,
+  // so an empty `changes` list does not mean the app is up to date. Optional for backwards compatibility
+  // with older Core builds that omit the field.
+  sourceConfigured?: boolean;
 };
 
 export type CoreRuntimeSwitchPlan = {
