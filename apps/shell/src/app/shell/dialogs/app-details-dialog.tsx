@@ -511,21 +511,31 @@ function MountsPanel({
 function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: { app: CoreApp; detail: DetailPanelState; busyAction: string | null; onReloadPlan: (app: CoreApp, manifestPath?: string) => void; onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void }) {
   const plan = detail.updatePlan;
 
-  // Operator-supplied source folder or manifest URL. Reset while rendering when the app
-  // identity changes instead of in an effect.
+  // Operator-supplied source folder or manifest URL, plus the source the shown plan was built
+  // from. Reset while rendering when the app identity changes instead of in an effect.
   // https://react.dev/learn/you-might-not-need-an-effect
   const [source, setSource] = useState("");
+  const [lastCheckedSource, setLastCheckedSource] = useState("");
   const [prevAppId, setPrevAppId] = useState(app.id);
   if (prevAppId !== app.id) {
     setPrevAppId(app.id);
     setSource("");
+    setLastCheckedSource("");
   }
 
   const trimmedSource = source.trim();
   const manifestPath = trimmedSource || undefined;
   // sourceConfigured is optional; only treat an explicit `false` from Core as "not configured".
   const sourceMissing = plan?.sourceConfigured === false;
+  // The shown plan was built from `lastCheckedSource`; if the field changed since, applying would
+  // hit Core's plan-digest guard, so require a Recheck first instead of failing with a raw error.
+  const planStale = Boolean(plan) && trimmedSource !== lastCheckedSource;
   const updateInputId = `${app.id}-update-source`;
+
+  const recheck = () => {
+    setLastCheckedSource(trimmedSource);
+    onReloadPlan(app, manifestPath);
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -540,7 +550,7 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
           />
           <p className="text-xs text-muted-foreground">Leave blank to use the source Core recorded when the app was installed.</p>
         </div>
-        <Button variant="outline" onClick={() => onReloadPlan(app, manifestPath)} disabled={detail.loading}>
+        <Button variant="outline" onClick={recheck} disabled={detail.loading}>
           <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin")} />
           Recheck
         </Button>
@@ -578,8 +588,11 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
         )}
       </DialogBody>
       {!detail.loading && plan && (
-        <DialogFooter>
-          <Button onClick={() => onApplyUpdate(app, plan, manifestPath)} disabled={plan.changes.length === 0 || busyAction === `${app.id}:update`}>
+        <DialogFooter className="sm:items-center">
+          {planStale && (
+            <p className="text-xs text-amber-700 dark:text-amber-300 sm:mr-auto">Source changed since the last check. Recheck before applying.</p>
+          )}
+          <Button onClick={() => onApplyUpdate(app, plan, manifestPath)} disabled={plan.changes.length === 0 || planStale || busyAction === `${app.id}:update`}>
             {busyAction === `${app.id}:update` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Apply update
           </Button>
