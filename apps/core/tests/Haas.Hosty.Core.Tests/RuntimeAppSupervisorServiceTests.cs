@@ -22,7 +22,6 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
             ManifestPath: oldManifest,
             SelectedRuntime: "docker",
-            SelectedChannel: "local",
             System: true,
             Autostart: false));
         var config = CreateConfig(fixture.Paths, manifestUrl, shellAutostart: false);
@@ -85,7 +84,6 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
             ManifestPath: manifestUrl,
             SelectedRuntime: "docker",
-            SelectedChannel: "local",
             System: true,
             Autostart: false));
         var localManifest = Path.Combine(root, "shell-manifest.json");

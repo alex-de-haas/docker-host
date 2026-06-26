@@ -432,36 +432,6 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.ApplyRuntimeSwitchAsync(appId, input, cancellationToken))));
 
-        app.MapGet("/control/v1/apps/{appId}/channels", async (
-            string appId,
-            string? channelsPath,
-            HttpRequest request,
-            ControlSecret secret,
-            CoreLifecycleService lifecycle,
-            CancellationToken cancellationToken) =>
-            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                await HandleLifecycleError(() => lifecycle.ListChannelsAsync(appId, new AppChannelsRequest(channelsPath), cancellationToken))));
-
-        app.MapPost("/control/v1/apps/{appId}/switch-channel/plan", async (
-            string appId,
-            HttpRequest request,
-            ControlSecret secret,
-            CoreLifecycleService lifecycle,
-            AppChannelSwitchPlanRequest input,
-            CancellationToken cancellationToken) =>
-            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                await HandleLifecycleError(() => lifecycle.CreateChannelSwitchPlanAsync(appId, input, cancellationToken))));
-
-        app.MapPost("/control/v1/apps/{appId}/switch-channel", async (
-            string appId,
-            HttpRequest request,
-            ControlSecret secret,
-            CoreLifecycleService lifecycle,
-            AppChannelSwitchApplyRequest input,
-            CancellationToken cancellationToken) =>
-            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                await HandleLifecycleError(() => lifecycle.ApplyChannelSwitchAsync(appId, input, cancellationToken))));
-
         app.MapPost("/control/v1/apps/{appId}/remove", async (
             string appId,
             HttpRequest request,

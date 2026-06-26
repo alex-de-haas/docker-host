@@ -2620,7 +2620,6 @@ public sealed class CoreLifecycleServiceTests
             Source: "manifest",
             ManifestPath: null,
             ManifestUrl: null,
-            SelectedChannel: null,
             SelectedRuntime: "docker",
             OperationStatus: "started",
             RuntimeState: "running",

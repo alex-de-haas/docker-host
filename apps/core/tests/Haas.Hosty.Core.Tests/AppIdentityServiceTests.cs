@@ -245,7 +245,6 @@ public sealed class AppIdentityServiceTests
                 Source: "manifest",
                 ManifestPath: "/tmp/notes/manifest.json",
                 ManifestUrl: null,
-                SelectedChannel: null,
                 SelectedRuntime: "dev",
                 OperationStatus: "installed",
                 RuntimeState: "running",

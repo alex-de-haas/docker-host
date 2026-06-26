@@ -246,7 +246,6 @@ public sealed class AppRegistryStoreTests
             Source: "installed",
             ManifestPath: "apps/com.example.notes/manifest.json",
             ManifestUrl: null,
-            SelectedChannel: "main",
             SelectedRuntime: "docker",
             OperationStatus: "installed",
             RuntimeState: "stopped",

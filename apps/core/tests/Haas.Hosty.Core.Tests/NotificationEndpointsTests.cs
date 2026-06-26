@@ -200,7 +200,6 @@ public sealed class NotificationEndpointsTests
                 Source: "installed",
                 ManifestPath: null,
                 ManifestUrl: null,
-                SelectedChannel: "main",
                 SelectedRuntime: "docker",
                 OperationStatus: "installed",
                 RuntimeState: "stopped",

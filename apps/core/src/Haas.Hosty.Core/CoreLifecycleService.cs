@@ -62,7 +62,6 @@ internal sealed class CoreLifecycleService(
             ManifestPath: selection.ManifestPath,
             CurrentManifestDigest: currentManifestDigest,
             TargetManifestDigest: selection.ManifestDigest,
-            SelectedChannel: request.SelectedChannel,
             DefaultAutostart: request.Autostart ?? true,
             RuntimeProfiles: BuildRuntimeProfileSummaries(selection.Manifest),
             Settings: selection.Manifest.Settings
@@ -87,7 +86,6 @@ internal sealed class CoreLifecycleService(
             selection,
             manifestCopyPath,
             manifestUrl: selection.ManifestUrl,
-            selectedChannel: request.SelectedChannel,
             system: request.System,
             existing: null) with
         {
@@ -434,7 +432,6 @@ internal sealed class CoreLifecycleService(
             selection.Manifest.Version,
             app.SelectedRuntime,
             selection.RuntimeProfile.Key,
-            request.TargetChannel ?? app.SelectedChannel,
             currentSelection.ManifestDigest,
             selection.ManifestDigest,
             willCreateBackup,
@@ -446,7 +443,6 @@ internal sealed class CoreLifecycleService(
             TargetVersion: selection.Manifest.Version!,
             CurrentRuntime: app.SelectedRuntime,
             TargetRuntime: selection.RuntimeProfile.Key,
-            TargetChannel: request.TargetChannel ?? app.SelectedChannel,
             ManifestPath: selection.ManifestPath,
             ManifestDigest: selection.ManifestDigest,
             PlanDigest: digest,
@@ -457,7 +453,7 @@ internal sealed class CoreLifecycleService(
 
     public async Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
     {
-        var plan = await CreateUpdatePlanAsync(appId, new AppUpdatePlanRequest(request.ManifestPath, request.SelectedRuntime, request.TargetChannel), cancellationToken);
+        var plan = await CreateUpdatePlanAsync(appId, new AppUpdatePlanRequest(request.ManifestPath, request.SelectedRuntime), cancellationToken);
         if (!string.Equals(plan.PlanDigest, request.PlanDigest, StringComparison.Ordinal))
         {
             throw new AppLifecycleException("update_plan_digest_mismatch", "Update plan digest does not match the current update plan.");
@@ -484,7 +480,6 @@ internal sealed class CoreLifecycleService(
             selection,
             manifestCopyPath,
             manifestUrl: selection.ManifestUrl,
-            selectedChannel: plan.TargetChannel,
             system: app.System,
             existing: app) with
         {
@@ -579,7 +574,6 @@ internal sealed class CoreLifecycleService(
             targetSelection,
             app.ManifestPath!,
             manifestUrl: app.ManifestUrl,
-            selectedChannel: app.SelectedChannel,
             system: app.System,
             existing: app) with
         {
@@ -609,58 +603,6 @@ internal sealed class CoreLifecycleService(
 
         var document = await apps.GetAppAsync(appId, cancellationToken);
         return new AppLifecycleResponse(document is null ? null : AppSummary.From(document), backup, "runtime-switched");
-    }
-
-    public async Task<AppChannelsResponse> ListChannelsAsync(
-        string appId,
-        AppChannelsRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        var app = await RequireAppAsync(appId, cancellationToken);
-        var index = await LoadChannelIndexAsync(app, request.ChannelsPath, cancellationToken);
-        return new AppChannelsResponse(appId, index.Channels);
-    }
-
-    public async Task<AppChannelSwitchPlan> CreateChannelSwitchPlanAsync(
-        string appId,
-        AppChannelSwitchPlanRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        var app = await RequireAppAsync(appId, cancellationToken);
-        var index = await LoadChannelIndexAsync(app, request.ChannelsPath, cancellationToken);
-        var channel = index.Channels.FirstOrDefault(candidate => string.Equals(candidate.Id, request.Channel, StringComparison.Ordinal)) ??
-            throw new AppLifecycleException("channel_not_found", $"Channel '{request.Channel}' was not found.");
-        var manifestPath = ResolveChannelManifestPath(app.ManifestPath, channel);
-        var updatePlan = await CreateUpdatePlanAsync(appId, new AppUpdatePlanRequest(
-            ManifestPath: manifestPath,
-            SelectedRuntime: request.SelectedRuntime ?? app.SelectedRuntime,
-            TargetChannel: channel.Id), cancellationToken);
-        return new AppChannelSwitchPlan(
-            AppId: appId,
-            Channel: channel,
-            UpdatePlan: updatePlan,
-            PlanDigest: updatePlan.PlanDigest);
-    }
-
-    public async Task<AppLifecycleResponse> ApplyChannelSwitchAsync(
-        string appId,
-        AppChannelSwitchApplyRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        var plan = await CreateChannelSwitchPlanAsync(appId, new AppChannelSwitchPlanRequest(
-            Channel: request.Channel,
-            ChannelsPath: request.ChannelsPath,
-            SelectedRuntime: request.SelectedRuntime), cancellationToken);
-        if (!string.Equals(plan.PlanDigest, request.PlanDigest, StringComparison.Ordinal))
-        {
-            throw new AppLifecycleException("channel_switch_plan_digest_mismatch", "Channel switch plan digest does not match the current switch plan.");
-        }
-
-        return await ApplyUpdateAsync(appId, new AppUpdateApplyRequest(
-            PlanDigest: plan.UpdatePlan.PlanDigest,
-            ManifestPath: plan.UpdatePlan.ManifestPath,
-            SelectedRuntime: plan.UpdatePlan.TargetRuntime,
-            TargetChannel: plan.Channel.Id), cancellationToken);
     }
 
     public async Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken = default)
@@ -901,7 +843,6 @@ internal sealed class CoreLifecycleService(
         RuntimeAppManifestSelection selection,
         string manifestPath,
         string? manifestUrl,
-        string? selectedChannel,
         bool system,
         AppRecord? existing)
     {
@@ -952,7 +893,6 @@ internal sealed class CoreLifecycleService(
             Source: manifest.Source?.Repository ?? "manifest",
             ManifestPath: manifestPath,
             ManifestUrl: manifestUrl,
-            SelectedChannel: selectedChannel,
             SelectedRuntime: selection.RuntimeProfile.Key,
             OperationStatus: existing?.OperationStatus ?? "installed",
             RuntimeState: existing?.RuntimeState ?? "stopped",
@@ -1423,7 +1363,6 @@ internal sealed class CoreLifecycleService(
             currentSelection,
             app.ManifestPath!,
             manifestUrl: app.ManifestUrl,
-            selectedChannel: app.SelectedChannel,
             system: app.System,
             existing: app) with
         {
@@ -2485,71 +2424,6 @@ internal sealed class CoreLifecycleService(
             .ToArray();
     }
 
-    private async Task<AppChannelIndex> LoadChannelIndexAsync(
-        AppRecord app,
-        string? channelsPath,
-        CancellationToken cancellationToken)
-    {
-        var path = ResolveChannelIndexPath(app.ManifestPath, channelsPath);
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-        {
-            throw new AppLifecycleException("channels_index_not_found", "Runtime app channel index was not found.");
-        }
-
-        await using var stream = File.OpenRead(path);
-        return await System.Text.Json.JsonSerializer.DeserializeAsync(stream, CoreJsonSerializerContext.Default.AppChannelIndex, cancellationToken) ??
-            throw new AppLifecycleException("channels_index_invalid", "Runtime app channel index is invalid.");
-    }
-
-    private static string? ResolveChannelIndexPath(string? manifestPath, string? channelsPath)
-    {
-        if (!string.IsNullOrWhiteSpace(channelsPath))
-        {
-            return Path.GetFullPath(channelsPath);
-        }
-
-        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
-        {
-            return null;
-        }
-
-        var manifest = System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(manifestPath), CoreJsonSerializerContext.Default.RuntimeAppManifest);
-        if (string.IsNullOrWhiteSpace(manifest?.ChannelsUrl))
-        {
-            return null;
-        }
-
-        return Path.IsPathRooted(manifest.ChannelsUrl)
-            ? manifest.ChannelsUrl
-            : Path.GetFullPath(Path.Combine(Path.GetDirectoryName(manifestPath) ?? ".", manifest.ChannelsUrl));
-    }
-
-    private static string ResolveChannelManifestPath(string? installedManifestPath, AppChannelEntry channel)
-    {
-        var manifestPath = channel.ManifestPath ?? channel.ManifestUrl;
-        if (string.IsNullOrWhiteSpace(manifestPath))
-        {
-            throw new AppLifecycleException("channel_manifest_missing", $"Channel '{channel.Id}' does not declare a manifest path.");
-        }
-
-        if (Uri.TryCreate(manifestPath, UriKind.Absolute, out var manifestUri) &&
-            (string.Equals(manifestUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(manifestUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
-        {
-            return manifestUri.AbsoluteUri;
-        }
-
-        if (Path.IsPathRooted(manifestPath))
-        {
-            return manifestPath;
-        }
-
-        var baseDirectory = string.IsNullOrWhiteSpace(installedManifestPath)
-            ? Directory.GetCurrentDirectory()
-            : Path.GetDirectoryName(installedManifestPath) ?? Directory.GetCurrentDirectory();
-        return Path.GetFullPath(Path.Combine(baseDirectory, manifestPath));
-    }
-
     private async Task<AppRecord> ReconcileRuntimeStateForSummaryAsync(AppRecord app, CancellationToken cancellationToken)
     {
         if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
@@ -2660,7 +2534,6 @@ internal sealed record AppUpdatePlanDigestSeed(
     string? TargetVersion,
     string? CurrentRuntime,
     string TargetRuntime,
-    string? TargetChannel,
     string? CurrentManifestDigest,
     string TargetManifestDigest,
     bool WillCreateBackup,
@@ -2678,14 +2551,12 @@ internal sealed record AppRuntimeSwitchDigestSeed(
 internal sealed record AppInstallPlanRequest(
     string ManifestPath,
     string? SelectedRuntime = null,
-    string? SelectedChannel = null,
     bool System = false,
     bool? Autostart = null);
 
 internal sealed record AppInstallRequest(
     string ManifestPath,
     string? SelectedRuntime = null,
-    string? SelectedChannel = null,
     bool System = false,
     IReadOnlyDictionary<string, string?>? Settings = null,
     bool? Autostart = null);
@@ -2702,14 +2573,12 @@ internal sealed record AppMountBindingInput(string Key, string Label, string Hos
 
 internal sealed record AppUpdatePlanRequest(
     string? ManifestPath = null,
-    string? SelectedRuntime = null,
-    string? TargetChannel = null);
+    string? SelectedRuntime = null);
 
 internal sealed record AppUpdateApplyRequest(
     string PlanDigest,
     string? ManifestPath = null,
-    string? SelectedRuntime = null,
-    string? TargetChannel = null);
+    string? SelectedRuntime = null);
 
 internal sealed record AppRemoveRequest(
     bool DeleteRuntimeState = true,
@@ -2725,12 +2594,6 @@ internal sealed record AppRestoreBackupRequest(bool CreatePreRestoreBackup = fal
 internal sealed record AppRuntimeSwitchPlanRequest(string TargetRuntime);
 
 internal sealed record AppRuntimeSwitchApplyRequest(string TargetRuntime, string PlanDigest);
-
-internal sealed record AppChannelsRequest(string? ChannelsPath = null);
-
-internal sealed record AppChannelSwitchPlanRequest(string Channel, string? ChannelsPath = null, string? SelectedRuntime = null);
-
-internal sealed record AppChannelSwitchApplyRequest(string Channel, string PlanDigest, string? ChannelsPath = null, string? SelectedRuntime = null);
 
 internal sealed record AppBackgroundLifecycleResult(
     string AppId,
@@ -2754,7 +2617,6 @@ internal sealed record AppInstallPlan(
     string ManifestPath,
     string? CurrentManifestDigest,
     string TargetManifestDigest,
-    string? SelectedChannel,
     bool DefaultAutostart,
     IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
@@ -2767,7 +2629,6 @@ internal sealed record AppUpdatePlan(
     string TargetVersion,
     string? CurrentRuntime,
     string TargetRuntime,
-    string? TargetChannel,
     string ManifestPath,
     string ManifestDigest,
     string PlanDigest,
@@ -2786,23 +2647,6 @@ internal sealed record AppRuntimeSwitchPlan(
     string PlanDigest,
     bool AutomaticBackup,
     IReadOnlyList<string> Changes);
-
-internal sealed record AppChannelIndex(IReadOnlyList<AppChannelEntry> Channels);
-
-internal sealed record AppChannelEntry(
-    string Id,
-    string Label,
-    string? ManifestPath,
-    string? ManifestUrl,
-    string? SourceRef);
-
-internal sealed record AppChannelsResponse(string AppId, IReadOnlyList<AppChannelEntry> Channels);
-
-internal sealed record AppChannelSwitchPlan(
-    string AppId,
-    AppChannelEntry Channel,
-    AppUpdatePlan UpdatePlan,
-    string PlanDigest);
 
 internal sealed record AppBackupsResponse(IReadOnlyList<AppBackupRecord> Backups);
 

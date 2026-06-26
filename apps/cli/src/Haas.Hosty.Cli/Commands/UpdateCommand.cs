@@ -150,7 +150,7 @@ internal sealed partial class UpdateCommand(CommandContext context)
             var shellManifestPath = selectedChannel?.ShellManifestPath is null
                 ? null
                 : NormalizeManifestReference(selectedChannel.ShellManifestPath);
-            var plan = await core.PostAsync<AppUpdatePlan>("apps/hosty.shell/update/plan", new AppUpdatePlanRequest(shellManifestPath, shell.SelectedRuntime, selectedChannel?.Id ?? shell.SelectedChannel));
+            var plan = await core.PostAsync<AppUpdatePlan>("apps/hosty.shell/update/plan", new AppUpdatePlanRequest(shellManifestPath, shell.SelectedRuntime));
             if (plan is null)
             {
                 context.Console.MarkupLine("[yellow]Hosty Shell update plan was not returned.[/]");
@@ -258,9 +258,9 @@ internal sealed partial class UpdateCommand(CommandContext context)
 
     internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
 
-    internal sealed record AppSummary(string Id, string? SelectedChannel, string? SelectedRuntime);
+    internal sealed record AppSummary(string Id, string? SelectedRuntime);
 
-    internal sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
+    internal sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime);
 
     internal sealed record AppUpdatePlan(string PlanDigest);
 

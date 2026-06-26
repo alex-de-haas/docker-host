@@ -103,7 +103,6 @@ internal sealed partial class AppsCommand(CommandContext context)
         var response = await core.PostAsync<AppLifecycleResponse>("apps/install", new AppInstallRequest(
             ManifestPath: options.ManifestPath,
             SelectedRuntime: options.SelectedRuntime,
-            SelectedChannel: options.SelectedChannel,
             System: options.System,
             Autostart: options.Autostart));
         RenderLifecycle(response);
@@ -136,8 +135,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         using var core = await OpenCoreAsync();
         var response = await core.PostAsync<AppUpdatePlan>($"apps/{Uri.EscapeDataString(options.AppId)}/update/plan", new AppUpdatePlanRequest(
             ManifestPath: options.ManifestPath,
-            SelectedRuntime: options.SelectedRuntime,
-            TargetChannel: options.TargetChannel));
+            SelectedRuntime: options.SelectedRuntime));
         RenderUpdatePlan(response);
         return 0;
     }
@@ -149,8 +147,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         var response = await core.PostAsync<AppLifecycleResponse>($"apps/{Uri.EscapeDataString(options.AppId)}/update", new AppUpdateApplyRequest(
             PlanDigest: options.PlanDigest!,
             ManifestPath: options.ManifestPath,
-            SelectedRuntime: options.SelectedRuntime,
-            TargetChannel: options.TargetChannel));
+            SelectedRuntime: options.SelectedRuntime));
         RenderLifecycle(response);
         return 0;
     }
@@ -516,7 +513,6 @@ internal sealed partial class AppsCommand(CommandContext context)
             .Field("App", Markup.Escape(plan.AppId))
             .Field("Version", Markup.Escape($"{plan.CurrentVersion} -> {plan.TargetVersion}"))
             .Field("Runtime", Markup.Escape($"{plan.CurrentRuntime ?? "none"} -> {plan.TargetRuntime}"))
-            .Field("Channel", Markup.Escape(plan.TargetChannel ?? "not configured"))
             .Field("Pre-update backup", ConsoleUi.Enabled(plan.WillCreatePreUpdateBackup))
             .Field("Manifest digest", Markup.Escape(plan.ManifestDigest))
             .Field("Plan digest", Markup.Escape(plan.PlanDigest));
@@ -832,7 +828,6 @@ internal sealed partial class AppsCommand(CommandContext context)
     {
         string? manifestPath = null;
         string? selectedRuntime = null;
-        string? selectedChannel = null;
         var system = false;
         bool? autostart = null;
 
@@ -845,9 +840,6 @@ internal sealed partial class AppsCommand(CommandContext context)
                     break;
                 case "--runtime":
                     selectedRuntime = RequireOptionValue(args, ref index, "--runtime");
-                    break;
-                case "--channel":
-                    selectedChannel = RequireOptionValue(args, ref index, "--channel");
                     break;
                 case "--system":
                     system = true;
@@ -877,7 +869,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             throw new CommandUsageException("apps install requires an HTTP(S) manifest URL, manifest file path, or app directory.", Usage);
         }
 
-        return new InstallOptions(NormalizeManifestReference(manifestPath), selectedRuntime, selectedChannel, system, autostart);
+        return new InstallOptions(NormalizeManifestReference(manifestPath), selectedRuntime, system, autostart);
     }
 
     private static AutostartOptions ParseAutostartOptions(string[] args)
@@ -926,7 +918,6 @@ internal sealed partial class AppsCommand(CommandContext context)
         var appId = args[0];
         string? manifestPath = null;
         string? selectedRuntime = null;
-        string? targetChannel = null;
         string? planDigest = null;
 
         for (var index = 1; index < args.Length; index++)
@@ -938,9 +929,6 @@ internal sealed partial class AppsCommand(CommandContext context)
                     break;
                 case "--runtime":
                     selectedRuntime = RequireOptionValue(args, ref index, "--runtime");
-                    break;
-                case "--channel":
-                    targetChannel = RequireOptionValue(args, ref index, "--channel");
                     break;
                 case "--plan-digest":
                     planDigest = RequireOptionValue(args, ref index, "--plan-digest");
@@ -955,7 +943,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             throw new CommandUsageException("apps update requires --plan-digest. Run `hosty apps update-plan <app-id>` first.", Usage);
         }
 
-        return new UpdateOptions(appId, manifestPath, selectedRuntime, targetChannel, planDigest);
+        return new UpdateOptions(appId, manifestPath, selectedRuntime, planDigest);
     }
 
     private static RemoveOptions ParseRemoveOptions(string[] args)
@@ -1499,11 +1487,11 @@ internal sealed partial class AppsCommand(CommandContext context)
         return Path.GetFullPath(manifestReference);
     }
 
-    internal sealed record InstallOptions(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
+    internal sealed record InstallOptions(string ManifestPath, string? SelectedRuntime, bool System, bool? Autostart);
 
     internal sealed record AutostartOptions(string AppId, bool Autostart);
 
-    internal sealed record UpdateOptions(string AppId, string? ManifestPath, string? SelectedRuntime, string? TargetChannel, string? PlanDigest);
+    internal sealed record UpdateOptions(string AppId, string? ManifestPath, string? SelectedRuntime, string? PlanDigest);
 
     internal sealed record RemoveOptions(string AppId, bool DeleteRuntimeState, bool DeleteData, bool DeleteBackups, bool DeleteSource, bool IgnoreRuntimeErrors);
 
@@ -1543,7 +1531,6 @@ internal sealed partial class AppsCommand(CommandContext context)
         string Kind,
         bool System,
         string Source,
-        string? SelectedChannel,
         string? SelectedRuntime,
         bool Autostart,
         string OperationStatus,
@@ -1569,13 +1556,13 @@ internal sealed partial class AppsCommand(CommandContext context)
 
     internal sealed record MountsSetOptions(string AppId, IReadOnlyList<AppMountBindingInput> Bindings);
 
-    internal sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, string? SelectedChannel, bool System, bool? Autostart);
+    internal sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, bool System, bool? Autostart);
 
     internal sealed record AppAutostartRequest(bool Autostart);
 
-    internal sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
+    internal sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime);
 
-    internal sealed record AppUpdateApplyRequest(string PlanDigest, string? ManifestPath, string? SelectedRuntime, string? TargetChannel);
+    internal sealed record AppUpdateApplyRequest(string PlanDigest, string? ManifestPath, string? SelectedRuntime);
 
     internal sealed record AppRemoveRequest(bool DeleteRuntimeState, bool DeleteData, bool DeleteBackups, bool DeleteSource, bool IgnoreRuntimeErrors);
 
@@ -1595,7 +1582,6 @@ internal sealed partial class AppsCommand(CommandContext context)
         string TargetVersion,
         string? CurrentRuntime,
         string TargetRuntime,
-        string? TargetChannel,
         string ManifestPath,
         string ManifestDigest,
         string PlanDigest,
@@ -1731,13 +1717,13 @@ internal sealed partial class AppsCommand(CommandContext context)
 
         Commands:
           list
-          install <http(s)-manifest-url|manifest-path|app-directory> [--runtime <key>] [--channel <channel>] [--system] [--autostart|--no-autostart]
+          install <http(s)-manifest-url|manifest-path|app-directory> [--runtime <key>] [--system] [--autostart|--no-autostart]
           autostart <app-id> --enabled|--disabled
           start <app-id>
           stop <app-id>
           restart <app-id>
-          update-plan <app-id> [--manifest <http(s)-manifest-url|manifest-path|app-directory>] [--runtime <key>] [--channel <channel>]
-          update <app-id> --plan-digest <digest> [--manifest <http(s)-manifest-url|manifest-path|app-directory>] [--runtime <key>] [--channel <channel>]
+          update-plan <app-id> [--manifest <http(s)-manifest-url|manifest-path|app-directory>] [--runtime <key>]
+          update <app-id> --plan-digest <digest> [--manifest <http(s)-manifest-url|manifest-path|app-directory>] [--runtime <key>]
           switch-runtime-plan <app-id> --runtime <key>
           switch-runtime <app-id> --runtime <key> --plan-digest <digest>
           remove <app-id> [--delete-data] [--delete-backups] [--delete-source] [--keep-state] [--ignore-runtime-errors]

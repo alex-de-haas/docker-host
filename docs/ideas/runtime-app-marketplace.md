@@ -1,0 +1,719 @@
+# Runtime App Marketplace
+
+Status: Idea
+Created: 2026-06-25
+Updated: 2026-06-26
+
+## Motivation
+
+Installing a runtime app today is fully manifest-driven: Core loads an `app.0.1`
+manifest from a local file, a local directory, or an HTTP(S) URL. This works, but
+there is no discovery: an operator must already know the app exists and where its
+manifest or repository lives.
+
+A marketplace adds a thin layer over the existing install path. The transport
+(OCI registries for Docker, Git for `localCommand`, manifest-by-URL) already
+exists, so the marketplace only needs to provide three things:
+
+- **Discovery** - where to find installable apps.
+- **Curation / trust** - which apps and publishers are vouched for.
+- **Version legibility** - which version is available and which one is actually running.
+
+This document captures the design discussion and the decisions reached.
+
+## Goals And Non-Goals
+
+Goals:
+
+- Reuse existing manifest-driven install and the reviewed-update-with-digest flow.
+- Require **zero new server infrastructure** to launch. Current reach is a couple
+  of enthusiasts; a hosted registry service is premature.
+- Make adding an app a reviewable, trust-gated event.
+- Make app **versions** flow without per-release friction.
+- Be a natural on-ramp to a richer model later (federation, then a hosted service).
+
+Non-Goals (for v1):
+
+- A hosted registry service with accounts, server-side search, ratings, and trending.
+- Semantic-version range negotiation.
+- Private repository / private registry authentication.
+- Automatic dependency install.
+
+## Core Principle
+
+The marketplace is a **discovery + trust index over existing transport**, not a new
+way to ship bits. None of the reference systems (Homebrew taps, Helm repos, APT,
+Docker Hub, Flathub, Artifact Hub) built distribution from scratch - each is a thin
+metadata/trust layer over Git, OCI, or HTTP. Hosty already has the transport, so
+the correct v1 target is a **signed catalog index over what exists**, not a service.
+
+## Variant Spectrum
+
+- **Variant A - Static Git catalog.** A single catalog index (a JSON file in a Git
+  repo) lists apps and points at their manifests / version sources. Style:
+  Homebrew tap / Helm repo. Minimal infra, evolves naturally.
+- **Variant B - Federated catalog sources.** An operator configures one or more
+  catalog sources (an official one plus private ones). Style: APT `sources.list`
+  / configurable VS Code gallery. Same format, different trust identity per source.
+- **Variant C - Hosted registry service.** A backend with publishing, server-side
+  search, ratings, and featured/trending. Premature at current scale.
+
+**Decision:** Build **Variant A, designed as a special case of B** - the index
+schema supports multiple sources from day one, but v1 ships a single official
+source. A "tap" is just another catalog repo URL. This evolves into B by adding
+sources and into C by replacing the static index behind the same Core
+`/api/catalog` contract, without breaking Shell.
+
+## Layered Model
+
+The single most important decision. Four layers, each owned by a different party
+and changing at a different cadence:
+
+| Layer | Owner | Written when | Holds digest/commit? | Mutable? |
+| --- | --- | --- | --- | --- |
+| **Manifest** (`app.0.1`, in the app repo) | Author, by hand | before build | No - tag/branch only | Declarative intent |
+| **Catalog index** (`catalog.json`) | Catalog CI | on membership change | Optional (generated) | Storefront / membership |
+| **Per-app version feed** (`releasesUrl` or registry tags) | Author CI | on each release | Yes (post-publish) | Author-driven |
+| **Lock** (Core app state) | Core | at install/update | Yes (resolved) | The thing that runs |
+
+The manifest is **declared intent** (like `package.json` with `^1.2.0` or a tag).
+The lock is the **resolved immutable identity** (like `package-lock.json`). The
+runtime must run the lock, never the tag.
+
+This is why a digest is **never authored into the manifest**: it only exists where
+it is generated *after* build (catalog CI, version feed) or resolved *at* install
+(Core lock). The chicken-and-egg of "we don't know the digest/commit until after
+build/commit" disappears because no human ever writes it.
+
+This lock layer is the **compiled-artifact** path (see "Artifacts, Runtimes, and
+Delivery"); a **source** artifact runs live and is not pinned. The existing
+`AppSourceState` (mutable `ResolvedRef` + immutable `Commit` resolved at install) is the
+implementation precedent for "resolve a ref to an immutable id and store it"; the Docker
+side mirrors it for compiled images: tag -> digest, lock the digest, run the digest.
+
+## Catalog vs Versions: Two Cadences
+
+`catalog.json` is the **membership / storefront directory**, not the version
+database. It lists *which apps exist* plus display and trust metadata, and it
+points at each app's version source. It is **not** where releases land.
+
+| Event | Touches catalog (PR)? | Cadence |
+| --- | --- | --- |
+| New app added | Yes - PR | Rare |
+| Publisher / icon / category change | Yes - PR | Rare |
+| App removed / deprecated | Yes - PR | Rare |
+| **New version released (0.3.1)** | **No** | Frequent - author CI |
+
+A PR to the catalog is an act of **membership and trust** (a one-time review of a
+new app: capabilities, external mounts, publisher identity). Version releases flow
+around the catalog, so authors are never forced to PR per release.
+
+## GitHub As Backend (Variant A)
+
+The official catalog is an ordinary GitHub repository. Adding an app is a PR. This
+is the Homebrew-core / Flathub / Helm-repo model: no marketplace infrastructure,
+just a Git repo plus CI. Zero servers.
+
+Repository layout:
+
+- One folder per app: `apps/<reverse-dns-id>/entry.{yaml,json}` plus `assets/`
+  (icon, screenshots). Small diffs, one app reviewed per PR, `CODEOWNERS` per folder.
+- An `entry` holds **metadata and pointers only**. Manifest and image live in the
+  author's own repo / registry. The catalog never contains app code.
+
+CI on PR (the automated gate):
+
+- Validate the entry and the referenced manifest against `app.0.1`.
+- Validate `id` format (reverse-DNS) and uniqueness across entries.
+- Check that the OCI ref / manifest URL resolves.
+- Sanity-check declared `capabilities` and `externalMounts` (surfaced to the reviewer).
+- Optionally render a card preview in a PR comment.
+
+CI on merge to `main`:
+
+- Generate the flat `catalog.json` from all `entry` files.
+- **Sign it keyless via cosign + GitHub OIDC (sigstore)** - no private key to hold;
+  the trust anchor is "this index was built by the `org/catalog` workflow." This is
+  npm-style provenance, free and key-management-free.
+- Publish via GitHub Pages / raw / a Release asset. Core fetches it and verifies the
+  signature against the expected OIDC identity.
+
+Optional submission ergonomics: a GitHub Issue Form -> Action that opens a PR,
+lowering the barrier for authors who do not use Git. Topic-crawler discovery is
+rejected: it needs a crawler and loses the review/trust gate.
+
+## Two-Level Trust
+
+Why version releases without a PR stay safe:
+
+1. **Catalog (PR-reviewed, one-time)** vouches: "releases of app X are signed by
+   identity Y."
+2. **The author's version feed** is signed by that same Y (keyless cosign via the
+   author CI's OIDC).
+3. Core trusts a new version automatically **as long as its signature is Y**, which
+   the catalog already vouched for.
+
+The publisher is reviewed once (membership); thereafter their releases are trusted
+by signature - like a verified publisher in VS Code or an accepted APT PPA. For the
+actual image bits, reuse cosign image signing; do not build a CA.
+
+## Artifacts, Runtimes, and Delivery
+
+Finalized 2026-06-25. This is the **foundational model** for updates and supersedes the
+earlier "lockability by source ownership" framing: the primary split is **artifact kind**,
+and `localCommand` is not itself a classification.
+
+Two things are ever updated: the **manifest** (contract) and the **artifact** (what
+runs). The artifact needs finer classification - splitting by runtime is not enough.
+Three **orthogonal** concepts:
+
+### Artifact kind
+
+- **Compiled artifact** - an immutable built output: a Docker image, a pre-built
+  Next.js bundle, etc.
+- **Source artifact** - a buildable/runnable source tree.
+
+Source is just another artifact, but with special properties (mutable, must be built and
+run, can be edited). **The update model is chosen by artifact kind, not by runtime
+type:** compiled -> lock + reviewed update; source -> the "live" model.
+
+### Delivery method (orthogonal to kind)
+
+How the artifact reaches the host: OCI registry, git repo, local folder, or a separate
+manifest. **Delivery does not imply kind.** Git can deliver *compiled* code, not just
+source; a folder can hold a pre-built app. So the kind must be **declared in the
+manifest**, never inferred from how it was delivered.
+
+### Runtime
+
+Declared by the developer in the manifest. A runtime:
+
+- specifies **which artifact** it consumes and **from where** (its artifact source),
+- determines **how** the app is launched,
+- and thereby implies the **artifact kind** it expects.
+
+So "`localCommand`" by itself classifies nothing: one `localCommand` may run a pre-built
+Next.js app from a folder (compiled), another may build and run source. The manifest's
+per-runtime declaration is what says source vs compiled - and that drives the update
+model.
+
+### The from-source runtime (developer opt-in)
+
+An app **may** declare a runtime that runs it **from source** ("source lives at
+`<repo>`; here is the build/run command"). This is opt-in - not every app supports it.
+
+- If declared and the operator selects it, Core **fetches the source into a folder inside
+  the app's root folder** (a Core-managed location, not a random user folder) and switches
+  to this runtime. Source can also be delivered via git or a separate manifest.
+- The same app can also be run from an **operator-owned** source folder (the operator
+  points Core at their own repo working tree) - the live dev loop.
+- A runtime that consumes **source** -> **live update**. Any other runtime (compiled
+  artifact) -> the **standard reviewed update + lock** for that artifact type.
+
+### Installation (definition)
+
+Installation = specifying *from where* to install the app. In every case:
+
+1. **Find the manifest** first.
+2. Create the app's **root folder** and store the manifest there.
+3. From the declared runtimes, **propose a default**.
+4. **Each runtime has its own artifact source**; selecting a runtime selects its source.
+
+### Two axes of liveness (resolved)
+
+`source = live` is the decision. But the manifest and the artifact have **different**
+liveness rules, so keep two axes:
+
+- **Code / artifact liveness = artifact KIND.** Source -> **live**: Core runs (and the
+  runtime command builds) the source tree; "update" is a cheap re-fetch of the ref or a
+  direct edit, then restart - no run-lock, no reviewed-update ceremony. Compiled ->
+  **locked**: digest (image) or content hash (prebuilt), advanced only by a reviewed
+  update. Reproducibility is what compiled artifacts are *for*; source is for iteration.
+- **Contract / manifest liveness = TRUST ownership of the source.** The operator's **own**
+  source (their folder/repo) crosses no trust boundary -> the manifest is **live** (re-read
+  + reconciled + diff surfaced). A **publisher's** source or image is a boundary -> the
+  manifest **contract** (capabilities, mounts, endpoints, settings schema) is **reviewed**
+  when it changes, even while the code runs live.
+
+Common cases fall out cleanly:
+
+| Case | Code | Contract |
+| --- | --- | --- |
+| Operator's own folder + source runtime | live | live (the pure dev loop) |
+| Core-fetched **publisher** source + source runtime | live | reviewed on change |
+| Registry image (compiled) + docker runtime | locked (digest) | reviewed (distributed app) |
+
+### Resolved manifest fields and build
+
+- **Artifact kind is declared per runtime:** `runtime.artifact: source | image | prebuilt`
+  (`image`/`prebuilt` are compiled; `source` is live). This single field selects the update
+  model.
+- **Is Core-fetched source live?** Yes - the *code* is live (re-fetch the ref + restart;
+  the observed commit is a display breadcrumb, not a run-lock). Its *contract* is reviewed
+  on change because the publisher authored it. (A future opt-in to pin a source to a commit
+  is possible, but is deliberately not the default - if you want pinning, ship a compiled
+  artifact.)
+- **Build step:** Core does **not** build. The source runtime's developer-declared
+  **command** builds and/or runs (e.g. `npm run dev`, or `npm run build && npm start`), and
+  Core supervises the process - exactly as `localCommand` works today. Build output is the
+  command's concern, not Core's; nothing is cached by Core.
+
+## Version Resolution And Artifact Pinning
+
+The drift problem, concretely: `demo-app` ships `image.tag = "latest"` with
+`pullPolicy = "always"`. Declared `version` is `0.4.1` and static, but a restart
+re-pulls `latest` and can silently run different bits. This is a **second, invisible
+update path that bypasses reviewed-update**. The fix is the lock model above.
+
+- **Pin-on-install/update + run-the-lock.** At install/update, resolve `tag ->
+  digest`, record it in app state, and run the locked digest on start/restart.
+  Restarts become deterministic; the declared version becomes truthful again.
+  "Update" = re-resolve the tag, get a new digest, run it through the existing
+  reviewed-update flow, advance the lock.
+- **Explicit per-app update policy (authoritative).** `pinned` (default - lock and
+  require a reviewed update) vs `rolling` (re-resolve on restart, drift accepted).
+  The app-level policy is the single source of truth; the manifest `pullPolicy` field
+  is **removed** because the policy fully covers it (`pinned` = pull the locked digest
+  if missing, then run it; `rolling` = pull the tag, re-resolve, run). The freedom
+  Hosty gives stays, but as a deliberate opt-in, not a silent default.
+- **Immutable release tags.** Authors should tag releases immutably
+  (`:0.3.1`, matching `version`) and avoid `:latest` for published apps. Then even
+  unpinned resolution is stable, and `:latest` honestly means "I want rolling."
+- **Update-available detection.** Periodically (or on demand) re-resolve the tag or
+  dist-tag and compare to the lock; surface "update available" as a first-class
+  state instead of a restart surprise.
+
+GitOps-style pinning (writing the digest into the committed manifest, e.g. a
+Renovate bot) is a valid alternative but pays exactly the build<->manifest coupling
+we want to avoid. The Core-side lock is cleaner at this scale.
+
+## Final Update Logic
+
+The resulting end-to-end behavior once locks + app policy land and channels are gone.
+
+### The update model is decided by artifact kind
+
+Per "Artifacts, Runtimes, and Delivery": the selected runtime declares its artifact kind,
+and that - not the runtime type - decides whether the lock applies.
+
+| Artifact kind | Examples | Code update model | Restart runs |
+| --- | --- | --- | --- |
+| **Compiled** | registry image; pre-built bundle | **locked** - digest / content hash, advanced by reviewed update | the locked artifact |
+| **Source** | operator folder; Core-fetched repo; manifest-pointed repo | **live** - run/build the tree; re-fetch or edit to update | the current source tree |
+
+The lock machinery below (digest, `pinned`/`rolling`, plan-seed) is the **compiled**
+branch. Source artifacts are live: no run-lock, no reviewed-update ceremony for the code.
+
+### Manifest liveness follows trust ownership
+
+The review gate exists to protect a **trust boundary** - adopting a manifest authored by
+someone other than the operator (a remote/catalog publisher, or a Core-managed artifact
+shared across operators). It is **not** about manifest mutability as such.
+
+An **operator-owned local folder crosses no trust boundary**: the developer owns both the
+Core host and the source and is editing their own manifest, so Core adopting those edits
+is identical to the developer reinstalling - which they may do freely. So for a live
+folder, **both the code and the manifest are live**:
+
+- On each start/restart Core **re-reads, validates, and reconciles** the folder manifest.
+  Changes - version, capabilities, mount slots, settings schema - take effect with **no
+  reviewed-update ceremony**: no reinstall, no publish/PR, no "press Update". (The earlier
+  "manifest is always the reviewed root copy" rule was wrong for this case - it applied a
+  trust-boundary gate where there is no boundary.)
+- Core **surfaces a diff** of what changed since the last start (especially capabilities,
+  external mounts, endpoints), so a silent edit - e.g. one an agent made - is **visible**.
+  Awareness, not a blocking gate.
+- The real gate for host access is unchanged: an `externalMounts` **slot** is inert until
+  the **operator binds a real host path** (`AppMountBinding`). A live manifest can declare
+  a new slot but cannot reach a host path without the operator's explicit binding - so
+  live manifest reading does not let an app self-grant host access.
+- If the folder manifest is invalid mid-edit, Core keeps the last valid contract running
+  and surfaces the error.
+
+For sources **the operator did not author** (registry image, a Core-fetched publisher
+source, a catalog install) the manifest **contract** is the **reviewed copy** and contract
+changes require review - that is the trust boundary being crossed (the *code* may still run
+live if the artifact kind is source).
+
+**Governing invariant (two axes):** *code* liveness follows **artifact kind** (source =
+live, compiled = locked); *contract* liveness follows **trust ownership** (operator's own
+source = live manifest, publisher source/image = reviewed contract). The two are
+independent: a Core-fetched publisher source runs **live code** but its **contract is
+reviewed** on change. Switching to a **compiled** runtime is a reviewed transition that
+**snapshots the current effective manifest** into the reviewed root copy and pins the
+artifact.
+
+### State per app
+
+- `updatePolicy`: `pinned` (default) | `rolling`. Applies **only to compiled artifacts**.
+- `ArtifactLocks`: per-service resolved immutable identity, set **only for compiled
+  artifacts**:
+  - Registry image -> `imageDigest` (`sha256:...`) plus the `repository:tag` it was
+    resolved from.
+  - Pre-built bundle -> a content hash of the built output.
+- A **source** artifact carries **no run-lock** and is not on the `pinned`/`rolling` axis;
+  the checked-out commit (if any) is an observed display breadcrumb only.
+
+The manifest only ever carries intent (`repository:tag`, `branch`). No digest, no
+`pullPolicy`.
+
+### Live source (folder + localCommand): the dev loop
+
+This is the development inner loop, and Core stays **hands-off on the artifact**:
+
+- Core runs whatever **code** is in the folder, every start. It **never** checks out,
+  resets, or rolls back - uncommitted/dirty work is exactly what the developer wants to
+  run. The frequent inner-loop edits (components, handlers) are picked up live, often by
+  the dev server's own HMR with no restart.
+- The **manifest is live too** (see above): on each start Core re-reads, validates, and
+  reconciles the folder manifest, using its profile definition (`command`,
+  `workingDirectory`, `env`, ports) with the working directory resolved against the
+  operator folder. Contract changes (version, capabilities, mount slots, settings schema)
+  are adopted on restart - no reinstall, no `update` ceremony - and surfaced as a diff so
+  silent edits are visible. New host access still needs the operator's mount binding.
+- There is **no enforced lock** and **no reviewed "update available"** for the artifact.
+- Core *may* **observe** for display only - `git rev-parse HEAD` + dirty flag, and the
+  folder manifest's **version** - surfaced as "source: `0.1.1` @ `abc123` (dirty)"
+  beside the installed version. Read-only breadcrumbs, never enforced. A non-git folder
+  simply shows no commit.
+- **UI:** mark the runtime as **Live** and hide the reviewed-update affordance while a
+  live runtime is active; it reappears if the operator switches to a compiled-artifact
+  runtime.
+
+So the answer to "how does the lock work here" is: **it does not lock the artifact** - for
+the operator's own folder both the code and the manifest are live (the manifest diff is
+surfaced, not gated). A Core-fetched *publisher* source runs the code live but reviews
+contract changes.
+
+### Resolving a lock (compiled artifacts only)
+
+- Registry image: `docker pull repository:tag`, then read the digest
+  (`docker inspect --format '{{index .RepoDigests 0}}'` or parse the pull output);
+  store it in `ArtifactLocks`.
+- Pre-built bundle: hash the built output and store it.
+
+Source artifacts are not resolved to a run-lock - they run live (`git rev-parse` may be
+recorded for *display* only).
+
+### Start / restart
+
+- **pinned**: ensure the locked artifact is present (Docker: pull by digest
+  `repository@sha256:...` if missing - deterministic), then run the locked artifact.
+  Bits never change across restarts.
+- **rolling**: re-resolve the mutable pointer (`pull repository:tag`; or a prebuilt's
+  tracked ref re-fetched + re-hashed), update `ArtifactLocks` to what is now running, then
+  run it. Drift is expected.
+- **live** (source artifact): run/build the source tree as-is - no resolve, no run-lock,
+  no policy. An operator folder picks up the developer's edits; a Core-fetched source picks
+  up a re-fetched ref.
+
+Restart = stop + start, same rules.
+
+### Core start (lock backfill)
+
+When Core (re)starts an app:
+
+- If `ArtifactLocks` is missing (legacy install), resolve the current ref and record
+  it (TOFU), then proceed as above. This is the only backfill step - no migration job.
+- pinned apps then keep that lock; rolling apps re-resolve every start anyway.
+- **Source artifacts are skipped** - nothing to lock; they are run/built live.
+
+### Reviewed update (new version, re-resolve, or version/track switch)
+
+1. Resolve the target ref -> target digest/commit.
+2. Build the plan seed including **current vs target artifact digests** (not just
+   manifest digests), so the operator sees an artifact change even when the manifest
+   is byte-identical (e.g. a re-pushed tag).
+3. Operator confirms the plan digest.
+4. Apply: write the new manifest copy, advance `ArtifactLocks` to the target, take the
+   pre-update backup (as today), and restart running the new lock.
+
+A catalog/feed "version" or dist-tag (`stable`/`beta`) resolves to a concrete
+manifest + digest and then takes this exact same path. There is no separate
+"switch-channel" flow.
+
+Source artifacts have **no reviewed update for the code** - it re-fetches/rebuilds live.
+For the operator's own source the manifest is live too (diff surfaced, not gated); for a
+publisher source a *contract* change still surfaces for review.
+
+### Update-available detection (read-only)
+
+- Re-resolve the app's pointer - the tag, or a dist-tag from the catalog/feed, or
+  branch HEAD - to a candidate digest/commit **without a full pull**
+  (`docker manifest inspect` / registry HEAD; `git ls-remote`).
+- Compare candidate vs the current lock. If different, surface "update available"
+  (with a version delta when the feed provides one). Applying it goes through the
+  reviewed update above.
+
+### Drift indicator
+
+- **pinned**: drift is impossible by construction (the lock is always what runs).
+- **rolling**: compare the running digest vs the last-recorded lock; if they differ,
+  surface "running a newer build than recorded".
+
+### Net effect
+
+- The declared version is always truthful: pinned apps run exactly their lock.
+- There is exactly **one** update path - the reviewed update - and `rolling` is the
+  only sanctioned, clearly-labelled way to accept automatic drift.
+- The silent "re-pull `latest` on restart" path is gone unless the operator
+  explicitly chose `rolling`.
+
+## Channels: Decision
+
+The per-app channel feature (`channelsUrl`, `AppChannelIndex`, `switch-channel/plan`,
+`switch-channel`) is **fully implemented**, but **confirmed unused** - there is no
+Shell UI and no installed app relies on it in practice. It was motivated by pre-merge
+testing, which is now covered by local install (folder install from a worktree plus
+`source-override` tests any runtime, including `localCommand`, before merge).
+
+**Decision: remove the channel code outright.** Because it is unused, no migration is
+needed. Removal surface (implemented in PR #67; referenced by symbol/file, not line
+number, so it does not drift):
+
+- Manifest: `channelsUrl`, `AppChannelIndex`, `AppChannelEntry`.
+- Core (`CoreLifecycleService`): `ListChannelsAsync`, `CreateChannelSwitchPlanAsync`,
+  `ApplyChannelSwitchAsync`, `LoadChannelIndexAsync`, `ResolveChannelIndexPath`,
+  `ResolveChannelManifestPath`.
+- Endpoints (`LifecycleEndpoints`): `channels`, `switch-channel/plan`, `switch-channel`.
+- State/plan: `AppRecord.SelectedChannel`, and `TargetChannel` on `AppUpdatePlan` /
+  `AppUpdatePlanDigestSeed`.
+- CLI: the `--channel` flag on `install` / `update`.
+
+- **The version/track concept lives only in the catalog + per-app version feed**
+  (dist-tags `stable`/`beta`), resolved into the standard reviewed-update path. It is
+  built fresh on the catalog side - not the old channel code.
+- **Pre-merge testing** is documented as the supported local dev loop, not a
+  published channel.
+- **Product channels stay separate.** `channels/product-channels.json` (delivery of
+  Core / Shell / CLI themselves) is a different axis - a stability track for the
+  *platform*, analogous to APT suites for the OS. Local app testing does not replace
+  it; keep and evolve it independently of the app catalog.
+
+This refines `update-channels.md`: app-level channels collapse into catalog
+versions plus an author-owned version feed; product channels are retained.
+
+## Manifest Metadata Extensions
+
+Today the manifest carries only `ui.icon` (a Lucide name) for display. The
+marketplace needs richer display metadata. Add a `catalogMetadata` block (kept out
+of the runtime schema so `app.0.1` runtime validation stays lean), with fields
+modeled on Flathub AppStream:
+
+- `publisher` (name / url / email)
+- `category`, `tags`
+- `icon` (asset/URL, not just a Lucide name), `screenshots[]`
+- `license` (SPDX)
+- `links` (website / docs / support)
+- `summary` / long description / changelog
+
+## Schemas (Sketch)
+
+Catalog entry (`apps/<id>/entry.yaml`, hand-authored, PR-gated):
+
+```yaml
+id: com.haas.demo-app
+publisher: { name: "...", url: "...", email: "..." }
+category: "..."
+tags: ["..."]
+display: { summary: "...", icon: assets/icon.png, screenshots: [...] }
+releasesUrl: https://<author>/releases.json   # or: registry/git tag source
+signerIdentity: github.com/<author>/<repo>     # trust anchor for the feed
+```
+
+Per-app version feed (`releasesUrl`, author-hosted, signed by author):
+
+```json
+{
+  "versions": [
+    { "version": "0.3.0", "manifestRef": "...", "imageDigest": "sha256:..." },
+    { "version": "0.3.1", "manifestRef": "...", "imageDigest": "sha256:..." }
+  ],
+  "tags": { "stable": "0.3.1", "beta": "0.4.0-rc1" }
+}
+```
+
+Lowest-friction alternative to a feed file: the entry points directly at an OCI repo
+/ Git repo and Core lists **tags directly** as versions - zero per-release author
+action beyond `git tag` / `docker push :0.3.1`.
+
+## Shell UI Surfaces
+
+- A `/marketplace` page rendering the catalog (cards: icon, name, publisher,
+  summary, category) on top of the existing install-review flow.
+- App detail: versions from the feed, screenshots, changelog, publisher, capability
+  list shown as install-time permissions.
+- **Version legibility on cards/details:** declared version + short running digest +
+  policy badge (`Pinned` / `Rolling`).
+- **Drift / update badges:** lock != latest-resolved -> "Update available 0.3.0 ->
+  0.3.1" with the reviewed-update CTA; running != lock (rolling drift) -> warning.
+- **Install-time mutable-tag note:** when a profile tracks a mutable tag, show
+  "This app tracks `latest` - restarts may update it. [Pin to current version]".
+- **Live runtime:** when the active runtime runs from an operator folder, show a **Live**
+  badge instead of the reviewed-update CTA (there is no reviewed update in live mode), the
+  live `source: <version> @ <commit> (dirty)` line, and a **"definition changed"** diff
+  banner when the folder manifest changed since the last start (highlighting capability /
+  mount / endpoint changes). A compiled-artifact runtime restores the normal version +
+  update CTA.
+
+## Phased Plan
+
+0. Remove the channel code (unused) - clears `channelsUrl`, `switch-channel*`, and
+   `SelectedChannel`/`TargetChannel` before versions are built on the catalog.
+1. Manifest metadata extensions (incl. per-runtime `artifact: source | image | prebuilt`)
+   + `catalog.json` and version-feed schemas.
+2. Artifact pinning (**compiled artifacts only**; source runtimes already run live): add
+   per-service `ArtifactLocks`; resolve tag -> digest at install/update; run the lock on
+   start/restart with lazy backfill on Core start; add the authoritative `pinned`/`rolling`
+   policy and remove `pullPolicy`.
+3. `/api/catalog` in Core reading the index; `/marketplace` page in Shell over the
+   existing install-review flow.
+4. Keyless signing of the catalog index and per-app feeds; two-level trust verification.
+5. Federation: operator-configured additional catalog sources (Variant B).
+
+## Decisions And Recommendations
+
+- Build Variant A designed as a special case of B; keep a single official source in v1.
+- Digest/commit lives only in the catalog (generated) and the Core lock (resolved),
+  never in the hand-authored manifest.
+- The catalog is membership/storefront (PR-gated, rare changes); versions come from
+  an author-owned feed or registry/git tags (no per-release PR).
+- Trust is two-level: the catalog vouches for a publisher's signing identity once;
+  signed releases are then trusted automatically.
+- Default to pinned (locked digest) with an explicit `rolling` opt-in; recommend
+  immutable release tags.
+- The app-level `pinned`/`rolling` policy is authoritative; **`pullPolicy` is removed
+  from the manifest** because the policy fully covers pull behavior.
+- The image lock is a new **per-service `ArtifactLocks`** on `AppRecord` (not an
+  overload of `AppSourceState`, which stays git-flavored for `localCommand`).
+- **The update model is decided by artifact kind (declared per runtime as
+  `runtime.artifact: source | image | prebuilt`), not by runtime type.** Source = live
+  (run/build the tree, re-fetch/edit to update, no run-lock); compiled = locked (digest /
+  content hash, reviewed update).
+- **Two axes of liveness.** *Code* follows artifact kind (source = live). *Contract*
+  follows trust ownership: the operator's own source = live manifest (diff surfaced, no
+  gate); a publisher source/image = reviewed contract on change. So a Core-fetched publisher
+  source runs live code with a reviewed contract. The host-access gate (operator mount
+  binding) is unchanged. Switching to a compiled runtime snapshots the manifest under review
+  and pins the artifact.
+- **Backfill the lock lazily**: when Core (re)starts an app with no lock, resolve the
+  current ref to a digest/commit and record it (TOFU). No separate migration step - an
+  update restarts the app anyway.
+- **Remove the channel code outright** (confirmed unused); the version/track concept
+  moves to the catalog + per-app feed. Keep product channels separate.
+
+## Current Implementation Findings (verified 2026-06-25)
+
+Checked against the code to ground the design. Key facts:
+
+- **Channels are fully implemented**, not a skeleton (see Channels: Decision).
+  Retiring is a migration, not a delete. Shell has no channel UI; CLI exposes
+  `--channel` on install/update only (no `hosty apps channels` command).
+- **The reviewed-update digest is manifest-only.** `AppUpdatePlanDigestSeed` hashes
+  current/target *manifest* digests (`CoreLifecycleService.cs:1154-1163`,
+  `HashPlanSeed` at `:945`). It does **not** observe the artifact. A force-pushed tag
+  with an identical manifest produces the same plan digest -> the change is invisible
+  to review. `ManifestDigest` is also transient (computed in the plan, not persisted
+  in `AppRecord`).
+- **No Docker image digest anywhere.** `RuntimeDockerImage(Repository, Tag, PullPolicy)`
+  has no `Digest` field and `Reference => "{Repository}:{Tag}"`
+  (`RuntimeAppManifest.cs:1293-1296`). No `repo@sha256:...` support.
+- **Pull output is discarded; the resolved digest is never captured.** Start does
+  `docker rm -f` then optionally `docker pull` then `docker run repo:tag`
+  (`RuntimeAppManifest.cs:755-784, 912`). Only `pullPolicy == "always"` is honored;
+  `missing`/`never`/`ifNotPresent` are silently treated as "do not pull".
+  `demo-app` ships `tag: latest` + `pullPolicy: always`, so every restart re-pulls
+  and can drift - exactly the reported behavior.
+- **Docker health is explicitly unimplemented** (`RuntimeAppManifest.cs:982-994`,
+  returns "unknown"). There is no way today to read the running image id/digest, so
+  no drift/update-available signal exists.
+- **`AppSourceState.Commit` is the existing lock precedent** for `localCommand`
+  (`AppRegistryStore.cs:254-261`, resolved via `git rev-parse` in
+  `AppSourceService`). There is **no image-identity field** on `AppRecord`
+  (`AppRegistryStore.cs:186-218`); install/update record manifest + source only.
+- **Catalog metadata gaps confirmed**: no publisher/tags/screenshots/license/links;
+  `ui.icon` exists; `ui.category` exists but is **not surfaced to `AppSummary`**
+  (`AppRegistryStore.cs:343-365`), so clients cannot even read the category today.
+- **`channels/product-channels.json` is unconsumed** by Core/CLI/Shell - a build/
+  pipeline placeholder, nothing reads it at runtime.
+
+## Improvement Opportunities (grounded)
+
+Ordered by leverage for the new update + catalog approach:
+
+1. **Add `Digest` to `RuntimeDockerImage` and emit `repo@sha256:...`** when locked
+   (`RuntimeAppManifest.cs:1293-1296`, parse at `:508`). Enables running a pinned
+   artifact instead of a mutable tag.
+2. **Capture the resolved digest after pull** instead of discarding it
+   (`RuntimeAppManifest.cs:783`): parse the `Digest:` line or
+   `docker inspect --format '{{index .RepoDigests 0}}'`.
+3. **Persist a per-service image lock** (parallel to `AppSourceState.Commit`). New
+   field on `AppRecord` (e.g. `ArtifactLocks`) keyed by service - per-service because
+   services can use different images even though `demo-app` shares one.
+4. **Run the lock on start/restart** (`RuntimeAppManifest.cs:755-784`): use the
+   locked digest, not `repo:tag`. Makes restarts deterministic.
+5. **Remove `pullPolicy`; derive pull behavior from the app-level `pinned`/`rolling`
+   policy** (single source of truth). Today only `always` works; `pinned` pulls the
+   locked digest if missing then runs it, `rolling` keeps `pull always` + re-resolve.
+6. **Include image locks in the plan seed** (`AppUpdatePlanDigestSeed`,
+   `CoreLifecycleService.cs:1154-1163`) so the operator sees "image changed even
+   though the manifest did not" - closes the invisible-update gap.
+7. **Implement Docker health / running-image inspection**
+   (`RuntimeAppManifest.cs:982-994`) to report the running digest -> powers the
+   "running != lock" drift warning and "update available".
+8. **Surface running digest, policy, and category on `AppSummary`**
+   (`AppRegistryStore.cs:343-365`) for marketplace cards and version legibility.
+9. **Add a `catalogMetadata` block to the manifest** (publisher/tags/screenshots/
+   license/links) and surface it; elevate/searchable category.
+10. **Classify update by artifact kind, declared per runtime** (`runtime.artifact:
+    source | image | prebuilt`). `pinned`/`rolling` and the digest lock apply to compiled
+    artifacts only; source artifacts run live (no run-lock). Reuse `AppSourceState` /
+    `git rev-parse` for *display* breadcrumbs on source, not as a run-lock.
+11. **Remove the channel code** (manifest `channelsUrl`, `AppChannelIndex`/`Entry`,
+    the three `switch-channel*` endpoints and their service methods,
+    `AppRecord.SelectedChannel`, the `TargetChannel` plan field, the `--channel` CLI
+    flag). See Channels: Decision for the full surface.
+
+## Open Questions
+
+- **Tag -> digest resolution without a full pull** for update-available detection.
+  Use `docker manifest inspect` / a registry HEAD vs a full `docker pull`? How does
+  this behave for private registries (out of scope for v1)?
+- **Where is the per-app version feed hosted and signed** for the zero-effort
+  (tags-only) author? Recommendation: support both registry/git-tag resolution and an
+  explicit `releasesUrl` feed; require a signer identity in the catalog entry either way.
+- **Offline / air-gapped signature verification** of a keyless (sigstore) index.
+  Recommendation: pinned identity + cached trust root; defer the full offline story.
+- **dist-tags over plain OCI/git tags** when there is no explicit feed.
+  Recommendation: convention or OCI annotations/referrers; decide during phase 1.
+- **`product-channels.json` ownership.** Nothing consumes it yet - define its
+  consumer (installer/build pipeline) before building platform delivery on it; keep
+  it separate from the app catalog.
+- **Content-hash lock for `prebuilt` artifacts.** Images have a natural OCI digest; a
+  pre-built bundle needs a defined hash (which files, normalization) to lock against.
+  Recommendation: a versioned Merkle **bundle digest** (`bundle.v1:sha256:...`) in the
+  style of Go's `h1:` dirhash, over the manifest-declared bundle root (per service):
+  - per file `sha256(bytes)` - **no content normalization** (hash exactly what runs);
+  - key each entry by its **POSIX, Unicode-NFC** relative path plus a normalized
+    exec-bit / `symlink -> target` flag; **sort by raw path bytes**; `sha256` the
+    concatenation;
+  - **ignore** mtime/atime/uid/gid and empty dirs, and a fixed ignore set (`.git`, OS junk
+    like `.DS_Store`), so the digest is identical across delivery methods (git clone /
+    folder copy / archive);
+  - compute at **install/update only** (not every start), store per service in
+    `ArtifactLocks`, include in the plan seed (closes the invisible-update gap for prebuilt
+    too); re-hash on demand for drift, not on each restart.
+
+  Implement as a hand-rolled Merkle over `SHA256` (AOT-clean, no deps); avoid
+  reproducible-tar (fragile on mtime / order / padding). Lowest-effort alternative: package
+  the bundle as an **OCI artifact** and reuse the image digest - this collapses `prebuilt`
+  into the `image` lock path (one mechanism, zero new code), at the cost of a registry push
+  rather than a plain file/git delivery.
+
+## Links
+
+- [Update channels](update-channels.md) - refined by this document (app channels folded in; product channels retained).
+- [Runtime app repository install](runtime-app-repository-install.md)
+- [Runtime source extensions](runtime-source-extensions.md)
+- [Runtime app manifest](../features/runtime-app-manifest.md)
+- [Final Hosty architecture](../features/final-hosty-architecture.md)
