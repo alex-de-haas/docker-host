@@ -214,7 +214,28 @@ internal sealed record AppRecord(
     // The operator's original local manifest source (file or directory) captured at install,
     // set only for non-URL installs. Lets a folder-installed app re-read its source folder on
     // update instead of the stale internal copy (app.ManifestPath). See CreateUpdatePlanAsync.
-    string? InstallManifestPath = null);
+    string? InstallManifestPath = null,
+    // Compiled-artifact run-locks keyed by service key (docker image services only). Resolved at
+    // install/update/first-start (tag -> digest) and run on restart so the declared version stays
+    // truthful. Null/absent = not yet resolved; lazily backfilled on next start (TOFU). Additive and
+    // nullable, so no AppStateDocument.SchemaVersion bump is needed (A3/A9).
+    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks = null,
+    // Pull/lock policy for compiled artifacts: "pinned" (default) runs the locked digest and requires
+    // a reviewed update to advance it; "rolling" re-resolves the tag every start and accepts drift.
+    // Null = pinned. Operator-set via configure; the single source of truth (pullPolicy is gone, A8).
+    string? UpdatePolicy = null);
+
+// The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
+// update for a pinned app. `Kind` is "image" (registry image) in v1; the bundle/source fields are
+// reserved for prebuilt/source kinds (out of phase 2a). For an image: `ImageDigest` is the locked
+// `sha256:...` and `ResolvedFromRef` the `repository:tag` it was resolved from. See A3.
+internal sealed record ArtifactLock(
+    string Kind,
+    string? ImageDigest,
+    string? ResolvedFromRef,
+    string? BundleHash,
+    string? Commit,
+    DateTimeOffset ResolvedAt);
 
 internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret, bool Required = false);
 
@@ -360,7 +381,11 @@ internal sealed record AppSummary(
     string? EntryPath,
     string? EmbeddedUrl,
     IReadOnlyList<AppNavigationSummary> Navigation,
-    IReadOnlyList<AppMountSummary> Mounts)
+    IReadOnlyList<AppMountSummary> Mounts,
+    // Compiled-artifact run-locks per service (the running/locked image digest) and the effective
+    // pull/lock policy ("pinned"/"rolling"), for version legibility and drift badges on clients.
+    string UpdatePolicy,
+    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks)
 {
     public static AppSummary From(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null)
     {
@@ -403,7 +428,9 @@ internal sealed record AppSummary(
             ui?.EntryPath,
             entryUrl,
             navigation,
-            BuildMountSummaries(app.MountSlots, app.Mounts));
+            BuildMountSummaries(app.MountSlots, app.Mounts),
+            DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
+            app.ArtifactLocks);
     }
 
     private static IReadOnlyList<AppMountSummary> BuildMountSummaries(

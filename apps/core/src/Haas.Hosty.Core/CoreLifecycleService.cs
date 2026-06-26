@@ -129,6 +129,7 @@ internal sealed class CoreLifecycleService(
 
     public async Task<AppLifecycleResponse> ConfigureAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken = default)
     {
+        var policy = NormalizeConfiguredUpdatePolicy(request.UpdatePolicy);
         var document = await apps.UpdateAppAsync(appId, app =>
         {
             ValidatePublicOriginSettings(request.Settings);
@@ -136,6 +137,7 @@ internal sealed class CoreLifecycleService(
             {
                 Settings = request.Settings is { Count: > 0 } ? MergeSettings(app.Settings, request.Settings) : app.Settings,
                 Autostart = request.Autostart ?? app.Autostart,
+                UpdatePolicy = policy ?? app.UpdatePolicy,
                 OperationStatus = "configured",
                 LastOperation = "configure",
                 LastError = null,
@@ -143,6 +145,25 @@ internal sealed class CoreLifecycleService(
         }, cancellationToken);
 
         return new AppLifecycleResponse(AppSummary.From(document.App), null, "configured");
+    }
+
+    // Validates an operator-supplied update policy. null leaves the policy unchanged; otherwise it
+    // must be "pinned" or "rolling" (case-insensitive), normalized to lowercase for storage.
+    private static string? NormalizeConfiguredUpdatePolicy(string? policy)
+    {
+        if (string.IsNullOrWhiteSpace(policy))
+        {
+            return null;
+        }
+
+        var trimmed = policy.Trim();
+        if (!string.Equals(trimmed, "pinned", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(trimmed, "rolling", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new AppLifecycleException("app_update_policy_invalid", $"Update policy '{policy}' must be 'pinned' or 'rolling'.");
+        }
+
+        return trimmed.ToLowerInvariant();
     }
 
     public async Task<AppLifecycleResponse> ConfigureAutostartAsync(
@@ -334,6 +355,9 @@ internal sealed class CoreLifecycleService(
                 LastOperation = "start",
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
+                // Persist the run-locks the adapter resolved (TOFU backfill / rolling advance);
+                // a runtime with nothing to pin returns null, leaving any existing locks intact.
+                ArtifactLocks = result.ArtifactLocks ?? current.ArtifactLocks,
             }, cancellationToken);
 
             await ReconcileIngressAsync(cancellationToken);
@@ -391,6 +415,7 @@ internal sealed class CoreLifecycleService(
                 LastOperation = "restart",
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, start.Endpoints, selection),
+                ArtifactLocks = start.ArtifactLocks ?? current.ArtifactLocks,
             }, cancellationToken);
 
             return new AppLifecycleResponse(AppSummary.From(updated.App), null, "restarted");
@@ -425,7 +450,12 @@ internal sealed class CoreLifecycleService(
 
         var willCreateBackup = Directory.Exists(GetAppDataPath(appId));
         var sourceConfigured = HasExternalUpdateSource(app, request.ManifestPath);
-        var changes = BuildUpdateChanges(app, currentSelection, selection);
+        var changes = BuildUpdateChanges(app, currentSelection, selection).ToList();
+        // Surface a compiled-artifact change even when the manifest JSON is byte-identical (a
+        // re-pushed tag): resolve the target tag's digest with a light remote lookup and compare it
+        // to the current lock. This closes the invisible-update gap and folds the artifact delta into
+        // the plan digest the operator confirms. See runtime-app-marketplace.md (Reviewed update / A4).
+        changes.AddRange(await BuildArtifactDigestChangesAsync(app, selection, cancellationToken));
         var seed = new AppUpdatePlanDigestSeed(
             appId,
             app.Version,
@@ -923,7 +953,11 @@ internal sealed class CoreLifecycleService(
                     // is what made folder installs silently re-read their stale snapshot on Recheck.
                     && !IsInternalAppPath(manifest.Id!, selection.ManifestPath)
                     ? Path.GetFullPath(selection.ManifestPath)
-                    : null));
+                    : null),
+            // ArtifactLocks is deliberately left null on (re)build: install has nothing to lock yet,
+            // and update/runtime-switch must drop the old lock so the next start re-resolves the new
+            // target (a re-pushed tag advances the digest). The policy is operator config, preserved.
+            UpdatePolicy: existing?.UpdatePolicy);
     }
 
     // External-mount slots are redeclared from the manifest on every (re)build, like runtime
@@ -1782,6 +1816,46 @@ internal sealed class CoreLifecycleService(
         return changes;
     }
 
+    // Compares each compiled (docker image) service's currently-locked digest against the target
+    // tag's remotely-resolved digest, producing `artifact:{service}:{current}->{target}` change
+    // entries. A re-pushed tag (identical manifest) therefore still shows up as a pending change.
+    // If the registry is unreachable the target is "unknown" (do not fail the plan, A4): surfaced
+    // only when a current lock exists, signalling the artifact will be re-pulled at apply.
+    private async Task<IReadOnlyList<string>> BuildArtifactDigestChangesAsync(
+        AppRecord app,
+        RuntimeAppManifestSelection targetSelection,
+        CancellationToken cancellationToken)
+    {
+        var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
+        var changes = new List<string>();
+        foreach (var service in targetSelection.Services
+            .Where(service => service.Image is not null)
+            .OrderBy(service => service.Key, StringComparer.Ordinal))
+        {
+            var currentDigest = app.ArtifactLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
+            var targetDigest = resolver is null
+                ? null
+                : await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(targetDigest))
+            {
+                if (!string.IsNullOrWhiteSpace(currentDigest))
+                {
+                    changes.Add($"artifact:{service.Key}:{currentDigest}->unknown");
+                }
+
+                continue;
+            }
+
+            if (!string.Equals(currentDigest, targetDigest, StringComparison.Ordinal))
+            {
+                changes.Add($"artifact:{service.Key}:{currentDigest ?? "none"}->{targetDigest}");
+            }
+        }
+
+        return changes;
+    }
+
     private static void AddUpdateServiceChanges(
         List<string> changes,
         RuntimeAppManifestSelection currentSelection,
@@ -2563,7 +2637,10 @@ internal sealed record AppInstallRequest(
 
 internal sealed record AppConfigureRequest(
     IReadOnlyDictionary<string, string?>? Settings = null,
-    bool? Autostart = null);
+    bool? Autostart = null,
+    // "pinned" | "rolling"; null leaves the current policy unchanged. The authoritative pull/lock
+    // policy for compiled artifacts (replaces the removed manifest pullPolicy).
+    string? UpdatePolicy = null);
 
 internal sealed record AppAutostartRequest(bool Autostart);
 

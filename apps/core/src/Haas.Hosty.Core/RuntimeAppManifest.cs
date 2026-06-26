@@ -488,7 +488,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             }
 
             var split = SplitImageReference(reference);
-            return new RuntimeDockerImage(split.Repository, split.Tag, null);
+            return new RuntimeDockerImage(split.Repository, split.Tag);
         }
 
         if (value.Value.ValueKind != JsonValueKind.Object)
@@ -505,7 +505,10 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             return null;
         }
 
-        return new RuntimeDockerImage(repository, tag, ReadString(value.Value, "pullPolicy"));
+        // pullPolicy is intentionally not read: pull behaviour now derives from the app-level
+        // pinned/rolling policy (see runtime-app-marketplace.md, A8). A digest is never authored
+        // into the manifest — it is resolved at install/update and stored in the lock.
+        return new RuntimeDockerImage(repository, tag);
     }
 
     private static (string Repository, string Tag) SplitImageReference(string reference)
@@ -736,10 +739,67 @@ internal interface IAppRuntimeAdapter
     Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default);
 }
 
+// Implemented by a runtime adapter that can resolve a compiled artifact's mutable pointer to its
+// immutable identity remotely, without materializing it. The lifecycle service uses it at plan time
+// to surface an artifact-digest change even when the manifest is byte-identical.
+internal interface IImageDigestResolver
+{
+    Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default);
+}
+
+// Indirection over the `docker` CLI so the adapter's resolve/run/inspect logic is unit-testable
+// without a daemon. Unlike RunDockerAsync it never throws on a non-zero exit — callers inspect
+// ExitCode — but a missing CLI surfaces as DockerUnavailableException.
+internal interface IDockerCommandRunner
+{
+    Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, CancellationToken cancellationToken = default);
+}
+
+internal sealed record DockerCommandResult(int ExitCode, string StandardOutput, string StandardError);
+
+internal sealed class DockerUnavailableException(string message) : Exception(message);
+
+// Default runner: shells out to the `docker` CLI. Mirrors the previous in-adapter process logic.
+internal sealed class ProcessDockerCommandRunner : IDockerCommandRunner
+{
+    public async Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, CancellationToken cancellationToken = default)
+    {
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "docker",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            },
+        };
+        foreach (var arg in args)
+        {
+            process.StartInfo.ArgumentList.Add(arg);
+        }
+
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            throw new DockerUnavailableException(ex.Message);
+        }
+
+        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        return new DockerCommandResult(process.ExitCode, stdout, stderr);
+    }
+}
+
 internal sealed class DockerRuntimeAdapter(
     HostyCoreRuntimeConfig config,
     AppServiceTokenService serviceTokens,
-    ILogger<DockerRuntimeAdapter> logger) : IAppRuntimeAdapter
+    ILogger<DockerRuntimeAdapter> logger,
+    IDockerCommandRunner? dockerRunner = null) : IAppRuntimeAdapter, IImageDigestResolver
 {
     // App ids already advised about WSL2 P2P throttling, so the warning is logged once per app
     // per Core process rather than on every (health-driven) restart. Instance field on the DI
@@ -750,12 +810,18 @@ internal sealed class DockerRuntimeAdapter(
     // Kernel info files whose contents mark a WSL2 environment; allocated once, not per check.
     private static readonly string[] WslKernelInfoPaths = ["/proc/sys/kernel/osrelease", "/proc/version"];
 
+    // Indirection over the `docker` CLI so the resolve/run/inspect logic is unit-testable without a
+    // daemon. DI never registers one, so production uses the process runner; tests inject a fake.
+    private readonly IDockerCommandRunner runner = dockerRunner ?? new ProcessDockerCommandRunner();
+
     public string Type => "docker";
 
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
+        var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
+        var policy = ResolveUpdatePolicy(context.App.UpdatePolicy);
 
         MaybeAdviseWslMirroredNetworking(context, services);
 
@@ -778,10 +844,13 @@ internal sealed class DockerRuntimeAdapter(
             var hostNetwork = service.Runtime.IsHostNetwork;
             var containerName = BuildContainerName(context.App.Id, service.Key);
             _ = await RunDockerAsync(["rm", "-f", containerName], ignoreFailures: true, cancellationToken);
-            if (string.Equals(service.Image.PullPolicy, "always", StringComparison.OrdinalIgnoreCase))
-            {
-                _ = await RunDockerAsync(["pull", service.Image.Reference], ignoreFailures: false, cancellationToken);
-            }
+
+            // Resolve what to run from the lock + policy instead of blindly running the mutable tag:
+            // pinned reuses the locked digest (pulling it only if missing), rolling re-resolves the
+            // tag and advances the lock, and a lockless app is backfilled (TOFU). See A3/A4/A8.
+            var existingLock = context.App.ArtifactLocks?.GetValueOrDefault(service.Key);
+            var (runReference, resolvedLock) = await ResolveImageRunReferenceAsync(service.Image, existingLock, policy, cancellationToken);
+            resolvedLocks[service.Key] = resolvedLock;
 
             var runArgs = new List<string>
             {
@@ -909,7 +978,7 @@ internal sealed class DockerRuntimeAdapter(
                 runArgs.Add($"{mountEnvironment.Key}={mountEnvironment.Value}");
             }
 
-            runArgs.Add(service.Image.Reference);
+            runArgs.Add(runReference);
             _ = await RunDockerAsync(runArgs, ignoreFailures: false, cancellationToken);
 
             foreach (var port in service.Runtime.Ports.Where(port => port.ContainerPort is not null))
@@ -930,7 +999,7 @@ internal sealed class DockerRuntimeAdapter(
             }
         }
 
-        return new AppRuntimeStartResult("running", endpoints);
+        return new AppRuntimeStartResult("running", endpoints, resolvedLocks);
     }
 
     public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
@@ -979,19 +1048,311 @@ internal sealed class DockerRuntimeAdapter(
         return new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines), services);
     }
 
-    public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
-        => Task.FromResult(new AppRuntimeHealthResult(
-            "unknown",
-            context.Manifest.Services
-                .Select(service => new AppRuntimeServiceHealth(
-                    Service: service.Key,
-                    Status: "unknown",
-                    ProcessId: null,
-                    ExitCode: null,
-                    LogPath: null,
-                    WorkingDirectory: null,
-                    Message: "Docker runtime health inspection is not implemented."))
-                .ToArray()));
+    public async Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+    {
+        var services = new List<AppRuntimeServiceHealth>();
+        foreach (var service in context.Manifest.Services)
+        {
+            services.Add(await InspectServiceHealthAsync(context.App.Id, service.Key, cancellationToken));
+        }
+
+        return new AppRuntimeHealthResult(SummarizeHealthStatus(services), services);
+    }
+
+    // Aggregate container statuses into one app status: all running -> healthy, all stopped ->
+    // stopped, some running -> unhealthy (partial), otherwise unknown.
+    internal static string SummarizeHealthStatus(IReadOnlyList<AppRuntimeServiceHealth> services)
+    {
+        if (services.Count == 0)
+        {
+            return "unknown";
+        }
+
+        if (services.All(service => string.Equals(service.Status, "running", StringComparison.Ordinal)))
+        {
+            return "healthy";
+        }
+
+        if (services.All(service => string.Equals(service.Status, "stopped", StringComparison.Ordinal)))
+        {
+            return "stopped";
+        }
+
+        return services.Any(service => string.Equals(service.Status, "running", StringComparison.Ordinal))
+            ? "unhealthy"
+            : "unknown";
+    }
+
+    // Inspects a single service container in one `docker inspect` call, then resolves the running
+    // image's first repo digest (`repository@sha256:...`) so clients can detect "running != lock"
+    // drift on rolling apps. A missing container or unavailable docker is reported as "stopped" —
+    // health is best-effort observation and never throws.
+    private async Task<AppRuntimeServiceHealth> InspectServiceHealthAsync(string appId, string serviceKey, CancellationToken cancellationToken)
+    {
+        var containerName = BuildContainerName(appId, serviceKey);
+        // Tab-separated so an empty middle field cannot shift columns. {{.Image}} is the image id;
+        // {{.Config.Image}} is the reference the container was launched with (the pinned digest).
+        const string format = "{{.State.Status}}\t{{.State.Pid}}\t{{.State.ExitCode}}\t{{.Image}}\t{{.Config.Image}}";
+        var inspect = await RunRawAsync(["inspect", "--format", format, containerName], cancellationToken);
+        if (inspect.ExitCode != 0)
+        {
+            return new AppRuntimeServiceHealth(serviceKey, "stopped", null, null, null, null, null);
+        }
+
+        var parsed = ParseContainerInspect(inspect.StandardOutput);
+        var image = parsed.ConfigImage;
+        if (!string.IsNullOrWhiteSpace(parsed.ImageId))
+        {
+            var repoDigest = await ResolveImageRepoDigestAsync(parsed.ImageId!, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(repoDigest))
+            {
+                image = repoDigest;
+            }
+        }
+
+        return new AppRuntimeServiceHealth(
+            Service: serviceKey,
+            Status: parsed.Status,
+            ProcessId: parsed.Pid,
+            ExitCode: parsed.ExitCode,
+            LogPath: null,
+            WorkingDirectory: null,
+            Message: null,
+            Image: string.IsNullOrWhiteSpace(image) ? null : image);
+    }
+
+    // Parses the tab-separated `docker inspect` line above. Maps docker's container state to the
+    // "running"/"stopped" vocabulary the rest of Core uses (anything not actively running is stopped).
+    internal static ContainerInspectInfo ParseContainerInspect(string output)
+    {
+        var fields = (output ?? string.Empty).Trim().Split('\t');
+        var rawStatus = fields.Length > 0 ? fields[0].Trim() : string.Empty;
+        var status = string.Equals(rawStatus, "running", StringComparison.OrdinalIgnoreCase) ? "running" : "stopped";
+        int? pid = fields.Length > 1 && int.TryParse(fields[1].Trim(), out var p) && p > 0 ? p : null;
+        int? exitCode = fields.Length > 2 && int.TryParse(fields[2].Trim(), out var c) ? c : null;
+        var imageId = fields.Length > 3 ? NullIfBlank(fields[3]) : null;
+        var configImage = fields.Length > 4 ? NullIfBlank(fields[4]) : null;
+        return new ContainerInspectInfo(status, pid, exitCode, imageId, configImage);
+    }
+
+    internal sealed record ContainerInspectInfo(string Status, int? Pid, int? ExitCode, string? ImageId, string? ConfigImage);
+
+    // Resolves the reference to actually run and the lock to persist, from the manifest image, any
+    // existing per-service lock, and the app's update policy. See runtime-app-marketplace.md
+    // ("Start / restart" and "Core start (lock backfill)"):
+    //   - pinned + existing digest: run the locked digest, pulling it only if absent (deterministic).
+    //   - rolling, or pinned with no lock (legacy/TOFU backfill): pull the tag, resolve its digest,
+    //     run the digest, and record the advanced lock.
+    private async Task<(string RunReference, ArtifactLock Lock)> ResolveImageRunReferenceAsync(
+        RuntimeDockerImage image,
+        ArtifactLock? existingLock,
+        string policy,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(policy, "pinned", StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
+        {
+            var pinnedReference = (image with { Digest = existingLock!.ImageDigest }).Reference;
+            if (!await ImageExistsLocallyAsync(pinnedReference, cancellationToken))
+            {
+                _ = await RunDockerAsync(["pull", pinnedReference], ignoreFailures: false, cancellationToken);
+            }
+
+            return (pinnedReference, existingLock);
+        }
+
+        // rolling, or first resolve / backfill: pull the mutable tag and capture the resolved digest.
+        var tagReference = image.TagReference;
+        string? pullOutput = null;
+        AppLifecycleException? pullFailure = null;
+        try
+        {
+            pullOutput = await RunDockerAsync(["pull", tagReference], ignoreFailures: false, cancellationToken);
+        }
+        catch (AppLifecycleException ex)
+        {
+            pullFailure = ex;
+        }
+
+        // Offline or a local-only image (e.g. built locally during development): the pull failed but
+        // the tag is already present, so resolve its digest from the local image and run it instead of
+        // blocking start. A genuinely-absent image rethrows the original failure. (Can't await in a
+        // catch filter, so the fallback check runs here.)
+        if (pullFailure is not null && !await ImageExistsLocallyAsync(tagReference, cancellationToken))
+        {
+            throw pullFailure;
+        }
+
+        var digest = ParsePullDigest(pullOutput) ?? await ResolveRepoDigestByTagAsync(tagReference, cancellationToken);
+        if (string.IsNullOrWhiteSpace(digest))
+        {
+            // A local-only image may have no repo digest; run the tag as-is and record a lock that
+            // still captures the resolved-from ref so the policy/plan machinery has something to show.
+            return (tagReference, new ArtifactLock("image", null, tagReference, null, null, DateTimeOffset.UtcNow));
+        }
+
+        var runReference = (image with { Digest = digest }).Reference;
+        return (runReference, new ArtifactLock("image", digest, tagReference, null, null, DateTimeOffset.UtcNow));
+    }
+
+    // Runs a docker command for its exit code without throwing when the CLI is unavailable: the
+    // resolve/inspect helpers treat "could not run" identically to a non-zero exit, so a missing
+    // daemon degrades to "not present"/"unknown" rather than crashing health or a pinned restart.
+    private async Task<DockerCommandResult> RunRawAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await runner.RunAsync(args, cancellationToken);
+        }
+        catch (DockerUnavailableException ex)
+        {
+            return new DockerCommandResult(127, string.Empty, ex.Message);
+        }
+    }
+
+    // True when the reference is already present in the local image store (so a pinned restart need
+    // not hit the registry). `docker image inspect` exits non-zero when the image is absent.
+    private async Task<bool> ImageExistsLocallyAsync(string reference, CancellationToken cancellationToken)
+        => (await RunRawAsync(["image", "inspect", reference], cancellationToken)).ExitCode == 0;
+
+    // Reads a pulled tag's first repo digest via `docker inspect`, used when the pull output did not
+    // carry a `Digest:` line. Returns the `sha256:...` portion, or null if unavailable.
+    private async Task<string?> ResolveRepoDigestByTagAsync(string tagReference, CancellationToken cancellationToken)
+    {
+        var result = await RunRawAsync(["inspect", "--format", "{{index .RepoDigests 0}}", tagReference], cancellationToken);
+        return result.ExitCode == 0 ? ParseRepoDigest(result.StandardOutput) : null;
+    }
+
+    // Reads an image id's first repo digest (`repository@sha256:...`) for health reporting.
+    private async Task<string?> ResolveImageRepoDigestAsync(string imageId, CancellationToken cancellationToken)
+    {
+        var result = await RunRawAsync(["inspect", "--format", "{{index .RepoDigests 0}}", imageId], cancellationToken);
+        if (result.ExitCode != 0)
+        {
+            return null;
+        }
+
+        var value = result.StandardOutput?.Trim();
+        return string.IsNullOrWhiteSpace(value) || value.Contains("no value", StringComparison.OrdinalIgnoreCase) ? null : value;
+    }
+
+    // Light remote digest lookup for the reviewed-update plan: resolves `repository:tag` to its index
+    // digest WITHOUT a full pull (A4). Returns the `sha256:...` digest, or null when the registry is
+    // unreachable/unresolvable — the plan then marks the artifact delta "unknown" and the full pull
+    // happens at apply. Tries `buildx imagetools` (multi-arch index digest) then `manifest inspect`.
+    public async Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
+    {
+        var tagReference = image.TagReference;
+        var imagetools = await RunRawAsync(
+            ["buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", tagReference],
+            cancellationToken);
+        if (imagetools.ExitCode == 0 && ParseSha256(imagetools.StandardOutput) is { } digest)
+        {
+            return digest;
+        }
+
+        var manifest = await RunRawAsync(["manifest", "inspect", "--verbose", tagReference], cancellationToken);
+        return manifest.ExitCode == 0 ? ParseManifestInspectDigest(manifest.StandardOutput) : null;
+    }
+
+    // Parses the `Digest: sha256:...` line docker prints during a pull. Returns `sha256:...` or null.
+    internal static string? ParsePullDigest(string? pullOutput)
+    {
+        if (string.IsNullOrWhiteSpace(pullOutput))
+        {
+            return null;
+        }
+
+        foreach (var line in pullOutput.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("Digest:", StringComparison.OrdinalIgnoreCase))
+            {
+                return ParseSha256(trimmed["Digest:".Length..]);
+            }
+        }
+
+        return null;
+    }
+
+    // Extracts the `sha256:...` portion from a repo digest reference (`repository@sha256:...`) as
+    // emitted by `docker inspect --format '{{index .RepoDigests 0}}'`. Returns null if absent.
+    internal static string? ParseRepoDigest(string? repoDigest)
+    {
+        if (string.IsNullOrWhiteSpace(repoDigest))
+        {
+            return null;
+        }
+
+        var trimmed = repoDigest.Trim();
+        var at = trimmed.LastIndexOf('@');
+        return at >= 0 ? ParseSha256(trimmed[(at + 1)..]) : ParseSha256(trimmed);
+    }
+
+    // `docker manifest inspect --verbose` returns either an object (single manifest) with a
+    // `Descriptor.digest`, or an array (manifest list) of per-platform entries. The pull lock is the
+    // index digest, which the array form does not expose reliably, so only the object form resolves.
+    internal static string? ParseManifestInspectDigest(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("Descriptor", out var descriptor) &&
+                descriptor.ValueKind == JsonValueKind.Object &&
+                descriptor.TryGetProperty("digest", out var digest) &&
+                digest.ValueKind == JsonValueKind.String)
+            {
+                return ParseSha256(digest.GetString());
+            }
+        }
+        catch (JsonException)
+        {
+            // Unexpected output shape: treat as unresolved rather than failing the plan.
+        }
+
+        return null;
+    }
+
+    // Normalizes a candidate digest string to a `sha256:<hex>` token, or null if it is not one.
+    private static string? ParseSha256(string? value)
+    {
+        var trimmed = value?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return null;
+        }
+
+        // Tolerate surrounding tokens (e.g. a whole reference) by locating the algorithm prefix.
+        var index = trimmed.IndexOf("sha256:", StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var candidate = trimmed[index..];
+        var end = candidate.IndexOfAny([' ', '\t', '\r', '\n', '"']);
+        if (end >= 0)
+        {
+            candidate = candidate[..end];
+        }
+
+        // sha256: + 64 lowercase hex chars.
+        return candidate.Length == "sha256:".Length + 64 ? candidate.ToLowerInvariant() : null;
+    }
+
+    // The app-level pull/lock policy: pinned (default) or rolling. Anything unrecognized (or null)
+    // is treated as pinned — the safe, deterministic default.
+    internal static string ResolveUpdatePolicy(string? policy)
+        => string.Equals(policy, "rolling", StringComparison.OrdinalIgnoreCase) ? "rolling" : "pinned";
+
+    private static string? NullIfBlank(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static IReadOnlyList<RuntimeSelectedService> OrderServices(IReadOnlyList<RuntimeSelectedService> services)
     {
@@ -1018,46 +1379,33 @@ internal sealed class DockerRuntimeAdapter(
         return ordered;
     }
 
-    private static async Task<string> RunDockerAsync(IReadOnlyList<string> args, bool ignoreFailures, CancellationToken cancellationToken)
+    // Runs a docker command through the injected runner and returns stdout, throwing on a non-zero
+    // exit (or unavailable docker) unless ignoreFailures. The exit-code-aware resolve/inspect helpers
+    // call the runner directly; this wrapper preserves the throw-on-failure semantics callers rely on.
+    private async Task<string> RunDockerAsync(IReadOnlyList<string> args, bool ignoreFailures, CancellationToken cancellationToken)
     {
-        var process = new System.Diagnostics.Process
-        {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "docker",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            },
-        };
-        foreach (var arg in args)
-        {
-            process.StartInfo.ArgumentList.Add(arg);
-        }
-
+        DockerCommandResult result;
         try
         {
-            process.Start();
+            result = await runner.RunAsync(args, cancellationToken);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (DockerUnavailableException) when (ignoreFailures)
         {
-            if (ignoreFailures)
-            {
-                return string.Empty;
-            }
-
+            return string.Empty;
+        }
+        catch (DockerUnavailableException ex)
+        {
             throw new AppLifecycleException("docker_unavailable", $"Docker CLI is not available: {ex.Message}");
         }
 
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        if (process.ExitCode != 0 && !ignoreFailures)
+        if (result.ExitCode != 0 && !ignoreFailures)
         {
-            throw new AppLifecycleException("docker_operation_failed", string.IsNullOrWhiteSpace(stderr) ? $"Docker exited with code {process.ExitCode}." : stderr.Trim());
+            throw new AppLifecycleException(
+                "docker_operation_failed",
+                string.IsNullOrWhiteSpace(result.StandardError) ? $"Docker exited with code {result.ExitCode}." : result.StandardError.Trim());
         }
 
-        return stdout;
+        return result.StandardOutput;
     }
 
     internal static string BuildContainerName(string appId, string serviceKey)
@@ -1290,9 +1638,21 @@ internal sealed record RuntimeSelectedService(
 [JsonConverter(typeof(RuntimeServiceDependencyJsonConverter))]
 internal sealed record RuntimeServiceDependency(string Service, string? Port);
 
-internal sealed record RuntimeDockerImage(string Repository, string Tag, string? PullPolicy)
+// A docker image the manifest declares. The manifest only ever carries intent (`repository:tag`);
+// the resolved immutable digest lives in the app-level lock (`AppRecord.ArtifactLocks`), not here.
+// `Digest` is populated transiently by the docker adapter when it combines the manifest image with a
+// resolved/locked digest to produce the pin (`repository@sha256:...`) that is actually run.
+internal sealed record RuntimeDockerImage(string Repository, string Tag, string? Digest = null)
 {
-    public string Reference => $"{Repository}:{Tag}";
+    // The reference to run: the pinned digest when one is set, else the mutable tag. Running the
+    // digest is what makes restarts deterministic (see runtime-app-marketplace.md, "Start / restart").
+    public string Reference => string.IsNullOrWhiteSpace(Digest)
+        ? $"{Repository}:{Tag}"
+        : $"{Repository}@{Digest}";
+
+    // The mutable pointer (`repository:tag`), always tag-shaped. Used to (re-)resolve a digest at
+    // install/update/rolling-start and to describe the manifest intent in update plans.
+    public string TagReference => $"{Repository}:{Tag}";
 }
 
 internal sealed class RuntimeAppManifest
@@ -1501,7 +1861,13 @@ internal sealed class RuntimeAppEndpointManifest
     public bool Public { get; init; }
 }
 
-internal sealed record AppRuntimeStartResult(string RuntimeState, IReadOnlyList<AppEndpointContract> Endpoints);
+// Per-service artifact locks the runtime resolved during start (compiled artifacts only). Null when
+// the runtime has nothing to pin (e.g. localCommand/source), in which case the caller leaves any
+// existing locks untouched. The lifecycle service persists these onto AppRecord.ArtifactLocks.
+internal sealed record AppRuntimeStartResult(
+    string RuntimeState,
+    IReadOnlyList<AppEndpointContract> Endpoints,
+    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks = null);
 
 internal sealed record AppRuntimeOperationResult(string RuntimeState);
 
@@ -1518,7 +1884,11 @@ internal sealed record AppRuntimeServiceHealth(
     int? ExitCode,
     string? LogPath,
     string? WorkingDirectory,
-    string? Message);
+    string? Message,
+    // The image the service is actually running, reported by the docker runtime as
+    // `repository@sha256:...` (its first repo digest). Lets clients surface "running != lock" drift.
+    // Null for runtimes that have no image (localCommand) or when it cannot be determined.
+    string? Image = null);
 
 internal sealed record AppManifestValidationError(string Code, string Message, string Path);
 
