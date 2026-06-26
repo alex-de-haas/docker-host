@@ -813,6 +813,50 @@ internal sealed class CoreLifecycleService(
             Services: health.Services);
     }
 
+    // Read-only "update available" detection (runtime-app-marketplace.md, "Update-available
+    // detection"): for each compiled (docker image) service, compare the currently-locked digest to
+    // the tag's remotely-resolved candidate digest via a light registry lookup (IImageDigestResolver,
+    // no full pull). A service is "update available" only when a lock exists and the candidate differs;
+    // an unreachable registry yields a null candidate reported as "unknown" rather than failing. This
+    // never mutates state — applying an update still goes through the reviewed-update plan.
+    public async Task<AppUpdateStatusResponse> GetUpdateStatusAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+        var policy = DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy);
+        var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
+
+        var services = new List<AppServiceUpdateStatus>();
+        foreach (var service in selection.Services
+            .Where(service => service.Image is not null)
+            .OrderBy(service => service.Key, StringComparer.Ordinal))
+        {
+            var lockedDigest = app.ArtifactLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
+            var candidateDigest = resolver is null
+                ? null
+                : await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
+            var unknown = string.IsNullOrWhiteSpace(candidateDigest);
+            var serviceUpdateAvailable = !unknown
+                && !string.IsNullOrWhiteSpace(lockedDigest)
+                && !string.Equals(lockedDigest, candidateDigest, StringComparison.Ordinal);
+
+            services.Add(new AppServiceUpdateStatus(
+                Service: service.Key,
+                LockedDigest: lockedDigest,
+                CandidateDigest: candidateDigest,
+                UpdateAvailable: serviceUpdateAvailable,
+                Unknown: unknown));
+        }
+
+        return new AppUpdateStatusResponse(
+            AppId: appId,
+            Runtime: selection.RuntimeProfile.Key,
+            RuntimeType: selection.RuntimeProfile.Type,
+            UpdatePolicy: policy,
+            UpdateAvailable: services.Any(service => service.UpdateAvailable),
+            Services: services);
+    }
+
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<AppBackgroundLifecycleResult>();
@@ -2741,3 +2785,23 @@ internal sealed record AppRuntimeHealthResponse(
     string RuntimeType,
     string Status,
     IReadOnlyList<AppRuntimeServiceHealth> Services);
+
+// Read-only update-available report for a runtime app (see GetUpdateStatusAsync). `UpdateAvailable`
+// is the aggregate over compiled services; `UpdatePolicy` is "pinned"/"rolling" for legibility.
+internal sealed record AppUpdateStatusResponse(
+    string AppId,
+    string Runtime,
+    string RuntimeType,
+    string UpdatePolicy,
+    bool UpdateAvailable,
+    IReadOnlyList<AppServiceUpdateStatus> Services);
+
+// Per-service update status: the currently-locked digest, the remotely-resolved candidate digest, and
+// whether the candidate is a new build (lock present and differs). `Unknown` = the registry could not
+// be reached so no candidate could be resolved.
+internal sealed record AppServiceUpdateStatus(
+    string Service,
+    string? LockedDigest,
+    string? CandidateDigest,
+    bool UpdateAvailable,
+    bool Unknown);

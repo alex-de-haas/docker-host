@@ -46,6 +46,18 @@ export function formatUpdateChange(change: string): string {
     return `Service ${service} image changed from ${formatArrowValue(diff)}`;
   }
 
+  // `artifact:{service}:{currentDigest}->{targetDigest}` — a resolved-image-digest change (a
+  // re-pushed tag or a new build) even when the manifest JSON is byte-identical. Digests are long,
+  // so render the short form. Endpoints can be `none` (no prior lock) or `unknown` (registry
+  // unreachable at plan time).
+  if (change.startsWith("artifact:")) {
+    const [service, diff] = splitToken(change.slice("artifact:".length), 1);
+    const separator = diff.indexOf("->");
+    const current = separator === -1 ? diff : diff.slice(0, separator);
+    const target = separator === -1 ? "" : diff.slice(separator + 2);
+    return `Service ${service} image digest changed from ${formatDigestEndpoint(current)} to ${formatDigestEndpoint(target)}`;
+  }
+
   if (change.startsWith("command:")) {
     const [service] = splitToken(change.slice("command:".length), 1);
     return `Service ${service} command changed`;
@@ -175,6 +187,29 @@ function formatArrowValue(value: string): string {
   }
 
   return `${value.slice(0, separator)} to ${value.slice(separator + 2)}`;
+}
+
+// Abbreviates a `sha256:...` image digest to `sha256:` + the first 12 hex chars for compact display.
+// Non-digest tokens (and short values) are returned unchanged.
+export function shortDigest(digest?: string | null): string | null {
+  const trimmed = digest?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const hex = trimmed.startsWith("sha256:") ? trimmed.slice("sha256:".length) : trimmed;
+  return hex.length > 12 ? `sha256:${hex.slice(0, 12)}` : trimmed;
+}
+
+// Renders one side of an artifact-digest diff: the literal `none`/`unknown`/empty markers verbatim,
+// any real digest abbreviated.
+function formatDigestEndpoint(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed === "none" || trimmed === "unknown") {
+    return trimmed || "unknown";
+  }
+
+  return shortDigest(trimmed) ?? trimmed;
 }
 
 function splitToken(value: string, fixedParts: number): string[] {

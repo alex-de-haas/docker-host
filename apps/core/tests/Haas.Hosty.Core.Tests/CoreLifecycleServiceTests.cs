@@ -912,6 +912,82 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task GetUpdateStatusAsync_ReportsUpdateAvailableWhenCandidateDiffersFromLock()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var lockedDigest = "sha256:" + new string('a', 64);
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", lockedDigest, "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+
+        // The registry now resolves the tracked tag to a newer digest.
+        var candidateDigest = "sha256:" + new string('b', 64);
+        fixture.Adapter.RemoteDigest = candidateDigest;
+
+        var status = await fixture.Service.GetUpdateStatusAsync("com.example.notes");
+
+        Assert.True(status.UpdateAvailable);
+        Assert.Equal("pinned", status.UpdatePolicy);
+        var service = Assert.Single(status.Services);
+        Assert.Equal("app", service.Service);
+        Assert.Equal(lockedDigest, service.LockedDigest);
+        Assert.Equal(candidateDigest, service.CandidateDigest);
+        Assert.True(service.UpdateAvailable);
+        Assert.False(service.Unknown);
+    }
+
+    [Fact]
+    public async Task GetUpdateStatusAsync_ReportsUpToDateWhenCandidateMatchesLock()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var digest = "sha256:" + new string('c', 64);
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", digest, "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+        // The registry resolves the same digest the app is already locked to.
+        fixture.Adapter.RemoteDigest = digest;
+
+        var status = await fixture.Service.GetUpdateStatusAsync("com.example.notes");
+
+        Assert.False(status.UpdateAvailable);
+        var service = Assert.Single(status.Services);
+        Assert.False(service.UpdateAvailable);
+        Assert.False(service.Unknown);
+        Assert.Equal(digest, service.CandidateDigest);
+    }
+
+    [Fact]
+    public async Task GetUpdateStatusAsync_MarksServiceUnknownWhenRegistryUnreachable()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", "sha256:" + new string('d', 64), "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+        // Registry unreachable -> resolver returns null; status must not fail and the delta is unknown.
+        fixture.Adapter.RemoteDigest = null;
+
+        var status = await fixture.Service.GetUpdateStatusAsync("com.example.notes");
+
+        Assert.False(status.UpdateAvailable);
+        var service = Assert.Single(status.Services);
+        Assert.True(service.Unknown);
+        Assert.False(service.UpdateAvailable);
+        Assert.Null(service.CandidateDigest);
+    }
+
+    [Fact]
     public async Task StartAsync_CloudflaredIngress_PersistsPublicOriginAndWritesTunnelConfig()
     {
         var fixture = await LifecycleFixture.CreateAsync(ingressBaseDomain: "apps.example.test");
