@@ -676,16 +676,17 @@ Ordered by leverage for the new update + catalog approach:
 
 ## Scope Decisions (confirmed 2026-06-26)
 
-Closing the implementation-readiness review; ids match the question list it produced.
+Closing the implementation-readiness review; IDs match the question list it produced.
 These narrow v1 to a buildable scope.
 
 Update model / artifact (A):
 
-- **A1** Artifact kind is declared per runtime: `services[].runtimes[<key>].artifact:
-  image | source | prebuilt`. `docker` defaults to `image`; `localCommand` must declare it.
+- **A1** Artifact kind is declared per runtime on `services[].runtimes[<key>].artifact`,
+  one of `image` / `source` / `prebuilt`. `docker` defaults to `image`; `localCommand`
+  must declare it.
 - **A2** No per-runtime source in v1; a source runtime consumes the app-level
   `manifest.source`. Revisit only if an app needs two repos.
-- **A3** Lock = `AppRecord.ArtifactLocks: Dictionary<serviceKey, ArtifactLock>?`, where
+- **A3** Lock = `AppRecord.ArtifactLocks: Dictionary<string, ArtifactLock>?` (keyed by service), where
   `ArtifactLock { Kind, ImageDigest?, ResolvedFromRef?, BundleHash?, Commit?, ResolvedAt }`.
   Nullable/additive; registered in `CoreJsonSerializerContext`.
 - **A4** Resolve the target digest at plan time with a light lookup (`docker manifest
