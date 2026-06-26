@@ -674,41 +674,97 @@ Ordered by leverage for the new update + catalog approach:
     `AppRecord.SelectedChannel`, the `TargetChannel` plan field, the `--channel` CLI
     flag). See Channels: Decision for the full surface.
 
+## Scope Decisions (confirmed 2026-06-26)
+
+Closing the implementation-readiness review; IDs match the question list it produced.
+These narrow v1 to a buildable scope.
+
+Update model / artifact (A):
+
+- **A1** Artifact kind is declared per runtime on `services[].runtimes[<key>].artifact`,
+  one of `image` / `source` / `prebuilt`. `docker` defaults to `image`; `localCommand`
+  must declare it.
+- **A2** No per-runtime source in v1; a source runtime consumes the app-level
+  `manifest.source`. Revisit only if an app needs two repos.
+- **A3** Lock = `AppRecord.ArtifactLocks: Dictionary<string, ArtifactLock>?` (keyed by service), where
+  `ArtifactLock { Kind, ImageDigest?, ResolvedFromRef?, BundleHash?, Commit?, ResolvedAt }`.
+  Nullable/additive; registered in `CoreJsonSerializerContext`.
+- **A4** Resolve the target digest at plan time with a light lookup (`docker manifest
+  inspect` / registry HEAD, no full pull). Registry unreachable -> the plan does not fail;
+  the artifact delta is marked "unknown" and the full pull happens at apply.
+- **A5** The live source-reconcile is its own phase (**2b**), after image pinning (**2a**).
+- **A6** `prebuilt` is **out of v1** (image + source only). Spec retained under Deferred.
+- **A7** Core-fetched publisher source is **out of v1** (only the operator-owned dev
+  folder is "source"); expected to arrive with git-URL install.
+- **A8** Remove `pullPolicy` from the manifest model; pull behaviour derives from the
+  `pinned`/`rolling` policy.
+- **A9** AppRecord changes are additive/nullable - no `SchemaVersion` transform; locks are
+  lazily backfilled on start.
+
+Marketplace (B):
+
+- **B1** Versioned schemas (`marketplace.0.1`) for `catalog.json` / entry / feed, specced
+  in phase 1.
+- **B2** `GET /api/catalog/apps` + `/api/catalog/apps/{id}`; merge sources by priority,
+  id-conflict -> first source wins + warning; pagination deferred.
+- **B3** **ECDsa P-256 detached signatures** (BCL-native, AOT-proven - see spike) over the
+  index + feed, verified against a public key pinned in Core. Keyless sigstore deferred.
+- **B4** v1 resolves versions from an explicit `releasesUrl` feed only; bare OCI/git tag
+  enumeration deferred.
+- **B5** New top-level `catalogMetadata` block (outside runtime validation); also surface
+  `ui.category` + metadata on `AppSummary`.
+- **B6** The catalog repo + CI is a separate `hosty-catalog` deliverable; Core only
+  consumes the published index.
+- **B7** Offline verification = pinned public key + cached trust root; full air-gapped
+  story deferred.
+
+Cross-cutting (C):
+
+- **C1** Product channels stay a separate axis; define the `product-channels.json`
+  consumer before building platform delivery on it.
+- **C2** Each phase = platform minor bump (0.x breaking-ish surface); Shell patch/minor.
+
+### B3 spike result (2026-06-26)
+
+Verified on .NET 10 with `PublishAot=true` (Core's exact build model):
+
+- **ECDsa P-256 detached signature** (sign + verify, with tamper and wrong-key rejection)
+  compiles **native-AOT clean** (warnings-as-errors) into a self-contained binary with
+  **no native dependency**. This is the v1 choice.
+- **Ed25519 is not in the .NET 10 BCL** (only ML-DSA / SLH-DSA PQC are), so an
+  ed25519/minisign scheme would need a native libsodium dependency - hence ECDsa P-256.
+- **`Sigstore` 0.5.0 does AOT-compile, link, and load** (0 IL trim/AOT warnings with the
+  assembly rooted), so keyless is **not AOT-infeasible** - but it ships a native
+  `libsodium.dylib` side-car (via `NSec.Cryptography`), a TUF client, and Fulcio/Rekor
+  HTTP surface, and is 0.x. Deferred on cost/maturity, not feasibility.
+
+## Deferred (out of v1)
+
+- **`prebuilt` artifacts + bundle hash.** Add when a real app needs a built bundle that is
+  not an OCI image. Spec to use when it lands: a versioned Merkle **bundle digest**
+  (`bundle.v1:sha256:...`) in the style of Go's `h1:` dirhash, over the manifest-declared
+  bundle root (per service): per file `sha256(bytes)` (no content normalization); key each
+  entry by its POSIX, Unicode-NFC relative path plus a normalized exec-bit / `symlink ->
+  target` flag; sort by raw path bytes; `sha256` the concatenation; ignore mtime/uid/gid
+  and empty dirs plus a fixed ignore set (`.git`, OS junk); compute at install/update only,
+  store in `ArtifactLocks`, include in the plan seed; re-hash on demand for drift. Hand-
+  rolled Merkle over `SHA256` (AOT-clean, no deps); avoid reproducible-tar. Lowest-effort
+  alternative: package the bundle as an OCI artifact and reuse the image digest.
+- **Core-fetched publisher source** (live code + reviewed contract) - arrives with git-URL
+  install.
+- **Bare OCI/git tag enumeration** as a version source (auth, rate limits, dist-tag
+  conventions).
+- **Keyless sigstore verification** - AOT-viable (see B3 spike) but heavy; revisit if the
+  catalog grows beyond a single trusted publisher.
+
 ## Open Questions
 
-- **Tag -> digest resolution without a full pull** for update-available detection.
-  Use `docker manifest inspect` / a registry HEAD vs a full `docker pull`? How does
-  this behave for private registries (out of scope for v1)?
-- **Where is the per-app version feed hosted and signed** for the zero-effort
-  (tags-only) author? Recommendation: support both registry/git-tag resolution and an
-  explicit `releasesUrl` feed; require a signer identity in the catalog entry either way.
-- **Offline / air-gapped signature verification** of a keyless (sigstore) index.
-  Recommendation: pinned identity + cached trust root; defer the full offline story.
-- **dist-tags over plain OCI/git tags** when there is no explicit feed.
-  Recommendation: convention or OCI annotations/referrers; decide during phase 1.
-- **`product-channels.json` ownership.** Nothing consumes it yet - define its
-  consumer (installer/build pipeline) before building platform delivery on it; keep
-  it separate from the app catalog.
-- **Content-hash lock for `prebuilt` artifacts.** Images have a natural OCI digest; a
-  pre-built bundle needs a defined hash (which files, normalization) to lock against.
-  Recommendation: a versioned Merkle **bundle digest** (`bundle.v1:sha256:...`) in the
-  style of Go's `h1:` dirhash, over the manifest-declared bundle root (per service):
-  - per file `sha256(bytes)` - **no content normalization** (hash exactly what runs);
-  - key each entry by its **POSIX, Unicode-NFC** relative path plus a normalized
-    exec-bit / `symlink -> target` flag; **sort by raw path bytes**; `sha256` the
-    concatenation;
-  - **ignore** mtime/atime/uid/gid and empty dirs, and a fixed ignore set (`.git`, OS junk
-    like `.DS_Store`), so the digest is identical across delivery methods (git clone /
-    folder copy / archive);
-  - compute at **install/update only** (not every start), store per service in
-    `ArtifactLocks`, include in the plan seed (closes the invisible-update gap for prebuilt
-    too); re-hash on demand for drift, not on each restart.
-
-  Implement as a hand-rolled Merkle over `SHA256` (AOT-clean, no deps); avoid
-  reproducible-tar (fragile on mtime / order / padding). Lowest-effort alternative: package
-  the bundle as an **OCI artifact** and reuse the image digest - this collapses `prebuilt`
-  into the `image` lock path (one mechanism, zero new code), at the cost of a registry push
-  rather than a plain file/git delivery.
+- **`product-channels.json` ownership.** Nothing consumes it yet - define its consumer
+  (installer/build pipeline) before building platform delivery on it; separate from the
+  app catalog.
+- **Phase 2b reconcile granularity.** Which manifest changes a live operator-folder source
+  applies on restart (e.g. ports/mounts needing a container rebuild) vs only surfaces in
+  the diff. Decide when 2b is designed.
 
 ## Links
 
