@@ -468,15 +468,14 @@ testing, which is now covered by local install (folder install from a worktree p
 `source-override` tests any runtime, including `localCommand`, before merge).
 
 **Decision: remove the channel code outright.** Because it is unused, no migration is
-needed. Removal surface:
+needed. Removal surface (implemented in PR #67; referenced by symbol/file, not line
+number, so it does not drift):
 
-- Manifest: `channelsUrl` (`RuntimeAppManifest.cs:1309`), `AppChannelIndex`,
-  `AppChannelEntry`.
-- Core: `ListChannelsAsync`, `CreateChannelSwitchPlanAsync`, `ApplyChannelSwitchAsync`,
-  `LoadChannelIndexAsync`, `ResolveChannelIndexPath`, `ResolveChannelManifestPath`
-  (`CoreLifecycleService.cs:614-664, 2488-2551, 2729-2805`).
-- Endpoints: `channels`, `switch-channel/plan`, `switch-channel`
-  (`LifecycleEndpoints.cs:435-463`).
+- Manifest: `channelsUrl`, `AppChannelIndex`, `AppChannelEntry`.
+- Core (`CoreLifecycleService`): `ListChannelsAsync`, `CreateChannelSwitchPlanAsync`,
+  `ApplyChannelSwitchAsync`, `LoadChannelIndexAsync`, `ResolveChannelIndexPath`,
+  `ResolveChannelManifestPath`.
+- Endpoints (`LifecycleEndpoints`): `channels`, `switch-channel/plan`, `switch-channel`.
 - State/plan: `AppRecord.SelectedChannel`, and `TargetChannel` on `AppUpdatePlan` /
   `AppUpdatePlanDigestSeed`.
 - CLI: the `--channel` flag on `install` / `update`.
