@@ -548,8 +548,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
     {
         var allowed = string.Equals(runtimeType, "docker", StringComparison.Ordinal) ? "image" : "source";
 
-        // R1: a localCommand without an explicit artifact infers `source` (back-compat); the
-        // advisory that surfaces this inference is folded into the 2b reconcile status.
+        // R1: an absent artifact infers per runtime type (localCommand → source) silently for
+        // back-compat — no error and, in v1, no advisory (surfacing a "declare it" hint is deferred
+        // to the liveness-breadcrumb increment, R15/R16).
         if (string.IsNullOrWhiteSpace(declared))
         {
             return allowed;

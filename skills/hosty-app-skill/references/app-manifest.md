@@ -52,7 +52,7 @@ For `localCommand` runtime profiles, do not hard-code development ports by defau
 
 Each `services[].runtimes[<key>]` may declare `artifact`, which tells Core how the running code is delivered and therefore how it updates:
 
-- `image` — a compiled OCI image. The update is **locked**: Core resolves the tag to an immutable digest and pins it, so restarts are deterministic and an update is a reviewed change. This is the default (and only supported value) for `docker`.
+- `image` — a compiled OCI image. By default (the `pinned` update policy) the update is **locked**: Core resolves the tag to an immutable digest and pins it, so restarts are deterministic and advancing it is a reviewed change. An operator can instead set the app's update policy to `rolling`, which re-resolves the tag on every start (drift accepted). This is the default (and only supported value) for `docker`.
 - `source` — code that runs **live** from the operator's own folder. There is no run-lock; Core re-reads and reconciles the manifest on each start. This is the default (and only supported value) for `localCommand`.
 
 `artifact` is optional — when omitted Core infers it from the runtime type (`docker` → `image`, `localCommand` → `source`), so existing manifests need no change. Declaring a value that does not match its runtime (e.g. `artifact: source` under `docker`) is rejected with `app_runtime_artifact_unsupported`. `prebuilt` is reserved and not yet supported.

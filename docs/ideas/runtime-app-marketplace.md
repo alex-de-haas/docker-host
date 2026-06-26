@@ -748,8 +748,9 @@ liveness UI + breadcrumbs (R15/R16) → switch live→compiled (R17).
 Artifact field (A1):
 
 - **R1** Infer when omitted, never fail for back-compat: absent `artifact` → `docker` resolves
-  to `image`, `localCommand` to `source`. A `localCommand` without an explicit `artifact`
-  emits a **warning**, not an error (softens "must declare" to "recommended").
+  to `image`, `localCommand` to `source`. A `localCommand` without an explicit `artifact` is
+  inferred **silently** (no error). *(Implemented as silent inference; surfacing a "declaring
+  artifact is recommended" advisory is deferred to the liveness-breadcrumb increment, R15/R16.)*
 - **R2** Allowed values in v1: `docker = {image}`, `localCommand = {source}`. Any other
   combination → `app_runtime_artifact_unsupported`.
 - **R3** `prebuilt` is **hard-rejected** at validation (fail fast), not accept-and-defer (per A6).
@@ -765,8 +766,10 @@ Reconcile granularity (phase 2b — closes the "reconcile granularity" open ques
 - **R6** Capability wiring (ingress/notifications) is **idempotent and re-applied each start**;
   changes surface in the diff. No separate ceremony.
 - **R7** A slot removed from a live manifest while an `AppMountBinding` exists: the binding is
-  **kept but marked orphaned/inactive** (not injected), surfaced in the diff with a warning.
-  The host path is never touched (Hosty never deletes mounts). A re-added slot auto-rebinds.
+  **kept but inert** — not injected and omitted from the mount summaries (keyed off current
+  slots) rather than deleted. The host path is never touched (Hosty never deletes mounts) and a
+  re-added slot auto-rebinds. *(Implemented as silently inert; explicitly surfacing the orphaned
+  binding in the reconcile diff with a warning is a follow-up increment.)*
 - **R8** Settings are **non-destructive**: stored values are validated against the new schema;
   mismatches surface as a warning and values are retained. Start is blocked only when a
   now-`required` setting is missing (reusing the existing required-settings gate).
