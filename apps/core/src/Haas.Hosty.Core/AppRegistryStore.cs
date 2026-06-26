@@ -223,7 +223,16 @@ internal sealed record AppRecord(
     // Pull/lock policy for compiled artifacts: "pinned" (default) runs the locked digest and requires
     // a reviewed update to advance it; "rolling" re-resolves the tag every start and accepts drift.
     // Null = pinned. Operator-set via configure; the single source of truth (pullPolicy is gone, A8).
-    string? UpdatePolicy = null);
+    string? UpdatePolicy = null,
+    // Set when a live source app's operator folder manifest failed validation on the last start (2b):
+    // Core kept running the last-good reviewed copy and surfaces the error so the operator sees the
+    // broken edit. Null when the live manifest is valid or the app is not a live source app. Additive
+    // and nullable, so no AppStateDocument.SchemaVersion bump is needed (R13/R14, A9).
+    string? ManifestError = null,
+    // The contract changes a live source app adopted at its last start (version/capability/mount/
+    // endpoint/settings deltas vs the previous start), for operator awareness — informational, not a
+    // gate (2b/R11/R12). Null/empty when nothing changed or the app is not a live source app.
+    IReadOnlyList<string>? LiveChanges = null);
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
 // update for a pinned app. `Kind` is "image" (registry image) in v1; the bundle/source fields are
@@ -385,7 +394,13 @@ internal sealed record AppSummary(
     // Compiled-artifact run-locks per service (the running/locked image digest) and the effective
     // pull/lock policy ("pinned"/"rolling"), for version legibility and drift badges on clients.
     string UpdatePolicy,
-    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks)
+    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks,
+    // Set when the live source folder manifest was invalid on the last start and Core fell back to
+    // the last-good copy; clients surface it as a non-blocking banner (2b, R14). Null otherwise.
+    string? ManifestError,
+    // Contract deltas a live source app adopted at its last start, for an informational "adopted"
+    // breadcrumb on clients (2b/R11). Null/empty when nothing changed or the app is not live source.
+    IReadOnlyList<string>? LiveChanges)
 {
     public static AppSummary From(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null)
     {
@@ -430,7 +445,9 @@ internal sealed record AppSummary(
             navigation,
             BuildMountSummaries(app.MountSlots, app.Mounts),
             DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
-            app.ArtifactLocks);
+            app.ArtifactLocks,
+            app.ManifestError,
+            app.LiveChanges);
     }
 
     private static IReadOnlyList<AppMountSummary> BuildMountSummaries(

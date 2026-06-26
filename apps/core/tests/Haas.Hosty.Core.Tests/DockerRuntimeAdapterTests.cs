@@ -118,7 +118,8 @@ public sealed class DockerRuntimeAdapterTests
                 Network = "host",
                 Ports = [new RuntimePortManifest { Key = "internal", ContainerPort = 8080 }],
             },
-            null);
+            null,
+            "image");
         var port = new RuntimePortManifest { Key = "internal", ContainerPort = 8080 };
 
         var url = DockerRuntimeAdapter.BuildDockerServiceUrl(service, port);
@@ -133,7 +134,8 @@ public sealed class DockerRuntimeAdapterTests
             "api",
             [],
             new RuntimeServiceProfileManifest { Type = "docker", Ports = [new RuntimePortManifest { Key = "internal", ContainerPort = 3000 }] },
-            null);
+            null,
+            "image");
         var port = new RuntimePortManifest { Key = "internal", ContainerPort = 3000 };
 
         var url = DockerRuntimeAdapter.BuildDockerServiceUrl(service, port);
@@ -175,8 +177,8 @@ public sealed class DockerRuntimeAdapterTests
     [Fact]
     public void RequiresUserNetwork_OnlyWhenAServiceDependsOnAnother()
     {
-        var api = new RuntimeSelectedService("api", [], new RuntimeServiceProfileManifest { Type = "docker" }, null);
-        var web = new RuntimeSelectedService("web", [new RuntimeServiceDependency("api", null)], new RuntimeServiceProfileManifest { Type = "docker" }, null);
+        var api = new RuntimeSelectedService("api", [], new RuntimeServiceProfileManifest { Type = "docker" }, null, "image");
+        var web = new RuntimeSelectedService("web", [new RuntimeServiceDependency("api", null)], new RuntimeServiceProfileManifest { Type = "docker" }, null, "image");
 
         Assert.False(DockerRuntimeAdapter.RequiresUserNetwork([api]));
         Assert.True(DockerRuntimeAdapter.RequiresUserNetwork([api, web]));
@@ -408,7 +410,8 @@ public sealed class DockerRuntimeAdapterTests
             "app",
             [],
             new RuntimeServiceProfileManifest { Type = "docker" },
-            new RuntimeDockerImage("ghcr.io/example/app", "latest"));
+            new RuntimeDockerImage("ghcr.io/example/app", "latest"),
+            "image");
         var manifest = new RuntimeAppManifest { SchemaVersion = "app.0.1", Id = "com.example.app", Name = "App", Version = "1.0.0" };
         var profile = new RuntimeProfileManifest { Key = "docker", Type = "docker", Default = true };
         var selection = new RuntimeAppManifestSelection(manifest, "/tmp/manifest.json", "digest", profile, [service], null, "{}", null);

@@ -338,14 +338,27 @@ internal sealed class CoreLifecycleService(
         var runtimeStarted = false;
         try
         {
+            var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
+            var selection = load.Selection;
+            // Adopt a live source folder edit before the gates below so they see the live contract
+            // (e.g. a newly-required setting blocks start, R8; a new required mount slot is enforced).
+            if (load.LiveReconciled)
+            {
+                app = await ReconcileLiveContractAsync(app, load, cancellationToken);
+            }
+
             await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
-            var selection = await LoadSelectionForAppAsync(app, cancellationToken);
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             EnsureMountsReadyForStart(context);
             await NotifyMissingDependenciesAsync(app, cancellationToken);
+            if (load.ManifestError is not null)
+            {
+                await NotifyManifestInvalidAsync(app, load.ManifestError, cancellationToken);
+            }
+
             var result = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
             var updated = await apps.UpdateAppAsync(appId, current => current with
@@ -358,6 +371,9 @@ internal sealed class CoreLifecycleService(
                 // Persist the run-locks the adapter resolved (TOFU backfill / rolling advance);
                 // a runtime with nothing to pin returns null, leaving any existing locks intact.
                 ArtifactLocks = result.ArtifactLocks ?? current.ArtifactLocks,
+                // A live source app records the last invalid-folder error (null clears it once the
+                // operator's edit validates again); non-source apps always clear it (2b/R14).
+                ManifestError = load.ManifestError,
             }, cancellationToken);
 
             await ReconcileIngressAsync(cancellationToken);
@@ -1039,14 +1055,16 @@ internal sealed class CoreLifecycleService(
         RuntimeAppManifest manifest,
         IReadOnlyList<AppMountBinding>? existing)
     {
+        // Keep every operator-configured binding, even one whose slot the manifest no longer declares
+        // (R7): Hosty never deletes an operator mount. An orphaned binding is inert — RuntimeMountPlanner
+        // (Resolve / EnsureRequiredConfigured) and the mount summaries all key off the current slots, so
+        // it is neither injected nor surfaced — and it re-activates automatically if the slot returns.
         if (existing is null || existing.Count == 0)
         {
             return [];
         }
 
-        return existing
-            .Where(binding => manifest.ExternalMounts.ContainsKey(binding.Key))
-            .ToArray();
+        return existing.ToArray();
     }
 
     private static IReadOnlyList<AppEndpointContract> PreserveEndpointUrls(
@@ -1655,6 +1673,34 @@ internal sealed class CoreLifecycleService(
         }
     }
 
+    // Host-admin advisory when a live source app started from its last-good copy because the operator
+    // folder manifest is currently invalid (2b/R14). Best-effort, never throws — a notification
+    // failure must not break a start that otherwise succeeded. Dedupe key is per-app so repeated bad
+    // starts coalesce into one advisory until the edit validates again.
+    private async Task NotifyManifestInvalidAsync(AppRecord app, string error, CancellationToken cancellationToken)
+    {
+        if (notifications is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await notifications.PublishAsync(
+                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                "warning",
+                $"'{app.Id}' is running an older manifest",
+                $"The live source folder manifest for '{app.Id}' failed validation, so Hosty kept running the last-good copy. Fix the edit and restart to adopt it. Error: {error}",
+                link: null,
+                $"manifest-invalid:{app.Id}",
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Failed to publish manifest-invalid advisory for {AppId}.", app.Id);
+        }
+    }
+
     // Start-time gate: a runtime app must not launch while a required setting is unset,
     // otherwise it comes up misconfigured with no clear signal to the operator. Checks the
     // stored settings (so it covers required secrets too, whose values Core holds but the UI
@@ -1740,14 +1786,138 @@ internal sealed class CoreLifecycleService(
         => await apps.GetAppAsync(appId, cancellationToken) ??
             throw new AppLifecycleException("app_not_found", $"Runtime app '{appId}' was not found.");
 
+    // The effective manifest an app runs with, plus whether it came from the live source folder, the
+    // last-good baseline it superseded (for the reconcile diff, R11), and any error from a mid-edit-
+    // invalid folder manifest (Selection then holds the last-good copy). Internal (not private) so the
+    // live-source reconcile is unit-testable without starting a process.
+    internal sealed record AppSelectionLoad(
+        RuntimeAppManifestSelection Selection,
+        bool LiveReconciled,
+        string? ManifestError,
+        RuntimeAppManifestSelection? Baseline = null);
+
+    // The effective manifest selection an app runs with. For a live source app (operator-owned
+    // localCommand folder) the live folder manifest is preferred over the reviewed internal copy and
+    // adopted with no reviewed-update ceremony (2b/R5); a mid-edit-invalid manifest falls back to the
+    // last-good copy and is surfaced, not fatal (R13). Most callers only need the selection, so this
+    // stays a thin wrapper; StartAsync uses LoadSelectionWithStatusAsync to also act on the error.
     private async Task<RuntimeAppManifestSelection> LoadSelectionForAppAsync(AppRecord app, CancellationToken cancellationToken)
+        => (await LoadSelectionWithStatusAsync(app, cancellationToken)).Selection;
+
+    internal async Task<AppSelectionLoad> LoadSelectionWithStatusAsync(AppRecord app, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(app.ManifestPath))
         {
             throw new AppLifecycleException("manifest_path_required", $"Runtime app '{app.Id}' has no manifest path.");
         }
 
-        return await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
+        // The reviewed internal copy is always valid (validated + saved at install/update); it is the
+        // last-good snapshot a live source app falls back to when its folder manifest is mid-edit.
+        var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
+
+        var livePath = ResolveLiveSourceManifestPath(app, lastGood);
+        if (livePath is null)
+        {
+            return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: null);
+        }
+
+        try
+        {
+            var live = await manifests.LoadAsync(livePath, app.SelectedRuntime, cancellationToken);
+            // A folder whose manifest now describes a different app is an operator mistake, not a
+            // contract Core should adopt — treat it like an invalid edit and keep the last-good copy.
+            if (!string.Equals(live.Manifest.Id, app.Id, StringComparison.Ordinal))
+            {
+                return new AppSelectionLoad(lastGood, LiveReconciled: false,
+                    ManifestError: $"Live source manifest declares app id '{live.Manifest.Id}', expected '{app.Id}'.");
+            }
+
+            return new AppSelectionLoad(live, LiveReconciled: true, ManifestError: null, Baseline: lastGood);
+        }
+        // A mid-edit folder manifest can fail validation (AppManifestException) or be unreadable
+        // (raw IO/permission/JSON errors from the file read) — either way it is a transient operator
+        // edit, so fall back to the last-good copy and surface the error rather than failing the start
+        // (R13). OperationCanceledException is intentionally not caught so cancellation propagates.
+        catch (Exception ex) when (ex is AppManifestException or AppLifecycleException
+            or IOException or UnauthorizedAccessException or JsonException)
+        {
+            return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: ex.Message);
+        }
+    }
+
+    // Adopt a live source folder manifest into the persisted record at start, with no reviewed-update
+    // ceremony (2b/R5): the contract (version, capabilities, endpoints, mount slots, settings schema,
+    // dependencies, UI, runtime profiles) tracks the live folder while operator state (settings values,
+    // mount bindings, autostart, runtime state) is preserved. The change list vs the last-good baseline
+    // is recorded for awareness (R11), and the last-good copy is freshened so the fallback and the next
+    // diff track "since last start" (R10). Mount handling is non-destructive: a removed slot keeps its
+    // binding (orphaned, inert) via PreserveMounts (R7).
+    internal async Task<AppRecord> ReconcileLiveContractAsync(AppRecord app, AppSelectionLoad load, CancellationToken cancellationToken)
+    {
+        var selection = load.Selection;
+        IReadOnlyList<string> changes = load.Baseline is null
+            ? []
+            : BuildUpdateChanges(app, load.Baseline, selection);
+
+        await manifests.SaveManifestCopyAsync(selection, GetAppRoot(app.Id), cancellationToken);
+
+        // Build the reconciled contract from the fresh `current` record inside the update lambda, not
+        // the stale `app` captured before the lock, so a setting/mount change applied concurrently
+        // (ConfigureAsync / ConfigureMountsAsync) is carried forward by BuildAppRecord instead of being
+        // overwritten with stale operator state. The lambda is pure and may re-run on a write conflict.
+        var updated = await apps.UpdateAppAsync(app.Id, current =>
+        {
+            var reconciled = BuildAppRecord(selection, current.ManifestPath!, manifestUrl: current.ManifestUrl, system: current.System, existing: current);
+            return current with
+            {
+                Version = reconciled.Version,
+                DisplayName = reconciled.DisplayName,
+                Description = reconciled.Description,
+                Source = reconciled.Source,
+                Capabilities = reconciled.Capabilities,
+                Settings = reconciled.Settings,
+                StorageMappings = reconciled.StorageMappings,
+                Dependencies = reconciled.Dependencies,
+                Endpoints = reconciled.Endpoints,
+                MountSlots = reconciled.MountSlots,
+                Mounts = reconciled.Mounts,
+                Ui = reconciled.Ui,
+                RuntimeProfiles = reconciled.RuntimeProfiles,
+                SourceState = reconciled.SourceState,
+                // Record this start's adopted deltas; null when nothing changed so clients show no badge.
+                LiveChanges = changes.Count > 0 ? changes : null,
+            };
+        }, cancellationToken);
+        return updated.App;
+    }
+
+    // The operator-owned source folder Core re-reads live, or null when the app is not a live source
+    // app. Live source = a source-artifact runtime (localCommand in v1) the operator owns locally — a
+    // source-override folder, else the original folder install. A URL/publisher install is never live
+    // source (its contract is reviewed, A7), and an InstallManifestPath that points back into Core's
+    // own app root is the internal copy (legacy capture), not an external source.
+    private string? ResolveLiveSourceManifestPath(AppRecord app, RuntimeAppManifestSelection lastGood)
+    {
+        var isSource = lastGood.Services.Any(service => string.Equals(service.Artifact, "source", StringComparison.Ordinal));
+        if (!isSource || !string.IsNullOrWhiteSpace(app.ManifestUrl))
+        {
+            return null;
+        }
+
+        var overridePath = app.SourceState?.LocalOverridePath;
+        if (!string.IsNullOrWhiteSpace(overridePath) && Directory.Exists(overridePath))
+        {
+            return overridePath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(app.InstallManifestPath) &&
+            !IsInternalAppPath(app.Id, app.InstallManifestPath) &&
+            (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath)))
+        {
+            return app.InstallManifestPath;
+        }
+
+        return null;
     }
 
     // Update source for a local install: prefer the operator's original folder/file so a folder

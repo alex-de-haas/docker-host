@@ -328,7 +328,60 @@ public sealed class AppManifestServiceTests
         return path;
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null)
+    [Fact]
+    public async Task LoadAsync_DockerRuntime_DefaultsArtifactToImage()
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("image", Assert.Single(selection.Services).Artifact);
+    }
+
+    [Fact]
+    public async Task LoadAsync_LocalCommandRuntime_DefaultsArtifactToSource()
+    {
+        var manifestPath = await WriteLocalCommandManifestAsync("com.example.notes");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("source", Assert.Single(selection.Services).Artifact);
+    }
+
+    [Fact]
+    public async Task LoadAsync_AcceptsExplicitMatchingArtifact()
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", runtimeArtifact: """, "artifact": "image" """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("image", Assert.Single(selection.Services).Artifact);
+    }
+
+    [Theory]
+    [InlineData(""", "artifact": "source" """)]   // docker cannot be a source artifact
+    [InlineData(""", "artifact": "prebuilt" """)] // reserved, out of v1
+    [InlineData(""", "artifact": "bundle" """)]   // unknown value
+    public async Task LoadAsync_RejectsUnsupportedDockerArtifact(string runtimeArtifact)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", runtimeArtifact: runtimeArtifact);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_runtime_artifact_unsupported");
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsLocalCommandImageArtifact()
+    {
+        var manifestPath = await WriteLocalCommandManifestAsync("com.example.notes", runtimeArtifact: """, "artifact": "image" """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_runtime_artifact_unsupported");
+    }
+
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -345,10 +398,36 @@ public sealed class AppManifestServiceTests
                 "runtimes": {
                   "docker": {
                     "type": "docker",
-                    "image": "ghcr.io/example/notes:1.0.0"{{runtimeNetwork ?? ""}}{{ports ?? ""}}
+                    "image": "ghcr.io/example/notes:1.0.0"{{runtimeArtifact ?? ""}}{{runtimeNetwork ?? ""}}{{ports ?? ""}}
                   }
                 }
               }]{{externalMounts ?? ""}}{{dependencies ?? ""}}
+            }
+            """);
+        return path;
+    }
+
+    private static async Task<string> WriteLocalCommandManifestAsync(string appId, string? runtimeArtifact = null)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "manifest.json");
+        await File.WriteAllTextAsync(path, $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "{{appId}}",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "npm run dev"{{runtimeArtifact ?? ""}}
+                  }
+                }
+              }]
             }
             """);
         return path;
