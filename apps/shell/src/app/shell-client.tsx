@@ -741,7 +741,6 @@ export function ShellClient({
           planDigest: plan.planDigest,
           manifestPath: source ? source : plan.manifestPath,
           selectedRuntime: plan.targetRuntime,
-          targetChannel: plan.targetChannel,
         });
         await refresh();
         setActivePanel(null);
@@ -845,7 +844,6 @@ export function ShellClient({
         await sendCsrfJson(`${coreOrigin}/api/apps/install`, {
           manifestPath: plan.manifestPath,
           selectedRuntime: plan.targetRuntime,
-          selectedChannel: plan.selectedChannel,
           system: false,
           settings,
           autostart,

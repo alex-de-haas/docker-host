@@ -44,7 +44,6 @@ export type CoreApp = {
   kind: string;
   system: boolean;
   source: string;
-  selectedChannel?: string | null;
   selectedRuntime?: string | null;
   autostart?: boolean | null;
   operationStatus: string;
@@ -170,7 +169,6 @@ export type CoreUpdatePlan = {
   targetVersion: string;
   currentRuntime?: string | null;
   targetRuntime: string;
-  targetChannel?: string | null;
   manifestPath: string;
   manifestDigest: string;
   planDigest: string;
@@ -221,7 +219,6 @@ export type CoreInstallPlan = {
   manifestPath: string;
   currentManifestDigest?: string | null;
   targetManifestDigest: string;
-  selectedChannel?: string | null;
   defaultAutostart?: boolean | null;
   runtimeProfiles?: CoreInstallRuntimeProfile[];
   settings: CoreInstallSetting[];

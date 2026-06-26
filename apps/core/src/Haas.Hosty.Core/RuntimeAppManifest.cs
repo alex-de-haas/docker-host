@@ -1306,7 +1306,6 @@ internal sealed class RuntimeAppManifest
     public string? Description { get; init; }
     public string? Version { get; init; }
     public RuntimeAppSource? Source { get; init; }
-    public string? ChannelsUrl { get; init; }
     public IReadOnlyList<RuntimeProfileManifest> RuntimeProfiles { get => field ?? []; init; } = [];
     public string? DefaultRuntime { get; init; }
     public IReadOnlyList<RuntimeAppServiceManifest> Services { get => field ?? []; init; } = [];

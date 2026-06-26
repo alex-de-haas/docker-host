@@ -918,7 +918,6 @@ internal sealed class RuntimeAppSupervisorService(
                 await lifecycle.InstallAsync(new AppInstallRequest(
                     ManifestPath: config.ShellManifestPath,
                     SelectedRuntime: config.ShellBootstrapRuntime,
-                    SelectedChannel: "local",
                     System: true,
                     Settings: BuildShellBootstrapSettings(config),
                     Autostart: config.ShellAutostart), cancellationToken);
@@ -968,7 +967,7 @@ internal sealed class RuntimeAppSupervisorService(
 
         var plan = await lifecycle.CreateUpdatePlanAsync(
             ShellAppId,
-            new AppUpdatePlanRequest(config.ShellManifestPath, config.ShellBootstrapRuntime, shell.SelectedChannel),
+            new AppUpdatePlanRequest(config.ShellManifestPath, config.ShellBootstrapRuntime),
             cancellationToken);
 
         var configuredManifestReferenceChanged = HasShellManifestReferenceChanged(shell);
@@ -985,8 +984,7 @@ internal sealed class RuntimeAppSupervisorService(
             new AppUpdateApplyRequest(
                 PlanDigest: plan.PlanDigest,
                 ManifestPath: config.ShellManifestPath,
-                SelectedRuntime: config.ShellBootstrapRuntime,
-                TargetChannel: shell.SelectedChannel),
+                SelectedRuntime: config.ShellBootstrapRuntime),
             cancellationToken);
         return await apps.GetAppAsync(ShellAppId, cancellationToken);
     }
