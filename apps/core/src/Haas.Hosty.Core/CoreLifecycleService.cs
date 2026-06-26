@@ -832,12 +832,33 @@ internal sealed class CoreLifecycleService(
             .OrderBy(service => service.Key, StringComparer.Ordinal))
         {
             var lockedDigest = app.ArtifactLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
-            var candidateDigest = resolver is null
-                ? null
-                : await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
+
+            // Without a recorded lock (an app not yet started, or a local-only image that has no
+            // digest) there is nothing to compare a candidate against, so update availability cannot
+            // be determined — report "unknown" and skip the registry lookup entirely.
+            if (string.IsNullOrWhiteSpace(lockedDigest))
+            {
+                services.Add(new AppServiceUpdateStatus(service.Key, lockedDigest, null, UpdateAvailable: false, Unknown: true));
+                continue;
+            }
+
+            string? candidateDigest = null;
+            if (resolver is not null)
+            {
+                try
+                {
+                    candidateDigest = await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // A network/registry failure must not fail the whole read-only status check; the
+                    // service is just reported "unknown" (candidate stays null) and the error is logged.
+                    logger.LogWarning(ex, "Failed to resolve remote image digest for app {AppId} service {Service}.", appId, service.Key);
+                }
+            }
+
             var unknown = string.IsNullOrWhiteSpace(candidateDigest);
             var serviceUpdateAvailable = !unknown
-                && !string.IsNullOrWhiteSpace(lockedDigest)
                 && !string.Equals(lockedDigest, candidateDigest, StringComparison.Ordinal);
 
             services.Add(new AppServiceUpdateStatus(

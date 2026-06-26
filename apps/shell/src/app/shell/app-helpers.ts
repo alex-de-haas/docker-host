@@ -189,8 +189,9 @@ function formatArrowValue(value: string): string {
   return `${value.slice(0, separator)} to ${value.slice(separator + 2)}`;
 }
 
-// Abbreviates a `sha256:...` image digest to `sha256:` + the first 12 hex chars for compact display.
-// Non-digest tokens (and short values) are returned unchanged.
+// Abbreviates a sha256 image digest to `sha256:` + the first 12 hex chars for compact display.
+// Only real digests (`sha256:`-prefixed or a bare 64-hex string) are shortened; any other token is
+// returned unchanged so non-digest identifiers are never mis-rendered with a fake `sha256:` prefix.
 export function shortDigest(digest?: string | null): string | null {
   const trimmed = digest?.trim();
   if (!trimmed) {
@@ -198,7 +199,11 @@ export function shortDigest(digest?: string | null): string | null {
   }
 
   const hex = trimmed.startsWith("sha256:") ? trimmed.slice("sha256:".length) : trimmed;
-  return hex.length > 12 ? `sha256:${hex.slice(0, 12)}` : trimmed;
+  if (!/^[0-9a-f]{64}$/i.test(hex)) {
+    return trimmed;
+  }
+
+  return `sha256:${hex.slice(0, 12)}`;
 }
 
 // Renders one side of an artifact-digest diff: the literal `none`/`unknown`/empty markers verbatim,

@@ -327,6 +327,11 @@ function AppServiceDetailsPanel({
 }
 
 function UpdatePolicyBadge({ policy }: { policy?: string | null }) {
+  // updatePolicy is optional for backwards compatibility with older Core builds; only render the
+  // badge when Core reported an explicit policy so an absent value is not mislabelled as "Pinned".
+  if (policy !== "pinned" && policy !== "rolling") {
+    return null;
+  }
   const rolling = policy === "rolling";
   return (
     <Badge variant={rolling ? "secondary" : "outline"} className="gap-1" title={rolling ? "Re-resolves the tag on every restart (drift accepted)" : "Runs the locked digest; advancing it needs a reviewed update"}>
