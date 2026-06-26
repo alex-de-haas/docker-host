@@ -127,6 +127,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppBackupCleanupApplyResponse))]
 [JsonSerializable(typeof(AppLogsResponse))]
 [JsonSerializable(typeof(AppRuntimeHealthResponse))]
+[JsonSerializable(typeof(AppUpdateStatusResponse))]
 [JsonSerializable(typeof(UserManagementStateResponse))]
 [JsonSerializable(typeof(UserInvitationsResponse))]
 [JsonSerializable(typeof(UserInvitationCreateResponse))]

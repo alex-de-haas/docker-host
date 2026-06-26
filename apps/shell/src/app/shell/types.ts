@@ -58,6 +58,19 @@ export type CoreApp = {
   entryPath?: string | null;
   embeddedUrl?: string | null;
   mounts?: CoreMountSlot[];
+  // Compiled-artifact pull/lock policy ("pinned"/"rolling") and per-service run-locks (the locked
+  // image digest). Optional for backwards compatibility with older Core builds. See digest pinning.
+  updatePolicy?: string | null;
+  artifactLocks?: Record<string, CoreArtifactLock> | null;
+};
+
+export type CoreArtifactLock = {
+  kind: string;
+  imageDigest?: string | null;
+  resolvedFromRef?: string | null;
+  bundleHash?: string | null;
+  commit?: string | null;
+  resolvedAt: string;
 };
 
 export type CoreMountBinding = {
@@ -153,6 +166,9 @@ export type CoreRuntimeServiceHealth = {
   logPath?: string | null;
   workingDirectory?: string | null;
   message?: string | null;
+  // The image the container is actually running (`repository@sha256:...`), used to surface
+  // "running != lock" drift. Null for runtimes without an image (localCommand) or when unknown.
+  image?: string | null;
 };
 
 export type AppHealthResponse = {
@@ -161,6 +177,30 @@ export type AppHealthResponse = {
   runtimeType: string;
   status: string;
   services: CoreRuntimeServiceHealth[];
+};
+
+export type AppServiceUpdateStatus = {
+  service: string;
+  lockedDigest?: string | null;
+  candidateDigest?: string | null;
+  updateAvailable: boolean;
+  unknown: boolean;
+};
+
+// Read-only update-available report from GET /api/apps/{id}/update-status.
+export type AppUpdateStatusResponse = {
+  appId: string;
+  runtime: string;
+  runtimeType: string;
+  updatePolicy: string;
+  updateAvailable: boolean;
+  services: AppServiceUpdateStatus[];
+};
+
+export type UpdateStatusState = {
+  loading: boolean;
+  error: string | null;
+  status: AppUpdateStatusResponse | null;
 };
 
 export type CoreUpdatePlan = {

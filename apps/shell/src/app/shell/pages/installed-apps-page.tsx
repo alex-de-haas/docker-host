@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import {
   Archive,
+  ArrowUpCircle,
   Boxes,
   Check,
   ChevronDown,
@@ -14,6 +15,7 @@ import {
   FileText,
   HardDrive,
   LoaderCircle,
+  Lock,
   MoreHorizontal,
   Play,
   Plus,
@@ -45,10 +47,19 @@ import {
   getAppPageLinks,
   getEndpointPublicOrigin,
   isAppAutostartEnabled,
+  shortDigest,
 } from "../app-helpers";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
-import type { AppAction, AppHealthResponse, CoreApp, OpenAppPanel, RuntimeHealthState } from "../types";
+import type {
+  AppAction,
+  AppHealthResponse,
+  AppUpdateStatusResponse,
+  CoreApp,
+  OpenAppPanel,
+  RuntimeHealthState,
+  UpdateStatusState,
+} from "../types";
 import { EmptyState, IconButton, PageHeader, StatusBadge } from "../ui";
 
 export function InstalledAppsPage({
@@ -147,16 +158,34 @@ export function InstalledAppsPage({
   );
 }
 
+// Reduces any image reference to its bare `sha256:...` digest (handles `repo@sha256:...` from
+// health as well as a bare lock digest); null when there is no digest.
+function normalizeDigest(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const index = value.indexOf("sha256:");
+  return index === -1 ? null : value.slice(index);
+}
+
 function AppServiceDetailsPanel({
   app,
   healthState,
+  updateStatusState,
   canConfigurePublicOrigins,
   onConfigurePublicOrigins,
+  canUpdate,
+  onOpenUpdate,
+  onRecheckUpdate,
 }: {
   app: CoreApp;
   healthState?: RuntimeHealthState;
+  updateStatusState?: UpdateStatusState;
   canConfigurePublicOrigins: boolean;
   onConfigurePublicOrigins: () => void;
+  canUpdate: boolean;
+  onOpenUpdate: () => void;
+  onRecheckUpdate: () => void;
 }) {
   const serviceRows = buildRuntimeServiceRows(app, healthState?.health);
   const copyEndpointUrl = async (url: string) => {
@@ -168,8 +197,51 @@ function AppServiceDetailsPanel({
     }
   };
 
+  // Per-service version legibility: locked digest (from the app record), running digest (from
+  // health), and the remotely-resolved candidate (from the update-status probe). Compiled docker
+  // services carry locks; source/localCommand services have none, so the section stays hidden.
+  const lockedByService = app.artifactLocks ?? {};
+  const runningByService = new Map(
+    (healthState?.health?.services ?? []).map((service) => [service.service, normalizeDigest(service.image)]),
+  );
+  const statusByService = new Map(
+    (updateStatusState?.status?.services ?? []).map((service) => [service.service, service]),
+  );
+  const hasImageInfo =
+    Object.keys(lockedByService).length > 0 ||
+    [...runningByService.values()].some((digest) => digest) ||
+    statusByService.size > 0;
+  const updateStatus = updateStatusState?.status;
+
   return (
     <div className="space-y-2 rounded-md border bg-background p-3">
+      {hasImageInfo && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/30 px-2 py-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <UpdatePolicyBadge policy={app.updatePolicy} />
+            <UpdateAvailabilityIndicator state={updateStatusState} />
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              disabled={updateStatusState?.loading}
+              onClick={onRecheckUpdate}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", updateStatusState?.loading && "animate-spin")} />
+              Check for updates
+            </Button>
+            {canUpdate && updateStatus?.updateAvailable && (
+              <Button type="button" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={onOpenUpdate}>
+                <Upload className="h-3.5 w-3.5" />
+                Update
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
       {healthState?.loading && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -182,7 +254,13 @@ function AppServiceDetailsPanel({
         <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">No services reported</div>
       ) : (
         <div className="grid gap-2">
-          {serviceRows.map((service) => (
+          {serviceRows.map((service) => {
+            const locked = normalizeDigest(lockedByService[service.service]?.imageDigest);
+            const running = runningByService.get(service.service) ?? null;
+            const serviceStatus = statusByService.get(service.service);
+            const drift = Boolean(locked && running && locked !== running);
+            const hasServiceImage = Boolean(locked || running || serviceStatus);
+            return (
             <div key={service.service} className="rounded-md bg-muted/30 p-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -191,6 +269,23 @@ function AppServiceDetailsPanel({
                 </div>
                 <StatusBadge value={service.status} />
               </div>
+              {hasServiceImage && (
+                <div className="mt-2 grid gap-1 rounded-md border bg-background px-2 py-1.5 text-xs">
+                  {locked && <ServiceDigestRow label="Locked" digest={locked} />}
+                  {running && <ServiceDigestRow label="Running" digest={running} tone={drift ? "warning" : undefined} />}
+                  {drift && (
+                    <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                      Running a different build than the recorded lock.
+                    </div>
+                  )}
+                  {serviceStatus?.updateAvailable && serviceStatus.candidateDigest && (
+                    <ServiceDigestRow label="Available" digest={serviceStatus.candidateDigest} tone="update" />
+                  )}
+                  {serviceStatus?.unknown && (
+                    <div className="text-[11px] text-muted-foreground">Update check unavailable (registry unreachable).</div>
+                  )}
+                </div>
+              )}
               {service.endpoints.length === 0 ? (
                 <div className="mt-2 rounded-md border border-dashed px-2 py-1.5 text-xs text-muted-foreground">No endpoints</div>
               ) : (
@@ -223,9 +318,72 @@ function AppServiceDetailsPanel({
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
+    </div>
+  );
+}
+
+function UpdatePolicyBadge({ policy }: { policy?: string | null }) {
+  // updatePolicy is optional for backwards compatibility with older Core builds; only render the
+  // badge when Core reported an explicit policy so an absent value is not mislabelled as "Pinned".
+  if (policy !== "pinned" && policy !== "rolling") {
+    return null;
+  }
+  const rolling = policy === "rolling";
+  return (
+    <Badge variant={rolling ? "secondary" : "outline"} className="gap-1" title={rolling ? "Re-resolves the tag on every restart (drift accepted)" : "Runs the locked digest; advancing it needs a reviewed update"}>
+      {rolling ? <RefreshCw className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+      {rolling ? "Rolling" : "Pinned"}
+    </Badge>
+  );
+}
+
+function UpdateAvailabilityIndicator({ state }: { state?: UpdateStatusState }) {
+  if (state?.loading) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+        Checking for updates
+      </span>
+    );
+  }
+  if (state?.error) {
+    return <span className="text-xs text-amber-700 dark:text-amber-300">Update check failed</span>;
+  }
+  const status = state?.status;
+  if (!status) {
+    return null;
+  }
+  if (status.updateAvailable) {
+    return (
+      <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-300">
+        <ArrowUpCircle className="h-3 w-3" />
+        Update available
+      </Badge>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+      <Check className="h-3.5 w-3.5" />
+      Up to date
+    </span>
+  );
+}
+
+function ServiceDigestRow({ label, digest, tone }: { label: string; digest: string; tone?: "warning" | "update" }) {
+  const toneClass =
+    tone === "warning"
+      ? "text-amber-700 dark:text-amber-300"
+      : tone === "update"
+        ? "text-emerald-700 dark:text-emerald-300"
+        : "text-foreground";
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+      <span className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className={cn("truncate font-mono", toneClass)} title={digest}>{shortDigest(digest) ?? digest}</span>
     </div>
   );
 }
@@ -301,6 +459,7 @@ function InstalledAppTableSection({
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
   const [healthByApp, setHealthByApp] = useState<Record<string, RuntimeHealthState>>({});
+  const [updateStatusByApp, setUpdateStatusByApp] = useState<Record<string, UpdateStatusState>>({});
 
   useEffect(() => {
     const appIds = new Set(apps.map((app) => app.id));
@@ -309,6 +468,10 @@ function InstalledAppTableSection({
       return next.size === current.size ? current : next;
     });
     setHealthByApp((current) => {
+      const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
+    setUpdateStatusByApp((current) => {
       const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
       return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
     });
@@ -355,6 +518,45 @@ function InstalledAppTableSection({
     }
   }, [coreOrigin]);
 
+  // Read-only update-available probe (light registry lookup in Core). Run on demand when a row is
+  // expanded — never for every row on load — so the N registry lookups stay opt-in.
+  const loadUpdateStatus = useCallback(async (app: CoreApp) => {
+    setUpdateStatusByApp((current) => ({
+      ...current,
+      [app.id]: {
+        loading: true,
+        error: null,
+        status: current[app.id]?.status ?? null,
+      },
+    }));
+
+    try {
+      const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/update-status`, { credentials: "include" });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+      if (!response.ok) {
+        throw new Error(await readCoreError(response));
+      }
+      const status = (await response.json()) as AppUpdateStatusResponse;
+      setUpdateStatusByApp((current) => ({
+        ...current,
+        [app.id]: { loading: false, error: null, status },
+      }));
+    } catch (error) {
+      if (isAuthRequiredRedirectError(error)) {
+        return;
+      }
+
+      setUpdateStatusByApp((current) => ({
+        ...current,
+        [app.id]: {
+          loading: false,
+          error: error instanceof Error ? error.message : "Update status is unavailable.",
+          status: current[app.id]?.status ?? null,
+        },
+      }));
+    }
+  }, [coreOrigin]);
+
   const toggleAppExpanded = (app: CoreApp) => {
     const shouldExpand = !expandedAppIds.has(app.id);
     setExpandedAppIds((current) => {
@@ -369,6 +571,7 @@ function InstalledAppTableSection({
 
     if (shouldExpand) {
       void loadAppHealth(app);
+      void loadUpdateStatus(app);
     }
   };
 
@@ -401,6 +604,8 @@ function InstalledAppTableSection({
               {apps.map((app) => {
                 const expanded = expandedAppIds.has(app.id);
                 const healthState = healthByApp[app.id];
+                const updateStatusState = updateStatusByApp[app.id];
+                const canUpdate = canManageApps && !app.system && app.capabilities.includes("update");
 
                 return (
                   <Fragment key={app.id}>
@@ -423,8 +628,12 @@ function InstalledAppTableSection({
                           <AppServiceDetailsPanel
                             app={app}
                             healthState={healthState}
+                            updateStatusState={updateStatusState}
                             canConfigurePublicOrigins={canManageApps && !app.system}
                             onConfigurePublicOrigins={() => onOpenPanel(app, "configure", { configureSection: "publicOrigins" })}
+                            canUpdate={canUpdate}
+                            onOpenUpdate={() => onOpenPanel(app, "update")}
+                            onRecheckUpdate={() => void loadUpdateStatus(app)}
                           />
                         </TableCell>
                       </TableRow>

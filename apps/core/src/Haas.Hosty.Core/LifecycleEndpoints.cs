@@ -233,6 +233,20 @@ internal static class LifecycleEndpoints
                 async () => await HandleLifecycleError(() => lifecycle.GetHealthAsync(appId, cancellationToken)),
                 cancellationToken: cancellationToken));
 
+        app.MapGet("/api/apps/{appId}/update-status", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetUpdateStatusAsync(appId, cancellationToken)),
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/apps/{appId}/backups", async (
             string appId,
             HttpRequest request,
