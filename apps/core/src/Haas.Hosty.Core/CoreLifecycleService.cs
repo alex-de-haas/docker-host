@@ -1695,7 +1695,7 @@ internal sealed class CoreLifecycleService(
                 $"manifest-invalid:{app.Id}",
                 cancellationToken);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.LogWarning(exception, "Failed to publish manifest-invalid advisory for {AppId}.", app.Id);
         }
@@ -1834,7 +1834,12 @@ internal sealed class CoreLifecycleService(
 
             return new AppSelectionLoad(live, LiveReconciled: true, ManifestError: null, Baseline: lastGood);
         }
-        catch (Exception ex) when (ex is AppManifestException or AppLifecycleException)
+        // A mid-edit folder manifest can fail validation (AppManifestException) or be unreadable
+        // (raw IO/permission/JSON errors from the file read) — either way it is a transient operator
+        // edit, so fall back to the last-good copy and surface the error rather than failing the start
+        // (R13). OperationCanceledException is intentionally not caught so cancellation propagates.
+        catch (Exception ex) when (ex is AppManifestException or AppLifecycleException
+            or IOException or UnauthorizedAccessException or JsonException)
         {
             return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: ex.Message);
         }
@@ -1856,25 +1861,32 @@ internal sealed class CoreLifecycleService(
 
         await manifests.SaveManifestCopyAsync(selection, GetAppRoot(app.Id), cancellationToken);
 
-        var reconciled = BuildAppRecord(selection, app.ManifestPath!, manifestUrl: app.ManifestUrl, system: app.System, existing: app);
-        var updated = await apps.UpdateAppAsync(app.Id, current => current with
+        // Build the reconciled contract from the fresh `current` record inside the update lambda, not
+        // the stale `app` captured before the lock, so a setting/mount change applied concurrently
+        // (ConfigureAsync / ConfigureMountsAsync) is carried forward by BuildAppRecord instead of being
+        // overwritten with stale operator state. The lambda is pure and may re-run on a write conflict.
+        var updated = await apps.UpdateAppAsync(app.Id, current =>
         {
-            Version = reconciled.Version,
-            DisplayName = reconciled.DisplayName,
-            Description = reconciled.Description,
-            Source = reconciled.Source,
-            Capabilities = reconciled.Capabilities,
-            Settings = reconciled.Settings,
-            StorageMappings = reconciled.StorageMappings,
-            Dependencies = reconciled.Dependencies,
-            Endpoints = reconciled.Endpoints,
-            MountSlots = reconciled.MountSlots,
-            Mounts = reconciled.Mounts,
-            Ui = reconciled.Ui,
-            RuntimeProfiles = reconciled.RuntimeProfiles,
-            SourceState = reconciled.SourceState,
-            // Record this start's adopted deltas; null when nothing changed so clients show no badge.
-            LiveChanges = changes.Count > 0 ? changes : null,
+            var reconciled = BuildAppRecord(selection, current.ManifestPath!, manifestUrl: current.ManifestUrl, system: current.System, existing: current);
+            return current with
+            {
+                Version = reconciled.Version,
+                DisplayName = reconciled.DisplayName,
+                Description = reconciled.Description,
+                Source = reconciled.Source,
+                Capabilities = reconciled.Capabilities,
+                Settings = reconciled.Settings,
+                StorageMappings = reconciled.StorageMappings,
+                Dependencies = reconciled.Dependencies,
+                Endpoints = reconciled.Endpoints,
+                MountSlots = reconciled.MountSlots,
+                Mounts = reconciled.Mounts,
+                Ui = reconciled.Ui,
+                RuntimeProfiles = reconciled.RuntimeProfiles,
+                SourceState = reconciled.SourceState,
+                // Record this start's adopted deltas; null when nothing changed so clients show no badge.
+                LiveChanges = changes.Count > 0 ? changes : null,
+            };
         }, cancellationToken);
         return updated.App;
     }
