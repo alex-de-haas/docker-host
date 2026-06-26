@@ -738,6 +738,89 @@ Verified on .NET 10 with `PublishAot=true` (Core's exact build model):
   `libsodium.dylib` side-car (via `NSec.Cryptography`), a TUF client, and Fulcio/Rekor
   HTTP surface, and is 0.x. Deferred on cost/maturity, not feasibility.
 
+## Phase 2b + A1 Resolutions (confirmed 2026-06-26)
+
+Closes the non-marketplace remainder of the update track: the per-runtime `artifact` field
+(A1) and live source-reconcile (phase 2b). IDs `R*` map to the open-questions review. Build
+order: A1 → snapshot+fallback (R10/R13) → diff (R11) → reconcile wiring (R5–R9) →
+liveness UI + breadcrumbs (R15/R16) → switch live→compiled (R17).
+
+Artifact field (A1):
+
+- **R1** Infer when omitted, never fail for back-compat: absent `artifact` → `docker` resolves
+  to `image`, `localCommand` to `source`. A `localCommand` without an explicit `artifact`
+  emits a **warning**, not an error (softens "must declare" to "recommended").
+- **R2** Allowed values in v1: `docker = {image}`, `localCommand = {source}`. Any other
+  combination → `app_runtime_artifact_unsupported`.
+- **R3** `prebuilt` is **hard-rejected** at validation (fail fast), not accept-and-defer (per A6).
+- **R4** The kind is **not persisted** on `AppRecord` — it is intent (like `repository:tag`),
+  re-derived from the manifest at start. Resolved compiled identity already lives in
+  `ArtifactLock.Kind`; a source artifact has no lock.
+
+Reconcile granularity (phase 2b — closes the "reconcile granularity" open question):
+
+- **R5** Reconcile is a **full re-evaluation of the run profile on every start**, no in-place
+  patching. `command`/`env`/`workingDirectory`/ports are picked up by the normal re-spawn; a
+  port change re-registers the router/ingress in the same start path.
+- **R6** Capability wiring (ingress/notifications) is **idempotent and re-applied each start**;
+  changes surface in the diff. No separate ceremony.
+- **R7** A slot removed from a live manifest while an `AppMountBinding` exists: the binding is
+  **kept but marked orphaned/inactive** (not injected), surfaced in the diff with a warning.
+  The host path is never touched (Hosty never deletes mounts). A re-added slot auto-rebinds.
+- **R8** Settings are **non-destructive**: stored values are validated against the new schema;
+  mismatches surface as a warning and values are retained. Start is blocked only when a
+  now-`required` setting is missing (reusing the existing required-settings gate).
+- **R9** Endpoints/ingress: same as R5 — idempotent re-register on start, no separate logic.
+
+Diff and snapshot (phase 2b):
+
+- **R10** *(refined at implementation)* Reuse the existing **reviewed internal copy**
+  (`app.ManifestPath` = `{appRoot}/manifest.json`, written by `SaveManifestCopyAsync` and always
+  valid) as the last-good snapshot — no new content/digest field on `AppRecord` is needed. The
+  start path prefers the live folder manifest and falls back to this copy when the live one is
+  invalid (R13); the diff baseline (R11) is `live-digest vs copy-digest`. The only new persisted
+  state is the nullable `AppRecord.ManifestError` (R14). Freshening the copy to the last *valid*
+  live manifest (so the fallback/baseline tracks "since last start") lands with the diff (R11).
+- **R11** Reuse `AddCapabilityChanges` / the plan-diff machinery; render it as an informational
+  "reconcile diff", not an update plan. Surface on `AppSummary` + Shell; no CLI ceremony.
+- **R12** The diff is **informational only**. The sole gate is new host access (operator mount
+  binding); everything else is awareness.
+
+Invalid manifest / edge (phase 2b):
+
+- **R13** On an invalid folder manifest, run the **last-good snapshot** (R10) and set an app
+  status `manifest-invalid` carrying the error. A cold Core start with a currently-invalid
+  manifest also falls back to last-good if present; with **no** last-good (first install
+  invalid) the app **refuses to start** with the validation error.
+- **R14** Surface the error as a structured status field (`manifestError`) + a notification +
+  a log line; Shell shows a non-blocking banner.
+
+Liveness markers / UI (phase 2b):
+
+- **R15** `isLive = (active runtime.artifact == source)` in v1 (source ⇒ operator-owned, per
+  A7). Expose a `runtimeLive` boolean on `AppSummary` so Shell hides the update CTA. The
+  publisher-source "live code + reviewed contract" branch is **not coded** — leave a TODO
+  referencing A7 so the simplification is deliberate.
+- **R16** Breadcrumbs are a small increment over the existing source/commit tracking
+  (`AppSourceState.Commit`): add a dirty flag + folder-manifest version, exposed read-only as
+  `sourceDisplay` on `AppSummary`. Reuse `AppSourceService` git logic; non-git → `commit=null`.
+
+Switch and cross-cutting (phase 2b):
+
+- **R17** Switch live→compiled is **in 2b scope** but minimal: one pass of the normal
+  install/update review path that snapshots the effective manifest into the reviewed copy and
+  pins the artifact (reuse the 2a lock resolve).
+- **R18** Publisher-source (live code + reviewed contract) is **not implemented** (A7); assert
+  `source ⇒ live` and omit the reviewed-contract-on-source branch.
+- **R19** Phase 2b = platform minor bump (0.9.0 → 0.10.0); `AppRecord` additions are
+  additive/nullable with lazy backfill, no `SchemaVersion` transform (per A9).
+- **Scope guard:** 2b targets **only `localCommand` operator folders** (the real case today);
+  docker-source does not exist and publisher-source is deferred — neither is coded.
+
+Smallest shippable 2b: A1 + live re-read with last-good fallback (R10/R13/R14) + diff in
+status (R11) + `runtimeLive` (R15). Orphaned-slot/stale-settings nuance (R7/R8) and the
+runtime switch (R17) can land as a second increment.
+
 ## Deferred (out of v1)
 
 - **`prebuilt` artifacts + bundle hash.** Add when a real app needs a built bundle that is
@@ -762,9 +845,9 @@ Verified on .NET 10 with `PublishAot=true` (Core's exact build model):
 - **`product-channels.json` ownership.** Nothing consumes it yet - define its consumer
   (installer/build pipeline) before building platform delivery on it; separate from the
   app catalog.
-- **Phase 2b reconcile granularity.** Which manifest changes a live operator-folder source
-  applies on restart (e.g. ports/mounts needing a container rebuild) vs only surfaces in
-  the diff. Decide when 2b is designed.
+- ~~**Phase 2b reconcile granularity.**~~ Resolved in *Phase 2b + A1 Resolutions* (R5–R9):
+  reconcile re-evaluates the full run profile every start (no in-place patching); ports/ingress
+  re-register on the same start path; orphaned slots and stale settings are non-destructive.
 
 ## Links
 

@@ -48,6 +48,15 @@ Core injects:
 
 For `localCommand` runtime profiles, do not hard-code development ports by default. Omit `localPort` and `hostPort` so Core assigns an available loopback port and injects it as `HOSTY_PORT_{KEY}`. If a service declares exactly one port and the app did not explicitly set `PORT`, Core also injects `PORT=<assigned-port>` for common dev servers such as Next.js.
 
+### Runtime Artifact Kind
+
+Each `services[].runtimes[<key>]` may declare `artifact`, which tells Core how the running code is delivered and therefore how it updates:
+
+- `image` — a compiled OCI image. The update is **locked**: Core resolves the tag to an immutable digest and pins it, so restarts are deterministic and an update is a reviewed change. This is the default (and only supported value) for `docker`.
+- `source` — code that runs **live** from the operator's own folder. There is no run-lock; Core re-reads and reconciles the manifest on each start. This is the default (and only supported value) for `localCommand`.
+
+`artifact` is optional — when omitted Core infers it from the runtime type (`docker` → `image`, `localCommand` → `source`), so existing manifests need no change. Declaring a value that does not match its runtime (e.g. `artifact: source` under `docker`) is rejected with `app_runtime_artifact_unsupported`. `prebuilt` is reserved and not yet supported.
+
 ### Service Dependencies
 
 A service's `dependsOn` lists sibling services. Each entry is a service-key string (`"api"`) or a `{ "service", "port" }` object naming a specific port. From that one declaration Core both **orders** startup (the depended-on service starts first) and injects the sibling's **internal** base URL as `HOSTY_SERVICE_{KEY}_URL` (e.g. `HOSTY_SERVICE_API_URL`). Use this for a BFF/proxy service to reach an internal API service without pinning ports or exposing the internal port publicly:

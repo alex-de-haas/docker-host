@@ -108,7 +108,7 @@ public sealed class RuntimeServiceDiscoveryTests
         => Service(key, new[] { dependsOn }, ports);
 
     private static RuntimeSelectedService Service(string key, IReadOnlyList<RuntimeServiceDependency> dependsOn, params RuntimePortManifest[] ports)
-        => new(key, dependsOn, new RuntimeServiceProfileManifest { Type = "docker", Ports = ports }, null);
+        => new(key, dependsOn, new RuntimeServiceProfileManifest { Type = "docker", Ports = ports }, null, "image");
 
     private static RuntimePortManifest Port(string key, int containerPort, bool isPublic = false)
         => new() { Key = key, ContainerPort = containerPort, Public = isPublic };

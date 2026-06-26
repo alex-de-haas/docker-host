@@ -227,7 +227,13 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             ValidateDevices(service.Key, runtimeType, runtime.Devices, errors);
             ValidatePorts(service.Key, runtime.Ports, runtime.IsHostNetwork, errors);
 
-            selectedServices.Add(new RuntimeSelectedService(service.Key, service.DependsOn, runtime with { Type = runtimeType }, image));
+            var artifact = ResolveArtifactKind(service.Key, runtimeType, runtime.Artifact, errors);
+            if (artifact is null)
+            {
+                continue;
+            }
+
+            selectedServices.Add(new RuntimeSelectedService(service.Key, service.DependsOn, runtime with { Type = runtimeType }, image, artifact));
         }
 
         if (selectedProfile is not null && selectedServices.Count == 0)
@@ -532,6 +538,44 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         => AppIdPattern.IsMatch(value) &&
             value is not "." and not ".." &&
             CoreDataPaths.IsSafePathSegment(value);
+
+    // Resolve the per-service artifact kind (A1). Absent infers per runtime type (docker → image,
+    // localCommand → source). v1 supports exactly one kind per runtime: docker = image,
+    // localCommand = source; `prebuilt` is reserved and any other value is rejected. Returns the
+    // resolved kind, or null after recording an error (the caller skips the service). See
+    // runtime-app-marketplace.md, R1–R4.
+    private static string? ResolveArtifactKind(string serviceKey, string runtimeType, string? declared, List<AppManifestValidationError> errors)
+    {
+        var allowed = string.Equals(runtimeType, "docker", StringComparison.Ordinal) ? "image" : "source";
+
+        // R1: a localCommand without an explicit artifact infers `source` (back-compat); the
+        // advisory that surfaces this inference is folded into the 2b reconcile status.
+        if (string.IsNullOrWhiteSpace(declared))
+        {
+            return allowed;
+        }
+
+        var artifact = declared.Trim();
+        if (string.Equals(artifact, "prebuilt", StringComparison.Ordinal))
+        {
+            errors.Add(new("app_runtime_artifact_unsupported", $"Service '{serviceKey}' declares artifact 'prebuilt', which is not supported by this Hosty Core build.", "$.services[].runtimes[].artifact"));
+            return null;
+        }
+
+        if (artifact is not ("image" or "source"))
+        {
+            errors.Add(new("app_runtime_artifact_unsupported", $"Service '{serviceKey}' declares unsupported artifact '{artifact}'; expected 'image' or 'source'.", "$.services[].runtimes[].artifact"));
+            return null;
+        }
+
+        if (!string.Equals(artifact, allowed, StringComparison.Ordinal))
+        {
+            errors.Add(new("app_runtime_artifact_unsupported", $"Service '{serviceKey}' runtime '{runtimeType}' supports artifact '{allowed}', not '{artifact}'.", "$.services[].runtimes[].artifact"));
+            return null;
+        }
+
+        return artifact;
+    }
 
     private static void ValidateRequired(string? value, string path, List<AppManifestValidationError> errors)
     {
@@ -1629,7 +1673,10 @@ internal sealed record RuntimeSelectedService(
     string Key,
     IReadOnlyList<RuntimeServiceDependency> DependsOn,
     RuntimeServiceProfileManifest Runtime,
-    RuntimeDockerImage? Image);
+    RuntimeDockerImage? Image,
+    // Resolved artifact kind for the selected runtime (A1): "image" (compiled, lockable) or
+    // "source" (live operator folder). Drives the update model and the liveness marker (R15).
+    string Artifact);
 
 // A `services[].dependsOn` entry. Accepts either a bare service-key string (`"api"`) or an
 // object that names a specific port (`{ "service": "api", "port": "internal" }`). One
@@ -1714,6 +1761,15 @@ internal sealed class RuntimeAppServiceManifest
 internal sealed record RuntimeServiceProfileManifest
 {
     public string? Type { get; init; }
+
+    // How the running code is delivered for this runtime (A1). `image` is a compiled, lockable
+    // OCI artifact (pinned/rolling, digest in ArtifactLocks); `source` runs live from the
+    // operator's own folder (no run-lock, manifest reconciled each start). Absent infers per
+    // runtime type — docker → `image`, localCommand → `source`. `prebuilt` is reserved (out of
+    // v1). See runtime-app-marketplace.md, R1–R4. The resolved kind is re-derived from the
+    // manifest at start, never persisted on AppRecord.
+    public string? Artifact { get; init; }
+
     public JsonElement? Image { get; init; }
     public string? Command { get; init; }
     public string? WorkingDirectory { get; init; }

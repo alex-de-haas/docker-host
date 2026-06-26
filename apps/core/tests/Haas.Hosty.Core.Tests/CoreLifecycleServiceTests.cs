@@ -2251,6 +2251,148 @@ public sealed class CoreLifecycleServiceTests
         return path;
     }
 
+    [Fact]
+    public async Task LoadSelection_LiveSourceFolder_PrefersLiveManifestOverInternalCopy()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // The operator edits the live source folder; Core must run the live manifest on the next
+        // start, not the reviewed internal copy saved at install (2b/R5).
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("2.0.0"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
+
+        Assert.True(load.LiveReconciled);
+        Assert.Null(load.ManifestError);
+        Assert.Equal("2.0.0", load.Selection.Manifest.Version);
+    }
+
+    [Fact]
+    public async Task LoadSelection_LiveSourceFolder_InvalidEdit_FallsBackToLastGoodAndReportsError()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // A mid-edit-invalid folder manifest must not break the app: Core keeps running the last-good
+        // copy and surfaces the error rather than failing (2b/R13/R14).
+        await File.WriteAllTextAsync(manifestPath, "{ not valid json");
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
+
+        Assert.False(load.LiveReconciled);
+        Assert.NotNull(load.ManifestError);
+        Assert.Equal("1.0.0", load.Selection.Manifest.Version);
+    }
+
+    [Fact]
+    public async Task ReconcileLiveContract_AdoptsLiveVersionFreshensCopyAndRecordsChanges()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("2.0.0"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
+
+        var reconciled = await fixture.Service.ReconcileLiveContractAsync(app!, load, CancellationToken.None);
+
+        // The persisted contract adopts the live version (no reviewed-update ceremony, R5) and the
+        // adopted delta is recorded for awareness (R11).
+        Assert.Equal("2.0.0", reconciled.Version);
+        Assert.Contains(reconciled.LiveChanges ?? [], change => change == "version:1.0.0->2.0.0");
+        // The last-good internal copy is freshened, so a re-read now baselines at the new version (R10).
+        var internalCopy = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json");
+        var refreshed = await fixture.Manifests.LoadAsync(internalCopy);
+        Assert.Equal("2.0.0", refreshed.Manifest.Version);
+    }
+
+    [Fact]
+    public async Task ReconcileLiveContract_KeepsOrphanedMountBindingWhenSlotRemoved()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        const string mountSlot = ""","externalMounts":{"catalogRoots":{"mode":"rw","multiple":true,"service":"app"}}""";
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("1.0.0", mountSlot));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        var host = CreateExternalDirectory();
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", "movies", host)]));
+
+        // The operator removes the mount slot from the live manifest. Hosty must NOT delete the
+        // operator's binding — it is kept (orphaned, inert) and re-activates if the slot returns (R7).
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("2.0.0"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
+
+        var reconciled = await fixture.Service.ReconcileLiveContractAsync(app!, load, CancellationToken.None);
+
+        Assert.DoesNotContain(reconciled.MountSlots ?? [], slot => slot.Key == "catalogRoots");
+        var binding = Assert.Single(reconciled.Mounts ?? []);
+        Assert.Equal("catalogRoots", binding.Key);
+        Assert.Equal("movies", binding.Label);
+    }
+
+    [Fact]
+    public async Task LoadSelection_DockerFolderInstall_DoesNotLiveReadInternalCopy()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "docker-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // A docker (image) app is not live source: editing the folder must NOT take effect on start —
+        // it stays a reviewed update. The selection reflects the install-time internal copy.
+        await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("2.0.0"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
+
+        Assert.False(load.LiveReconciled);
+        Assert.Null(load.ManifestError);
+        Assert.Equal("1.0.0", load.Selection.Manifest.Version);
+    }
+
+    private static string CreateLocalCommandFolderManifestJson(string version, string? externalMounts = null)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "{{version}}",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "echo hi"
+                  }
+                }
+              }]{{externalMounts ?? ""}}
+            }
+            """;
+
     private static string CreateRemoteManifestJson(string version)
         => $$"""
             {
