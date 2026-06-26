@@ -20,7 +20,8 @@ public sealed class RuntimeAppManifestRepositoryTests
         var dockerService = Assert.Single(docker.Services);
         Assert.Equal("ghcr.io/alex-de-haas/hosty-shell", dockerService.Image?.Repository);
         Assert.Equal("latest", dockerService.Image?.Tag);
-        Assert.Equal("always", dockerService.Image?.PullPolicy);
+        // The manifest carries intent only (no digest), so the reference is the mutable tag.
+        Assert.Equal("ghcr.io/alex-de-haas/hosty-shell:latest", dockerService.Image?.Reference);
         Assert.Equal("dev", dev.RuntimeProfile.Key);
         Assert.Equal("localCommand", dev.RuntimeProfile.Type);
         Assert.Equal("apps/shell", Assert.Single(dev.Services).Runtime.WorkingDirectory);

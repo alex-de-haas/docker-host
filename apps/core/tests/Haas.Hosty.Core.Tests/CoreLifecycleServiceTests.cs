@@ -768,6 +768,150 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_PersistsResolvedArtifactLocksAndBackfillsLazily()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var digest = "sha256:" + new string('a', 64);
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", digest, "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+
+        await fixture.Service.StartAsync("com.example.notes");
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        // Lazy backfill: the app had no lock when this start ran (TOFU), and the runtime's resolved
+        // lock is persisted onto the record.
+        Assert.Null(fixture.Adapter.LastContext!.App.ArtifactLocks);
+        Assert.Equal(digest, app!.ArtifactLocks?["app"].ImageDigest);
+        Assert.Equal("ghcr.io/example/notes:1.0.0", app.ArtifactLocks?["app"].ResolvedFromRef);
+    }
+
+    [Fact]
+    public async Task StartAsync_LeavesArtifactLocksUntouchedWhenRuntimeResolvesNone()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var digest = "sha256:" + new string('b', 64);
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with
+        {
+            ArtifactLocks = new Dictionary<string, ArtifactLock>
+            {
+                ["app"] = new("image", digest, "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+            },
+        });
+        // A runtime with nothing to pin (source / localCommand) returns no locks.
+        fixture.Adapter.StartLocks = null;
+
+        await fixture.Service.StartAsync("com.example.notes");
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        Assert.Equal(digest, app!.ArtifactLocks?["app"].ImageDigest);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_SurfacesArtifactDigestChangeForRePushedTag()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var lockedDigest = "sha256:" + new string('c', 64);
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", lockedDigest, "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+
+        // The registry now resolves the same tag to a different digest (a re-pushed tag), while the
+        // manifest JSON is byte-identical.
+        var rePushedDigest = "sha256:" + new string('d', 64);
+        fixture.Adapter.RemoteDigest = rePushedDigest;
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        Assert.Contains($"artifact:app:{lockedDigest}->{rePushedDigest}", plan.Changes);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_MarksArtifactDeltaUnknownWhenRegistryUnreachable()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var lockedDigest = "sha256:" + new string('e', 64);
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", lockedDigest, "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+        // Registry unreachable -> resolver returns null; the plan must not fail and the delta is unknown.
+        fixture.Adapter.RemoteDigest = null;
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        Assert.Contains($"artifact:app:{lockedDigest}->unknown", plan.Changes);
+    }
+
+    [Fact]
+    public async Task ApplyUpdateAsync_ResetsArtifactLocksSoNextStartReResolves()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestV1 = await fixture.WriteManifestAsync("1.0.0");
+        var manifestV2 = await fixture.WriteManifestAsync("1.0.1");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestV1));
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", "sha256:" + new string('a', 64), "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+        await fixture.Service.StopAsync("com.example.notes");
+        // Stop the runtime from re-resolving on the apply-triggered restart so we observe the reset.
+        fixture.Adapter.StartLocks = null;
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+        await fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest, manifestV2));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        // The stale lock is dropped on update so the next start re-resolves the new target digest.
+        Assert.Null(app!.ArtifactLocks);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_SetsUpdatePolicyAndSurfacesItOnSummary()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var installed = await fixture.Apps.ListAppsAsync();
+        Assert.Equal("pinned", Assert.Single(installed).UpdatePolicy);
+
+        var configured = await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(UpdatePolicy: "rolling"));
+
+        Assert.Equal("rolling", configured.App?.UpdatePolicy);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("rolling", app!.UpdatePolicy);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_RejectsInvalidUpdatePolicy()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var exception = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(UpdatePolicy: "always")));
+
+        Assert.Equal("app_update_policy_invalid", exception.Code);
+    }
+
+    [Fact]
     public async Task StartAsync_CloudflaredIngress_PersistsPublicOriginAndWritesTunnelConfig()
     {
         var fixture = await LifecycleFixture.CreateAsync(ingressBaseDomain: "apps.example.test");
@@ -2553,7 +2697,7 @@ public sealed class CoreLifecycleServiceTests
         }
     }
 
-    private sealed class RecordingRuntimeAdapter : IAppRuntimeAdapter
+    private sealed class RecordingRuntimeAdapter : IAppRuntimeAdapter, IImageDigestResolver
     {
         public string Type => "docker";
 
@@ -2567,6 +2711,13 @@ public sealed class CoreLifecycleServiceTests
 
         public RuntimeLifecycleContext? LastContext { get; private set; }
 
+        // Per-service artifact locks the fake docker runtime "resolves" on start; persisted by the
+        // lifecycle service. Null (default) leaves the app's locks untouched, as a source runtime would.
+        public IReadOnlyDictionary<string, ArtifactLock>? StartLocks { get; set; }
+
+        // Digest the fake resolver returns for plan-time remote lookups; null = registry unreachable.
+        public string? RemoteDigest { get; set; }
+
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             StartCount++;
@@ -2577,10 +2728,14 @@ public sealed class CoreLifecycleServiceTests
             }
 
             OnStarted?.Invoke();
-            return Task.FromResult(new AppRuntimeStartResult("running", [
-                new AppEndpointContract("app.http", "http", "http://localhost:3100", Public: true, Service: "app", Port: "http"),
-            ]));
+            return Task.FromResult(new AppRuntimeStartResult(
+                "running",
+                [new AppEndpointContract("app.http", "http", "http://localhost:3100", Public: true, Service: "app", Port: "http")],
+                StartLocks));
         }
+
+        public Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
+            => Task.FromResult(RemoteDigest);
 
         public Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {

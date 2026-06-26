@@ -29,8 +29,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/demo-app",
-            "tag": "latest",
-            "pullPolicy": "always"
+            "tag": "latest"
           },
           "ports": [
             {
@@ -65,8 +64,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/demo-app",
-            "tag": "latest",
-            "pullPolicy": "always"
+            "tag": "latest"
           },
           "ports": [
             {

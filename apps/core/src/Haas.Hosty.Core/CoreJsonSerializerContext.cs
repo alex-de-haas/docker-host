@@ -36,6 +36,9 @@ internal static class CoreJson
 // Persisted state / internal serialization roots.
 [JsonSerializable(typeof(UserDirectoryState))]
 [JsonSerializable(typeof(AppStateDocument))]
+// Reachable via AppRecord/AppSummary, but rooted explicitly: the per-service artifact run-lock is
+// (de)serialized as a nested map value on persisted state and on API summaries.
+[JsonSerializable(typeof(ArtifactLock))]
 [JsonSerializable(typeof(RetainedAppConfig))]
 [JsonSerializable(typeof(RuntimeAppManifest))]
 [JsonSerializable(typeof(AuditRecord))]
