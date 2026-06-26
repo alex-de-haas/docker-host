@@ -764,7 +764,7 @@ internal sealed class ProcessDockerCommandRunner : IDockerCommandRunner
 {
     public async Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, CancellationToken cancellationToken = default)
     {
-        var process = new System.Diagnostics.Process
+        using var process = new System.Diagnostics.Process
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
@@ -1163,7 +1163,26 @@ internal sealed class DockerRuntimeAdapter(
 
         // rolling, or first resolve / backfill: pull the mutable tag and capture the resolved digest.
         var tagReference = image.TagReference;
-        var pullOutput = await RunDockerAsync(["pull", tagReference], ignoreFailures: false, cancellationToken);
+        string? pullOutput = null;
+        AppLifecycleException? pullFailure = null;
+        try
+        {
+            pullOutput = await RunDockerAsync(["pull", tagReference], ignoreFailures: false, cancellationToken);
+        }
+        catch (AppLifecycleException ex)
+        {
+            pullFailure = ex;
+        }
+
+        // Offline or a local-only image (e.g. built locally during development): the pull failed but
+        // the tag is already present, so resolve its digest from the local image and run it instead of
+        // blocking start. A genuinely-absent image rethrows the original failure. (Can't await in a
+        // catch filter, so the fallback check runs here.)
+        if (pullFailure is not null && !await ImageExistsLocallyAsync(tagReference, cancellationToken))
+        {
+            throw pullFailure;
+        }
+
         var digest = ParsePullDigest(pullOutput) ?? await ResolveRepoDigestByTagAsync(tagReference, cancellationToken);
         if (string.IsNullOrWhiteSpace(digest))
         {

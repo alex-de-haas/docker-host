@@ -286,6 +286,38 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task StartAsync_RollingPullFailsButImagePresentLocally_FallsBackToLocalDigest()
+    {
+        var digest = "sha256:" + new string('9', 64);
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["pull", ..] => new DockerCommandResult(1, "", "network unreachable"),
+            ["image", "inspect", ..] => new DockerCommandResult(0, "[{}]", ""),
+            ["inspect", ..] => new DockerCommandResult(0, $"ghcr.io/example/app@{digest}", ""),
+            _ => new DockerCommandResult(0, "", ""),
+        });
+
+        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("rolling", locks: null)));
+
+        Assert.Equal(digest, result.ArtifactLocks?["app"].ImageDigest);
+        Assert.Equal($"ghcr.io/example/app@{digest}", runner.Find("run")![^1]);
+    }
+
+    [Fact]
+    public async Task StartAsync_RollingPullFailsAndImageAbsent_Throws()
+    {
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["pull", ..] => new DockerCommandResult(1, "", "network unreachable"),
+            ["image", "inspect", ..] => new DockerCommandResult(1, "", "No such image"),
+            _ => new DockerCommandResult(0, "", ""),
+        });
+
+        await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("rolling", locks: null))));
+    }
+
+    [Fact]
     public async Task StartAsync_PinnedWithLockPresentLocally_RunsLockWithoutPulling()
     {
         var digest = "sha256:" + new string('a', 64);
