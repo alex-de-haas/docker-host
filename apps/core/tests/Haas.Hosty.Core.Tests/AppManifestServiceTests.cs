@@ -538,6 +538,37 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == "app_runtime_artifact_unsupported");
     }
 
+    [Fact]
+    public async Task LoadAsync_AcceptsBundledCollectorManifest()
+    {
+        var manifestPath = ResolveRepoFile(Path.Combine("apps", "collector", "manifest.json"));
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal(CollectorBootstrap.AppId, selection.Manifest.Id);
+        var ports = selection.Services.Single().Runtime.Ports;
+        Assert.Contains(ports, port => port.Key == "otlp-http" && port.ContainerPort == 4318 && string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ports, port => port.Key == "metrics" && port.ContainerPort == 9464);
+        Assert.Equal("/etc/otelcol-contrib", selection.DataTarget?.ContainerPath);
+    }
+
+    private static string ResolveRepoFile(string relativePath)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, relativePath);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not locate '{relativePath}' walking up from {AppContext.BaseDirectory}.");
+    }
+
     private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");

@@ -915,9 +915,14 @@ internal sealed class CoreLifecycleService(
     {
         var results = new List<AppBackgroundLifecycleResult>();
         var records = await apps.ListAppRecordsAsync(cancellationToken);
+        // The telemetry collector starts before every other app: it is the OTLP sink they point at,
+        // so its endpoint URL must be resolved and persisted before their start-time env injection
+        // reads it (see ResolveTelemetryEndpointAsync). Otherwise alphabetical id order applies.
         foreach (var app in records.Where(app =>
             string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
-            (app.Autostart ?? true)).OrderBy(app => app.Id, StringComparer.Ordinal))
+            (app.Autostart ?? true))
+            .OrderByDescending(app => string.Equals(app.Id, CollectorBootstrap.AppId, StringComparison.Ordinal))
+            .ThenBy(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
             results.Add(await RunBackgroundLifecycleActionAsync(
@@ -2027,6 +2032,23 @@ internal sealed class CoreLifecycleService(
 
     private string GetAppDataPath(string appId)
         => Path.Combine(GetAppRoot(appId), "data");
+
+    // Writes a Core-owned file into a system app's data dir, which the runtime mounts into the
+    // container (see RuntimeAppDataTarget). Used by the collector bootstrap to deliver the
+    // authoritative otelcol config before the container starts. Idempotent: overwrites each call so
+    // a config template change ships on the next Core start. The file name is constrained to a plain
+    // file name (no separators) so it cannot escape the data dir.
+    internal async Task WriteSystemAppDataFileAsync(string appId, string fileName, string content, CancellationToken cancellationToken)
+    {
+        if (fileName.Contains(Path.DirectorySeparatorChar) || fileName.Contains(Path.AltDirectorySeparatorChar) || fileName.Contains("..", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("System app data file name must be a plain file name.", nameof(fileName));
+        }
+
+        var dataPath = GetAppDataPath(appId);
+        Directory.CreateDirectory(dataPath);
+        await File.WriteAllTextAsync(Path.Combine(dataPath, fileName), content, cancellationToken);
+    }
 
     private string GetRetainedConfigPath(string appId)
         => Path.Combine(GetAppRoot(appId), "retained-config.json");
