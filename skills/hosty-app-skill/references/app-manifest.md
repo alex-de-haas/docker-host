@@ -45,6 +45,7 @@ Core injects:
 - `HOSTY_DEPENDENCY_{KEY}_URL` (cross-app: another installed app's public endpoint)
 - `HOSTY_SERVICE_{KEY}_URL` (intra-app: a sibling service's internal base URL — see Service Dependencies)
 - `HOSTY_MOUNT_{KEY}` (one per declared `externalMounts` slot — see External Mounts)
+- `OTEL_*` (only when the app opts into `telemetry` and the host has observability enabled — see Telemetry)
 
 For `localCommand` runtime profiles, do not hard-code development ports by default. Omit `localPort` and `hostPort` so Core assigns an available loopback port and injects it as `HOSTY_PORT_{KEY}`. If a service declares exactly one port and the app did not explicitly set `PORT`, Core also injects `PORT=<assigned-port>` for common dev servers such as Next.js.
 
@@ -111,3 +112,23 @@ Read the variable, split on `,`, then split each entry on the **first** `=` into
 **App responsibilities.** Validate each injected root yourself (e.g. exists, is a single filesystem via `st_dev` if you hardlink within it). Do not assume two roots share a filesystem.
 
 **Operator configuration.** Paths are not in the manifest. The operator sets them via Core (`POST /api/apps/{appId}/mounts`, admin-only) after install. Core rejects host paths inside the Hosty data root or sensitive system paths, and fails app start if a configured path does not exist.
+
+## Telemetry
+
+Opt in to OpenTelemetry export with a top-level `telemetry` block (additive; absent or `enabled: false` means the app emits nothing). `docker` runtime only in v1.
+
+```jsonc
+"telemetry": {
+  "enabled": true,       // opt in to OTLP export
+  "sampleRatio": 0.1      // optional, traces head-sample ratio in [0,1] (default 0.1)
+}
+```
+
+When the app opts in **and** the host has observability enabled (`HOSTY_OBSERVABILITY_ENABLED=1`, off by default), Core injects the standard OpenTelemetry env so any OTel SDK exports with no app-specific wiring:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — the collector's OTLP/HTTP origin (reachable from the container).
+- `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
+- `OTEL_SERVICE_NAME` — the app id; `OTEL_RESOURCE_ATTRIBUTES` also carries `hosty.app.id` and `hosty.app.service`.
+- `OTEL_TRACES_SAMPLER=parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG` = `sampleRatio`.
+
+Instrument with your language's OTel SDK and read these env vars (most SDKs read them automatically). If the env is absent, observability is off or the collector is not up yet — degrade gracefully and emit nothing. See `docs/features/observability.md`.
