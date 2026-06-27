@@ -117,6 +117,41 @@ public sealed class AppManifestServiceTests
         Assert.Equal(30, healthcheck.IntervalSeconds);
     }
 
+    [Theory]
+    [InlineData(""", "telemetry": { "enabled": true, "sampleRatio": 1.5 }""")]
+    [InlineData(""", "telemetry": { "enabled": true, "sampleRatio": -0.1 }""")]
+    public async Task LoadAsync_RejectsInvalidTelemetrySampleRatio(string telemetry)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", telemetry: telemetry);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_telemetry_sample_ratio_invalid");
+    }
+
+    [Fact]
+    public async Task LoadAsync_AcceptsTelemetryOptIn()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            telemetry: """, "telemetry": { "enabled": true, "sampleRatio": 0.25 }""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var settings = RuntimeTelemetrySettings.FromManifest(selection.Manifest.Telemetry);
+        Assert.True(settings.Enabled);
+        Assert.Equal(0.25, settings.SampleRatio);
+    }
+
+    [Fact]
+    public void TelemetrySettings_DefaultsToDisabledWhenAbsentOrOff()
+    {
+        Assert.False(RuntimeTelemetrySettings.FromManifest(null).Enabled);
+        Assert.False(RuntimeTelemetrySettings.FromManifest(new RuntimeAppTelemetryManifest { Enabled = false }).Enabled);
+        // Opted in but no ratio -> sane head-based default.
+        Assert.Equal(0.1, RuntimeTelemetrySettings.FromManifest(new RuntimeAppTelemetryManifest { Enabled = true }).SampleRatio);
+    }
+
     [Fact]
     public void ValidateHealthcheck_DockerRejectsHttp()
     {
@@ -503,7 +538,7 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == "app_runtime_artifact_unsupported");
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null)
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -523,7 +558,7 @@ public sealed class AppManifestServiceTests
                     "image": "ghcr.io/example/notes:1.0.0"{{runtimeArtifact ?? ""}}{{runtimeNetwork ?? ""}}{{ports ?? ""}}{{healthcheck ?? ""}}
                   }
                 }
-              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}
+              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}{{telemetry ?? ""}}
             }
             """);
         return path;

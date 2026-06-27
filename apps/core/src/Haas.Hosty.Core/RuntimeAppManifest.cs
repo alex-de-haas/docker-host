@@ -331,6 +331,11 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             }
         }
 
+        if (manifest.Telemetry is { SampleRatio: { } sampleRatio } && (sampleRatio < 0.0 || sampleRatio > 1.0))
+        {
+            errors.Add(new("app_manifest_telemetry_sample_ratio_invalid", "telemetry.sampleRatio must be between 0 and 1.", "$.telemetry.sampleRatio"));
+        }
+
         ValidateDependencies(manifest.Dependencies, errors);
 
         RuntimeAppDataTarget? dataTarget = null;
@@ -1904,6 +1909,7 @@ internal sealed class RuntimeAppManifest
     public IReadOnlyList<string> Capabilities { get => field ?? []; init; } = [];
     public IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> ExternalMounts { get => field ??= new Dictionary<string, RuntimeAppExternalMountManifest>(); init; } = new Dictionary<string, RuntimeAppExternalMountManifest>();
     public RuntimeAppRestartPolicyManifest? RestartPolicy { get; init; }
+    public RuntimeAppTelemetryManifest? Telemetry { get; init; }
 }
 
 // Operator-configured external host-path mount slot. The manifest declares the slot
@@ -1954,6 +1960,35 @@ internal sealed record RuntimeRestartPolicy(string Mode, int MaxRetries, int Bac
         var maxRetries = manifest.MaxRetries is int retries && retries >= 0 ? retries : 5;
         var backoff = manifest.BackoffSeconds is int seconds && seconds >= 0 ? seconds : 10;
         return new RuntimeRestartPolicy(mode, maxRetries, backoff);
+    }
+}
+
+// Declares whether this app exports OpenTelemetry to the Hosty collector and at what trace sample
+// ratio. Opt-in: absent or enabled=false means no OTEL_* environment is injected (the app produces
+// no OTLP). Additive under schemaVersion app.0.1. Only the docker runtime acts on this in v1; a
+// localCommand app gets no OTLP (see observability.md). sampleRatio applies to traces (head-based).
+internal sealed record RuntimeAppTelemetryManifest
+{
+    public bool? Enabled { get; init; }
+    public double? SampleRatio { get; init; }
+}
+
+// Telemetry intent with manifest defaults applied, ready for the docker adapter to act on. Disabled
+// by default; SampleRatio is clamped to [0,1] with a 0.1 head-based default so an opted-in app that
+// omits a ratio still samples a sane fraction of traces.
+internal sealed record RuntimeTelemetrySettings(bool Enabled, double SampleRatio)
+{
+    public static readonly RuntimeTelemetrySettings Disabled = new(false, 0.1);
+
+    public static RuntimeTelemetrySettings FromManifest(RuntimeAppTelemetryManifest? manifest)
+    {
+        if (manifest is null || manifest.Enabled != true)
+        {
+            return Disabled;
+        }
+
+        var ratio = manifest.SampleRatio is double value ? Math.Clamp(value, 0.0, 1.0) : 0.1;
+        return new RuntimeTelemetrySettings(true, ratio);
     }
 }
 
