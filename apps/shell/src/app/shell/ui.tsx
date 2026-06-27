@@ -54,8 +54,9 @@ export function EmptyState({ icon: Icon, title, description, iconClassName }: { 
 
 export function StatusBadge({ value }: { value: string }) {
   const normalized = value.toLowerCase();
-  const running = normalized.includes("running") || normalized.includes("ok") || normalized.includes("ready");
-  const attention = normalized.includes("error") || normalized.includes("failed") || normalized.includes("unknown") || normalized.includes("offline");
+  // "healthy" is matched exactly so it does not also light up on "unhealthy" (substring match).
+  const running = normalized.includes("running") || normalized.includes("ok") || normalized.includes("ready") || normalized === "healthy";
+  const attention = normalized.includes("error") || normalized.includes("failed") || normalized.includes("unknown") || normalized.includes("offline") || normalized.includes("unhealthy") || normalized.includes("degraded");
   return (
     <Badge variant="outline" className={cn("gap-1.5", (running || attention) && "border-transparent", running && "bg-emerald-500/10 text-emerald-700", attention && "bg-amber-500/10 text-amber-700")}>
       <span className={cn("h-2 w-2 rounded-full", running ? "bg-emerald-500" : attention ? "bg-amber-500" : "bg-muted-foreground")} />

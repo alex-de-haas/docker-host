@@ -61,6 +61,128 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
     }
 
+    [Theory]
+    [InlineData(""", "restartPolicy": { "mode": "sometimes" }""", "app_manifest_restart_policy_mode_invalid")]
+    [InlineData(""", "restartPolicy": { "mode": "on-failure", "maxRetries": -1 }""", "app_manifest_restart_policy_max_retries_invalid")]
+    [InlineData(""", "restartPolicy": { "mode": "always", "backoffSeconds": -5 }""", "app_manifest_restart_policy_backoff_invalid")]
+    public async Task LoadAsync_RejectsInvalidRestartPolicy(string restartPolicy, string expectedCode)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", restartPolicy: restartPolicy);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    [Fact]
+    public async Task LoadAsync_AcceptsCaseInsensitiveRestartPolicyMode()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            restartPolicy: """, "restartPolicy": { "mode": "ON-FAILURE" }""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("on-failure", RuntimeRestartPolicy.FromManifest(selection.Manifest.RestartPolicy).Mode);
+    }
+
+    [Theory]
+    [InlineData(""", "healthcheck": { "type": "carrier-pigeon" }""", "app_manifest_healthcheck_type_invalid")]
+    [InlineData(""", "healthcheck": { "type": "http" }""", "app_manifest_healthcheck_type_invalid")]
+    [InlineData(""", "healthcheck": { "type": "exec" }""", "app_manifest_healthcheck_command_required")]
+    [InlineData(""", "healthcheck": { "type": "exec", "command": "true", "intervalSeconds": 0 }""", "app_manifest_healthcheck_interval_invalid")]
+    [InlineData(""", "healthcheck": { "type": "exec", "command": "true", "retries": 0 }""", "app_manifest_healthcheck_retries_invalid")]
+    public async Task LoadAsync_RejectsInvalidHealthcheck(string healthcheck, string expectedCode)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", healthcheck: healthcheck);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    [Fact]
+    public async Task LoadAsync_AcceptsExecHealthcheck()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            healthcheck: """, "healthcheck": { "type": "exec", "command": "true", "intervalSeconds": 30 }""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var healthcheck = selection.Manifest.Services[0].Runtimes["docker"].Healthcheck;
+        Assert.NotNull(healthcheck);
+        Assert.Equal("exec", healthcheck.Type);
+        Assert.Equal("true", healthcheck.Command);
+        Assert.Equal(30, healthcheck.IntervalSeconds);
+    }
+
+    [Fact]
+    public void ValidateHealthcheck_DockerRejectsHttp()
+    {
+        var errors = new List<AppManifestValidationError>();
+
+        AppManifestService.ValidateHealthcheck("api", "docker", [], new RuntimeServiceHealthcheckManifest { Type = "http" }, errors);
+
+        Assert.Contains(errors, candidate => candidate.Code == "app_manifest_healthcheck_type_invalid");
+    }
+
+    [Fact]
+    public void ValidateHealthcheck_LocalCommandRejectsExec()
+    {
+        var errors = new List<AppManifestValidationError>();
+
+        AppManifestService.ValidateHealthcheck("api", "localCommand", [], new RuntimeServiceHealthcheckManifest { Type = "exec", Command = "true" }, errors);
+
+        Assert.Contains(errors, candidate => candidate.Code == "app_manifest_healthcheck_type_invalid");
+    }
+
+    [Fact]
+    public void ValidateHealthcheck_HttpWithoutDeclaredPorts_RequiresPort()
+    {
+        var errors = new List<AppManifestValidationError>();
+
+        AppManifestService.ValidateHealthcheck("api", "localCommand", [], new RuntimeServiceHealthcheckManifest { Type = "http" }, errors);
+
+        Assert.Contains(errors, candidate => candidate.Code == "app_manifest_healthcheck_port_required");
+    }
+
+    [Fact]
+    public void ValidateHealthcheck_HttpPortNotDeclared_IsRejected()
+    {
+        var errors = new List<AppManifestValidationError>();
+
+        AppManifestService.ValidateHealthcheck(
+            "api", "localCommand", [new RuntimePortManifest { ContainerPort = 3000 }],
+            new RuntimeServiceHealthcheckManifest { Type = "http", Port = 9999 }, errors);
+
+        Assert.Contains(errors, candidate => candidate.Code == "app_manifest_healthcheck_port_unknown");
+    }
+
+    [Fact]
+    public void ValidateHealthcheck_NonPositiveInterval_IsRejected()
+    {
+        var errors = new List<AppManifestValidationError>();
+
+        AppManifestService.ValidateHealthcheck(
+            "api", "localCommand", [new RuntimePortManifest { ContainerPort = 3000 }],
+            new RuntimeServiceHealthcheckManifest { Type = "tcp", Port = 3000, IntervalSeconds = 0 }, errors);
+
+        Assert.Contains(errors, candidate => candidate.Code == "app_manifest_healthcheck_interval_invalid");
+    }
+
+    [Fact]
+    public void ValidateHealthcheck_ValidLocalCommandHttp_HasNoErrors()
+    {
+        var errors = new List<AppManifestValidationError>();
+
+        AppManifestService.ValidateHealthcheck(
+            "api", "localCommand", [new RuntimePortManifest { ContainerPort = 3000 }],
+            new RuntimeServiceHealthcheckManifest { Type = "http", Port = 3000, Path = "/healthz", IntervalSeconds = 10 }, errors);
+
+        Assert.Empty(errors);
+    }
+
     [Fact]
     public async Task LoadAsync_AcceptsHostExposedRawPort()
     {
@@ -381,7 +503,7 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == "app_runtime_artifact_unsupported");
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null)
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -398,10 +520,10 @@ public sealed class AppManifestServiceTests
                 "runtimes": {
                   "docker": {
                     "type": "docker",
-                    "image": "ghcr.io/example/notes:1.0.0"{{runtimeArtifact ?? ""}}{{runtimeNetwork ?? ""}}{{ports ?? ""}}
+                    "image": "ghcr.io/example/notes:1.0.0"{{runtimeArtifact ?? ""}}{{runtimeNetwork ?? ""}}{{ports ?? ""}}{{healthcheck ?? ""}}
                   }
                 }
-              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}
+              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}
             }
             """);
         return path;

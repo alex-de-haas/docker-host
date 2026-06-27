@@ -9,6 +9,16 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class CoreLifecycleServiceTests
 {
     [Theory]
+    [InlineData("healthy", "running")]
+    [InlineData("degraded", "running")]
+    [InlineData("starting", "running")]
+    [InlineData("stopped", "stopped")]
+    [InlineData("unhealthy", "unknown")]
+    [InlineData("partial-weird", null)]
+    public void ResolveRuntimeStateFromHealth_MapsAggregateToCoarseState(string status, string? expected)
+        => Assert.Equal(expected, CoreLifecycleService.ResolveRuntimeStateFromHealth(new AppRuntimeHealthResult(status, [])));
+
+    [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]
     [InlineData("pre-runtime-switch")]
