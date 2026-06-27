@@ -58,7 +58,17 @@ jobs:
       - name: Resolve product version
         id: product_version
         shell: bash
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        # The platform (Core + CLI) version source of truth is Directory.Build.props <Version>
+        # (docs/features/repository-release-model.md). The root package.json is the private monorepo
+        # container, not the platform version — reading it here stamped published binaries with a stale
+        # 0.5.0 while Directory.Build.props had advanced, so Core reported the wrong version.
+        run: |
+          version=$(grep -oE '<Version>[^<]+</Version>' Directory.Build.props | sed -E 's#</?Version>##g')
+          if [[ -z "$version" ]]; then
+            echo "Could not resolve <Version> from Directory.Build.props" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install Native AOT prerequisites (Linux)
         if: runner.os == 'Linux'
