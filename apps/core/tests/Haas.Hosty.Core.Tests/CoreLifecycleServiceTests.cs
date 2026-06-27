@@ -602,6 +602,19 @@ public sealed class CoreLifecycleServiceTests
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
             fixture.Service.CreateUpdatePlanAsync("com.example.live", new AppUpdatePlanRequest()));
         Assert.Equal("update_live_source_runtime", error.Code);
+
+        // Legacy/partially-populated record that never persisted RuntimeProfiles must still classify as
+        // live source: both the summary flag and the update-plan guard fall back to loading profiles
+        // from the reviewed internal manifest rather than silently treating the runtime as non-live.
+        var live = await fixture.Apps.GetAppAsync("com.example.live");
+        await fixture.Apps.UpsertAppAsync(live! with { RuntimeProfiles = null });
+
+        var legacySummary = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.True(legacySummary.Live);
+
+        var legacyError = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.CreateUpdatePlanAsync("com.example.live", new AppUpdatePlanRequest()));
+        Assert.Equal("update_live_source_runtime", legacyError.Code);
     }
 
     [Theory]

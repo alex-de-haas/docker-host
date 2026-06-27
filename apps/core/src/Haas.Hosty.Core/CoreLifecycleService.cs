@@ -124,7 +124,7 @@ internal sealed class CoreLifecycleService(
             TryDelete(GetRetainedConfigPath(selection.Manifest.Id!));
         }
 
-        return new AppLifecycleResponse(AppSummary.From(document.App), null, "installed");
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "installed");
     }
 
     public async Task<AppLifecycleResponse> ConfigureAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken = default)
@@ -144,7 +144,7 @@ internal sealed class CoreLifecycleService(
             };
         }, cancellationToken);
 
-        return new AppLifecycleResponse(AppSummary.From(document.App), null, "configured");
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
     // Validates an operator-supplied update policy. null leaves the policy unchanged; otherwise it
@@ -179,7 +179,7 @@ internal sealed class CoreLifecycleService(
             LastError = null,
         }, cancellationToken);
 
-        return new AppLifecycleResponse(AppSummary.From(document.App), null, "configured");
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
     // Operator-configured external mount bindings. Replaces the full set for the app (idempotent
@@ -198,7 +198,7 @@ internal sealed class CoreLifecycleService(
             LastError = null,
         }, cancellationToken);
 
-        return new AppLifecycleResponse(AppSummary.From(document.App), null, "configured");
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
     private IReadOnlyList<AppMountBinding> ValidateMountBindings(AppRecord app, IReadOnlyList<AppMountBindingInput> inputs)
@@ -377,7 +377,7 @@ internal sealed class CoreLifecycleService(
             }, cancellationToken);
 
             await ReconcileIngressAsync(cancellationToken);
-            return new AppLifecycleResponse(AppSummary.From(updated.App), null, "started");
+            return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "started");
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
@@ -406,7 +406,7 @@ internal sealed class CoreLifecycleService(
         }, cancellationToken);
 
         await ReconcileIngressAsync(cancellationToken);
-        return new AppLifecycleResponse(AppSummary.From(updated.App), null, "stopped");
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "stopped");
     }
 
     public async Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
@@ -434,7 +434,7 @@ internal sealed class CoreLifecycleService(
                 ArtifactLocks = start.ArtifactLocks ?? current.ArtifactLocks,
             }, cancellationToken);
 
-            return new AppLifecycleResponse(AppSummary.From(updated.App), null, "restarted");
+            return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "restarted");
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
@@ -458,7 +458,10 @@ internal sealed class CoreLifecycleService(
         // re-read and validate the live folder with no fallback and surface a confusing "manifest failed
         // validation" when it is mid-edit. Refuse with a clear, actionable error instead. Passing an
         // explicit manifestPath/URL still works as an escape hatch for an out-of-band comparison.
-        if (string.IsNullOrWhiteSpace(request.ManifestPath) && IsLiveSourceApp(app))
+        // Resolve profiles with the same fallback as summaries so a legacy record that never persisted
+        // RuntimeProfiles is still classified correctly (and not silently treated as non-live).
+        var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
+        if (string.IsNullOrWhiteSpace(request.ManifestPath) && IsLiveSourceApp(app, profiles))
         {
             throw new AppLifecycleException(
                 "update_live_source_runtime",
@@ -555,7 +558,7 @@ internal sealed class CoreLifecycleService(
             return new AppLifecycleResponse(restarted.App, backup, "updated");
         }
 
-        return new AppLifecycleResponse(AppSummary.From(document.App), backup, "updated");
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), backup, "updated");
     }
 
     public async Task<AppRuntimeSwitchPlan> CreateRuntimeSwitchPlanAsync(
@@ -662,7 +665,7 @@ internal sealed class CoreLifecycleService(
         }
 
         var document = await apps.GetAppAsync(appId, cancellationToken);
-        return new AppLifecycleResponse(document is null ? null : AppSummary.From(document), backup, "runtime-switched");
+        return new AppLifecycleResponse(document is null ? null : await BuildAppSummaryAsync(document, cancellationToken), backup, "runtime-switched");
     }
 
     public async Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken = default)
@@ -729,7 +732,7 @@ internal sealed class CoreLifecycleService(
 
         TryDeleteDirectoryIfEmpty(GetAppRoot(appId));
         await ReconcileIngressAsync(cancellationToken);
-        return new AppLifecycleResponse(app is null ? null : AppSummary.From(app), null, "removed");
+        return new AppLifecycleResponse(app is null ? null : await BuildAppSummaryAsync(app, cancellationToken), null, "removed");
     }
 
     public async Task<AppBackupsResponse> ListBackupsAsync(string appId, CancellationToken cancellationToken = default)
@@ -1106,16 +1109,22 @@ internal sealed class CoreLifecycleService(
         }).ToArray();
     }
 
+    // Single choke point for building a summary so the live-source flag is computed consistently for
+    // every response (list and lifecycle actions alike), not just the app list. Callers that mutate the
+    // record then build a response should use this rather than AppSummary.From directly.
     private async Task<AppSummary> BuildAppSummaryAsync(AppRecord app, CancellationToken cancellationToken)
     {
-        if (app.RuntimeProfiles is { Count: > 0 })
-        {
-            return AppSummary.From(app, live: IsLiveSourceApp(app));
-        }
-
-        var profiles = await TryLoadRuntimeProfilesForSummaryAsync(app, cancellationToken);
+        var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
         return AppSummary.From(app, profiles, IsLiveSourceApp(app, profiles));
     }
+
+    // The app's runtime profiles, preferring the persisted record and falling back to a live load from
+    // the reviewed internal manifest for legacy records that never persisted them. Returns [] (never
+    // null) when neither is available.
+    private async Task<IReadOnlyList<AppRuntimeProfileSummary>> ResolveRuntimeProfilesAsync(AppRecord app, CancellationToken cancellationToken)
+        => app.RuntimeProfiles is { Count: > 0 }
+            ? app.RuntimeProfiles
+            : await TryLoadRuntimeProfilesForSummaryAsync(app, cancellationToken);
 
     private async Task<IReadOnlyList<AppRuntimeProfileSummary>> TryLoadRuntimeProfilesForSummaryAsync(
         AppRecord app,
