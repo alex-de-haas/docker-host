@@ -74,6 +74,18 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
     }
 
+    [Fact]
+    public async Task LoadAsync_AcceptsCaseInsensitiveRestartPolicyMode()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            restartPolicy: """, "restartPolicy": { "mode": "ON-FAILURE" }""");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("on-failure", RuntimeRestartPolicy.FromManifest(selection.Manifest.RestartPolicy).Mode);
+    }
+
     [Theory]
     [InlineData(""", "healthcheck": { "type": "carrier-pigeon" }""", "app_manifest_healthcheck_type_invalid")]
     [InlineData(""", "healthcheck": { "type": "http" }""", "app_manifest_healthcheck_type_invalid")]

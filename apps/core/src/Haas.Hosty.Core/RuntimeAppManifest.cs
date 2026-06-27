@@ -313,7 +313,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
 
         if (manifest.RestartPolicy is { } restartPolicy)
         {
-            if (restartPolicy.Mode is not ("no" or "on-failure" or "always"))
+            // Normalize the same way RuntimeRestartPolicy.FromManifest does, so the manifest API is not
+            // stricter than the runtime that consumes it ("ON-FAILURE" / " always " resolve fine).
+            if ((restartPolicy.Mode ?? "no").Trim().ToLowerInvariant() is not ("no" or "on-failure" or "always"))
             {
                 errors.Add(new("app_manifest_restart_policy_mode_invalid", "restartPolicy.mode must be 'no', 'on-failure', or 'always'.", "$.restartPolicy.mode"));
             }

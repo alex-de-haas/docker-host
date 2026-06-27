@@ -38,7 +38,12 @@ internal sealed class NetworkHealthProbe : IHealthProbe
                 _ => false,
             };
         }
-        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or OperationCanceledException)
+        // A failed probe is itself the unhealthy signal, so swallow everything a malformed target or a
+        // transport failure can throw — bad host/path (UriFormatException), bad port
+        // (ArgumentException/ArgumentOutOfRangeException), HttpClient misuse (InvalidOperationException),
+        // and the usual network/timeout faults — rather than letting it escape into the supervisor tick.
+        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException
+            or OperationCanceledException or UriFormatException or InvalidOperationException or ArgumentException)
         {
             return false;
         }

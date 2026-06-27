@@ -931,10 +931,13 @@ internal sealed class RuntimeAppSupervisorService(
 
     private async Task SuperviseTickAsync(CancellationToken cancellationToken)
     {
+        // Apps with an active crash-loop gate are observed even while their reconciled state sits at
+        // "stopped" during backoff, so retries and give-up keep advancing across ticks.
+        var supervised = new HashSet<string>(restartGates.Keys, StringComparer.Ordinal);
         IReadOnlyList<AppHealthObservation> observations;
         try
         {
-            observations = await lifecycle.ObserveRuntimeHealthAsync(cancellationToken);
+            observations = await lifecycle.ObserveRuntimeHealthAsync(supervised, cancellationToken);
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
@@ -1001,7 +1004,7 @@ internal sealed class RuntimeAppSupervisorService(
                     logger.LogInformation("Supervisor restarted '{AppId}' after a crash (attempt {Attempt}/{Max}).",
                         observation.AppId, next.Attempts, observation.RestartPolicy.MaxRetries);
                 }
-                catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     logger.LogWarning(ex, "Supervisor restart of '{AppId}' failed.", observation.AppId);
                 }
@@ -1009,6 +1012,9 @@ internal sealed class RuntimeAppSupervisorService(
                 break;
 
             case RestartDecision.GiveUp:
+                // Drop the gate so the abandoned app (left at "stopped") stops being supervised and
+                // settles, instead of being observed and re-evaluated to GiveUp on every later tick.
+                restartGates.Remove(observation.AppId);
                 await NotifyRestartGiveUpAsync(observation.AppId, observation.RestartPolicy.MaxRetries, cancellationToken);
                 break;
         }

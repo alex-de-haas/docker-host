@@ -2855,35 +2855,47 @@ internal sealed class CoreLifecycleService(
             _ => null,
         };
 
-    // Phase 1 supervision read: observe every running runtime app's current health across BOTH
+    // Phase 1 supervision read: observe each relevant runtime app's current health across BOTH
     // runtimes (the summary-path reconcile above stays localCommand-only so listing never fans out to
     // docker), reconcile the persisted RuntimeState from what is actually observed, and return the
-    // per-app aggregate health so the supervisor can detect transitions and notify. Best-effort: a
-    // failure to observe one app is swallowed and yields no observation, never throwing.
-    public async Task<IReadOnlyList<AppHealthObservation>> ObserveRuntimeHealthAsync(CancellationToken cancellationToken = default)
+    // per-app aggregate health so the supervisor can detect transitions and notify. `supervisedAppIds`
+    // are apps the supervisor is actively retrying after a crash: their persisted state may already be
+    // "stopped" during restart backoff, but they must keep being observed so retries and give-up still
+    // fire across ticks. Best-effort: a failure to observe one app is logged and skipped, never
+    // failing the whole pass and starving the other apps of supervision.
+    public async Task<IReadOnlyList<AppHealthObservation>> ObserveRuntimeHealthAsync(
+        IReadOnlySet<string> supervisedAppIds, CancellationToken cancellationToken = default)
     {
         var records = await apps.ListAppRecordsAsync(cancellationToken);
         var observations = new List<AppHealthObservation>();
         foreach (var app in records)
         {
-            var observation = await ObserveRuntimeHealthForAppAsync(app, cancellationToken);
-            if (observation is not null)
+            try
             {
-                observations.Add(observation);
+                var observation = await ObserveRuntimeHealthForAppAsync(app, supervisedAppIds.Contains(app.Id), cancellationToken);
+                if (observation is not null)
+                {
+                    observations.Add(observation);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Failed to observe runtime health for app '{AppId}'.", app.Id);
             }
         }
 
         return observations;
     }
 
-    private async Task<AppHealthObservation?> ObserveRuntimeHealthForAppAsync(AppRecord app, CancellationToken cancellationToken)
+    private async Task<AppHealthObservation?> ObserveRuntimeHealthForAppAsync(AppRecord app, bool supervised, CancellationToken cancellationToken)
     {
-        // Only apps Core believes are running are probed: a stopped app reads as stopped and would be
-        // noise, while an app that crashed is still marked running here and so is observed (its
-        // transition to stopped is detected on this tick before the state is reconciled to stopped).
+        // Probe apps the operator expects up: those Core still believes are running, plus any the
+        // supervisor is actively retrying after a crash. The latter keep being observed even though
+        // their reconciled state is already "stopped" during backoff, so the crash-loop gate continues
+        // to advance instead of the app silently falling out of supervision after one tick.
         if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
-            !string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) ||
-            string.IsNullOrWhiteSpace(app.ManifestPath))
+            string.IsNullOrWhiteSpace(app.ManifestPath) ||
+            (!string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) && !supervised))
         {
             return null;
         }
