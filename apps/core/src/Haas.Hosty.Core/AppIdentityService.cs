@@ -14,6 +14,9 @@ internal sealed class AppIdentityService(
     private static readonly TimeSpan AuthCodeLifetime = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan IdentityTokenLifetime = TimeSpan.FromHours(24);
 
+    private readonly SemaphoreSlim _signingKeyLock = new(1, 1);
+    private byte[]? _signingKey;
+
     public async Task<AppAuthorizeResult> CreateAuthorizationCodeAsync(
         string appId,
         string userId,
@@ -137,34 +140,93 @@ internal sealed class AppIdentityService(
 
     private async Task<byte[]> GetSigningKeyAsync(CancellationToken cancellationToken)
     {
-        var path = Path.Combine(paths.AuthRoot, "app-identity-signing.key");
+        var cached = Volatile.Read(ref _signingKey);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        await _signingKeyLock.WaitAsync(cancellationToken);
         try
         {
-            var existingKey = await ReadSigningKeyAsync(path, cancellationToken);
+            cached = _signingKey;
+            if (cached is not null)
+            {
+                return cached;
+            }
+
+            var key = await LoadOrCreateSigningKeyAsync(cancellationToken);
+            Volatile.Write(ref _signingKey, key);
+            return key;
+        }
+        finally
+        {
+            _signingKeyLock.Release();
+        }
+    }
+
+    private async Task<byte[]> LoadOrCreateSigningKeyAsync(CancellationToken cancellationToken)
+    {
+        var path = Path.Combine(paths.AuthRoot, "app-identity-signing.key");
+
+        var existing = await TryReadSigningKeyAsync(path, cancellationToken);
+        if (existing is not null)
+        {
             SecureFileSystem.TryRestrictFile(path);
-            return existingKey;
-        }
-        catch (IOException) when (File.Exists(path))
-        {
-            return await ReadSigningKeyAfterConcurrentCreateAsync(path, cancellationToken);
-        }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-        {
-            // Missing key falls through to atomic creation below.
+            return existing;
         }
 
         SecureFileSystem.EnsurePrivateDirectory(paths.AuthRoot);
         var key = RandomNumberGenerator.GetBytes(32);
+
+        // First use: publish the key via a unique temp file + atomic rename so the
+        // real path is never observed empty or partially written by a concurrent
+        // reader. overwrite:false means we lose cleanly if another writer wins.
+        if (await TryWriteSigningKeyAsync(path, key, overwrite: false, cancellationToken))
+        {
+            return key;
+        }
+
+        // Another writer created the file first; adopt its key.
+        var winner = await TryReadSigningKeyWithRetryAsync(path, cancellationToken);
+        if (winner is not null)
+        {
+            SecureFileSystem.TryRestrictFile(path);
+            return winner;
+        }
+
+        // The file exists but never received a valid key (e.g. an empty file left
+        // behind by an older crash). Replace it atomically with a fresh key.
+        if (await TryWriteSigningKeyAsync(path, key, overwrite: true, cancellationToken))
+        {
+            return key;
+        }
+
+        throw new AppIdentityException("signing_key_unavailable", "Identity signing key could not be initialized.");
+    }
+
+    private static async Task<bool> TryWriteSigningKeyAsync(string path, byte[] key, bool overwrite, CancellationToken cancellationToken)
+    {
         var encodedKey = Encoding.UTF8.GetBytes(Convert.ToBase64String(key));
+        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
-            await using var stream = SecureFileSystem.CreatePrivateFile(path, FileMode.CreateNew);
-            await stream.WriteAsync(encodedKey, cancellationToken);
-            return key;
+            await using (var stream = SecureFileSystem.CreatePrivateFile(tempPath, FileMode.CreateNew))
+            {
+                await stream.WriteAsync(encodedKey, cancellationToken);
+            }
+
+            File.Move(tempPath, path, overwrite);
+            SecureFileSystem.TryRestrictFile(path);
+            return true;
         }
         catch (IOException)
         {
-            return await ReadSigningKeyAfterConcurrentCreateAsync(path, cancellationToken);
+            return false;
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
         }
     }
 
@@ -175,21 +237,56 @@ internal sealed class AppIdentityService(
         return CryptographicOperations.FixedTimeEquals(expectedBytes, actualBytes);
     }
 
-    private static async Task<byte[]> ReadSigningKeyAsync(string path, CancellationToken cancellationToken)
-        => Convert.FromBase64String((await File.ReadAllTextAsync(path, cancellationToken)).Trim());
-
-    private static async Task<byte[]> ReadSigningKeyAfterConcurrentCreateAsync(string path, CancellationToken cancellationToken)
+    private static async Task<byte[]?> TryReadSigningKeyAsync(string path, CancellationToken cancellationToken)
     {
-        for (var attempt = 0; ; attempt++)
+        try
         {
-            try
+            var text = (await File.ReadAllTextAsync(path, cancellationToken)).Trim();
+            if (text.Length == 0)
             {
-                return await ReadSigningKeyAsync(path, cancellationToken);
+                return null;
             }
-            catch (IOException) when (attempt < 10)
+
+            var key = Convert.FromBase64String(text);
+            return key.Length == 0 ? null : key;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException)
+        {
+            // Concurrent writer holds the file, it is mid-rename, or permissions are
+            // restricted; treat as absent.
+            return null;
+        }
+    }
+
+    private static async Task<byte[]?> TryReadSigningKeyWithRetryAsync(string path, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var key = await TryReadSigningKeyAsync(path, cancellationToken);
+            if (key is not null)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+                return key;
             }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+        }
+
+        return await TryReadSigningKeyAsync(path, cancellationToken);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+        {
+            // Best-effort cleanup of the temp file; the directory may already be gone.
         }
     }
 
