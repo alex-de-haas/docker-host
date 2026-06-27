@@ -254,9 +254,10 @@ internal sealed class AppIdentityService(
         {
             return null;
         }
-        catch (Exception ex) when (ex is IOException or FormatException)
+        catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException)
         {
-            // Concurrent writer holds the file or it is mid-rename; treat as absent.
+            // Concurrent writer holds the file, it is mid-rename, or permissions are
+            // restricted; treat as absent.
             return null;
         }
     }
@@ -283,9 +284,9 @@ internal sealed class AppIdentityService(
         {
             File.Delete(path);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
         {
-            // Best-effort cleanup of the temp file.
+            // Best-effort cleanup of the temp file; the directory may already be gone.
         }
     }
 

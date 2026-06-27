@@ -181,6 +181,26 @@ public sealed class AppIdentityServiceTests
         Assert.Equal(32, Convert.FromBase64String((await File.ReadAllTextAsync(keyPath)).Trim()).Length);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   \n")]
+    [InlineData("not-valid-base64!!")]
+    public async Task CreateLaunchTokenAsync_SelfHealsPoisonedSigningKeyFile(string poisonedContents)
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var keyPath = Path.Combine(fixture.Paths.AuthRoot, "app-identity-signing.key");
+        Directory.CreateDirectory(fixture.Paths.AuthRoot);
+        await File.WriteAllTextAsync(keyPath, poisonedContents);
+
+        var token = await fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1");
+        var session = await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes");
+
+        Assert.True(session.Active);
+        Assert.Equal("user_1", session.UserId);
+        Assert.Equal(32, Convert.FromBase64String((await File.ReadAllTextAsync(keyPath)).Trim()).Length);
+    }
+
     private static HostUserRecord CreateUser(string id, bool disabled = false)
         => new(
             Id: id,
