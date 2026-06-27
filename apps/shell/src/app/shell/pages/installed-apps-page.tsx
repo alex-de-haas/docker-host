@@ -209,6 +209,10 @@ function AppServiceDetailsPanel({
   const statusByService = new Map(
     (updateStatusState?.status?.services ?? []).map((service) => [service.service, service]),
   );
+  // Per-service health detail (container HEALTHCHECK result, restart count, uptime) keyed by service.
+  const healthByService = new Map(
+    (healthState?.health?.services ?? []).map((service) => [service.service, service]),
+  );
   const hasImageInfo =
     Object.keys(lockedByService).length > 0 ||
     [...runningByService.values()].some((digest) => digest) ||
@@ -287,16 +291,30 @@ function AppServiceDetailsPanel({
             const locked = normalizeDigest(lockedByService[service.service]?.imageDigest);
             const running = runningByService.get(service.service) ?? null;
             const serviceStatus = statusByService.get(service.service);
+            const serviceHealth = healthByService.get(service.service);
             const drift = Boolean(locked && running && locked !== running);
             const hasServiceImage = Boolean(locked || running || serviceStatus);
             return (
             <div key={service.service} className="rounded-md bg-muted/30 p-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="truncate text-xs font-medium">{service.service}</div>
+                  <div
+                    className="truncate text-xs font-medium"
+                    title={serviceHealth?.startedAt ? `Started ${serviceHealth.startedAt}` : undefined}
+                  >
+                    {service.service}
+                  </div>
                   {service.message && <div className="truncate text-xs text-muted-foreground">{service.message}</div>}
+                  {serviceHealth?.restartCount ? (
+                    <div className="truncate text-[11px] text-muted-foreground">
+                      {serviceHealth.restartCount} restart{serviceHealth.restartCount === 1 ? "" : "s"}
+                    </div>
+                  ) : null}
                 </div>
-                <StatusBadge value={service.status} />
+                <div className="flex items-center gap-1.5">
+                  {serviceHealth?.health && <StatusBadge value={serviceHealth.health} />}
+                  <StatusBadge value={service.status} />
+                </div>
               </div>
               {hasServiceImage && (
                 <div className="mt-2 grid gap-1 rounded-md border bg-background px-2 py-1.5 text-xs">

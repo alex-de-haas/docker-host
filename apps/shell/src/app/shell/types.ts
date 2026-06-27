@@ -180,6 +180,14 @@ export type CoreRuntimeServiceHealth = {
   // The image the container is actually running (`repository@sha256:...`), used to surface
   // "running != lock" drift. Null for runtimes without an image (localCommand) or when unknown.
   image?: string | null;
+  // Container HEALTHCHECK result ("healthy"/"unhealthy"/"starting"), or null when the runtime has no
+  // health probe (localCommand) or the image declares no HEALTHCHECK. Distinct from `status`, which
+  // is pure liveness (running/stopped).
+  health?: string | null;
+  // Times the runtime has restarted this service (docker RestartCount), or null when unavailable.
+  restartCount?: number | null;
+  // RFC3339 start timestamp of the current run, or null when not started.
+  startedAt?: string | null;
 };
 
 export type AppHealthResponse = {

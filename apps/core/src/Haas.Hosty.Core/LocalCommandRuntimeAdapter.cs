@@ -7,7 +7,8 @@ namespace Haas.Hosty.Core;
 internal sealed class LocalCommandRuntimeAdapter(
     HostyCoreRuntimeConfig config,
     LocalCommandProcessRegistry registry,
-    AppServiceTokenService serviceTokens) : IAppRuntimeAdapter
+    AppServiceTokenService serviceTokens,
+    IHealthProbe? probe = null) : IAppRuntimeAdapter
 {
     public string Type => "localCommand";
 
@@ -84,7 +85,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     throw;
                 }
 
-                registry.Set(context.App.Id, service.Key, new LocalCommandProcess(process, logPath, workingDirectory));
+                registry.Set(context.App.Id, service.Key, new LocalCommandProcess(process, logPath, workingDirectory, servicePorts[service.Key]));
                 startedServices.Add(service.Key);
                 await Task.Delay(250, cancellationToken);
                 if (process.HasExited)
@@ -158,19 +159,88 @@ internal sealed class LocalCommandRuntimeAdapter(
         return Task.FromResult(new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines), services));
     }
 
-    public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+    public async Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
-        var services = context.Manifest.Services
-            .Select(service => BuildServiceHealth(context, service))
-            .ToArray();
-        var status = services.Length == 0
+        var services = new List<AppRuntimeServiceHealth>(context.Manifest.Services.Count);
+        foreach (var service in context.Manifest.Services)
+        {
+            var health = BuildServiceHealth(context, service);
+            services.Add(await ApplyActiveProbeAsync(context, service, health, cancellationToken));
+        }
+
+        // Liveness decides first, then the Core-side probe result (Health) refines the all-running
+        // case — exactly as the docker aggregate does, but keeping localCommand's "exited" status in
+        // the failure branch ("unhealthy") rather than treating it as a clean stop.
+        var status = services.Count == 0
             ? "unknown"
             : services.All(service => string.Equals(service.Status, "running", StringComparison.Ordinal))
-                ? "healthy"
+                ? services.Any(service => string.Equals(service.Health, "unhealthy", StringComparison.Ordinal))
+                    ? "degraded"
+                    : services.Any(service => string.Equals(service.Health, "starting", StringComparison.Ordinal))
+                        ? "starting"
+                        : "healthy"
                 : services.All(service => string.Equals(service.Status, "stopped", StringComparison.Ordinal))
                     ? "stopped"
                     : "unhealthy";
-        return Task.FromResult(new AppRuntimeHealthResult(status, services));
+        return new AppRuntimeHealthResult(status, services);
+    }
+
+    // Folds a Core-side http/tcp probe into a running service's health. Only a running service with a
+    // declared http/tcp healthcheck and a resolvable host port is probed; otherwise the base health
+    // (no probe signal) is returned unchanged.
+    private async Task<AppRuntimeServiceHealth> ApplyActiveProbeAsync(
+        RuntimeLifecycleContext context, RuntimeSelectedService service, AppRuntimeServiceHealth health, CancellationToken cancellationToken)
+    {
+        if (probe is null ||
+            service.Runtime.Healthcheck is not { } healthcheck ||
+            !string.Equals(health.Status, "running", StringComparison.Ordinal))
+        {
+            return health;
+        }
+
+        var handle = registry.Get(context.App.Id, service.Key);
+        if (handle is null)
+        {
+            return health;
+        }
+
+        var target = ResolveProbeTarget(healthcheck, service.Runtime.Ports, handle.Ports);
+        if (target is null)
+        {
+            return health;
+        }
+
+        var healthy = await probe.ProbeAsync(target, cancellationToken);
+        return health with { Health = healthy ? "healthy" : "unhealthy" };
+    }
+
+    // Resolves a loopback probe target from a service's http/tcp healthcheck and the host ports it was
+    // assigned at start. The healthcheck names a declared container port (or defaults to the first);
+    // that port's key maps to the actual host port. Returns null when the check is not http/tcp or no
+    // port resolves, so the caller simply skips probing.
+    internal static HealthProbeTarget? ResolveProbeTarget(
+        RuntimeServiceHealthcheckManifest? healthcheck,
+        IReadOnlyList<RuntimePortManifest> ports,
+        IReadOnlyDictionary<string, int> assignedPorts)
+    {
+        if (healthcheck is null || healthcheck.Type is not ("http" or "tcp"))
+        {
+            return null;
+        }
+
+        var port = healthcheck.Port is int declared
+            ? ports.FirstOrDefault(candidate => candidate.ContainerPort == declared)
+            : ports.FirstOrDefault(candidate => candidate.ContainerPort is not null);
+        if (port is null || !assignedPorts.TryGetValue(RuntimeServiceDiscovery.PortKey(port), out var hostPort))
+        {
+            return null;
+        }
+
+        var path = string.IsNullOrWhiteSpace(healthcheck.Path)
+            ? "/"
+            : healthcheck.Path!.StartsWith('/') ? healthcheck.Path! : "/" + healthcheck.Path;
+        var timeout = TimeSpan.FromSeconds(healthcheck.TimeoutSeconds is int seconds && seconds > 0 ? seconds : 5);
+        return new HealthProbeTarget(healthcheck.Type, "127.0.0.1", hostPort, path, timeout);
     }
 
     private static System.Diagnostics.ProcessStartInfo CreateShellStartInfo(string command, string workingDirectory)
@@ -474,7 +544,8 @@ internal sealed class LocalCommandProcessRegistry
 internal sealed record LocalCommandProcess(
     System.Diagnostics.Process Process,
     string LogPath,
-    string WorkingDirectory);
+    string WorkingDirectory,
+    IReadOnlyDictionary<string, int> Ports);
 
 internal sealed class LocalCommandLogWriter(TextWriter writer) : IDisposable
 {

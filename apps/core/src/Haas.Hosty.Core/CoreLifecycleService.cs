@@ -2843,14 +2843,85 @@ internal sealed class CoreLifecycleService(
         return updated.App;
     }
 
-    private static string? ResolveRuntimeStateFromHealth(AppRuntimeHealthResult health)
+    // Maps an aggregate health status to the coarse persisted RuntimeState. "degraded"/"starting" are
+    // still live (the container is up), so they reconcile to "running"; "unhealthy" (a partial outage)
+    // is ambiguous and maps to "unknown"; anything unrecognized leaves the state untouched.
+    internal static string? ResolveRuntimeStateFromHealth(AppRuntimeHealthResult health)
         => health.Status switch
         {
-            "healthy" => "running",
+            "healthy" or "degraded" or "starting" => "running",
             "stopped" => "stopped",
             "unhealthy" => "unknown",
             _ => null,
         };
+
+    // Phase 1 supervision read: observe every running runtime app's current health across BOTH
+    // runtimes (the summary-path reconcile above stays localCommand-only so listing never fans out to
+    // docker), reconcile the persisted RuntimeState from what is actually observed, and return the
+    // per-app aggregate health so the supervisor can detect transitions and notify. Best-effort: a
+    // failure to observe one app is swallowed and yields no observation, never throwing.
+    public async Task<IReadOnlyList<AppHealthObservation>> ObserveRuntimeHealthAsync(CancellationToken cancellationToken = default)
+    {
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        var observations = new List<AppHealthObservation>();
+        foreach (var app in records)
+        {
+            var observation = await ObserveRuntimeHealthForAppAsync(app, cancellationToken);
+            if (observation is not null)
+            {
+                observations.Add(observation);
+            }
+        }
+
+        return observations;
+    }
+
+    private async Task<AppHealthObservation?> ObserveRuntimeHealthForAppAsync(AppRecord app, CancellationToken cancellationToken)
+    {
+        // Only apps Core believes are running are probed: a stopped app reads as stopped and would be
+        // noise, while an app that crashed is still marked running here and so is observed (its
+        // transition to stopped is detected on this tick before the state is reconciled to stopped).
+        if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
+            !string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(app.ManifestPath))
+        {
+            return null;
+        }
+
+        RuntimeAppManifestSelection selection;
+        try
+        {
+            selection = await LoadSelectionForAppAsync(app, cancellationToken);
+        }
+        catch (Exception ex) when (ex is AppManifestException or IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
+
+        AppRuntimeHealthResult health;
+        try
+        {
+            health = await ResolveAdapter(selection.RuntimeProfile.Type).GetHealthAsync(
+                await CreateRuntimeContextAsync(app, selection, cancellationToken),
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        var observedRuntimeState = ResolveRuntimeStateFromHealth(health);
+        if (observedRuntimeState is not null &&
+            !string.Equals(observedRuntimeState, app.RuntimeState, StringComparison.Ordinal))
+        {
+            _ = await apps.UpdateAppAsync(app.Id, current => current with
+            {
+                RuntimeState = observedRuntimeState,
+            }, cancellationToken);
+        }
+
+        return new AppHealthObservation(app.Id, health.Status, RuntimeRestartPolicy.FromManifest(selection.Manifest.RestartPolicy));
+    }
 
     private static void TryDelete(string path)
     {
@@ -3036,6 +3107,11 @@ internal sealed record AppRuntimeHealthResponse(
     string RuntimeType,
     string Status,
     IReadOnlyList<AppRuntimeServiceHealth> Services);
+
+// One supervision observation: an app's aggregate health status at a point in time plus its resolved
+// restart policy, used by the supervisor to reconcile state, detect transitions, and restart crashes.
+// Not serialized — internal supervision only.
+internal sealed record AppHealthObservation(string AppId, string Status, RuntimeRestartPolicy RestartPolicy);
 
 // Read-only update-available report for a runtime app (see GetUpdateStatusAsync). `UpdateAvailable`
 // is the aggregate over compiled services; `UpdatePolicy` is "pinned"/"rolling" for legibility.

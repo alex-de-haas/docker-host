@@ -118,6 +118,124 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData("degraded", "warning")]
+    [InlineData("unhealthy", "warning")]
+    [InlineData("stopped", "error")]
+    public void DescribeHealthTransition_WorseStateFromHealthy_ProducesAdvisory(string current, string expectedLevel)
+    {
+        var (level, title, body) = RuntimeAppSupervisorService.DescribeHealthTransition("app.one", "healthy", current);
+
+        Assert.Equal(expectedLevel, level);
+        Assert.NotNull(title);
+        Assert.NotNull(body);
+    }
+
+    [Fact]
+    public void DescribeHealthTransition_RecoveryToHealthy_IsSuccess()
+        => Assert.Equal("success", RuntimeAppSupervisorService.DescribeHealthTransition("app.one", "degraded", "healthy").Level);
+
+    [Fact]
+    public void DescribeHealthTransition_StartupHopToHealthy_IsSilent()
+        => Assert.Null(RuntimeAppSupervisorService.DescribeHealthTransition("app.one", "starting", "healthy").Level);
+
+    [Theory]
+    [InlineData("starting")]
+    [InlineData("unknown")]
+    public void DescribeHealthTransition_TransientOrAmbiguousStates_AreSilent(string current)
+        => Assert.Null(RuntimeAppSupervisorService.DescribeHealthTransition("app.one", "healthy", current).Level);
+
+    [Fact]
+    public void EvaluateRestart_DisabledPolicy_Skips()
+    {
+        var (decision, _) = RuntimeAppSupervisorService.EvaluateRestart(
+            RuntimeRestartPolicy.Disabled, RestartGateState.Initial, DateTimeOffset.UnixEpoch, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(RestartDecision.Skip, decision);
+    }
+
+    [Fact]
+    public void EvaluateRestart_FirstFailure_RestartsAndArmsBaseBackoff()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+
+        var (decision, next) = RuntimeAppSupervisorService.EvaluateRestart(
+            new RuntimeRestartPolicy("on-failure", 3, 10), RestartGateState.Initial, now, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(RestartDecision.Restart, decision);
+        Assert.Equal(1, next.Attempts);
+        Assert.Equal(now.AddSeconds(10), next.NextEligibleAt);
+        Assert.False(next.GaveUp);
+    }
+
+    [Fact]
+    public void EvaluateRestart_WithinBackoffWindow_Skips()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var armed = new RestartGateState(1, now.AddSeconds(10), false);
+
+        var (decision, _) = RuntimeAppSupervisorService.EvaluateRestart(
+            new RuntimeRestartPolicy("always", 3, 10), armed, now.AddSeconds(5), TimeSpan.FromMinutes(5));
+
+        Assert.Equal(RestartDecision.Skip, decision);
+    }
+
+    [Fact]
+    public void EvaluateRestart_BackoffGrowsExponentially()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var afterTwo = new RestartGateState(2, now, false);
+
+        var (decision, next) = RuntimeAppSupervisorService.EvaluateRestart(
+            new RuntimeRestartPolicy("on-failure", 5, 10), afterTwo, now, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(RestartDecision.Restart, decision);
+        Assert.Equal(now.AddSeconds(40), next.NextEligibleAt); // 10 * 2^2
+    }
+
+    [Fact]
+    public void EvaluateRestart_BackoffCappedAtMax()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var deep = new RestartGateState(10, now, false);
+
+        var (_, next) = RuntimeAppSupervisorService.EvaluateRestart(
+            new RuntimeRestartPolicy("always", 100, 60), deep, now, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(now.AddMinutes(5), next.NextEligibleAt);
+    }
+
+    [Fact]
+    public void EvaluateRestart_ExhaustedRetries_GivesUp()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var exhausted = new RestartGateState(2, now, false);
+
+        var (decision, next) = RuntimeAppSupervisorService.EvaluateRestart(
+            new RuntimeRestartPolicy("always", 2, 10), exhausted, now, TimeSpan.FromMinutes(5));
+
+        Assert.Equal(RestartDecision.GiveUp, decision);
+        Assert.True(next.GaveUp);
+    }
+
+    [Fact]
+    public void RestartPolicy_FromManifest_AppliesDefaultsAndNormalizesMode()
+    {
+        var resolved = RuntimeRestartPolicy.FromManifest(new RuntimeAppRestartPolicyManifest { Mode = "ON-FAILURE" });
+
+        Assert.Equal("on-failure", resolved.Mode);
+        Assert.True(resolved.Enabled);
+        Assert.Equal(5, resolved.MaxRetries);
+        Assert.Equal(10, resolved.BackoffSeconds);
+    }
+
+    [Fact]
+    public void RestartPolicy_FromManifest_NullOrUnknownModeIsDisabled()
+    {
+        Assert.False(RuntimeRestartPolicy.FromManifest(null).Enabled);
+        Assert.False(RuntimeRestartPolicy.FromManifest(new RuntimeAppRestartPolicyManifest { Mode = "whenever" }).Enabled);
+    }
+
     private static async Task<AppRecord> WaitForShellVersionAsync(AppRegistryStore apps, string version)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);

@@ -226,6 +226,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             ValidateCapabilities(service.Key, runtimeType, runtime.Capabilities, errors);
             ValidateDevices(service.Key, runtimeType, runtime.Devices, errors);
             ValidatePorts(service.Key, runtime.Ports, runtime.IsHostNetwork, errors);
+            ValidateHealthcheck(service.Key, runtimeType, runtime.Ports, runtime.Healthcheck, errors);
 
             var artifact = ResolveArtifactKind(service.Key, runtimeType, runtime.Artifact, errors);
             if (artifact is null)
@@ -307,6 +308,24 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             if (!string.IsNullOrWhiteSpace(mount.Service) && !serviceKeys.Contains(mount.Service))
             {
                 errors.Add(new("app_manifest_external_mount_service_unknown", $"externalMounts['{mountKey}'].service references unknown service '{mount.Service}'.", "$.externalMounts"));
+            }
+        }
+
+        if (manifest.RestartPolicy is { } restartPolicy)
+        {
+            if (restartPolicy.Mode is not ("no" or "on-failure" or "always"))
+            {
+                errors.Add(new("app_manifest_restart_policy_mode_invalid", "restartPolicy.mode must be 'no', 'on-failure', or 'always'.", "$.restartPolicy.mode"));
+            }
+
+            if (restartPolicy.MaxRetries is < 0)
+            {
+                errors.Add(new("app_manifest_restart_policy_max_retries_invalid", "restartPolicy.maxRetries must be zero or greater.", "$.restartPolicy.maxRetries"));
+            }
+
+            if (restartPolicy.BackoffSeconds is < 0)
+            {
+                errors.Add(new("app_manifest_restart_policy_backoff_invalid", "restartPolicy.backoffSeconds must be zero or greater.", "$.restartPolicy.backoffSeconds"));
             }
         }
 
@@ -767,6 +786,72 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         }
     }
 
+    internal static void ValidateHealthcheck(string serviceKey, string runtimeType, IReadOnlyList<RuntimePortManifest> ports, RuntimeServiceHealthcheckManifest? healthcheck, List<AppManifestValidationError> errors)
+    {
+        if (healthcheck is null)
+        {
+            return;
+        }
+
+        const string path = "$.services[].runtimes[].healthcheck";
+        var type = healthcheck.Type;
+
+        // Each runtime exposes the check mechanism it can actually honor: docker translates "exec" to a
+        // container HEALTHCHECK; localCommand has no container, so Core probes "http"/"tcp" from the
+        // host. Cross-runtime types are rejected rather than silently ignored.
+        if (string.Equals(runtimeType, "docker", StringComparison.Ordinal))
+        {
+            if (type is not ("none" or "exec"))
+            {
+                errors.Add(new("app_manifest_healthcheck_type_invalid", $"Service '{serviceKey}' docker healthcheck.type must be 'none' or 'exec' (http/tcp probing applies to localCommand).", path));
+            }
+
+            if (string.Equals(type, "exec", StringComparison.Ordinal) && string.IsNullOrWhiteSpace(healthcheck.Command))
+            {
+                errors.Add(new("app_manifest_healthcheck_command_required", $"Service '{serviceKey}' healthcheck.type 'exec' requires a non-empty command.", path));
+            }
+        }
+        else
+        {
+            if (type is not ("none" or "http" or "tcp"))
+            {
+                errors.Add(new("app_manifest_healthcheck_type_invalid", $"Service '{serviceKey}' localCommand healthcheck.type must be 'none', 'http', or 'tcp' (exec applies to docker).", path));
+            }
+
+            if (type is "http" or "tcp")
+            {
+                if (ports.Count == 0)
+                {
+                    errors.Add(new("app_manifest_healthcheck_port_required", $"Service '{serviceKey}' healthcheck.type '{type}' requires the service to declare at least one port to probe.", path));
+                }
+                else if (healthcheck.Port is int declaredPort && !ports.Any(candidate => candidate.ContainerPort == declaredPort))
+                {
+                    errors.Add(new("app_manifest_healthcheck_port_unknown", $"Service '{serviceKey}' healthcheck.port {declaredPort} does not match any declared container port.", path));
+                }
+            }
+        }
+
+        if (healthcheck.IntervalSeconds is <= 0)
+        {
+            errors.Add(new("app_manifest_healthcheck_interval_invalid", $"Service '{serviceKey}' healthcheck.intervalSeconds must be greater than zero.", path));
+        }
+
+        if (healthcheck.TimeoutSeconds is <= 0)
+        {
+            errors.Add(new("app_manifest_healthcheck_timeout_invalid", $"Service '{serviceKey}' healthcheck.timeoutSeconds must be greater than zero.", path));
+        }
+
+        if (healthcheck.Retries is <= 0)
+        {
+            errors.Add(new("app_manifest_healthcheck_retries_invalid", $"Service '{serviceKey}' healthcheck.retries must be greater than zero.", path));
+        }
+
+        if (healthcheck.GracePeriodSeconds is < 0)
+        {
+            errors.Add(new("app_manifest_healthcheck_grace_invalid", $"Service '{serviceKey}' healthcheck.gracePeriodSeconds must be zero or greater.", path));
+        }
+    }
+
 }
 
 internal interface IAppRuntimeAdapter
@@ -938,6 +1023,7 @@ internal sealed class DockerRuntimeAdapter(
             // Privileged extras (validated + install-review gated): Linux capabilities and host
             // device nodes, e.g. NET_ADMIN + /dev/net/tun for an in-container VPN.
             runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
+            runArgs.AddRange(BuildHealthcheckArguments(service.Runtime));
 
             foreach (var environment in BuildDockerCoreEnvironment(config))
             {
@@ -1104,8 +1190,11 @@ internal sealed class DockerRuntimeAdapter(
         return new AppRuntimeHealthResult(SummarizeHealthStatus(services), services);
     }
 
-    // Aggregate container statuses into one app status: all running -> healthy, all stopped ->
-    // stopped, some running -> unhealthy (partial), otherwise unknown.
+    // Aggregate container statuses into one app status. Liveness (Status) decides first; the
+    // container HEALTHCHECK signal (Health) only refines the all-running case so existing outcomes
+    // are unchanged: all stopped -> stopped; some up + some down -> unhealthy (partial outage);
+    // otherwise unknown. New, additive: all up but any failing its healthcheck -> degraded; all up
+    // but any still starting -> starting; all up and healthy/no-healthcheck -> healthy.
     internal static string SummarizeHealthStatus(IReadOnlyList<AppRuntimeServiceHealth> services)
     {
         if (services.Count == 0)
@@ -1115,6 +1204,16 @@ internal sealed class DockerRuntimeAdapter(
 
         if (services.All(service => string.Equals(service.Status, "running", StringComparison.Ordinal)))
         {
+            if (services.Any(service => string.Equals(service.Health, "unhealthy", StringComparison.Ordinal)))
+            {
+                return "degraded";
+            }
+
+            if (services.Any(service => string.Equals(service.Health, "starting", StringComparison.Ordinal)))
+            {
+                return "starting";
+            }
+
             return "healthy";
         }
 
@@ -1137,7 +1236,10 @@ internal sealed class DockerRuntimeAdapter(
         var containerName = BuildContainerName(appId, serviceKey);
         // Tab-separated so an empty middle field cannot shift columns. {{.Image}} is the image id;
         // {{.Config.Image}} is the reference the container was launched with (the pinned digest).
-        const string format = "{{.State.Status}}\t{{.State.Pid}}\t{{.State.ExitCode}}\t{{.Image}}\t{{.Config.Image}}";
+        // {{if .State.Health}} guards the health field: .State.Health is nil when the image declares
+        // no HEALTHCHECK, and an unguarded {{.State.Health.Status}} would error out the whole inspect.
+        // RestartCount and StartedAt are observation-only signals for uptime / crash-loop legibility.
+        const string format = "{{.State.Status}}\t{{.State.Pid}}\t{{.State.ExitCode}}\t{{.Image}}\t{{.Config.Image}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.RestartCount}}\t{{.State.StartedAt}}";
         var inspect = await RunRawAsync(["inspect", "--format", format, containerName], cancellationToken);
         if (inspect.ExitCode != 0)
         {
@@ -1163,7 +1265,10 @@ internal sealed class DockerRuntimeAdapter(
             LogPath: null,
             WorkingDirectory: null,
             Message: null,
-            Image: string.IsNullOrWhiteSpace(image) ? null : image);
+            Image: string.IsNullOrWhiteSpace(image) ? null : image,
+            Health: parsed.Health,
+            RestartCount: parsed.RestartCount,
+            StartedAt: parsed.StartedAt);
     }
 
     // Parses the tab-separated `docker inspect` line above. Maps docker's container state to the
@@ -1177,10 +1282,41 @@ internal sealed class DockerRuntimeAdapter(
         int? exitCode = fields.Length > 2 && int.TryParse(fields[2].Trim(), out var c) ? c : null;
         var imageId = fields.Length > 3 ? NullIfBlank(fields[3]) : null;
         var configImage = fields.Length > 4 ? NullIfBlank(fields[4]) : null;
-        return new ContainerInspectInfo(status, pid, exitCode, imageId, configImage);
+        // Container HEALTHCHECK result; blank (the `{{if .State.Health}}` guard) means the image
+        // declares no healthcheck, which is no signal rather than a failure.
+        var health = fields.Length > 5 ? NormalizeHealth(fields[5]) : null;
+        int? restartCount = fields.Length > 6 && int.TryParse(fields[6].Trim(), out var r) && r >= 0 ? r : null;
+        var startedAt = fields.Length > 7 ? NullIfNeverStarted(fields[7]) : null;
+        return new ContainerInspectInfo(status, pid, exitCode, imageId, configImage, health, restartCount, startedAt);
     }
 
-    internal sealed record ContainerInspectInfo(string Status, int? Pid, int? ExitCode, string? ImageId, string? ConfigImage);
+    // Normalizes docker's health status to a lowercase {healthy|unhealthy|starting}; anything else
+    // (blank, "none", unrecognized) is null so "no healthcheck" reads as no signal, not a failure.
+    internal static string? NormalizeHealth(string? value)
+        => (value ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "healthy" => "healthy",
+            "unhealthy" => "unhealthy",
+            "starting" => "starting",
+            _ => null,
+        };
+
+    // Docker reports the zero value "0001-01-01T00:00:00Z" for a container that never started.
+    private static string? NullIfNeverStarted(string? value)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        return trimmed.Length == 0 || trimmed.StartsWith("0001-01-01", StringComparison.Ordinal) ? null : trimmed;
+    }
+
+    internal sealed record ContainerInspectInfo(
+        string Status,
+        int? Pid,
+        int? ExitCode,
+        string? ImageId,
+        string? ConfigImage,
+        string? Health = null,
+        int? RestartCount = null,
+        string? StartedAt = null);
 
     // Resolves the reference to actually run and the lock to persist, from the manifest image, any
     // existing per-service lock, and the app's update policy. See runtime-app-marketplace.md
@@ -1608,6 +1744,47 @@ internal sealed class DockerRuntimeAdapter(
         return args;
     }
 
+    // Translates a service's "exec" healthcheck into docker run --health-* flags so the container gets
+    // a HEALTHCHECK whose result the adapter reads back via State.Health.Status (Phase 0). type
+    // none/absent (and the reserved http/tcp) emit nothing, leaving any image-baked HEALTHCHECK as-is.
+    internal static IReadOnlyList<string> BuildHealthcheckArguments(RuntimeServiceProfileManifest runtime)
+    {
+        var healthcheck = runtime.Healthcheck;
+        if (healthcheck is null ||
+            !string.Equals(healthcheck.Type, "exec", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(healthcheck.Command))
+        {
+            return [];
+        }
+
+        var args = new List<string> { "--health-cmd", healthcheck.Command };
+        if (healthcheck.IntervalSeconds is int interval && interval > 0)
+        {
+            args.Add("--health-interval");
+            args.Add($"{interval}s");
+        }
+
+        if (healthcheck.TimeoutSeconds is int timeout && timeout > 0)
+        {
+            args.Add("--health-timeout");
+            args.Add($"{timeout}s");
+        }
+
+        if (healthcheck.Retries is int retries && retries > 0)
+        {
+            args.Add("--health-retries");
+            args.Add(retries.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (healthcheck.GracePeriodSeconds is int grace && grace > 0)
+        {
+            args.Add("--health-start-period");
+            args.Add($"{grace}s");
+        }
+
+        return args;
+    }
+
     internal static IReadOnlyList<string> BuildDockerCoreEnvironment(HostyCoreRuntimeConfig config)
         => [
             $"HOSTY_CORE_PORT={config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
@@ -1724,6 +1901,7 @@ internal sealed class RuntimeAppManifest
     public IReadOnlyList<RuntimeAppEndpointManifest> Endpoints { get => field ?? []; init; } = [];
     public IReadOnlyList<string> Capabilities { get => field ?? []; init; } = [];
     public IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> ExternalMounts { get => field ??= new Dictionary<string, RuntimeAppExternalMountManifest>(); init; } = new Dictionary<string, RuntimeAppExternalMountManifest>();
+    public RuntimeAppRestartPolicyManifest? RestartPolicy { get; init; }
 }
 
 // Operator-configured external host-path mount slot. The manifest declares the slot
@@ -1736,6 +1914,45 @@ internal sealed record RuntimeAppExternalMountManifest
     public string Mode { get => field ?? "rw"; init; } = "rw";
     public string? Service { get; init; }
     public bool Required { get; init; }
+}
+
+// Declares how the supervisor restarts this app when it is observed to have crashed (all services
+// exited) while Core still believed it was running. `mode`: "no" (default) never restarts;
+// "on-failure" and "always" restart with exponential backoff up to `maxRetries` attempts before
+// giving up. Additive under schemaVersion app.0.1; absent means no supervisor-driven restart.
+internal sealed record RuntimeAppRestartPolicyManifest
+{
+    public string Mode { get => field ?? "no"; init; } = "no";
+    public int? MaxRetries { get; init; }
+    public int? BackoffSeconds { get; init; }
+}
+
+// Restart policy with manifest defaults applied, ready for the supervisor to act on. Mode "no"
+// disables supervisor restarts; "on-failure"/"always" both restart an app observed to have crashed
+// (the supervisor never sees operator-initiated stops). Default budget: 5 attempts, 10s base backoff.
+internal sealed record RuntimeRestartPolicy(string Mode, int MaxRetries, int BackoffSeconds)
+{
+    public static readonly RuntimeRestartPolicy Disabled = new("no", 0, 0);
+
+    public bool Enabled => !string.Equals(Mode, "no", StringComparison.Ordinal);
+
+    public static RuntimeRestartPolicy FromManifest(RuntimeAppRestartPolicyManifest? manifest)
+    {
+        if (manifest is null)
+        {
+            return Disabled;
+        }
+
+        var mode = (manifest.Mode ?? "no").Trim().ToLowerInvariant() switch
+        {
+            "on-failure" => "on-failure",
+            "always" => "always",
+            _ => "no",
+        };
+        var maxRetries = manifest.MaxRetries is int retries && retries >= 0 ? retries : 5;
+        var backoff = manifest.BackoffSeconds is int seconds && seconds >= 0 ? seconds : 10;
+        return new RuntimeRestartPolicy(mode, maxRetries, backoff);
+    }
 }
 
 internal sealed record RuntimeAppSource(
@@ -1759,6 +1976,26 @@ internal sealed class RuntimeAppServiceManifest
     public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get => field ??= new Dictionary<string, RuntimeServiceProfileManifest>(); init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
 }
 
+// Per-service health probe applied by the runtime (Phase 1c). v1 supports type "exec": the docker
+// runtime translates it to a container HEALTHCHECK (docker --health-*), whose result the adapter
+// already reads back as State.Health.Status (Phase 0). type "none"/absent applies no Hosty-managed
+// healthcheck and leaves any image-baked HEALTHCHECK untouched. http/tcp are reserved for upcoming
+// Core-side probing. Additive under schemaVersion app.0.1.
+internal sealed record RuntimeServiceHealthcheckManifest
+{
+    public string Type { get => field ?? "none"; init; } = "none";
+    // For type "exec" (docker): the shell command docker runs in-container as --health-cmd (exit 0 = healthy).
+    public string? Command { get; init; }
+    // For type "http"/"tcp" (localCommand, Core-side probe): the declared container port to probe.
+    // Omitted -> the service's first declared port. http additionally uses Path (default "/").
+    public int? Port { get; init; }
+    public string? Path { get; init; }
+    public int? IntervalSeconds { get; init; }
+    public int? TimeoutSeconds { get; init; }
+    public int? Retries { get; init; }
+    public int? GracePeriodSeconds { get; init; }
+}
+
 internal sealed record RuntimeServiceProfileManifest
 {
     public string? Type { get; init; }
@@ -1776,6 +2013,9 @@ internal sealed record RuntimeServiceProfileManifest
     public string? WorkingDirectory { get; init; }
     public IReadOnlyDictionary<string, string> Environment { get => field ??= new Dictionary<string, string>(); init; } = new Dictionary<string, string>();
     public IReadOnlyList<RuntimePortManifest> Ports { get => field ?? []; init; } = [];
+
+    // Per-service health probe for this runtime (Phase 1c). See RuntimeServiceHealthcheckManifest.
+    public RuntimeServiceHealthcheckManifest? Healthcheck { get; init; }
 
     // Docker network mode (docker runtime only; off by default). null/"bridge" keeps the current
     // behaviour (per-app user network for service discovery, else the default bridge). "host" runs
@@ -1945,7 +2185,15 @@ internal sealed record AppRuntimeServiceHealth(
     // The image the service is actually running, reported by the docker runtime as
     // `repository@sha256:...` (its first repo digest). Lets clients surface "running != lock" drift.
     // Null for runtimes that have no image (localCommand) or when it cannot be determined.
-    string? Image = null);
+    string? Image = null,
+    // Container HEALTHCHECK result ("healthy"/"unhealthy"/"starting"), or null when the runtime has
+    // no health probe (localCommand) or the image declares no HEALTHCHECK. Distinct from Status,
+    // which stays a pure liveness signal so existing callers keying off "running" are unaffected.
+    string? Health = null,
+    // Times the runtime has restarted this service (docker RestartCount), or null when unavailable.
+    int? RestartCount = null,
+    // RFC3339 start timestamp of the current run as reported by the runtime, or null when not started.
+    string? StartedAt = null);
 
 internal sealed record AppManifestValidationError(string Code, string Message, string Path);
 

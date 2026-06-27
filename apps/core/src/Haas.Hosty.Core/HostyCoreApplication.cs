@@ -41,6 +41,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
+        builder.Services.AddSingleton<IHealthProbe, NetworkHealthProbe>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();
@@ -863,15 +864,39 @@ internal sealed record HostyCoreRuntimeConfig(
     }
 }
 
+internal enum RestartDecision
+{
+    Skip,
+    Restart,
+    GiveUp,
+}
+
+// Per-app crash-loop gate carried between supervision ticks: how many restarts have been attempted,
+// the earliest time the next attempt is allowed (backoff), and whether the budget is exhausted.
+internal sealed record RestartGateState(int Attempts, DateTimeOffset NextEligibleAt, bool GaveUp)
+{
+    public static readonly RestartGateState Initial = new(0, DateTimeOffset.MinValue, false);
+}
+
 internal sealed class RuntimeAppSupervisorService(
     HostyCoreRuntimeConfig config,
     AppRegistryStore apps,
     CoreLifecycleService lifecycle,
     AppSourceService sources,
-    ILogger<RuntimeAppSupervisorService> logger) : BackgroundService
+    ILogger<RuntimeAppSupervisorService> logger,
+    NotificationService? notifications = null) : BackgroundService
 {
     private const string ShellAppId = "hosty.shell";
     private static readonly TimeSpan RuntimeAppShutdownTimeout = TimeSpan.FromSeconds(15);
+    // How often to observe runtime-app health, reconcile RuntimeState, and surface transitions.
+    private static readonly TimeSpan SuperviseInterval = TimeSpan.FromSeconds(15);
+    // Upper bound on exponential restart backoff so a long-running crash loop still retries occasionally.
+    private static readonly TimeSpan MaxRestartBackoff = TimeSpan.FromMinutes(5);
+    // Last observed aggregate health per app, so a tick can detect transitions. In-memory only: a
+    // Core restart re-baselines silently (the first observation of each app raises no notification).
+    private readonly Dictionary<string, string> lastObservedHealth = new(StringComparer.Ordinal);
+    // Per-app crash-loop gate (attempts + next eligible time + gave-up), driving restart backoff.
+    private readonly Dictionary<string, RestartGateState> restartGates = new(StringComparer.Ordinal);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -884,12 +909,205 @@ internal sealed class RuntimeAppSupervisorService(
 
         try
         {
-            await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+            await SuperviseAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
     }
+
+    // Periodic health supervision (Phase 1): each tick reconciles RuntimeState from observed health
+    // and raises a host-admin advisory for any app whose aggregate health changed since the last tick.
+    // The first tick fires after one interval (no immediate probe), so a fast-cancelled host never
+    // observes — keeping startup and shutdown quiet.
+    private async Task SuperviseAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(SuperviseInterval);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            await SuperviseTickAsync(stoppingToken);
+        }
+    }
+
+    private async Task SuperviseTickAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyList<AppHealthObservation> observations;
+        try
+        {
+            observations = await lifecycle.ObserveRuntimeHealthAsync(cancellationToken);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Runtime app supervision tick failed.");
+            return;
+        }
+
+        var observed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var observation in observations)
+        {
+            observed.Add(observation.AppId);
+            var previous = lastObservedHealth.GetValueOrDefault(observation.AppId);
+            lastObservedHealth[observation.AppId] = observation.Status;
+            if (previous is not null && !string.Equals(previous, observation.Status, StringComparison.Ordinal))
+            {
+                await NotifyHealthTransitionAsync(observation.AppId, previous, observation.Status, cancellationToken);
+            }
+
+            await ApplyRestartPolicyAsync(observation, cancellationToken);
+        }
+
+        // Forget apps no longer observed (stopped or removed) so a later restart re-baselines quietly.
+        PruneUnobserved(lastObservedHealth, observed);
+        PruneUnobserved(restartGates, observed);
+    }
+
+    private static void PruneUnobserved<T>(Dictionary<string, T> map, HashSet<string> observed)
+    {
+        foreach (var key in map.Keys.Where(id => !observed.Contains(id)).ToArray())
+        {
+            map.Remove(key);
+        }
+    }
+
+    // Restarts an app the supervisor observed to have crashed, honoring its restart policy and a
+    // per-app exponential-backoff crash-loop gate. Observing the app healthy clears the gate so a
+    // future crash starts from a fresh budget.
+    private async Task ApplyRestartPolicyAsync(AppHealthObservation observation, CancellationToken cancellationToken)
+    {
+        if (string.Equals(observation.Status, "healthy", StringComparison.Ordinal))
+        {
+            restartGates.Remove(observation.AppId);
+            return;
+        }
+
+        // Only a full crash (all services exited -> "stopped") is auto-restarted in v1; partial
+        // degradation is surfaced as an advisory but not acted on — restarting healthy services to
+        // recover one is too blunt, and per-service restart is a later refinement.
+        if (!string.Equals(observation.Status, "stopped", StringComparison.Ordinal) || !observation.RestartPolicy.Enabled)
+        {
+            return;
+        }
+
+        var gate = restartGates.GetValueOrDefault(observation.AppId, RestartGateState.Initial);
+        var (decision, next) = EvaluateRestart(observation.RestartPolicy, gate, DateTimeOffset.UtcNow, MaxRestartBackoff);
+        restartGates[observation.AppId] = next;
+
+        switch (decision)
+        {
+            case RestartDecision.Restart:
+                try
+                {
+                    await lifecycle.StartAsync(observation.AppId, cancellationToken);
+                    logger.LogInformation("Supervisor restarted '{AppId}' after a crash (attempt {Attempt}/{Max}).",
+                        observation.AppId, next.Attempts, observation.RestartPolicy.MaxRetries);
+                }
+                catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
+                {
+                    logger.LogWarning(ex, "Supervisor restart of '{AppId}' failed.", observation.AppId);
+                }
+
+                break;
+
+            case RestartDecision.GiveUp:
+                await NotifyRestartGiveUpAsync(observation.AppId, observation.RestartPolicy.MaxRetries, cancellationToken);
+                break;
+        }
+    }
+
+    // Pure crash-loop gate: given the policy, the per-app restart state, and now, decides whether to
+    // restart, give up, or wait. Backoff grows exponentially from the base (base * 2^attempts), capped
+    // at maxBackoff. Extracted as a static so the decision is unit-testable without timers or IO.
+    internal static (RestartDecision Decision, RestartGateState NextState) EvaluateRestart(
+        RuntimeRestartPolicy policy, RestartGateState state, DateTimeOffset now, TimeSpan maxBackoff)
+    {
+        if (!policy.Enabled || state.GaveUp)
+        {
+            return (RestartDecision.Skip, state);
+        }
+
+        if (state.Attempts >= policy.MaxRetries)
+        {
+            return (RestartDecision.GiveUp, state with { GaveUp = true });
+        }
+
+        if (now < state.NextEligibleAt)
+        {
+            return (RestartDecision.Skip, state);
+        }
+
+        var backoffSeconds = Math.Min(policy.BackoffSeconds * Math.Pow(2, state.Attempts), maxBackoff.TotalSeconds);
+        return (RestartDecision.Restart, new RestartGateState(state.Attempts + 1, now.AddSeconds(backoffSeconds), false));
+    }
+
+    private async Task NotifyRestartGiveUpAsync(string appId, int maxRetries, CancellationToken cancellationToken)
+    {
+        if (notifications is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await notifications.PublishAsync(
+                new AppScope(appId), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                "error",
+                $"'{appId}' is crash-looping",
+                $"'{appId}' kept exiting and was restarted {maxRetries} time(s) without recovering. Hosty has stopped restarting it — check its logs and start it manually once fixed.",
+                link: null,
+                dedupeKey: $"restart-giveup:{appId}",
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to publish crash-loop advisory for {AppId}.", appId);
+        }
+    }
+
+    private async Task NotifyHealthTransitionAsync(string appId, string previous, string current, CancellationToken cancellationToken)
+    {
+        if (notifications is null)
+        {
+            return;
+        }
+
+        var (level, title, body) = DescribeHealthTransition(appId, previous, current);
+        if (level is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await notifications.PublishAsync(
+                new AppScope(appId), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                level, title!, body, link: null,
+                dedupeKey: $"health-transition:{appId}:{current}",
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to publish health transition advisory for {AppId}.", appId);
+        }
+    }
+
+    // Decides whether an aggregate health change is worth a host-admin advisory and how to phrase it.
+    // Moves into the transient "starting" or ambiguous "unknown" states are intentionally silent, as
+    // is the normal startup hop starting -> healthy. "stopped" here means an unexpected exit: a
+    // running app is only observed while Core still believes it is running, so an operator-initiated
+    // stop leaves the observed set before it is ever seen as a transition here.
+    internal static (string? Level, string? Title, string? Body) DescribeHealthTransition(string appId, string previous, string current)
+        => current switch
+        {
+            "healthy" when !string.Equals(previous, "starting", StringComparison.Ordinal) =>
+                ("success", $"'{appId}' recovered", $"'{appId}' is healthy again (was {previous})."),
+            "degraded" =>
+                ("warning", $"'{appId}' is degraded", $"'{appId}' is running but at least one service is failing its health check."),
+            "unhealthy" =>
+                ("warning", $"'{appId}' is partially down", $"'{appId}' has a service down while others keep running. Check its logs."),
+            "stopped" =>
+                ("error", $"'{appId}' stopped unexpectedly", $"'{appId}' was running but all of its services have exited. Check its logs."),
+            _ => (null, null, null),
+        };
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {

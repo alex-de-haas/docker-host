@@ -162,6 +162,59 @@ public sealed class DockerRuntimeAdapterTests
     public void BuildPrivilegedArguments_EmptyWhenNoneDeclared()
         => Assert.Empty(DockerRuntimeAdapter.BuildPrivilegedArguments(new RuntimeServiceProfileManifest { Type = "docker" }));
 
+    [Fact]
+    public void BuildHealthcheckArguments_ExecHealthcheck_EmitsAllDockerFlags()
+    {
+        var runtime = new RuntimeServiceProfileManifest
+        {
+            Type = "docker",
+            Healthcheck = new RuntimeServiceHealthcheckManifest
+            {
+                Type = "exec",
+                Command = "curl -f http://localhost:8080/health || exit 1",
+                IntervalSeconds = 30,
+                TimeoutSeconds = 5,
+                Retries = 3,
+                GracePeriodSeconds = 10,
+            },
+        };
+
+        var args = DockerRuntimeAdapter.BuildHealthcheckArguments(runtime);
+
+        Assert.Equal(
+        [
+            "--health-cmd", "curl -f http://localhost:8080/health || exit 1",
+            "--health-interval", "30s",
+            "--health-timeout", "5s",
+            "--health-retries", "3",
+            "--health-start-period", "10s",
+        ], args);
+    }
+
+    [Fact]
+    public void BuildHealthcheckArguments_ExecWithoutTuning_EmitsOnlyCommand()
+        => Assert.Equal(
+            ["--health-cmd", "true"],
+            DockerRuntimeAdapter.BuildHealthcheckArguments(new RuntimeServiceProfileManifest
+            {
+                Type = "docker",
+                Healthcheck = new RuntimeServiceHealthcheckManifest { Type = "exec", Command = "true" },
+            }));
+
+    [Theory]
+    [InlineData("none")]
+    [InlineData("http")]
+    public void BuildHealthcheckArguments_NonExecType_EmitsNothing(string type)
+        => Assert.Empty(DockerRuntimeAdapter.BuildHealthcheckArguments(new RuntimeServiceProfileManifest
+        {
+            Type = "docker",
+            Healthcheck = new RuntimeServiceHealthcheckManifest { Type = type, Command = "true" },
+        }));
+
+    [Fact]
+    public void BuildHealthcheckArguments_NoHealthcheck_EmitsNothing()
+        => Assert.Empty(DockerRuntimeAdapter.BuildHealthcheckArguments(new RuntimeServiceProfileManifest { Type = "docker" }));
+
     [Theory]
     [InlineData("NET_ADMIN", "NET_ADMIN")]
     [InlineData("net_admin", "NET_ADMIN")]
@@ -252,6 +305,70 @@ public sealed class DockerRuntimeAdapterTests
     [Fact]
     public void ParseContainerInspect_MapsNonRunningStateToStopped()
         => Assert.Equal("stopped", DockerRuntimeAdapter.ParseContainerInspect("exited\t0\t137\t\t").Status);
+
+    [Fact]
+    public void ParseContainerInspect_ParsesHealthRestartAndStartedAt()
+    {
+        var info = DockerRuntimeAdapter.ParseContainerInspect(
+            "running\t4321\t0\tsha256:imageid\tghcr.io/example/app@sha256:abc\thealthy\t3\t2026-06-27T10:00:00Z");
+
+        Assert.Equal("healthy", info.Health);
+        Assert.Equal(3, info.RestartCount);
+        Assert.Equal("2026-06-27T10:00:00Z", info.StartedAt);
+    }
+
+    [Fact]
+    public void ParseContainerInspect_BlankHealthFieldMeansNoSignal()
+    {
+        var info = DockerRuntimeAdapter.ParseContainerInspect(
+            "running\t4321\t0\tsha256:imageid\tghcr.io/example/app@sha256:abc\t\t0\t2026-06-27T10:00:00Z");
+
+        Assert.Null(info.Health);
+        Assert.Equal(0, info.RestartCount);
+    }
+
+    [Fact]
+    public void ParseContainerInspect_NeverStartedTimestampIsNull()
+        => Assert.Null(DockerRuntimeAdapter.ParseContainerInspect(
+            "created\t0\t0\t\t\t\t0\t0001-01-01T00:00:00Z").StartedAt);
+
+    [Theory]
+    [InlineData("healthy", "healthy")]
+    [InlineData("UNHEALTHY", "unhealthy")]
+    [InlineData("starting", "starting")]
+    [InlineData("", null)]
+    [InlineData("none", null)]
+    [InlineData("weird", null)]
+    public void NormalizeHealth_MapsKnownStatusesAndNullsTheRest(string input, string? expected)
+        => Assert.Equal(expected, DockerRuntimeAdapter.NormalizeHealth(input));
+
+    [Fact]
+    public void SummarizeHealthStatus_AllRunningHealthyOrNoHealthcheck_IsHealthy()
+        => Assert.Equal("healthy", DockerRuntimeAdapter.SummarizeHealthStatus(
+            [Svc("a", "running", "healthy"), Svc("b", "running", null)]));
+
+    [Fact]
+    public void SummarizeHealthStatus_RunningButUnhealthyHealthcheck_IsDegraded()
+        => Assert.Equal("degraded", DockerRuntimeAdapter.SummarizeHealthStatus(
+            [Svc("a", "running", "healthy"), Svc("b", "running", "unhealthy")]));
+
+    [Fact]
+    public void SummarizeHealthStatus_RunningButStarting_IsStarting()
+        => Assert.Equal("starting", DockerRuntimeAdapter.SummarizeHealthStatus(
+            [Svc("a", "running", "starting")]));
+
+    [Fact]
+    public void SummarizeHealthStatus_PartialLiveness_StaysUnhealthy()
+        => Assert.Equal("unhealthy", DockerRuntimeAdapter.SummarizeHealthStatus(
+            [Svc("a", "running", "healthy"), Svc("b", "stopped", null)]));
+
+    [Fact]
+    public void SummarizeHealthStatus_AllStopped_IsStopped()
+        => Assert.Equal("stopped", DockerRuntimeAdapter.SummarizeHealthStatus(
+            [Svc("a", "stopped", null)]));
+
+    private static AppRuntimeServiceHealth Svc(string service, string status, string? health)
+        => new(service, status, null, null, null, null, null, Health: health);
 
     [Fact]
     public async Task StartAsync_RollingPolicy_PullsTagResolvesDigestAndRecordsLock()
