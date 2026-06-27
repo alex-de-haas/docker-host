@@ -1531,7 +1531,27 @@ internal sealed class CoreLifecycleService(
             GetAppRoot(app.Id),
             GetAppDataPath(app.Id),
             await ResolveDependencyUrlsAsync(app, cancellationToken),
-            RuntimeMountPlanner.Resolve(app.MountSlots, app.Mounts));
+            RuntimeMountPlanner.Resolve(app.MountSlots, app.Mounts),
+            await ResolveTelemetryEndpointAsync(app, cancellationToken));
+
+    // The OTLP/HTTP origin an app should export telemetry to: the collector system app's host-exposed
+    // otlp-http endpoint, resolved fresh at each start (like dependency URLs) so the docker adapter can
+    // rewrite the loopback host to host.docker.internal. The collector's presence is the gate — it is
+    // never installed when observability is off, so the lookup returns null and the adapter injects no
+    // OTEL_* env. Returns null when the collector is absent / not yet started (no persisted endpoint
+    // URL) or when the app is the collector itself (graceful no-op in every case).
+    private async Task<string?> ResolveTelemetryEndpointAsync(AppRecord app, CancellationToken cancellationToken)
+    {
+        if (string.Equals(app.Id, CollectorBootstrap.AppId, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var collector = await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
+        var endpoint = (collector?.Endpoints ?? []).FirstOrDefault(candidate =>
+            string.Equals(candidate.Key, CollectorBootstrap.OtlpEndpointKey, StringComparison.Ordinal));
+        return string.IsNullOrWhiteSpace(endpoint?.Url) ? null : endpoint.Url;
+    }
 
     // Start-time gate for external mounts: a declared-required slot must have a binding, every
     // configured host path must still pass the path policy (defense-in-depth against a binding

@@ -1056,6 +1056,12 @@ internal sealed class DockerRuntimeAdapter(
             runArgs.Add("-e");
             runArgs.Add($"HOSTY_APP_SERVICE_TOKEN={serviceTokens.CreateToken(context.App.Id)}");
 
+            foreach (var telemetry in BuildTelemetryEnvironment(context, service.Key))
+            {
+                runArgs.Add("-e");
+                runArgs.Add(telemetry);
+            }
+
             foreach (var dependency in context.DependencyUrls)
             {
                 runArgs.Add("-e");
@@ -1799,6 +1805,32 @@ internal sealed class DockerRuntimeAdapter(
             $"HOSTY_CORE_ORIGIN={BuildDockerCoreOrigin(config.EffectiveCorePublicOrigin)}",
         ];
 
+    // OTEL_* environment injected into a service whose manifest opts into telemetry, when a collector
+    // endpoint is available. The endpoint's loopback host is rewritten to host.docker.internal (the
+    // same rewrite as HOSTY_CORE_ORIGIN) so the container reaches the host-published OTLP port. Empty
+    // when telemetry is disabled or no collector endpoint resolved — the standard OTEL_* variables are
+    // honoured by every OpenTelemetry SDK, so no app-specific wiring is required. No bearer token in v1:
+    // per-app ingest auth is deferred (host-internal bind). See docs/features/observability.md.
+    internal static IReadOnlyList<string> BuildTelemetryEnvironment(RuntimeLifecycleContext context, string serviceKey)
+    {
+        var settings = RuntimeTelemetrySettings.FromManifest(context.Manifest.Manifest.Telemetry);
+        if (!settings.Enabled || string.IsNullOrWhiteSpace(context.TelemetryEndpoint))
+        {
+            return [];
+        }
+
+        var endpoint = BuildDockerCoreOrigin(context.TelemetryEndpoint);
+        var ratio = settings.SampleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        return [
+            $"OTEL_EXPORTER_OTLP_ENDPOINT={endpoint}",
+            "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+            $"OTEL_SERVICE_NAME={context.App.Id}",
+            $"OTEL_RESOURCE_ATTRIBUTES=service.name={context.App.Id},hosty.app.id={context.App.Id},hosty.app.service={serviceKey}",
+            "OTEL_TRACES_SAMPLER=parentbased_traceidratio",
+            $"OTEL_TRACES_SAMPLER_ARG={ratio}",
+        ];
+    }
+
     internal static string BuildDockerCoreOrigin(string coreOrigin)
     {
         if (!Uri.TryCreate(coreOrigin, UriKind.Absolute, out var uri) ||
@@ -1842,7 +1874,11 @@ internal sealed record RuntimeLifecycleContext(
     string AppRoot,
     string AppDataPath,
     IReadOnlyDictionary<string, string> DependencyUrls,
-    IReadOnlyList<RuntimeMount> Mounts);
+    IReadOnlyList<RuntimeMount> Mounts,
+    // The OTLP/HTTP origin of the telemetry collector (host.docker.internal:<port>-rewritable
+    // loopback URL), or null when observability is off / the collector is not yet up. The docker
+    // adapter injects OTEL_* env from this only for an app whose manifest opts into telemetry.
+    string? TelemetryEndpoint = null);
 
 internal sealed record RuntimeAppManifestSelection(
     RuntimeAppManifest Manifest,

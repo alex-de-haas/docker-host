@@ -514,6 +514,59 @@ public sealed class DockerRuntimeAdapterTests
         Assert.Null(await CreateAdapter(runner).ResolveRemoteDigestAsync(new RuntimeDockerImage("ghcr.io/example/app", "latest")));
     }
 
+    [Fact]
+    public void BuildTelemetryEnvironment_InjectsOtelWhenEnabledWithEndpoint()
+    {
+        var context = CreateTelemetryContext(enabled: true, sampleRatio: 0.25, endpoint: "http://localhost:4318");
+
+        var env = DockerRuntimeAdapter.BuildTelemetryEnvironment(context, "app");
+
+        Assert.Contains("OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318", env);
+        Assert.Contains("OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf", env);
+        Assert.Contains("OTEL_SERVICE_NAME=com.example.app", env);
+        Assert.Contains("OTEL_RESOURCE_ATTRIBUTES=service.name=com.example.app,hosty.app.id=com.example.app,hosty.app.service=app", env);
+        Assert.Contains("OTEL_TRACES_SAMPLER=parentbased_traceidratio", env);
+        Assert.Contains("OTEL_TRACES_SAMPLER_ARG=0.25", env);
+    }
+
+    [Fact]
+    public void BuildTelemetryEnvironment_EmptyWhenTelemetryDisabled()
+    {
+        var context = CreateTelemetryContext(enabled: false, sampleRatio: null, endpoint: "http://localhost:4318");
+
+        Assert.Empty(DockerRuntimeAdapter.BuildTelemetryEnvironment(context, "app"));
+    }
+
+    [Fact]
+    public void BuildTelemetryEnvironment_EmptyWhenNoCollectorEndpoint()
+    {
+        var context = CreateTelemetryContext(enabled: true, sampleRatio: null, endpoint: null);
+
+        Assert.Empty(DockerRuntimeAdapter.BuildTelemetryEnvironment(context, "app"));
+    }
+
+    private static RuntimeLifecycleContext CreateTelemetryContext(bool enabled, double? sampleRatio, string? endpoint)
+    {
+        var service = new RuntimeSelectedService(
+            "app",
+            [],
+            new RuntimeServiceProfileManifest { Type = "docker" },
+            new RuntimeDockerImage("ghcr.io/example/app", "latest"),
+            "image");
+        var manifest = new RuntimeAppManifest
+        {
+            SchemaVersion = "app.0.1",
+            Id = "com.example.app",
+            Name = "App",
+            Version = "1.0.0",
+            Telemetry = new RuntimeAppTelemetryManifest { Enabled = enabled, SampleRatio = sampleRatio },
+        };
+        var profile = new RuntimeProfileManifest { Key = "docker", Type = "docker", Default = true };
+        var selection = new RuntimeAppManifestSelection(manifest, "/tmp/manifest.json", "digest", profile, [service], null, "{}", null);
+        var app = CreateDockerAppRecord(updatePolicy: null, locks: null);
+        return new RuntimeLifecycleContext(app, selection, "/tmp/app", "/tmp/app/data", new Dictionary<string, string>(), [], endpoint);
+    }
+
     private static DockerRuntimeAdapter CreateAdapter(IDockerCommandRunner runner)
         => new(
             CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
