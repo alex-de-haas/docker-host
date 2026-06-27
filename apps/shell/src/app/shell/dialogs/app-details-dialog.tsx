@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
-import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Plus, Radio, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -521,6 +521,24 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
     setPrevAppId(app.id);
     setSource("");
     setLastCheckedSource("");
+  }
+
+  // A live source runtime adopts its manifest on restart and has no reviewed-update path; the Update
+  // affordance is normally hidden, but a deep link can still open this view, so explain rather than
+  // running a plan that Core would refuse (see CoreApp.live, runtime-app-marketplace.md "Live source").
+  // Placed after the hooks above so render order stays stable (react-hooks/rules-of-hooks).
+  if (app.live) {
+    return (
+      <DialogBody>
+        <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
+          <Radio className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <div className="space-y-1">
+            <p className="font-medium text-emerald-700 dark:text-emerald-300">This runtime is live</p>
+            <p className="text-muted-foreground">Core runs this app from your source folder and adopts manifest edits on restart, so there is no reviewed update. Switch to a compiled runtime to use reviewed updates.</p>
+          </div>
+        </div>
+      </DialogBody>
+    );
   }
 
   const trimmedSource = source.trim();

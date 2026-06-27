@@ -62,6 +62,17 @@ export type CoreApp = {
   // image digest). Optional for backwards compatibility with older Core builds. See digest pinning.
   updatePolicy?: string | null;
   artifactLocks?: Record<string, CoreArtifactLock> | null;
+  // True when the selected runtime runs live from the operator's own source folder (a source-kind
+  // runtime, localCommand in v1): the manifest is adopted on restart, so there is no reviewed-update
+  // path and the Update affordance is hidden in favour of a "Live" badge. Optional for backwards
+  // compatibility with older Core builds. See runtime-app-marketplace.md ("Live source").
+  live?: boolean | null;
+  // Set when the live source folder manifest was invalid on the last start and Core kept the last-good
+  // copy running; surfaced as a non-blocking warning. Null when valid or not a live source app.
+  manifestError?: string | null;
+  // Contract deltas (version/capabilities/mounts/...) a live source app adopted at its last start,
+  // surfaced as an informational "adopted" breadcrumb. Null/empty when nothing changed.
+  liveChanges?: string[] | null;
 };
 
 export type CoreArtifactLock = {
