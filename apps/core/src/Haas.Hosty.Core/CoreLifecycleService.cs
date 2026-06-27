@@ -451,6 +451,20 @@ internal sealed class CoreLifecycleService(
     public async Task<AppUpdatePlan> CreateUpdatePlanAsync(string appId, AppUpdatePlanRequest request, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+
+        // A live source app (operator-owned folder + source runtime) has no reviewed-update path: its
+        // manifest is adopted live on restart, not advanced through a plan (runtime-app-marketplace.md,
+        // "Live source"). With no explicit external source to compare against, building a plan would
+        // re-read and validate the live folder with no fallback and surface a confusing "manifest failed
+        // validation" when it is mid-edit. Refuse with a clear, actionable error instead. Passing an
+        // explicit manifestPath/URL still works as an escape hatch for an out-of-band comparison.
+        if (string.IsNullOrWhiteSpace(request.ManifestPath) && IsLiveSourceApp(app))
+        {
+            throw new AppLifecycleException(
+                "update_live_source_runtime",
+                "This runtime runs live from your source folder; its manifest is adopted on restart, not through a reviewed update. Switch to a compiled runtime to use reviewed updates.");
+        }
+
         var manifestPath = request.ManifestPath ?? app.ManifestUrl ?? ResolveLocalUpdateManifestPath(app);
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -1096,10 +1110,11 @@ internal sealed class CoreLifecycleService(
     {
         if (app.RuntimeProfiles is { Count: > 0 })
         {
-            return AppSummary.From(app);
+            return AppSummary.From(app, live: IsLiveSourceApp(app));
         }
 
-        return AppSummary.From(app, await TryLoadRuntimeProfilesForSummaryAsync(app, cancellationToken));
+        var profiles = await TryLoadRuntimeProfilesForSummaryAsync(app, cancellationToken);
+        return AppSummary.From(app, profiles, IsLiveSourceApp(app, profiles));
     }
 
     private async Task<IReadOnlyList<AppRuntimeProfileSummary>> TryLoadRuntimeProfilesForSummaryAsync(
@@ -1918,6 +1933,42 @@ internal sealed class CoreLifecycleService(
         }
 
         return null;
+    }
+
+    // True when the app's selected runtime is a live source artifact owned by the operator: a
+    // source-kind runtime (localCommand in v1) whose manifest Core re-reads live from the operator's
+    // own folder (a source-override, else the original folder install), never a URL/publisher install.
+    // For these the contract tracks the folder and is adopted on restart, so the reviewed-update flow
+    // does not apply - clients mark the runtime "Live" and hide the Update affordance, and
+    // CreateUpdatePlanAsync refuses with a clear error (runtime-app-marketplace.md, "Live source").
+    // Determined from the record alone (selected profile type + source ownership) so it is cheap and
+    // never loads or validates a (possibly mid-edit) folder manifest. Mirrors ResolveLiveSourceManifestPath,
+    // using profile type == "localCommand" for the source-artifact check the loaded selection would make.
+    private bool IsLiveSourceApp(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
+    {
+        // A URL/publisher install crosses a trust boundary: its contract is reviewed even when the
+        // code runs live, so it is never "live source" for the update affordance.
+        if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
+        {
+            return false;
+        }
+
+        var selectedProfile = ((profiles ?? app.RuntimeProfiles) ?? [])
+            .FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
+        if (selectedProfile is null || !string.Equals(selectedProfile.Type, "localCommand", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var overridePath = app.SourceState?.LocalOverridePath;
+        if (!string.IsNullOrWhiteSpace(overridePath) && Directory.Exists(overridePath))
+        {
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(app.InstallManifestPath)
+            && !IsInternalAppPath(app.Id, app.InstallManifestPath)
+            && (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath));
     }
 
     // Update source for a local install: prefer the operator's original folder/file so a folder

@@ -400,9 +400,18 @@ internal sealed record AppSummary(
     string? ManifestError,
     // Contract deltas a live source app adopted at its last start, for an informational "adopted"
     // breadcrumb on clients (2b/R11). Null/empty when nothing changed or the app is not live source.
-    IReadOnlyList<string>? LiveChanges)
+    IReadOnlyList<string>? LiveChanges,
+    // True when the selected runtime is a live source artifact owned by the operator (a source-kind
+    // runtime - localCommand in v1 - re-read live from the operator's own folder). For these the
+    // contract is adopted on restart and there is no reviewed-update path, so clients mark the runtime
+    // "Live" and hide the Update affordance (runtime-app-marketplace.md). False for compiled runtimes
+    // and for publisher/URL installs (whose contract is reviewed even when the code runs live).
+    bool Live = false)
 {
-    public static AppSummary From(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null)
+    public static AppSummary From(
+        AppRecord app,
+        IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null,
+        bool live = false)
     {
         var ui = app.Ui;
         var endpoints = AttachPublicOrigins(app.Endpoints, app.Settings);
@@ -447,7 +456,8 @@ internal sealed record AppSummary(
             DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
             app.ArtifactLocks,
             app.ManifestError,
-            app.LiveChanges);
+            app.LiveChanges,
+            live);
     }
 
     private static IReadOnlyList<AppMountSummary> BuildMountSummaries(

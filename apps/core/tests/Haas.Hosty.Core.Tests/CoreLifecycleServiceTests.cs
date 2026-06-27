@@ -552,6 +552,58 @@ public sealed class CoreLifecycleServiceTests
         Assert.False(plan.SourceConfigured);
     }
 
+    [Fact]
+    public async Task LiveSourceRuntime_MarksSummaryLive_AndRefusesReviewedUpdate()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.live",
+              "name": "Live App",
+              "version": "1.0.0",
+              "runtimeProfiles": [
+                { "key": "docker", "type": "docker", "default": true },
+                { "key": "local", "type": "localCommand" }
+              ],
+              "defaultRuntime": "docker",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/example/live:1.0.0" },
+                  "local": { "type": "localCommand", "command": "sleep 5", "workingDirectory": "." }
+                }
+              }]
+            }
+            """);
+
+        // Installed on the compiled docker runtime: the runtime is not live and the reviewed-update
+        // path applies (this is the case that "works" in the reported bug).
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "docker"));
+
+        var dockerSummary = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.False(dockerSummary.Live);
+        var dockerPlan = await fixture.Service.CreateUpdatePlanAsync("com.example.live", new AppUpdatePlanRequest());
+        Assert.Equal("docker", dockerPlan.TargetRuntime);
+
+        // Switching the selected runtime to the operator-owned localCommand profile makes it live
+        // source: the contract is adopted on restart, so the summary flags the runtime live (clients
+        // hide Update + show the "Live" badge) and a blank reviewed-update plan is refused with a clear
+        // error instead of the confusing "manifest failed validation" from the reported bug.
+        var app = await fixture.Apps.GetAppAsync("com.example.live");
+        await fixture.Apps.UpsertAppAsync(app! with { SelectedRuntime = "local" });
+
+        var liveSummary = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.True(liveSummary.Live);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.CreateUpdatePlanAsync("com.example.live", new AppUpdatePlanRequest()));
+        Assert.Equal("update_live_source_runtime", error.Code);
+    }
+
     [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]

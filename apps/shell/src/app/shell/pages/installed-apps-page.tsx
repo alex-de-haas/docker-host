@@ -19,6 +19,7 @@ import {
   MoreHorizontal,
   Play,
   Plus,
+  Radio,
   RefreshCw,
   RotateCcw,
   Settings2,
@@ -44,6 +45,7 @@ import {
   appHasMissingRequiredSettings,
   buildRuntimeServiceRows,
   formatRuntimeProfileLabel,
+  formatUpdateChange,
   getAppPageLinks,
   getEndpointPublicOrigin,
   isAppAutostartEnabled,
@@ -215,6 +217,33 @@ function AppServiceDetailsPanel({
 
   return (
     <div className="space-y-2 rounded-md border bg-background p-3">
+      {app.live && (
+        <div className="space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs">
+          <div className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-300">
+            <Radio className="h-3.5 w-3.5" />
+            Live source runtime
+          </div>
+          <p className="text-muted-foreground">
+            Core runs this app from your source folder and adopts manifest edits on restart — there is no reviewed update. Switch to a compiled runtime for locked, reviewed updates.
+          </p>
+          {app.manifestError && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-amber-900 dark:text-amber-200">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>Last start kept the previous manifest because the folder manifest was invalid: {app.manifestError}</span>
+            </div>
+          )}
+          {app.liveChanges && app.liveChanges.length > 0 && (
+            <div className="text-muted-foreground">
+              <span className="text-[11px] uppercase tracking-wide">Adopted at last start</span>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {app.liveChanges.map((change) => (
+                  <li key={change}>{formatUpdateChange(change)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
       {hasImageInfo && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/30 px-2 py-1.5">
           <div className="flex flex-wrap items-center gap-2">
@@ -605,7 +634,9 @@ function InstalledAppTableSection({
                 const expanded = expandedAppIds.has(app.id);
                 const healthState = healthByApp[app.id];
                 const updateStatusState = updateStatusByApp[app.id];
-                const canUpdate = canManageApps && !app.system && app.capabilities.includes("update");
+                // A live source runtime adopts its manifest on restart and has no reviewed-update path,
+                // so the Update affordance is hidden in favour of the "Live" badge (see CoreApp.live).
+                const canUpdate = canManageApps && !app.system && !app.live && app.capabilities.includes("update");
 
                 return (
                   <Fragment key={app.id}>
@@ -682,7 +713,9 @@ function InstalledAppRow({
   const canBackup = canControl && app.capabilities.includes("backup");
   const canConfigure = canControl;
   const canConfigureMounts = canControl && (app.mounts?.length ?? 0) > 0;
-  const canUpdate = canControl && app.capabilities.includes("update");
+  // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
+  // Update menu item is hidden and the "Live" badge is shown instead. See CoreApp.live.
+  const canUpdate = canControl && !app.live && app.capabilities.includes("update");
   const canRemove = canControl && app.capabilities.includes("remove");
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
   const autostartEnabled = isAppAutostartEnabled(app);
@@ -715,6 +748,16 @@ function InstalledAppRow({
               <span className="truncate font-medium">{app.displayName}</span>
               {app.system && <Badge variant="secondary">System</Badge>}
               {isShell && <Badge variant="outline">Shell</Badge>}
+              {app.live && (
+                <Badge
+                  variant="outline"
+                  className="gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+                  title="Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
+                >
+                  <Radio className="h-3 w-3" />
+                  Live
+                </Badge>
+              )}
               {needsRequiredSettings && (
                 <span title="Configure required settings before starting" className="inline-flex shrink-0">
                   <TriangleAlert className="h-4 w-4 text-amber-500" aria-label="Configure required settings before starting" />
