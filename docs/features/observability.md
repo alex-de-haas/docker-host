@@ -6,9 +6,10 @@ Collect telemetry **from hosted runtime apps** and surface it in Shell, without 
 observability backend. Apps are the OpenTelemetry producers; an OTel collector aggregates their OTLP
 push and re-exposes it for Core to read; Core is the read boundary; Shell is the (later) read-only UI.
 
-This page documents **phase P2** — the collection path. It is plumbing: with P2 alone there is no
-user-visible UI yet. P3 adds Core's scrape + read API and Core-collected infra metrics/logs; P4 adds
-the Shell Observability tab.
+This page documents **phases P2 and P3** — the collection path and Core's read boundary. It is
+plumbing plus a Core HTTP API: there is still no user-visible UI (that is P4, the Shell Observability
+tab). P2 is the push path (apps → collector); P3 is Core scraping that into an in-memory store, adding
+Core-collected container infra metrics, and serving a metrics read API.
 
 ## Non-goals
 
@@ -30,8 +31,9 @@ the Shell Observability tab.
 ## Architecture
 
 ```
-runtime apps ──OTLP/HTTP──▶ OTel collector (Hosty system app) ──Prometheus /metrics──▶ Core (P3) ──▶ Shell (P4)
-  (opt-in telemetry)         unprivileged container               scraped by Core
+runtime apps ──OTLP/HTTP──▶ OTel collector (Hosty system app) ──Prometheus /metrics──▶ Core ──read API──▶ Shell (P4)
+  (opt-in telemetry)         unprivileged container               scraped by Core (P3)
+                                                                  + `docker stats` infra metrics (P3)
 ```
 
 The collector is installed as a **hidden system app** (`hosty.observability.collector`), like the
@@ -83,6 +85,40 @@ exports with no app-specific wiring:
 The collector's presence is the gate: when observability is off it is never installed, the endpoint
 resolves to null, and **no `OTEL_*` env is injected** — apps must degrade gracefully and emit nothing.
 
+## Core read boundary (P3): scrape, infra metrics, read API
+
+P3 makes Core the queryable read boundary. There is no external backend in v1 — Core itself plays the
+"storage" role, turning the collector's push stream into something range-queryable.
+
+**In-memory metric store.** `IMetricStore` (`InMemoryMetricStore`) holds a bounded rolling window of
+metric points per `(app, series)` — a 1-hour window, capped per series and per app. It is **pure
+in-memory with no persistence**: a Core restart drops the window, which is acceptable for a live
+metrics view. The interface is the seam for a later durable swap (e.g. `Microsoft.Data.Sqlite`); v1
+keeps Core framework-only.
+
+**Two collectors feed the store, on a ~10s `TelemetryScrapeService` loop** (gated behind
+`HOSTY_OBSERVABILITY_ENABLED`; it no-ops when off):
+
+1. **App metrics** — Core scrapes the collector's loopback Prometheus `/metrics` (a host process
+   reaching the auto-allocated loopback port), parses the exposition text, and attributes each series
+   to its app via the promoted `hosty_app_id` label (then drops that label, since the series is keyed
+   by app). These only flow for apps that opted into telemetry and export OTLP metrics.
+2. **Container infra metrics** — Core runs `docker stats` itself (its host-level Docker access),
+   attributing each container to its app/service via the `hosty.app.id` / `hosty.app.service` labels
+   Core already stamps at run, and records `container.cpu.percent`, `container.memory.bytes`,
+   `container.memory.percent` (labelled with `service`). This is the **universal baseline**: it works
+   for every running container regardless of instrumentation, and keeps the collector unprivileged.
+
+**Read API.** `GET /api/apps/{id}/metrics?range=<seconds>` (admin session; `range` default 300,
+clamped to the 1-hour window) returns the app's series — name, labels, and timestamped points — over
+the window. A `/control/v1/...` twin exists for the CLI admin plane. The endpoint never fails on "no
+data": observability off, no telemetry, or a stopped app all return an empty series list.
+
+**Console logs** are already served by `GET /api/apps/{id}/logs` (`docker logs` tail) and are
+unchanged by P3. **Traces** are still dropped at the collector (`nop`) so there is no trace store to
+read yet, and **OTLP logs** are not collected yet — both are P4. So P3 adds exactly one new read
+surface: metrics.
+
 ## Logs: two separate streams (console vs OTLP)
 
 Hosty keeps **two log streams that are never merged** — they have different shapes, sources, and
@@ -120,12 +156,17 @@ console-log view. The two streams stay addressable independently end to end.
 - `RuntimeTelemetrySettings.FromManifest` / `RuntimeAppTelemetryManifest` (`RuntimeAppManifest.cs`).
 - `ResolveTelemetryEndpointAsync` (`CoreLifecycleService.cs`) — per-start endpoint resolution.
 - `DockerRuntimeAdapter.BuildTelemetryEnvironment` (`RuntimeAppManifest.cs`) — `OTEL_*` injection.
+- `MetricStore.cs` — `IMetricStore` + `InMemoryMetricStore` rolling-window store (P3).
+- `PrometheusTextParser.cs` / `DockerStatsParser.cs` — exposition-format and `docker stats` parsers (P3).
+- `TelemetryScrapeService.cs` — the ~10s scrape/collect loop that fills the store (P3).
+- `CoreLifecycleService.GetMetricsAsync` + the `…/metrics` endpoints in `LifecycleEndpoints.cs` (P3).
 
 ## Roadmap (later phases)
 
-- **P3** — Core scrapes the collector `/metrics` into an in-memory `IMetricStore`; Core collects
-  container infra metrics (`docker stats`) and console logs (`docker logs`) itself; read API
-  (`GET /api/apps/{id}/metrics|traces|logs`).
+- **P3 (done)** — Core scrapes the collector `/metrics` into an in-memory `IMetricStore` and collects
+  container infra metrics (`docker stats`) itself; read API `GET /api/apps/{id}/metrics?range`.
+  Console logs are served by the pre-existing `…/logs` endpoint; traces (`nop`) and OTLP logs are not
+  yet stored, so no `…/traces` or OTLP-`…/logs` read surface exists yet (both P4).
 - **P4** — Shell Observability tab + fleet heat-map; **plus OTLP-logs support**: a `logs` pipeline in
   the collector config, a Core ingest path that stores OTLP logs as their **own stream separate from
   the console (`docker logs`) stream**, and a distinct structured Shell view for them (severity /
