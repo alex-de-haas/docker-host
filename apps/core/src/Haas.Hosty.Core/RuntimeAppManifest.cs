@@ -331,6 +331,11 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             }
         }
 
+        if (manifest.Telemetry is { SampleRatio: { } sampleRatio } && (sampleRatio < 0.0 || sampleRatio > 1.0))
+        {
+            errors.Add(new("app_manifest_telemetry_sample_ratio_invalid", "telemetry.sampleRatio must be between 0 and 1.", "$.telemetry.sampleRatio"));
+        }
+
         ValidateDependencies(manifest.Dependencies, errors);
 
         RuntimeAppDataTarget? dataTarget = null;
@@ -1050,6 +1055,12 @@ internal sealed class DockerRuntimeAdapter(
 
             runArgs.Add("-e");
             runArgs.Add($"HOSTY_APP_SERVICE_TOKEN={serviceTokens.CreateToken(context.App.Id)}");
+
+            foreach (var telemetry in BuildTelemetryEnvironment(context, service.Key))
+            {
+                runArgs.Add("-e");
+                runArgs.Add(telemetry);
+            }
 
             foreach (var dependency in context.DependencyUrls)
             {
@@ -1794,6 +1805,34 @@ internal sealed class DockerRuntimeAdapter(
             $"HOSTY_CORE_ORIGIN={BuildDockerCoreOrigin(config.EffectiveCorePublicOrigin)}",
         ];
 
+    // OTEL_* environment injected into a service whose manifest opts into telemetry, when a collector
+    // endpoint is available. The endpoint's loopback host is rewritten to host.docker.internal (the
+    // same rewrite as HOSTY_CORE_ORIGIN) so the container reaches the host-published OTLP port. Empty
+    // when telemetry is disabled or no collector endpoint resolved — the standard OTEL_* variables are
+    // honoured by every OpenTelemetry SDK, so no app-specific wiring is required. No bearer token in v1:
+    // per-app ingest auth is deferred (host-internal bind). See docs/features/observability.md.
+    internal static IReadOnlyList<string> BuildTelemetryEnvironment(RuntimeLifecycleContext context, string serviceKey)
+    {
+        var settings = RuntimeTelemetrySettings.FromManifest(context.Manifest.Manifest.Telemetry);
+        if (!settings.Enabled || string.IsNullOrWhiteSpace(context.TelemetryEndpoint))
+        {
+            return [];
+        }
+
+        var endpoint = BuildDockerCoreOrigin(context.TelemetryEndpoint);
+        // Round-trippable invariant form: a fixed "0.###" would truncate small ratios (0.0001 -> "0",
+        // silently disabling traces). The validated ratio is already in [0,1].
+        var ratio = settings.SampleRatio.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return [
+            $"OTEL_EXPORTER_OTLP_ENDPOINT={endpoint}",
+            "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+            $"OTEL_SERVICE_NAME={context.App.Id}",
+            $"OTEL_RESOURCE_ATTRIBUTES=service.name={context.App.Id},hosty.app.id={context.App.Id},hosty.app.service={serviceKey}",
+            "OTEL_TRACES_SAMPLER=parentbased_traceidratio",
+            $"OTEL_TRACES_SAMPLER_ARG={ratio}",
+        ];
+    }
+
     internal static string BuildDockerCoreOrigin(string coreOrigin)
     {
         if (!Uri.TryCreate(coreOrigin, UriKind.Absolute, out var uri) ||
@@ -1837,7 +1876,11 @@ internal sealed record RuntimeLifecycleContext(
     string AppRoot,
     string AppDataPath,
     IReadOnlyDictionary<string, string> DependencyUrls,
-    IReadOnlyList<RuntimeMount> Mounts);
+    IReadOnlyList<RuntimeMount> Mounts,
+    // The OTLP/HTTP origin of the telemetry collector (host.docker.internal:<port>-rewritable
+    // loopback URL), or null when observability is off / the collector is not yet up. The docker
+    // adapter injects OTEL_* env from this only for an app whose manifest opts into telemetry.
+    string? TelemetryEndpoint = null);
 
 internal sealed record RuntimeAppManifestSelection(
     RuntimeAppManifest Manifest,
@@ -1904,6 +1947,7 @@ internal sealed class RuntimeAppManifest
     public IReadOnlyList<string> Capabilities { get => field ?? []; init; } = [];
     public IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> ExternalMounts { get => field ??= new Dictionary<string, RuntimeAppExternalMountManifest>(); init; } = new Dictionary<string, RuntimeAppExternalMountManifest>();
     public RuntimeAppRestartPolicyManifest? RestartPolicy { get; init; }
+    public RuntimeAppTelemetryManifest? Telemetry { get; init; }
 }
 
 // Operator-configured external host-path mount slot. The manifest declares the slot
@@ -1954,6 +1998,35 @@ internal sealed record RuntimeRestartPolicy(string Mode, int MaxRetries, int Bac
         var maxRetries = manifest.MaxRetries is int retries && retries >= 0 ? retries : 5;
         var backoff = manifest.BackoffSeconds is int seconds && seconds >= 0 ? seconds : 10;
         return new RuntimeRestartPolicy(mode, maxRetries, backoff);
+    }
+}
+
+// Declares whether this app exports OpenTelemetry to the Hosty collector and at what trace sample
+// ratio. Opt-in: absent or enabled=false means no OTEL_* environment is injected (the app produces
+// no OTLP). Additive under schemaVersion app.0.1. Only the docker runtime acts on this in v1; a
+// localCommand app gets no OTLP (see observability.md). sampleRatio applies to traces (head-based).
+internal sealed record RuntimeAppTelemetryManifest
+{
+    public bool? Enabled { get; init; }
+    public double? SampleRatio { get; init; }
+}
+
+// Telemetry intent with manifest defaults applied, ready for the docker adapter to act on. Disabled
+// by default; SampleRatio is clamped to [0,1] with a 0.1 head-based default so an opted-in app that
+// omits a ratio still samples a sane fraction of traces.
+internal sealed record RuntimeTelemetrySettings(bool Enabled, double SampleRatio)
+{
+    public static readonly RuntimeTelemetrySettings Disabled = new(false, 0.1);
+
+    public static RuntimeTelemetrySettings FromManifest(RuntimeAppTelemetryManifest? manifest)
+    {
+        if (manifest is null || manifest.Enabled != true)
+        {
+            return Disabled;
+        }
+
+        var ratio = manifest.SampleRatio is double value ? Math.Clamp(value, 0.0, 1.0) : 0.1;
+        return new RuntimeTelemetrySettings(true, ratio);
     }
 }
 

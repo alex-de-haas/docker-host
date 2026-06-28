@@ -915,9 +915,14 @@ internal sealed class CoreLifecycleService(
     {
         var results = new List<AppBackgroundLifecycleResult>();
         var records = await apps.ListAppRecordsAsync(cancellationToken);
+        // The telemetry collector starts before every other app: it is the OTLP sink they point at,
+        // so its endpoint URL must be resolved and persisted before their start-time env injection
+        // reads it (see ResolveTelemetryEndpointAsync). Otherwise alphabetical id order applies.
         foreach (var app in records.Where(app =>
             string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
-            (app.Autostart ?? true)).OrderBy(app => app.Id, StringComparer.Ordinal))
+            (app.Autostart ?? true))
+            .OrderByDescending(app => string.Equals(app.Id, CollectorBootstrap.AppId, StringComparison.Ordinal))
+            .ThenBy(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
             results.Add(await RunBackgroundLifecycleActionAsync(
@@ -1526,7 +1531,27 @@ internal sealed class CoreLifecycleService(
             GetAppRoot(app.Id),
             GetAppDataPath(app.Id),
             await ResolveDependencyUrlsAsync(app, cancellationToken),
-            RuntimeMountPlanner.Resolve(app.MountSlots, app.Mounts));
+            RuntimeMountPlanner.Resolve(app.MountSlots, app.Mounts),
+            await ResolveTelemetryEndpointAsync(app, cancellationToken));
+
+    // The OTLP/HTTP origin an app should export telemetry to: the collector system app's host-exposed
+    // otlp-http endpoint, resolved fresh at each start (like dependency URLs) so the docker adapter can
+    // rewrite the loopback host to host.docker.internal. The collector's presence is the gate — it is
+    // never installed when observability is off, so the lookup returns null and the adapter injects no
+    // OTEL_* env. Returns null when the collector is absent / not yet started (no persisted endpoint
+    // URL) or when the app is the collector itself (graceful no-op in every case).
+    private async Task<string?> ResolveTelemetryEndpointAsync(AppRecord app, CancellationToken cancellationToken)
+    {
+        if (string.Equals(app.Id, CollectorBootstrap.AppId, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var collector = await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
+        var endpoint = (collector?.Endpoints ?? []).FirstOrDefault(candidate =>
+            string.Equals(candidate.Key, CollectorBootstrap.OtlpEndpointKey, StringComparison.Ordinal));
+        return string.IsNullOrWhiteSpace(endpoint?.Url) ? null : endpoint.Url;
+    }
 
     // Start-time gate for external mounts: a declared-required slot must have a binding, every
     // configured host path must still pass the path policy (defense-in-depth against a binding
@@ -2027,6 +2052,23 @@ internal sealed class CoreLifecycleService(
 
     private string GetAppDataPath(string appId)
         => Path.Combine(GetAppRoot(appId), "data");
+
+    // Writes a Core-owned file into a system app's data dir, which the runtime mounts into the
+    // container (see RuntimeAppDataTarget). Used by the collector bootstrap to deliver the
+    // authoritative otelcol config before the container starts. Idempotent: overwrites each call so
+    // a config template change ships on the next Core start. The file name is constrained to a plain
+    // file name (no separators) so it cannot escape the data dir.
+    internal async Task WriteSystemAppDataFileAsync(string appId, string fileName, string content, CancellationToken cancellationToken)
+    {
+        if (fileName.Contains(Path.DirectorySeparatorChar) || fileName.Contains(Path.AltDirectorySeparatorChar) || fileName.Contains("..", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("System app data file name must be a plain file name.", nameof(fileName));
+        }
+
+        var dataPath = GetAppDataPath(appId);
+        Directory.CreateDirectory(dataPath);
+        await File.WriteAllTextAsync(Path.Combine(dataPath, fileName), content, cancellationToken);
+    }
 
     private string GetRetainedConfigPath(string appId)
         => Path.Combine(GetAppRoot(appId), "retained-config.json");

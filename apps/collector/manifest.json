@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.observability.collector",
+  "name": "Hosty Telemetry Collector",
+  "description": "OpenTelemetry collector that receives OTLP from Hosty runtime apps and re-exposes it as a Prometheus /metrics endpoint for Core to scrape.",
+  "version": "0.1.0",
+  "runtimeProfiles": [
+    {
+      "key": "docker",
+      "type": "docker",
+      "default": true
+    }
+  ],
+  "defaultRuntime": "docker",
+  "services": [
+    {
+      "key": "collector",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": {
+            "repository": "otel/opentelemetry-collector-contrib",
+            "tag": "0.155.0"
+          },
+          "ports": [
+            {
+              "key": "otlp-http",
+              "containerPort": 4318,
+              "localPort": 4318,
+              "protocol": "http",
+              "expose": "host"
+            },
+            {
+              "key": "metrics",
+              "containerPort": 9464,
+              "protocol": "http"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "data": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "docker",
+        "containerPath": "/etc/otelcol-contrib"
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "key": "otlp-http",
+      "service": "collector",
+      "port": "otlp-http",
+      "protocol": "http"
+    },
+    {
+      "key": "metrics",
+      "service": "collector",
+      "port": "metrics",
+      "protocol": "http"
+    }
+  ],
+  "capabilities": ["restart", "stop", "logs"]
+}

@@ -651,7 +651,11 @@ internal sealed record HostyCoreRuntimeConfig(
     string? IngressBaseDomain = null,
     string? IngressConfigPath = null,
     string? IngressTunnelId = null,
-    string? IngressCredentialsFile = null)
+    string? IngressCredentialsFile = null,
+    bool ObservabilityEnabled = false,
+    string? CollectorManifestPath = null,
+    string CollectorBootstrapRuntime = "docker",
+    bool CollectorAutostart = true)
 {
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
 
@@ -676,6 +680,8 @@ internal sealed record HostyCoreRuntimeConfig(
         var runtimePublicHost = "localhost";
         var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
             ResolveDefaultShellManifestPath();
+        var collectorManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_MANIFEST_PATH")) ??
+            ResolveDefaultCollectorManifestPath();
         // Resolve to absolute paths: the credentials path is written verbatim into config.yml and
         // cloudflared (run from another cwd / as a service) cannot resolve relative or ~ paths.
         var ingressConfigPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CONFIG_PATH")) is { } configPath
@@ -706,7 +712,11 @@ internal sealed record HostyCoreRuntimeConfig(
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_BASE_DOMAIN")),
             ingressConfigPath,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_TUNNEL_ID")),
-            ingressCredentialsFile);
+            ingressCredentialsFile,
+            ReadBoolean("HOSTY_OBSERVABILITY_ENABLED", defaultValue: false),
+            collectorManifestPath,
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME")) ?? "docker",
+            ReadBoolean("HOSTY_COLLECTOR_AUTOSTART", defaultValue: true));
     }
 
     private static string? ReadFirst(params string[] names)
@@ -838,19 +848,28 @@ internal sealed record HostyCoreRuntimeConfig(
     }
 
     private static string? ResolveDefaultShellManifestPath()
+        => ResolveDefaultBundledManifestPath("shell");
+
+    private static string? ResolveDefaultCollectorManifestPath()
+        => ResolveDefaultBundledManifestPath("collector");
+
+    // Walks up from the working dir and the binary's base dir looking for a manifest bundled next to
+    // Core under apps/<name>/manifest.json (or <name>/manifest.json). Shared by the Shell and the
+    // telemetry collector, both of which ship their manifest in this repo layout.
+    private static string? ResolveDefaultBundledManifestPath(string name)
     {
         foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
         {
             var directory = new DirectoryInfo(start);
             while (directory is not null)
             {
-                var candidate = Path.Combine(directory.FullName, "apps", "shell", "manifest.json");
+                var candidate = Path.Combine(directory.FullName, "apps", name, "manifest.json");
                 if (File.Exists(candidate))
                 {
                     return candidate;
                 }
 
-                candidate = Path.Combine(directory.FullName, "shell", "manifest.json");
+                candidate = Path.Combine(directory.FullName, name, "manifest.json");
                 if (File.Exists(candidate))
                 {
                     return candidate;
@@ -903,6 +922,7 @@ internal sealed class RuntimeAppSupervisorService(
         await Task.Yield();
 
         await EnsureShellInstalledAsync(stoppingToken);
+        await EnsureCollectorInstalledAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
         await lifecycle.ReconcileIngressAsync(stoppingToken);
@@ -1244,6 +1264,97 @@ internal sealed class RuntimeAppSupervisorService(
         }
 
         return settings;
+    }
+
+    // Installs the telemetry collector as a hidden system app and writes Core's authoritative
+    // otelcol config into its app-data dir before the container starts (P2). Gated behind
+    // ObservabilityEnabled (default off) so an install with no telemetry consumer never pulls the
+    // collector image. The collector is started first by StartAutostartAppsAsync so its OTLP endpoint
+    // resolves before other apps come up. Best-effort, mirroring the Shell bootstrap: a failure here
+    // leaves Core fully usable, just without telemetry collection.
+    private async Task EnsureCollectorInstalledAsync(CancellationToken cancellationToken)
+    {
+        if (!config.ObservabilityEnabled)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.CollectorManifestPath))
+        {
+            logger.LogWarning("Hosty telemetry collector bootstrap skipped because no collector manifest path was configured.");
+            return;
+        }
+
+        try
+        {
+            var collector = await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
+            if (collector is null)
+            {
+                await lifecycle.InstallAsync(new AppInstallRequest(
+                    ManifestPath: config.CollectorManifestPath,
+                    SelectedRuntime: config.CollectorBootstrapRuntime,
+                    System: true,
+                    Settings: null,
+                    Autostart: config.CollectorAutostart), cancellationToken);
+                collector = await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
+            }
+            else
+            {
+                collector = await ReconcileCollectorManifestAsync(collector, cancellationToken);
+            }
+
+            if (collector is not null && collector.Autostart != config.CollectorAutostart)
+            {
+                await lifecycle.ConfigureAutostartAsync(CollectorBootstrap.AppId, new AppAutostartRequest(config.CollectorAutostart), cancellationToken);
+            }
+
+            // Core owns the config: (re)write it on every start so a template change ships forward.
+            // Written before the container starts (StartAutostartAppsAsync runs after this), and the
+            // manifest mounts the app-data dir over the image's default config directory.
+            if (collector is not null)
+            {
+                await lifecycle.WriteSystemAppDataFileAsync(
+                    CollectorBootstrap.AppId,
+                    CollectorBootstrap.ConfigFileName,
+                    CollectorBootstrap.ConfigYaml,
+                    cancellationToken);
+            }
+        }
+        // Best-effort bootstrap: catch everything except cancellation so an unexpected failure here
+        // can never crash the supervisor background service — Core stays up, just without telemetry.
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Hosty telemetry collector bootstrap did not complete; Core remains available without telemetry collection.");
+        }
+    }
+
+    private async Task<AppRecord?> ReconcileCollectorManifestAsync(AppRecord collector, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(collector.SelectedRuntime ?? config.CollectorBootstrapRuntime, config.CollectorBootstrapRuntime, StringComparison.Ordinal))
+        {
+            return collector;
+        }
+
+        var plan = await lifecycle.CreateUpdatePlanAsync(
+            CollectorBootstrap.AppId,
+            new AppUpdatePlanRequest(config.CollectorManifestPath, config.CollectorBootstrapRuntime),
+            cancellationToken);
+        if (plan.Changes.Count == 0)
+        {
+            return collector;
+        }
+
+        logger.LogInformation(
+            "Hosty telemetry collector bootstrap applying manifest reconciliation with {ChangeCount} reported changes.",
+            plan.Changes.Count);
+        await lifecycle.ApplyUpdateAsync(
+            CollectorBootstrap.AppId,
+            new AppUpdateApplyRequest(
+                PlanDigest: plan.PlanDigest,
+                ManifestPath: config.CollectorManifestPath,
+                SelectedRuntime: config.CollectorBootstrapRuntime),
+            cancellationToken);
+        return await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
     }
 
     private async Task StartAutostartAppsAsync(CancellationToken cancellationToken)
