@@ -83,6 +83,35 @@ exports with no app-specific wiring:
 The collector's presence is the gate: when observability is off it is never installed, the endpoint
 resolves to null, and **no `OTEL_*` env is injected** — apps must degrade gracefully and emit nothing.
 
+## Logs: two separate streams (console vs OTLP)
+
+Hosty keeps **two log streams that are never merged** — they have different shapes, sources, and
+audiences:
+
+1. **Console logs** (`docker logs` stdout/stderr). Collected by **Core** (P3), zero instrumentation,
+   captures *every* app including ones that know nothing about OpenTelemetry. Plain text lines, no
+   severity/attributes, no trace correlation. This is the universal baseline.
+2. **OTLP logs** (OpenTelemetry logs signal). **Opt-in** via the app's OTel logs SDK/appender.
+   Structured records with severity + attributes and — the reason to bother — `trace_id` / `span_id`
+   correlation, so a log line links to its span. Only flows for apps that wire a logs SDK.
+
+**Transport is already automatic.** The `OTEL_EXPORTER_OTLP_ENDPOINT` we inject is the *base* OTLP
+endpoint, which every OTel SDK uses for all three signals (`/v1/traces`, `/v1/metrics`, `/v1/logs`).
+So an app that wants OTLP logs only has to enable its language's logs SDK — no extra Hosty env or
+manifest field beyond `telemetry.enabled`.
+
+**Receiving and surfacing OTLP logs is P4 work**, not done yet:
+
+- The collector has **no `logs` pipeline** today (only `metrics` → Prometheus and `traces` → `nop`),
+  so OTLP logs sent now are not accepted.
+- Core has no logs read path, and Shell has no view for them.
+
+P4 will add: a `logs` pipeline in the collector config → a Core ingest path that keeps OTLP logs in
+their **own store/stream, separate from the `docker logs` console stream** (the file-tail-from-collector
+model already planned for traces is the likely shape) → a Shell surface that shows OTLP logs as a
+**distinct, structured view** (severity/attribute filters, trace links), *never* interleaved into the
+console-log view. The two streams stay addressable independently end to end.
+
 ## Key code
 
 - `apps/collector/manifest.json` — collector system-app manifest.
@@ -91,3 +120,15 @@ resolves to null, and **no `OTEL_*` env is injected** — apps must degrade grac
 - `RuntimeTelemetrySettings.FromManifest` / `RuntimeAppTelemetryManifest` (`RuntimeAppManifest.cs`).
 - `ResolveTelemetryEndpointAsync` (`CoreLifecycleService.cs`) — per-start endpoint resolution.
 - `DockerRuntimeAdapter.BuildTelemetryEnvironment` (`RuntimeAppManifest.cs`) — `OTEL_*` injection.
+
+## Roadmap (later phases)
+
+- **P3** — Core scrapes the collector `/metrics` into an in-memory `IMetricStore`; Core collects
+  container infra metrics (`docker stats`) and console logs (`docker logs`) itself; read API
+  (`GET /api/apps/{id}/metrics|traces|logs`).
+- **P4** — Shell Observability tab + fleet heat-map; **plus OTLP-logs support**: a `logs` pipeline in
+  the collector config, a Core ingest path that stores OTLP logs as their **own stream separate from
+  the console (`docker logs`) stream**, and a distinct structured Shell view for them (severity /
+  attribute filters, trace-id links) that is never interleaved with console logs.
+- **Later** — per-app OTLP ingest auth; localCommand OTLP; external backend (SigNoz / Prometheus +
+  Tempo + Loki) swap (changes only where the collector exports / where Core reads).
