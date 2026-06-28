@@ -14,10 +14,21 @@ internal sealed class CoreLifecycleService(
     IEnumerable<IAppRuntimeAdapter> adapters,
     IIngressController ingress,
     ILogger<CoreLifecycleService> logger,
-    NotificationService? notifications = null)
+    NotificationService? notifications = null,
+    IClock? clock = null,
+    IMetricStore? metrics = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
+
+    // Default and ceiling for a metrics range query. The ceiling matches the in-memory store's
+    // rolling window, so asking for more than the store retains is clamped rather than misleading.
+    private const int DefaultMetricsRangeSeconds = 300;
+    private const int MaxMetricsRangeSeconds = 3600;
+
+    // Optional in tests (which exercise lifecycle, not telemetry); DI always supplies the singletons.
+    private readonly IClock clock = clock ?? new SystemClock();
+    private readonly IMetricStore metrics = metrics ?? new InMemoryMetricStore();
 
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
@@ -844,6 +855,18 @@ internal sealed class CoreLifecycleService(
             RuntimeType: selection.RuntimeProfile.Type,
             Status: health.Status,
             Services: health.Services);
+    }
+
+    // Observability v1 read path (P3): the app's metric series held in the in-memory store over the
+    // last `range` seconds (default 5 min, clamped to the store's 1-hour window). Returns an empty
+    // series list when observability is off, the app emits no telemetry, or its containers are not
+    // running — the endpoint never fails on "no data". Requires the app to exist (404 otherwise).
+    public async Task<AppMetricsResponse> GetMetricsAsync(string appId, int? rangeSeconds, CancellationToken cancellationToken = default)
+    {
+        _ = await RequireAppAsync(appId, cancellationToken);
+        var range = Math.Clamp(rangeSeconds ?? DefaultMetricsRangeSeconds, 1, MaxMetricsRangeSeconds);
+        var series = metrics.Query(appId, clock.UtcNow.AddSeconds(-range));
+        return new AppMetricsResponse(appId, range, series);
     }
 
     // Read-only "update available" detection (runtime-app-marketplace.md, "Update-available
@@ -3161,6 +3184,13 @@ internal sealed record AppRuntimeHealthResponse(
     string RuntimeType,
     string Status,
     IReadOnlyList<AppRuntimeServiceHealth> Services);
+
+// Observability metrics read response: the app's series (name + labels + timestamped points) over the
+// resolved range. `RangeSeconds` echoes the effective (clamped) window the points were drawn from.
+internal sealed record AppMetricsResponse(
+    string AppId,
+    long RangeSeconds,
+    IReadOnlyList<MetricSeriesSnapshot> Series);
 
 // One supervision observation: an app's aggregate health status at a point in time plus its resolved
 // restart policy, used by the supervisor to reconcile state, detect transitions, and restart crashes.
