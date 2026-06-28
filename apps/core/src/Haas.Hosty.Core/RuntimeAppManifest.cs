@@ -1820,7 +1820,9 @@ internal sealed class DockerRuntimeAdapter(
         }
 
         var endpoint = BuildDockerCoreOrigin(context.TelemetryEndpoint);
-        var ratio = settings.SampleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        // Round-trippable invariant form: a fixed "0.###" would truncate small ratios (0.0001 -> "0",
+        // silently disabling traces). The validated ratio is already in [0,1].
+        var ratio = settings.SampleRatio.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return [
             $"OTEL_EXPORTER_OTLP_ENDPOINT={endpoint}",
             "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",

@@ -530,6 +530,15 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
+    public void BuildTelemetryEnvironment_PreservesSmallSampleRatio()
+    {
+        // A fixed "0.###" format would truncate this to "0" and silently disable traces.
+        var context = CreateTelemetryContext(enabled: true, sampleRatio: 0.0005, endpoint: "http://localhost:4318");
+
+        Assert.Contains("OTEL_TRACES_SAMPLER_ARG=0.0005", DockerRuntimeAdapter.BuildTelemetryEnvironment(context, "app"));
+    }
+
+    [Fact]
     public void BuildTelemetryEnvironment_EmptyWhenTelemetryDisabled()
     {
         var context = CreateTelemetryContext(enabled: false, sampleRatio: null, endpoint: "http://localhost:4318");

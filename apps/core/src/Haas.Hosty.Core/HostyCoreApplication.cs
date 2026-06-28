@@ -1320,8 +1320,9 @@ internal sealed class RuntimeAppSupervisorService(
                     cancellationToken);
             }
         }
-        catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
-            ex is AppLifecycleException or AppManifestException or HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
+        // Best-effort bootstrap: catch everything except cancellation so an unexpected failure here
+        // can never crash the supervisor background service — Core stays up, just without telemetry.
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Hosty telemetry collector bootstrap did not complete; Core remains available without telemetry collection.");
         }

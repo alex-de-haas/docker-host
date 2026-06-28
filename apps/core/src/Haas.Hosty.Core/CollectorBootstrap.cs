@@ -45,8 +45,10 @@ internal static class CollectorBootstrap
             endpoint: 0.0.0.0:9464
             resource_to_telemetry_conversion:
               enabled: true
-          debug:
-            verbosity: basic
+          # Traces are accepted then dropped in v1 (no trace store yet): nop keeps the /v1/traces
+          # handler registered so app exporters do not see 404s, without logging span data. P3/P4
+          # swaps this for a real trace sink.
+          nop: {}
 
         service:
           telemetry:
@@ -60,7 +62,7 @@ internal static class CollectorBootstrap
             traces:
               receivers: [otlp]
               processors: [batch]
-              exporters: [debug]
+              exporters: [nop]
 
         """;
 }

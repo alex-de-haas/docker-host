@@ -20,7 +20,7 @@
           "type": "docker",
           "image": {
             "repository": "otel/opentelemetry-collector-contrib",
-            "tag": "latest"
+            "tag": "0.155.0"
           },
           "ports": [
             {

@@ -19,8 +19,11 @@ the Shell Observability tab.
   Docker socket or host log directories. Container infra metrics (`docker stats`) and log tail
   (`docker logs`) are collected by **Core itself** in P3, using the host-level Docker access it
   already has — keeping the default-installed system container free of root-equivalent access.
-- **No per-app ingest authentication in v1.** The collector's OTLP port is host-internal; v1 accepts
-  the `service.name` spoof risk among trusted local apps. A shared/per-app ingest secret is deferred.
+- **No per-app ingest authentication in v1.** The collector's OTLP port uses `expose: host`, which
+  binds `0.0.0.0` (so sibling containers reach it via `host.docker.internal`) — meaning it is also
+  reachable from the LAN unless the host firewall blocks it. v1 has no ingest auth and accepts the
+  `service.name` spoof risk among trusted local apps; **run it on a trusted network / firewall the
+  OTLP port** (default 4318) until a shared/per-app ingest secret lands. See [raw ports](raw-ports.md).
 - **No localCommand OTLP.** Only the `docker` runtime injects OTLP env in v1. A docker-less host gets
   no collector and no OTLP; it degrades (in P3) to Core-collected health + process metrics + log tail.
 
