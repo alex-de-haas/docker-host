@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import {
+  Activity,
   Archive,
   ArrowUpCircle,
   Boxes,
@@ -922,8 +923,11 @@ function InstalledAppActionsMenu({
   onOpenPanel: OpenAppPanel;
 }) {
   const hasLogs = canInspect && app.capabilities.includes("logs");
+  // Observability (metrics + OTLP logs) is host-collected and available for any inspectable app; the
+  // panel shows an empty state when observability is disabled or the app has emitted nothing yet.
+  const hasObservability = canInspect;
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
-  const hasMenuActions = hasLogs || canBackup || canConfigure || canConfigureMounts || canUpdate || canRemove;
+  const hasMenuActions = hasLogs || hasObservability || canBackup || canConfigure || canConfigureMounts || canUpdate || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -941,6 +945,12 @@ function InstalledAppActionsMenu({
           <DropdownMenuItem onClick={() => onOpenPanel(app, "logs")}>
             <FileText className="h-4 w-4" />
             Logs
+          </DropdownMenuItem>
+        )}
+        {hasObservability && (
+          <DropdownMenuItem onClick={() => onOpenPanel(app, "observability")}>
+            <Activity className="h-4 w-4" />
+            Observability
           </DropdownMenuItem>
         )}
         {canBackup && (

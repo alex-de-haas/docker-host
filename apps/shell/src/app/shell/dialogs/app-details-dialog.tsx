@@ -31,6 +31,7 @@ import type {
   RemoveOptions,
 } from "../types";
 import { CheckboxRow, EmptyState, FactCard, IconButton, InlineError } from "../ui";
+import { ObservabilityPanel } from "./observability-panel";
 
 export function AppDetailsDialog({
   app,
@@ -41,6 +42,7 @@ export function AppDetailsDialog({
   detail,
   onClose,
   onRefreshLogs,
+  onRefreshObservability,
   onRefreshBackups,
   onCreateBackup,
   onRestoreBackup,
@@ -61,6 +63,7 @@ export function AppDetailsDialog({
   detail: DetailPanelState;
   onClose: () => void;
   onRefreshLogs: (app: CoreApp) => void;
+  onRefreshObservability: (app: CoreApp, rangeSeconds?: number) => void;
   onRefreshBackups: (app: CoreApp, activate?: boolean) => void;
   onCreateBackup: (app: CoreApp) => void;
   onRestoreBackup: (app: CoreApp, backup: CoreBackup) => void;
@@ -77,13 +80,14 @@ export function AppDetailsDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className={cn("sm:max-w-3xl", view === "logs" && "sm:max-w-5xl")}>
+      <DialogContent className={cn("sm:max-w-3xl", (view === "logs" || view === "observability") && "sm:max-w-5xl")}>
         <DialogHeader>
           <DialogTitle>{detailTitle(view)} · {app.displayName}</DialogTitle>
           <DialogDescription>{app.id}</DialogDescription>
         </DialogHeader>
         {detail.error && <InlineError message={detail.error} />}
         {view === "logs" && <LogsPanel app={app} detail={detail} onRefresh={onRefreshLogs} />}
+        {view === "observability" && <ObservabilityPanel app={app} detail={detail} onRefresh={onRefreshObservability} />}
         {view === "backups" && canMutateApp && (
           <BackupsPanel
             app={app}

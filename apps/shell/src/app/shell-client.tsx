@@ -33,7 +33,9 @@ import type {
   ActivePanel,
   AppAction,
   AppLaunchResponse,
+  AppMetricsResponse,
   AppOpenTarget,
+  AppOtlpLogsResponse,
   AppPageLink,
   AppsResponse,
   BackupsResponse,
@@ -492,10 +494,53 @@ export function ShellClient({
     [appEndpoint, coreOrigin],
   );
 
+  const loadAppObservability = useCallback(
+    async (app: CoreApp, rangeSeconds = 900) => {
+      const requestToken = ++detailRequestRef.current;
+      setActivePanel({ appId: app.id, view: "observability" });
+      setDetailPanel({ ...emptyDetailPanelState(), loading: true, metrics: null, otlpLogs: null });
+      try {
+        const range = encodeURIComponent(String(rangeSeconds));
+        // Metrics and OTLP logs are independent read surfaces fetched together for one panel.
+        const [metricsResponse, logsResponse] = await Promise.all([
+          fetch(`${appEndpoint(app, "/metrics")}?range=${range}`, { credentials: "include" }),
+          fetch(`${appEndpoint(app, "/otlp-logs")}?range=${range}&limit=500`, { credentials: "include" }),
+        ]);
+        redirectToCoreLoginIfAuthRequired(metricsResponse, coreOrigin);
+        redirectToCoreLoginIfAuthRequired(logsResponse, coreOrigin);
+        if (!metricsResponse.ok) {
+          throw new Error(await readCoreError(metricsResponse));
+        }
+        if (!logsResponse.ok) {
+          throw new Error(await readCoreError(logsResponse));
+        }
+
+        const metrics = (await metricsResponse.json()) as AppMetricsResponse;
+        const otlpLogs = (await logsResponse.json()) as AppOtlpLogsResponse;
+        if (requestToken !== detailRequestRef.current) {
+          return;
+        }
+
+        setDetailPanel({ ...emptyDetailPanelState(), metrics, otlpLogs });
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error) || requestToken !== detailRequestRef.current) {
+          return;
+        }
+
+        setDetailPanel({ ...emptyDetailPanelState(), error: error instanceof Error ? error.message : "Observability data is unavailable.", metrics: null, otlpLogs: null });
+      }
+    },
+    [appEndpoint, coreOrigin],
+  );
+
   const openAppPanel = useCallback(
     (app: CoreApp, view: DetailView, options?: OpenPanelOptions) => {
       if (view === "logs") {
         void loadAppLogs(app);
+        return;
+      }
+      if (view === "observability") {
+        void loadAppObservability(app);
         return;
       }
       if (view === "backups") {
@@ -510,7 +555,7 @@ export function ShellClient({
       setActivePanel({ appId: app.id, view, configureSection: options?.configureSection });
       setDetailPanel(emptyDetailPanelState());
     },
-    [loadAppBackups, loadAppLogs, loadUpdatePlan],
+    [loadAppBackups, loadAppLogs, loadAppObservability, loadUpdatePlan],
   );
 
   const closeAppPanel = useCallback(() => {
@@ -1200,6 +1245,7 @@ export function ShellClient({
             detail={detailPanel}
             onClose={closeAppPanel}
             onRefreshLogs={loadAppLogs}
+            onRefreshObservability={loadAppObservability}
             onRefreshBackups={loadAppBackups}
             onCreateBackup={createManualBackup}
             onRestoreBackup={restoreBackup}
