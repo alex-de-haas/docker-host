@@ -60,12 +60,23 @@ the bind mount; the contents are non-secret telemetry. Traces are still accepted
 ## Enabling it
 
 Observability is **off by default** — an install with no telemetry consumer never pulls the collector
-image. Enable it on the host:
+image. Enable it with `hosty config` (persisted in `launch.env`, injected into the Core process on
+`hosty core start`):
 
-- `HOSTY_OBSERVABILITY_ENABLED=1` — install + run the collector (default `false`).
-- `HOSTY_COLLECTOR_MANIFEST_PATH` — override the bundled `apps/collector/manifest.json`.
-- `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` — default `docker`.
-- `HOSTY_COLLECTOR_AUTOSTART` — default `true`.
+```sh
+hosty config set HOSTY_OBSERVABILITY_ENABLED true
+hosty core start   # or restart if already running — the flag is read only at Core startup
+```
+
+- `HOSTY_OBSERVABILITY_ENABLED` — install + run the collector (default `false`). Booleans accept
+  `true/false`, `1/0`, `yes/no`, `enabled/disabled`, `on/off`; stored canonicalized to `true`/`false`.
+- `HOSTY_COLLECTOR_AUTOSTART` — start the collector with the other autostart apps (default `true`).
+
+Both are also plain Core env vars, so `export HOSTY_OBSERVABILITY_ENABLED=1` before `hosty core start`
+still works (the CLI passes its environment through to Core). `hosty config` only injects a value when
+it overrides Core's default, so it never clobbers such an ambient export. Two advanced overrides remain
+ambient-env-only (not in `hosty config`): `HOSTY_COLLECTOR_MANIFEST_PATH` (override the bundled
+`apps/collector/manifest.json`) and `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` (default `docker`).
 
 The collector starts **before** other autostart apps so its OTLP endpoint is resolved and persisted
 before their start-time env injection reads it.

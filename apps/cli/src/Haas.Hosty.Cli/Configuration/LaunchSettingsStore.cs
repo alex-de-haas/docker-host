@@ -102,9 +102,14 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
         => LaunchSettingDefinitions.All.ToDictionary(x => x.Key, x => x.DefaultValue(environment), StringComparer.Ordinal);
 
     private static string NormalizeValue(string key, string value)
-        => key is LaunchSettingDefinitions.HostyCorePort or LaunchSettingDefinitions.HostyShellPort
-            ? value.Trim()
-            : value;
+        => key switch
+        {
+            LaunchSettingDefinitions.HostyCorePort or LaunchSettingDefinitions.HostyShellPort => value.Trim(),
+            // Canonicalize boolean settings so the persisted launch.env always reads true/false.
+            LaunchSettingDefinitions.HostyObservabilityEnabled or LaunchSettingDefinitions.HostyCollectorAutostart =>
+                LaunchSettingDefinitions.IsTruthy(value) ? "true" : "false",
+            _ => value,
+        };
 
     private static IEnumerable<(string Key, string Value)> Parse(IEnumerable<string> lines)
     {
