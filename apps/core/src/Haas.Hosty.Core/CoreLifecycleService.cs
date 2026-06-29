@@ -16,7 +16,8 @@ internal sealed class CoreLifecycleService(
     ILogger<CoreLifecycleService> logger,
     NotificationService? notifications = null,
     IClock? clock = null,
-    IMetricStore? metrics = null)
+    IMetricStore? metrics = null,
+    ILogStore? logs = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -26,9 +27,17 @@ internal sealed class CoreLifecycleService(
     private const int DefaultMetricsRangeSeconds = 300;
     private const int MaxMetricsRangeSeconds = 3600;
 
+    // Defaults and ceilings for an OTLP-logs query. Range mirrors metrics (the store's 1-hour window);
+    // the limit caps how many records one response carries (the store retains up to 2000 per app).
+    private const int DefaultLogsRangeSeconds = 300;
+    private const int MaxLogsRangeSeconds = 3600;
+    private const int DefaultLogsLimit = 500;
+    private const int MaxLogsLimit = 2000;
+
     // Optional in tests (which exercise lifecycle, not telemetry); DI always supplies the singletons.
     private readonly IClock clock = clock ?? new SystemClock();
     private readonly IMetricStore metrics = metrics ?? new InMemoryMetricStore();
+    private readonly ILogStore logs = logs ?? new InMemoryLogStore();
 
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
@@ -742,8 +751,9 @@ internal sealed class CoreLifecycleService(
         }
 
         TryDeleteDirectoryIfEmpty(GetAppRoot(appId));
-        // Drop the app's in-memory telemetry so an uninstalled app's series do not linger in the store.
+        // Drop the app's in-memory telemetry so an uninstalled app's series/records do not linger.
         metrics.Remove(appId);
+        logs.Remove(appId);
         await ReconcileIngressAsync(cancellationToken);
         return new AppLifecycleResponse(app is null ? null : await BuildAppSummaryAsync(app, cancellationToken), null, "removed");
     }
@@ -869,6 +879,21 @@ internal sealed class CoreLifecycleService(
         var range = Math.Clamp(rangeSeconds ?? DefaultMetricsRangeSeconds, 1, MaxMetricsRangeSeconds);
         var series = metrics.Query(appId, clock.UtcNow.AddSeconds(-range));
         return new AppMetricsResponse(appId, range, series);
+    }
+
+    // Observability v1 OTLP-logs read path (P4): the app's structured log records held in the in-memory
+    // store over the last `range` seconds (default 5 min, clamped to the 1-hour window), optionally
+    // filtered to severity >= `minSeverity`, capped to the most recent `limit`. This is the OTLP-logs
+    // stream — distinct from GetLogsAsync's `docker logs` console tail and never interleaved with it.
+    // Returns an empty record list when observability is off, the app emits no OTLP logs, or its
+    // containers are not running — the endpoint never fails on "no data". Requires the app to exist.
+    public async Task<AppOtlpLogsResponse> GetOtlpLogsAsync(string appId, int? rangeSeconds, int? minSeverity, int? limit, CancellationToken cancellationToken = default)
+    {
+        _ = await RequireAppAsync(appId, cancellationToken);
+        var range = Math.Clamp(rangeSeconds ?? DefaultLogsRangeSeconds, 1, MaxLogsRangeSeconds);
+        var cappedLimit = Math.Clamp(limit ?? DefaultLogsLimit, 1, MaxLogsLimit);
+        var records = logs.Query(appId, clock.UtcNow.AddSeconds(-range), minSeverity, cappedLimit);
+        return new AppOtlpLogsResponse(appId, range, records);
     }
 
     // Read-only "update available" detection (runtime-app-marketplace.md, "Update-available
@@ -3219,6 +3244,14 @@ internal sealed record AppMetricsResponse(
     string AppId,
     long RangeSeconds,
     IReadOnlyList<MetricSeriesSnapshot> Series);
+
+// Observability OTLP-logs read response: the app's structured log records over the resolved range.
+// `RangeSeconds` echoes the effective (clamped) window. This is the OTLP-logs stream, distinct from
+// AppLogsResponse (the `docker logs` console tail).
+internal sealed record AppOtlpLogsResponse(
+    string AppId,
+    long RangeSeconds,
+    IReadOnlyList<OtlpLogRecord> Records);
 
 // One supervision observation: an app's aggregate health status at a point in time plus its resolved
 // restart policy, used by the supervisor to reconcile state, detect transitions, and restart crashes.

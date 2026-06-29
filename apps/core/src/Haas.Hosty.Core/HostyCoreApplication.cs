@@ -52,7 +52,9 @@ internal static class HostyCoreApplication
         // always available (the read API returns empty when nothing was scraped); the scrape loop
         // no-ops unless ObservabilityEnabled.
         builder.Services.AddSingleton<IMetricStore, InMemoryMetricStore>();
+        builder.Services.AddSingleton<ILogStore, InMemoryLogStore>();
         builder.Services.AddSingleton<IMetricsScrapeClient, HttpMetricsScrapeClient>();
+        builder.Services.AddSingleton<ILogTailReader, FileLogTailReader>();
         builder.Services.AddHostedService<TelemetryScrapeService>();
         builder.Services.AddSingleton<IIngressController>(sp =>
         {

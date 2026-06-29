@@ -37,29 +37,121 @@ internal sealed class HttpMetricsScrapeClient : IMetricsScrapeClient, IDisposabl
     public void Dispose() => client.Dispose();
 }
 
+// A chunk of newly-appended log file bytes, decoded to text, plus the byte offset to resume from on
+// the next tick. Content is aligned to whole lines (any trailing partial line is left for next time).
+internal readonly record struct LogTailRead(string Content, long NextOffset);
+
+// Reads newly-appended content from the collector's OTLP-logs file. Abstracted so the scrape loop can
+// be tested without real file I/O, and so the offset/rotation handling lives in one place.
+internal interface ILogTailReader
+{
+    Task<LogTailRead?> ReadAsync(string path, long fromOffset, CancellationToken cancellationToken = default);
+}
+
+// Default tail reader: opens the file shared-read (the collector is appending to it), resumes from the
+// caller's offset, and aligns to whole lines so a half-flushed final line is re-read next tick rather
+// than parsed incomplete. Resets to the start when the file is shorter than the offset (the file
+// exporter rotated/truncated). Caps the per-tick read so a large backlog cannot spike memory. Returns
+// null when the file is absent or unreadable this tick — the collector simply produced nothing yet.
+internal sealed class FileLogTailReader : ILogTailReader
+{
+    private const long MaxBytesPerRead = 4 * 1024 * 1024;
+
+    public async Task<LogTailRead?> ReadAsync(string path, long fromOffset, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var length = stream.Length;
+            // A file shorter than where we left off means it rotated/truncated: start over from 0.
+            var start = fromOffset < 0 || fromOffset > length ? 0 : fromOffset;
+            var available = length - start;
+            if (available <= 0)
+            {
+                return new LogTailRead(string.Empty, length);
+            }
+
+            // Skip ahead past a large backlog (e.g. after a long Core stall) to bound this tick's read.
+            if (available > MaxBytesPerRead)
+            {
+                start = length - MaxBytesPerRead;
+                available = MaxBytesPerRead;
+            }
+
+            stream.Seek(start, SeekOrigin.Begin);
+            var buffer = new byte[available];
+            var total = 0;
+            while (total < buffer.Length)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(total), cancellationToken);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                total += read;
+            }
+
+            if (total <= 0)
+            {
+                return new LogTailRead(string.Empty, start);
+            }
+
+            // Consume only through the last complete line; the trailing partial waits for next tick.
+            var lastNewline = Array.LastIndexOf(buffer, (byte)'\n', total - 1, total);
+            if (lastNewline < 0)
+            {
+                return new LogTailRead(string.Empty, start);
+            }
+
+            var consume = lastNewline + 1;
+            var content = System.Text.Encoding.UTF8.GetString(buffer, 0, consume);
+            return new LogTailRead(content, start + consume);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+}
+
 // Which app/service a hosty container belongs to, read back from its `hosty.app.*` docker labels.
 internal sealed record ContainerOwner(string AppId, string Service);
 
-// Background poller that fills the in-memory IMetricStore (observability v1, P3). Each tick it:
+// Background poller that fills the in-memory telemetry stores (observability v1, P3+P4). Each tick it:
 //   1. scrapes the collector's Prometheus /metrics (app-exported OTLP metrics, re-exposed by the
-//      collector) and attributes each series to its app via the promoted `hosty_app_id` label, and
+//      collector) and attributes each series to its app via the promoted `hosty_app_id` label,
 //   2. collects container infra metrics itself with `docker stats` — keeping the collector container
 //      unprivileged — attributing each container to its app/service via the `hosty.app.*` labels Core
-//      already stamps at run. See docs/features/observability.md.
-// Gated behind ObservabilityEnabled: when observability is off the collector is never installed and
-// this loop does nothing. Best-effort throughout — an unreachable collector or docker yields no data
-// for that tick and is skipped silently (no per-tick log spam); only an unexpected tick-level failure
-// is logged. Each tick also prunes the store so series that stop emitting are reclaimed.
+//      already stamps at run, and
+//   3. tails the collector's OTLP-logs file (P4), parsing the newly-appended OTLP/JSON into the log
+//      store, attributing each record to its app via its `hosty.app.id` resource attribute.
+// See docs/features/observability.md. Gated behind ObservabilityEnabled: when observability is off the
+// collector is never installed and this loop does nothing. Best-effort throughout — an unreachable
+// collector or docker yields no data for that tick and is skipped silently (no per-tick log spam);
+// only an unexpected tick-level failure is logged. Each tick also prunes the stores so series and
+// records that stop emitting are reclaimed.
 internal sealed class TelemetryScrapeService(
     HostyCoreRuntimeConfig config,
+    CoreDataPaths paths,
     AppRegistryStore apps,
     IMetricStore store,
+    ILogStore logStore,
     IClock clock,
     IMetricsScrapeClient scrapeClient,
+    ILogTailReader logTailReader,
     IDockerCommandRunner dockerRunner,
     ILogger<TelemetryScrapeService> logger) : BackgroundService
 {
     private static readonly TimeSpan ScrapeInterval = TimeSpan.FromSeconds(10);
+
+    // Byte offset into the collector's OTLP-logs file the tail loop resumes from each tick.
+    private long logTailOffset;
 
     // Prometheus label the collector promotes from the `hosty.app.id` resource attribute (dots become
     // underscores). It attributes a scraped series to its app, so it is consumed for routing and then
@@ -102,8 +194,34 @@ internal sealed class TelemetryScrapeService(
         var now = clock.UtcNow;
         await ScrapeCollectorMetricsAsync(now, cancellationToken);
         await ScrapeContainerStatsAsync(now, cancellationToken);
-        // Reclaim points/series that aged out of the window even if their producer stopped emitting.
+        await TailOtlpLogsAsync(now, cancellationToken);
+        // Reclaim points/series/records that aged out of the window even if their producer stopped.
         store.Prune(now);
+        logStore.Prune(now);
+    }
+
+    // Reads the OTLP-logs file the collector appends to (P4), parses the newly-appended OTLP/JSON, and
+    // records each line into the log store under its attributed app. Best-effort: an absent or
+    // unreadable file (collector off, nothing logged yet) yields no records this tick.
+    private async Task TailOtlpLogsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var path = CollectorBootstrap.ResolveHostLogsFilePath(paths.AppsRoot);
+        var read = await logTailReader.ReadAsync(path, logTailOffset, cancellationToken);
+        if (read is not { } chunk)
+        {
+            return;
+        }
+
+        logTailOffset = chunk.NextOffset;
+        if (string.IsNullOrEmpty(chunk.Content))
+        {
+            return;
+        }
+
+        foreach (var parsed in OtlpLogsJsonParser.Parse(chunk.Content, now))
+        {
+            logStore.Record(parsed.AppId, parsed.Record);
+        }
     }
 
     private async Task ScrapeCollectorMetricsAsync(DateTimeOffset now, CancellationToken cancellationToken)

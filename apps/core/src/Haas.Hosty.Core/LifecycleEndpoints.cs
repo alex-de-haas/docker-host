@@ -248,6 +248,23 @@ internal static class LifecycleEndpoints
                 async () => await HandleLifecycleError(() => lifecycle.GetMetricsAsync(appId, range, cancellationToken)),
                 cancellationToken: cancellationToken));
 
+        app.MapGet("/api/apps/{appId}/otlp-logs", async (
+            string appId,
+            int? range,
+            int? severity,
+            int? limit,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetOtlpLogsAsync(appId, range, severity, limit, cancellationToken)),
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/apps/{appId}/update-status", async (
             string appId,
             HttpRequest request,
@@ -558,6 +575,18 @@ internal static class LifecycleEndpoints
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.GetMetricsAsync(appId, range, cancellationToken))));
+
+        app.MapGet("/control/v1/apps/{appId}/otlp-logs", async (
+            string appId,
+            int? range,
+            int? severity,
+            int? limit,
+            HttpRequest request,
+            ControlSecret secret,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleLifecycleError(() => lifecycle.GetOtlpLogsAsync(appId, range, severity, limit, cancellationToken))));
     }
 
     private static async Task<IResult> HandleLifecycleError<T>(Func<Task<T>> action)
