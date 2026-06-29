@@ -52,7 +52,9 @@ internal static class HostyCoreApplication
         // always available (the read API returns empty when nothing was scraped); the scrape loop
         // no-ops unless ObservabilityEnabled.
         builder.Services.AddSingleton<IMetricStore, InMemoryMetricStore>();
+        builder.Services.AddSingleton<ILogStore, InMemoryLogStore>();
         builder.Services.AddSingleton<IMetricsScrapeClient, HttpMetricsScrapeClient>();
+        builder.Services.AddSingleton<ILogTailReader, FileLogTailReader>();
         builder.Services.AddHostedService<TelemetryScrapeService>();
         builder.Services.AddSingleton<IIngressController>(sp =>
         {
@@ -1327,6 +1329,11 @@ internal sealed class RuntimeAppSupervisorService(
                     CollectorBootstrap.ConfigFileName,
                     CollectorBootstrap.ConfigYaml,
                     cancellationToken);
+
+                // Provision the OTLP-logs sink dir world-writable before the container starts, so the
+                // non-root collector can write/rotate its log file into the mounted app-data dir that
+                // Core tails from the host side (P4). See CollectorBootstrap.ContainerLogsFile.
+                lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.LogsRelativeDir);
             }
         }
         // Best-effort bootstrap: catch everything except cancellation so an unexpected failure here

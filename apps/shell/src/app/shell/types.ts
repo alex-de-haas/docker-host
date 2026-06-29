@@ -198,6 +198,28 @@ export type AppHealthResponse = {
   services: CoreRuntimeServiceHealth[];
 };
 
+// Observability metrics from GET /api/apps/{id}/metrics: one series per (metric, label set), each a
+// rolling window of timestamped points. The Core-collected infra baseline is `container.cpu.percent`
+// / `container.memory.bytes` / `container.memory.percent` (labelled by service); apps that export OTLP
+// metrics add their own series.
+export type MetricPoint = { timestampUnixMs: number; value: number };
+export type MetricSeries = { name: string; labels: Record<string, string>; points: MetricPoint[] };
+export type AppMetricsResponse = { appId: string; rangeSeconds: number; series: MetricSeries[] };
+
+// Structured OTLP log record from GET /api/apps/{id}/otlp-logs — the OTLP-logs stream, distinct from
+// the `docker logs` console tail surfaced by LogsPanel. Carries severity, attributes, and (when the
+// app is trace-correlated) trace/span ids.
+export type OtlpLogRecord = {
+  timestampUnixMs: number;
+  severityNumber: number;
+  severityText: string;
+  body: string;
+  attributes: Record<string, string>;
+  traceId?: string | null;
+  spanId?: string | null;
+};
+export type AppOtlpLogsResponse = { appId: string; rangeSeconds: number; records: OtlpLogRecord[] };
+
 export type AppServiceUpdateStatus = {
   service: string;
   lockedDigest?: string | null;
@@ -289,7 +311,7 @@ export type CoreError = {
 };
 
 export type AppAction = "start" | "stop" | "restart" | "backup";
-export type DetailView = "logs" | "backups" | "configure" | "mounts" | "update" | "remove";
+export type DetailView = "logs" | "observability" | "backups" | "configure" | "mounts" | "update" | "remove";
 export type ShellView = "available-apps" | "dashboard" | "installed-apps" | "users";
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
@@ -387,6 +409,9 @@ export type DetailPanelState = {
   backups: CoreBackup[] | null;
   backupCleanupPlan: CoreBackupCleanupPlan | null;
   updatePlan: CoreUpdatePlan | null;
+  // Observability panel payloads (metrics + OTLP logs), fetched together by loadAppObservability.
+  metrics?: AppMetricsResponse | null;
+  otlpLogs?: AppOtlpLogsResponse | null;
 };
 
 export type InstallPanelState = {

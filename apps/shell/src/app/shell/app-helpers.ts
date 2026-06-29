@@ -393,6 +393,8 @@ export function detailTitle(view: DetailView) {
   switch (view) {
     case "logs":
       return "Logs";
+    case "observability":
+      return "Observability";
     case "backups":
       return "Backups";
     case "configure":
