@@ -227,6 +227,11 @@ internal sealed partial class CoreCommand(CommandContext context)
         AddOptional(environment, LaunchSettingDefinitions.HostyShellPublicOrigin, settings.HostyShellPublicOrigin);
         AddOptional(environment, LaunchSettingDefinitions.HostyShellManifestPath, settings.ResolveHostyShellManifestPath(context.Environment));
         AddOptional(environment, LaunchSettingDefinitions.HostyShellBootstrapRuntime, settings.HostyShellBootstrapRuntime);
+        // Observability toggles: inject only when they override Core's own default, so a default config
+        // leaves Core to its built-in behaviour and never clobbers an ambient HOSTY_OBSERVABILITY_*
+        // export. Core defaults: observability off, collector autostart on.
+        AddBooleanOverride(environment, LaunchSettingDefinitions.HostyObservabilityEnabled, settings.HostyObservabilityEnabled, coreDefault: false);
+        AddBooleanOverride(environment, LaunchSettingDefinitions.HostyCollectorAutostart, settings.HostyCollectorAutostart, coreDefault: true);
         return environment;
     }
 
@@ -243,6 +248,17 @@ internal sealed partial class CoreCommand(CommandContext context)
         if (!string.IsNullOrWhiteSpace(value))
         {
             environment[key] = value;
+        }
+    }
+
+    // Injects a boolean setting into the Core environment only when it differs from Core's own default
+    // (so a default config value is left implicit and an ambient export of the same var is preserved).
+    private static void AddBooleanOverride(IDictionary<string, string> environment, string key, string value, bool coreDefault)
+    {
+        var enabled = LaunchSettingDefinitions.IsTruthy(value);
+        if (enabled != coreDefault)
+        {
+            environment[key] = enabled ? "true" : "false";
         }
     }
 

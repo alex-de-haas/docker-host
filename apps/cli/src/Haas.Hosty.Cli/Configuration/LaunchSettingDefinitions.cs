@@ -10,6 +10,8 @@ internal static class LaunchSettingDefinitions
     public const string HostyShellPublicOrigin = "HOSTY_SHELL_PUBLIC_ORIGIN";
     public const string HostyShellManifestPath = "HOSTY_SHELL_MANIFEST_PATH";
     public const string HostyShellBootstrapRuntime = "HOSTY_SHELL_BOOTSTRAP_RUNTIME";
+    public const string HostyObservabilityEnabled = "HOSTY_OBSERVABILITY_ENABLED";
+    public const string HostyCollectorAutostart = "HOSTY_COLLECTOR_AUTOSTART";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
@@ -20,6 +22,11 @@ internal static class LaunchSettingDefinitions
         new(HostyShellPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
         new(HostyShellManifestPath, _ => DefaultShellManifestPath, true, ValidateManifestReference),
         new(HostyShellBootstrapRuntime, _ => "docker", true, ValidateRuntimeKey),
+        // Observability (P4): the collector is installed/started only when enabled. Mirrors Core's
+        // HOSTY_OBSERVABILITY_ENABLED / HOSTY_COLLECTOR_AUTOSTART env vars. The manifest-path and
+        // bootstrap-runtime overrides stay advanced ambient-env-only knobs.
+        new(HostyObservabilityEnabled, _ => "false", true, ValidateBoolean),
+        new(HostyCollectorAutostart, _ => "true", true, ValidateBoolean),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);
@@ -69,6 +76,25 @@ internal static class LaunchSettingDefinitions
             string.IsNullOrEmpty(uri.PathAndQuery.Trim('/'))
             ? null
             : "Host public origin must be an absolute http(s) origin without a path.";
+    }
+
+    private const string BooleanError = "Value must be a boolean (true/false, 1/0, yes/no, enabled/disabled, on/off).";
+    private static readonly HashSet<string> TruthyBooleanTokens = new(StringComparer.OrdinalIgnoreCase) { "1", "true", "yes", "enabled", "on" };
+    private static readonly HashSet<string> FalsyBooleanTokens = new(StringComparer.OrdinalIgnoreCase) { "0", "false", "no", "disabled", "off" };
+
+    // True when a (validated) boolean setting value is one of the truthy tokens. Used to canonicalize
+    // the stored value and to decide whether to inject the override into the Core process environment.
+    public static bool IsTruthy(string? value) => value is not null && TruthyBooleanTokens.Contains(value.Trim());
+
+    private static string? ValidateBoolean(string value, HostyEnvironment _)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return BooleanError;
+        }
+
+        var token = value.Trim();
+        return TruthyBooleanTokens.Contains(token) || FalsyBooleanTokens.Contains(token) ? null : BooleanError;
     }
 
     private static string? ValidatePort(string value, HostyEnvironment _)

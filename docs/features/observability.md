@@ -60,12 +60,29 @@ the bind mount; the contents are non-secret telemetry. Traces are still accepted
 ## Enabling it
 
 Observability is **off by default** — an install with no telemetry consumer never pulls the collector
-image. Enable it on the host:
+image. Enable it with `hosty config` (persisted in `launch.env`, injected into the Core process on
+`hosty core start`):
 
-- `HOSTY_OBSERVABILITY_ENABLED=1` — install + run the collector (default `false`).
-- `HOSTY_COLLECTOR_MANIFEST_PATH` — override the bundled `apps/collector/manifest.json`.
-- `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` — default `docker`.
-- `HOSTY_COLLECTOR_AUTOSTART` — default `true`.
+```sh
+hosty config set HOSTY_OBSERVABILITY_ENABLED true
+hosty core start   # or restart if already running — the flag is read only at Core startup
+```
+
+- `HOSTY_OBSERVABILITY_ENABLED` — install + run the collector (default `false`).
+- `HOSTY_COLLECTOR_AUTOSTART` — start the collector with the other autostart apps (default `true`).
+
+When set via `hosty config`, these accept `true/false`, `1/0`, `yes/no`, `enabled/disabled`, `on/off`
+and are stored canonicalized to `true`/`false`. Note this wider token set is a `hosty config`
+convenience: Core's own env-var parsing only treats `1`, `true`, `enabled`, `yes` as truthy, so if you
+export the variable **directly** prefer one of those (e.g. `export HOSTY_OBSERVABILITY_ENABLED=1`).
+
+Both are also plain Core env vars, so a direct `export … ` before `hosty core start` works too (the CLI
+passes its environment through to Core). Precedence: `hosty config` injects a value into the Core
+process **only when it differs from Core's default**, so a config left at its default does not touch an
+ambient export — but a non-default config value *is* injected and therefore takes precedence over an
+ambient export of the same variable. Two advanced overrides stay ambient-env-only (not in
+`hosty config`): `HOSTY_COLLECTOR_MANIFEST_PATH` (override the bundled `apps/collector/manifest.json`)
+and `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` (default `docker`).
 
 The collector starts **before** other autostart apps so its OTLP endpoint is resolved and persisted
 before their start-time env injection reads it.
