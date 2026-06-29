@@ -78,19 +78,23 @@ internal static class LaunchSettingDefinitions
             : "Host public origin must be an absolute http(s) origin without a path.";
     }
 
-    private static readonly string[] TruthyBooleanTokens = ["1", "true", "yes", "enabled", "on"];
-    private static readonly string[] FalsyBooleanTokens = ["0", "false", "no", "disabled", "off"];
+    private const string BooleanError = "Value must be a boolean (true/false, 1/0, yes/no, enabled/disabled, on/off).";
+    private static readonly HashSet<string> TruthyBooleanTokens = new(StringComparer.OrdinalIgnoreCase) { "1", "true", "yes", "enabled", "on" };
+    private static readonly HashSet<string> FalsyBooleanTokens = new(StringComparer.OrdinalIgnoreCase) { "0", "false", "no", "disabled", "off" };
 
     // True when a (validated) boolean setting value is one of the truthy tokens. Used to canonicalize
     // the stored value and to decide whether to inject the override into the Core process environment.
-    public static bool IsTruthy(string value) => TruthyBooleanTokens.Contains(value.Trim().ToLowerInvariant());
+    public static bool IsTruthy(string? value) => value is not null && TruthyBooleanTokens.Contains(value.Trim());
 
     private static string? ValidateBoolean(string value, HostyEnvironment _)
     {
-        var token = value.Trim().ToLowerInvariant();
-        return TruthyBooleanTokens.Contains(token) || FalsyBooleanTokens.Contains(token)
-            ? null
-            : "Value must be a boolean (true/false, 1/0, yes/no, enabled/disabled, on/off).";
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return BooleanError;
+        }
+
+        var token = value.Trim();
+        return TruthyBooleanTokens.Contains(token) || FalsyBooleanTokens.Contains(token) ? null : BooleanError;
     }
 
     private static string? ValidatePort(string value, HostyEnvironment _)
