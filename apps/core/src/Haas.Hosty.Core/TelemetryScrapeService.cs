@@ -84,7 +84,8 @@ internal sealed class FileLogTailReader : ILogTailReader
             }
 
             stream.Seek(start, SeekOrigin.Begin);
-            var buffer = new byte[available];
+            // available is now capped to MaxBytesPerRead, so it fits an int; cast makes the bound explicit.
+            var buffer = new byte[(int)available];
             var total = 0;
             while (total < buffer.Length)
             {

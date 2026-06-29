@@ -2127,9 +2127,10 @@ internal sealed class CoreLifecycleService(
     // the data dir. The contents are non-secret telemetry the host already trusts.
     internal string EnsureSystemAppDataSubdirectory(string appId, string relativeDir)
     {
-        if (relativeDir.Contains(Path.DirectorySeparatorChar) || relativeDir.Contains(Path.AltDirectorySeparatorChar) || relativeDir.Contains("..", StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(relativeDir) || relativeDir is "." or ".." ||
+            relativeDir.Contains(Path.DirectorySeparatorChar) || relativeDir.Contains(Path.AltDirectorySeparatorChar) || relativeDir.Contains("..", StringComparison.Ordinal))
         {
-            throw new ArgumentException("System app data subdirectory must be a plain directory name.", nameof(relativeDir));
+            throw new ArgumentException("System app data subdirectory must be a plain, non-empty directory name.", nameof(relativeDir));
         }
 
         var path = Path.Combine(GetAppDataPath(appId), relativeDir);

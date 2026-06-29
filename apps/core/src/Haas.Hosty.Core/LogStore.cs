@@ -65,7 +65,6 @@ internal sealed class InMemoryLogStore : ILogStore
             return;
         }
 
-        var cutoffMs = (record.TimestampUnixMs - (long)window.TotalMilliseconds);
         lock (gate)
         {
             if (!apps.TryGetValue(appId, out var records))
@@ -76,12 +75,9 @@ internal sealed class InMemoryLogStore : ILogStore
 
             records.AddLast(record);
 
-            // Trim by age relative to the incoming record, then by count — oldest first.
-            while (records.First is { } oldest && oldest.Value.TimestampUnixMs < cutoffMs)
-            {
-                records.RemoveFirst();
-            }
-
+            // Bound memory on write by count only. Age eviction is left to Prune, which runs each
+            // scrape tick on the authoritative host clock — so a single record with a skewed future
+            // timestamp cannot prematurely evict the app's in-window records here.
             while (records.Count > MaxRecordsPerApp)
             {
                 records.RemoveFirst();

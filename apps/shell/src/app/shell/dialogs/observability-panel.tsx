@@ -298,8 +298,12 @@ function formatTimeTick(value: number): string {
   return `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
 }
 
+// Stable React key for a series: name + its labels sorted by key (so insertion order cannot change
+// the key), joined by an explicit unit-separator escape (never a literal control character).
 function seriesKey(series: MetricSeries): string {
-  return `${series.name}${Object.entries(series.labels)
+  const labels = Object.entries(series.labels)
+    .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
-    .join(",")}`;
+    .join(",");
+  return `${series.name}\u0001${labels}`;
 }

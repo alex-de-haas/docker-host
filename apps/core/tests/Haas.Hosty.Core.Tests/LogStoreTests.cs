@@ -78,16 +78,17 @@ public sealed class LogStoreTests
     }
 
     [Fact]
-    public void Record_DropsRecordsOutsideRetentionWindowOnAppend()
+    public void Record_DoesNotEvictInWindowRecordsWhenSkewedFutureRecordArrives()
     {
+        // Age eviction is Prune's job (host clock), not Record's: a single record stamped far in the
+        // future (client clock skew) must not evict the app's existing in-window records on append.
         var store = new InMemoryLogStore(TimeSpan.FromSeconds(60));
-        store.Record("app.a", Rec(T0, body: "old"));
-        // 90s later the first record is outside the 60s window and is evicted on append.
-        store.Record("app.a", Rec(T0.AddSeconds(90), body: "new"));
+        store.Record("app.a", Rec(T0, body: "real"));
+        store.Record("app.a", Rec(T0.AddHours(2), body: "skewed-future"));
 
         var records = store.Query("app.a", T0.AddSeconds(-3600), null, 100);
 
-        Assert.Equal("new", Assert.Single(records).Body);
+        Assert.Equal(["real", "skewed-future"], records.Select(record => record.Body));
     }
 
     [Fact]
