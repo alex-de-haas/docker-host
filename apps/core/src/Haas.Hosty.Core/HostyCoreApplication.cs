@@ -42,9 +42,18 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         builder.Services.AddSingleton<IHealthProbe, NetworkHealthProbe>();
+        // Shared docker CLI runner so the runtime adapter and the telemetry scrape loop go through one
+        // instance; the adapter's optional ctor param picks this up via DI in production.
+        builder.Services.AddSingleton<IDockerCommandRunner, ProcessDockerCommandRunner>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();
+        // Observability v1 (P3): in-memory telemetry store + the loop that fills it. The store is
+        // always available (the read API returns empty when nothing was scraped); the scrape loop
+        // no-ops unless ObservabilityEnabled.
+        builder.Services.AddSingleton<IMetricStore, InMemoryMetricStore>();
+        builder.Services.AddSingleton<IMetricsScrapeClient, HttpMetricsScrapeClient>();
+        builder.Services.AddHostedService<TelemetryScrapeService>();
         builder.Services.AddSingleton<IIngressController>(sp =>
         {
             var ingressConfig = sp.GetRequiredService<HostyCoreRuntimeConfig>();

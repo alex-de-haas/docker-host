@@ -222,6 +222,53 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task GetMetricsAsync_ReturnsRecordedSeriesWithinDefaultRange()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        fixture.Metrics.Record(
+            "com.example.notes",
+            "container.cpu.percent",
+            new Dictionary<string, string> { ["service"] = "app" },
+            4.2,
+            fixture.Clock.UtcNow);
+
+        var response = await fixture.Service.GetMetricsAsync("com.example.notes", rangeSeconds: null);
+
+        Assert.Equal("com.example.notes", response.AppId);
+        Assert.Equal(300, response.RangeSeconds);
+        var series = Assert.Single(response.Series);
+        Assert.Equal("container.cpu.percent", series.Name);
+        Assert.Equal("app", series.Labels["service"]);
+        Assert.Equal(4.2, series.Points[0].Value);
+    }
+
+    [Fact]
+    public async Task GetMetricsAsync_ClampsRangeToStoreWindow()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var response = await fixture.Service.GetMetricsAsync("com.example.notes", rangeSeconds: 999_999);
+
+        Assert.Equal(3600, response.RangeSeconds);
+        Assert.Empty(response.Series);
+    }
+
+    [Fact]
+    public async Task GetMetricsAsync_UnknownApp_Throws()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.GetMetricsAsync("com.example.missing", rangeSeconds: null));
+
+        Assert.Equal("app_not_found", error.Code);
+    }
+
+    [Fact]
     public async Task CreateUpdatePlanAsync_UsesStoredManifestUrlForRemoteInstalls()
     {
         const string manifestUrl = "https://apps.example.test/notes/manifest.json";
@@ -2554,7 +2601,8 @@ public sealed class CoreLifecycleServiceTests
             CoreLifecycleService service,
             RecordingRuntimeAdapter adapter,
             LocalCommandProcessRegistry localProcesses,
-            FakeClock clock)
+            FakeClock clock,
+            InMemoryMetricStore metrics)
         {
             Root = root;
             Paths = paths;
@@ -2566,6 +2614,7 @@ public sealed class CoreLifecycleServiceTests
             Adapter = adapter;
             LocalProcesses = localProcesses;
             Clock = clock;
+            Metrics = metrics;
         }
 
         public string Root { get; }
@@ -2587,6 +2636,8 @@ public sealed class CoreLifecycleServiceTests
         public LocalCommandProcessRegistry LocalProcesses { get; }
 
         public FakeClock Clock { get; }
+
+        public InMemoryMetricStore Metrics { get; }
 
         public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null, string? ingressBaseDomain = null)
         {
@@ -2633,8 +2684,9 @@ public sealed class CoreLifecycleServiceTests
             IIngressController ingress = ingressBaseDomain is null
                 ? new NoneIngressController()
                 : new CloudflaredIngressController(runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance);
-            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
+            var metrics = new InMemoryMetricStore();
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, metrics: metrics);
+            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, metrics);
         }
 
         public async Task<string> WriteManifestAsync(

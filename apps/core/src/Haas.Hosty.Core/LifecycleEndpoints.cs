@@ -233,6 +233,21 @@ internal static class LifecycleEndpoints
                 async () => await HandleLifecycleError(() => lifecycle.GetHealthAsync(appId, cancellationToken)),
                 cancellationToken: cancellationToken));
 
+        app.MapGet("/api/apps/{appId}/metrics", async (
+            string appId,
+            int? range,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetMetricsAsync(appId, range, cancellationToken)),
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/apps/{appId}/update-status", async (
             string appId,
             HttpRequest request,
@@ -533,6 +548,16 @@ internal static class LifecycleEndpoints
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.GetHealthAsync(appId, cancellationToken))));
+
+        app.MapGet("/control/v1/apps/{appId}/metrics", async (
+            string appId,
+            int? range,
+            HttpRequest request,
+            ControlSecret secret,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleLifecycleError(() => lifecycle.GetMetricsAsync(appId, range, cancellationToken))));
     }
 
     private static async Task<IResult> HandleLifecycleError<T>(Func<Task<T>> action)
