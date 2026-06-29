@@ -2095,6 +2095,32 @@ internal sealed class CoreLifecycleService(
         await File.WriteAllTextAsync(Path.Combine(dataPath, fileName), content, cancellationToken);
     }
 
+    // Creates a Core-owned subdirectory inside a system app's data dir, world-writable on Unix so a
+    // container running as a non-root UID (e.g. the distroless OTel collector's 10001) can create and
+    // rotate files there through the bind mount, which Core then reads back from the host side (the P4
+    // OTLP-logs sink). Idempotent. The relative dir is constrained to a plain name so it cannot escape
+    // the data dir. The contents are non-secret telemetry the host already trusts.
+    internal string EnsureSystemAppDataSubdirectory(string appId, string relativeDir)
+    {
+        if (relativeDir.Contains(Path.DirectorySeparatorChar) || relativeDir.Contains(Path.AltDirectorySeparatorChar) || relativeDir.Contains("..", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("System app data subdirectory must be a plain directory name.", nameof(relativeDir));
+        }
+
+        var path = Path.Combine(GetAppDataPath(appId), relativeDir);
+        Directory.CreateDirectory(path);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(
+                path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute);
+        }
+
+        return path;
+    }
+
     private string GetRetainedConfigPath(string appId)
         => Path.Combine(GetAppRoot(appId), "retained-config.json");
 

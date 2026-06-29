@@ -3,8 +3,9 @@ namespace Haas.Hosty.Core;
 // Constants and the canonical configuration for the Hosty telemetry collector — the OpenTelemetry
 // collector that Core installs as a hidden system app (P2). The collector receives OTLP over HTTP
 // from opted-in runtime apps and re-exposes it as a Prometheus text endpoint that Core scrapes in
-// P3. Core owns the config: it is written into the collector's app-data dir at bootstrap and mounted
-// over the image's default config directory, so the stock `--config /etc/otelcol-contrib/config.yaml`
+// P3, and (P4) writes received OTLP logs as newline-delimited JSON into a file Core tails. Core owns
+// the config: it is written into the collector's app-data dir at bootstrap and mounted over the
+// image's default config directory, so the stock `--config /etc/otelcol-contrib/config.yaml`
 // entrypoint picks it up. Embedded here (not a repo file) so a stripped binary deployment still has
 // it, matching how Core inlines its other bootstrap templates. See docs/features/observability.md.
 internal static class CollectorBootstrap
@@ -22,11 +23,29 @@ internal static class CollectorBootstrap
     public const string OtlpEndpointKey = "otlp-http";
     public const string MetricsEndpointKey = "metrics";
 
-    // Authoritative collector config. OTLP/HTTP in (4318) → Prometheus out (9464). Infra metrics
-    // (docker stats) and log tail are deliberately NOT here — Core collects those itself via its
-    // host-level docker access in P3, keeping this container unprivileged (no docker.sock mount).
+    // OTLP-logs sink (P4). The `file` exporter writes received logs as newline-delimited OTLP/JSON
+    // into a subdir of the mounted config dir, which Core reads back from the host side and tails into
+    // its in-memory log store — the same "Core reads from the collector" boundary as the metrics
+    // scrape, so the collector stays unprivileged (no inbound ingest endpoint on Core, no docker.sock).
+    // The path is relative to the collector's app-data dir (= ContainerConfigDir inside the container).
+    public const string LogsRelativeDir = "otlp-logs";
+    public const string LogsFileName = "logs.jsonl";
+    public const string ContainerLogsFile = ContainerConfigDir + "/" + LogsRelativeDir + "/" + LogsFileName;
+
+    // Host-side path of the OTLP-logs file Core tails, derived from the apps root. Mirrors
+    // CoreLifecycleService.GetAppDataPath ({appsRoot}/{appId}/data) for the collector app, so the
+    // scrape loop can find the same file the bootstrap provisions without taking a CoreLifecycleService
+    // dependency. The "data" segment is the app-data dir name GetAppDataPath appends.
+    public static string ResolveHostLogsFilePath(string appsRoot)
+        => Path.Combine(CoreDataPaths.ResolveContainedPath(appsRoot, AppId), "data", LogsRelativeDir, LogsFileName);
+
+    // Authoritative collector config. OTLP/HTTP in (4318) → Prometheus out (9464) for metrics, and a
+    // rotated newline-delimited JSON file for logs (Core tails it). Infra metrics (docker stats) and
+    // console log tail (docker logs) are deliberately NOT here — Core collects those itself via its
+    // host-level docker access, keeping this container unprivileged (no docker.sock mount).
     // resource_to_telemetry_conversion promotes service.name / hosty.app.id resource attributes to
-    // Prometheus labels so P3/P4 can attribute each series to its app.
+    // Prometheus labels so P3/P4 can attribute each metrics series to its app; the file exporter keeps
+    // the full resource so Core attributes each log record via its hosty.app.id resource attribute.
     public const string ConfigYaml = """
         # Hosty telemetry collector configuration — authored and owned by Core.
         # Do not edit in place: Core rewrites this file from CollectorBootstrap.ConfigYaml on every
@@ -45,9 +64,19 @@ internal static class CollectorBootstrap
             endpoint: 0.0.0.0:9464
             resource_to_telemetry_conversion:
               enabled: true
+          # OTLP logs sink (P4): newline-delimited JSON that Core tails from the mounted app-data dir.
+          # Rotation bounds disk use; Core keeps only a live in-memory window, so rotated-out backups
+          # are never read. flush_interval keeps records landing promptly for the ~10s tail loop.
+          file:
+            path: /etc/otelcol-contrib/otlp-logs/logs.jsonl
+            format: json
+            flush_interval: 1s
+            rotation:
+              max_megabytes: 8
+              max_backups: 1
           # Traces are accepted then dropped in v1 (no trace store yet): nop keeps the /v1/traces
-          # handler registered so app exporters do not see 404s, without logging span data. P3/P4
-          # swaps this for a real trace sink.
+          # handler registered so app exporters do not see 404s, without logging span data. A later
+          # phase swaps this for a real trace sink.
           nop: {}
 
         service:
@@ -59,6 +88,10 @@ internal static class CollectorBootstrap
               receivers: [otlp]
               processors: [batch]
               exporters: [prometheus]
+            logs:
+              receivers: [otlp]
+              processors: [batch]
+              exporters: [file]
             traces:
               receivers: [otlp]
               processors: [batch]
