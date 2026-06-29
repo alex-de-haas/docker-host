@@ -28,6 +28,15 @@ internal interface IMetricStore
     // All series for an app holding at least one point at or after `since`, each trimmed to that
     // window. Empty when the app has no recorded telemetry.
     IReadOnlyList<MetricSeriesSnapshot> Query(string appId, DateTimeOffset since);
+
+    // Drop everything recorded for an app — called when the app is removed so an uninstalled app's
+    // series do not linger until the process restarts.
+    void Remove(string appId);
+
+    // Evict points older than the retention window across every series, dropping series and apps that
+    // empty out. Called periodically by the scrape loop so series that stop emitting (transient
+    // containers, dynamic labels) are reclaimed even though no further Record arrives to trim them.
+    void Prune(DateTimeOffset now);
 }
 
 internal sealed class InMemoryMetricStore : IMetricStore
@@ -115,6 +124,43 @@ internal sealed class InMemoryMetricStore : IMetricStore
         }
     }
 
+    public void Remove(string appId)
+    {
+        if (string.IsNullOrWhiteSpace(appId))
+        {
+            return;
+        }
+
+        lock (gate)
+        {
+            apps.Remove(appId);
+        }
+    }
+
+    public void Prune(DateTimeOffset now)
+    {
+        var cutoffMs = (now - window).ToUnixTimeMilliseconds();
+        lock (gate)
+        {
+            foreach (var appId in apps.Keys.ToArray())
+            {
+                var series = apps[appId];
+                foreach (var key in series.Keys.ToArray())
+                {
+                    if (series[key].PruneOlderThan(cutoffMs))
+                    {
+                        series.Remove(key);
+                    }
+                }
+
+                if (series.Count == 0)
+                {
+                    apps.Remove(appId);
+                }
+            }
+        }
+    }
+
     // Drops the series whose newest point is oldest, freeing a slot for a fresh series once an app
     // hits the cardinality cap. Returns false only when the app has no series to evict (never, here).
     private static bool TryEvictColdestSeries(Dictionary<string, Series> series)
@@ -141,25 +187,27 @@ internal sealed class InMemoryMetricStore : IMetricStore
     }
 
     // Canonical per-app series identity: the metric name plus its labels sorted by key, so the same
-    // label set always maps to one series regardless of emission order. Control bytes separate the
-    // fields so ordinary names/values can never collide across the boundary.
+    // label set always maps to one series regardless of emission order. Each segment is length-prefixed
+    // (`<len>:<value>`), a uniquely-decodable encoding — so the key is collision-free for ANY name or
+    // label value, with no reliance on "impossible" separator characters.
     private static string BuildSeriesKey(string name, IReadOnlyDictionary<string, string>? labels)
     {
-        if (labels is null || labels.Count == 0)
+        var builder = new StringBuilder();
+        AppendSegment(builder, name);
+        if (labels is not null)
         {
-            return name;
-        }
-
-        var builder = new StringBuilder(name);
-        foreach (var label in labels.OrderBy(pair => pair.Key, StringComparer.Ordinal))
-        {
-            // \u001f (unit sep) before each label, \u001e (record sep) between key and value:
-            // control bytes that cannot appear in our names/labels, so distinct sets never collide.
-            builder.Append('\u001f').Append(label.Key).Append('\u001e').Append(label.Value);
+            foreach (var label in labels.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                AppendSegment(builder, label.Key);
+                AppendSegment(builder, label.Value);
+            }
         }
 
         return builder.ToString();
     }
+
+    private static void AppendSegment(StringBuilder builder, string value)
+        => builder.Append(value.Length).Append(':').Append(value);
 
     private static IReadOnlyDictionary<string, string> FreezeLabels(IReadOnlyDictionary<string, string>? labels)
         => labels is null || labels.Count == 0
@@ -213,6 +261,19 @@ internal sealed class InMemoryMetricStore : IMetricStore
             }
 
             return result;
+        }
+
+        // Drops points older than the cutoff and reports whether the series is now empty (so the store
+        // can reclaim it). The newest timestamp is left intact: it still ranks the series for the
+        // coldest-series eviction even once all its points have aged out.
+        public bool PruneOlderThan(long cutoffMs)
+        {
+            while (points.Count > 0 && points.Peek().TimestampUnixMs < cutoffMs)
+            {
+                points.Dequeue();
+            }
+
+            return points.Count == 0;
         }
     }
 }

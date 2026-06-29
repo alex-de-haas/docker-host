@@ -104,7 +104,9 @@ internal static class DockerStatsParser
 
         foreach (var (suffix, multiplier) in ByteSuffixes)
         {
-            if (token.EndsWith(suffix, StringComparison.Ordinal))
+            // Case-insensitive so a future docker/locale variant (e.g. "mib") still parses; the longer
+            // IEC units are listed before "B" so they win the match.
+            if (token.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
             {
                 var number = token[..^suffix.Length].Trim();
                 return double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)

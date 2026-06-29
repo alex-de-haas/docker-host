@@ -742,6 +742,8 @@ internal sealed class CoreLifecycleService(
         }
 
         TryDeleteDirectoryIfEmpty(GetAppRoot(appId));
+        // Drop the app's in-memory telemetry so an uninstalled app's series do not linger in the store.
+        metrics.Remove(appId);
         await ReconcileIngressAsync(cancellationToken);
         return new AppLifecycleResponse(app is null ? null : await BuildAppSummaryAsync(app, cancellationToken), null, "removed");
     }

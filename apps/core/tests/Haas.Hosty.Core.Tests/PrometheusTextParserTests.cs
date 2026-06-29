@@ -64,9 +64,21 @@ public sealed class PrometheusTextParserTests
     public void Parse_HandlesFloatForms(string line, double expected)
         => Assert.Equal(expected, Assert.Single(PrometheusTextParser.Parse(line)).Value);
 
-    [Fact]
-    public void Parse_NaNValueParsesAsNaN()
-        => Assert.True(double.IsNaN(Assert.Single(PrometheusTextParser.Parse("metric NaN")).Value));
+    [Theory]
+    [InlineData("metric inf", double.PositiveInfinity)]
+    [InlineData("metric +inf", double.PositiveInfinity)]
+    [InlineData("metric Infinity", double.PositiveInfinity)]
+    [InlineData("metric -INF", double.NegativeInfinity)]
+    [InlineData("metric -infinity", double.NegativeInfinity)]
+    public void Parse_HandlesSpecialFloatsCaseInsensitively(string line, double expected)
+        => Assert.Equal(expected, Assert.Single(PrometheusTextParser.Parse(line)).Value);
+
+    [Theory]
+    [InlineData("metric NaN")]
+    [InlineData("metric nan")]
+    [InlineData("metric NAN")]
+    public void Parse_NaNValueParsesAsNaN(string line)
+        => Assert.True(double.IsNaN(Assert.Single(PrometheusTextParser.Parse(line)).Value));
 
     [Fact]
     public void Parse_SkipsMalformedLinesButKeepsValidOnes()

@@ -10,8 +10,9 @@ internal sealed record PrometheusSample(string Name, IReadOnlyDictionary<string,
 
 // Minimal, allocation-light parser for the Prometheus text exposition format the OTel collector's
 // `prometheus` exporter serves at /metrics. Hand-written (no regex) so it stays Native-AOT-clean and
-// cheap to run every scrape tick. Tolerant by design: a malformed line is skipped, never thrown, so
-// one bad series cannot poison a whole scrape.
+// cheap to run every scrape tick: it works over ReadOnlySpan<char> and only allocates the strings it
+// actually keeps (metric name and label key/value). Tolerant by design: a malformed line is skipped,
+// never thrown, so one bad series cannot poison a whole scrape.
 internal static class PrometheusTextParser
 {
     public static IReadOnlyList<PrometheusSample> Parse(string? text)
@@ -22,16 +23,16 @@ internal static class PrometheusTextParser
         }
 
         var samples = new List<PrometheusSample>();
-        foreach (var rawLine in text.Split('\n'))
+        foreach (var rawLine in text.AsSpan().EnumerateLines())
         {
-            var line = rawLine.AsSpan().Trim();
+            var line = rawLine.Trim();
             // Blank lines and `# HELP` / `# TYPE` metadata carry no samples.
             if (line.IsEmpty || line[0] == '#')
             {
                 continue;
             }
 
-            if (TryParseLine(line.ToString(), out var sample))
+            if (TryParseLine(line, out var sample))
             {
                 samples.Add(sample);
             }
@@ -40,7 +41,7 @@ internal static class PrometheusTextParser
         return samples;
     }
 
-    private static bool TryParseLine(string line, out PrometheusSample sample)
+    private static bool TryParseLine(ReadOnlySpan<char> line, out PrometheusSample sample)
     {
         sample = null!;
 
@@ -90,12 +91,12 @@ internal static class PrometheusTextParser
             return false;
         }
 
-        sample = new PrometheusSample(name, labels, value);
+        sample = new PrometheusSample(name.ToString(), labels, value);
         return true;
     }
 
     // Parses `{k="v",k2="v2",}` starting at the `{` in `index`, leaving `index` just past the `}`.
-    private static bool TryParseLabels(string line, ref int index, out IReadOnlyDictionary<string, string> labels)
+    private static bool TryParseLabels(ReadOnlySpan<char> line, ref int index, out IReadOnlyDictionary<string, string> labels)
     {
         labels = EmptyLabels;
         index++; // consume '{'
@@ -131,7 +132,7 @@ internal static class PrometheusTextParser
                 return false;
             }
 
-            var labelName = line[nameStart..index];
+            var labelName = line[nameStart..index].ToString();
             SkipSpaces(line, ref index);
             if (index >= line.Length || line[index] != '=')
             {
@@ -162,7 +163,7 @@ internal static class PrometheusTextParser
 
     // Parses a double-quoted label value starting at the opening quote, honoring the Prometheus
     // escapes `\\`, `\"`, and `\n`. Leaves `index` just past the closing quote.
-    private static bool TryParseQuotedValue(string line, ref int index, out string value)
+    private static bool TryParseQuotedValue(ReadOnlySpan<char> line, ref int index, out string value)
     {
         value = string.Empty;
         index++; // consume opening '"'
@@ -199,27 +200,36 @@ internal static class PrometheusTextParser
         return false; // unterminated quote
     }
 
-    private static bool TryParseValue(string token, out double value)
+    // Prometheus values are Go floats; the special tokens (±Inf, Infinity, NaN) are case-insensitive,
+    // and the invariant double.TryParse does not recognise them, so they are matched explicitly first.
+    private static bool TryParseValue(ReadOnlySpan<char> token, out double value)
     {
-        switch (token)
+        if (token.Equals("Inf", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("+Inf", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("Infinity", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("+Infinity", StringComparison.OrdinalIgnoreCase))
         {
-            case "+Inf":
-            case "Inf":
-                value = double.PositiveInfinity;
-                return true;
-            case "-Inf":
-                value = double.NegativeInfinity;
-                return true;
-            case "NaN":
-            case "Nan":
-                value = double.NaN;
-                return true;
-            default:
-                return double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+            value = double.PositiveInfinity;
+            return true;
         }
+
+        if (token.Equals("-Inf", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("-Infinity", StringComparison.OrdinalIgnoreCase))
+        {
+            value = double.NegativeInfinity;
+            return true;
+        }
+
+        if (token.Equals("NaN", StringComparison.OrdinalIgnoreCase))
+        {
+            value = double.NaN;
+            return true;
+        }
+
+        return double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
-    private static void SkipSpaces(string line, ref int index)
+    private static void SkipSpaces(ReadOnlySpan<char> line, ref int index)
     {
         while (index < line.Length && line[index] is ' ' or '\t')
         {

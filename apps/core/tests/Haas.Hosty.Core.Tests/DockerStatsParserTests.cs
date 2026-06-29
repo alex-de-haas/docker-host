@@ -43,6 +43,7 @@ public sealed class DockerStatsParserTests
     [InlineData("2MiB", 2d * 1024 * 1024)]
     [InlineData("1.5GiB", 1.5d * 1024 * 1024 * 1024)]
     [InlineData("100MB", 100d * 1000 * 1000)]
+    [InlineData("2mib", 2d * 1024 * 1024)]
     public void ParseUsedBytes_SingleValue(string value, double expected)
         => Assert.Equal(expected, DockerStatsParser.ParseUsedBytes(value));
 

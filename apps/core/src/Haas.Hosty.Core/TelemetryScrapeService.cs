@@ -23,7 +23,12 @@ internal sealed class HttpMetricsScrapeClient : IMetricsScrapeClient, IDisposabl
                 ? await response.Content.ReadAsStringAsync(cancellationToken)
                 : null;
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        // Any transport, timeout, or malformed-URL failure means "no data this tick", never a crash:
+        // HttpRequestException/IOException (transport), TaskCanceledException (timeout, when not our
+        // own cancellation), and UriFormatException/InvalidOperationException (a bad endpoint URL).
+        catch (Exception ex) when (
+            ex is HttpRequestException or System.IO.IOException or UriFormatException or InvalidOperationException ||
+            (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
             return null;
         }
@@ -42,7 +47,9 @@ internal sealed record ContainerOwner(string AppId, string Service);
 //      unprivileged — attributing each container to its app/service via the `hosty.app.*` labels Core
 //      already stamps at run. See docs/features/observability.md.
 // Gated behind ObservabilityEnabled: when observability is off the collector is never installed and
-// this loop does nothing. Best-effort throughout — a failed scrape is logged and skipped, never fatal.
+// this loop does nothing. Best-effort throughout — an unreachable collector or docker yields no data
+// for that tick and is skipped silently (no per-tick log spam); only an unexpected tick-level failure
+// is logged. Each tick also prunes the store so series that stop emitting are reclaimed.
 internal sealed class TelemetryScrapeService(
     HostyCoreRuntimeConfig config,
     AppRegistryStore apps,
@@ -95,6 +102,8 @@ internal sealed class TelemetryScrapeService(
         var now = clock.UtcNow;
         await ScrapeCollectorMetricsAsync(now, cancellationToken);
         await ScrapeContainerStatsAsync(now, cancellationToken);
+        // Reclaim points/series that aged out of the window even if their producer stopped emitting.
+        store.Prune(now);
     }
 
     private async Task ScrapeCollectorMetricsAsync(DateTimeOffset now, CancellationToken cancellationToken)

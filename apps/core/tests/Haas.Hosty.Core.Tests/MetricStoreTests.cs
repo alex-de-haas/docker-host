@@ -102,6 +102,58 @@ public sealed class MetricStoreTests
         Assert.Empty(store.Query("app.a", T0.AddSeconds(-60)));
     }
 
+    [Fact]
+    public void Record_SeriesKeyIsCollisionFreeEvenWithSeparatorLikeValues()
+    {
+        // Under a separator-character key scheme these two label sets collide; a length-prefixed key
+        // keeps them distinct. Set A: two labels; Set B: one label whose value embeds the would-be
+        // separators between A's segments.
+        var store = new InMemoryMetricStore();
+        store.Record("app.a", "m", Labels(("a", "b"), ("c", "d")), 1.0, T0);
+        store.Record("app.a", "m", Labels(("a", "bcd")), 2.0, T0);
+
+        var series = store.Query("app.a", T0.AddSeconds(-60));
+
+        Assert.Equal(2, series.Count);
+    }
+
+    [Fact]
+    public void Remove_DropsAllSeriesForApp()
+    {
+        var store = new InMemoryMetricStore();
+        store.Record("app.a", "cpu", null, 1.0, T0);
+        store.Record("app.b", "cpu", null, 2.0, T0);
+
+        store.Remove("app.a");
+
+        Assert.Empty(store.Query("app.a", T0.AddSeconds(-60)));
+        Assert.Single(store.Query("app.b", T0.AddSeconds(-60)));
+    }
+
+    [Fact]
+    public void Prune_EvictsStalePointsAndEmptySeries()
+    {
+        var store = new InMemoryMetricStore(TimeSpan.FromSeconds(60));
+        store.Record("app.a", "cpu", null, 1.0, T0);
+
+        // 10 minutes later every point for the (now silent) series is outside the 60s window; a prune
+        // at that time reclaims the series even though no further Record arrived to trim it.
+        store.Prune(T0.AddMinutes(10));
+
+        Assert.Empty(store.Query("app.a", T0.AddSeconds(-3600)));
+    }
+
+    [Fact]
+    public void Prune_KeepsPointsInsideTheWindow()
+    {
+        var store = new InMemoryMetricStore(TimeSpan.FromSeconds(60));
+        store.Record("app.a", "cpu", null, 1.0, T0.AddSeconds(30));
+
+        store.Prune(T0.AddSeconds(40));
+
+        Assert.Equal([1.0], Assert.Single(store.Query("app.a", T0.AddSeconds(-60))).Points.Select(p => p.Value));
+    }
+
     private static Dictionary<string, string> Labels(params (string Key, string Value)[] pairs)
         => pairs.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 }
