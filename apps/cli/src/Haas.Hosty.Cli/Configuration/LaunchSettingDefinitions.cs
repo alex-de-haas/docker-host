@@ -3,6 +3,7 @@ namespace Haas.Hosty.Cli.Configuration;
 internal static class LaunchSettingDefinitions
 {
     private const string DefaultShellManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
+    private const string DefaultCollectorManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/collector/manifest.json";
     public const string HostyDataRoot = "HOSTY_DATA_ROOT";
     public const string HostyCorePort = "HOSTY_CORE_PORT";
     public const string HostyShellPort = "HOSTY_SHELL_PORT";
@@ -12,6 +13,7 @@ internal static class LaunchSettingDefinitions
     public const string HostyShellBootstrapRuntime = "HOSTY_SHELL_BOOTSTRAP_RUNTIME";
     public const string HostyObservabilityEnabled = "HOSTY_OBSERVABILITY_ENABLED";
     public const string HostyCollectorAutostart = "HOSTY_COLLECTOR_AUTOSTART";
+    public const string HostyCollectorManifestPath = "HOSTY_COLLECTOR_MANIFEST_PATH";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
@@ -23,10 +25,13 @@ internal static class LaunchSettingDefinitions
         new(HostyShellManifestPath, _ => DefaultShellManifestPath, true, ValidateManifestReference),
         new(HostyShellBootstrapRuntime, _ => "docker", true, ValidateRuntimeKey),
         // Observability (P4): the collector is installed/started only when enabled. Mirrors Core's
-        // HOSTY_OBSERVABILITY_ENABLED / HOSTY_COLLECTOR_AUTOSTART env vars. The manifest-path and
-        // bootstrap-runtime overrides stay advanced ambient-env-only knobs.
+        // HOSTY_OBSERVABILITY_ENABLED / HOSTY_COLLECTOR_AUTOSTART env vars. The collector manifest path
+        // carries a remote default (like the Shell) so an installed standalone Core — which has no repo
+        // layout on disk to discover apps/collector/manifest.json — can still bootstrap the collector;
+        // only HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME stays an advanced ambient-env-only knob.
         new(HostyObservabilityEnabled, _ => "false", true, ValidateBoolean),
         new(HostyCollectorAutostart, _ => "true", true, ValidateBoolean),
+        new(HostyCollectorManifestPath, _ => DefaultCollectorManifestPath, true, ValidateManifestReference),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);
@@ -107,7 +112,7 @@ internal static class LaunchSettingDefinitions
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return "Shell manifest path cannot be empty.";
+            return "Manifest path cannot be empty.";
         }
 
         var trimmed = value.Trim();
@@ -116,7 +121,7 @@ internal static class LaunchSettingDefinitions
         {
             if (!string.IsNullOrWhiteSpace(uri.UserInfo))
             {
-                return "Shell manifest URL must not include credentials.";
+                return "Manifest URL must not include credentials.";
             }
 
             return null;
@@ -124,11 +129,11 @@ internal static class LaunchSettingDefinitions
 
         if (trimmed.Contains("://", StringComparison.Ordinal))
         {
-            return "Shell manifest URL must use http or https.";
+            return "Manifest URL must use http or https.";
         }
 
         var resolved = environment.ResolvePath(trimmed);
-        return Path.IsPathFullyQualified(resolved) ? null : "Shell manifest path must resolve to an absolute path or be an http(s) URL.";
+        return Path.IsPathFullyQualified(resolved) ? null : "Manifest path must resolve to an absolute path or be an http(s) URL.";
     }
 
     private static string? ValidateRuntimeKey(string value, HostyEnvironment _)

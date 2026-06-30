@@ -554,6 +554,35 @@ public sealed class DockerRuntimeAdapterTests
         Assert.Empty(DockerRuntimeAdapter.BuildTelemetryEnvironment(context, "app"));
     }
 
+    [Fact]
+    public void TelemetrySettings_BuildEnvironment_UsesEndpointVerbatimForLocalCommand()
+    {
+        // The localCommand adapter passes the host-loopback collector endpoint unchanged — no
+        // host.docker.internal rewrite (its process runs on the host, unlike a container).
+        var settings = RuntimeTelemetrySettings.FromManifest(
+            new RuntimeAppTelemetryManifest { Enabled = true, SampleRatio = 0.25 });
+
+        var env = settings.BuildEnvironment("http://127.0.0.1:4318", "com.example.app", "engine");
+
+        Assert.Contains(env, pair => pair.Key == "OTEL_EXPORTER_OTLP_ENDPOINT" && pair.Value == "http://127.0.0.1:4318");
+        Assert.Contains(env, pair => pair.Key == "OTEL_EXPORTER_OTLP_PROTOCOL" && pair.Value == "http/protobuf");
+        Assert.Contains(env, pair => pair.Key == "OTEL_SERVICE_NAME" && pair.Value == "com.example.app");
+        Assert.Contains(env, pair => pair.Key == "OTEL_RESOURCE_ATTRIBUTES"
+            && pair.Value == "service.name=com.example.app,hosty.app.id=com.example.app,hosty.app.service=engine");
+        Assert.Contains(env, pair => pair.Key == "OTEL_TRACES_SAMPLER_ARG" && pair.Value == "0.25");
+    }
+
+    [Fact]
+    public void TelemetrySettings_BuildEnvironment_EmptyWhenDisabledOrNoEndpoint()
+    {
+        var enabled = RuntimeTelemetrySettings.FromManifest(new RuntimeAppTelemetryManifest { Enabled = true });
+        Assert.Empty(enabled.BuildEnvironment(null, "com.example.app", "engine"));
+        Assert.Empty(enabled.BuildEnvironment("   ", "com.example.app", "engine"));
+
+        var disabled = RuntimeTelemetrySettings.FromManifest(new RuntimeAppTelemetryManifest { Enabled = false });
+        Assert.Empty(disabled.BuildEnvironment("http://127.0.0.1:4318", "com.example.app", "engine"));
+    }
+
     private static RuntimeLifecycleContext CreateTelemetryContext(bool enabled, double? sampleRatio, string? endpoint)
     {
         var service = new RuntimeSelectedService(

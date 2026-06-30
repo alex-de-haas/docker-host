@@ -26,8 +26,10 @@ distinct structured OTLP-logs view). The Dashboard fleet heat-map is the remaini
   reachable from the LAN unless the host firewall blocks it. v1 has no ingest auth and accepts the
   `service.name` spoof risk among trusted local apps; **run it on a trusted network / firewall the
   OTLP port** (default 4318) until a shared/per-app ingest secret lands. See [raw ports](raw-ports.md).
-- **No localCommand OTLP.** Only the `docker` runtime injects OTLP env in v1. A docker-less host gets
-  no collector and no OTLP; it degrades (in P3) to Core-collected health + process metrics + log tail.
+- **No OTLP without a collector.** The collector is itself a docker app, so a fully docker-less host
+  has no collector and no OTLP — it degrades to Core-collected health + process metrics + log tail.
+  When the collector *is* running, both `docker` and `localCommand` apps export to it (the localCommand
+  process runs on the host and reaches the collector's host-published port via the loopback endpoint).
 
 ## Architecture
 
@@ -70,6 +72,11 @@ hosty core start   # or restart if already running — the flag is read only at 
 
 - `HOSTY_OBSERVABILITY_ENABLED` — install + run the collector (default `false`).
 - `HOSTY_COLLECTOR_AUTOSTART` — start the collector with the other autostart apps (default `true`).
+- `HOSTY_COLLECTOR_MANIFEST_PATH` — where Core reads the collector manifest (default: the
+  `apps/collector/manifest.json` published from this repo on GitHub `main`). A **standalone installed
+  Core has no repo layout on disk**, so this remote default is what lets it bootstrap the collector at
+  all — without it the bootstrap is skipped (`"no collector manifest path was configured"`). Override
+  with a local path or a different URL for a fork / air-gapped mirror.
 
 When set via `hosty config`, these accept `true/false`, `1/0`, `yes/no`, `enabled/disabled`, `on/off`
 and are stored canonicalized to `true`/`false`. Note this wider token set is a `hosty config`
@@ -80,27 +87,29 @@ Both are also plain Core env vars, so a direct `export … ` before `hosty core 
 passes its environment through to Core). Precedence: `hosty config` injects a value into the Core
 process **only when it differs from Core's default**, so a config left at its default does not touch an
 ambient export — but a non-default config value *is* injected and therefore takes precedence over an
-ambient export of the same variable. Two advanced overrides stay ambient-env-only (not in
-`hosty config`): `HOSTY_COLLECTOR_MANIFEST_PATH` (override the bundled `apps/collector/manifest.json`)
-and `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` (default `docker`).
+ambient export of the same variable. One advanced override stays ambient-env-only (not in
+`hosty config`): `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` (default `docker`).
 
 The collector starts **before** other autostart apps so its OTLP endpoint is resolved and persisted
 before their start-time env injection reads it.
 
 ## App opt-in
 
-An app opts in with a `telemetry` block in its manifest (additive under `app.0.1`; `docker` only):
+An app opts in with a `telemetry` block in its manifest (additive under `app.0.1`; `docker` and
+`localCommand`):
 
 ```jsonc
 "telemetry": { "enabled": true, "sampleRatio": 0.1 }
 ```
 
 When the app opts in **and** the collector endpoint is available, Core injects the standard `OTEL_*`
-env at docker run (see `DockerRuntimeAdapter.BuildTelemetryEnvironment`), so any OpenTelemetry SDK
-exports with no app-specific wiring:
+env at start (the docker adapter at docker-run, the localCommand adapter into the child process env;
+both share `RuntimeTelemetrySettings.BuildEnvironment`), so any OpenTelemetry SDK exports with no
+app-specific wiring:
 
-- `OTEL_EXPORTER_OTLP_ENDPOINT` — the collector OTLP origin, loopback-rewritten to
-  `host.docker.internal:<port>` (same rewrite as `HOSTY_CORE_ORIGIN`).
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — the collector OTLP origin. For a **docker** app the loopback host is
+  rewritten to `host.docker.internal:<port>` (same rewrite as `HOSTY_CORE_ORIGIN`); a **localCommand**
+  app runs on the host and gets the loopback origin unchanged.
 - `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
 - `OTEL_SERVICE_NAME=<app id>`; `OTEL_RESOURCE_ATTRIBUTES=service.name=…,hosty.app.id=…,hosty.app.service=…`
 - `OTEL_TRACES_SAMPLER=parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG=<sampleRatio>`.

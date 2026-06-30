@@ -38,6 +38,9 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal("", settings.HostyShellPublicOrigin);
         Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json", settings.HostyShellManifestPath);
         Assert.Equal("docker", settings.HostyShellBootstrapRuntime);
+        // A launch.env that predates the collector-manifest setting still resolves its default, so an
+        // existing install self-heals (Core gets the collector manifest URL → bootstrap proceeds).
+        Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/collector/manifest.json", settings.HostyCollectorManifestPath);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }

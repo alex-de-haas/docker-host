@@ -235,6 +235,10 @@ internal sealed partial class CoreCommand(CommandContext context)
         // export. Core defaults: observability off, collector autostart on.
         AddBooleanOverride(environment, LaunchSettingDefinitions.HostyObservabilityEnabled, settings.HostyObservabilityEnabled, coreDefault: false);
         AddBooleanOverride(environment, LaunchSettingDefinitions.HostyCollectorAutostart, settings.HostyCollectorAutostart, coreDefault: true);
+        // The collector manifest reference is carried like the Shell's: an installed standalone Core has
+        // no repo layout to discover apps/collector/manifest.json on disk, so without this the collector
+        // bootstrap is skipped. Injected unconditionally; Core only consults it when observability is on.
+        AddOptional(environment, LaunchSettingDefinitions.HostyCollectorManifestPath, settings.ResolveHostyCollectorManifestPath(context.Environment));
         return environment;
     }
 
