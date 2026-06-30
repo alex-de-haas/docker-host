@@ -1467,6 +1467,12 @@ internal sealed class ControlDiscoveryWriter(
     IHostApplicationLifetime lifetime,
     ILogger<ControlDiscoveryWriter> logger) : IHostedService
 {
+    // Per-process ownership token written into control.json. RemoveDiscovery only deletes the file
+    // when the on-disk nonce still matches, so a departing instance (a restart's old Core, or a
+    // second start that lost the bind) can never delete the file a newer, live Core just wrote and
+    // strand the CLI. This complements the write guard (only ApplicationStarted writes).
+    private readonly string nonce = Guid.NewGuid().ToString("N");
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
         // Tie the discovery file to the host lifecycle rather than to hosted-service
@@ -1487,7 +1493,7 @@ internal sealed class ControlDiscoveryWriter(
         {
             SecureFileSystem.EnsurePrivateDirectory(config.RunDirectory);
             var discovery = new ControlDiscoveryDocument(
-                SchemaVersion: 1,
+                SchemaVersion: 2,
                 Component: "hosty-core",
                 Transport: "http-loopback",
                 Endpoint: config.ListenUrl,
@@ -1496,7 +1502,11 @@ internal sealed class ControlDiscoveryWriter(
                 {
                     ["X-Hosty-Control-Secret"] = secret.Value,
                 },
-                StartedAt: DateTimeOffset.UtcNow);
+                StartedAt: DateTimeOffset.UtcNow,
+                // PID lets the CLI tell a live Core from a stale file left by a hard kill; Nonce lets
+                // this writer prove the file is still its own before removing it on shutdown.
+                ProcessId: Environment.ProcessId,
+                Nonce: nonce);
 
             var json = JsonSerializer.Serialize(
                 discovery,
@@ -1521,14 +1531,54 @@ internal sealed class ControlDiscoveryWriter(
     {
         try
         {
-            if (File.Exists(config.ControlDiscoveryPath))
+            if (!File.Exists(config.ControlDiscoveryPath))
             {
-                File.Delete(config.ControlDiscoveryPath);
+                return;
             }
+
+            // Only delete the file if it is still the one this process wrote. A newer Core (restart
+            // race or double start) overwrites control.json with its own nonce; removing it then
+            // would delete the live Core's discovery and leave the CLI blind (the exact failure the
+            // write guard already prevents on the write side).
+            if (!OwnsDiscoveryFile(config.ControlDiscoveryPath, nonce))
+            {
+                logger.LogInformation(
+                    "Hosty Core control discovery at {Path} belongs to another Core instance; leaving it in place.",
+                    config.ControlDiscoveryPath);
+                return;
+            }
+
+            File.Delete(config.ControlDiscoveryPath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             logger.LogWarning(ex, "Unable to remove Hosty Core control discovery at {Path}", config.ControlDiscoveryPath);
+        }
+    }
+
+    // True only when control.json exists and still carries this process's nonce. A missing,
+    // unreadable, or differently-owned file returns false so a departing instance never deletes a
+    // file it cannot prove it owns.
+    internal static bool OwnsDiscoveryFile(string path, string nonce)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            var json = File.ReadAllText(path);
+            var existing = JsonSerializer.Deserialize(
+                json,
+                JsonOptions.GetTypeInfo(typeof(ControlDiscoveryDocument)) as JsonTypeInfo<ControlDiscoveryDocument>
+                    ?? throw new NotSupportedException(
+                        $"Type '{nameof(ControlDiscoveryDocument)}' is not registered in {nameof(CoreJsonSerializerContext)}."));
+            return existing is not null && string.Equals(existing.Nonce, nonce, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
         }
     }
 
@@ -1548,7 +1598,9 @@ internal sealed record ControlDiscoveryDocument(
     string Endpoint,
     string ControlBaseUrl,
     IReadOnlyDictionary<string, string> RequiredHeaders,
-    DateTimeOffset StartedAt);
+    DateTimeOffset StartedAt,
+    int ProcessId = 0,
+    string Nonce = "");
 
 internal sealed class AppBackupRetentionScheduler(
     AppBackupService backups,

@@ -78,9 +78,24 @@ internal sealed partial class UpdateCommand(CommandContext context)
                 return;
             }
 
+            var processId = core.CoreProcessId;
             await core.PostAsync("core/stop");
             context.Console.MarkupLine("[grey]Hosty Core stop requested before Windows executable update.[/]");
-            await Task.Delay(750);
+
+            // The executable cannot be replaced while the old Core still holds it open, so wait for
+            // the process to actually exit (the /core/stop call only signals shutdown). Fall back to
+            // a short delay for an older Core whose discovery file records no PID.
+            if (processId is int pid && pid > 0)
+            {
+                if (!await ProcessLiveness.WaitForExitAsync(pid, TimeSpan.FromSeconds(30)))
+                {
+                    context.Error.MarkupLine("[yellow]Hosty Core did not exit before the Windows executable update; the update may fail if the file is locked.[/]");
+                }
+            }
+            else
+            {
+                await Task.Delay(750);
+            }
         }
         catch (Exception ex) when (ex is CoreControlException or HttpRequestException or IOException or JsonException or OperationCanceledException)
         {

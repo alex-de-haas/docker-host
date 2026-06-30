@@ -19,6 +19,9 @@ internal sealed partial class CoreCommand(CommandContext context)
 
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan HealthProbeTimeout = TimeSpan.FromSeconds(2);
+    // Upper bound on waiting for a stopped Core to fully exit. Core's own shutdown stops runtime apps
+    // under a 15s bound plus listener drain, so 30s leaves margin before we report a stuck process.
+    private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(30);
 
     public async Task<int> ExecuteAsync(string[] args)
     {
@@ -291,6 +294,14 @@ internal sealed partial class CoreCommand(CommandContext context)
         return 0;
     }
 
+    private enum StopOutcome
+    {
+        NotRunning,
+        Stopped,
+        TimedOut,
+        Failed,
+    }
+
     private async Task<int> StopAsync(string[] args)
     {
         if (args.Length > 0)
@@ -298,11 +309,34 @@ internal sealed partial class CoreCommand(CommandContext context)
             throw new CommandUsageException("core stop does not accept arguments.", Usage);
         }
 
+        switch (await StopCoreAsync())
+        {
+            case StopOutcome.NotRunning:
+                context.Error.MarkupLine("[yellow]Hosty Core is not running or local control discovery is unavailable.[/]");
+                return 1;
+            case StopOutcome.Stopped:
+                context.Console.MarkupLine("[green]Hosty Core stopped.[/]");
+                return 0;
+            case StopOutcome.TimedOut:
+                context.Error.MarkupLine("[yellow]Hosty Core did not fully stop within the timeout; it may still be shutting down.[/]");
+                context.Error.MarkupLine("[grey]Check it with [white]hosty core status[/].[/]");
+                return 1;
+            default:
+                return 1;
+        }
+    }
+
+    // Requests a stop and waits for the Core process to actually exit. The /core/stop call only
+    // signals shutdown (StopApplication) and returns immediately, so without this wait a caller —
+    // notably `restart`/`update` — would race the dying Core: start a new one while the old still
+    // holds the port, or have the old Core's shutdown delete the new Core's freshly-written
+    // discovery file. Error messages are printed here; the caller maps the outcome to an exit code.
+    private async Task<StopOutcome> StopCoreAsync()
+    {
         var discovery = await ReadControlDiscoveryAsync();
         if (discovery is null)
         {
-            context.Error.MarkupLine("[yellow]Hosty Core is not running or local control discovery is unavailable.[/]");
-            return 1;
+            return StopOutcome.NotRunning;
         }
 
         using var httpClient = CreateControlClient(discovery);
@@ -314,7 +348,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
         {
             context.Error.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
-            return 1;
+            return StopOutcome.Failed;
         }
 
         using (response)
@@ -327,36 +361,40 @@ internal sealed partial class CoreCommand(CommandContext context)
                     context.Error.MarkupLine("[red]Unable to stop Hosty Core:[/] local control secret was rejected.");
                     context.Error.MarkupLine($"[grey]This usually means the control discovery file is stale or belongs to another Core process: {Markup.Escape(GetControlDiscoveryPath())}[/]");
                     context.Error.MarkupLine("[grey]Run `hosty core status` to verify the active Core. If no matching Core is running, remove the stale discovery file and start Core again.[/]");
-                    return 1;
+                    return StopOutcome.Failed;
                 }
 
                 context.Error.MarkupLine($"[red]Unable to stop Hosty Core:[/] HTTP {(int)response.StatusCode}: {Markup.Escape(body)}");
-                return 1;
+                return StopOutcome.Failed;
             }
-
-            context.Console.MarkupLine("[green]Hosty Core stop requested.[/]");
-            return 0;
         }
+
+        context.Console.MarkupLine("[green]Hosty Core stop requested.[/]");
+        return await WaitForCoreFullyStoppedAsync(discovery.ProcessId, discovery.ControlBaseUrl)
+            ? StopOutcome.Stopped
+            : StopOutcome.TimedOut;
     }
 
     private async Task<int> RestartAsync(string[] args)
     {
-        var options = ParseStartOptions(args);
-        var settings = context.SettingsStore.Load();
-        var url = options.Url ?? BuildDefaultCoreUrl(settings);
+        // Validate start options up front so a bad flag fails before we stop the running Core.
+        _ = ParseStartOptions(args);
 
-        var stopResult = await StopAsync([]);
-        if (stopResult == 0)
+        // StopCoreAsync waits for the old process to fully exit (port released, discovery file
+        // removed), so the start below binds cleanly and cannot have its discovery clobbered by the
+        // old Core's shutdown. NotRunning is fine — there is simply nothing to stop.
+        switch (await StopCoreAsync())
         {
-            // Wait for the old Core to actually release its port before starting a new
-            // one, otherwise the idempotent start would just re-detect the dying Core
-            // and report a false-positive "already running".
-            if (!await WaitForCoreStoppedAsync(url))
-            {
-                context.Console.MarkupLine(
-                    $"[red]Hosty Core is still responding on {Markup.Escape(url)} after stop; restart aborted.[/]");
+            case StopOutcome.NotRunning:
+            case StopOutcome.Stopped:
+                break;
+            case StopOutcome.TimedOut:
+                context.Error.MarkupLine("[red]Hosty Core did not fully stop within the timeout; restart aborted.[/]");
+                context.Error.MarkupLine("[grey]Check it with [white]hosty core status[/] and retry once it has stopped.[/]");
                 return 1;
-            }
+            default:
+                context.Error.MarkupLine("[red]Hosty Core stop failed; restart aborted.[/]");
+                return 1;
         }
 
         return await StartAsync(args);
@@ -415,6 +453,26 @@ internal sealed partial class CoreCommand(CommandContext context)
             return false;
         }
     }
+
+    // Waits for the stopped Core to fully exit. Prefers the recorded PID (the real "process gone"
+    // signal — port released and discovery removed); falls back to /healthz going dark for an older
+    // Core whose discovery file carries no PID.
+    private async Task<bool> WaitForCoreFullyStoppedAsync(int? processId, string controlBaseUrl)
+    {
+        if (processId is int pid && pid > 0)
+        {
+            return await ProcessLiveness.WaitForExitAsync(pid, StopTimeout);
+        }
+
+        return TryGetOrigin(controlBaseUrl) is { } origin
+            ? await WaitForCoreStoppedAsync(origin)
+            : true;
+    }
+
+    private static string? TryGetOrigin(string controlBaseUrl)
+        => Uri.TryCreate(controlBaseUrl, UriKind.Absolute, out var uri)
+            ? uri.GetLeftPart(UriPartial.Authority)
+            : null;
 
     // Returns true once the Core at <url> stops answering /healthz, or false if it is still
     // responding when the timeout elapses.
@@ -514,8 +572,39 @@ internal sealed partial class CoreCommand(CommandContext context)
             return null;
         }
 
-        await using var stream = File.OpenRead(path);
-        return await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream);
+        ControlDiscoveryDocument? discovery;
+        await using (var stream = File.OpenRead(path))
+        {
+            discovery = await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream);
+        }
+
+        if (discovery is null)
+        {
+            return null;
+        }
+
+        // A discovery file whose recorded PID is no longer alive is an orphan left by a hard-killed
+        // Core (its ApplicationStopped cleanup never ran). Treat it as not running and remove it so
+        // it stops shadowing a truly-stopped Core. PID absent => trust the file (older Core).
+        if (discovery.ProcessId is int pid && pid > 0 && !ProcessLiveness.IsAlive(pid))
+        {
+            TryDeleteStaleDiscovery(path);
+            return null;
+        }
+
+        return discovery;
+    }
+
+    private static void TryDeleteStaleDiscovery(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort: a stale file we cannot delete is overwritten by the next Core start.
+        }
     }
 
     private string GetControlDiscoveryPath()
@@ -634,7 +723,9 @@ internal sealed partial class CoreCommand(CommandContext context)
 
     internal sealed record ControlDiscoveryDocument(
         string ControlBaseUrl,
-        IReadOnlyDictionary<string, string> RequiredHeaders);
+        IReadOnlyDictionary<string, string> RequiredHeaders,
+        int? ProcessId = null,
+        string? Nonce = null);
 
     internal sealed record CoreStatusDocument(
         string? Status,

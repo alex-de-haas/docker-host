@@ -67,6 +67,29 @@ public sealed class CoreControlClientTests : IDisposable
         Assert.Equal(expectedMessage, exception.Message);
     }
 
+    [Fact]
+    public async Task TryCreateAsync_DiscoveryPointsToDeadProcess_RemovesStaleFileAndReturnsNull()
+    {
+        var path = WriteCoreDiscovery("http://127.0.0.1:1/control/v1", processId: int.MaxValue - 1);
+
+        using var client = await CoreControlClient.TryCreateAsync(CreateContext());
+
+        Assert.Null(client);
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public async Task TryCreateAsync_DiscoveryPointsToLiveProcess_ReturnsClientWithRecordedPid()
+    {
+        var path = WriteCoreDiscovery("http://127.0.0.1:1/control/v1", processId: Environment.ProcessId);
+
+        using var client = await CoreControlClient.TryCreateAsync(CreateContext());
+
+        Assert.NotNull(client);
+        Assert.Equal(Environment.ProcessId, client!.CoreProcessId);
+        Assert.True(File.Exists(path));
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);
@@ -88,12 +111,13 @@ public sealed class CoreControlClientTests : IDisposable
         return new CommandContext(console, environment, new LaunchSettingsStore(environment));
     }
 
-    private void WriteCoreDiscovery(string controlBaseUrl)
+    private string WriteCoreDiscovery(string controlBaseUrl, int? processId = null)
     {
         var runDirectory = Path.Combine(rootDirectory, "core", "run");
         Directory.CreateDirectory(runDirectory);
+        var path = Path.Combine(runDirectory, "control.json");
         File.WriteAllText(
-            Path.Combine(runDirectory, "control.json"),
+            path,
             JsonSerializer.Serialize(new
             {
                 controlBaseUrl,
@@ -101,7 +125,10 @@ public sealed class CoreControlClientTests : IDisposable
                 {
                     ["X-Hosty-Test-Control"] = "test-secret",
                 },
+                processId,
+                nonce = "test-nonce",
             }));
+        return path;
     }
 
     private sealed class SilentServer : IDisposable
