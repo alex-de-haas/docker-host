@@ -78,17 +78,21 @@ hosty core start   # or restart if already running — the flag is read only at 
   all — without it the bootstrap is skipped (`"no collector manifest path was configured"`). Override
   with a local path or a different URL for a fork / air-gapped mirror.
 
-When set via `hosty config`, these accept `true/false`, `1/0`, `yes/no`, `enabled/disabled`, `on/off`
-and are stored canonicalized to `true`/`false`. Note this wider token set is a `hosty config`
-convenience: Core's own env-var parsing only treats `1`, `true`, `enabled`, `yes` as truthy, so if you
-export the variable **directly** prefer one of those (e.g. `export HOSTY_OBSERVABILITY_ENABLED=1`).
+The two **boolean** toggles accept `true/false`, `1/0`, `yes/no`, `enabled/disabled`, `on/off` when set
+via `hosty config` and are stored canonicalized to `true`/`false`. Note this wider token set is a
+`hosty config` convenience: Core's own env-var parsing only treats `1`, `true`, `enabled`, `yes` as
+truthy, so if you export a boolean **directly** prefer one of those (e.g.
+`export HOSTY_OBSERVABILITY_ENABLED=1`). The manifest path is a string, not a boolean.
 
-Both are also plain Core env vars, so a direct `export … ` before `hosty core start` works too (the CLI
-passes its environment through to Core). Precedence: `hosty config` injects a value into the Core
-process **only when it differs from Core's default**, so a config left at its default does not touch an
-ambient export — but a non-default config value *is* injected and therefore takes precedence over an
-ambient export of the same variable. One advanced override stays ambient-env-only (not in
-`hosty config`): `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` (default `docker`).
+All three are also plain Core env vars, so a direct `export … ` before `hosty core start` works too (the
+CLI passes its environment through to Core). Injection precedence differs by kind. The **boolean**
+toggles are injected into the Core process **only when they differ from Core's default**, so one left at
+its default does not touch an ambient export (a non-default value *is* injected and takes precedence).
+The **manifest path** (like `HOSTY_SHELL_MANIFEST_PATH`) is injected whenever non-empty — including its
+default — which is exactly what lets an installed Core find the collector manifest; consequently a
+configured or default path takes precedence over an ambient `export HOSTY_COLLECTOR_MANIFEST_PATH`. One
+advanced override stays ambient-env-only (not in `hosty config`): `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME`
+(default `docker`).
 
 The collector starts **before** other autostart apps so its OTLP endpoint is resolved and persisted
 before their start-time env injection reads it.
