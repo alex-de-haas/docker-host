@@ -21,15 +21,20 @@ internal sealed partial class CoreControlClient : IDisposable
     private readonly TimeSpan probeTimeout;
     private readonly TimeSpan operationTimeout;
 
-    private CoreControlClient(string controlBaseUrl, HttpClient httpClient, TimeSpan probeTimeout, TimeSpan operationTimeout)
+    private CoreControlClient(string controlBaseUrl, HttpClient httpClient, TimeSpan probeTimeout, TimeSpan operationTimeout, int? coreProcessId)
     {
         ControlBaseUrl = controlBaseUrl.TrimEnd('/');
         this.httpClient = httpClient;
         this.probeTimeout = probeTimeout;
         this.operationTimeout = operationTimeout;
+        CoreProcessId = coreProcessId;
     }
 
     public string ControlBaseUrl { get; }
+
+    // PID of the Core process this discovery file points at, when recorded (schema >= 2). Lets
+    // callers wait for that process to fully exit after requesting a stop. Null for older Cores.
+    public int? CoreProcessId { get; }
 
     public static async Task<CoreControlClient?> TryCreateAsync(
         CommandContext context,
@@ -43,10 +48,32 @@ internal sealed partial class CoreControlClient : IDisposable
             return null;
         }
 
-        await using var stream = File.OpenRead(path);
-        var discovery = await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream, cancellationToken);
+        // A locked, truncated, or mid-write control.json must degrade to "discovery unavailable"
+        // rather than crash the caller. FileShare.ReadWrite tolerates the writer holding it open.
+        ControlDiscoveryDocument? discovery;
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            discovery = await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
+
         if (discovery is null || string.IsNullOrWhiteSpace(discovery.ControlBaseUrl))
         {
+            return null;
+        }
+
+        // A hard-killed Core never runs its ApplicationStopped cleanup, so control.json can outlive
+        // the process. If it names a PID that is no longer alive, treat it as not running and remove
+        // the orphan so the next read takes the clean "not running" path instead of a connection
+        // error (and the stale secret it holds stops lingering on disk). PID absent => can't tell,
+        // so trust the file (older Core, or a process we can't observe).
+        if (discovery.ProcessId is int pid && pid > 0 && !ProcessLiveness.IsAlive(pid))
+        {
+            ControlDiscovery.TryDeleteStale(path);
             return null;
         }
 
@@ -63,7 +90,8 @@ internal sealed partial class CoreControlClient : IDisposable
             discovery.ControlBaseUrl,
             httpClient,
             probeTimeout ?? DefaultProbeTimeout,
-            operationTimeout ?? DefaultOperationTimeout);
+            operationTimeout ?? DefaultOperationTimeout,
+            discovery.ProcessId is > 0 ? discovery.ProcessId : null);
     }
 
     public async Task<T?> GetAsync<T>(string path, CancellationToken cancellationToken = default)
@@ -139,7 +167,9 @@ internal sealed partial class CoreControlClient : IDisposable
 
     internal sealed record ControlDiscoveryDocument(
         string ControlBaseUrl,
-        IReadOnlyDictionary<string, string> RequiredHeaders);
+        IReadOnlyDictionary<string, string> RequiredHeaders,
+        int? ProcessId = null,
+        string? Nonce = null);
 }
 
 internal sealed class CoreControlException(

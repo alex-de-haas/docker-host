@@ -41,6 +41,20 @@ public sealed class CoreCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task StopAsync_WhenDiscoveryPointsToDeadProcess_ReportsNotRunningAndRemovesStaleFile()
+    {
+        // A hard-killed Core leaves control.json behind pointing at a PID that is no longer alive.
+        var path = WriteCoreDiscovery("http://127.0.0.1:1/control/v1", processId: int.MaxValue - 1);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["stop"], console);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("not running", output.ToString());
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
     public async Task StartAsync_WhenCoreAlreadyHealthy_ReusesItWithoutSpawning()
     {
         using var server = new FakeCoreServer(HttpStatusCode.OK, """{"status":"ok"}""");
@@ -66,19 +80,26 @@ public sealed class CoreCommandTests : IDisposable
     }
 
     private void WriteCoreDiscovery(FakeCoreServer server)
+        => WriteCoreDiscovery(server.ControlBaseUrl);
+
+    private string WriteCoreDiscovery(string controlBaseUrl, int? processId = null)
     {
         var runDirectory = Path.Combine(rootDirectory, "core", "run");
         Directory.CreateDirectory(runDirectory);
+        var path = Path.Combine(runDirectory, "control.json");
         File.WriteAllText(
-            Path.Combine(runDirectory, "control.json"),
+            path,
             JsonSerializer.Serialize(new
             {
-                controlBaseUrl = server.ControlBaseUrl,
+                controlBaseUrl,
                 requiredHeaders = new Dictionary<string, string>
                 {
                     ["X-Hosty-Test-Control"] = "test-secret",
                 },
+                processId,
+                nonce = "test-nonce",
             }));
+        return path;
     }
 
     private static (IAnsiConsole Console, StringWriter Output) CreateConsole()
