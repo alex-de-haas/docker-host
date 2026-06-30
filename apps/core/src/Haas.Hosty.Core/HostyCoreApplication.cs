@@ -24,6 +24,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
         builder.Services.AddSingleton<AppServiceTokenService>();
         builder.Services.AddSingleton<AppRegistryStore>();
+        builder.Services.AddSingleton<MountPathPolicy>();
+        builder.Services.AddSingleton<GlobalMountStore>();
+        builder.Services.AddSingleton<GlobalMountService>();
         builder.Services.AddSingleton<UserDirectoryStore>();
         builder.Services.AddSingleton<AuthBootstrapTokenStore>();
         builder.Services.AddSingleton<AuditStore>();
@@ -221,6 +224,7 @@ internal static class HostyCoreApplication
         AuthBootstrapEndpoints.Map(app);
         UserManagementEndpoints.Map(app);
         LifecycleEndpoints.Map(app);
+        GlobalMountEndpoints.Map(app);
         SourceEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);

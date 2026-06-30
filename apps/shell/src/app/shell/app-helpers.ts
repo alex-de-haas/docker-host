@@ -397,10 +397,8 @@ export function detailTitle(view: DetailView) {
       return "Observability";
     case "backups":
       return "Backups";
-    case "configure":
-      return "Configure";
-    case "mounts":
-      return "External storage";
+    case "settings":
+      return "Settings";
     case "update":
       return "Update";
     case "remove":

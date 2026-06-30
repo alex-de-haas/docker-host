@@ -3,7 +3,6 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import {
   Activity,
-  Archive,
   ArrowUpCircle,
   Boxes,
   Check,
@@ -47,7 +46,6 @@ import {
   buildRuntimeServiceRows,
   formatRuntimeProfileLabel,
   formatUpdateChange,
-  getAppPageLinks,
   getEndpointPublicOrigin,
   isAppAutostartEnabled,
   shortDigest,
@@ -77,8 +75,8 @@ export function InstalledAppsPage({
   onInstall,
   onAction,
   onSwitchRuntime,
-  onCreateBackup,
   onOpenPanel,
+  onOpenSharedMounts,
 }: {
   coreOrigin: string;
   runtimeApps: CoreApp[];
@@ -91,8 +89,8 @@ export function InstalledAppsPage({
   onInstall: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
-  onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
+  onOpenSharedMounts: () => void;
 }) {
   const isRefreshing = loading;
   const hasAnyApps = runtimeApps.length > 0 || systemApps.length > 0;
@@ -107,6 +105,12 @@ export function InstalledAppsPage({
             <Button variant="outline" size="icon" onClick={onRefresh} disabled={isRefreshing} aria-label="Refresh apps">
               <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
             </Button>
+            {canManageApps && (
+              <Button variant="outline" onClick={onOpenSharedMounts}>
+                <HardDrive className="h-4 w-4" />
+                Shared mounts
+              </Button>
+            )}
             {canManageApps && (
               <Button onClick={onInstall}>
                 <Plus className="h-4 w-4" />
@@ -137,7 +141,6 @@ export function InstalledAppsPage({
             busyAction={busyAction}
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
-            onCreateBackup={onCreateBackup}
             onOpenPanel={onOpenPanel}
           />
           <InstalledAppTableSection
@@ -152,7 +155,6 @@ export function InstalledAppsPage({
             busyAction={busyAction}
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
-            onCreateBackup={onCreateBackup}
             onOpenPanel={onOpenPanel}
           />
         </div>
@@ -488,7 +490,6 @@ function InstalledAppTableSection({
   busyAction,
   onAction,
   onSwitchRuntime,
-  onCreateBackup,
   onOpenPanel,
 }: {
   coreOrigin: string;
@@ -502,7 +503,6 @@ function InstalledAppTableSection({
   busyAction: string | null;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
-  onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
@@ -644,7 +644,6 @@ function InstalledAppTableSection({
                 <TableHead>Version</TableHead>
                 <TableHead>Autostart</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>UI</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -669,18 +668,17 @@ function InstalledAppTableSection({
                       onToggleExpanded={() => toggleAppExpanded(app)}
                       onAction={onAction}
                       onSwitchRuntime={onSwitchRuntime}
-                      onCreateBackup={onCreateBackup}
                       onOpenPanel={onOpenPanel}
                     />
                     {expanded && (
                       <TableRow>
-                        <TableCell colSpan={7} className="bg-muted/20 px-4 py-3">
+                        <TableCell colSpan={6} className="bg-muted/20 px-4 py-3">
                           <AppServiceDetailsPanel
                             app={app}
                             healthState={healthState}
                             updateStatusState={updateStatusState}
                             canConfigurePublicOrigins={canManageApps && !app.system}
-                            onConfigurePublicOrigins={() => onOpenPanel(app, "configure", { configureSection: "publicOrigins" })}
+                            onConfigurePublicOrigins={() => onOpenPanel(app, "settings", { settingsTab: "publicOrigins" })}
                             canUpdate={canUpdate}
                             onOpenUpdate={() => onOpenPanel(app, "update")}
                             onRecheckUpdate={() => void loadUpdateStatus(app)}
@@ -709,7 +707,6 @@ function InstalledAppRow({
   onToggleExpanded,
   onAction,
   onSwitchRuntime,
-  onCreateBackup,
   onOpenPanel,
 }: {
   app: CoreApp;
@@ -721,17 +718,14 @@ function InstalledAppRow({
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
-  onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const running = app.runtimeState === "running";
-  const canOpen = !app.system && getAppPageLinks(app).length > 0;
   const canControl = canManageApps && !app.system;
   const canSwitchRuntime = canManageApps;
   const canInspect = canManageApps;
   const canBackup = canControl && app.capabilities.includes("backup");
   const canConfigure = canControl;
-  const canConfigureMounts = canControl && (app.mounts?.length ?? 0) > 0;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
   // Update menu item is hidden and the "Live" badge is shown instead. See CoreApp.live.
   const canUpdate = canControl && !app.live && app.capabilities.includes("update");
@@ -767,16 +761,6 @@ function InstalledAppRow({
               <span className="truncate font-medium">{app.displayName}</span>
               {app.system && <Badge variant="secondary">System</Badge>}
               {isShell && <Badge variant="outline">Shell</Badge>}
-              {app.live && (
-                <Badge
-                  variant="outline"
-                  className="gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
-                  title="Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
-                >
-                  <Radio className="h-3 w-3" />
-                  Live
-                </Badge>
-              )}
               {needsRequiredSettings && (
                 <span title="Configure required settings before starting" className="inline-flex shrink-0">
                   <TriangleAlert className="h-4 w-4 text-amber-500" aria-label="Configure required settings before starting" />
@@ -798,9 +782,20 @@ function InstalledAppRow({
       </TableCell>
       <TableCell>{app.version}</TableCell>
       <TableCell><Badge variant={autostartEnabled ? "outline" : "secondary"}>{autostartEnabled ? "On" : "Off"}</Badge></TableCell>
-      <TableCell><StatusBadge value={app.runtimeState || app.operationStatus} /></TableCell>
       <TableCell>
-        <Badge variant={canOpen ? "outline" : "secondary"}>{canOpen ? "Available" : "No UI"}</Badge>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusBadge value={app.runtimeState || app.operationStatus} />
+          {app.live && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+              title="Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
+            >
+              <Radio className="h-3 w-3" />
+              Live
+            </Badge>
+          )}
+        </div>
       </TableCell>
       <TableCell>
         <div className="flex items-center justify-end gap-1">
@@ -823,11 +818,8 @@ function InstalledAppRow({
             canInspect={canInspect}
             canBackup={canBackup}
             canConfigure={canConfigure}
-            canConfigureMounts={canConfigureMounts}
             canUpdate={canUpdate}
             canRemove={canRemove}
-            busyAction={busyAction}
-            onCreateBackup={onCreateBackup}
             onOpenPanel={onOpenPanel}
           />
         </div>
@@ -904,30 +896,23 @@ function InstalledAppActionsMenu({
   canInspect,
   canBackup,
   canConfigure,
-  canConfigureMounts,
   canUpdate,
   canRemove,
-  busyAction,
-  onCreateBackup,
   onOpenPanel,
 }: {
   app: CoreApp;
   canInspect: boolean;
   canBackup: boolean;
   canConfigure: boolean;
-  canConfigureMounts: boolean;
   canUpdate: boolean;
   canRemove: boolean;
-  busyAction: string | null;
-  onCreateBackup: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const hasLogs = canInspect && app.capabilities.includes("logs");
   // Observability (metrics + OTLP logs) is host-collected and available for any inspectable app; the
   // panel shows an empty state when observability is disabled or the app has emitted nothing yet.
   const hasObservability = canInspect;
-  const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
-  const hasMenuActions = hasLogs || hasObservability || canBackup || canConfigure || canConfigureMounts || canUpdate || canRemove;
+  const hasMenuActions = hasLogs || hasObservability || canBackup || canConfigure || canUpdate || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -954,28 +939,16 @@ function InstalledAppActionsMenu({
           </DropdownMenuItem>
         )}
         {canBackup && (
-          <>
-            <DropdownMenuItem disabled={isBusy("backup")} onClick={() => onCreateBackup(app)}>
-              {isBusy("backup") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
-              Create backup
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onOpenPanel(app, "backups")}>
-              <Database className="h-4 w-4" />
-              Backups
-            </DropdownMenuItem>
-          </>
+          <DropdownMenuItem onClick={() => onOpenPanel(app, "backups")}>
+            <Database className="h-4 w-4" />
+            Backups
+          </DropdownMenuItem>
         )}
         {(canConfigure || canUpdate) && <DropdownMenuSeparator />}
         {canConfigure && (
-          <DropdownMenuItem onClick={() => onOpenPanel(app, "configure")}>
+          <DropdownMenuItem onClick={() => onOpenPanel(app, "settings")}>
             <Settings2 className="h-4 w-4" />
-            Configure
-          </DropdownMenuItem>
-        )}
-        {canConfigureMounts && (
-          <DropdownMenuItem onClick={() => onOpenPanel(app, "mounts")}>
-            <HardDrive className="h-4 w-4" />
-            External storage
+            Settings
           </DropdownMenuItem>
         )}
         {canUpdate && (

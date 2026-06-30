@@ -61,8 +61,8 @@ export function ShellInstalledAppsRoute() {
         onInstall={shellActions.openInstallDialog}
         onAction={shellActions.runAppAction}
         onSwitchRuntime={shellActions.switchAppRuntime}
-        onCreateBackup={shellActions.createManualBackup}
         onOpenPanel={shellActions.openAppPanel}
+        onOpenSharedMounts={shellActions.openSharedMounts}
       />
     </AdminShellRoute>
   );

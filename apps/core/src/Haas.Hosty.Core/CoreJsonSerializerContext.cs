@@ -36,6 +36,7 @@ internal static class CoreJson
 // Persisted state / internal serialization roots.
 [JsonSerializable(typeof(UserDirectoryState))]
 [JsonSerializable(typeof(AppStateDocument))]
+[JsonSerializable(typeof(GlobalMountState))]
 // Reachable via AppRecord/AppSummary, but rooted explicitly: the per-service artifact run-lock is
 // (de)serialized as a nested map value on persisted state and on API summaries.
 [JsonSerializable(typeof(ArtifactLock))]
@@ -68,6 +69,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppConfigureRequest))]
 [JsonSerializable(typeof(AppAutostartRequest))]
 [JsonSerializable(typeof(AppMountsRequest))]
+[JsonSerializable(typeof(GlobalMountUpsertRequest))]
 [JsonSerializable(typeof(AppUpdatePlanRequest))]
 [JsonSerializable(typeof(AppUpdateApplyRequest))]
 [JsonSerializable(typeof(AppRuntimeSwitchPlanRequest))]
@@ -113,6 +115,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppSessionValidationResult))]
 [JsonSerializable(typeof(AppInstallPlan))]
 [JsonSerializable(typeof(AppLifecycleResponse))]
+[JsonSerializable(typeof(GlobalMountListResponse))]
 [JsonSerializable(typeof(AppUpdatePlan))]
 [JsonSerializable(typeof(AppRuntimeSwitchPlan))]
 [JsonSerializable(typeof(AppBackupsResponse))]

@@ -88,6 +88,9 @@ export type CoreMountBinding = {
   label: string;
   hostPath: string;
   containerPath: string;
+  // "global" (resolved from a shared-mounts library entry) or "local" (inline host path).
+  source?: string;
+  globalMountName?: string | null;
 };
 
 export type CoreMountSlot = {
@@ -99,10 +102,21 @@ export type CoreMountSlot = {
   bindings: CoreMountBinding[];
 };
 
+// A global binding sends only key + globalMountName; a local binding sends key + label + hostPath.
 export type MountBindingInput = {
   key: string;
-  label: string;
+  label?: string;
+  hostPath?: string;
+  globalMountName?: string;
+};
+
+// Host-level shared-mounts library entry (GET /api/global-mounts).
+export type CoreGlobalMount = {
+  name: string;
   hostPath: string;
+  mode: string;
+  description?: string | null;
+  usedBy: number;
 };
 
 export type AppsResponse = {
@@ -311,7 +325,10 @@ export type CoreError = {
 };
 
 export type AppAction = "start" | "stop" | "restart" | "backup";
-export type DetailView = "logs" | "observability" | "backups" | "configure" | "mounts" | "update" | "remove";
+export type DetailView = "logs" | "observability" | "backups" | "settings" | "update" | "remove";
+
+// Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
+export type SettingsTab = "app" | "publicOrigins" | "mounts";
 export type ShellView = "available-apps" | "dashboard" | "installed-apps" | "users";
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
@@ -423,11 +440,11 @@ export type InstallPanelState = {
 export type ActivePanel = {
   appId: string;
   view: DetailView;
-  configureSection?: "publicOrigins";
+  settingsTab?: SettingsTab;
 };
 
 export type OpenPanelOptions = {
-  configureSection?: "publicOrigins";
+  settingsTab?: SettingsTab;
 };
 
 export type OpenAppPanel = (app: CoreApp, view: DetailView, options?: OpenPanelOptions) => void;

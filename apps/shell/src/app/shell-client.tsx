@@ -11,6 +11,7 @@ import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
+import { SharedMountsDialog } from "./shell/dialogs/shared-mounts-dialog";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
@@ -43,6 +44,7 @@ import type {
   CoreBackup,
   CoreBackupCleanupApplyResponse,
   CoreBackupCleanupPlan,
+  CoreGlobalMount,
   CoreInstallPlan,
   CoreRuntimeSwitchPlan,
   CoreStatus,
@@ -93,6 +95,8 @@ export function ShellClient({
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
+  const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
+  const [sharedMountsOpen, setSharedMountsOpen] = useState(false);
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(false);
@@ -151,6 +155,7 @@ export function ShellClient({
       }
 
       let apps: AppsResponse = { apps: [] };
+      let nextGlobalMounts: CoreGlobalMount[] = [];
       if (session?.authenticated) {
         const appsResponse = await fetch(`${coreOrigin}/api/apps`, { credentials: "include" });
         redirectToCoreLoginIfAuthRequired(appsResponse, coreOrigin);
@@ -159,12 +164,22 @@ export function ShellClient({
         }
 
         apps = (await appsResponse.json()) as AppsResponse;
+
+        // The shared-mounts library is admin-only; non-admins simply get an empty list (the picker
+        // and Shared mounts button are gated to admins anyway).
+        if (session.user?.role === "host.admin") {
+          const mountsResponse = await fetch(`${coreOrigin}/api/global-mounts`, { credentials: "include" });
+          if (mountsResponse.ok) {
+            nextGlobalMounts = ((await mountsResponse.json()) as { mounts?: CoreGlobalMount[] }).mounts ?? [];
+          }
+        }
       }
 
       if (requestToken !== refreshRequestRef.current) {
         return;
       }
 
+      setGlobalMounts(nextGlobalMounts);
       setState({
         loading: false,
         error: null,
@@ -552,7 +567,7 @@ export function ShellClient({
         return;
       }
       detailRequestRef.current += 1;
-      setActivePanel({ appId: app.id, view, configureSection: options?.configureSection });
+      setActivePanel({ appId: app.id, view, settingsTab: options?.settingsTab });
       setDetailPanel(emptyDetailPanelState());
     },
     [loadAppBackups, loadAppLogs, loadAppObservability, loadUpdatePlan],
@@ -758,7 +773,7 @@ export function ShellClient({
         await sendCsrfJson(appEndpoint(app, "/mounts"), { mounts });
         await refresh();
         setActivePanel(null);
-        toast.success("External storage saved", { description: app.displayName });
+        toast.success("Mounts saved", { description: app.displayName });
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
           return;
@@ -767,7 +782,7 @@ export function ShellClient({
         setDetailPanel((current) => ({
           ...current,
           loading: false,
-          error: error instanceof Error ? error.message : "Saving external storage failed.",
+          error: error instanceof Error ? error.message : "Saving mounts failed.",
         }));
       } finally {
         setBusyAction((current) => (current === actionKey ? null : current));
@@ -775,6 +790,27 @@ export function ShellClient({
     },
     [appEndpoint, refresh, sendCsrfJson],
   );
+
+  // Shared-mounts library (host-level). The endpoints return the full updated list, so each call
+  // refreshes globalMounts directly; the SharedMountsDialog surfaces any thrown error inline.
+  const saveGlobalMount = useCallback(
+    async (input: { name: string; hostPath: string; mode?: string; description?: string | null }) => {
+      const response = await sendCsrfJson(`${coreOrigin}/api/global-mounts`, input, "POST");
+      setGlobalMounts(((await response.json()) as { mounts?: CoreGlobalMount[] }).mounts ?? []);
+    },
+    [coreOrigin, sendCsrfJson],
+  );
+
+  const deleteGlobalMount = useCallback(
+    async (name: string, force = false) => {
+      const url = `${coreOrigin}/api/global-mounts/${encodeURIComponent(name)}${force ? "?force=true" : ""}`;
+      const response = await sendCsrfJson(url, undefined, "DELETE");
+      setGlobalMounts(((await response.json()) as { mounts?: CoreGlobalMount[] }).mounts ?? []);
+    },
+    [coreOrigin, sendCsrfJson],
+  );
+
+  const openSharedMounts = useCallback(() => setSharedMountsOpen(true), []);
 
   const applyUpdate = useCallback(
     async (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => {
@@ -1138,6 +1174,7 @@ export function ShellClient({
       createManualBackup,
       openAppPanel,
       openInstalledApps,
+      openSharedMounts,
     }),
     [
       coreOrigin,
@@ -1147,6 +1184,7 @@ export function ShellClient({
       openAppPanel,
       openInstalledApps,
       openInstallDialog,
+      openSharedMounts,
       refresh,
       runAppAction,
       sendCsrfJson,
@@ -1239,7 +1277,8 @@ export function ShellClient({
           <AppDetailsDialog
             app={selectedApp}
             view={activePanel.view}
-            configureSection={activePanel.configureSection}
+            settingsTab={activePanel.settingsTab}
+            globalMounts={globalMounts}
             canManageApps={Boolean(canManageApps)}
             busyAction={busyAction}
             detail={detailPanel}
@@ -1259,6 +1298,15 @@ export function ShellClient({
             onRemove={removeApp}
           />
         )}
+
+        <SharedMountsDialog
+          open={sharedMountsOpen}
+          globalMounts={globalMounts}
+          canManageApps={Boolean(canManageApps)}
+          onClose={() => setSharedMountsOpen(false)}
+          onSave={saveGlobalMount}
+          onDelete={deleteGlobalMount}
+        />
       </div>
       </ShellStateContext.Provider>
     </ShellActionsContext.Provider>

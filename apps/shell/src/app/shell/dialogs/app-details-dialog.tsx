@@ -1,8 +1,8 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
-import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Plus, Radio, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -12,8 +12,6 @@ import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, formatUpdateChange, isAppAutostartEnabled } from "../app-helpers";
 import {
   buildPublicOriginGroups,
-  ConfigureSection,
-  hasMissingRequiredSettings,
   isPublicOriginSettingKey,
   PublicOriginInput,
   SettingInput,
@@ -22,6 +20,7 @@ import type {
   CoreApp,
   CoreBackup,
   CoreBackupCleanupPlan,
+  CoreGlobalMount,
   CoreMountSlot,
   CoreUpdatePlan,
   DetailPanelState,
@@ -29,6 +28,7 @@ import type {
   LogsServiceSegment,
   MountBindingInput,
   RemoveOptions,
+  SettingsTab,
 } from "../types";
 import { CheckboxRow, EmptyState, FactCard, IconButton, InlineError } from "../ui";
 import { ObservabilityPanel } from "./observability-panel";
@@ -36,7 +36,8 @@ import { ObservabilityPanel } from "./observability-panel";
 export function AppDetailsDialog({
   app,
   view,
-  configureSection,
+  settingsTab,
+  globalMounts,
   canManageApps,
   busyAction,
   detail,
@@ -57,7 +58,8 @@ export function AppDetailsDialog({
 }: {
   app: CoreApp;
   view: DetailView;
-  configureSection?: "publicOrigins";
+  settingsTab?: SettingsTab;
+  globalMounts: CoreGlobalMount[];
   canManageApps: boolean;
   busyAction: string | null;
   detail: DetailPanelState;
@@ -102,11 +104,18 @@ export function AppDetailsDialog({
           />
         )}
         {view === "backups" && !canMutateApp && <InlineError message="System app backup controls are not available in Shell." />}
-        {view === "configure" && <ConfigurePanel app={app} busyAction={busyAction} canManageApps={canMutateApp} initialOpenSection={configureSection} onConfigure={onConfigure} />}
-        {view === "mounts" && (canMutateApp ? (
-          <MountsPanel app={app} busyAction={busyAction} onConfigureMounts={onConfigureMounts} />
+        {view === "settings" && (canMutateApp ? (
+          <SettingsDialog
+            app={app}
+            busyAction={busyAction}
+            canManageApps={canMutateApp}
+            globalMounts={globalMounts}
+            initialTab={settingsTab}
+            onConfigure={onConfigure}
+            onConfigureMounts={onConfigureMounts}
+          />
         ) : (
-          <InlineError message="System app external storage controls are not available in Shell." />
+          <InlineError message="System app settings are not available in Shell." />
         ))}
         {view === "update" && (canMutateApp ? (
           <UpdatePanel app={app} detail={detail} busyAction={busyAction} onReloadPlan={onReloadUpdatePlan} onApplyUpdate={onApplyUpdate} />
@@ -272,17 +281,104 @@ function BackupsPanel({
   );
 }
 
-function ConfigurePanel({
+const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: "app", label: "App settings" },
+  { id: "publicOrigins", label: "Public origins" },
+  { id: "mounts", label: "Mounts" },
+];
+
+// Consolidated runtime-app configuration: App settings, Public origins, and Mounts as tabs. A tab is
+// hidden when the app has no matching data; with a single tab the bar is omitted. App settings and
+// public origins share one settings form (one configure endpoint); mounts saves separately.
+function SettingsDialog({
   app,
   busyAction,
   canManageApps,
-  initialOpenSection,
+  globalMounts,
+  initialTab,
   onConfigure,
+  onConfigureMounts,
 }: {
   app: CoreApp;
   busyAction: string | null;
   canManageApps: boolean;
-  initialOpenSection?: "publicOrigins";
+  globalMounts: CoreGlobalMount[];
+  initialTab?: SettingsTab;
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
+}) {
+  const settings = app.settings || [];
+  const hasPublicOrigins = settings.some((setting) => isPublicOriginSettingKey(setting.key));
+  const hasMounts = (app.mounts?.length ?? 0) > 0;
+  const availableTabs = SETTINGS_TABS.filter((tab) =>
+    tab.id === "app" ? true : tab.id === "publicOrigins" ? hasPublicOrigins : hasMounts,
+  );
+  const defaultTab: SettingsTab = initialTab && availableTabs.some((tab) => tab.id === initialTab) ? initialTab : "app";
+  const [active, setActive] = useState<SettingsTab>(defaultTab);
+
+  // Reset the active tab while rendering when the app or requested tab changes.
+  const resetSignature = `${app.id}|${initialTab ?? ""}`;
+  const [prevReset, setPrevReset] = useState<string | null>(null);
+  if (prevReset !== resetSignature) {
+    setPrevReset(resetSignature);
+    setActive(defaultTab);
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      {availableTabs.length > 1 && (
+        <div className="flex gap-1 border-b">
+          {availableTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActive(tab.id)}
+              className={cn(
+                "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
+                active === tab.id ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Both forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
+      <div className={cn("flex min-h-0 flex-1 flex-col", active === "mounts" && "hidden")}>
+        <SettingsForm
+          app={app}
+          section={active === "publicOrigins" ? "publicOrigins" : "app"}
+          busyAction={busyAction}
+          canManageApps={canManageApps}
+          onConfigure={onConfigure}
+        />
+      </div>
+      {hasMounts && (
+        <div className={cn("flex min-h-0 flex-1 flex-col", active !== "mounts" && "hidden")}>
+          <MountsForm
+            app={app}
+            busyAction={busyAction}
+            canManageApps={canManageApps}
+            globalMounts={globalMounts}
+            onConfigureMounts={onConfigureMounts}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsForm({
+  app,
+  section,
+  busyAction,
+  canManageApps,
+  onConfigure,
+}: {
+  app: CoreApp;
+  section: "app" | "publicOrigins";
+  busyAction: string | null;
+  canManageApps: boolean;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
 }) {
   const settings = app.settings || [];
@@ -290,25 +386,19 @@ function ConfigurePanel({
   const publicOriginSettings = settings.filter((setting) => isPublicOriginSettingKey(setting.key));
   const publicOriginGroups = buildPublicOriginGroups(app, publicOriginSettings);
   const settingsSignature = settings
-    .map((setting) => `${setting.key}\u0000${setting.type}\u0000${setting.secret ? "1" : "0"}\u0000${setting.required ? "1" : "0"}\u0000${setting.value ?? ""}`)
-    .join("\u0001");
+    .map((setting) => [setting.key, setting.type, setting.secret ? "1" : "0", setting.required ? "1" : "0", setting.value ?? ""].join(" "))
+    .join("");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [autostartDraft, setAutostartDraft] = useState(isAppAutostartEnabled(app));
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [publicOriginsOpen, setPublicOriginsOpen] = useState(false);
 
-  // Reset the draft/section state while rendering when the app identity or its
-  // settings change, instead of in an effect.
+  // Reset the draft while rendering when the app identity or its settings change, not in an effect.
   // https://react.dev/learn/you-might-not-need-an-effect
-  const resetSignature = `${app.id}\u0001${app.autostart}\u0001${initialOpenSection ?? ""}\u0001${settingsSignature}`;
+  const resetSignature = `${app.id}${app.autostart}${settingsSignature}`;
   const [prevResetSignature, setPrevResetSignature] = useState<string | null>(null);
   if (prevResetSignature !== resetSignature) {
     setPrevResetSignature(resetSignature);
-    const nextDraft = Object.fromEntries(settings.map((setting) => [setting.key, setting.secret ? "" : setting.value || ""]));
-    setDraft(nextDraft);
+    setDraft(Object.fromEntries(settings.map((setting) => [setting.key, setting.secret ? "" : setting.value || ""])));
     setAutostartDraft(isAppAutostartEnabled(app));
-    setSettingsOpen(hasMissingRequiredSettings(appSettings, nextDraft));
-    setPublicOriginsOpen(initialOpenSection === "publicOrigins");
   }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -326,58 +416,42 @@ function ConfigurePanel({
   return (
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
-        <div className="rounded-md border bg-muted/30 p-3">
-          <CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} />
-        </div>
-        <ConfigureSection
-          title="App settings"
-          testId="configure-app-settings"
-          count={appSettings.length}
-          open={settingsOpen}
-          onOpenChange={setSettingsOpen}
-          attention={hasMissingRequiredSettings(appSettings, draft)}
-        >
-          {appSettings.length > 0 ? (
-            <div className="space-y-3">
-              {appSettings.map((setting) => (
-                <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
-              ))}
+        {section === "app" ? (
+          <>
+            <div className="rounded-md border bg-muted/30 p-3">
+              <CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} />
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">This app has no app-owned settings.</p>
-          )}
-        </ConfigureSection>
-        <ConfigureSection
-          title="Public origins"
-          testId="configure-public-origins"
-          count={publicOriginSettings.length}
-          open={publicOriginsOpen}
-          onOpenChange={setPublicOriginsOpen}
-        >
-          {publicOriginSettings.length > 0 ? (
-            <div className="space-y-4">
-              {publicOriginGroups.map((group) => (
-                <div key={group.service} className="space-y-2">
-                  <h3 className="text-sm font-medium">{group.service}</h3>
-                  <div className="space-y-2">
-                    {group.items.map(({ setting, endpoint }) => (
-                      <PublicOriginInput
-                        key={setting.key}
-                        setting={setting}
-                        endpoint={endpoint}
-                        value={draft[setting.key] ?? ""}
-                        disabled={!canManageApps}
-                        onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
-                      />
-                    ))}
-                  </div>
+            {appSettings.length > 0 ? (
+              <div className="space-y-3">
+                {appSettings.map((setting) => (
+                  <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">This app has no app-owned settings.</p>
+            )}
+          </>
+        ) : (
+          <div className="space-y-4">
+            {publicOriginGroups.map((group) => (
+              <div key={group.service} className="space-y-2">
+                <h3 className="text-sm font-medium">{group.service}</h3>
+                <div className="space-y-2">
+                  {group.items.map(({ setting, endpoint }) => (
+                    <PublicOriginInput
+                      key={setting.key}
+                      setting={setting}
+                      endpoint={endpoint}
+                      value={draft[setting.key] ?? ""}
+                      disabled={!canManageApps}
+                      onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
+                    />
+                  ))}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">This app has no public endpoints.</p>
-          )}
-        </ConfigureSection>
+              </div>
+            ))}
+          </div>
+        )}
       </DialogBody>
       <DialogFooter>
         <Button type="submit" disabled={!canManageApps || busyAction === `${app.id}:configure`}>
@@ -389,54 +463,85 @@ function ConfigurePanel({
   );
 }
 
-function MountsPanel({
+type MountRow = { source: "global" | "local"; globalMountName: string; label: string; hostPath: string };
+
+const MOUNT_CONTROL_CLASS =
+  "flex h-9 rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+
+function MountsForm({
   app,
   busyAction,
+  canManageApps,
+  globalMounts,
   onConfigureMounts,
 }: {
   app: CoreApp;
   busyAction: string | null;
+  canManageApps: boolean;
+  globalMounts: CoreGlobalMount[];
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
 }) {
   const slots: CoreMountSlot[] = app.mounts || [];
-  const slotsSignature = JSON.stringify(slots.map((slot) => [slot.key, slot.bindings.map((binding) => [binding.label, binding.hostPath])]));
-  const [rows, setRows] = useState<Record<string, Array<{ label: string; hostPath: string }>>>({});
+  const slotsSignature = JSON.stringify(
+    slots.map((slot) => [slot.key, slot.bindings.map((binding) => [binding.source ?? "local", binding.globalMountName ?? "", binding.label, binding.hostPath])]),
+  );
+  const [rows, setRows] = useState<Record<string, MountRow[]>>({});
 
   useEffect(() => {
-    setRows(Object.fromEntries(slots.map((slot) => [slot.key, slot.bindings.map((binding) => ({ label: binding.label, hostPath: binding.hostPath }))])));
-    // slots is derived from app.mounts; slotsSignature captures its contents so user edits are not reset on every render.
+    setRows(Object.fromEntries(slots.map((slot) => [
+      slot.key,
+      slot.bindings.map((binding) => ({
+        source: binding.source === "global" ? "global" : "local",
+        globalMountName: binding.globalMountName ?? "",
+        label: binding.label,
+        hostPath: binding.hostPath,
+      } satisfies MountRow)),
+    ])));
+    // slotsSignature captures app.mounts contents so user edits are not reset on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.id, slotsSignature]);
 
-  if (slots.length === 0) {
-    return <EmptyState icon={HardDrive} title="No external storage" description="This app does not declare any external mount slots." />;
-  }
+  const globalByName = useMemo(() => new Map(globalMounts.map((mount) => [mount.name, mount])), [globalMounts]);
 
-  const updateRow = (key: string, index: number, field: "label" | "hostPath", value: string) => {
+  const updateRow = (key: string, index: number, patch: Partial<MountRow>) => {
     setRows((current) => {
       const next = (current[key] ?? []).slice();
-      next[index] = { ...next[index], [field]: value };
+      next[index] = { ...next[index], ...patch };
       return { ...current, [key]: next };
     });
   };
 
   const addRow = (key: string) => {
-    setRows((current) => ({ ...current, [key]: [...(current[key] ?? []), { label: "", hostPath: "" }] }));
+    const source: "global" | "local" = globalMounts.length > 0 ? "global" : "local";
+    setRows((current) => ({
+      ...current,
+      [key]: [...(current[key] ?? []), { source, globalMountName: globalMounts[0]?.name ?? "", label: "", hostPath: "" }],
+    }));
   };
 
   const removeRow = (key: string, index: number) => {
     setRows((current) => ({ ...current, [key]: (current[key] ?? []).filter((_, rowIndex) => rowIndex !== index) }));
   };
 
+  if (slots.length === 0) {
+    return <EmptyState icon={HardDrive} title="No external storage" description="This app does not declare any external mount slots." />;
+  }
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const mounts: MountBindingInput[] = [];
     for (const slot of slots) {
       for (const row of rows[slot.key] ?? []) {
-        const label = row.label.trim();
-        const hostPath = row.hostPath.trim();
-        if (label.length > 0 && hostPath.length > 0) {
-          mounts.push({ key: slot.key, label, hostPath });
+        if (row.source === "global") {
+          if (row.globalMountName) {
+            mounts.push({ key: slot.key, globalMountName: row.globalMountName });
+          }
+        } else {
+          const label = row.label.trim();
+          const hostPath = row.hostPath.trim();
+          if (label.length > 0 && hostPath.length > 0) {
+            mounts.push({ key: slot.key, label, hostPath });
+          }
         }
       }
     }
@@ -449,7 +554,7 @@ function MountsPanel({
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          External folders live outside app data and are never backed up or deleted by Hosty. Host paths must be absolute and outside the Hosty data root.
+          Global mounts come from Shared mounts — label and path are fixed. Local paths bind a host folder directly; they must be absolute and outside the Hosty data root. External folders are never backed up or deleted by Hosty.
         </p>
         {slots.map((slot) => {
           const slotRows = rows[slot.key] ?? [];
@@ -471,20 +576,66 @@ function MountsPanel({
                 <div className="space-y-2">
                   {slotRows.map((row, index) => (
                     <div key={index} className="flex items-center gap-2">
-                      <Input
-                        aria-label={`${slot.key} label`}
-                        placeholder="label"
-                        className="w-40"
-                        value={row.label}
-                        onChange={(event) => updateRow(slot.key, index, "label", event.target.value)}
-                      />
-                      <Input
-                        aria-label={`${slot.key} host path`}
-                        placeholder="/srv/path"
-                        className="flex-1"
-                        value={row.hostPath}
-                        onChange={(event) => updateRow(slot.key, index, "hostPath", event.target.value)}
-                      />
+                      <select
+                        aria-label={`${slot.key} source`}
+                        className={cn(MOUNT_CONTROL_CLASS, "w-28")}
+                        value={row.source}
+                        disabled={!canManageApps}
+                        onChange={(event) =>
+                          updateRow(
+                            slot.key,
+                            index,
+                            event.target.value === "global"
+                              ? { source: "global", globalMountName: row.globalMountName || globalMounts[0]?.name || "" }
+                              : { source: "local" },
+                          )
+                        }
+                      >
+                        <option value="global" disabled={globalMounts.length === 0}>Global</option>
+                        <option value="local">Local</option>
+                      </select>
+                      {row.source === "global" ? (
+                        <>
+                          <select
+                            aria-label={`${slot.key} shared mount`}
+                            className={cn(MOUNT_CONTROL_CLASS, "w-44")}
+                            value={row.globalMountName}
+                            disabled={!canManageApps || globalMounts.length === 0}
+                            onChange={(event) => updateRow(slot.key, index, { globalMountName: event.target.value })}
+                          >
+                            {globalMounts.length === 0 ? (
+                              <option value="">No shared mounts</option>
+                            ) : (
+                              globalMounts.map((mount) => (
+                                <option key={mount.name} value={mount.name}>{mount.name}</option>
+                              ))
+                            )}
+                          </select>
+                          <div className="flex h-9 flex-1 items-center gap-1.5 rounded-md border bg-muted/40 px-3 text-muted-foreground">
+                            <Lock className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate font-mono text-xs">{globalByName.get(row.globalMountName)?.hostPath ?? "—"}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <Input
+                            aria-label={`${slot.key} label`}
+                            placeholder="label"
+                            className="w-44"
+                            value={row.label}
+                            disabled={!canManageApps}
+                            onChange={(event) => updateRow(slot.key, index, { label: event.target.value })}
+                          />
+                          <Input
+                            aria-label={`${slot.key} host path`}
+                            placeholder="/srv/path"
+                            className="flex-1 font-mono text-xs"
+                            value={row.hostPath}
+                            disabled={!canManageApps}
+                            onChange={(event) => updateRow(slot.key, index, { hostPath: event.target.value })}
+                          />
+                        </>
+                      )}
                       <IconButton title="Remove path" destructive onClick={() => removeRow(slot.key, index)}>
                         <Trash2 className="h-4 w-4" />
                       </IconButton>
@@ -493,7 +644,7 @@ function MountsPanel({
                 </div>
               )}
               {canAdd && (
-                <Button type="button" variant="outline" size="sm" onClick={() => addRow(slot.key)}>
+                <Button type="button" variant="outline" size="sm" disabled={!canManageApps} onClick={() => addRow(slot.key)}>
                   <Plus className="h-4 w-4" />
                   Add path
                 </Button>
@@ -503,9 +654,9 @@ function MountsPanel({
         })}
       </DialogBody>
       <DialogFooter>
-        <Button type="submit" disabled={busy}>
+        <Button type="submit" disabled={busy || !canManageApps}>
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
-          Save external storage
+          Save mounts
         </Button>
       </DialogFooter>
     </form>
