@@ -216,15 +216,14 @@ internal sealed class CoreLifecycleService(
         AppMountsRequest request,
         CancellationToken cancellationToken = default)
     {
-        var app = await RequireAppAsync(appId, cancellationToken);
-        // Resolve a global binding's name against the library up front (async); slots are
-        // manifest-derived and stable, so validating against the pre-fetched record is safe.
+        // Read the library snapshot up front (async); validation itself is synchronous and runs
+        // against the current record inside UpdateAppAsync so bindings are checked against the
+        // record's live mount slots, not a stale pre-fetched copy.
         var registry = await globalMounts.ReadAsync(cancellationToken);
-        var bindings = ValidateMountBindings(app, request.Mounts ?? [], registry);
 
         var document = await apps.UpdateAppAsync(appId, current => current with
         {
-            Mounts = bindings,
+            Mounts = ValidateMountBindings(current, request.Mounts ?? [], registry),
             OperationStatus = "configured",
             LastOperation = "configure-mounts",
             LastError = null,

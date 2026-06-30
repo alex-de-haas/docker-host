@@ -9,8 +9,11 @@ internal sealed class GlobalMountStore(CoreDataPaths paths)
     private string StatePath => Path.Combine(paths.CoreRoot, "global-mounts.json");
 
     public async Task<GlobalMountState> ReadAsync(CancellationToken cancellationToken = default)
-        => await JsonStorage.ReadAsync<GlobalMountState>(StatePath, cancellationToken) ??
-            new GlobalMountState(1, []);
+    {
+        var state = await JsonStorage.ReadAsync<GlobalMountState>(StatePath, cancellationToken);
+        // A corrupted/hand-edited file with "mounts": null would otherwise NRE in the service.
+        return state is null ? new GlobalMountState(1, []) : state with { Mounts = state.Mounts ?? [] };
+    }
 
     public async Task WriteAsync(GlobalMountState state, CancellationToken cancellationToken = default)
         => await JsonStorage.WriteAsync(StatePath, state, restrictToOwner: true, cancellationToken);

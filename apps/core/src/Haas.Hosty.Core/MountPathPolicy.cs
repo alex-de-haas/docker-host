@@ -76,7 +76,7 @@ internal sealed class MountPathPolicy(CoreDataPaths paths)
         {
             return new DirectoryInfo(fullPath).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? fullPath;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or System.Security.SecurityException or IOException or UnauthorizedAccessException)
         {
             return fullPath;
         }

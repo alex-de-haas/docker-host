@@ -16,7 +16,8 @@ const CONTROL_CLASS =
 
 type DraftMount = { name: string; hostPath: string; mode: string; description: string };
 
-const emptyDraft: DraftMount = { name: "", hostPath: "", mode: "ro", description: "" };
+// Default mode mirrors Core, which treats an omitted mode as "rw" (no extra cap on the slot mode).
+const emptyDraft: DraftMount = { name: "", hostPath: "", mode: "rw", description: "" };
 
 export function SharedMountsDialog({
   open,
@@ -43,12 +44,14 @@ export function SharedMountsDialog({
   const resetForm = () => {
     setDraft(emptyDraft);
     setEditing(null);
+    setConfirmForce(null);
   };
 
   const startEdit = (mount: CoreGlobalMount) => {
     setDraft({ name: mount.name, hostPath: mount.hostPath, mode: mount.mode, description: mount.description ?? "" });
     setEditing(mount.name);
     setError(null);
+    setConfirmForce(null);
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {

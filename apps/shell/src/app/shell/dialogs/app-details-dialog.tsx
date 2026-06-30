@@ -386,14 +386,14 @@ function SettingsForm({
   const publicOriginSettings = settings.filter((setting) => isPublicOriginSettingKey(setting.key));
   const publicOriginGroups = buildPublicOriginGroups(app, publicOriginSettings);
   const settingsSignature = settings
-    .map((setting) => [setting.key, setting.type, setting.secret ? "1" : "0", setting.required ? "1" : "0", setting.value ?? ""].join(" "))
-    .join("");
+    .map((setting) => [setting.key, setting.type, setting.secret ? "1" : "0", setting.required ? "1" : "0", setting.value ?? ""].join("\u0000"))
+    .join("\u0001");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [autostartDraft, setAutostartDraft] = useState(isAppAutostartEnabled(app));
 
   // Reset the draft while rendering when the app identity or its settings change, not in an effect.
   // https://react.dev/learn/you-might-not-need-an-effect
-  const resetSignature = `${app.id}${app.autostart}${settingsSignature}`;
+  const resetSignature = `${app.id}\u0001${app.autostart}\u0001${settingsSignature}`;
   const [prevResetSignature, setPrevResetSignature] = useState<string | null>(null);
   if (prevResetSignature !== resetSignature) {
     setPrevResetSignature(resetSignature);
@@ -636,7 +636,7 @@ function MountsForm({
                           />
                         </>
                       )}
-                      <IconButton title="Remove path" destructive onClick={() => removeRow(slot.key, index)}>
+                      <IconButton title="Remove path" destructive disabled={!canManageApps} onClick={() => removeRow(slot.key, index)}>
                         <Trash2 className="h-4 w-4" />
                       </IconButton>
                     </div>
