@@ -2,7 +2,6 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import {
-  Activity,
   ArrowUpCircle,
   Boxes,
   Check,
@@ -12,7 +11,6 @@ import {
   Copy,
   Database,
   ExternalLink,
-  FileText,
   HardDrive,
   LoaderCircle,
   Lock,
@@ -723,7 +721,6 @@ function InstalledAppRow({
   const running = app.runtimeState === "running";
   const canControl = canManageApps && !app.system;
   const canSwitchRuntime = canManageApps;
-  const canInspect = canManageApps;
   const canBackup = canControl && app.capabilities.includes("backup");
   const canConfigure = canControl;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
@@ -815,7 +812,6 @@ function InstalledAppRow({
           )}
           <InstalledAppActionsMenu
             app={app}
-            canInspect={canInspect}
             canBackup={canBackup}
             canConfigure={canConfigure}
             canUpdate={canUpdate}
@@ -893,7 +889,6 @@ function RuntimeSwitcher({
 
 function InstalledAppActionsMenu({
   app,
-  canInspect,
   canBackup,
   canConfigure,
   canUpdate,
@@ -901,18 +896,13 @@ function InstalledAppActionsMenu({
   onOpenPanel,
 }: {
   app: CoreApp;
-  canInspect: boolean;
   canBackup: boolean;
   canConfigure: boolean;
   canUpdate: boolean;
   canRemove: boolean;
   onOpenPanel: OpenAppPanel;
 }) {
-  const hasLogs = canInspect && app.capabilities.includes("logs");
-  // Observability (metrics + OTLP logs) is host-collected and available for any inspectable app; the
-  // panel shows an empty state when observability is disabled or the app has emitted nothing yet.
-  const hasObservability = canInspect;
-  const hasMenuActions = hasLogs || hasObservability || canBackup || canConfigure || canUpdate || canRemove;
+  const hasMenuActions = canBackup || canConfigure || canUpdate || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -926,18 +916,6 @@ function InstalledAppActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        {hasLogs && (
-          <DropdownMenuItem onClick={() => onOpenPanel(app, "logs")}>
-            <FileText className="h-4 w-4" />
-            Logs
-          </DropdownMenuItem>
-        )}
-        {hasObservability && (
-          <DropdownMenuItem onClick={() => onOpenPanel(app, "observability")}>
-            <Activity className="h-4 w-4" />
-            Observability
-          </DropdownMenuItem>
-        )}
         {canBackup && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "backups")}>
             <Database className="h-4 w-4" />

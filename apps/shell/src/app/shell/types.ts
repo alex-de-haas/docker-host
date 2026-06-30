@@ -234,6 +234,11 @@ export type OtlpLogRecord = {
 };
 export type AppOtlpLogsResponse = { appId: string; rangeSeconds: number; records: OtlpLogRecord[] };
 
+// Cross-resource OTLP logs from GET /api/observability/logs — the same structured records merged
+// across all (or a filtered set of) apps, each tagged with its source app id + display name.
+export type FleetOtlpLogRecord = OtlpLogRecord & { appId: string; appName: string };
+export type FleetOtlpLogsResponse = { rangeSeconds: number; appCount: number; records: FleetOtlpLogRecord[] };
+
 export type AppServiceUpdateStatus = {
   service: string;
   lockedDigest?: string | null;
@@ -325,11 +330,18 @@ export type CoreError = {
 };
 
 export type AppAction = "start" | "stop" | "restart" | "backup";
-export type DetailView = "logs" | "observability" | "backups" | "settings" | "update" | "remove";
+export type DetailView = "backups" | "settings" | "update" | "remove";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
 export type SettingsTab = "app" | "publicOrigins" | "mounts";
-export type ShellView = "available-apps" | "dashboard" | "installed-apps" | "users";
+export type ShellView =
+  | "available-apps"
+  | "dashboard"
+  | "installed-apps"
+  | "users"
+  | "obs-metrics"
+  | "obs-console"
+  | "obs-logs";
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
 export type HostyThemePreference = "light" | "dark" | "system";
@@ -421,14 +433,9 @@ export type LoadState = {
 export type DetailPanelState = {
   loading: boolean;
   error: string | null;
-  logs: string | null;
-  logServices?: LogsServiceSegment[] | null;
   backups: CoreBackup[] | null;
   backupCleanupPlan: CoreBackupCleanupPlan | null;
   updatePlan: CoreUpdatePlan | null;
-  // Observability panel payloads (metrics + OTLP logs), fetched together by loadAppObservability.
-  metrics?: AppMetricsResponse | null;
-  otlpLogs?: AppOtlpLogsResponse | null;
 };
 
 export type InstallPanelState = {

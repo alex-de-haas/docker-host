@@ -10,6 +10,7 @@ import {
   Gauge,
   Home,
   LayoutGrid,
+  LineChart,
   LoaderCircle,
   LogIn,
   LogOut,
@@ -17,7 +18,9 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  ScrollText,
   Sun,
+  Terminal,
   Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -106,6 +109,14 @@ export function ShellSidebar({
               <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
               <SidebarButton compact={compact} active={activeView === "installed-apps" && !workspace} icon={Boxes} label="Installed Apps" onClick={() => onNavigate("installed-apps")} />
               <SidebarButton compact={compact} active={activeView === "users"} icon={Users} label="User Management" onClick={() => onNavigate("users")} />
+            </NavigationSection>
+          )}
+
+          {canManageApps && (
+            <NavigationSection title="Observability" compact={compact}>
+              <SidebarButton compact={compact} active={activeView === "obs-metrics" && !workspace} icon={LineChart} label="Metrics" onClick={() => onNavigate("obs-metrics")} />
+              <SidebarButton compact={compact} active={activeView === "obs-console" && !workspace} icon={Terminal} label="Console logs" onClick={() => onNavigate("obs-console")} />
+              <SidebarButton compact={compact} active={activeView === "obs-logs" && !workspace} icon={ScrollText} label="Structured logs" onClick={() => onNavigate("obs-logs")} />
             </NavigationSection>
           )}
 

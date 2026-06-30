@@ -4,6 +4,9 @@ import type { ReactNode } from "react";
 import { AvailableAppsPage } from "./pages/available-apps-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { InstalledAppsPage } from "./pages/installed-apps-page";
+import { ObservabilityConsoleLogsPage } from "./pages/observability/console-logs-page";
+import { ObservabilityMetricsPage } from "./pages/observability/metrics-page";
+import { ObservabilityStructuredLogsPage } from "./pages/observability/structured-logs-page";
 import { UserManagementPanel } from "./pages/user-management-page";
 import { useShellActions, useShellState } from "./shell-context";
 
@@ -78,6 +81,51 @@ export function ShellUsersRoute() {
         coreOrigin={shellActions.coreOrigin}
         activeUser={shell.activeUser}
         sendCsrfJson={shellActions.sendCsrfJson}
+      />
+    </AdminShellRoute>
+  );
+}
+
+export function ShellObservabilityMetricsRoute() {
+  const shell = useShellState();
+  const shellActions = useShellActions();
+
+  return (
+    <AdminShellRoute>
+      <ObservabilityMetricsPage
+        runtimeApps={shell.runtimeApps}
+        systemApps={shell.systemApps}
+        coreOrigin={shellActions.coreOrigin}
+      />
+    </AdminShellRoute>
+  );
+}
+
+export function ShellObservabilityConsoleRoute() {
+  const shell = useShellState();
+  const shellActions = useShellActions();
+
+  return (
+    <AdminShellRoute>
+      <ObservabilityConsoleLogsPage
+        runtimeApps={shell.runtimeApps}
+        systemApps={shell.systemApps}
+        coreOrigin={shellActions.coreOrigin}
+      />
+    </AdminShellRoute>
+  );
+}
+
+export function ShellObservabilityLogsRoute() {
+  const shell = useShellState();
+  const shellActions = useShellActions();
+
+  return (
+    <AdminShellRoute>
+      <ObservabilityStructuredLogsPage
+        runtimeApps={shell.runtimeApps}
+        systemApps={shell.systemApps}
+        coreOrigin={shellActions.coreOrigin}
       />
     </AdminShellRoute>
   );

@@ -198,19 +198,42 @@ anticipated):
 
 The two streams stay addressable independently end to end (`…/logs` vs `…/otlp-logs`).
 
-## Shell Observability tab (P4)
+## Shell Observability tab (P4, superseded)
 
-A per-app **Observability** view (Installed Apps → app action menu) renders both read surfaces:
+P4 originally shipped a **per-app** Observability tab (recharts metric charts + a structured OTLP-logs
+table) plus a console **Logs** tab in the Installed Apps app-action dialog. Both per-app dialog tabs
+were later **removed** in favour of the cross-resource Observability **section** below — the same read
+surfaces, but host-wide with a resource selector, so the per-app popups were pure duplication. The
+Dashboard **fleet heat-map** remains deferred.
 
-- **Metrics** — recharts area charts, one per series, with a 5m/15m/1h range selector. CPU/memory
-  series are titled and unit-formatted (% / bytes). Backed by `GET …/metrics`.
-- **OTLP logs** — a severity-filterable (All / Info+ / Warn+ / Error+) structured table with severity
-  badges, trace-id chips, and attribute chips, newest-first. Backed by `GET …/otlp-logs`, and kept
-  visually distinct from the console-log `LogsPanel`.
+## Shell Observability section (cross-resource)
 
-Both show informative empty states when observability is disabled or the app has emitted nothing. The
-Dashboard **fleet heat-map** is deferred to a focused follow-up (it wants a Core fleet-summary
-endpoint to avoid N per-app calls).
+Shell has a first-class **Observability** group in the sidebar (host-admin only), modelled on the .NET
+Aspire dashboard. Three top-level destinations, each its own route under `/observability` (a "Resources"
+overview was dropped — Installed Apps already covers it):
+
+- **Metrics** (`/observability/metrics`) — a resource selector (All / one app) + 5m/15m/1h range; charts
+  reuse the same `MetricSeriesCard`, fanned out over `GET …/metrics` per selected app.
+- **Console logs** (`/observability/console`) — a resource selector + the `docker logs` tail
+  (`GET …/logs`), kept strictly separate from the OTLP stream.
+- **Structured logs** (`/observability/logs`) — OTLP log records merged across **all** resources into one
+  searchable, severity-filterable stream, backed by the new fleet endpoint below.
+
+The per-app dialog Observability/Logs tabs were removed (they duplicated this section); the shared
+`MetricSeriesCard` / `OtlpLogTable` components now back only the section pages. Cross-resource metrics
+and console logs deliberately fan out the existing per-app endpoints (no aggregation value in a fleet
+endpoint there — the in-memory stores are per-app keyed and charts render per app anyway). Only the
+structured-logs view needs server-side composition (a single time-merged, globally-ordered,
+globally-capped stream), so it gets one new endpoint.
+
+**Fleet read API.** `GET /api/observability/logs?range=<seconds>&severity=<minNumber>&limit=<n>&apps=<csv>&q=<substring>`
+(admin session; `/control/v1` twin) merges OTLP log records across all installed apps (or the `apps`
+filter), applies the severity floor + a case-insensitive `q` body search, orders chronologically, and
+caps to the most recent `limit` **across apps**. Each record is tagged with its source `appId` +
+`appName` (the stored `OtlpLogRecord` carries neither — attribution happens at the service layer by
+iterating `ListAppRecordsAsync` and querying `ILogStore` per app). Best-effort: an unknown id in `apps`
+is skipped, never a 404. `ILogStore` is unchanged — the cross-app composition lives in
+`CoreLifecycleService.GetFleetOtlpLogsAsync`.
 
 ## Key code
 
@@ -226,9 +249,12 @@ endpoint to avoid N per-app calls).
 - `OtlpLogsJsonParser.cs` — tolerant OTLP/JSON logs parser for the collector file output (P4).
 - `TelemetryScrapeService.cs` — the ~10s loop that fills the stores; metrics scrape + `docker stats`
   (P3) + the `FileLogTailReader` OTLP-logs tail (P4).
-- `CoreLifecycleService.GetMetricsAsync` / `GetOtlpLogsAsync` + the `…/metrics` and `…/otlp-logs`
-  endpoints in `LifecycleEndpoints.cs` (P3/P4).
-- `apps/shell/src/app/shell/dialogs/observability-panel.tsx` — the Shell Observability tab (P4).
+- `CoreLifecycleService.GetMetricsAsync` / `GetOtlpLogsAsync` / `GetFleetOtlpLogsAsync` + the
+  `…/metrics`, `…/otlp-logs`, and `/api/observability/logs` endpoints in `LifecycleEndpoints.cs`.
+- `apps/shell/src/app/shell/observability/` — shared `MetricSeriesCard` + `OtlpLogTable` components
+  (extracted from the removed per-app `observability-panel.tsx`; now used only by the section pages).
+- `apps/shell/src/app/shell/pages/observability/` — the cross-resource Metrics / Console logs /
+  Structured logs pages; routed via `apps/shell/src/app/observability/*` + `shell-routes.ts`.
 
 ## Roadmap (later phases)
 
@@ -240,7 +266,12 @@ endpoint to avoid N per-app calls).
   `GET /api/apps/{id}/otlp-logs?range&severity&limit`; **plus the Shell Observability tab** — per-app
   metric charts and a distinct, structured OTLP-logs view (severity filters, trace-id chips), never
   interleaved with console logs.
-- **Later** — the Dashboard **fleet heat-map** (+ a Core fleet-summary endpoint); traces (a real sink
-  replacing `nop` + a `…/traces` read surface); per-app OTLP ingest auth; localCommand OTLP; external
-  backend (SigNoz / Prometheus + Tempo + Loki) swap (changes only where the collector exports / where
-  Core reads).
+- **P5 (done)** — the cross-resource **Observability section** in Shell (Aspire-style): Metrics /
+  Console logs / Structured logs as first-class destinations, reusing the per-app read surfaces, plus
+  one new fleet endpoint `GET /api/observability/logs` for cross-app structured-logs search/merge.
+  (A "Resources" overview was considered but dropped — Installed Apps already covers it.) Traces
+  deliberately out of scope.
+- **Later** — **traces** (a real collector sink replacing `nop` + a `…/traces` read surface + a
+  span-waterfall UI) — the largest remaining vertical; the Dashboard **fleet heat-map** (+ a Core
+  fleet-summary endpoint); per-app OTLP ingest auth; localCommand OTLP; external backend (SigNoz /
+  Prometheus + Tempo + Loki) swap (changes only where the collector exports / where Core reads).

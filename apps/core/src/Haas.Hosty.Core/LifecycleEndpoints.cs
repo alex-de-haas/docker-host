@@ -265,6 +265,26 @@ internal static class LifecycleEndpoints
                 async () => await HandleLifecycleError(() => lifecycle.GetOtlpLogsAsync(appId, range, severity, limit, cancellationToken)),
                 cancellationToken: cancellationToken));
 
+        // Cross-resource OTLP logs across all apps (the Shell "Structured logs" view). `apps` is an
+        // optional comma-separated app-id filter; `q` an optional body substring. Host-admin only.
+        app.MapGet("/api/observability/logs", async (
+            int? range,
+            int? severity,
+            int? limit,
+            string? apps,
+            string? q,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetFleetOtlpLogsAsync(range, severity, limit, ParseAppFilter(apps), q, cancellationToken)),
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/apps/{appId}/update-status", async (
             string appId,
             HttpRequest request,
@@ -587,6 +607,31 @@ internal static class LifecycleEndpoints
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.GetOtlpLogsAsync(appId, range, severity, limit, cancellationToken))));
+
+        app.MapGet("/control/v1/observability/logs", async (
+            int? range,
+            int? severity,
+            int? limit,
+            string? apps,
+            string? q,
+            HttpRequest request,
+            ControlSecret secret,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleLifecycleError(() => lifecycle.GetFleetOtlpLogsAsync(range, severity, limit, ParseAppFilter(apps), q, cancellationToken))));
+    }
+
+    // Parse the optional comma-separated `apps` query filter into a list of app ids (null = all apps).
+    private static IReadOnlyCollection<string>? ParseAppFilter(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv))
+        {
+            return null;
+        }
+
+        var ids = csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return ids.Length == 0 ? null : ids;
     }
 
     private static async Task<IResult> HandleLifecycleError<T>(Func<Task<T>> action)
