@@ -343,6 +343,18 @@ internal sealed partial class CoreCommand(CommandContext context)
             return StopOutcome.NotRunning;
         }
 
+        // The stop request returns immediately but the process can take several seconds to fully
+        // exit, so show a spinner while we wait. Outcome messages are printed by the caller after the
+        // spinner clears; errors go to the separate stderr console, which stays safe under the live
+        // status display.
+        return await CommandStatus.RunAsync(
+            context,
+            "Stopping Hosty Core…",
+            () => RequestStopAndWaitAsync(discovery));
+    }
+
+    private async Task<StopOutcome> RequestStopAndWaitAsync(ControlDiscoveryDocument discovery)
+    {
         using var httpClient = CreateControlClient(discovery);
         HttpResponseMessage response;
         try
@@ -373,7 +385,6 @@ internal sealed partial class CoreCommand(CommandContext context)
             }
         }
 
-        context.Console.MarkupLine("[green]Hosty Core stop requested.[/]");
         return await WaitForCoreFullyStoppedAsync(discovery.ProcessId, discovery.ControlBaseUrl)
             ? StopOutcome.Stopped
             : StopOutcome.TimedOut;
