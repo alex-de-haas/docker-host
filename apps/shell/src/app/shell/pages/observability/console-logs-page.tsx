@@ -69,7 +69,11 @@ export function ObservabilityConsoleLogsPage({
         const payload = (await response.json()) as LogsResponse;
         const services = payload.services ?? [];
         setState({ loading: false, error: null, text: payload.text || "", services });
-        setActiveService(services[0]?.service ?? null);
+        // Keep the current service selected across refreshes when it is still present; only fall back
+        // to the first service when the previous selection is gone (or none was set).
+        setActiveService((current) =>
+          current && services.some((segment) => segment.service === current) ? current : services[0]?.service ?? null,
+        );
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
           return;
@@ -89,8 +93,7 @@ export function ObservabilityConsoleLogsPage({
     if (selectedAppId) {
       void loadLogs(selectedAppId);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAppId]);
+  }, [selectedAppId, loadLogs]);
 
   const hasTabs = state.services.length > 1;
   const activeSegment = state.services.find((segment) => segment.service === activeService) ?? state.services[0];

@@ -39,6 +39,17 @@ export function ObservabilityMetricsPage({
   const [rangeSeconds, setRangeSeconds] = useState(900);
   const [metricsByApp, setMetricsByApp] = useState<Record<string, MetricsState>>({});
 
+  // Keep the selection valid as the app set changes (e.g. an app is uninstalled) — adjust during
+  // render, not in an effect. https://react.dev/learn/you-might-not-need-an-effect
+  const appsSignature = apps.map((app) => app.id).join(",");
+  const [prevAppsSignature, setPrevAppsSignature] = useState(appsSignature);
+  if (prevAppsSignature !== appsSignature) {
+    setPrevAppsSignature(appsSignature);
+    if (selectedAppId !== ALL && !apps.some((app) => app.id === selectedAppId)) {
+      setSelectedAppId(ALL);
+    }
+  }
+
   // The apps the current selection asks for (all of them, or a single resource).
   const targetApps = useMemo(
     () => (selectedAppId === ALL ? apps : apps.filter((app) => app.id === selectedAppId)),
@@ -87,12 +98,11 @@ export function ObservabilityMetricsPage({
     [targetApps, loadAppMetrics],
   );
 
-  // Reload whenever the selection or range changes.
-  const targetSignature = targetApps.map((app) => app.id).join(",");
+  // Reload whenever the selection or range changes. `refresh` is memoized on `targetApps`, which is
+  // referentially stable (derived from the memoized app list), so depending on it does not loop.
   useEffect(() => {
     refresh(rangeSeconds);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetSignature, rangeSeconds]);
+  }, [refresh, rangeSeconds]);
 
   const selectRange = (seconds: number) => setRangeSeconds(seconds);
 
@@ -150,6 +160,22 @@ export function ObservabilityMetricsPage({
           </div>
         }
       />
+
+      {targetApps.some((app) => metricsByApp[app.id]?.error) && (
+        <div className="space-y-2">
+          {targetApps.map((app) => {
+            const error = metricsByApp[app.id]?.error;
+            return error ? (
+              <div
+                key={app.id}
+                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200"
+              >
+                {app.displayName}: {error}
+              </div>
+            ) : null;
+          })}
+        </div>
+      )}
 
       {targetApps.length === 0 ? (
         <EmptyState icon={LineChart} title="No resources" description="Install an app to see its metrics." />

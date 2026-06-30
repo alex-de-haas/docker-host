@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, LoaderCircle, RefreshCw, ScrollText, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,8 +49,22 @@ export function ObservabilityStructuredLogsPage({
   const [query, setQuery] = useState("");
   const [state, setState] = useState<LogsState>({ loading: false, error: null, response: null });
 
+  // Keep the selection valid as the app set changes (adjust during render, not in an effect).
+  const appsSignature = apps.map((app) => app.id).join(",");
+  const [prevAppsSignature, setPrevAppsSignature] = useState(appsSignature);
+  if (prevAppsSignature !== appsSignature) {
+    setPrevAppsSignature(appsSignature);
+    if (selectedAppId !== ALL && !apps.some((app) => app.id === selectedAppId)) {
+      setSelectedAppId(ALL);
+    }
+  }
+
+  // Debounced typing + manual refresh can overlap; a request token ensures only the latest in-flight
+  // request updates state, so a slower earlier response can't overwrite newer results or errors.
+  const requestRef = useRef(0);
   const loadLogs = useCallback(
     async (appId: string, severity: number, range: number, text: string) => {
+      const token = ++requestRef.current;
       setState((current) => ({ ...current, loading: true, error: null }));
       try {
         const params = new URLSearchParams({ range: String(range), limit: "500" });
@@ -72,9 +86,12 @@ export function ObservabilityStructuredLogsPage({
           throw new Error(await readCoreError(response));
         }
         const payload = (await response.json()) as FleetOtlpLogsResponse;
+        if (token !== requestRef.current) {
+          return;
+        }
         setState({ loading: false, error: null, response: payload });
       } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
+        if (isAuthRequiredRedirectError(error) || token !== requestRef.current) {
           return;
         }
         setState({

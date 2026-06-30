@@ -878,10 +878,16 @@ internal sealed class CoreLifecycleService(
         var trimmedQuery = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
         var filter = appIds is { Count: > 0 } ? new HashSet<string>(appIds, StringComparer.Ordinal) : null;
 
+        // Without a body search the newest `cappedLimit` per app are enough (the global cap keeps at
+        // most that many total); with `q`, pull the full window so the substring filter has enough
+        // candidates to draw from.
+        var perAppLimit = trimmedQuery is null ? cappedLimit : MaxLogsLimit;
+
         var records = await apps.ListAppRecordsAsync(cancellationToken);
         var merged = new List<FleetOtlpLogRecord>();
         foreach (var app in records)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (filter is not null && !filter.Contains(app.Id))
             {
                 continue;
@@ -889,9 +895,11 @@ internal sealed class CoreLifecycleService(
 
             // Pull the most recent window per app, then merge/cap globally below — so the total limit
             // is applied after the cross-app merge, not per app.
-            foreach (var record in logs.Query(app.Id, since, minSeverity, MaxLogsLimit))
+            foreach (var record in logs.Query(app.Id, since, minSeverity, perAppLimit))
             {
-                if (trimmedQuery is not null && record.Body.IndexOf(trimmedQuery, StringComparison.OrdinalIgnoreCase) < 0)
+                // Records are parsed from external OTLP, so defend against missing body/attributes.
+                var body = record.Body ?? string.Empty;
+                if (trimmedQuery is not null && !body.Contains(trimmedQuery, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -902,8 +910,8 @@ internal sealed class CoreLifecycleService(
                     record.TimestampUnixMs,
                     record.SeverityNumber,
                     record.SeverityText,
-                    record.Body,
-                    record.Attributes,
+                    body,
+                    record.Attributes ?? new Dictionary<string, string>(),
                     record.TraceId,
                     record.SpanId));
             }

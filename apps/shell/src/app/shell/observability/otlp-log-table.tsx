@@ -24,8 +24,8 @@ export function OtlpLogTable({ records, showSource = false }: { records: OtlpLog
     <div className="max-h-[28rem] min-h-0 overflow-auto rounded-md border">
       <table className="w-full border-collapse text-left text-xs">
         <tbody>
-          {ordered.map((record, index) => (
-            <tr key={index} className="border-b align-top last:border-b-0">
+          {ordered.map((record) => (
+            <tr key={logRowKey(record)} className="border-b align-top last:border-b-0">
               <td className="whitespace-nowrap px-2 py-1.5 font-mono text-muted-foreground">
                 {new Date(record.timestampUnixMs).toLocaleTimeString()}
               </td>
@@ -70,6 +70,19 @@ function LogMeta({ record }: { record: OtlpLogRow }) {
       ))}
     </div>
   );
+}
+
+// Stable per-row key derived from record fields rather than the array index (which shifts when rows
+// are reversed/filtered or new records arrive): timestamp + source app + span/trace id + severity +
+// a body prefix. Distinct enough to key a logs table without an explicit record id.
+function logRowKey(record: OtlpLogRow): string {
+  return [
+    record.timestampUnixMs,
+    record.appId ?? "",
+    record.spanId ?? record.traceId ?? "",
+    record.severityNumber,
+    record.body.slice(0, 80),
+  ].join("|");
 }
 
 export function severityClasses(severityNumber: number): string {
