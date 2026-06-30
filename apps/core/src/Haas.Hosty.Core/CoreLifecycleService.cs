@@ -857,6 +857,74 @@ internal sealed class CoreLifecycleService(
         return new AppOtlpLogsResponse(appId, range, records);
     }
 
+    // Observability v1 cross-resource OTLP-logs read path: structured log records merged across ALL
+    // installed apps (optionally narrowed to `appIds`) over the last `range` seconds, filtered to
+    // severity >= `minSeverity` and to a substring `query` over the body, then ordered chronologically
+    // and capped to the most recent `limit` across apps. Best-effort: an unknown id in `appIds` is
+    // simply absent from the registry (never a 404 — there is no per-app gate here). Each record is
+    // tagged with its source app id + display name (the stored OtlpLogRecord carries neither). This is
+    // the OTLP-logs stream, distinct from the `docker logs` console tail and never interleaved with it.
+    public async Task<FleetOtlpLogsResponse> GetFleetOtlpLogsAsync(
+        int? rangeSeconds,
+        int? minSeverity,
+        int? limit,
+        IReadOnlyCollection<string>? appIds,
+        string? query,
+        CancellationToken cancellationToken = default)
+    {
+        var range = Math.Clamp(rangeSeconds ?? DefaultLogsRangeSeconds, 1, MaxLogsRangeSeconds);
+        var cappedLimit = Math.Clamp(limit ?? DefaultLogsLimit, 1, MaxLogsLimit);
+        var since = clock.UtcNow.AddSeconds(-range);
+        var trimmedQuery = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+        var filter = appIds is { Count: > 0 } ? new HashSet<string>(appIds, StringComparer.Ordinal) : null;
+
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        var merged = new List<FleetOtlpLogRecord>();
+        foreach (var app in records)
+        {
+            if (filter is not null && !filter.Contains(app.Id))
+            {
+                continue;
+            }
+
+            // Pull the most recent window per app, then merge/cap globally below — so the total limit
+            // is applied after the cross-app merge, not per app.
+            foreach (var record in logs.Query(app.Id, since, minSeverity, MaxLogsLimit))
+            {
+                if (trimmedQuery is not null && record.Body.IndexOf(trimmedQuery, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                merged.Add(new FleetOtlpLogRecord(
+                    app.Id,
+                    app.DisplayName,
+                    record.TimestampUnixMs,
+                    record.SeverityNumber,
+                    record.SeverityText,
+                    record.Body,
+                    record.Attributes,
+                    record.TraceId,
+                    record.SpanId));
+            }
+        }
+
+        // Global chronological order, then keep the most recent `limit` (drop the oldest overflow).
+        merged.Sort((left, right) => left.TimestampUnixMs.CompareTo(right.TimestampUnixMs));
+        if (merged.Count > cappedLimit)
+        {
+            merged.RemoveRange(0, merged.Count - cappedLimit);
+        }
+
+        var present = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var record in merged)
+        {
+            present.Add(record.AppId);
+        }
+
+        return new FleetOtlpLogsResponse(range, present.Count, merged);
+    }
+
     // Read-only "update available" detection (runtime-app-marketplace.md, "Update-available
     // detection"): for each compiled (docker image) service, compare the currently-locked digest to
     // the tag's remotely-resolved candidate digest via a light registry lookup (IImageDigestResolver,
@@ -3245,6 +3313,28 @@ internal sealed record AppOtlpLogsResponse(
     string AppId,
     long RangeSeconds,
     IReadOnlyList<OtlpLogRecord> Records);
+
+// One cross-resource OTLP log record: a stored OtlpLogRecord flattened with the source app it was
+// attributed to. AppId is the store key; AppName is the app's display name (for grouping/labels in
+// the cross-app Structured logs view). The stored record carries neither, so both are injected here.
+internal sealed record FleetOtlpLogRecord(
+    string AppId,
+    string AppName,
+    long TimestampUnixMs,
+    int SeverityNumber,
+    string SeverityText,
+    string Body,
+    IReadOnlyDictionary<string, string> Attributes,
+    string? TraceId,
+    string? SpanId);
+
+// Cross-resource OTLP-logs read response: structured records merged across all (or the filtered) apps
+// over the resolved range, in chronological order (newest last). `RangeSeconds` echoes the effective
+// (clamped) window; `AppCount` is the number of apps that contributed at least one record.
+internal sealed record FleetOtlpLogsResponse(
+    long RangeSeconds,
+    int AppCount,
+    IReadOnlyList<FleetOtlpLogRecord> Records);
 
 // One supervision observation: an app's aggregate health status at a point in time plus its resolved
 // restart policy, used by the supervisor to reconcile state, detect transitions, and restart crashes.

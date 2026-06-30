@@ -7,9 +7,19 @@ const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   "available-apps": "/apps",
   "installed-apps": "/installed-apps",
   users: "/users",
+  "obs-metrics": "/observability/metrics",
+  "obs-console": "/observability/console",
+  "obs-logs": "/observability/logs",
 };
 
-const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "installed-apps", "users"]);
+const ADMIN_SHELL_VIEWS = new Set<ShellView>([
+  "dashboard",
+  "installed-apps",
+  "users",
+  "obs-metrics",
+  "obs-console",
+  "obs-logs",
+]);
 
 export function shellViewRequiresAdmin(view: ShellView) {
   return ADMIN_SHELL_VIEWS.has(view);
@@ -64,6 +74,18 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
 
   if (path === "/users") {
     return { view: "users", workspace: null };
+  }
+
+  if (path === "/observability/metrics") {
+    return { view: "obs-metrics", workspace: null };
+  }
+
+  if (path === "/observability/console") {
+    return { view: "obs-console", workspace: null };
+  }
+
+  if (path === "/observability/logs") {
+    return { view: "obs-logs", workspace: null };
   }
 
   return { view: "dashboard", workspace: null };

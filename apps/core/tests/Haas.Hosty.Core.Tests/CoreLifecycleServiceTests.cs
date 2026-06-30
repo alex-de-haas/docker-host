@@ -269,6 +269,119 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task GetFleetOtlpLogsAsync_MergesRecordsAcrossAppsInChronologicalOrder()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: "com.example.tasks", name: "Tasks")));
+        var now = fixture.Clock.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 2000, 9, "notes line"));
+        fixture.Logs.Record("com.example.tasks", LogRecord(now - 1000, 9, "tasks line"));
+
+        var response = await fixture.Service.GetFleetOtlpLogsAsync(null, null, null, null, null);
+
+        Assert.Equal(300, response.RangeSeconds);
+        Assert.Equal(2, response.AppCount);
+        Assert.Equal(2, response.Records.Count);
+        // Newest last (chronological).
+        Assert.Equal("com.example.notes", response.Records[0].AppId);
+        Assert.Equal("Notes", response.Records[0].AppName);
+        Assert.Equal("com.example.tasks", response.Records[1].AppId);
+        Assert.Equal("Tasks", response.Records[1].AppName);
+    }
+
+    [Fact]
+    public async Task GetFleetOtlpLogsAsync_FiltersByAppIds()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: "com.example.tasks", name: "Tasks")));
+        var now = fixture.Clock.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 1000, 9, "notes line"));
+        fixture.Logs.Record("com.example.tasks", LogRecord(now - 1000, 9, "tasks line"));
+
+        var response = await fixture.Service.GetFleetOtlpLogsAsync(null, null, null, new[] { "com.example.tasks" }, null);
+
+        Assert.Equal(1, response.AppCount);
+        var record = Assert.Single(response.Records);
+        Assert.Equal("com.example.tasks", record.AppId);
+    }
+
+    [Fact]
+    public async Task GetFleetOtlpLogsAsync_FiltersByQuerySubstringCaseInsensitively()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var now = fixture.Clock.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 2000, 9, "hello world"));
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 1000, 9, "goodbye"));
+
+        var response = await fixture.Service.GetFleetOtlpLogsAsync(null, null, null, null, "HELLO");
+
+        var record = Assert.Single(response.Records);
+        Assert.Equal("hello world", record.Body);
+    }
+
+    [Fact]
+    public async Task GetFleetOtlpLogsAsync_FiltersBySeverityFloor()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var now = fixture.Clock.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 2000, 9, "info line"));
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 1000, 17, "error line"));
+
+        var response = await fixture.Service.GetFleetOtlpLogsAsync(null, minSeverity: 13, null, null, null);
+
+        var record = Assert.Single(response.Records);
+        Assert.Equal("error line", record.Body);
+    }
+
+    [Fact]
+    public async Task GetFleetOtlpLogsAsync_AppliesTotalLimitKeepingNewest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var now = fixture.Clock.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 3000, 9, "oldest"));
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 2000, 9, "middle"));
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 1000, 9, "newest"));
+
+        var response = await fixture.Service.GetFleetOtlpLogsAsync(null, null, limit: 2, null, null);
+
+        Assert.Equal(2, response.Records.Count);
+        Assert.Equal("middle", response.Records[0].Body);
+        Assert.Equal("newest", response.Records[1].Body);
+    }
+
+    [Fact]
+    public async Task GetFleetOtlpLogsAsync_UnknownAppIdInFilter_IsSkippedNotFatal()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var now = fixture.Clock.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Logs.Record("com.example.notes", LogRecord(now - 1000, 9, "notes line"));
+
+        var response = await fixture.Service.GetFleetOtlpLogsAsync(
+            null, null, null, new[] { "com.example.notes", "com.example.ghost" }, null);
+
+        var record = Assert.Single(response.Records);
+        Assert.Equal("com.example.notes", record.AppId);
+    }
+
+    private static OtlpLogRecord LogRecord(long timestampUnixMs, int severityNumber, string body)
+        => new(
+            timestampUnixMs,
+            severityNumber,
+            severityNumber >= 17 ? "ERROR" : severityNumber >= 13 ? "WARN" : "INFO",
+            body,
+            new Dictionary<string, string>(),
+            TraceId: null,
+            SpanId: null);
+
+    [Fact]
     public async Task CreateUpdatePlanAsync_UsesStoredManifestUrlForRemoteInstalls()
     {
         const string manifestUrl = "https://apps.example.test/notes/manifest.json";
@@ -2704,7 +2817,8 @@ public sealed class CoreLifecycleServiceTests
             RecordingRuntimeAdapter adapter,
             LocalCommandProcessRegistry localProcesses,
             FakeClock clock,
-            InMemoryMetricStore metrics)
+            InMemoryMetricStore metrics,
+            InMemoryLogStore logs)
         {
             Root = root;
             Paths = paths;
@@ -2717,6 +2831,7 @@ public sealed class CoreLifecycleServiceTests
             LocalProcesses = localProcesses;
             Clock = clock;
             Metrics = metrics;
+            Logs = logs;
         }
 
         public string Root { get; }
@@ -2740,6 +2855,8 @@ public sealed class CoreLifecycleServiceTests
         public FakeClock Clock { get; }
 
         public InMemoryMetricStore Metrics { get; }
+
+        public InMemoryLogStore Logs { get; }
 
         public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null, string? ingressBaseDomain = null)
         {
@@ -2787,8 +2904,9 @@ public sealed class CoreLifecycleServiceTests
                 ? new NoneIngressController()
                 : new CloudflaredIngressController(runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
             var metrics = new InMemoryMetricStore();
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, metrics: metrics);
-            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, metrics);
+            var logs = new InMemoryLogStore();
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, metrics: metrics, logs: logs);
+            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, metrics, logs);
         }
 
         // Shared-mounts library over the same data root the lifecycle service reads from.
@@ -2801,9 +2919,11 @@ public sealed class CoreLifecycleServiceTests
             string? sourceRepository = null,
             string? settingsJson = null,
             string? externalMountsJson = null,
-            string? networkJson = null)
+            string? networkJson = null,
+            string id = "com.example.notes",
+            string name = "Notes")
         {
-            var path = Path.Combine(Root, $"notes-{version}.json");
+            var path = Path.Combine(Root, $"{id}-{version}.json");
             var dependencyJson = includeDependency
                 ? """
                   "dependencies": [{
@@ -2833,8 +2953,8 @@ public sealed class CoreLifecycleServiceTests
             await File.WriteAllTextAsync(path, $$"""
                 {
                   "schemaVersion": "app.0.1",
-                  "id": "com.example.notes",
-                  "name": "Notes",
+                  "id": "{{id}}",
+                  "name": "{{name}}",
                   "description": "Personal notes.",
                   "version": "{{version}}",
                   {{sourceJson}}
