@@ -31,12 +31,22 @@ internal sealed class LaunchSettings
 
     public string HostyCollectorAutostart => this[LaunchSettingDefinitions.HostyCollectorAutostart];
 
+    public string HostyCollectorManifestPath => this[LaunchSettingDefinitions.HostyCollectorManifestPath];
+
     public string ResolveHostDataRoot(HostyEnvironment environment)
         => environment.ResolvePath(HostyDataRootRaw);
 
     public string ResolveHostyShellManifestPath(HostyEnvironment environment)
+        => ResolveManifestReference(HostyShellManifestPath, environment);
+
+    public string ResolveHostyCollectorManifestPath(HostyEnvironment environment)
+        => ResolveManifestReference(HostyCollectorManifestPath, environment);
+
+    // A manifest reference is either an http(s) URL (used verbatim) or a local path (resolved against
+    // the host environment). Shared by the Shell and the telemetry collector bootstrap references.
+    private static string ResolveManifestReference(string reference, HostyEnvironment environment)
     {
-        var manifestPath = HostyShellManifestPath.Trim();
+        var manifestPath = reference.Trim();
         return Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
             ? manifestPath
