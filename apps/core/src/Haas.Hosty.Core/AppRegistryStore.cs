@@ -257,7 +257,10 @@ internal sealed record AppMountSlot(string Key, string Mode, bool Multiple, bool
 // Operator-configured binding of a host path into a declared mount slot. The container path
 // is derived deterministically from the operator-chosen Label (`/mnt/{Key}/{Label}`) so it is
 // stable across sibling add/remove. Read-only/-write comes from the slot's Mode, not stored here.
-internal sealed record AppMountBinding(string Key, string Label, string HostPath);
+// When GlobalMountName is set the binding references a shared-mounts library entry: Label equals the
+// entry name and HostPath is a display cache re-resolved live from the library at start (see
+// GlobalMountStore). Additive/nullable, so no AppStateDocument schema bump (cf. ArtifactLocks).
+internal sealed record AppMountBinding(string Key, string Label, string HostPath, string? GlobalMountName = null);
 
 internal sealed record AppDependencyContract(
     string AppId,
@@ -483,7 +486,9 @@ internal sealed record AppSummary(
                     .Select(binding => new AppMountBindingSummary(
                         binding.Label,
                         binding.HostPath,
-                        RuntimeMountPlanner.BuildContainerPath(binding.Key, binding.Label)))
+                        RuntimeMountPlanner.BuildContainerPath(binding.Key, binding.Label),
+                        binding.GlobalMountName is null ? "local" : "global",
+                        binding.GlobalMountName))
                     .ToArray()))
             .ToArray();
     }
@@ -594,4 +599,6 @@ internal sealed record AppMountSummary(
     string? Service,
     IReadOnlyList<AppMountBindingSummary> Bindings);
 
-internal sealed record AppMountBindingSummary(string Label, string HostPath, string ContainerPath);
+// Source is "global" (HostPath resolved from the shared-mounts library entry named GlobalMountName)
+// or "local" (inline operator path). HostPath for a global binding is the last-resolved display cache.
+internal sealed record AppMountBindingSummary(string Label, string HostPath, string ContainerPath, string Source, string? GlobalMountName);

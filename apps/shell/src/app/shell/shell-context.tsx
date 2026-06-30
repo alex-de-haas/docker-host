@@ -34,6 +34,7 @@ export type ShellActionsContextValue = {
   createManualBackup: (app: CoreApp) => Promise<void>;
   openAppPanel: OpenAppPanel;
   openInstalledApps: () => void;
+  openSharedMounts: () => void;
 };
 
 export const ShellStateContext = createContext<ShellContextValue | null>(null);

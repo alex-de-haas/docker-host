@@ -2363,6 +2363,108 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("app_mount_source_missing", error.Code);
     }
 
+    [Fact]
+    public async Task ConfigureMountsAsync_GlobalRefPersistsBindingAndSurfacesSource()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var host = CreateExternalDirectory();
+        await fixture.CreateGlobalMountService().UpsertAsync(new GlobalMountUpsertRequest("media", host));
+
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", GlobalMountName: "media")]));
+
+        var summary = (await fixture.Service.ListAppsAsync()).Single();
+        var binding = Assert.Single(summary.Mounts.Single().Bindings);
+        Assert.Equal("media", binding.Label);
+        Assert.Equal("global", binding.Source);
+        Assert.Equal("media", binding.GlobalMountName);
+        Assert.Equal(Path.GetFullPath(host), binding.HostPath);
+        Assert.Equal("/mnt/catalogRoots/media", binding.ContainerPath);
+    }
+
+    [Fact]
+    public async Task ConfigureMountsAsync_RejectsUnknownGlobalRef()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureMountsAsync(
+                "com.example.notes",
+                new AppMountsRequest([new AppMountBindingInput("catalogRoots", GlobalMountName: "ghost")])));
+
+        Assert.Equal("global_mount_not_found", error.Code);
+    }
+
+    [Fact]
+    public async Task StartAsync_ResolvesGlobalRefHostPathLiveFromLibrary()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var host = CreateExternalDirectory();
+        var library = fixture.CreateGlobalMountService();
+        await library.UpsertAsync(new GlobalMountUpsertRequest("media", host));
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", GlobalMountName: "media")]));
+
+        await fixture.Service.StartAsync("com.example.notes");
+
+        var mount = Assert.Single(fixture.Adapter.LastContext!.Mounts);
+        Assert.Equal(Path.GetFullPath(host), mount.HostPath);
+        Assert.Equal("/mnt/catalogRoots/media", mount.ContainerPath);
+    }
+
+    [Fact]
+    public async Task StartAsync_RequiredSlotFailsWhenReferencedGlobalDeleted()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var host = CreateExternalDirectory();
+        var library = fixture.CreateGlobalMountService();
+        await library.UpsertAsync(new GlobalMountUpsertRequest("media", host));
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", GlobalMountName: "media")]));
+
+        // Force-delete the library entry: the binding becomes inert, leaving the required slot empty.
+        await library.DeleteAsync("media", force: true);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.StartAsync("com.example.notes"));
+
+        Assert.Equal("app_mount_required_unconfigured", error.Code);
+    }
+
+    [Fact]
+    public async Task GlobalMount_DeleteBlockedWhileReferencedThenForced()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var host = CreateExternalDirectory();
+        var library = fixture.CreateGlobalMountService();
+        await library.UpsertAsync(new GlobalMountUpsertRequest("media", host));
+        await fixture.Service.ConfigureMountsAsync(
+            "com.example.notes",
+            new AppMountsRequest([new AppMountBindingInput("catalogRoots", GlobalMountName: "media")]));
+
+        var listed = Assert.Single(await library.ListAsync());
+        Assert.Equal(1, listed.UsedBy);
+
+        var blocked = await Assert.ThrowsAsync<AppLifecycleException>(() => library.DeleteAsync("media", force: false));
+        Assert.Equal("global_mount_in_use", blocked.Code);
+
+        var remaining = await library.DeleteAsync("media", force: true);
+        Assert.Empty(remaining);
+    }
+
     private const string RequiredCatalogMountsJson =
         """ "externalMounts": { "catalogRoots": { "multiple": true, "required": true, "service": "app" } },""";
 
@@ -2688,6 +2790,10 @@ public sealed class CoreLifecycleServiceTests
             var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, metrics: metrics);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, metrics);
         }
+
+        // Shared-mounts library over the same data root the lifecycle service reads from.
+        public GlobalMountService CreateGlobalMountService()
+            => new(new GlobalMountStore(Paths), Apps, new MountPathPolicy(Paths));
 
         public async Task<string> WriteManifestAsync(
             string version,

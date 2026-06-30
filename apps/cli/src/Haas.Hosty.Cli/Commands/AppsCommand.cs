@@ -629,11 +629,15 @@ internal sealed partial class AppsCommand(CommandContext context)
                 continue;
             }
 
-            var table = ConsoleUi.CreateTable("Label", "Host path", "Container path");
+            var table = ConsoleUi.CreateTable("Label", "Source", "Host path", "Container path");
             foreach (var binding in slot.Bindings)
             {
+                var source = string.Equals(binding.Source, "global", StringComparison.Ordinal)
+                    ? $"global:{binding.GlobalMountName}"
+                    : "local";
                 table.AddRow(
                     Markup.Escape(binding.Label),
+                    Markup.Escape(source),
                     Markup.Escape(binding.HostPath),
                     Markup.Escape(binding.ContainerPath));
             }
@@ -1121,6 +1125,17 @@ internal sealed partial class AppsCommand(CommandContext context)
 
                 bindings.Add(new AppMountBindingInput(parts[0], parts[1], parts[2]));
             }
+            else if (args[index] == "--ref")
+            {
+                var spec = RequireOptionValue(args, ref index, "--ref");
+                var parts = spec.Split('=', 2);
+                if (parts.Length != 2 || parts.Any(string.IsNullOrWhiteSpace))
+                {
+                    throw new CommandUsageException("apps mounts set --ref must be <key>=<global-mount-name>.", Usage);
+                }
+
+                bindings.Add(new AppMountBindingInput(parts[0], GlobalMountName: parts[1]));
+            }
             else
             {
                 throw new CommandUsageException($"Unknown apps mounts set argument '{args[index]}'.", Usage);
@@ -1129,7 +1144,7 @@ internal sealed partial class AppsCommand(CommandContext context)
 
         if (bindings.Count == 0)
         {
-            throw new CommandUsageException("apps mounts set requires at least one --mount <key>=<label>=<host-path>.", Usage);
+            throw new CommandUsageException("apps mounts set requires at least one --mount <key>=<label>=<host-path> or --ref <key>=<global-mount-name>.", Usage);
         }
 
         return new MountsSetOptions(appId, bindings);
@@ -1548,11 +1563,13 @@ internal sealed partial class AppsCommand(CommandContext context)
         string? Service,
         IReadOnlyList<AppMountBindingSummary> Bindings);
 
-    internal sealed record AppMountBindingSummary(string Label, string HostPath, string ContainerPath);
+    internal sealed record AppMountBindingSummary(string Label, string HostPath, string ContainerPath, string? Source = null, string? GlobalMountName = null);
 
     internal sealed record AppMountsRequest(IReadOnlyList<AppMountBindingInput> Mounts);
 
-    internal sealed record AppMountBindingInput(string Key, string Label, string HostPath);
+    // A local binding sends Label + HostPath; a global binding sends GlobalMountName (the label and
+    // host path come from the shared-mounts library entry).
+    internal sealed record AppMountBindingInput(string Key, string? Label = null, string? HostPath = null, string? GlobalMountName = null);
 
     internal sealed record MountsSetOptions(string AppId, IReadOnlyList<AppMountBindingInput> Bindings);
 
@@ -1733,7 +1750,7 @@ internal sealed partial class AppsCommand(CommandContext context)
           backups prune-plan <app-id> [--format table|json]
           backups prune <app-id> --plan-digest <digest> --yes [--format table|json]
           mounts <app-id>
-          mounts set <app-id> --mount <key>=<label>=<host-path> [--mount ...]
+          mounts set <app-id> [--mount <key>=<label>=<host-path>] [--ref <key>=<global-mount-name>] ...
           mounts clear <app-id>
           restore <app-id> <backup-id> [--pre-restore-backup]
           logs <app-id> [--tail <count>]

@@ -605,6 +605,49 @@ public sealed class AppsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task MountsSetAsync_SendsGlobalRefBinding()
+    {
+        using var server = new FakeCoreServer("""
+            {
+              "app": {
+                "id": "com.haas.demo-app",
+                "displayName": "Demo App",
+                "version": "1.0.0",
+                "kind": "runtime",
+                "system": false,
+                "source": "manifest",
+                "selectedRuntime": "docker",
+                "operationStatus": "configured",
+                "runtimeState": "stopped",
+                "capabilities": [],
+                "mounts": []
+              },
+              "backup": null,
+              "status": "configured"
+            }
+            """);
+        WriteCoreDiscovery(server);
+        var (console, _) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync([
+            "apps",
+            "mounts",
+            "set",
+            "com.haas.demo-app",
+            "--ref",
+            "catalogRoots=media",
+        ], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("/control/v1/apps/com.haas.demo-app/mounts", server.PathAndQuery);
+        using var body = JsonDocument.Parse(server.Body);
+        var binding = body.RootElement.GetProperty("mounts")[0];
+        Assert.Equal("catalogRoots", binding.GetProperty("key").GetString());
+        Assert.Equal("media", binding.GetProperty("globalMountName").GetString());
+    }
+
+    [Fact]
     public async Task MountsClearAsync_SendsEmptyMountsList()
     {
         using var server = new FakeCoreServer("""

@@ -17,7 +17,9 @@ internal sealed class CoreLifecycleService(
     NotificationService? notifications = null,
     IClock? clock = null,
     IMetricStore? metrics = null,
-    ILogStore? logs = null)
+    ILogStore? logs = null,
+    GlobalMountStore? globalMounts = null,
+    MountPathPolicy? mountPathPolicy = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -38,6 +40,10 @@ internal sealed class CoreLifecycleService(
     private readonly IClock clock = clock ?? new SystemClock();
     private readonly IMetricStore metrics = metrics ?? new InMemoryMetricStore();
     private readonly ILogStore logs = logs ?? new InMemoryLogStore();
+    // Host-level shared-mounts library and the shared host-path policy. Default-constructed in tests
+    // (both only need CoreDataPaths); DI supplies the singletons.
+    private readonly GlobalMountStore globalMounts = globalMounts ?? new GlobalMountStore(paths);
+    private readonly MountPathPolicy mountPathPolicy = mountPathPolicy ?? new MountPathPolicy(paths);
 
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
@@ -210,9 +216,14 @@ internal sealed class CoreLifecycleService(
         AppMountsRequest request,
         CancellationToken cancellationToken = default)
     {
-        var document = await apps.UpdateAppAsync(appId, app => app with
+        // Read the library snapshot up front (async); validation itself is synchronous and runs
+        // against the current record inside UpdateAppAsync so bindings are checked against the
+        // record's live mount slots, not a stale pre-fetched copy.
+        var registry = await globalMounts.ReadAsync(cancellationToken);
+
+        var document = await apps.UpdateAppAsync(appId, current => current with
         {
-            Mounts = ValidateMountBindings(app, request.Mounts ?? []),
+            Mounts = ValidateMountBindings(current, request.Mounts ?? [], registry),
             OperationStatus = "configured",
             LastOperation = "configure-mounts",
             LastError = null,
@@ -221,9 +232,10 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
-    private IReadOnlyList<AppMountBinding> ValidateMountBindings(AppRecord app, IReadOnlyList<AppMountBindingInput> inputs)
+    private IReadOnlyList<AppMountBinding> ValidateMountBindings(AppRecord app, IReadOnlyList<AppMountBindingInput> inputs, GlobalMountState registry)
     {
         var slots = (app.MountSlots ?? []).ToDictionary(slot => slot.Key, StringComparer.Ordinal);
+        var library = registry.Mounts.ToDictionary(mount => mount.Name, StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var perKeyCount = new Dictionary<string, int>(StringComparer.Ordinal);
         var result = new List<AppMountBinding>(inputs.Count);
@@ -236,7 +248,32 @@ internal sealed class CoreLifecycleService(
                 throw new AppLifecycleException("app_mount_slot_unknown", $"App '{app.Id}' does not declare an external mount slot '{key}'.");
             }
 
-            var label = input.Label?.Trim() ?? string.Empty;
+            // A global binding references a shared-mounts library entry by name; its label is the entry
+            // name (operator cannot rename it) and the host path is resolved from the library. A local
+            // binding carries an operator-chosen label and an inline host path.
+            var globalName = input.GlobalMountName?.Trim();
+            var isGlobal = !string.IsNullOrEmpty(globalName);
+            string label;
+            string hostPath;
+            string? boundGlobalName;
+            if (isGlobal)
+            {
+                if (!library.TryGetValue(globalName!, out var entry))
+                {
+                    throw new AppLifecycleException("global_mount_not_found", $"Shared mount '{globalName}' was not found.");
+                }
+
+                label = entry.Name;
+                hostPath = entry.HostPath;
+                boundGlobalName = entry.Name;
+            }
+            else
+            {
+                label = input.Label?.Trim() ?? string.Empty;
+                hostPath = mountPathPolicy.NormalizeAndValidate(input.HostPath);
+                boundGlobalName = null;
+            }
+
             if (!MountLabelPattern.IsMatch(label) || label is "." or "..")
             {
                 throw new AppLifecycleException("app_mount_label_invalid", $"External mount label '{label}' must match ^[a-z0-9][a-z0-9._-]{{0,62}}$.");
@@ -253,82 +290,11 @@ internal sealed class CoreLifecycleService(
                 throw new AppLifecycleException("app_mount_multiple_not_allowed", $"External mount '{key}' does not allow more than one host path.");
             }
 
-            result.Add(new AppMountBinding(key, label, NormalizeAndValidateMountHostPath(input.HostPath)));
+            result.Add(new AppMountBinding(key, label, hostPath, boundGlobalName));
         }
 
         return result;
     }
-
-    private string NormalizeAndValidateMountHostPath(string? raw)
-    {
-        var value = raw?.Trim();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new AppLifecycleException("app_mount_path_required", "External mount host path is required.");
-        }
-
-        if (!Path.IsPathFullyQualified(value))
-        {
-            throw new AppLifecycleException("app_mount_path_not_absolute", $"External mount host path must be absolute: {value}");
-        }
-
-        // A ':' in a non-Windows host path would break the docker `-v host:container` argument.
-        if (!OperatingSystem.IsWindows() && value.Contains(':'))
-        {
-            throw new AppLifecycleException("app_mount_path_invalid", $"External mount host path may not contain ':': {value}");
-        }
-
-        // Paths are injected as a comma-separated HOSTY_MOUNT_{KEY} list, so a ',' would break the
-        // contract the app relies on when it splits the variable.
-        if (value.Contains(','))
-        {
-            throw new AppLifecycleException("app_mount_path_invalid", $"External mount host path may not contain ',': {value}");
-        }
-
-        var normalized = Path.GetFullPath(value);
-        EnsureMountPathAllowed(normalized);
-        EnsureMountPathAllowed(ResolveRealPath(normalized));
-        return normalized;
-    }
-
-    // Rejects host paths that would breach isolation: anything inside the Hosty data root (would
-    // expose core/backups/other-app data) or a sensitive system root. Applied to both the
-    // operator path and its symlink-resolved target.
-    private void EnsureMountPathAllowed(string fullPath)
-    {
-        if (PathEqualsOrWithin(paths.DataRoot, fullPath))
-        {
-            throw new AppLifecycleException("app_mount_path_in_data_root", $"External mount host path may not be inside the Hosty data root: {fullPath}");
-        }
-
-        if (IsFileSystemRoot(fullPath))
-        {
-            throw new AppLifecycleException("app_mount_path_forbidden", $"External mount host path may not be the filesystem root: {fullPath}");
-        }
-
-        foreach (var denied in MountDenyRoots)
-        {
-            if (PathEqualsOrWithin(denied, fullPath))
-            {
-                throw new AppLifecycleException("app_mount_path_forbidden", $"External mount host path may not be inside the system path '{denied}': {fullPath}");
-            }
-        }
-    }
-
-    private static string ResolveRealPath(string fullPath)
-    {
-        try
-        {
-            return new DirectoryInfo(fullPath).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? fullPath;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return fullPath;
-        }
-    }
-
-    private static bool IsFileSystemRoot(string fullPath)
-        => string.Equals(Path.GetFullPath(fullPath), Path.GetPathRoot(fullPath), PathComparison);
 
     private static bool PathEqualsOrWithin(string root, string candidate)
     {
@@ -344,11 +310,6 @@ internal sealed class CoreLifecycleService(
 
     private static StringComparison PathComparison
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
-    private static readonly string[] MountDenyRoots =
-        OperatingSystem.IsWindows()
-            ? []
-            : ["/etc", "/proc", "/sys", "/dev", "/boot", "/run", "/var/run"];
 
     public async Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
     {
@@ -1575,14 +1536,30 @@ internal sealed class CoreLifecycleService(
         AppRecord app,
         RuntimeAppManifestSelection selection,
         CancellationToken cancellationToken)
-        => new(
+    {
+        // Dereference global mount bindings against the live library, then resolve. A ref whose
+        // entry was deleted is dropped (inert); an entry capped to read-only forces ReadOnly on top
+        // of the slot mode (the slot stays authoritative — it can only further restrict).
+        var registry = await globalMounts.ReadAsync(cancellationToken);
+        var globalsByName = registry.Mounts.ToDictionary(mount => mount.Name, StringComparer.Ordinal);
+        var (bindings, forcedReadOnly) = RuntimeMountPlanner.MaterializeBindings(app.Mounts, globalsByName);
+        var mounts = RuntimeMountPlanner.Resolve(app.MountSlots, bindings);
+        if (forcedReadOnly.Count > 0)
+        {
+            mounts = mounts
+                .Select(mount => forcedReadOnly.Contains((mount.Key, mount.Label)) ? mount with { ReadOnly = true } : mount)
+                .ToArray();
+        }
+
+        return new(
             app,
             selection,
             GetAppRoot(app.Id),
             GetAppDataPath(app.Id),
             await ResolveDependencyUrlsAsync(app, cancellationToken),
-            RuntimeMountPlanner.Resolve(app.MountSlots, app.Mounts),
+            mounts,
             await ResolveTelemetryEndpointAsync(app, cancellationToken));
+    }
 
     // The OTLP/HTTP origin an app should export telemetry to: the collector system app's host-exposed
     // otlp-http endpoint, resolved fresh at each start (like dependency URLs) so the docker adapter can
@@ -1609,13 +1586,26 @@ internal sealed class CoreLifecycleService(
     // let docker bind a missing path, which would silently create an empty root-owned dir.
     private void EnsureMountsReadyForStart(RuntimeLifecycleContext context)
     {
-        RuntimeMountPlanner.EnsureRequiredConfigured(context.App.MountSlots, context.App.Mounts);
+        // Required check runs over the resolved mounts (context.Mounts): a global binding whose
+        // library entry was deleted is already dropped there, so a required slot left with only such
+        // a ref correctly counts as unconfigured.
+        var configuredKeys = context.Mounts.Select(mount => mount.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var slot in context.App.MountSlots ?? [])
+        {
+            if (slot.Required && !configuredKeys.Contains(slot.Key))
+            {
+                throw new AppLifecycleException(
+                    "app_mount_required_unconfigured",
+                    $"External mount '{slot.Key}' is required but no host path is configured. Configure it before starting the app.");
+            }
+        }
+
         foreach (var mount in context.Mounts)
         {
             // Re-check both the stored path and its symlink-resolved target: a path validated at
             // config time could have been repointed at a forbidden location since (TOCTOU).
-            EnsureMountPathAllowed(mount.HostPath);
-            EnsureMountPathAllowed(ResolveRealPath(mount.HostPath));
+            mountPathPolicy.EnsureAllowed(mount.HostPath);
+            mountPathPolicy.EnsureAllowed(MountPathPolicy.ResolveRealPath(mount.HostPath));
             if (!Directory.Exists(mount.HostPath))
             {
                 throw new AppLifecycleException(
@@ -3143,7 +3133,9 @@ internal sealed record AppAutostartRequest(bool Autostart);
 
 internal sealed record AppMountsRequest(IReadOnlyList<AppMountBindingInput>? Mounts = null);
 
-internal sealed record AppMountBindingInput(string Key, string Label, string HostPath);
+// A global binding sends Key + GlobalMountName (Label/HostPath are derived from the library entry);
+// a local binding sends Key + Label + HostPath. See CoreLifecycleService.ValidateMountBindings.
+internal sealed record AppMountBindingInput(string Key, string? Label = null, string? HostPath = null, string? GlobalMountName = null);
 
 internal sealed record AppUpdatePlanRequest(
     string? ManifestPath = null,

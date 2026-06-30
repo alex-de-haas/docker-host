@@ -146,4 +146,67 @@ public sealed class RuntimeMountPlannerTests
 
         RuntimeMountPlanner.EnsureRequiredConfigured(slots, bindings);
     }
+
+    [Fact]
+    public void MaterializeBindings_ResolvesGlobalRefHostPathAndPassesInlineThrough()
+    {
+        var globals = new Dictionary<string, GlobalMount>(StringComparer.Ordinal)
+        {
+            ["media"] = new("media", "/srv/media", null, "rw"),
+        };
+        var bindings = new AppMountBinding[]
+        {
+            new("catalogRoots", "stale-label", "/stale/cache", "media"),
+            new("catalogRoots", "anime", "/srv/anime"),
+        };
+
+        var (resolved, forcedReadOnly) = RuntimeMountPlanner.MaterializeBindings(bindings, globals);
+
+        Assert.Collection(
+            resolved,
+            binding =>
+            {
+                Assert.Equal("media", binding.Label);
+                Assert.Equal("/srv/media", binding.HostPath);
+                Assert.Equal("media", binding.GlobalMountName);
+            },
+            binding =>
+            {
+                Assert.Equal("anime", binding.Label);
+                Assert.Equal("/srv/anime", binding.HostPath);
+                Assert.Null(binding.GlobalMountName);
+            });
+        Assert.Empty(forcedReadOnly);
+    }
+
+    [Fact]
+    public void MaterializeBindings_DropsRefWhoseLibraryEntryWasDeleted()
+    {
+        var globals = new Dictionary<string, GlobalMount>(StringComparer.Ordinal);
+        var bindings = new AppMountBinding[] { new("catalogRoots", "media", "/stale", "media") };
+
+        var (resolved, _) = RuntimeMountPlanner.MaterializeBindings(bindings, globals);
+
+        Assert.Empty(resolved);
+    }
+
+    [Fact]
+    public void MaterializeBindings_ReadOnlyLibraryEntryForcesReadOnly()
+    {
+        var globals = new Dictionary<string, GlobalMount>(StringComparer.Ordinal)
+        {
+            ["config"] = new("config", "/srv/config", null, "ro"),
+        };
+        IReadOnlyList<AppMountSlot> slots = [new("settings", "rw", Multiple: false, Required: false, Service: null)];
+        var bindings = new AppMountBinding[] { new("settings", "config", "/stale", "config") };
+
+        var (resolved, forcedReadOnly) = RuntimeMountPlanner.MaterializeBindings(bindings, globals);
+        var mounts = RuntimeMountPlanner.Resolve(slots, resolved);
+        var mount = Assert.Single(mounts);
+
+        // The slot is rw, but the library entry caps it to ro.
+        Assert.Contains(("settings", "config"), forcedReadOnly);
+        Assert.False(mount.ReadOnly);
+        Assert.True(forcedReadOnly.Contains((mount.Key, mount.Label)));
+    }
 }

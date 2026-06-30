@@ -17,6 +17,7 @@ internal static class CliJson
     {
         TypeInfoResolver = JsonTypeInfoResolver.Combine(
             AppsCommand.AppsJsonContext.Default,
+            StorageCommand.StorageJsonContext.Default,
             AuthCommand.AuthJsonContext.Default,
             CoreCommand.CoreJsonContext.Default,
             OpenCommand.OpenJsonContext.Default,

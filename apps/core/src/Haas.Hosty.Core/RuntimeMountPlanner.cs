@@ -37,6 +37,45 @@ internal static class RuntimeMountPlanner
             .ToArray();
     }
 
+    // Materializes operator bindings against the shared-mounts library before resolution: a global
+    // ref binding (GlobalMountName set) takes its host path from the named library entry and is
+    // dropped (inert) if that entry no longer exists; an inline binding passes through unchanged.
+    // Also returns the (key, label) pairs whose library entry caps the mode to read-only, so the
+    // caller can apply that cap on top of the slot mode. Pure: the library snapshot is passed in.
+    public static (IReadOnlyList<AppMountBinding> Bindings, IReadOnlySet<(string Key, string Label)> ForcedReadOnly) MaterializeBindings(
+        IReadOnlyList<AppMountBinding>? bindings,
+        IReadOnlyDictionary<string, GlobalMount> globalsByName)
+    {
+        var forcedReadOnly = new HashSet<(string, string)>();
+        if (bindings is null || bindings.Count == 0)
+        {
+            return ([], forcedReadOnly);
+        }
+
+        var materialized = new List<AppMountBinding>(bindings.Count);
+        foreach (var binding in bindings)
+        {
+            if (binding.GlobalMountName is null)
+            {
+                materialized.Add(binding);
+                continue;
+            }
+
+            if (!globalsByName.TryGetValue(binding.GlobalMountName, out var entry))
+            {
+                continue;
+            }
+
+            materialized.Add(binding with { Label = entry.Name, HostPath = entry.HostPath });
+            if (string.Equals(entry.MaxMode, "ro", StringComparison.Ordinal))
+            {
+                forcedReadOnly.Add((binding.Key, entry.Name));
+            }
+        }
+
+        return (materialized, forcedReadOnly);
+    }
+
     // Mounts that target the given service: a slot with no declared service applies to every
     // service in the app; a slot that names a service only binds into that one.
     public static IReadOnlyList<RuntimeMount> ForService(IReadOnlyList<RuntimeMount> mounts, string serviceKey)
