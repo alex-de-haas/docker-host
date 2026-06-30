@@ -464,8 +464,9 @@ internal sealed partial class CoreCommand(CommandContext context)
             return await ProcessLiveness.WaitForExitAsync(pid, StopTimeout);
         }
 
+        // Same budget as the PID path so a no-PID Core is not declared timed-out 15s early.
         return TryGetOrigin(controlBaseUrl) is { } origin
-            ? await WaitForCoreStoppedAsync(origin)
+            ? await WaitForCoreStoppedAsync(origin, StopTimeout)
             : true;
     }
 
@@ -476,9 +477,9 @@ internal sealed partial class CoreCommand(CommandContext context)
 
     // Returns true once the Core at <url> stops answering /healthz, or false if it is still
     // responding when the timeout elapses.
-    private async Task<bool> WaitForCoreStoppedAsync(string url)
+    private async Task<bool> WaitForCoreStoppedAsync(string url, TimeSpan timeout)
     {
-        var deadline = DateTimeOffset.UtcNow + StartTimeout;
+        var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
             if (!await IsCoreHealthyAsync(url))
@@ -572,10 +573,17 @@ internal sealed partial class CoreCommand(CommandContext context)
             return null;
         }
 
+        // A locked, truncated, or mid-write control.json must degrade to "not running" rather than
+        // crash stop/restart. FileShare.ReadWrite tolerates the writer holding it open.
         ControlDiscoveryDocument? discovery;
-        await using (var stream = File.OpenRead(path))
+        try
         {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             discovery = await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
         }
 
         if (discovery is null)
@@ -588,23 +596,11 @@ internal sealed partial class CoreCommand(CommandContext context)
         // it stops shadowing a truly-stopped Core. PID absent => trust the file (older Core).
         if (discovery.ProcessId is int pid && pid > 0 && !ProcessLiveness.IsAlive(pid))
         {
-            TryDeleteStaleDiscovery(path);
+            ControlDiscovery.TryDeleteStale(path);
             return null;
         }
 
         return discovery;
-    }
-
-    private static void TryDeleteStaleDiscovery(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Best-effort: a stale file we cannot delete is overwritten by the next Core start.
-        }
     }
 
     private string GetControlDiscoveryPath()

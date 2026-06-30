@@ -48,10 +48,17 @@ internal sealed partial class CoreControlClient : IDisposable
             return null;
         }
 
+        // A locked, truncated, or mid-write control.json must degrade to "discovery unavailable"
+        // rather than crash the caller. FileShare.ReadWrite tolerates the writer holding it open.
         ControlDiscoveryDocument? discovery;
-        await using (var stream = File.OpenRead(path))
+        try
         {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             discovery = await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
         }
 
         if (discovery is null || string.IsNullOrWhiteSpace(discovery.ControlBaseUrl))
@@ -66,7 +73,7 @@ internal sealed partial class CoreControlClient : IDisposable
         // so trust the file (older Core, or a process we can't observe).
         if (discovery.ProcessId is int pid && pid > 0 && !ProcessLiveness.IsAlive(pid))
         {
-            TryDeleteStaleDiscovery(path);
+            ControlDiscovery.TryDeleteStale(path);
             return null;
         }
 
@@ -157,18 +164,6 @@ internal sealed partial class CoreControlClient : IDisposable
 
     public void Dispose()
         => httpClient.Dispose();
-
-    private static void TryDeleteStaleDiscovery(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Best-effort cleanup: a stale file we cannot delete is overwritten by the next start.
-        }
-    }
 
     internal sealed record ControlDiscoveryDocument(
         string ControlBaseUrl,

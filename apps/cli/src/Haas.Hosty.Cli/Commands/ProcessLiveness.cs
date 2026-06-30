@@ -25,11 +25,16 @@ internal static class ProcessLiveness
         }
         catch (ArgumentException)
         {
+            // Documented "no process with this id" signal — definitively not running.
             return false;
         }
-        catch (InvalidOperationException)
+        catch (Exception)
         {
-            return false;
+            // Any other failure (e.g. a Win32Exception/UnauthorizedAccessException querying a
+            // process we cannot access on Windows) is indeterminate, not proof of death. Treat it
+            // as alive so a probe error never makes a caller delete a live Core's discovery file or
+            // declare a stop complete prematurely. Worst case the wait below times out honestly.
+            return true;
         }
     }
 
