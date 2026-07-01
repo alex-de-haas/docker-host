@@ -133,8 +133,37 @@ public sealed class LocalCommandRuntimeAdapterTests
         }
     }
 
+    [Fact]
+    public async Task StartAsync_RejectsPrebuiltWorkingDirectoryThatEscapesTheArtifactRoot()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var appRoot = CreateTempDirectory();
+        try
+        {
+            var dist = Path.Combine(appRoot, "dist");
+            Directory.CreateDirectory(dist);
+            await File.WriteAllTextAsync(Path.Combine(dist, "marker.txt"), "built");
+
+            // A workingDirectory that climbs out of the materialized artifact copy must be refused.
+            var (adapter, registry, context) = CreatePrebuiltScenario(appRoot, deliveryPath: "dist", command: "sleep 30", workingDirectory: "../../escape");
+
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+
+            Assert.Equal("local_command_working_directory_out_of_bounds", error.Code);
+            Assert.Null(registry.Get("com.example.app", "web"));
+        }
+        finally
+        {
+            TryDeleteDirectory(appRoot);
+        }
+    }
+
     private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreatePrebuiltScenario(
-        string appRoot, string deliveryPath, string command)
+        string appRoot, string deliveryPath, string command, string? workingDirectory = null)
     {
         var registry = new LocalCommandProcessRegistry();
         var adapter = new LocalCommandRuntimeAdapter(
@@ -150,6 +179,7 @@ public sealed class LocalCommandRuntimeAdapterTests
                 Type = "localCommand",
                 Artifact = "prebuilt",
                 Delivery = new RuntimePrebuiltDeliveryManifest { Type = "folder", Path = deliveryPath },
+                WorkingDirectory = workingDirectory,
                 Command = command,
             },
             null,

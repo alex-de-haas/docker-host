@@ -47,7 +47,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                 if (string.Equals(service.Artifact, "prebuilt", StringComparison.Ordinal) &&
                     service.Runtime.Delivery is { } delivery)
                 {
-                    var policy = string.Equals(context.App.UpdatePolicy, "rolling", StringComparison.Ordinal) ? "rolling" : "pinned";
+                    var policy = DockerRuntimeAdapter.ResolveUpdatePolicy(context.App.UpdatePolicy);
                     var (artifactRoot, resolvedLock) = PrebuiltArtifactStore.Resolve(
                         context.AppRoot,
                         context.Manifest.RuntimeProfile.Key,
@@ -631,9 +631,30 @@ internal sealed class LocalCommandRuntimeAdapter(
             context.AppRoot;
 
     private static string CombineWorkingDirectory(string root, string? workingDirectory)
-        => string.IsNullOrWhiteSpace(workingDirectory)
-            ? root
-            : Path.GetFullPath(Path.Combine(root, workingDirectory));
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            return root;
+        }
+
+        // Keep the working directory inside `root`: a `workingDirectory` that is absolute or climbs out
+        // with `..` would otherwise run from — or, for a prebuilt, escape the materialized copy into —
+        // an arbitrary host path. OS-aware containment (case-insensitive on Windows, separator-safe).
+        var canonicalRoot = Path.GetFullPath(root);
+        var combined = Path.GetFullPath(Path.Combine(canonicalRoot, workingDirectory));
+        var rootPrefix = canonicalRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? canonicalRoot
+            : canonicalRoot + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(combined, canonicalRoot, comparison) && !combined.StartsWith(rootPrefix, comparison))
+        {
+            throw new AppLifecycleException(
+                "local_command_working_directory_out_of_bounds",
+                $"Working directory '{workingDirectory}' escapes the runtime root '{canonicalRoot}'.");
+        }
+
+        return combined;
+    }
 
     // Source-based working directory (also used by health/logs for display). A prebuilt service's run
     // directory is the materialized artifact copy instead, resolved in StartAsync.

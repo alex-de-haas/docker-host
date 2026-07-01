@@ -12,6 +12,16 @@ namespace Haas.Hosty.Core;
 // See docs/features/runtime-artifact-model.md.
 internal static class PrebuiltArtifactStore
 {
+    // Recurse the whole tree, keep dotfiles/system files (a build's .env or similar must be hashed and
+    // copied — the default EnumerationOptions skips them), and skip — rather than throw on — any entry
+    // we cannot access, so one unreadable file never aborts hashing or materialization of the rest.
+    private static readonly EnumerationOptions RecursiveEnumeration = new()
+    {
+        RecurseSubdirectories = true,
+        IgnoreInaccessible = true,
+        AttributesToSkip = FileAttributes.None,
+    };
+
     // Resolves the run directory and lock for a prebuilt service. Under `pinned` with a recorded hash
     // whose materialized copy still exists, the locked copy is re-run untouched; otherwise (rolling,
     // first start, backfill, or a missing copy) the current delivery is hashed and materialized.
@@ -51,7 +61,9 @@ internal static class PrebuiltArtifactStore
             MaterializeCopy(deliveryPath, materializedPath);
         }
 
-        var lockRecord = new ArtifactLock("prebuilt", null, deliveryPath, hash, null, DateTimeOffset.UtcNow);
+        // Record the authored delivery path (e.g. "dist"), not the resolved absolute path: the lock is
+        // exposed to clients via AppSummary, so leaking the host checkout location would be a regression.
+        var lockRecord = new ArtifactLock("prebuilt", null, delivery.Path, hash, null, DateTimeOffset.UtcNow);
         return (materializedPath, lockRecord);
     }
 
@@ -72,7 +84,7 @@ internal static class PrebuiltArtifactStore
     internal static string HashDirectory(string root)
     {
         var files = Directory
-            .EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .EnumerateFiles(root, "*", RecursiveEnumeration)
             .Select(full => (Relative: Path.GetRelativePath(root, full).Replace('\\', '/'), Full: full))
             .OrderBy(entry => entry.Relative, StringComparer.Ordinal)
             .ToList();
@@ -125,19 +137,24 @@ internal static class PrebuiltArtifactStore
         }
     }
 
+    // Single pass over the tree (files and directories together) so a large delivery — e.g. one with a
+    // node_modules — is not walked twice. Order-independent: each file ensures its parent exists before
+    // the copy, so a file enumerated before its directory entry is still handled.
     private static void CopyDirectory(string source, string destination)
     {
         Directory.CreateDirectory(destination);
-        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        foreach (var entry in Directory.EnumerateFileSystemEntries(source, "*", RecursiveEnumeration))
         {
-            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
-        }
-
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            var target = Path.Combine(destination, Path.GetRelativePath(source, file));
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, overwrite: true);
+            var target = Path.Combine(destination, Path.GetRelativePath(source, entry));
+            if (Directory.Exists(entry))
+            {
+                Directory.CreateDirectory(target);
+            }
+            else
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(entry, target, overwrite: true);
+            }
         }
     }
 
