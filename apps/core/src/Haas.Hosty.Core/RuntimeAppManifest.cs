@@ -97,6 +97,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
 
         var profileKeys = new HashSet<string>(StringComparer.Ordinal);
         var defaultProfileCount = 0;
+        var developmentProfileCount = 0;
         foreach (var profile in manifest.RuntimeProfiles)
         {
             if (string.IsNullOrWhiteSpace(profile.Key))
@@ -120,15 +121,35 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                 errors.Add(new("app_manifest_runtime_type_unsupported", $"Runtime profile type '{profile.Type}' is not supported by this Hosty Core build.", "$.runtimeProfiles[].type"));
             }
 
+            // `development` gates source override + the live update model, both of which only make
+            // sense for a source runtime (localCommand in v1). A docker profile cannot be a
+            // development runtime.
+            if (profile.Development && profile.Type is not "localCommand")
+            {
+                errors.Add(new("app_manifest_development_requires_local_command", $"Runtime profile '{profile.Key}' sets development: true, which is only supported for a localCommand runtime.", "$.runtimeProfiles[].development"));
+            }
+
             if (profile.Default)
             {
                 defaultProfileCount++;
+            }
+
+            if (profile.Development)
+            {
+                developmentProfileCount++;
             }
         }
 
         if (defaultProfileCount > 1)
         {
             errors.Add(new("app_manifest_runtime_default_duplicate", "Only one runtime profile may set default: true.", "$.runtimeProfiles"));
+        }
+
+        // v1 supports a single development runtime, so one operator source override is enough. The
+        // multi-development-runtime (per-runtime override) case is deferred; see the design doc.
+        if (developmentProfileCount > 1)
+        {
+            errors.Add(new("app_manifest_multiple_development_runtimes", "At most one runtime profile may set development: true.", "$.runtimeProfiles"));
         }
 
         var resolvedRuntime = selectedRuntime?.Trim();
@@ -222,6 +243,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                 continue;
             }
 
+            ValidateSetup(service.Key, runtimeType, runtime.Setup, errors);
             ValidateNetwork(service.Key, runtimeType, runtime.Network, errors);
             ValidateCapabilities(service.Key, runtimeType, runtime.Capabilities, errors);
             ValidateDevices(service.Key, runtimeType, runtime.Devices, errors);
@@ -673,6 +695,21 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                     errors.Add(new("app_manifest_dependency_alias_collision", $"Dependency endpoint alias '{endpoint.Alias}' normalizes to the same HOSTY_DEPENDENCY_ variable as another wired endpoint.", path));
                 }
             }
+        }
+    }
+
+    // Validates the one-shot `setup` command. localCommand runtime only — the docker runtime ships a
+    // prebuilt image, so a host-side preparation step has no meaning there. Empty is fine (no setup).
+    private static void ValidateSetup(string serviceKey, string runtimeType, string? setup, List<AppManifestValidationError> errors)
+    {
+        if (string.IsNullOrWhiteSpace(setup))
+        {
+            return;
+        }
+
+        if (!string.Equals(runtimeType, "localCommand", StringComparison.Ordinal))
+        {
+            errors.Add(new("app_manifest_service_setup_requires_local_command", $"Service '{serviceKey}' setup is only supported under the localCommand runtime.", "$.services[].runtimes[].setup"));
         }
     }
 
@@ -2058,6 +2095,13 @@ internal sealed class RuntimeProfileManifest
     public string Key { get => field ?? ""; init; } = "";
     public string Type { get => field ?? ""; init; } = "";
     public bool Default { get; init; }
+
+    // Marks a runtime meant for local development. Two coupled consequences: the operator may point
+    // it at their own source folder (source override), and it runs live from that folder (no lock, no
+    // reviewed update — the "Live" affordance). Only valid for a source runtime (localCommand in v1);
+    // at most one per manifest. A non-development source runtime is locked and updated in review, even
+    // though it also runs from source. See docs/features/runtime-artifact-model.md.
+    public bool Development { get; init; }
 }
 
 internal sealed class RuntimeAppServiceManifest
@@ -2100,6 +2144,14 @@ internal sealed record RuntimeServiceProfileManifest
     public string? Artifact { get; init; }
 
     public JsonElement? Image { get; init; }
+
+    // One-shot preparation command run to completion before `command` on every start (localCommand
+    // only). It runs in the same `workingDirectory` with the same environment as `command`; a
+    // non-zero exit fails the start. This is where a source-run app installs dependencies or builds
+    // (`npm install`, `dotnet restore`, `pip install`, …) — the checkout Core pulls has no
+    // `node_modules`/artifacts, so without it a fresh dev checkout can't start. Empty by default.
+    public string? Setup { get; init; }
+
     public string? Command { get; init; }
     public string? WorkingDirectory { get; init; }
     public IReadOnlyDictionary<string, string> Environment { get => field ??= new Dictionary<string, string>(); init; } = new Dictionary<string, string>();

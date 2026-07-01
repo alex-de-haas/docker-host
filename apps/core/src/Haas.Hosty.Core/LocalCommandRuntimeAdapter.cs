@@ -51,6 +51,20 @@ internal sealed class LocalCommandRuntimeAdapter(
                     AutoFlush = true,
                 });
 
+                // Prepare the source before the long-running command (e.g. `npm install`). It runs to
+                // completion; a failure fails the start. The log writer is disposed here on failure
+                // because this service was not yet registered/started (the outer catch only unwinds
+                // services already in `startedServices`).
+                try
+                {
+                    await RunSetupAsync(context, service, servicePorts, workingDirectory, logWriter, cancellationToken);
+                }
+                catch
+                {
+                    logWriter.Dispose();
+                    throw;
+                }
+
                 var startInfo = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
                 InjectEnvironment(startInfo, context, service, endpoints, servicePorts);
                 var process = new System.Diagnostics.Process
@@ -105,6 +119,116 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
 
         return new AppRuntimeStartResult("running", endpoints);
+    }
+
+    // Runs the service's one-shot `setup` command to completion before the long-running `command`, in
+    // the same working directory and with the same injected environment. Output streams to the service
+    // log; a non-zero exit (or a launch failure) throws so the start aborts with the cause visible. A
+    // no-op when the service declares no setup.
+    private async Task RunSetupAsync(
+        RuntimeLifecycleContext context,
+        RuntimeSelectedService service,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> servicePorts,
+        string workingDirectory,
+        LocalCommandLogWriter logWriter,
+        CancellationToken cancellationToken)
+    {
+        var setup = service.Runtime.Setup;
+        if (string.IsNullOrWhiteSpace(setup))
+        {
+            return;
+        }
+
+        logWriter.TryWriteLine($"[hosty] setup: {setup}");
+        var startInfo = CreateShellStartInfo(setup, workingDirectory);
+        // Setup sees the same environment as `command`; the endpoints list is throwaway here so the
+        // real start remains the single source of truth for recorded endpoints.
+        InjectEnvironment(startInfo, context, service, [], servicePorts);
+
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = startInfo,
+            EnableRaisingEvents = true,
+        };
+
+        // Keep the last lines so a failure message carries the actual cause (e.g. npm's error) without
+        // making the operator open the log file. OutputDataReceived and ErrorDataReceived are raised
+        // concurrently on separate threads, so `tail` (not thread-safe) is guarded by a lock.
+        var tail = new Queue<string>();
+        var tailLock = new object();
+        void Capture(string? line)
+        {
+            if (line is null)
+            {
+                return;
+            }
+
+            logWriter.TryWriteLine(line);
+            lock (tailLock)
+            {
+                tail.Enqueue(line);
+                while (tail.Count > 15)
+                {
+                    tail.Dequeue();
+                }
+            }
+        }
+
+        process.OutputDataReceived += (_, args) => Capture(args.Data);
+        process.ErrorDataReceived += (_, args) => Capture(args.Data);
+
+        try
+        {
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+        }
+        catch (Exception ex)
+        {
+            throw new AppLifecycleException("local_command_setup_failed", $"Local command setup for service '{service.Key}' failed to start: {ex.Message}");
+        }
+
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        catch
+        {
+            // Never leave the setup process orphaned on cancellation. Kill can race the process's own
+            // exit (InvalidOperationException) or be denied (Win32Exception); swallow so the original
+            // cancellation/failure exception is the one that propagates.
+            if (!process.HasExited)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort — preserve the original exception below.
+                }
+            }
+
+            throw;
+        }
+
+        // Parameterless WaitForExit flushes any still-pending async output before we read the tail.
+        process.WaitForExit();
+
+        if (process.ExitCode != 0)
+        {
+            logWriter.TryWriteLine($"[hosty] setup exited with code {process.ExitCode}");
+            string detail;
+            lock (tailLock)
+            {
+                detail = tail.Count > 0 ? " " + string.Join(" | ", tail) : string.Empty;
+            }
+            throw new AppLifecycleException(
+                "local_command_setup_failed",
+                $"Local command setup for service '{service.Key}' exited with code {process.ExitCode}.{detail}");
+        }
+
+        logWriter.TryWriteLine("[hosty] setup completed");
     }
 
     public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)

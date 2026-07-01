@@ -67,6 +67,7 @@ Use `runtimeProfiles` to declare both Docker and local command modes:
         "dev": {
           "type": "localCommand",
           "workingDirectory": "apps/demo-app",
+          "setup": "npm install",
           "command": "npm run dev:frontend",
           "ports": [
             {
@@ -84,6 +85,8 @@ Use `runtimeProfiles` to declare both Docker and local command modes:
 ```
 
 Do not add `localPort` or `hostPort` for normal local app development. Core assigns available ports, exposes them through `HOSTY_PORT_{KEY}`, and injects `PORT` for single-port services unless the app explicitly set `PORT`.
+
+Declare `setup` when the source needs preparation before it can run. Core checks out the app's source but does not install dependencies or build for you, so a Node app must declare `"setup": "npm install"` (and a compiled app its own restore/build) — otherwise `command` starts against a checkout with no `node_modules` and fails (`sh: next: command not found`). Core runs `setup` to completion before `command` on every start; keep it idempotent.
 
 Keep the same service keys, endpoint keys, settings, data directory semantics, and UI navigation across runtime profiles so switching runtimes is reviewable and reversible.
 

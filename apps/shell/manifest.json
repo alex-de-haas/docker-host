@@ -17,7 +17,8 @@
     },
     {
       "key": "dev",
-      "type": "localCommand"
+      "type": "localCommand",
+      "development": true
     }
   ],
   "defaultRuntime": "docker",
@@ -48,6 +49,7 @@
         "dev": {
           "type": "localCommand",
           "workingDirectory": "apps/shell",
+          "setup": "npm install",
           "command": "npm run dev",
           "environment": {
             "HOSTNAME": "0.0.0.0"

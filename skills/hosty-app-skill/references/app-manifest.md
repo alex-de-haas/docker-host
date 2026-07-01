@@ -49,6 +49,8 @@ Core injects:
 
 For `localCommand` runtime profiles, do not hard-code development ports by default. Omit `localPort` and `hostPort` so Core assigns an available loopback port and injects it as `HOSTY_PORT_{KEY}`. If a service declares exactly one port and the app did not explicitly set `PORT`, Core also injects `PORT=<assigned-port>` for common dev servers such as Next.js.
 
+A `localCommand` service may declare `setup` — a one-shot preparation command Core runs to completion **before** `command`, in the same `workingDirectory` with the same environment. Use it to install dependencies or build from the source Core checked out (`npm install`, `dotnet restore`, `pip install`, …); that checkout has no `node_modules`/build artifacts, so a source-run app that needs them must declare `setup` or its `command` fails to start. Setup runs on every start (it should be idempotent — `npm install` no-ops when up to date), so it also picks up dependency changes after Core pulls new source. A non-zero exit fails the start with the setup output in the service log. `setup` is `localCommand`-only; declaring it under `docker` is rejected with `app_manifest_service_setup_requires_local_command`.
+
 ### Runtime Artifact Kind
 
 Each `services[].runtimes[<key>]` may declare `artifact`, which tells Core how the running code is delivered and therefore how it updates:

@@ -117,6 +117,8 @@ When an app manifest is installed from a local manifest file or app directory wi
 
 `localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`. The resolved working directory must already exist; Core does not create missing source directories.
 
+Core checks out the app's source but does not install dependencies or build it. A source that needs preparation (a Node app has no `node_modules`, a compiled app has no build output) must declare a `setup` command on the `localCommand` runtime; Core runs it to completion in the working directory before the long-running `command`, on every start. Without it, `command` launches against a bare checkout and fails (e.g. `sh: next: command not found`). See the `setup` field in [Runtime app manifest](runtime-app-manifest.md).
+
 Production installers should treat `localCommand` as platform-specific unless the command is known to be portable. Prefer commands that:
 
 - run in the foreground and let Core own stop/restart behavior;
@@ -125,7 +127,7 @@ Production installers should treat `localCommand` as platform-specific unless th
 - omit `localPort` / `hostPort` in normal local development so Core can assign a free port;
 - expect Core and Shell links to use `http://localhost:<assigned-port>` locally; configure `HOSTY_PUBLIC_ORIGIN_<ENDPOINT_KEY>` only when the endpoint is exposed through an external origin;
 - avoid shell features that only exist on one target platform unless the runtime profile key or installer target makes that platform explicit;
-- keep package installation outside runtime start commands so app start is repeatable and does not require network access.
+- put dependency installation and builds in the `setup` command, not the long-running `command`, so start stays a single foregrounded process; keep `setup` idempotent (e.g. `npm install`) since it runs on every start.
 
 Docker runtime profiles remain the production-oriented default for app distribution. `localCommand` is the local-first runtime path for source workflows and for apps that are intentionally supervised as local processes.
 

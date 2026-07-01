@@ -737,7 +737,7 @@ public sealed class CoreLifecycleServiceTests
               "version": "1.0.0",
               "runtimeProfiles": [
                 { "key": "docker", "type": "docker", "default": true },
-                { "key": "local", "type": "localCommand" }
+                { "key": "local", "type": "localCommand", "development": true }
               ],
               "defaultRuntime": "docker",
               "services": [{
@@ -798,8 +798,9 @@ public sealed class CoreLifecycleServiceTests
         Assert.False(dockerSummary.SupportsSource);
         Assert.Null(dockerSummary.SourceOverridePath);
 
-        // A non-URL install that declares a localCommand profile is source-capable even before any
-        // override is set, so the Shell can offer the Source tab to point it at a folder.
+        // A non-URL install that declares a development runtime (localCommand + development: true) is
+        // source-capable even before any override is set, so the Shell can offer the Source tab to
+        // point it at a folder. A non-development localCommand profile would not qualify.
         var folder = Path.Combine(fixture.Root, "src-app");
         Directory.CreateDirectory(folder);
         var manifestPath = Path.Combine(folder, "manifest.json");
@@ -811,7 +812,7 @@ public sealed class CoreLifecycleServiceTests
               "version": "1.0.0",
               "runtimeProfiles": [
                 { "key": "docker", "type": "docker", "default": true },
-                { "key": "local", "type": "localCommand" }
+                { "key": "local", "type": "localCommand", "development": true }
               ],
               "defaultRuntime": "docker",
               "services": [{
@@ -848,6 +849,49 @@ public sealed class CoreLifecycleServiceTests
         var liveSrc = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.src");
         Assert.True(liveSrc.Live);
         Assert.Equal(Path.GetFullPath(overrideFolder), liveSrc.SourceLivePath);
+    }
+
+    [Fact]
+    public async Task NonDevelopmentLocalCommandRuntime_IsNotLiveOrSourceCapable()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "prod-src-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        // A localCommand runtime WITHOUT development: it builds/runs a locked artifact from source
+        // (e.g. `npm run build` then `npm run start`), so it must not be treated as live or overridable.
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.prodsrc",
+              "name": "Prod Src",
+              "version": "1.0.0",
+              "runtimeProfiles": [
+                { "key": "docker", "type": "docker", "default": true },
+                { "key": "release", "type": "localCommand" }
+              ],
+              "defaultRuntime": "docker",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/example/prodsrc:1.0.0" },
+                  "release": { "type": "localCommand", "command": "npm run start", "workingDirectory": "." }
+                }
+              }]
+            }
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "docker"));
+
+        var summary = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.prodsrc");
+        Assert.False(summary.SupportsSource);
+
+        // Even when the non-development localCommand runtime is selected, it is not live: the
+        // reviewed-update path still applies and clients show no "Live" badge / Source tab.
+        var record = await fixture.Apps.GetAppAsync("com.example.prodsrc");
+        await fixture.Apps.UpsertAppAsync(record! with { SelectedRuntime = "release" });
+        var selected = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.prodsrc");
+        Assert.False(selected.Live);
+        Assert.False(selected.SupportsSource);
     }
 
     [Theory]

@@ -34,6 +34,141 @@ public sealed class LocalCommandRuntimeAdapterTests
         Assert.DoesNotContain("after", text.ToString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task StartAsync_RunsSetupToCompletionBeforeCommand()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // The setup/command scripts here are POSIX shell; Core runs sh only off-Windows.
+        }
+
+        var workRoot = CreateTempDirectory();
+        try
+        {
+            var (adapter, registry, context) = CreateSetupScenario(
+                workRoot,
+                // The marker proves setup ran, and ran in the working directory, before command.
+                setup: "printf ran > setup-marker.txt",
+                command: "sleep 30");
+
+            var result = await adapter.StartAsync(context);
+
+            Assert.Equal("running", result.RuntimeState);
+            Assert.True(File.Exists(Path.Combine(workRoot, "setup-marker.txt")));
+            Assert.NotNull(registry.Get("com.example.app", "app"));
+
+            await adapter.StopAsync(context);
+        }
+        finally
+        {
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_FailsWithoutStartingCommandWhenSetupExitsNonZero()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // The setup/command scripts here are POSIX shell; Core runs sh only off-Windows.
+        }
+
+        var workRoot = CreateTempDirectory();
+        try
+        {
+            var (adapter, registry, context) = CreateSetupScenario(
+                workRoot,
+                setup: "echo boom-detail 1>&2; exit 7",
+                command: "sleep 30");
+
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+
+            Assert.Equal("local_command_setup_failed", error.Code);
+            Assert.Contains("boom-detail", error.Message, StringComparison.Ordinal); // tail carries the cause
+            Assert.Null(registry.Get("com.example.app", "app")); // command must not have started
+        }
+        finally
+        {
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreateSetupScenario(
+        string workRoot, string? setup, string command)
+    {
+        var registry = new LocalCommandProcessRegistry();
+        var adapter = new LocalCommandRuntimeAdapter(
+            CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
+            registry,
+            new AppServiceTokenService(new ControlSecret("test-control-secret")));
+
+        var service = new RuntimeSelectedService(
+            "app",
+            [],
+            new RuntimeServiceProfileManifest { Type = "localCommand", Setup = setup, Command = command },
+            null,
+            "source");
+        var manifest = new RuntimeAppManifest { SchemaVersion = "app.0.1", Id = "com.example.app", Name = "App", Version = "1.0.0" };
+        var profile = new RuntimeProfileManifest { Key = "dev", Type = "localCommand", Default = true };
+        var selection = new RuntimeAppManifestSelection(manifest, "/tmp/manifest.json", "digest", profile, [service], null, "{}", null);
+        // SourceState is null and the service declares no workingDirectory, so ResolveWorkingDirectory
+        // falls back to AppRoot — setup and command both run in workRoot.
+        var context = new RuntimeLifecycleContext(
+            CreateLocalCommandAppRecord(),
+            selection,
+            workRoot,
+            Path.Combine(workRoot, "data"),
+            new Dictionary<string, string>(),
+            []);
+        return (adapter, registry, context);
+    }
+
+    private static AppRecord CreateLocalCommandAppRecord()
+        => new(
+            Id: "com.example.app",
+            DisplayName: "App",
+            Description: null,
+            Version: "1.0.0",
+            Kind: "runtime",
+            System: false,
+            Source: "manifest",
+            ManifestPath: "/tmp/manifest.json",
+            ManifestUrl: null,
+            SelectedRuntime: "dev",
+            OperationStatus: "installed",
+            RuntimeState: "stopped",
+            LastOperation: null,
+            LastError: null,
+            Capabilities: [],
+            Settings: new Dictionary<string, AppSettingValue>(),
+            StorageMappings: [],
+            Dependencies: [],
+            Endpoints: [],
+            InstalledAt: DateTimeOffset.UtcNow,
+            UpdatedAt: DateTimeOffset.UtcNow);
+
+    private static string CreateTempDirectory()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"hosty-localcommand-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch (IOException)
+        {
+            // A still-terminating child can hold a handle briefly; a leaked temp dir is harmless.
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
     private static HostyCoreRuntimeConfig CreateConfig(int corePort, string listenUrl, string? corePublicOrigin)
         => new(
             DataRoot: "/tmp/hosty",

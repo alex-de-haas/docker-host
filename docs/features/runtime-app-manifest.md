@@ -43,6 +43,10 @@ hosty apps start com.haas.demo-app
 
 ## Runtime Profiles
 
+Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), an optional `default: true` (at most one), and an optional `development: true`.
+
+`development: true` marks a runtime meant for local development. It is only valid for a `localCommand` profile (rejected on `docker` with `app_manifest_development_requires_local_command`), and at most one profile per manifest may set it (`app_manifest_multiple_development_runtimes`). A development runtime has two coupled effects: the operator may point it at their own source folder (source override), and it runs **live** from that folder — the manifest is adopted on restart, so there is no reviewed-update path (clients show a "Live" badge and hide Update). A `localCommand` runtime **without** `development` runs from source too, but is treated as a locked, reviewed-update artifact (e.g. it builds a production bundle via `setup`), not as live. See [Runtime artifact & storage model](runtime-artifact-model.md).
+
 `docker` profiles run service images through Docker. `localCommand` profiles run repository-local commands under Core supervision. Core injects app environment such as:
 
 - `HOSTY_APP_ID`
@@ -77,6 +81,21 @@ Each entry in a service runtime's `ports` array accepts:
 - `transport` - subset of `["tcp", "udp"]`, default `["tcp"]`. Each transport is published as a separate `-p` rule. Docker runtime only.
 
 `expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](raw-ports.md).
+
+### Local command setup
+
+A `localCommand` service runtime accepts an optional `setup` command. Core runs it to completion in the service's `workingDirectory`, with the same injected environment as `command`, **before** starting the long-running `command` — on every start. Use it to prepare the source Core checked out, which ships without installed dependencies or build output:
+
+```json
+"dev": {
+  "type": "localCommand",
+  "workingDirectory": "apps/shell",
+  "setup": "npm install",
+  "command": "npm run dev"
+}
+```
+
+Without `setup`, `command` runs against a bare checkout and fails (e.g. `sh: next: command not found`). A non-zero `setup` exit fails the start, with the setup output captured in the service log. Because it runs every start, `setup` must be idempotent (`npm install`, `dotnet restore`, and `pip install` all no-op when already satisfied), which also lets it pick up dependency changes after Core pulls new source. `setup` is `localCommand`-only; declaring it under `docker` is rejected with `app_manifest_service_setup_requires_local_command`.
 
 ### Service network mode
 

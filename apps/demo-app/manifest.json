@@ -17,7 +17,8 @@
     },
     {
       "key": "dev",
-      "type": "localCommand"
+      "type": "localCommand",
+      "development": true
     }
   ],
   "defaultRuntime": "docker",
@@ -42,6 +43,7 @@
         "dev": {
           "type": "localCommand",
           "workingDirectory": "apps/demo-app",
+          "setup": "npm install",
           "command": "npm run dev:backend",
           "environment": {
             "NEXT_DIST_DIR": ".next-dev-backend"
@@ -78,6 +80,7 @@
         "dev": {
           "type": "localCommand",
           "workingDirectory": "apps/demo-app",
+          "setup": "npm install",
           "command": "npm run dev:frontend",
           "environment": {
             "NEXT_DIST_DIR": ".next-dev-frontend"

@@ -62,10 +62,11 @@ export type CoreApp = {
   // image digest). Optional for backwards compatibility with older Core builds. See digest pinning.
   updatePolicy?: string | null;
   artifactLocks?: Record<string, CoreArtifactLock> | null;
-  // True when the selected runtime runs live from the operator's own source folder (a source-kind
-  // runtime, localCommand in v1): the manifest is adopted on restart, so there is no reviewed-update
-  // path and the Update affordance is hidden in favour of a "Live" badge. Optional for backwards
-  // compatibility with older Core builds. See runtime-app-marketplace.md ("Live source").
+  // True when the selected runtime is a development runtime (a localCommand profile with
+  // development: true) running live from the operator's own source folder: the manifest is adopted on
+  // restart, so there is no reviewed-update path and the Update affordance is hidden in favour of a
+  // "Live" badge. Optional for backwards compatibility with older Core builds. See
+  // runtime-artifact-model.md.
   live?: boolean | null;
   // Set when the live source folder manifest was invalid on the last start and Core kept the last-good
   // copy running; surfaced as a non-blocking warning. Null when valid or not a live source app.
@@ -73,8 +74,9 @@ export type CoreApp = {
   // Contract deltas (version/capabilities/mounts/...) a live source app adopted at its last start,
   // surfaced as an informational "adopted" breadcrumb. Null/empty when nothing changed.
   liveChanges?: string[] | null;
-  // True when the app can run from a local source folder (non-URL install with a localCommand runtime
-  // profile); gates the settings "Source" tab. sourceOverridePath is the operator-set override folder
+  // True when the app can run from a local source folder (non-URL install that declares a development
+  // runtime — a localCommand profile with development: true); gates the settings "Source" tab. A
+  // non-development localCommand runtime does not qualify. sourceOverridePath is the operator-set folder
   // (null = using the standard Hosty-managed source); sourceManagedPath is the Hosty-managed checkout
   // folder for display. Optional for backwards compatibility with older Core builds.
   supportsSource?: boolean | null;

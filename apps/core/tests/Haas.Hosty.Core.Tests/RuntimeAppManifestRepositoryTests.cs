@@ -24,6 +24,7 @@ public sealed class RuntimeAppManifestRepositoryTests
         Assert.Equal("ghcr.io/alex-de-haas/hosty-shell:latest", dockerService.Image?.Reference);
         Assert.Equal("dev", dev.RuntimeProfile.Key);
         Assert.Equal("localCommand", dev.RuntimeProfile.Type);
+        Assert.True(dev.RuntimeProfile.Development);
         Assert.Equal("apps/shell", Assert.Single(dev.Services).Runtime.WorkingDirectory);
     }
 

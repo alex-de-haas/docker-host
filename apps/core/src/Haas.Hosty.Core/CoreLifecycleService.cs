@@ -2111,9 +2111,12 @@ internal sealed class CoreLifecycleService(
             return null;
         }
 
+        // Only a development runtime (a localCommand profile with development: true) runs live from an
+        // operator folder. A non-development source runtime builds a locked artifact and is updated in
+        // review, so it is not "live". Development implies localCommand (manifest-validated).
         var selectedProfile = ((profiles ?? app.RuntimeProfiles) ?? [])
             .FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
-        if (selectedProfile is null || !string.Equals(selectedProfile.Type, "localCommand", StringComparison.Ordinal))
+        if (selectedProfile is null || !selectedProfile.Development)
         {
             return null;
         }
@@ -2987,7 +2990,8 @@ internal sealed class CoreLifecycleService(
             .Select(profile => new AppRuntimeProfileSummary(
                 profile.Key,
                 profile.Type,
-                string.Equals(profile.Key, defaultRuntime, StringComparison.Ordinal)))
+                string.Equals(profile.Key, defaultRuntime, StringComparison.Ordinal),
+                profile.Development))
             .ToArray();
     }
 
