@@ -419,12 +419,17 @@ internal sealed record AppSummary(
     // configured. Surfaced so the Shell's Source tab can show/edit the current source without a
     // second round-trip. Additive/nullable; older clients ignore them.
     string? SourceOverridePath = null,
-    string? SourceManagedPath = null)
+    string? SourceManagedPath = null,
+    // The folder a live source app actually runs from (the override folder, else the original external
+    // folder install), or null when not live. Computed by the lifecycle service (needs the internal-path
+    // guard), so it is passed in rather than derived here. Clients show it in the "Live" badge tooltip.
+    string? SourceLivePath = null)
 {
     public static AppSummary From(
         AppRecord app,
         IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null,
-        bool live = false)
+        bool live = false,
+        string? liveSourcePath = null)
     {
         var ui = app.Ui;
         var endpoints = AttachPublicOrigins(app.Endpoints, app.Settings);
@@ -479,7 +484,8 @@ internal sealed record AppSummary(
             live,
             supportsSource,
             app.SourceState?.LocalOverridePath,
-            app.SourceState?.ManagedCheckoutPath);
+            app.SourceState?.ManagedCheckoutPath,
+            liveSourcePath);
     }
 
     private static IReadOnlyList<AppMountSummary> BuildMountSummaries(

@@ -80,6 +80,9 @@ export type CoreApp = {
   supportsSource?: boolean | null;
   sourceOverridePath?: string | null;
   sourceManagedPath?: string | null;
+  // The folder a live source app actually runs from (override folder, else the original folder
+  // install); shown in the "Live" badge tooltip. Null when the app is not running live from source.
+  sourceLivePath?: string | null;
 };
 
 export type CoreArtifactLock = {

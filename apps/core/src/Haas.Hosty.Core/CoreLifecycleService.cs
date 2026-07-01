@@ -1207,7 +1207,8 @@ internal sealed class CoreLifecycleService(
     private async Task<AppSummary> BuildAppSummaryAsync(AppRecord app, CancellationToken cancellationToken)
     {
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
-        return AppSummary.From(app, profiles, IsLiveSourceApp(app, profiles));
+        var liveSourcePath = ResolveLiveSourcePath(app, profiles);
+        return AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
     }
 
     // The app's runtime profiles, preferring the persisted record and falling back to a live load from
@@ -2095,30 +2096,42 @@ internal sealed class CoreLifecycleService(
     // never loads or validates a (possibly mid-edit) folder manifest. Mirrors ResolveLiveSourceManifestPath,
     // using profile type == "localCommand" for the source-artifact check the loaded selection would make.
     private bool IsLiveSourceApp(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
+        => ResolveLiveSourcePath(app, profiles) is not null;
+
+    // The operator-owned source folder a live source app runs from - a source-override folder, else the
+    // original external folder install - or null when the app is not a live source app. Record-only
+    // mirror of ResolveLiveSourceManifestPath (which needs a loaded manifest); kept in sync so the
+    // "Live" flag, the summary's SourceLivePath (badge tooltip), and the update-plan guard all agree.
+    private string? ResolveLiveSourcePath(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
     {
         // A URL/publisher install crosses a trust boundary: its contract is reviewed even when the
         // code runs live, so it is never "live source" for the update affordance.
         if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
         {
-            return false;
+            return null;
         }
 
         var selectedProfile = ((profiles ?? app.RuntimeProfiles) ?? [])
             .FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
         if (selectedProfile is null || !string.Equals(selectedProfile.Type, "localCommand", StringComparison.Ordinal))
         {
-            return false;
+            return null;
         }
 
         var overridePath = app.SourceState?.LocalOverridePath;
         if (!string.IsNullOrWhiteSpace(overridePath) && Directory.Exists(overridePath))
         {
-            return true;
+            return overridePath;
         }
 
-        return !string.IsNullOrWhiteSpace(app.InstallManifestPath)
+        if (!string.IsNullOrWhiteSpace(app.InstallManifestPath)
             && !IsInternalAppPath(app.Id, app.InstallManifestPath)
-            && (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath));
+            && (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath)))
+        {
+            return app.InstallManifestPath;
+        }
+
+        return null;
     }
 
     // Update source for a local install: prefer the operator's original folder/file so a folder

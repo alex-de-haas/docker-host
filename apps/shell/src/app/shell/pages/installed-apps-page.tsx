@@ -788,7 +788,11 @@ function InstalledAppRow({
             <Badge
               variant="outline"
               className="gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
-              title="Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
+              title={
+                app.sourceLivePath
+                  ? `Runs live from ${app.sourceLivePath}; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates.`
+                  : "Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
+              }
             >
               <Radio className="h-3 w-3" />
               Live

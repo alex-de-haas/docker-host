@@ -838,6 +838,16 @@ public sealed class CoreLifecycleServiceTests
         Assert.True(overridden.SupportsSource);
         Assert.Equal(Path.GetFullPath(overrideFolder), overridden.SourceOverridePath);
         Assert.Equal(Path.Combine(fixture.Paths.SourcesRoot, "com.example.src"), overridden.SourceManagedPath);
+        // Still on the docker runtime, so it is not running live and no live source path is surfaced.
+        Assert.Null(overridden.SourceLivePath);
+
+        // Selecting the localCommand runtime makes it live; SourceLivePath (the badge tooltip path)
+        // resolves to the override folder.
+        var record = await fixture.Apps.GetAppAsync("com.example.src");
+        await fixture.Apps.UpsertAppAsync(record! with { SelectedRuntime = "local" });
+        var liveSrc = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.src");
+        Assert.True(liveSrc.Live);
+        Assert.Equal(Path.GetFullPath(overrideFolder), liveSrc.SourceLivePath);
     }
 
     [Theory]
