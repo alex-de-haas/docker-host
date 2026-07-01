@@ -73,6 +73,13 @@ export type CoreApp = {
   // Contract deltas (version/capabilities/mounts/...) a live source app adopted at its last start,
   // surfaced as an informational "adopted" breadcrumb. Null/empty when nothing changed.
   liveChanges?: string[] | null;
+  // True when the app can run from a local source folder (non-URL install with a localCommand runtime
+  // profile); gates the settings "Source" tab. sourceOverridePath is the operator-set override folder
+  // (null = using the standard Hosty-managed source); sourceManagedPath is the Hosty-managed checkout
+  // folder for display. Optional for backwards compatibility with older Core builds.
+  supportsSource?: boolean | null;
+  sourceOverridePath?: string | null;
+  sourceManagedPath?: string | null;
 };
 
 export type CoreArtifactLock = {
@@ -333,7 +340,7 @@ export type AppAction = "start" | "stop" | "restart" | "backup";
 export type DetailView = "backups" | "settings" | "update" | "remove";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
-export type SettingsTab = "app" | "publicOrigins" | "mounts";
+export type SettingsTab = "app" | "publicOrigins" | "mounts" | "source";
 export type ShellView =
   | "available-apps"
   | "dashboard"

@@ -409,7 +409,17 @@ internal sealed record AppSummary(
     // contract is adopted on restart and there is no reviewed-update path, so clients mark the runtime
     // "Live" and hide the Update affordance (runtime-app-marketplace.md). False for compiled runtimes
     // and for publisher/URL installs (whose contract is reviewed even when the code runs live).
-    bool Live = false)
+    bool Live = false,
+    // True when the app can run from a local source folder: a non-URL install that declares a
+    // localCommand runtime profile. Broader than Live (which also requires a source to already exist) -
+    // it gates the Shell's "Source" tab so an operator can point the app at a source before one is set.
+    bool SupportsSource = false,
+    // The operator-configured local source override folder (AppSourceState.LocalOverridePath), and the
+    // Hosty-managed checkout folder for this app (AppSourceState.ManagedCheckoutPath). Null when not
+    // configured. Surfaced so the Shell's Source tab can show/edit the current source without a
+    // second round-trip. Additive/nullable; older clients ignore them.
+    string? SourceOverridePath = null,
+    string? SourceManagedPath = null)
 {
     public static AppSummary From(
         AppRecord app,
@@ -433,6 +443,12 @@ internal sealed record AppSummary(
                 EntryPath: item.Path,
                 EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path)))
             .ToArray() ?? [];
+
+        // Source-capable when it can run from a local folder: a non-URL install with a localCommand
+        // runtime profile. Mirrors the source-ownership half of IsLiveSourceApp, without requiring a
+        // source to already exist (that is Live).
+        var supportsSource = string.IsNullOrWhiteSpace(app.ManifestUrl)
+            && profiles.Any(profile => string.Equals(profile.Type, "localCommand", StringComparison.Ordinal));
 
         return new(
             app.Id,
@@ -460,7 +476,10 @@ internal sealed record AppSummary(
             app.ArtifactLocks,
             app.ManifestError,
             app.LiveChanges,
-            live);
+            live,
+            supportsSource,
+            app.SourceState?.LocalOverridePath,
+            app.SourceState?.ManagedCheckoutPath);
     }
 
     private static IReadOnlyList<AppMountSummary> BuildMountSummaries(

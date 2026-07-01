@@ -787,6 +787,59 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("update_live_source_runtime", legacyError.Code);
     }
 
+    [Fact]
+    public async Task SummarySupportsSource_ReflectsLocalCommandProfile_AndSurfacesOverridePath()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+
+        // A docker-only app cannot run from a local source folder: no Source tab in the Shell.
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var dockerSummary = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.False(dockerSummary.SupportsSource);
+        Assert.Null(dockerSummary.SourceOverridePath);
+
+        // A non-URL install that declares a localCommand profile is source-capable even before any
+        // override is set, so the Shell can offer the Source tab to point it at a folder.
+        var folder = Path.Combine(fixture.Root, "src-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.src",
+              "name": "Src App",
+              "version": "1.0.0",
+              "runtimeProfiles": [
+                { "key": "docker", "type": "docker", "default": true },
+                { "key": "local", "type": "localCommand" }
+              ],
+              "defaultRuntime": "docker",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/example/src:1.0.0" },
+                  "local": { "type": "localCommand", "command": "sleep 5", "workingDirectory": "." }
+                }
+              }]
+            }
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "docker"));
+
+        var srcSummary = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.src");
+        Assert.True(srcSummary.SupportsSource);
+        Assert.Null(srcSummary.SourceOverridePath);
+
+        // Setting a local override surfaces the folder plus the managed checkout path on the summary.
+        var overrideFolder = Path.Combine(fixture.Root, "override-src");
+        Directory.CreateDirectory(overrideFolder);
+        await fixture.Sources.SetLocalOverrideAsync("com.example.src", new AppSourceOverrideRequest(overrideFolder));
+
+        var overridden = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.src");
+        Assert.True(overridden.SupportsSource);
+        Assert.Equal(Path.GetFullPath(overrideFolder), overridden.SourceOverridePath);
+        Assert.Equal(Path.Combine(fixture.Paths.SourcesRoot, "com.example.src"), overridden.SourceManagedPath);
+    }
+
     [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]

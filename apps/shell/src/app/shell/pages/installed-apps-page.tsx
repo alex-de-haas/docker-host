@@ -675,7 +675,7 @@ function InstalledAppTableSection({
                             app={app}
                             healthState={healthState}
                             updateStatusState={updateStatusState}
-                            canConfigurePublicOrigins={canManageApps && !app.system}
+                            canConfigurePublicOrigins={canManageApps}
                             onConfigurePublicOrigins={() => onOpenPanel(app, "settings", { settingsTab: "publicOrigins" })}
                             canUpdate={canUpdate}
                             onOpenUpdate={() => onOpenPanel(app, "update")}
@@ -722,7 +722,9 @@ function InstalledAppRow({
   const canControl = canManageApps && !app.system;
   const canSwitchRuntime = canManageApps;
   const canBackup = canControl && app.capabilities.includes("backup");
-  const canConfigure = canControl;
+  // Settings (env/public origins/mounts/source) are available for system apps too; only start/stop,
+  // backups, update, and remove stay gated on !app.system via canControl.
+  const canConfigure = canManageApps;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
   // Update menu item is hidden and the "Live" badge is shown instead. See CoreApp.live.
   const canUpdate = canControl && !app.live && app.capabilities.includes("update");

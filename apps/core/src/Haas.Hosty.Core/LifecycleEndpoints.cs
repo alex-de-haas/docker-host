@@ -110,6 +110,54 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        // Browser twins of the control-API source routes in SourceEndpoints.cs. Let the Shell change
+        // an installed app's live source folder (set/clear the local override) with the same admin
+        // session + CSRF guard the other mutating app endpoints use. GET reads current source state.
+        app.MapGet("/api/apps/{appId}/source", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            AppSourceService sources,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => sources.GetAsync(appId, cancellationToken)),
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/source/override", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            AppSourceService sources,
+            AppSourceOverrideRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => sources.SetLocalOverrideAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapDelete("/api/apps/{appId}/source/override", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            AppSourceService sources,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => sources.ClearLocalOverrideAsync(appId, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapPost("/api/apps/{appId}/autostart", async (
             string appId,
             HttpRequest request,
