@@ -1,6 +1,6 @@
 # Runtime Artifact & Storage Model
 
-> **Status: design (review before implementation).** Phase 0 (the `localCommand` `setup` command) has shipped. Phases 1–3 below are proposed, not built. This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](../ideas/runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
+> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command) and Phase 1a (the `development` flag) have shipped. Phases 1b–3 below are proposed, not built. This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](../ideas/runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
 
 ## Motivation
 

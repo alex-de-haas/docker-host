@@ -152,8 +152,10 @@ internal sealed class LocalCommandRuntimeAdapter(
         };
 
         // Keep the last lines so a failure message carries the actual cause (e.g. npm's error) without
-        // making the operator open the log file.
+        // making the operator open the log file. OutputDataReceived and ErrorDataReceived are raised
+        // concurrently on separate threads, so `tail` (not thread-safe) is guarded by a lock.
         var tail = new Queue<string>();
+        var tailLock = new object();
         void Capture(string? line)
         {
             if (line is null)
@@ -162,10 +164,13 @@ internal sealed class LocalCommandRuntimeAdapter(
             }
 
             logWriter.TryWriteLine(line);
-            tail.Enqueue(line);
-            while (tail.Count > 15)
+            lock (tailLock)
             {
-                tail.Dequeue();
+                tail.Enqueue(line);
+                while (tail.Count > 15)
+                {
+                    tail.Dequeue();
+                }
             }
         }
 
@@ -189,10 +194,19 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
         catch
         {
-            // Never leave the setup process orphaned on cancellation.
+            // Never leave the setup process orphaned on cancellation. Kill can race the process's own
+            // exit (InvalidOperationException) or be denied (Win32Exception); swallow so the original
+            // cancellation/failure exception is the one that propagates.
             if (!process.HasExited)
             {
-                process.Kill(entireProcessTree: true);
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort — preserve the original exception below.
+                }
             }
 
             throw;
@@ -204,7 +218,11 @@ internal sealed class LocalCommandRuntimeAdapter(
         if (process.ExitCode != 0)
         {
             logWriter.TryWriteLine($"[hosty] setup exited with code {process.ExitCode}");
-            var detail = tail.Count > 0 ? " " + string.Join(" | ", tail) : string.Empty;
+            string detail;
+            lock (tailLock)
+            {
+                detail = tail.Count > 0 ? " " + string.Join(" | ", tail) : string.Empty;
+            }
             throw new AppLifecycleException(
                 "local_command_setup_failed",
                 $"Local command setup for service '{service.Key}' exited with code {process.ExitCode}.{detail}");
