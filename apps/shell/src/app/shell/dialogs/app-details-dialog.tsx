@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Database, FileText, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -48,6 +48,8 @@ export function AppDetailsDialog({
   onApplyBackupCleanup,
   onConfigure,
   onConfigureMounts,
+  onConfigureSource,
+  onClearSource,
   onReloadUpdatePlan,
   onApplyUpdate,
   onRemove,
@@ -68,11 +70,16 @@ export function AppDetailsDialog({
   onApplyBackupCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
+  onConfigureSource: (app: CoreApp, path: string) => void;
+  onClearSource: (app: CoreApp) => void;
   onReloadUpdatePlan: (app: CoreApp, manifestPath?: string) => void;
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
 }) {
+  // Settings (env/public origins/mounts/source) are available for system apps too; only backups,
+  // update, and remove stay hidden for them.
   const canMutateApp = canManageApps && !app.system;
+  const canConfigureApp = canManageApps;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -96,18 +103,20 @@ export function AppDetailsDialog({
           />
         )}
         {view === "backups" && !canMutateApp && <InlineError message="System app backup controls are not available in Shell." />}
-        {view === "settings" && (canMutateApp ? (
+        {view === "settings" && (canConfigureApp ? (
           <SettingsDialog
             app={app}
             busyAction={busyAction}
-            canManageApps={canMutateApp}
+            canManageApps={canConfigureApp}
             globalMounts={globalMounts}
             initialTab={settingsTab}
             onConfigure={onConfigure}
             onConfigureMounts={onConfigureMounts}
+            onConfigureSource={onConfigureSource}
+            onClearSource={onClearSource}
           />
         ) : (
-          <InlineError message="System app settings are not available in Shell." />
+          <InlineError message="You do not have permission to manage app settings." />
         ))}
         {view === "update" && (canMutateApp ? (
           <UpdatePanel app={app} detail={detail} busyAction={busyAction} onReloadPlan={onReloadUpdatePlan} onApplyUpdate={onApplyUpdate} />
@@ -226,6 +235,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "app", label: "App settings" },
   { id: "publicOrigins", label: "Public origins" },
   { id: "mounts", label: "Mounts" },
+  { id: "source", label: "Source" },
 ];
 
 // Consolidated runtime-app configuration: App settings, Public origins, and Mounts as tabs. A tab is
@@ -239,6 +249,8 @@ function SettingsDialog({
   initialTab,
   onConfigure,
   onConfigureMounts,
+  onConfigureSource,
+  onClearSource,
 }: {
   app: CoreApp;
   busyAction: string | null;
@@ -247,13 +259,25 @@ function SettingsDialog({
   initialTab?: SettingsTab;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
+  onConfigureSource: (app: CoreApp, path: string) => void;
+  onClearSource: (app: CoreApp) => void;
 }) {
   const settings = app.settings || [];
   const hasPublicOrigins = settings.some((setting) => isPublicOriginSettingKey(setting.key));
   const hasMounts = (app.mounts?.length ?? 0) > 0;
-  const availableTabs = SETTINGS_TABS.filter((tab) =>
-    tab.id === "app" ? true : tab.id === "publicOrigins" ? hasPublicOrigins : hasMounts,
-  );
+  const hasSource = Boolean(app.supportsSource);
+  const availableTabs = SETTINGS_TABS.filter((tab) => {
+    switch (tab.id) {
+      case "app":
+        return true;
+      case "publicOrigins":
+        return hasPublicOrigins;
+      case "mounts":
+        return hasMounts;
+      case "source":
+        return hasSource;
+    }
+  });
   const defaultTab: SettingsTab = initialTab && availableTabs.some((tab) => tab.id === initialTab) ? initialTab : "app";
   const [active, setActive] = useState<SettingsTab>(defaultTab);
 
@@ -284,8 +308,8 @@ function SettingsDialog({
           ))}
         </div>
       )}
-      {/* Both forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
-      <div className={cn("flex min-h-0 flex-1 flex-col", active === "mounts" && "hidden")}>
+      {/* All forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
+      <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "publicOrigins" && "hidden")}>
         <SettingsForm
           app={app}
           section={active === "publicOrigins" ? "publicOrigins" : "app"}
@@ -302,6 +326,17 @@ function SettingsDialog({
             canManageApps={canManageApps}
             globalMounts={globalMounts}
             onConfigureMounts={onConfigureMounts}
+          />
+        </div>
+      )}
+      {hasSource && (
+        <div className={cn("flex min-h-0 flex-1 flex-col", active !== "source" && "hidden")}>
+          <SourceForm
+            app={app}
+            busyAction={busyAction}
+            canManageApps={canManageApps}
+            onConfigureSource={onConfigureSource}
+            onClearSource={onClearSource}
           />
         </div>
       )}
@@ -598,6 +633,120 @@ function MountsForm({
         <Button type="submit" disabled={busy || !canManageApps}>
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
           Save mounts
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+// Source override for apps that can run from a local folder (CoreApp.supportsSource). "Standard"
+// clears the override so Core uses its recorded source; "Custom" points the app at an operator
+// repo folder. The stored override arrives on the app summary, so saving refreshes it in place.
+function SourceForm({
+  app,
+  busyAction,
+  canManageApps,
+  onConfigureSource,
+  onClearSource,
+}: {
+  app: CoreApp;
+  busyAction: string | null;
+  canManageApps: boolean;
+  onConfigureSource: (app: CoreApp, path: string) => void;
+  onClearSource: (app: CoreApp) => void;
+}) {
+  const overridePath = app.sourceOverridePath ?? "";
+  const [mode, setMode] = useState<"standard" | "custom">(overridePath ? "custom" : "standard");
+  const [pathDraft, setPathDraft] = useState(overridePath);
+
+  // Reset while rendering when the app identity or its stored override changes, not in an effect.
+  // https://react.dev/learn/you-might-not-need-an-effect
+  const resetSignature = `${app.id}\u0001${overridePath}`;
+  const [prevReset, setPrevReset] = useState<string | null>(null);
+  if (prevReset !== resetSignature) {
+    setPrevReset(resetSignature);
+    setMode(overridePath ? "custom" : "standard");
+    setPathDraft(overridePath);
+  }
+
+  const busy = busyAction === `${app.id}:source`;
+  const trimmedPath = pathDraft.trim();
+  const customInvalid = mode === "custom" && trimmedPath.length === 0;
+  // Only enable Save when it would change something: a new custom path, or clearing an existing override.
+  const dirty = mode === "custom" ? trimmedPath !== overridePath : overridePath.length > 0;
+  const modeName = `${app.id}-source-mode`;
+  const inputId = `${app.id}-source-path`;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (mode === "custom") {
+      if (trimmedPath.length === 0) {
+        return;
+      }
+      onConfigureSource(app, trimmedPath);
+    } else {
+      onClearSource(app);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+      <DialogBody className="space-y-4">
+        <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
+          <Radio className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <p className="text-muted-foreground">
+            Core runs this app live from the selected source folder and adopts manifest edits on restart. The folder must exist on the host.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", mode === "standard" && "border-foreground")}>
+            <input
+              type="radio"
+              name={modeName}
+              className="mt-1"
+              checked={mode === "standard"}
+              disabled={!canManageApps}
+              onChange={() => setMode("standard")}
+            />
+            <div className="min-w-0 space-y-0.5">
+              <div className="text-sm font-medium">Standard Hosty source</div>
+              <div className="text-xs text-muted-foreground">
+                Use the source Core recorded when the app was installed
+                {app.sourceManagedPath ? (
+                  <> · <code className="font-mono">{app.sourceManagedPath}</code></>
+                ) : null}
+                .
+              </div>
+            </div>
+          </label>
+          <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", mode === "custom" && "border-foreground")}>
+            <input
+              type="radio"
+              name={modeName}
+              className="mt-1"
+              checked={mode === "custom"}
+              disabled={!canManageApps}
+              onChange={() => setMode("custom")}
+            />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="text-sm font-medium">Custom source folder</div>
+              <div className="text-xs text-muted-foreground">Point this app at a repository folder on the host.</div>
+              <Input
+                id={inputId}
+                placeholder="/srv/apps/my-app"
+                className="font-mono text-xs"
+                value={pathDraft}
+                disabled={!canManageApps || mode !== "custom"}
+                onChange={(event) => setPathDraft(event.target.value)}
+              />
+            </div>
+          </label>
+        </div>
+      </DialogBody>
+      <DialogFooter>
+        <Button type="submit" disabled={!canManageApps || busy || customInvalid || !dirty}>
+          {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FolderGit2 className="h-4 w-4" />}
+          Save source
         </Button>
       </DialogFooter>
     </form>

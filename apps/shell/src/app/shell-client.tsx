@@ -712,6 +712,63 @@ export function ShellClient({
     [appEndpoint, refresh, sendCsrfJson],
   );
 
+  // Source override: point an app's live source at a custom folder, or clear it to fall back to the
+  // standard Hosty-managed source. Unlike configure/mounts we keep the panel open so the Source tab
+  // re-derives selectedApp from refreshed state and shows the new override state.
+  const configureAppSource = useCallback(
+    async (app: CoreApp, path: string) => {
+      const actionKey = `${app.id}:source`;
+      setBusyAction(actionKey);
+      // The panel stays open on success, so clear any stale error from a prior failed attempt.
+      setDetailPanel((current) => ({ ...current, error: null }));
+      try {
+        await sendCsrfJson(appEndpoint(app, "/source/override"), { path });
+        await refresh();
+        toast.success("Source updated", { description: app.displayName });
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
+        setDetailPanel((current) => ({
+          ...current,
+          loading: false,
+          error: error instanceof Error ? error.message : "Updating source failed.",
+        }));
+      } finally {
+        setBusyAction((current) => (current === actionKey ? null : current));
+      }
+    },
+    [appEndpoint, refresh, sendCsrfJson],
+  );
+
+  const clearAppSource = useCallback(
+    async (app: CoreApp) => {
+      const actionKey = `${app.id}:source`;
+      setBusyAction(actionKey);
+      // The panel stays open on success, so clear any stale error from a prior failed attempt.
+      setDetailPanel((current) => ({ ...current, error: null }));
+      try {
+        await sendCsrfJson(appEndpoint(app, "/source/override"), undefined, "DELETE");
+        await refresh();
+        toast.success("Source reset to standard", { description: app.displayName });
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
+        setDetailPanel((current) => ({
+          ...current,
+          loading: false,
+          error: error instanceof Error ? error.message : "Resetting source failed.",
+        }));
+      } finally {
+        setBusyAction((current) => (current === actionKey ? null : current));
+      }
+    },
+    [appEndpoint, refresh, sendCsrfJson],
+  );
+
   // Shared-mounts library (host-level). The endpoints return the full updated list, so each call
   // refreshes globalMounts directly; the SharedMountsDialog surfaces any thrown error inline.
   const saveGlobalMount = useCallback(
@@ -1212,6 +1269,8 @@ export function ShellClient({
             onApplyBackupCleanup={applyBackupCleanup}
             onConfigure={configureApp}
             onConfigureMounts={configureMounts}
+            onConfigureSource={configureAppSource}
+            onClearSource={clearAppSource}
             onReloadUpdatePlan={loadUpdatePlan}
             onApplyUpdate={applyUpdate}
             onRemove={removeApp}
