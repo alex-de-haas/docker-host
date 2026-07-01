@@ -43,6 +43,10 @@ hosty apps start com.haas.demo-app
 
 ## Runtime Profiles
 
+Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), an optional `default: true` (at most one), and an optional `development: true`.
+
+`development: true` marks a runtime meant for local development. It is only valid for a `localCommand` profile (rejected on `docker` with `app_manifest_development_requires_local_command`), and at most one profile per manifest may set it (`app_manifest_multiple_development_runtimes`). A development runtime has two coupled effects: the operator may point it at their own source folder (source override), and it runs **live** from that folder — the manifest is adopted on restart, so there is no reviewed-update path (clients show a "Live" badge and hide Update). A `localCommand` runtime **without** `development` runs from source too, but is treated as a locked, reviewed-update artifact (e.g. it builds a production bundle via `setup`), not as live. See [Runtime artifact & storage model](runtime-artifact-model.md).
+
 `docker` profiles run service images through Docker. `localCommand` profiles run repository-local commands under Core supervision. Core injects app environment such as:
 
 - `HOSTY_APP_ID`

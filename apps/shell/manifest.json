@@ -17,7 +17,8 @@
     },
     {
       "key": "dev",
-      "type": "localCommand"
+      "type": "localCommand",
+      "development": true
     }
   ],
   "defaultRuntime": "docker",

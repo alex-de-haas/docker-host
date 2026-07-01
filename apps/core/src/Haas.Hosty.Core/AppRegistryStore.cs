@@ -281,7 +281,10 @@ internal sealed record AppEndpointContract(
     string? Port = null,
     string? PublicOrigin = null);
 
-internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default);
+// `Development` (additive/defaulted for back-compat) marks a runtime meant for local development:
+// it supports source override and runs live. Gates the Shell's Source tab and drives the "Live"
+// affordance. See docs/features/runtime-artifact-model.md.
+internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default, bool Development = false);
 
 internal sealed record AppSourceState(
     string? Type,
@@ -449,11 +452,13 @@ internal sealed record AppSummary(
                 EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path)))
             .ToArray() ?? [];
 
-        // Source-capable when it can run from a local folder: a non-URL install with a localCommand
-        // runtime profile. Mirrors the source-ownership half of IsLiveSourceApp, without requiring a
-        // source to already exist (that is Live).
+        // Source-capable when it can run from a local folder: a non-URL install that declares a
+        // development runtime (a localCommand profile with development: true). Mirrors the
+        // source-ownership half of IsLiveSourceApp, without requiring a source to already exist (that
+        // is Live). Narrowed from "any localCommand" so a build-to-production source runtime does not
+        // offer override. See docs/features/runtime-artifact-model.md.
         var supportsSource = string.IsNullOrWhiteSpace(app.ManifestUrl)
-            && profiles.Any(profile => string.Equals(profile.Type, "localCommand", StringComparison.Ordinal));
+            && profiles.Any(profile => profile.Development);
 
         return new(
             app.Id,

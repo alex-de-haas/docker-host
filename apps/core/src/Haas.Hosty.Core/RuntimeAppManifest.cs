@@ -97,6 +97,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
 
         var profileKeys = new HashSet<string>(StringComparer.Ordinal);
         var defaultProfileCount = 0;
+        var developmentProfileCount = 0;
         foreach (var profile in manifest.RuntimeProfiles)
         {
             if (string.IsNullOrWhiteSpace(profile.Key))
@@ -120,15 +121,35 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                 errors.Add(new("app_manifest_runtime_type_unsupported", $"Runtime profile type '{profile.Type}' is not supported by this Hosty Core build.", "$.runtimeProfiles[].type"));
             }
 
+            // `development` gates source override + the live update model, both of which only make
+            // sense for a source runtime (localCommand in v1). A docker profile cannot be a
+            // development runtime.
+            if (profile.Development && profile.Type is not "localCommand")
+            {
+                errors.Add(new("app_manifest_development_requires_local_command", $"Runtime profile '{profile.Key}' sets development: true, which is only supported for a localCommand runtime.", "$.runtimeProfiles[].development"));
+            }
+
             if (profile.Default)
             {
                 defaultProfileCount++;
+            }
+
+            if (profile.Development)
+            {
+                developmentProfileCount++;
             }
         }
 
         if (defaultProfileCount > 1)
         {
             errors.Add(new("app_manifest_runtime_default_duplicate", "Only one runtime profile may set default: true.", "$.runtimeProfiles"));
+        }
+
+        // v1 supports a single development runtime, so one operator source override is enough. The
+        // multi-development-runtime (per-runtime override) case is deferred; see the design doc.
+        if (developmentProfileCount > 1)
+        {
+            errors.Add(new("app_manifest_multiple_development_runtimes", "At most one runtime profile may set development: true.", "$.runtimeProfiles"));
         }
 
         var resolvedRuntime = selectedRuntime?.Trim();
@@ -2074,6 +2095,13 @@ internal sealed class RuntimeProfileManifest
     public string Key { get => field ?? ""; init; } = "";
     public string Type { get => field ?? ""; init; } = "";
     public bool Default { get; init; }
+
+    // Marks a runtime meant for local development. Two coupled consequences: the operator may point
+    // it at their own source folder (source override), and it runs live from that folder (no lock, no
+    // reviewed update — the "Live" affordance). Only valid for a source runtime (localCommand in v1);
+    // at most one per manifest. A non-development source runtime is locked and updated in review, even
+    // though it also runs from source. See docs/features/runtime-artifact-model.md.
+    public bool Development { get; init; }
 }
 
 internal sealed class RuntimeAppServiceManifest

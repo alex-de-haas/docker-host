@@ -417,6 +417,89 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsDevelopmentRuntime()
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [
+                { "key": "docker", "type": "docker", "default": true },
+                { "key": "dev", "type": "localCommand", "development": true }
+              ],
+              "defaultRuntime": "docker",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/example/notes:1.0.0" },
+                  "dev": { "type": "localCommand", "command": "npm run dev" }
+                }
+              }]
+            }
+            """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var dev = Assert.Single(selection.Manifest.RuntimeProfiles, profile => profile.Key == "dev");
+        Assert.True(dev.Development);
+        var docker = Assert.Single(selection.Manifest.RuntimeProfiles, profile => profile.Key == "docker");
+        Assert.False(docker.Development);
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsDevelopmentUnderDocker()
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true, "development": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/notes:1.0.0" } }
+              }]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_development_requires_local_command");
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsMultipleDevelopmentRuntimes()
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [
+                { "key": "dev1", "type": "localCommand", "default": true, "development": true },
+                { "key": "dev2", "type": "localCommand", "development": true }
+              ],
+              "defaultRuntime": "dev1",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev1": { "type": "localCommand", "command": "npm run dev" },
+                  "dev2": { "type": "localCommand", "command": "npm run dev" }
+                }
+              }]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_multiple_development_runtimes");
+    }
+
+    [Fact]
     public async Task LoadAsync_AcceptsDependsOnStringAndObjectForms()
     {
         var manifestPath = await WriteTwoServiceManifestAsync("""[ "api", { "service": "api", "port": "internal" } ]""");
@@ -638,6 +721,15 @@ public sealed class AppManifestServiceTests
               }]
             }
             """);
+        return path;
+    }
+
+    private static async Task<string> WriteRawManifestAsync(string json)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "manifest.json");
+        await File.WriteAllTextAsync(path, json);
         return path;
     }
 }
