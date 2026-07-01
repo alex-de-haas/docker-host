@@ -55,6 +55,7 @@ import type {
   AppHealthResponse,
   AppUpdateStatusResponse,
   CoreApp,
+  CoreRuntimeProfile,
   OpenAppPanel,
   RuntimeHealthState,
   UpdateStatusState,
@@ -830,6 +831,29 @@ function InstalledAppRow({
   );
 }
 
+// Per-runtime mode marker in the switcher, so an operator sees which target runs live from source
+// vs. runs a locked build before switching. Driven by the profile's `development` flag (Core narrows
+// Live/source-override to development runtimes). See runtime-artifact-model.md.
+function RuntimeModeBadge({ profile }: { profile: CoreRuntimeProfile }) {
+  const live = profile.development === true;
+  return (
+    <span
+      className={cn(
+        "ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]",
+        live ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+      )}
+      title={
+        live
+          ? "Development runtime: runs live from your source folder; the manifest is adopted on restart (no reviewed update)."
+          : "Locked runtime: runs a fixed image/build, advanced by a reviewed update."
+      }
+    >
+      {live ? <Radio className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+      {live ? "Live" : "Locked"}
+    </span>
+  );
+}
+
 function RuntimeSwitcher({
   app,
   canSwitch,
@@ -884,6 +908,7 @@ function RuntimeSwitcher({
                   <Check className={cn("h-4 w-4", selected ? "opacity-100" : "opacity-0")} />
                 )}
                 <span className="min-w-0 flex-1 truncate">{formatRuntimeProfileLabel(profile)}</span>
+                <RuntimeModeBadge profile={profile} />
               </DropdownMenuItem>
             );
           })}
