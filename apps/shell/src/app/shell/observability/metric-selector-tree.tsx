@@ -60,6 +60,7 @@ export function MetricSelectorTree({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Filter metrics"
+          aria-label="Filter metrics"
           className="h-8 w-full rounded-md border bg-transparent pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
       </div>
@@ -100,6 +101,8 @@ export function MetricSelectorTree({
               </button>
               <button
                 type="button"
+                role="checkbox"
+                aria-checked={groupState === "indeterminate" ? "mixed" : groupState === "checked"}
                 onClick={() => onSetGroup(instruments, groupState !== "checked")}
                 className="flex min-w-0 items-center gap-2"
               >
@@ -115,6 +118,8 @@ export function MetricSelectorTree({
                   <button
                     key={name}
                     type="button"
+                    role="checkbox"
+                    aria-checked={selected.has(name)}
                     onClick={() => onToggleInstrument(name)}
                     className="flex w-full items-center gap-2 py-0.5 text-left text-sm"
                   >

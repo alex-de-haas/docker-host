@@ -19,7 +19,7 @@ export function MetricSeriesCard({ series }: { series: MetricSeries }) {
   const last = series.points.at(-1)?.value;
   // `otel_scope_*` labels only encode the meter (already used for grouping) — drop them from the
   // card subtitle so it shows the dimensions that actually distinguish the series.
-  const subtitle = Object.entries(series.labels)
+  const subtitle = Object.entries(series.labels ?? {})
     .filter(([key]) => !key.startsWith("otel_scope_"))
     .map(([key, value]) => `${key}=${value}`)
     .join(" · ");
@@ -151,7 +151,7 @@ export function metricGroup(series: MetricSeries): string {
   if (isInfrastructureMetric(series.name)) {
     return INFRASTRUCTURE_GROUP;
   }
-  const scope = series.labels["otel_scope_name"];
+  const scope = series.labels?.["otel_scope_name"];
   if (scope && scope.trim().length > 0) {
     return scope.trim();
   }
@@ -162,7 +162,7 @@ export function metricGroup(series: MetricSeries): string {
 // Stable React key for a series: name + its labels sorted by key (so insertion order cannot change
 // the key), joined by an explicit unit-separator escape (never a literal control character).
 export function metricSeriesKey(series: MetricSeries): string {
-  const labels = Object.entries(series.labels)
+  const labels = Object.entries(series.labels ?? {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
     .join(",");

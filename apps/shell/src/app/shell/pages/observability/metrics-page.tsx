@@ -62,15 +62,25 @@ export function ObservabilityMetricsPage({
   const [selectedAppId, setSelectedAppId] = useState<string>(ALL);
   const [rangeSeconds, setRangeSeconds] = useState(900);
   const [metricsByApp, setMetricsByApp] = useState<Record<string, MetricsState>>({});
-  const [selected, setSelected] = useState<Set<string>>(() => readSelectedMetrics());
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [hydrated, setHydrated] = useState(false);
 
-  // Persist the ticked instruments across reloads (empty set = only pinned CPU/memory show).
+  // Load the persisted selection after mount rather than in the state initializer: reading
+  // localStorage during render would make the client's first render diverge from the server-rendered
+  // HTML (window is undefined on the server) and trip a hydration mismatch.
   useEffect(() => {
-    if (typeof window === "undefined") {
+    setSelected(readSelectedMetrics());
+    setHydrated(true);
+  }, []);
+
+  // Persist the ticked instruments across reloads (empty set = only pinned CPU/memory show). Gated on
+  // `hydrated` so the mount pass cannot clobber the stored set with the empty initial state.
+  useEffect(() => {
+    if (!hydrated) {
       return;
     }
     window.localStorage.setItem(METRICS_SELECTED_STORAGE_KEY, JSON.stringify([...selected]));
-  }, [selected]);
+  }, [selected, hydrated]);
 
   // Keep the selection valid as the app set changes (e.g. an app is uninstalled) — adjust during
   // render, not in an effect. https://react.dev/learn/you-might-not-need-an-effect
