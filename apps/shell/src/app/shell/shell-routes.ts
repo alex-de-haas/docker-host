@@ -2,6 +2,11 @@ import type { ShellRouteState, ShellSearchParams, ShellView, WorkspaceRoute } fr
 
 export const SIDEBAR_COMPACT_STORAGE_KEY = "hosty.shell.sidebar.compact";
 
+// Instrument names the user has ticked on the Metrics page (JSON string[]). Persisted so the chosen
+// set of charts survives reloads; empty by default (only pinned CPU/memory show until the user opts
+// metrics in).
+export const METRICS_SELECTED_STORAGE_KEY = "hosty.shell.metrics.selected";
+
 const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   dashboard: "/dashboard",
   "available-apps": "/apps",

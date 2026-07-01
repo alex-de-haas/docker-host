@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, ChevronDown, LineChart, LoaderCircle, RefreshCw } from "lucide-react";
+import { Activity, ChevronDown, LineChart, ListChecks, LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,7 +14,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../../core-api";
-import { MetricSeriesCard, METRIC_RANGES, metricSeriesKey } from "../../observability/metric-series-card";
+import {
+  isInfrastructureMetric,
+  MetricSeriesCard,
+  METRIC_RANGES,
+  metricGroup,
+  metricSeriesKey,
+} from "../../observability/metric-series-card";
+import { MetricSelectorTree, type MetricGroup } from "../../observability/metric-selector-tree";
+import { METRICS_SELECTED_STORAGE_KEY } from "../../shell-routes";
 import type { AppMetricsResponse, CoreApp } from "../../types";
 import { EmptyState, PageHeader } from "../../ui";
 
@@ -22,9 +30,25 @@ const ALL = "__all__";
 
 type MetricsState = { loading: boolean; error: string | null; metrics: AppMetricsResponse | null };
 
+// The instrument names ticked on the Metrics page, read back from localStorage. Empty by default —
+// only the pinned CPU/memory series show until the user opts metrics in.
+function readSelectedMetrics(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+  try {
+    const raw = window.localStorage.getItem(METRICS_SELECTED_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return Array.isArray(parsed) ? new Set(parsed.filter((value): value is string => typeof value === "string")) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
 // Cross-resource Metrics view, modelled on the .NET Aspire "Metrics" page: pick a resource (or all),
-// pick a time range, and see the metric series Core has buffered for it. Charts reuse the same
-// MetricSeriesCard as the per-app observability dialog.
+// pick a time range, then tick the instruments to chart in the meter tree on the left. CPU and memory
+// (docker stats) are pinned and always charted. Charts reuse the same MetricSeriesCard as the per-app
+// observability dialog.
 export function ObservabilityMetricsPage({
   runtimeApps,
   systemApps,
@@ -38,6 +62,15 @@ export function ObservabilityMetricsPage({
   const [selectedAppId, setSelectedAppId] = useState<string>(ALL);
   const [rangeSeconds, setRangeSeconds] = useState(900);
   const [metricsByApp, setMetricsByApp] = useState<Record<string, MetricsState>>({});
+  const [selected, setSelected] = useState<Set<string>>(() => readSelectedMetrics());
+
+  // Persist the ticked instruments across reloads (empty set = only pinned CPU/memory show).
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(METRICS_SELECTED_STORAGE_KEY, JSON.stringify([...selected]));
+  }, [selected]);
 
   // Keep the selection valid as the app set changes (e.g. an app is uninstalled) — adjust during
   // render, not in an effect. https://react.dev/learn/you-might-not-need-an-effect
@@ -106,6 +139,65 @@ export function ObservabilityMetricsPage({
 
   const selectRange = (seconds: number) => setRangeSeconds(seconds);
 
+  const toggleInstrument = useCallback((name: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  }, []);
+
+  const setGroup = useCallback((names: string[], select: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const name of names) {
+        if (select) {
+          next.add(name);
+        } else {
+          next.delete(name);
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  // The instruments Core has buffered for the current resource selection, split into the pinned
+  // infrastructure series and the selectable meter groups. Each instrument name maps to a single
+  // meter, so we key by name and take the first group we see for it.
+  const { pinned, groups } = useMemo(() => {
+    const groupByName = new Map<string, string>();
+    for (const app of targetApps) {
+      for (const series of metricsByApp[app.id]?.metrics?.series ?? []) {
+        if (!groupByName.has(series.name)) {
+          groupByName.set(series.name, metricGroup(series));
+        }
+      }
+    }
+    const pinnedNames = [...groupByName.keys()].filter(isInfrastructureMetric).sort();
+    const byGroup = new Map<string, string[]>();
+    for (const [name, group] of groupByName) {
+      if (isInfrastructureMetric(name)) {
+        continue;
+      }
+      const bucket = byGroup.get(group);
+      if (bucket) {
+        bucket.push(name);
+      } else {
+        byGroup.set(group, [name]);
+      }
+    }
+    const groupList: MetricGroup[] = [...byGroup.entries()]
+      .map(([group, instruments]) => ({ group, instruments: instruments.sort() }))
+      .sort((a, b) => a.group.localeCompare(b.group));
+    return { pinned: pinnedNames, groups: groupList };
+  }, [targetApps, metricsByApp]);
+
+  const hasAnyInstrument = pinned.length > 0 || groups.length > 0;
+
   const selectedLabel =
     selectedAppId === ALL ? "All resources" : apps.find((app) => app.id === selectedAppId)?.displayName ?? "All resources";
 
@@ -113,6 +205,17 @@ export function ObservabilityMetricsPage({
   // Apps with at least one buffered series, in selection order.
   const populated = targetApps.filter((app) => (metricsByApp[app.id]?.metrics?.series.length ?? 0) > 0);
   const everyTargetSettled = targetApps.every((app) => metricsByApp[app.id] && !metricsByApp[app.id]!.loading);
+
+  // Per resource, the series to chart: the pinned infra ones plus any ticked instrument. Infra first
+  // so CPU/memory lead each section (stable sort keeps API order within each rank).
+  const sections = populated
+    .map((app) => ({
+      app,
+      series: (metricsByApp[app.id]?.metrics?.series ?? [])
+        .filter((series) => isInfrastructureMetric(series.name) || selected.has(series.name))
+        .sort((a, b) => Number(isInfrastructureMetric(b.name)) - Number(isInfrastructureMetric(a.name))),
+    }))
+    .filter((section) => section.series.length > 0);
 
   return (
     <div className="space-y-6">
@@ -179,28 +282,49 @@ export function ObservabilityMetricsPage({
 
       {targetApps.length === 0 ? (
         <EmptyState icon={LineChart} title="No resources" description="Install an app to see its metrics." />
-      ) : populated.length === 0 ? (
-        anyLoading || !everyTargetSettled ? (
-          <EmptyState icon={LoaderCircle} title="Loading metrics" iconClassName="animate-spin" />
-        ) : (
-          <EmptyState
-            icon={Activity}
-            title="No metrics"
-            description="Metrics appear once an app is running and observability is enabled on the host (HOSTY_OBSERVABILITY_ENABLED)."
-          />
-        )
       ) : (
-        <div className="space-y-6">
-          {populated.map((app) => (
-            <section key={app.id} className="space-y-3">
-              <h3 className="text-sm font-medium">{app.displayName}</h3>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {(metricsByApp[app.id]?.metrics?.series ?? []).map((entry) => (
-                  <MetricSeriesCard key={metricSeriesKey(entry)} series={entry} />
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+          {hasAnyInstrument && (
+            <MetricSelectorTree
+              groups={groups}
+              pinnedInstruments={pinned}
+              selected={selected}
+              onToggleInstrument={toggleInstrument}
+              onSetGroup={setGroup}
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            {populated.length === 0 ? (
+              anyLoading || !everyTargetSettled ? (
+                <EmptyState icon={LoaderCircle} title="Loading metrics" iconClassName="animate-spin" />
+              ) : (
+                <EmptyState
+                  icon={Activity}
+                  title="No metrics"
+                  description="Metrics appear once an app is running and observability is enabled on the host (HOSTY_OBSERVABILITY_ENABLED)."
+                />
+              )
+            ) : sections.length === 0 ? (
+              <EmptyState
+                icon={ListChecks}
+                title="Select metrics"
+                description="Tick metrics in the list to chart them. CPU and memory appear automatically for containerized apps."
+              />
+            ) : (
+              <div className="space-y-6">
+                {sections.map(({ app, series }) => (
+                  <section key={app.id} className="space-y-3">
+                    <h3 className="text-sm font-medium">{app.displayName}</h3>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {series.map((entry) => (
+                        <MetricSeriesCard key={metricSeriesKey(entry)} series={entry} />
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
-            </section>
-          ))}
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -17,7 +17,10 @@ export function MetricSeriesCard({ series }: { series: MetricSeries }) {
   const color = metricColor(series.name);
   const data = series.points.map((point) => ({ t: point.timestampUnixMs, v: point.value }));
   const last = series.points.at(-1)?.value;
+  // `otel_scope_*` labels only encode the meter (already used for grouping) — drop them from the
+  // card subtitle so it shows the dimensions that actually distinguish the series.
   const subtitle = Object.entries(series.labels)
+    .filter(([key]) => !key.startsWith("otel_scope_"))
     .map(([key, value]) => `${key}=${value}`)
     .join(" · ");
 
@@ -128,6 +131,32 @@ function metricColor(name: string): { id: string; stroke: string } {
 function formatTimeTick(value: number): string {
   const date = new Date(value);
   return `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
+}
+
+// Pinned pseudo-meter for the docker-stats CPU/memory series Core collects for every container it
+// owns. These are always charted in the Metrics view, so they sit outside the checkbox selection.
+export const INFRASTRUCTURE_GROUP = "Infrastructure";
+
+// Docker-stats CPU/memory series (name prefix `container.`). Kept out of the selectable set and
+// pinned to the top of the Metrics view.
+export function isInfrastructureMetric(name: string): boolean {
+  return name.startsWith("container.");
+}
+
+// Which "meter" (instrumentation scope) a series belongs to, for the selector tree. Infra series are
+// grouped as Infrastructure; OTLP series carry their meter name in the `otel_scope_name` label the
+// collector's Prometheus exporter promotes; failing that we fall back to the leading namespace
+// segment of the instrument name (e.g. "http.client.request.duration" → "http").
+export function metricGroup(series: MetricSeries): string {
+  if (isInfrastructureMetric(series.name)) {
+    return INFRASTRUCTURE_GROUP;
+  }
+  const scope = series.labels["otel_scope_name"];
+  if (scope && scope.trim().length > 0) {
+    return scope.trim();
+  }
+  const dot = series.name.indexOf(".");
+  return dot > 0 ? series.name.slice(0, dot) : series.name;
 }
 
 // Stable React key for a series: name + its labels sorted by key (so insertion order cannot change
