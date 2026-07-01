@@ -1,6 +1,6 @@
 # Runtime Artifact & Storage Model
 
-> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command) and Phase 1a (the `development` flag) have shipped. Phases 1b–3 below are proposed, not built. This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](../ideas/runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
+> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command), Phase 1a (the `development` flag), and Phase 2 (`prebuilt` with folder delivery) have shipped. Phase 3 (Shell UI) and the later prebuilt deliveries (git-release/URL) are proposed, not built; the isolated Phase 1b storage migration was dropped (see Phasing). This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](../ideas/runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
 
 ## Motivation
 
@@ -85,9 +85,9 @@ flowchart TB
 | | `docker` | `localCommand` |
 | --- | --- | --- |
 | `image` | ✅ implemented | — (n/a) |
-| `prebuilt` | reserved (docker-from-image is the `image` cell) | 🔜 **Phase 2** |
-| `source`, `development: true` | out of scope (docker-built-from-source — see Open questions) | ✅ implemented (dev/live is inferred today; **Phase 1a** makes it a declared flag) |
-| `source`, `development: false` (build → prod) | out of scope | 🔜 **Phase 1a** (today Core would wrongly flag it Live and offer override) |
+| `prebuilt` | reserved (docker-from-image is the `image` cell) | ✅ **Phase 2** — folder delivery (git-release/URL deferred) |
+| `source`, `development: true` | out of scope (docker-built-from-source — see Open questions) | ✅ **Phase 1a** — declared `development` flag |
+| `source`, `development: false` (build → prod) | out of scope | ✅ **Phase 1a** — no longer mislabeled Live/overridable |
 
 ## Storage layout
 
@@ -217,8 +217,8 @@ Switching remains the reviewed [`switch-runtime-plan` / `switch-runtime`](runtim
 
 - **Phase 0 — shipped.** `localCommand` `setup` command (build hook for `artifact: source`). See [Runtime app manifest](runtime-app-manifest.md).
 - **Phase 1a — shipped.** `development` flag on the runtime profile, validated source-only and **at most one per manifest** (`app_manifest_development_requires_local_command` / `app_manifest_multiple_development_runtimes`), surfaced on `AppRuntimeProfileSummary`. `IsLiveSourceApp`/`AppRecord.Live` and `SupportsSource` now require a `development: true` runtime; the in-repo `hosty.shell` / `demo-app` `dev` profiles declare it. The Source settings tab already gates on `SupportsSource`, so it now hides unless a development runtime exists and targets that runtime's (single, app-level) override without a runtime switch. This fixes the prior mislabeling of a build-to-production source runtime as Live/overridable, and unblocks "same source, two runtimes (release vs dev)". A `development: false` source runtime is a locked, reviewed-update artifact (its commit lock lands with the build-to-prod path in a later phase). Multi-entry override dropdown deferred to 1b (single-runtime rule).
-- **Phase 1b — storage & state refactor.** Move to `apps/<id>/runtimes/<key>/…`; generalize `AppSourceState`/`ArtifactLocks` → per-runtime `RuntimeArtifactState` (incl. per-runtime `operatorOverride`); migration. Also where multiple development runtimes + the multi-entry override dropdown would land, if the single-runtime rule is relaxed. No new user-visible behavior for the single-runtime case — pure refactor for `source`/`image`.
-- **Phase 2 — `prebuilt` kind.** Implement `artifact: prebuilt`: **folder + git-release-asset** delivery first (URL / OCI-as-files deferred — decision 7), content-hash lock, fetch/verify/extract into `artifact/<hash>/`, reviewed update. Per-runtime artifact-source selection in CLI.
+- **Phase 1b — deferred / folded.** The isolated `sources/<id>` → `apps/<id>/…` migration was dropped as premature churn (no consumer yet; risked a double migration). Per-runtime artifact storage instead arrives greenfield with Phase 2 (the `artifact/<hash>/` dirs). The source-checkout relocation + `RuntimeArtifactState` unification stay deferred until a real multi-source-runtime need. See the sequencing note below.
+- **Phase 2 — shipped (folder delivery).** `artifact: prebuilt` for `localCommand` with `delivery: { type: folder, path }`. Core content-hashes the delivery, materializes an immutable copy under `apps/<id>/runtimes/<key>/artifact/<hash>/` (greenfield — no migration), records the hash as `ArtifactLock.BundleHash`, and runs `command` from the copy. Pinned re-runs the locked copy; rolling adopts a changed delivery (mirrors the docker digest lock). Validation covers delivery required/type/path and prebuilt↔delivery consistency. **Deferred:** git-release/URL delivery (decision 7) and reviewed-update-plan surfacing of a new prebuilt build (use `rolling` to iterate for now).
 - **Phase 3 — Shell.** Runtime switching UI that surfaces the human distinction **"Runs from source (live)"** vs **"Runs a built release (locked)"** (from the `development` flag), and per-runtime update-available state.
 
 ## Resolved decisions

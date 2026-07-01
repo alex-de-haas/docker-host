@@ -97,6 +97,22 @@ A `localCommand` service runtime accepts an optional `setup` command. Core runs 
 
 Without `setup`, `command` runs against a bare checkout and fails (e.g. `sh: next: command not found`). A non-zero `setup` exit fails the start, with the setup output captured in the service log. Because it runs every start, `setup` must be idempotent (`npm install`, `dotnet restore`, and `pip install` all no-op when already satisfied), which also lets it pick up dependency changes after Core pulls new source. `setup` is `localCommand`-only; declaring it under `docker` is rejected with `app_manifest_service_setup_requires_local_command`.
 
+### Prebuilt artifact
+
+A `localCommand` service may set `artifact: "prebuilt"` to run an already-compiled build (a binary, a compiled Next.js standalone, a static bundle) instead of source. It declares a `delivery` descriptor for where the build comes from — v1 supports `{ "type": "folder", "path": … }`:
+
+```json
+"release": {
+  "type": "localCommand",
+  "artifact": "prebuilt",
+  "delivery": { "type": "folder", "path": "dist" },
+  "workingDirectory": ".",
+  "command": "node server.js"
+}
+```
+
+The folder `path` resolves relative to the app's source root (or absolute). On start Core content-hashes the folder, materializes an immutable copy under `apps/<id>/runtimes/<key>/artifact/<hash>/`, records the hash as a run-lock (`ArtifactLock.BundleHash`), and runs `command` from the copy (plus any `workingDirectory`). This mirrors the docker image digest lock: with the default **pinned** policy Core re-runs the locked copy on every start; set the app's update policy to **rolling** to re-hash the delivery and adopt a changed build. `delivery` is required for `prebuilt` (`app_manifest_prebuilt_delivery_required`), rejected for other artifact kinds (`app_manifest_delivery_requires_prebuilt`), and `prebuilt` is `localCommand`-only. Reviewed-update-plan surfacing of a new prebuilt build is not yet wired (use `rolling` to iterate). See [Runtime artifact & storage model](runtime-artifact-model.md).
+
 ### Service network mode
 
 A `docker` service runtime accepts an optional `network` field:

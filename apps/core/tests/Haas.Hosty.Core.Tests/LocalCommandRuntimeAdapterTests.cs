@@ -93,6 +93,110 @@ public sealed class LocalCommandRuntimeAdapterTests
         }
     }
 
+    [Fact]
+    public async Task StartAsync_MaterializesAndRunsPrebuiltArtifactFromContentStore()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // command is a POSIX shell script; Core runs sh only off-Windows.
+        }
+
+        var appRoot = CreateTempDirectory();
+        try
+        {
+            // Delivery folder relative to the app/source root.
+            var dist = Path.Combine(appRoot, "dist");
+            Directory.CreateDirectory(dist);
+            await File.WriteAllTextAsync(Path.Combine(dist, "marker.txt"), "built");
+
+            var (adapter, registry, context) = CreatePrebuiltScenario(appRoot, deliveryPath: "dist", command: "sleep 30");
+
+            var result = await adapter.StartAsync(context);
+
+            Assert.Equal("running", result.RuntimeState);
+            var lockRecord = Assert.Contains("web", result.ArtifactLocks!);
+            Assert.Equal("prebuilt", lockRecord.Kind);
+            Assert.False(string.IsNullOrWhiteSpace(lockRecord.BundleHash));
+
+            // The process runs from the materialized artifact copy, not the source delivery folder.
+            var running = registry.Get("com.example.app", "web");
+            Assert.NotNull(running);
+            var artifactRoot = Path.Combine(appRoot, "runtimes", "release", "artifact", lockRecord.BundleHash!);
+            Assert.Equal(artifactRoot, running!.WorkingDirectory);
+            Assert.True(File.Exists(Path.Combine(artifactRoot, "marker.txt")));
+
+            await adapter.StopAsync(context);
+        }
+        finally
+        {
+            TryDeleteDirectory(appRoot);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_RejectsPrebuiltWorkingDirectoryThatEscapesTheArtifactRoot()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var appRoot = CreateTempDirectory();
+        try
+        {
+            var dist = Path.Combine(appRoot, "dist");
+            Directory.CreateDirectory(dist);
+            await File.WriteAllTextAsync(Path.Combine(dist, "marker.txt"), "built");
+
+            // A workingDirectory that climbs out of the materialized artifact copy must be refused.
+            var (adapter, registry, context) = CreatePrebuiltScenario(appRoot, deliveryPath: "dist", command: "sleep 30", workingDirectory: "../../escape");
+
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+
+            Assert.Equal("local_command_working_directory_out_of_bounds", error.Code);
+            Assert.Null(registry.Get("com.example.app", "web"));
+        }
+        finally
+        {
+            TryDeleteDirectory(appRoot);
+        }
+    }
+
+    private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreatePrebuiltScenario(
+        string appRoot, string deliveryPath, string command, string? workingDirectory = null)
+    {
+        var registry = new LocalCommandProcessRegistry();
+        var adapter = new LocalCommandRuntimeAdapter(
+            CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
+            registry,
+            new AppServiceTokenService(new ControlSecret("test-control-secret")));
+
+        var service = new RuntimeSelectedService(
+            "web",
+            [],
+            new RuntimeServiceProfileManifest
+            {
+                Type = "localCommand",
+                Artifact = "prebuilt",
+                Delivery = new RuntimePrebuiltDeliveryManifest { Type = "folder", Path = deliveryPath },
+                WorkingDirectory = workingDirectory,
+                Command = command,
+            },
+            null,
+            "prebuilt");
+        var manifest = new RuntimeAppManifest { SchemaVersion = "app.0.1", Id = "com.example.app", Name = "App", Version = "1.0.0" };
+        var profile = new RuntimeProfileManifest { Key = "release", Type = "localCommand", Default = true };
+        var selection = new RuntimeAppManifestSelection(manifest, "/tmp/manifest.json", "digest", profile, [service], null, "{}", null);
+        var context = new RuntimeLifecycleContext(
+            CreateLocalCommandAppRecord(),
+            selection,
+            appRoot,
+            Path.Combine(appRoot, "data"),
+            new Dictionary<string, string>(),
+            []);
+        return (adapter, registry, context);
+    }
+
     private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreateSetupScenario(
         string workRoot, string? setup, string command)
     {
