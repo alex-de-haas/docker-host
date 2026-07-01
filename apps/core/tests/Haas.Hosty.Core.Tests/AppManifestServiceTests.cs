@@ -500,6 +500,94 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsPrebuiltRuntimeWithFolderDelivery()
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "release", "type": "localCommand", "default": true }],
+              "services": [{
+                "key": "web",
+                "runtimes": {
+                  "release": {
+                    "type": "localCommand",
+                    "artifact": "prebuilt",
+                    "delivery": { "type": "folder", "path": "dist" },
+                    "command": "node server.js"
+                  }
+                }
+              }]
+            }
+            """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var service = Assert.Single(selection.Services);
+        Assert.Equal("prebuilt", service.Artifact);
+        Assert.Equal("folder", service.Runtime.Delivery?.Type);
+        Assert.Equal("dist", service.Runtime.Delivery?.Path);
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsPrebuiltUnderDocker()
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "web",
+                "runtimes": { "docker": { "type": "docker", "artifact": "prebuilt", "image": "ghcr.io/example/notes:1.0.0" } }
+              }]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_runtime_artifact_unsupported");
+    }
+
+    [Theory]
+    [InlineData(""""
+        "artifact": "prebuilt", "command": "node server.js"
+    """", "app_manifest_prebuilt_delivery_required")]
+    [InlineData(""""
+        "artifact": "prebuilt", "delivery": { "type": "url", "path": "dist" }, "command": "node server.js"
+    """", "app_manifest_prebuilt_delivery_type_unsupported")]
+    [InlineData(""""
+        "artifact": "prebuilt", "delivery": { "type": "folder" }, "command": "node server.js"
+    """", "app_manifest_prebuilt_delivery_path_required")]
+    [InlineData(""""
+        "artifact": "source", "delivery": { "type": "folder", "path": "dist" }, "command": "npm run dev"
+    """", "app_manifest_delivery_requires_prebuilt")]
+    public async Task LoadAsync_RejectsInvalidDelivery(string runtimeBody, string expectedCode)
+    {
+        var manifestPath = await WriteRawManifestAsync($$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "release", "type": "localCommand", "default": true }],
+              "services": [{
+                "key": "web",
+                "runtimes": { "release": { "type": "localCommand", {{runtimeBody}} } }
+              }]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    [Fact]
     public async Task LoadAsync_AcceptsDependsOnStringAndObjectForms()
     {
         var manifestPath = await WriteTwoServiceManifestAsync("""[ "api", { "service": "api", "port": "internal" } ]""");

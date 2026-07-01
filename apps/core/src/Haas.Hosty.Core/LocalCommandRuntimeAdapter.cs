@@ -16,6 +16,9 @@ internal sealed class LocalCommandRuntimeAdapter(
     {
         var endpoints = new List<AppEndpointContract>();
         var startedServices = new List<string>();
+        // Content-hash locks for prebuilt services, keyed by service (mirrors the docker image-digest
+        // locks). Returned to the lifecycle service to persist onto AppRecord.ArtifactLocks.
+        var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
         foreach (var service in context.Manifest.Services)
         {
             await StopServiceAsync(context.App.Id, service.Key, cancellationToken);
@@ -37,6 +40,25 @@ internal sealed class LocalCommandRuntimeAdapter(
                 }
 
                 var workingDirectory = ResolveWorkingDirectory(context, service);
+
+                // A prebuilt service runs from a materialized, content-addressed copy of its delivery
+                // (not the source tree). Materialize/resolve it and record the resulting hash lock; the
+                // run directory becomes the artifact copy plus any declared workingDirectory.
+                if (string.Equals(service.Artifact, "prebuilt", StringComparison.Ordinal) &&
+                    service.Runtime.Delivery is { } delivery)
+                {
+                    var policy = DockerRuntimeAdapter.ResolveUpdatePolicy(context.App.UpdatePolicy);
+                    var (artifactRoot, resolvedLock) = PrebuiltArtifactStore.Resolve(
+                        context.AppRoot,
+                        context.Manifest.RuntimeProfile.Key,
+                        ResolveSourceRoot(context),
+                        delivery,
+                        context.App.ArtifactLocks?.GetValueOrDefault(service.Key),
+                        policy);
+                    workingDirectory = CombineWorkingDirectory(artifactRoot, service.Runtime.WorkingDirectory);
+                    resolvedLocks[service.Key] = resolvedLock;
+                }
+
                 if (!Directory.Exists(workingDirectory))
                 {
                     throw new AppLifecycleException(
@@ -118,7 +140,7 @@ internal sealed class LocalCommandRuntimeAdapter(
             throw;
         }
 
-        return new AppRuntimeStartResult("running", endpoints);
+        return new AppRuntimeStartResult("running", endpoints, resolvedLocks.Count > 0 ? resolvedLocks : null);
     }
 
     // Runs the service's one-shot `setup` command to completion before the long-running `command`, in
@@ -601,15 +623,43 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
     }
 
-    private static string ResolveWorkingDirectory(RuntimeLifecycleContext context, RuntimeSelectedService service)
-    {
-        var sourceRoot = context.App.SourceState?.LocalOverridePath ??
+    // The operator's source root: an override folder, else the managed checkout, else the app root.
+    // Drives source runtimes' working directory and resolves a prebuilt service's relative delivery.
+    private static string ResolveSourceRoot(RuntimeLifecycleContext context)
+        => context.App.SourceState?.LocalOverridePath ??
             context.App.SourceState?.ManagedCheckoutPath ??
             context.AppRoot;
-        return string.IsNullOrWhiteSpace(service.Runtime.WorkingDirectory)
-            ? sourceRoot
-            : Path.GetFullPath(Path.Combine(sourceRoot, service.Runtime.WorkingDirectory));
+
+    private static string CombineWorkingDirectory(string root, string? workingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            return root;
+        }
+
+        // Keep the working directory inside `root`: a `workingDirectory` that is absolute or climbs out
+        // with `..` would otherwise run from — or, for a prebuilt, escape the materialized copy into —
+        // an arbitrary host path. OS-aware containment (case-insensitive on Windows, separator-safe).
+        var canonicalRoot = Path.GetFullPath(root);
+        var combined = Path.GetFullPath(Path.Combine(canonicalRoot, workingDirectory));
+        var rootPrefix = canonicalRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? canonicalRoot
+            : canonicalRoot + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(combined, canonicalRoot, comparison) && !combined.StartsWith(rootPrefix, comparison))
+        {
+            throw new AppLifecycleException(
+                "local_command_working_directory_out_of_bounds",
+                $"Working directory '{workingDirectory}' escapes the runtime root '{canonicalRoot}'.");
+        }
+
+        return combined;
     }
+
+    // Source-based working directory (also used by health/logs for display). A prebuilt service's run
+    // directory is the materialized artifact copy instead, resolved in StartAsync.
+    private static string ResolveWorkingDirectory(RuntimeLifecycleContext context, RuntimeSelectedService service)
+        => CombineWorkingDirectory(ResolveSourceRoot(context), service.Runtime.WorkingDirectory);
 
     private async Task StopServiceAsync(string appId, string serviceKey, CancellationToken cancellationToken)
     {

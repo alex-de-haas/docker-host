@@ -251,6 +251,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             ValidateHealthcheck(service.Key, runtimeType, runtime.Ports, runtime.Healthcheck, errors);
 
             var artifact = ResolveArtifactKind(service.Key, runtimeType, runtime.Artifact, errors);
+            ValidateDelivery(service.Key, artifact, runtime.Delivery, errors);
             if (artifact is null)
             {
                 continue;
@@ -594,36 +595,70 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
     // runtime-app-marketplace.md, R1–R4.
     private static string? ResolveArtifactKind(string serviceKey, string runtimeType, string? declared, List<AppManifestValidationError> errors)
     {
-        var allowed = string.Equals(runtimeType, "docker", StringComparison.Ordinal) ? "image" : "source";
+        var isDocker = string.Equals(runtimeType, "docker", StringComparison.Ordinal);
 
-        // R1: an absent artifact infers per runtime type (localCommand → source) silently for
-        // back-compat — no error and, in v1, no advisory (surfacing a "declare it" hint is deferred
-        // to the liveness-breadcrumb increment, R15/R16).
+        // R1: an absent artifact infers per runtime type (docker → image, localCommand → source)
+        // silently for back-compat — no error and no advisory (deferred to R15/R16).
         if (string.IsNullOrWhiteSpace(declared))
         {
-            return allowed;
+            return isDocker ? "image" : "source";
         }
 
         var artifact = declared.Trim();
-        if (string.Equals(artifact, "prebuilt", StringComparison.Ordinal))
+        if (artifact is not ("image" or "source" or "prebuilt"))
         {
-            errors.Add(new("app_runtime_artifact_unsupported", $"Service '{serviceKey}' declares artifact 'prebuilt', which is not supported by this Hosty Core build.", "$.services[].runtimes[].artifact"));
+            errors.Add(new("app_runtime_artifact_unsupported", $"Service '{serviceKey}' declares unsupported artifact '{artifact}'; expected 'image', 'source', or 'prebuilt'.", "$.services[].runtimes[].artifact"));
             return null;
         }
 
-        if (artifact is not ("image" or "source"))
+        // docker delivers an image; localCommand delivers source (live) or prebuilt (compiled build).
+        var supported = isDocker ? artifact is "image" : artifact is "source" or "prebuilt";
+        if (!supported)
         {
-            errors.Add(new("app_runtime_artifact_unsupported", $"Service '{serviceKey}' declares unsupported artifact '{artifact}'; expected 'image' or 'source'.", "$.services[].runtimes[].artifact"));
-            return null;
-        }
-
-        if (!string.Equals(artifact, allowed, StringComparison.Ordinal))
-        {
-            errors.Add(new("app_runtime_artifact_unsupported", $"Service '{serviceKey}' runtime '{runtimeType}' supports artifact '{allowed}', not '{artifact}'.", "$.services[].runtimes[].artifact"));
+            var allowed = isDocker ? "'image'" : "'source' or 'prebuilt'";
+            errors.Add(new("app_runtime_artifact_unsupported", $"Service '{serviceKey}' runtime '{runtimeType}' supports artifact {allowed}, not '{artifact}'.", "$.services[].runtimes[].artifact"));
             return null;
         }
 
         return artifact;
+    }
+
+    // Validates the `delivery` descriptor against the resolved artifact kind: required (folder, with a
+    // path) for `prebuilt`, rejected for every other kind. Skips when the kind was unresolved (the
+    // artifact error already stands). See runtime-artifact-model.md.
+    private static void ValidateDelivery(string serviceKey, string? artifactKind, RuntimePrebuiltDeliveryManifest? delivery, List<AppManifestValidationError> errors)
+    {
+        const string path = "$.services[].runtimes[].delivery";
+        if (artifactKind is null)
+        {
+            return;
+        }
+
+        if (!string.Equals(artifactKind, "prebuilt", StringComparison.Ordinal))
+        {
+            if (delivery is not null)
+            {
+                errors.Add(new("app_manifest_delivery_requires_prebuilt", $"Service '{serviceKey}' declares delivery, which is only supported for artifact 'prebuilt'.", path));
+            }
+
+            return;
+        }
+
+        if (delivery is null)
+        {
+            errors.Add(new("app_manifest_prebuilt_delivery_required", $"Service '{serviceKey}' artifact 'prebuilt' requires a delivery descriptor.", path));
+            return;
+        }
+
+        if (!string.Equals(delivery.Type, "folder", StringComparison.Ordinal))
+        {
+            errors.Add(new("app_manifest_prebuilt_delivery_type_unsupported", $"Service '{serviceKey}' delivery.type '{delivery.Type}' is not supported; expected 'folder'.", path));
+        }
+
+        if (string.IsNullOrWhiteSpace(delivery.Path))
+        {
+            errors.Add(new("app_manifest_prebuilt_delivery_path_required", $"Service '{serviceKey}' delivery.path is required for a folder delivery.", path));
+        }
     }
 
     private static void ValidateRequired(string? value, string path, List<AppManifestValidationError> errors)
@@ -2111,6 +2146,15 @@ internal sealed class RuntimeAppServiceManifest
     public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get => field ??= new Dictionary<string, RuntimeServiceProfileManifest>(); init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
 }
 
+// Delivery descriptor for a `prebuilt` artifact — where the already-compiled build is fetched from.
+// v1 supports `folder` only: `Path` is a directory holding the build, resolved relative to the app's
+// source root (or absolute). `git-release`/`url` are reserved. See runtime-artifact-model.md.
+internal sealed record RuntimePrebuiltDeliveryManifest
+{
+    public string? Type { get; init; }
+    public string? Path { get; init; }
+}
+
 // Per-service health probe applied by the runtime (Phase 1c). v1 supports type "exec": the docker
 // runtime translates it to a container HEALTHCHECK (docker --health-*), whose result the adapter
 // already reads back as State.Health.Status (Phase 0). type "none"/absent applies no Hosty-managed
@@ -2136,12 +2180,17 @@ internal sealed record RuntimeServiceProfileManifest
     public string? Type { get; init; }
 
     // How the running code is delivered for this runtime (A1). `image` is a compiled, lockable
-    // OCI artifact (pinned/rolling, digest in ArtifactLocks); `source` runs live from the
-    // operator's own folder (no run-lock, manifest reconciled each start). Absent infers per
-    // runtime type — docker → `image`, localCommand → `source`. `prebuilt` is reserved (out of
-    // v1). See runtime-app-marketplace.md, R1–R4. The resolved kind is re-derived from the
-    // manifest at start, never persisted on AppRecord.
+    // OCI artifact (pinned/rolling, digest in ArtifactLocks); `source` runs live from the operator's
+    // own folder (no run-lock, manifest reconciled each start); `prebuilt` is a compiled non-container
+    // build (localCommand only) delivered via `delivery`, content-hash-locked in ArtifactLocks and
+    // materialized under the app's artifact store. Absent infers per runtime type — docker → `image`,
+    // localCommand → `source`. See docs/features/runtime-artifact-model.md. The resolved kind is
+    // re-derived from the manifest at start, never persisted on AppRecord.
     public string? Artifact { get; init; }
+
+    // Where a `prebuilt` artifact's compiled build comes from. Required when artifact is `prebuilt`,
+    // rejected otherwise. v1 supports `{ "type": "folder", "path": … }`; git-release/url are reserved.
+    public RuntimePrebuiltDeliveryManifest? Delivery { get; init; }
 
     public JsonElement? Image { get; init; }
 
