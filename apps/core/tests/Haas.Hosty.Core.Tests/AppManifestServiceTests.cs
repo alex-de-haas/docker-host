@@ -397,6 +397,26 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsSetupUnderLocalCommand()
+    {
+        var manifestPath = await WriteLocalCommandManifestAsync("com.example.notes", runtimeArtifact: """, "setup": "npm install" """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("npm install", selection.Services.Single().Runtime.Setup);
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsSetupUnderDocker()
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes", runtimeNetwork: """, "setup": "npm install" """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_service_setup_requires_local_command");
+    }
+
+    [Fact]
     public async Task LoadAsync_AcceptsDependsOnStringAndObjectForms()
     {
         var manifestPath = await WriteTwoServiceManifestAsync("""[ "api", { "service": "api", "port": "internal" } ]""");

@@ -78,6 +78,21 @@ Each entry in a service runtime's `ports` array accepts:
 
 `expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](raw-ports.md).
 
+### Local command setup
+
+A `localCommand` service runtime accepts an optional `setup` command. Core runs it to completion in the service's `workingDirectory`, with the same injected environment as `command`, **before** starting the long-running `command` — on every start. Use it to prepare the source Core checked out, which ships without installed dependencies or build output:
+
+```json
+"dev": {
+  "type": "localCommand",
+  "workingDirectory": "apps/shell",
+  "setup": "npm install",
+  "command": "npm run dev"
+}
+```
+
+Without `setup`, `command` runs against a bare checkout and fails (e.g. `sh: next: command not found`). A non-zero `setup` exit fails the start, with the setup output captured in the service log. Because it runs every start, `setup` must be idempotent (`npm install`, `dotnet restore`, and `pip install` all no-op when already satisfied), which also lets it pick up dependency changes after Core pulls new source. `setup` is `localCommand`-only; declaring it under `docker` is rejected with `app_manifest_service_setup_requires_local_command`.
+
 ### Service network mode
 
 A `docker` service runtime accepts an optional `network` field:

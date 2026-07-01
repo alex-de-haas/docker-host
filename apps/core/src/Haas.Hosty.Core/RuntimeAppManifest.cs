@@ -222,6 +222,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                 continue;
             }
 
+            ValidateSetup(service.Key, runtimeType, runtime.Setup, errors);
             ValidateNetwork(service.Key, runtimeType, runtime.Network, errors);
             ValidateCapabilities(service.Key, runtimeType, runtime.Capabilities, errors);
             ValidateDevices(service.Key, runtimeType, runtime.Devices, errors);
@@ -673,6 +674,21 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
                     errors.Add(new("app_manifest_dependency_alias_collision", $"Dependency endpoint alias '{endpoint.Alias}' normalizes to the same HOSTY_DEPENDENCY_ variable as another wired endpoint.", path));
                 }
             }
+        }
+    }
+
+    // Validates the one-shot `setup` command. localCommand runtime only — the docker runtime ships a
+    // prebuilt image, so a host-side preparation step has no meaning there. Empty is fine (no setup).
+    private static void ValidateSetup(string serviceKey, string runtimeType, string? setup, List<AppManifestValidationError> errors)
+    {
+        if (string.IsNullOrWhiteSpace(setup))
+        {
+            return;
+        }
+
+        if (!string.Equals(runtimeType, "localCommand", StringComparison.Ordinal))
+        {
+            errors.Add(new("app_manifest_service_setup_requires_local_command", $"Service '{serviceKey}' setup is only supported under the localCommand runtime.", "$.services[].runtimes[].setup"));
         }
     }
 
@@ -2100,6 +2116,14 @@ internal sealed record RuntimeServiceProfileManifest
     public string? Artifact { get; init; }
 
     public JsonElement? Image { get; init; }
+
+    // One-shot preparation command run to completion before `command` on every start (localCommand
+    // only). It runs in the same `workingDirectory` with the same environment as `command`; a
+    // non-zero exit fails the start. This is where a source-run app installs dependencies or builds
+    // (`npm install`, `dotnet restore`, `pip install`, …) — the checkout Core pulls has no
+    // `node_modules`/artifacts, so without it a fresh dev checkout can't start. Empty by default.
+    public string? Setup { get; init; }
+
     public string? Command { get; init; }
     public string? WorkingDirectory { get; init; }
     public IReadOnlyDictionary<string, string> Environment { get => field ??= new Dictionary<string, string>(); init; } = new Dictionary<string, string>();
