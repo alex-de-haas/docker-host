@@ -661,7 +661,7 @@ function SourceForm({
 
   // Reset while rendering when the app identity or its stored override changes, not in an effect.
   // https://react.dev/learn/you-might-not-need-an-effect
-  const resetSignature = `${app.id}${overridePath}`;
+  const resetSignature = `${app.id}\u0001${overridePath}`;
   const [prevReset, setPrevReset] = useState<string | null>(null);
   if (prevReset !== resetSignature) {
     setPrevReset(resetSignature);

@@ -719,6 +719,8 @@ export function ShellClient({
     async (app: CoreApp, path: string) => {
       const actionKey = `${app.id}:source`;
       setBusyAction(actionKey);
+      // The panel stays open on success, so clear any stale error from a prior failed attempt.
+      setDetailPanel((current) => ({ ...current, error: null }));
       try {
         await sendCsrfJson(appEndpoint(app, "/source/override"), { path });
         await refresh();
@@ -744,6 +746,8 @@ export function ShellClient({
     async (app: CoreApp) => {
       const actionKey = `${app.id}:source`;
       setBusyAction(actionKey);
+      // The panel stays open on success, so clear any stale error from a prior failed attempt.
+      setDetailPanel((current) => ({ ...current, error: null }));
       try {
         await sendCsrfJson(appEndpoint(app, "/source/override"), undefined, "DELETE");
         await refresh();
