@@ -314,6 +314,11 @@ export type CoreRuntimeProfile = {
   key: string;
   type: string;
   default: boolean;
+  // True when this runtime is meant for local development (a localCommand profile with
+  // development: true): it runs live from the operator's source folder and supports source override.
+  // A runtime without it is "locked" — a fixed image/build advanced by a reviewed update. Optional for
+  // backwards compatibility with older Core builds. See runtime-artifact-model.md.
+  development?: boolean;
 };
 
 export type CoreInstallRuntimeProfile = CoreRuntimeProfile;
