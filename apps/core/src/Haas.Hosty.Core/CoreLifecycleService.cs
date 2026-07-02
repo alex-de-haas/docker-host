@@ -219,6 +219,47 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
+    // Operator toggle of a runtime's Development Mode (runtime-artifact-model.md). Records an explicit
+    // per-runtime override; an unset runtime falls back to the manifest `development` default. Valid only
+    // for a source (localCommand) runtime — image/prebuilt have no working copy to run live. Takes effect
+    // on the next start of that runtime; when it is the selected runtime the summary's Live flag flips
+    // immediately.
+    public async Task<AppLifecycleResponse> ConfigureDevelopmentModeAsync(
+        string appId,
+        AppDevelopmentModeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
+        var profile = profiles.FirstOrDefault(candidate => string.Equals(candidate.Key, request.Runtime, StringComparison.Ordinal))
+            ?? throw new AppLifecycleException("runtime_not_found", $"Runtime '{request.Runtime}' is not declared by app '{appId}'.");
+        if (!string.Equals(profile.Type, "localCommand", StringComparison.Ordinal))
+        {
+            throw new AppLifecycleException(
+                "development_mode_unsupported_runtime",
+                $"Development Mode is only available for a source (localCommand) runtime, not '{profile.Key}' ({profile.Type}).");
+        }
+
+        var document = await apps.UpdateAppAsync(appId, current =>
+        {
+            var modes = new Dictionary<string, bool>(
+                current.DevelopmentModes ?? new Dictionary<string, bool>(StringComparer.Ordinal),
+                StringComparer.Ordinal)
+            {
+                [request.Runtime] = request.Enabled,
+            };
+            return current with
+            {
+                DevelopmentModes = modes,
+                OperationStatus = "configured",
+                LastOperation = "configure-development-mode",
+                LastError = null,
+            };
+        }, cancellationToken);
+
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
+    }
+
     // Operator-configured external mount bindings. Replaces the full set for the app (idempotent
     // PUT semantics), validating each host path against the manifest-declared slots and the path
     // policy before persisting. Existence of the host paths is enforced lazily at start time.
@@ -2460,12 +2501,12 @@ internal sealed class CoreLifecycleService(
     // development: true (a build-to-production source runtime is locked/reviewed, never live).
     private string? ResolveLiveSourcePath(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
     {
-        // Only a development runtime (a localCommand profile with development: true) runs live from an
-        // operator folder. A non-development source runtime builds a locked artifact and is updated in
-        // review, so it is not "live". Development implies localCommand (manifest-validated).
+        // Only a source (localCommand) runtime whose effective Development Mode is ON runs live from an
+        // operator folder — the operator's per-runtime toggle, defaulting to the manifest `development`
+        // flag. OFF (or a non-source runtime) is locked/reviewed, so it is not "live".
         var selectedProfile = ((profiles ?? app.RuntimeProfiles) ?? [])
             .FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
-        if (selectedProfile is null || !selectedProfile.Development)
+        if (selectedProfile is null || !AppSummary.ResolveDevelopmentMode(app, selectedProfile))
         {
             return null;
         }
@@ -3593,6 +3634,8 @@ internal sealed record AppConfigureRequest(
     string? UpdatePolicy = null);
 
 internal sealed record AppAutostartRequest(bool Autostart);
+
+internal sealed record AppDevelopmentModeRequest(string Runtime, bool Enabled);
 
 internal sealed record AppMountsRequest(IReadOnlyList<AppMountBindingInput>? Mounts = null);
 

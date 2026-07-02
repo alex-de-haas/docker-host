@@ -97,7 +97,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
 
         var profileKeys = new HashSet<string>(StringComparer.Ordinal);
         var defaultProfileCount = 0;
-        var developmentProfileCount = 0;
         foreach (var profile in manifest.RuntimeProfiles)
         {
             if (string.IsNullOrWhiteSpace(profile.Key))
@@ -133,11 +132,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             {
                 defaultProfileCount++;
             }
-
-            if (profile.Development)
-            {
-                developmentProfileCount++;
-            }
         }
 
         if (defaultProfileCount > 1)
@@ -145,12 +139,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             errors.Add(new("app_manifest_runtime_default_duplicate", "Only one runtime profile may set default: true.", "$.runtimeProfiles"));
         }
 
-        // v1 supports a single development runtime, so one operator source override is enough. The
-        // multi-development-runtime (per-runtime override) case is deferred; see the design doc.
-        if (developmentProfileCount > 1)
-        {
-            errors.Add(new("app_manifest_multiple_development_runtimes", "At most one runtime profile may set development: true.", "$.runtimeProfiles"));
-        }
+        // `development` is now only the *default* for a per-runtime operator Development Mode toggle, so
+        // several flagged runtimes are harmless (each just defaults to live) — the former "at most one
+        // development runtime" rule is retired. See runtime-artifact-model.md.
 
         var resolvedRuntime = selectedRuntime?.Trim();
         if (string.IsNullOrWhiteSpace(resolvedRuntime))

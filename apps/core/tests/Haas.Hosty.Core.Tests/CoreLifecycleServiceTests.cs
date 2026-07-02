@@ -984,14 +984,15 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task NonDevelopmentLocalCommandRuntime_IsNotLiveOrSourceCapable()
+    public async Task NonDevelopmentLocalCommandRuntime_IsSourceCapableButNotLiveByDefault()
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var folder = Path.Combine(fixture.Root, "prod-src-app");
         Directory.CreateDirectory(folder);
         var manifestPath = Path.Combine(folder, "manifest.json");
-        // A localCommand runtime WITHOUT development: it builds/runs a locked artifact from source
-        // (e.g. `npm run build` then `npm run start`), so it must not be treated as live or overridable.
+        // A localCommand runtime WITHOUT development: it is source-capable (the operator may override it
+        // and toggle Development Mode on), but its Development Mode defaults OFF, so it is not live until
+        // the operator flips it. See the Development Mode operator toggle (runtime-artifact-model.md).
         await File.WriteAllTextAsync(manifestPath, """
             {
               "schemaVersion": "app.0.1",
@@ -1015,15 +1016,16 @@ public sealed class CoreLifecycleServiceTests
         await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "docker"));
 
         var summary = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.prodsrc");
-        Assert.False(summary.SupportsSource);
+        // Source-capable: a localCommand runtime exists, so the operator can override + toggle it.
+        Assert.True(summary.SupportsSource);
 
-        // Even when the non-development localCommand runtime is selected, it is not live: the
-        // reviewed-update path still applies and clients show no "Live" badge / Source tab.
+        // Selecting the non-development localCommand runtime does not make it live: Development Mode
+        // defaults OFF (its manifest declares no development flag), so the reviewed path still applies.
         var record = await fixture.Apps.GetAppAsync("com.example.prodsrc");
         await fixture.Apps.UpsertAppAsync(record! with { SelectedRuntime = "release" });
         var selected = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.prodsrc");
         Assert.False(selected.Live);
-        Assert.False(selected.SupportsSource);
+        Assert.True(selected.SupportsSource);
     }
 
     [Fact]
@@ -1085,6 +1087,57 @@ public sealed class CoreLifecycleServiceTests
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
             fixture.Service.CreateUpdatePlanAsync("com.example.url-dev", new AppUpdatePlanRequest()));
         Assert.Equal("update_live_source_runtime", error.Code);
+    }
+
+    [Fact]
+    public async Task ConfigureDevelopmentMode_TogglesLivenessOnANonDevelopmentRuntime()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "toggle-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        // A source runtime with no development flag: Development Mode defaults OFF.
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.toggle",
+              "name": "Toggle",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "release", "type": "localCommand", "default": true }],
+              "defaultRuntime": "release",
+              "services": [{ "key": "app", "runtimes": { "release": { "type": "localCommand", "command": "echo hi" } } }]
+            }
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        var off = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.toggle");
+        Assert.False(off.Live);
+        Assert.False(off.RuntimeProfiles.Single().DevelopmentMode);
+        Assert.True(off.SupportsSource);
+
+        // The operator flips Development Mode ON for the release runtime → it runs live from its source.
+        await fixture.Service.ConfigureDevelopmentModeAsync("com.example.toggle", new AppDevelopmentModeRequest("release", Enabled: true));
+        var on = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.toggle");
+        Assert.True(on.Live);
+        Assert.True(on.RuntimeProfiles.Single().DevelopmentMode);
+
+        // And back OFF, restoring the locked/reviewed behavior.
+        await fixture.Service.ConfigureDevelopmentModeAsync("com.example.toggle", new AppDevelopmentModeRequest("release", Enabled: false));
+        var backOff = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.toggle");
+        Assert.False(backOff.Live);
+        Assert.False(backOff.RuntimeProfiles.Single().DevelopmentMode);
+    }
+
+    [Fact]
+    public async Task ConfigureDevelopmentMode_RejectsNonSourceRuntime()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureDevelopmentModeAsync("com.example.notes", new AppDevelopmentModeRequest("docker", Enabled: true)));
+
+        Assert.Equal("development_mode_unsupported_runtime", error.Code);
     }
 
     [Theory]
