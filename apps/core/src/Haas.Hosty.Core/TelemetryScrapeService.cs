@@ -131,7 +131,8 @@ internal sealed record ContainerOwner(string AppId, string Service);
 //      unprivileged — attributing each container to its app/service via the `hosty.app.*` labels Core
 //      already stamps at run, and
 //   3. tails the collector's OTLP-logs file (P4), parsing the newly-appended OTLP/JSON into the log
-//      store, attributing each record to its app via its `hosty.app.id` resource attribute.
+//      store, attributing each record to its app via its `hosty.app.id` resource attribute, and
+//   4. tails the collector's OTLP-traces file the same way into the trace store (traces phase).
 // See docs/features/observability.md. Gated behind ObservabilityEnabled: when observability is off the
 // collector is never installed and this loop does nothing. Best-effort throughout — an unreachable
 // collector or docker yields no data for that tick and is skipped silently (no per-tick log spam);
@@ -143,6 +144,7 @@ internal sealed class TelemetryScrapeService(
     AppRegistryStore apps,
     IMetricStore store,
     ILogStore logStore,
+    ITraceStore traceStore,
     IClock clock,
     IMetricsScrapeClient scrapeClient,
     ILogTailReader logTailReader,
@@ -151,8 +153,9 @@ internal sealed class TelemetryScrapeService(
 {
     private static readonly TimeSpan ScrapeInterval = TimeSpan.FromSeconds(10);
 
-    // Byte offset into the collector's OTLP-logs file the tail loop resumes from each tick.
+    // Byte offsets into the collector's OTLP-logs/-traces files the tail loops resume from each tick.
     private long logTailOffset;
+    private long traceTailOffset;
 
     // Prometheus label the collector promotes from the `hosty.app.id` resource attribute (dots become
     // underscores). It attributes a scraped series to its app, so it is consumed for routing and then
@@ -196,9 +199,11 @@ internal sealed class TelemetryScrapeService(
         await ScrapeCollectorMetricsAsync(now, cancellationToken);
         await ScrapeContainerStatsAsync(now, cancellationToken);
         await TailOtlpLogsAsync(now, cancellationToken);
-        // Reclaim points/series/records that aged out of the window even if their producer stopped.
+        await TailOtlpTracesAsync(cancellationToken);
+        // Reclaim points/series/records/spans that aged out of the window even if their producer stopped.
         store.Prune(now);
         logStore.Prune(now);
+        traceStore.Prune(now);
     }
 
     // Reads the OTLP-logs file the collector appends to (P4), parses the newly-appended OTLP/JSON, and
@@ -222,6 +227,29 @@ internal sealed class TelemetryScrapeService(
         foreach (var parsed in OtlpLogsJsonParser.Parse(chunk.Content, now))
         {
             logStore.Record(parsed.AppId, parsed.Record);
+        }
+    }
+
+    // Reads the OTLP-traces file the collector appends to (traces phase), parsing the newly-appended
+    // OTLP/JSON into the trace store under its attributed app. Best-effort like the logs tail.
+    private async Task TailOtlpTracesAsync(CancellationToken cancellationToken)
+    {
+        var path = CollectorBootstrap.ResolveHostTracesFilePath(paths.AppsRoot);
+        var read = await logTailReader.ReadAsync(path, traceTailOffset, cancellationToken);
+        if (read is not { } chunk)
+        {
+            return;
+        }
+
+        traceTailOffset = chunk.NextOffset;
+        if (string.IsNullOrEmpty(chunk.Content))
+        {
+            return;
+        }
+
+        foreach (var parsed in OtlpTracesJsonParser.Parse(chunk.Content))
+        {
+            traceStore.Record(parsed.AppId, parsed.Span);
         }
     }
 

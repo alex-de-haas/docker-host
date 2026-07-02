@@ -382,6 +382,138 @@ public sealed class CoreLifecycleServiceTests
             SpanId: null);
 
     [Fact]
+    public async Task GetFleetTracesAsync_GroupsSpansAcrossAppsIntoOneTrace()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: "com.example.tasks", name: "Tasks")));
+        var nowNano = fixture.Clock.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
+        fixture.Traces.Record("com.example.notes", Span("trace-a", "span-1", parent: null, "GET /notes", nowNano - 5_000_000, nowNano));
+        fixture.Traces.Record("com.example.tasks", Span("trace-a", "span-2", parent: "span-1", "SELECT tasks", nowNano - 3_000_000, nowNano - 1_000_000));
+
+        var response = await fixture.Service.GetFleetTracesAsync(null, null, null, null);
+
+        Assert.Equal(300, response.RangeSeconds);
+        Assert.Equal(2, response.AppCount);
+        var trace = Assert.Single(response.Traces);
+        Assert.Equal("trace-a", trace.TraceId);
+        Assert.Equal("GET /notes", trace.RootName);
+        Assert.True(trace.HasRootSpan);
+        Assert.Equal("com.example.notes", trace.RootAppId);
+        Assert.Equal(2, trace.SpanCount);
+        Assert.Equal(0, trace.ErrorCount);
+        Assert.Equal(5.0, trace.DurationMs);
+        Assert.Equal(2, trace.Apps.Count);
+    }
+
+    [Fact]
+    public async Task GetFleetTracesAsync_OrdersNewestFirstAndAppliesTraceLimit()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var nowNano = fixture.Clock.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
+        fixture.Traces.Record("com.example.notes", Span("trace-old", "span-1", null, "oldest", nowNano - 30_000_000, nowNano - 29_000_000));
+        fixture.Traces.Record("com.example.notes", Span("trace-mid", "span-2", null, "middle", nowNano - 20_000_000, nowNano - 19_000_000));
+        fixture.Traces.Record("com.example.notes", Span("trace-new", "span-3", null, "newest", nowNano - 10_000_000, nowNano - 9_000_000));
+
+        var response = await fixture.Service.GetFleetTracesAsync(null, limit: 2, null, null);
+
+        Assert.Equal(2, response.Traces.Count);
+        Assert.Equal("trace-new", response.Traces[0].TraceId);
+        Assert.Equal("trace-mid", response.Traces[1].TraceId);
+    }
+
+    [Fact]
+    public async Task GetFleetTracesAsync_FiltersByQueryOverRootNameAndTraceId()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var nowNano = fixture.Clock.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
+        fixture.Traces.Record("com.example.notes", Span("aaa111", "span-1", null, "GET /notes", nowNano - 2_000_000, nowNano));
+        fixture.Traces.Record("com.example.notes", Span("bbb222", "span-2", null, "POST /tasks", nowNano - 2_000_000, nowNano));
+
+        var byName = await fixture.Service.GetFleetTracesAsync(null, null, null, "get /NOTES");
+        var byId = await fixture.Service.GetFleetTracesAsync(null, null, null, "bbb");
+
+        Assert.Equal("aaa111", Assert.Single(byName.Traces).TraceId);
+        Assert.Equal("bbb222", Assert.Single(byId.Traces).TraceId);
+    }
+
+    [Fact]
+    public async Task GetFleetTracesAsync_CountsErrorSpansAndFallsBackToEarliestSpanWhenRootMissing()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var nowNano = fixture.Clock.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
+        fixture.Traces.Record("com.example.notes",
+            Span("trace-a", "span-2", parent: "span-gone", "child work", nowNano - 4_000_000, nowNano - 1_000_000, statusCode: "error"));
+
+        var trace = Assert.Single((await fixture.Service.GetFleetTracesAsync(null, null, null, null)).Traces);
+
+        Assert.False(trace.HasRootSpan);
+        Assert.Equal("child work", trace.RootName);
+        Assert.Equal(1, trace.ErrorCount);
+    }
+
+    [Fact]
+    public async Task GetTraceAsync_MergesSpansAcrossAppsOrderedByStart()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: "com.example.tasks", name: "Tasks")));
+        var nowNano = fixture.Clock.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
+        fixture.Traces.Record("com.example.tasks", Span("trace-a", "span-2", "span-1", "SELECT tasks", nowNano - 3_000_000, nowNano - 1_000_000));
+        fixture.Traces.Record("com.example.notes", Span("trace-a", "span-1", null, "GET /notes", nowNano - 5_000_000, nowNano));
+        fixture.Traces.Record("com.example.notes", Span("trace-b", "span-9", null, "unrelated", nowNano - 5_000_000, nowNano));
+
+        var response = await fixture.Service.GetTraceAsync("trace-a");
+
+        Assert.Equal("trace-a", response.TraceId);
+        Assert.Equal(2, response.Spans.Count);
+        Assert.Equal("span-1", response.Spans[0].SpanId);
+        Assert.Equal("Notes", response.Spans[0].AppName);
+        Assert.Equal("span-2", response.Spans[1].SpanId);
+        Assert.Equal("Tasks", response.Spans[1].AppName);
+        Assert.Equal(5.0, response.DurationMs);
+        Assert.Equal(2.0, response.Spans[1].DurationMs);
+    }
+
+    [Fact]
+    public async Task GetTraceAsync_UnknownTraceId_ReturnsEmptySpanListNotError()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var response = await fixture.Service.GetTraceAsync("no-such-trace");
+
+        Assert.Equal("no-such-trace", response.TraceId);
+        Assert.Empty(response.Spans);
+        Assert.Equal(0, response.DurationMs);
+    }
+
+    private static OtlpSpan Span(
+        string traceId,
+        string spanId,
+        string? parent,
+        string name,
+        long startUnixNano,
+        long endUnixNano,
+        string statusCode = "unset")
+        => new(
+            traceId,
+            spanId,
+            parent,
+            name,
+            Kind: "server",
+            startUnixNano,
+            endUnixNano,
+            statusCode,
+            StatusMessage: null,
+            new Dictionary<string, string>());
+
+    [Fact]
     public async Task CreateUpdatePlanAsync_UsesStoredManifestUrlForRemoteInstalls()
     {
         const string manifestUrl = "https://apps.example.test/notes/manifest.json";
@@ -892,6 +1024,67 @@ public sealed class CoreLifecycleServiceTests
         var selected = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.prodsrc");
         Assert.False(selected.Live);
         Assert.False(selected.SupportsSource);
+    }
+
+    [Fact]
+    public async Task UrlInstallWithDevelopmentRuntime_IsSourceCapable_AndOverrideMakesItLive()
+    {
+        const string manifestUrl = "https://apps.example.test/url-dev/manifest.json";
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+                {
+                  "schemaVersion": "app.0.1",
+                  "id": "com.example.url-dev",
+                  "name": "Url Dev App",
+                  "version": "1.0.0",
+                  "runtimeProfiles": [
+                    { "key": "docker", "type": "docker", "default": true },
+                    { "key": "dev", "type": "localCommand", "development": true }
+                  ],
+                  "defaultRuntime": "docker",
+                  "services": [{
+                    "key": "app",
+                    "runtimes": {
+                      "docker": { "type": "docker", "image": "ghcr.io/example/url-dev:1.0.0" },
+                      "dev": { "type": "localCommand", "command": "sleep 5", "workingDirectory": "." }
+                    }
+                  }]
+                }
+                """, Encoding.UTF8, "application/json"),
+        })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+
+        // A URL install may select the compiled docker runtime; the development localCommand profile it
+        // also declares is not selected, so the remote-local-command guard does not trip.
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "docker"));
+
+        // Source-capability follows the presence of a development runtime, not the install channel: the
+        // Shell offers the Source tab even for a URL install so the operator can point it at a folder.
+        var installed = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.url-dev");
+        Assert.Equal(manifestUrl, (await fixture.Apps.GetAppAsync("com.example.url-dev"))?.ManifestUrl);
+        Assert.True(installed.SupportsSource);
+        Assert.False(installed.Live);
+
+        // Setting an override then selecting the development runtime runs it live from the operator's
+        // folder — the explicit override supersedes the URL install's reviewed contract.
+        var overrideFolder = Path.Combine(fixture.Root, "url-dev-override");
+        Directory.CreateDirectory(overrideFolder);
+        await fixture.Sources.SetLocalOverrideAsync("com.example.url-dev", new AppSourceOverrideRequest(overrideFolder));
+
+        var record = await fixture.Apps.GetAppAsync("com.example.url-dev");
+        await fixture.Apps.UpsertAppAsync(record! with { SelectedRuntime = "dev" });
+
+        var live = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.url-dev");
+        Assert.True(live.SupportsSource);
+        Assert.Equal(Path.GetFullPath(overrideFolder), live.SourceOverridePath);
+        Assert.True(live.Live);
+        Assert.Equal(Path.GetFullPath(overrideFolder), live.SourceLivePath);
+
+        // While it runs live from the operator's folder, the reviewed-update path no longer applies.
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.CreateUpdatePlanAsync("com.example.url-dev", new AppUpdatePlanRequest()));
+        Assert.Equal("update_live_source_runtime", error.Code);
     }
 
     [Theory]
@@ -2925,7 +3118,8 @@ public sealed class CoreLifecycleServiceTests
             LocalCommandProcessRegistry localProcesses,
             FakeClock clock,
             InMemoryMetricStore metrics,
-            InMemoryLogStore logs)
+            InMemoryLogStore logs,
+            InMemoryTraceStore traces)
         {
             Root = root;
             Paths = paths;
@@ -2939,6 +3133,7 @@ public sealed class CoreLifecycleServiceTests
             Clock = clock;
             Metrics = metrics;
             Logs = logs;
+            Traces = traces;
         }
 
         public string Root { get; }
@@ -2964,6 +3159,8 @@ public sealed class CoreLifecycleServiceTests
         public InMemoryMetricStore Metrics { get; }
 
         public InMemoryLogStore Logs { get; }
+
+        public InMemoryTraceStore Traces { get; }
 
         public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null, string? ingressBaseDomain = null)
         {
@@ -3012,8 +3209,9 @@ public sealed class CoreLifecycleServiceTests
                 : new CloudflaredIngressController(runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
             var metrics = new InMemoryMetricStore();
             var logs = new InMemoryLogStore();
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, metrics: metrics, logs: logs);
-            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, metrics, logs);
+            var traces = new InMemoryTraceStore();
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, metrics: metrics, logs: logs, traces: traces);
+            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, metrics, logs, traces);
         }
 
         // Shared-mounts library over the same data root the lifecycle service reads from.

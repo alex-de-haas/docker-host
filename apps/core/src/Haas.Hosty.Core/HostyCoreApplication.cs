@@ -56,6 +56,7 @@ internal static class HostyCoreApplication
         // no-ops unless ObservabilityEnabled.
         builder.Services.AddSingleton<IMetricStore, InMemoryMetricStore>();
         builder.Services.AddSingleton<ILogStore, InMemoryLogStore>();
+        builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
         builder.Services.AddSingleton<IMetricsScrapeClient, HttpMetricsScrapeClient>();
         builder.Services.AddSingleton<ILogTailReader, FileLogTailReader>();
         builder.Services.AddHostedService<TelemetryScrapeService>();
@@ -1334,10 +1335,12 @@ internal sealed class RuntimeAppSupervisorService(
                     CollectorBootstrap.ConfigYaml,
                     cancellationToken);
 
-                // Provision the OTLP-logs sink dir world-writable before the container starts, so the
-                // non-root collector can write/rotate its log file into the mounted app-data dir that
-                // Core tails from the host side (P4). See CollectorBootstrap.ContainerLogsFile.
+                // Provision the OTLP-logs/-traces sink dirs world-writable before the container
+                // starts, so the non-root collector can write/rotate its sink files into the mounted
+                // app-data dir that Core tails from the host side (P4 + traces phase). See
+                // CollectorBootstrap.ContainerLogsFile / ContainerTracesFile.
                 lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.LogsRelativeDir);
+                lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.TracesRelativeDir);
             }
         }
         // Best-effort bootstrap: catch everything except cancellation so an unexpected failure here
