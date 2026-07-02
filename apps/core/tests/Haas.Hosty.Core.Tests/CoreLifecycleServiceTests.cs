@@ -1288,6 +1288,34 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyRuntimeSwitchAsync_PreservesAssignedHostPortOverride()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteSwitchableDockerManifestAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // An assigned host-port override (e.g. the Shell's config.ShellPort, set by the bootstrap) is a
+        // Core-reserved setting, not a manifest-declared one.
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(new Dictionary<string, string?>(StringComparer.Ordinal) { ["HOSTY_PORT_APP"] = "7171" }));
+        Assert.Equal("7171", (await fixture.Apps.GetAppAsync("com.example.notes"))?.Settings.GetValueOrDefault("HOSTY_PORT_APP")?.Value);
+
+        var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync(
+            "com.example.notes",
+            new AppRuntimeSwitchPlanRequest("docker-alt"));
+        _ = await fixture.Service.ApplyRuntimeSwitchAsync(
+            "com.example.notes",
+            new AppRuntimeSwitchApplyRequest("docker-alt", plan.PlanDigest));
+
+        // The override survives the switch — the app's assigned port does not silently revert to the
+        // manifest default.
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("docker-alt", app?.SelectedRuntime);
+        Assert.Equal("7171", app?.Settings.GetValueOrDefault("HOSTY_PORT_APP")?.Value);
+    }
+
+    [Fact]
     public async Task ApplyRuntimeSwitchAsync_RollsBackSelectedRuntimeWhenRestartFails()
     {
         var fixture = await LifecycleFixture.CreateAsync();
