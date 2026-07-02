@@ -1225,6 +1225,28 @@ public sealed class CoreLifecycleServiceTests
         Assert.Null(disabled.DevelopmentModeRestore);
     }
 
+    [Fact]
+    public async Task ConfigureDevelopmentMode_Disable_NoRestoreHintWhenEnableTookNoSnapshot()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var id = await InstallToggleSourceAppAsync(fixture);
+        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
+        if (Directory.Exists(dataPath))
+        {
+            Directory.Delete(dataPath, recursive: true);
+        }
+
+        // Enable with no data directory → a baseline is recorded but its BackupId is null.
+        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
+
+        // Even with version drift there is no snapshot to restore, so a disable must not recommend a
+        // rollback (and must not leave the app stranded stopped with no rollback path).
+        _ = await fixture.Apps.UpdateAppAsync(id, current => current with { Version = "1.1.0" });
+        var disabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: false));
+
+        Assert.Null(disabled.DevelopmentModeRestore);
+    }
+
     // A source (localCommand) app with Development Mode defaulting OFF, plus a data directory the
     // pre-development-mode snapshot can capture. Mirrors the manifest of the toggle test above.
     private static async Task<string> InstallToggleSourceAppAsync(LifecycleFixture fixture)
