@@ -2192,7 +2192,13 @@ internal sealed class CoreLifecycleService(
         // last-good snapshot a live source app falls back to when its folder manifest is mid-edit.
         var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
 
-        var livePath = ResolveLiveSourcePath(app);
+        // Legacy records may predate persisted RuntimeProfiles; fall back to the profiles of the
+        // just-loaded internal copy (same source as ResolveRuntimeProfilesAsync, but reusing lastGood so
+        // there is no extra load) so a development runtime is never misread as non-live here.
+        var profiles = app.RuntimeProfiles is { Count: > 0 }
+            ? app.RuntimeProfiles
+            : BuildRuntimeProfileSummaries(lastGood.Manifest);
+        var livePath = ResolveLiveSourcePath(app, profiles);
         if (livePath is null)
         {
             return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: null);

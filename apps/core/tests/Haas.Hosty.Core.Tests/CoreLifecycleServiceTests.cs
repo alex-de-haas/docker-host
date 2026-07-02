@@ -2911,6 +2911,31 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task LoadSelection_LiveSourceFolder_LegacyRecordWithoutPersistedProfiles_StillLiveReconciles()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "legacy-live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // Simulate a legacy record that never persisted RuntimeProfiles: liveness must still resolve from
+        // the reviewed internal copy (development runtime → live), not silently fall back to non-live.
+        var installed = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(installed! with { RuntimeProfiles = null });
+
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("2.0.0"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Null(app!.RuntimeProfiles);
+
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app, CancellationToken.None);
+
+        Assert.True(load.LiveReconciled);
+        Assert.Equal("2.0.0", load.Selection.Manifest.Version);
+    }
+
+    [Fact]
     public async Task LoadSelection_LiveSourceFolder_InvalidEdit_FallsBackToLastGoodAndReportsError()
     {
         var fixture = await LifecycleFixture.CreateAsync();
