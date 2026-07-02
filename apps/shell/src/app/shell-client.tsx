@@ -769,6 +769,36 @@ export function ShellClient({
     [appEndpoint, refresh, sendCsrfJson],
   );
 
+  // Per-runtime Development Mode toggle. Keeps the panel open (like source) so the Source tab
+  // re-derives selectedApp from refreshed state and the switch reflects the new effective mode.
+  const configureAppDevelopmentMode = useCallback(
+    async (app: CoreApp, runtime: string, enabled: boolean) => {
+      const actionKey = `${app.id}:development-mode`;
+      setBusyAction(actionKey);
+      setDetailPanel((current) => ({ ...current, error: null }));
+      try {
+        await sendCsrfJson(appEndpoint(app, "/development-mode"), { runtime, enabled });
+        await refresh();
+        toast.success(enabled ? "Development Mode on" : "Development Mode off", {
+          description: `${app.displayName} · ${runtime}`,
+        });
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
+        setDetailPanel((current) => ({
+          ...current,
+          loading: false,
+          error: error instanceof Error ? error.message : "Updating Development Mode failed.",
+        }));
+      } finally {
+        setBusyAction((current) => (current === actionKey ? null : current));
+      }
+    },
+    [appEndpoint, refresh, sendCsrfJson],
+  );
+
   // Shared-mounts library (host-level). The endpoints return the full updated list, so each call
   // refreshes globalMounts directly; the SharedMountsDialog surfaces any thrown error inline.
   const saveGlobalMount = useCallback(
@@ -1271,6 +1301,7 @@ export function ShellClient({
             onConfigureMounts={configureMounts}
             onConfigureSource={configureAppSource}
             onClearSource={clearAppSource}
+            onSetDevelopmentMode={configureAppDevelopmentMode}
             onReloadUpdatePlan={loadUpdatePlan}
             onApplyUpdate={applyUpdate}
             onRemove={removeApp}

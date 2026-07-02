@@ -356,11 +356,14 @@ export type CoreRuntimeProfile = {
   key: string;
   type: string;
   default: boolean;
-  // True when this runtime is meant for local development (a localCommand profile with
-  // development: true): it runs live from the operator's source folder and supports source override.
-  // A runtime without it is "locked" — a fixed image/build advanced by a reviewed update. Optional for
-  // backwards compatibility with older Core builds. See runtime-artifact-model.md.
+  // The manifest author's declared default for Development Mode on this runtime (the intent marker).
+  // Optional for backwards compatibility with older Core builds. See runtime-artifact-model.md.
   development?: boolean;
+  // The effective Development Mode after the operator's per-runtime toggle is applied (override else the
+  // `development` default; false for a non-source runtime). This is what actually governs liveness — ON
+  // runs the runtime live from source, OFF runs it locked/reviewed — so the Live/Locked badge and the
+  // toggle switch read from it. Optional for older Core builds (fall back to `development`).
+  developmentMode?: boolean;
 };
 
 export type CoreInstallRuntimeProfile = CoreRuntimeProfile;
