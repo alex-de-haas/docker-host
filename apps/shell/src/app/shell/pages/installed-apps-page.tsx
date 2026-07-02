@@ -74,6 +74,7 @@ export function InstalledAppsPage({
   onInstall,
   onAction,
   onSwitchRuntime,
+  onSetDevelopmentMode,
   onOpenPanel,
   onOpenSharedMounts,
 }: {
@@ -88,6 +89,7 @@ export function InstalledAppsPage({
   onInstall: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
+  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onOpenPanel: OpenAppPanel;
   onOpenSharedMounts: () => void;
 }) {
@@ -140,6 +142,7 @@ export function InstalledAppsPage({
             busyAction={busyAction}
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
+            onSetDevelopmentMode={onSetDevelopmentMode}
             onOpenPanel={onOpenPanel}
           />
           <InstalledAppTableSection
@@ -154,6 +157,7 @@ export function InstalledAppsPage({
             busyAction={busyAction}
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
+            onSetDevelopmentMode={onSetDevelopmentMode}
             onOpenPanel={onOpenPanel}
           />
         </div>
@@ -489,6 +493,7 @@ function InstalledAppTableSection({
   busyAction,
   onAction,
   onSwitchRuntime,
+  onSetDevelopmentMode,
   onOpenPanel,
 }: {
   coreOrigin: string;
@@ -502,6 +507,7 @@ function InstalledAppTableSection({
   busyAction: string | null;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
+  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
@@ -667,6 +673,7 @@ function InstalledAppTableSection({
                       onToggleExpanded={() => toggleAppExpanded(app)}
                       onAction={onAction}
                       onSwitchRuntime={onSwitchRuntime}
+                      onSetDevelopmentMode={onSetDevelopmentMode}
                       onOpenPanel={onOpenPanel}
                     />
                     {expanded && (
@@ -706,6 +713,7 @@ function InstalledAppRow({
   onToggleExpanded,
   onAction,
   onSwitchRuntime,
+  onSetDevelopmentMode,
   onOpenPanel,
 }: {
   app: CoreApp;
@@ -717,6 +725,7 @@ function InstalledAppRow({
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
+  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const running = app.runtimeState === "running";
@@ -730,6 +739,15 @@ function InstalledAppRow({
   // Update menu item is hidden and the "Live" badge is shown instead. See CoreApp.live.
   const canUpdate = canControl && !app.live && app.capabilities.includes("update");
   const canRemove = canControl && app.capabilities.includes("remove");
+  // Development Mode is a per-source-runtime toggle (localCommand + Core reports developmentMode).
+  // Surface it in the actions menu only for the *selected* source runtime, so an operator can flip
+  // live/reviewed without opening Settings → Source. See runtime-artifact-model.md.
+  const selectedDevRuntime = (app.runtimeProfiles ?? []).find(
+    (profile) =>
+      profile.key === app.selectedRuntime &&
+      profile.type === "localCommand" &&
+      profile.developmentMode !== undefined,
+  );
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
   const autostartEnabled = isAppAutostartEnabled(app);
   const needsRequiredSettings = !running && appHasMissingRequiredSettings(app);
@@ -823,6 +841,10 @@ function InstalledAppRow({
             canConfigure={canConfigure}
             canUpdate={canUpdate}
             canRemove={canRemove}
+            devRuntime={canManageApps ? selectedDevRuntime : undefined}
+            devWillRestart={!app.system && running}
+            devBusy={isBusy("development-mode")}
+            onSetDevelopmentMode={onSetDevelopmentMode}
             onOpenPanel={onOpenPanel}
           />
         </div>
@@ -925,6 +947,10 @@ function InstalledAppActionsMenu({
   canConfigure,
   canUpdate,
   canRemove,
+  devRuntime,
+  devWillRestart,
+  devBusy,
+  onSetDevelopmentMode,
   onOpenPanel,
 }: {
   app: CoreApp;
@@ -932,13 +958,22 @@ function InstalledAppActionsMenu({
   canConfigure: boolean;
   canUpdate: boolean;
   canRemove: boolean;
+  // The selected source runtime whose Development Mode can be toggled here (undefined when the
+  // selected runtime is not a source runtime, or the operator cannot manage apps).
+  devRuntime?: CoreRuntimeProfile;
+  // True when toggling will auto-restart the app (a running, non-system app); drives the caption.
+  devWillRestart: boolean;
+  devBusy: boolean;
+  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onOpenPanel: OpenAppPanel;
 }) {
-  const hasMenuActions = canBackup || canConfigure || canUpdate || canRemove;
+  const hasMenuActions = Boolean(devRuntime) || canBackup || canConfigure || canUpdate || canRemove;
 
   if (!hasMenuActions) {
     return null;
   }
+
+  const devOn = devRuntime ? (devRuntime.developmentMode ?? devRuntime.development) === true : false;
 
   return (
     <DropdownMenu>
@@ -947,7 +982,31 @@ function InstalledAppActionsMenu({
           <MoreHorizontal className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
+      <DropdownMenuContent align="end" className="w-56">
+        {devRuntime && (
+          <>
+            <DropdownMenuLabel>Development mode</DropdownMenuLabel>
+            <DropdownMenuItem
+              disabled={devBusy}
+              onClick={() => onSetDevelopmentMode(app, devRuntime.key, !devOn)}
+            >
+              {devBusy ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : devOn ? (
+                <Lock className="h-4 w-4" />
+              ) : (
+                <Radio className="h-4 w-4" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div>{devOn ? "Disable development mode" : "Enable development mode"}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {devWillRestart ? "Restarts the app now" : "Applies on next start"}
+                </div>
+              </div>
+            </DropdownMenuItem>
+            {(canBackup || canConfigure || canUpdate || canRemove) && <DropdownMenuSeparator />}
+          </>
+        )}
         {canBackup && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "backups")}>
             <Database className="h-4 w-4" />

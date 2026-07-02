@@ -241,7 +241,16 @@ internal sealed record AppRecord(
     // by a reviewed source-resolve/update); a folder install has no separate reviewed source, so OFF runs
     // its own folder. Additive/nullable, so no AppStateDocument schema bump. See "Development Mode — an
     // operator toggle" in runtime-artifact-model.md.
-    IReadOnlyDictionary<string, bool>? DevelopmentModes = null);
+    IReadOnlyDictionary<string, bool>? DevelopmentModes = null,
+    // Snapshot bookkeeping captured when the operator turned Development Mode ON for a runtime, so
+    // turning it OFF later can offer to roll the app data back to the reviewed version's last-known-good
+    // state. Keyed by runtime; each entry records the reviewed version at enable time and the id of the
+    // `pre-development-mode` backup taken then. On disable Core compares the entry's Version to the app's
+    // current version (which reflects the version that ran live) to decide whether a rollback is worth
+    // recommending — a likely one-way data migration the reviewed version may not read. Cleared on
+    // disable. Additive/nullable, so no AppStateDocument schema bump. See "Development Mode — an operator
+    // toggle" in runtime-artifact-model.md.
+    IReadOnlyDictionary<string, DevelopmentModeBaseline>? DevelopmentModeBaselines = null);
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
 // update for a pinned app. `Kind` is "image" (registry image) in v1; the bundle/source fields are
@@ -254,6 +263,11 @@ internal sealed record ArtifactLock(
     string? BundleHash,
     string? Commit,
     DateTimeOffset ResolvedAt);
+
+// Per-runtime snapshot bookkeeping for a Development-Mode enable (see AppRecord.DevelopmentModeBaselines).
+// Version = the reviewed version in effect when the operator turned dev mode ON; BackupId = the
+// `pre-development-mode` backup taken at that moment (null when the app has no data directory to snapshot).
+internal sealed record DevelopmentModeBaseline(string Version, string? BackupId);
 
 internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret, bool Required = false);
 

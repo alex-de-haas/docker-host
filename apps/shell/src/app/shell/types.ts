@@ -152,6 +152,22 @@ export type BackupsResponse = {
   backups: CoreBackup[];
 };
 
+// Returned on a Development-Mode disable that Core judged risky: the app ran a different version live
+// than the reviewed baseline, so its data may have been migrated one-way. Core leaves the app stopped
+// and hands back the pre-development-mode snapshot to offer for rollback. See ConfigureDevelopmentModeAsync.
+export type CoreDevelopmentModeRestoreHint = {
+  recommended: boolean;
+  runtime: string;
+  backupId?: string | null;
+  baselineVersion: string;
+  currentVersion: string;
+};
+
+export type CoreAppLifecycleResult = {
+  status?: string;
+  developmentModeRestore?: CoreDevelopmentModeRestoreHint | null;
+};
+
 export type CoreBackupRetentionStatus = {
   eligible: boolean;
   reason: string;

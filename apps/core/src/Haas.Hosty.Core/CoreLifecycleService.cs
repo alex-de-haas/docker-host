@@ -240,22 +240,120 @@ internal sealed class CoreLifecycleService(
                 $"Development Mode is only available for a source (localCommand) runtime, not '{profile.Key}' ({profile.Type}).");
         }
 
-        var document = await apps.UpdateAppAsync(appId, current =>
-        {
-            var modes = current.DevelopmentModes is not null
-                ? new Dictionary<string, bool>(current.DevelopmentModes, StringComparer.Ordinal)
-                : new Dictionary<string, bool>(StringComparer.Ordinal);
-            modes[request.Runtime] = request.Enabled;
-            return current with
-            {
-                DevelopmentModes = modes,
-                OperationStatus = "configured",
-                LastOperation = "configure-development-mode",
-                LastError = null,
-            };
-        }, cancellationToken);
+        var currentlyOn = AppSummary.ResolveDevelopmentMode(app, profile);
+        var targetsSelected = string.Equals(request.Runtime, app.SelectedRuntime, StringComparison.Ordinal);
+        var enabling = request.Enabled && !currentlyOn;
+        var disabling = !request.Enabled && currentlyOn;
+        var changing = enabling || disabling;
+        // System apps (e.g. the Shell) are never stopped/snapshotted/restarted from here: cycling the
+        // Shell would drop the operator's own session, and the manual start/stop affordances are gated
+        // off system apps too. Their toggle just flips the flag and takes effect on their next start.
+        var manageLifecycle = !app.System;
 
-        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
+        // Detect a risky disable up front — before we flip or restart, while app.Version still reflects
+        // the version that ran live in dev mode. Risk = a pre-dev-mode snapshot exists AND the app has
+        // since run a different version (a likely one-way data migration the reviewed version may not
+        // read back). Require the snapshot (baseline.BackupId): without one there is nothing to roll back
+        // to (also implies the app had no data at enable), so a restart is fine. When risky the app is
+        // left stopped and the caller is handed the snapshot to offer before the reviewed version boots.
+        AppDevelopmentModeRestoreHint? restoreHint = null;
+        if (disabling && targetsSelected && manageLifecycle
+            && app.DevelopmentModeBaselines is not null
+            && app.DevelopmentModeBaselines.TryGetValue(request.Runtime, out var baseline)
+            && baseline.BackupId is not null
+            && !string.Equals(baseline.Version, app.Version, StringComparison.Ordinal))
+        {
+            restoreHint = new AppDevelopmentModeRestoreHint(
+                Recommended: true,
+                Runtime: request.Runtime,
+                BackupId: baseline.BackupId,
+                BaselineVersion: baseline.Version,
+                CurrentVersion: app.Version);
+        }
+
+        // Development Mode is only read at start, so flipping the *selected* running runtime needs a
+        // stop/start cycle to take effect. A no-op call (mode already matches) or a non-selected runtime
+        // cycles nothing, so an idempotent retry never interrupts a running app. Mirror the manual-backup
+        // path's stop->operate->restart so the enable snapshot below copies stopped (consistent) data —
+        // and, per that pattern, the stop lives inside the try so the finally still restores a running app
+        // if the snapshot or persistence step fails partway.
+        var wasRunning = targetsSelected && manageLifecycle && changing && string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        var completed = false;
+        try
+        {
+            if (wasRunning)
+            {
+                var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+                _ = await ResolveAdapter(selection.RuntimeProfile.Type)
+                    .StopAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
+                _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
+            }
+
+            // Snapshot the pre-migration data before going live so a later disable can roll back to the
+            // reviewed version's last-known-good state. CreateBackupAsync returns null when the app has no
+            // data directory (nothing to migrate), which the baseline records faithfully.
+            AppBackupRecord? backup = enabling && manageLifecycle
+                ? await backups.CreateBackupAsync(appId, "pre-development-mode", cancellationToken: cancellationToken)
+                : null;
+            var baselineVersion = app.Version;
+            var recordBaseline = enabling && manageLifecycle;
+
+            var document = await apps.UpdateAppAsync(appId, current =>
+            {
+                var modes = current.DevelopmentModes is not null
+                    ? new Dictionary<string, bool>(current.DevelopmentModes, StringComparer.Ordinal)
+                    : new Dictionary<string, bool>(StringComparer.Ordinal);
+                modes[request.Runtime] = request.Enabled;
+
+                // Record the reviewed baseline (version + snapshot) on enable so a later disable can weigh a
+                // rollback; clear it on any disable so a re-enable captures a fresh baseline.
+                var baselines = current.DevelopmentModeBaselines is not null
+                    ? new Dictionary<string, DevelopmentModeBaseline>(current.DevelopmentModeBaselines, StringComparer.Ordinal)
+                    : new Dictionary<string, DevelopmentModeBaseline>(StringComparer.Ordinal);
+                if (recordBaseline)
+                {
+                    baselines[request.Runtime] = new DevelopmentModeBaseline(baselineVersion, backup?.BackupId);
+                }
+                else if (!request.Enabled)
+                {
+                    baselines.Remove(request.Runtime);
+                }
+
+                return current with
+                {
+                    DevelopmentModes = modes,
+                    DevelopmentModeBaselines = baselines.Count > 0 ? baselines : null,
+                    OperationStatus = "configured",
+                    LastOperation = "configure-development-mode",
+                    LastError = null,
+                };
+            }, cancellationToken);
+
+            // The flip is now durable; the restart below is best-effort, so mark the operation complete
+            // here — the finally must not double-restart if StartAsync itself throws (it records + rethrows
+            // its own failure), nor restart a risky disable that is intentionally left stopped.
+            completed = true;
+
+            // Restart to apply — except a risky disable, which is left stopped so the operator can restore
+            // the snapshot (via the returned hint) before the reviewed version boots onto migrated data.
+            if (wasRunning && restoreHint is null)
+            {
+                var restarted = await StartAsync(appId, cancellationToken);
+                return new AppLifecycleResponse(restarted.App, backup, "configured", restoreHint);
+            }
+
+            return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), backup, "configured", restoreHint);
+        }
+        finally
+        {
+            // The snapshot/persistence step failed or was cancelled after we stopped a running app: restore
+            // its prior running state so the toggle never silently leaves it down. CancellationToken.None so
+            // a cancelled operation still restarts; a restart failure surfaces through StartAsync.
+            if (wasRunning && !completed)
+            {
+                _ = await StartAsync(appId, CancellationToken.None);
+            }
+        }
     }
 
     // Operator-configured external mount bindings. Replaces the full set for the app (idempotent
@@ -3741,7 +3839,22 @@ internal sealed record AppBackgroundLifecycleResult(
     string? ErrorCode,
     string? Message);
 
-internal sealed record AppLifecycleResponse(AppSummary? App, AppBackupRecord? Backup, string Status);
+internal sealed record AppLifecycleResponse(
+    AppSummary? App,
+    AppBackupRecord? Backup,
+    string Status,
+    // Set only on a Development-Mode *disable* that looks risky: the app ran a different version live
+    // than the reviewed baseline, so its data may have been migrated one-way. Carries the pre-dev-mode
+    // backup to offer for rollback. The app is left stopped in this case so the operator can restore
+    // before the reviewed version boots onto migrated data. Null on every other lifecycle response.
+    AppDevelopmentModeRestoreHint? DevelopmentModeRestore = null);
+
+internal sealed record AppDevelopmentModeRestoreHint(
+    bool Recommended,
+    string Runtime,
+    string? BackupId,
+    string BaselineVersion,
+    string CurrentVersion);
 
 internal sealed record AppInstallPlan(
     string AppId,

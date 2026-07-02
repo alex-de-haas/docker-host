@@ -31,6 +31,7 @@ export type ShellActionsContextValue = {
   openInstallDialog: () => void;
   runAppAction: (app: CoreApp, action: AppAction) => Promise<void>;
   switchAppRuntime: (app: CoreApp, targetRuntime: string) => Promise<void>;
+  configureAppDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => Promise<void>;
   createManualBackup: (app: CoreApp) => Promise<void>;
   openAppPanel: OpenAppPanel;
   openInstalledApps: () => void;

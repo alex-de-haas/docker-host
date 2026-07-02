@@ -13,7 +13,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
     // applying its own migrations). Unlike "manual", these are kept-last-N retention-managed:
     // an app may request one on every startup, so retaining them forever would leak storage.
     public const string AppInitiatedReason = "app-initiated";
-    private static readonly string[] AutomaticReasons = ["pre-update", "pre-restore", "pre-runtime-switch", "scheduled"];
+    private static readonly string[] AutomaticReasons = ["pre-update", "pre-restore", "pre-runtime-switch", "pre-development-mode", "scheduled"];
     private static readonly string[] RetentionManagedReasons = [.. AutomaticReasons, AppInitiatedReason];
     private static readonly AppBackupRetentionPolicy DefaultRetentionPolicy = new(
         Rules: RetentionManagedReasons.ToDictionary(

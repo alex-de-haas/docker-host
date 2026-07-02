@@ -40,6 +40,9 @@ internal static class CoreJson
 // Reachable via AppRecord/AppSummary, but rooted explicitly: the per-service artifact run-lock is
 // (de)serialized as a nested map value on persisted state and on API summaries.
 [JsonSerializable(typeof(ArtifactLock))]
+// Reachable via AppRecord, but rooted explicitly (same reason as ArtifactLock): a nested map value on
+// persisted state carrying the Development-Mode enable snapshot bookkeeping.
+[JsonSerializable(typeof(DevelopmentModeBaseline))]
 [JsonSerializable(typeof(RetainedAppConfig))]
 [JsonSerializable(typeof(RuntimeAppManifest))]
 [JsonSerializable(typeof(AuditRecord))]
@@ -116,6 +119,9 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppSessionValidationResult))]
 [JsonSerializable(typeof(AppInstallPlan))]
 [JsonSerializable(typeof(AppLifecycleResponse))]
+// Reachable via AppLifecycleResponse, but rooted explicitly for parity with the other nested DTOs:
+// the Development-Mode disable rollback recommendation.
+[JsonSerializable(typeof(AppDevelopmentModeRestoreHint))]
 [JsonSerializable(typeof(GlobalMountListResponse))]
 [JsonSerializable(typeof(AppUpdatePlan))]
 [JsonSerializable(typeof(AppRuntimeSwitchPlan))]

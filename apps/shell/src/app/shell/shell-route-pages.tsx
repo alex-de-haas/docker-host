@@ -65,6 +65,7 @@ export function ShellInstalledAppsRoute() {
         onInstall={shellActions.openInstallDialog}
         onAction={shellActions.runAppAction}
         onSwitchRuntime={shellActions.switchAppRuntime}
+        onSetDevelopmentMode={shellActions.configureAppDevelopmentMode}
         onOpenPanel={shellActions.openAppPanel}
         onOpenSharedMounts={shellActions.openSharedMounts}
       />

@@ -1140,10 +1140,140 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("development_mode_unsupported_runtime", error.Code);
     }
 
+    [Fact]
+    public async Task ConfigureDevelopmentMode_Enable_SnapshotsDataAndRecordsBaseline()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var id = await InstallToggleSourceAppAsync(fixture);
+        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
+        Directory.CreateDirectory(dataPath);
+        await File.WriteAllTextAsync(Path.Combine(dataPath, "notes.db"), "v1-data");
+
+        var enabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
+        // Enabling is not risky (nothing to roll back to yet).
+        Assert.Null(enabled.DevelopmentModeRestore);
+
+        var snapshot = (await fixture.Backups.ListBackupsAsync(id)).Single(backup => backup.Reason == "pre-development-mode");
+        var app = await fixture.Apps.GetAppAsync(id);
+        Assert.NotNull(app!.DevelopmentModeBaselines);
+        var baseline = app.DevelopmentModeBaselines!["release"];
+        Assert.Equal("1.0.0", baseline.Version);
+        Assert.Equal(snapshot.BackupId, baseline.BackupId);
+    }
+
+    [Fact]
+    public async Task ConfigureDevelopmentMode_Enable_WithoutDataDirectory_TakesNoSnapshot()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var id = await InstallToggleSourceAppAsync(fixture);
+        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
+        if (Directory.Exists(dataPath))
+        {
+            Directory.Delete(dataPath, recursive: true);
+        }
+
+        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
+
+        var backups = await fixture.Backups.ListBackupsAsync(id);
+        Assert.DoesNotContain(backups, backup => backup.Reason == "pre-development-mode");
+        // The baseline is still recorded so a later disable can compare versions; it just has no snapshot.
+        var app = await fixture.Apps.GetAppAsync(id);
+        Assert.Null(app!.DevelopmentModeBaselines!["release"].BackupId);
+    }
+
+    [Fact]
+    public async Task ConfigureDevelopmentMode_Disable_RecommendsRestoreWhenVersionDriftedInDevMode()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var id = await InstallToggleSourceAppAsync(fixture);
+        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
+        Directory.CreateDirectory(dataPath);
+        await File.WriteAllTextAsync(Path.Combine(dataPath, "notes.db"), "v1-data");
+
+        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
+        var snapshotId = (await fixture.Backups.ListBackupsAsync(id)).Single(backup => backup.Reason == "pre-development-mode").BackupId;
+
+        // Simulate the dev-mode runtime having adopted a newer manifest version while running live.
+        _ = await fixture.Apps.UpdateAppAsync(id, current => current with { Version = "1.1.0" });
+
+        var disabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: false));
+
+        Assert.NotNull(disabled.DevelopmentModeRestore);
+        Assert.True(disabled.DevelopmentModeRestore!.Recommended);
+        Assert.Equal("release", disabled.DevelopmentModeRestore.Runtime);
+        Assert.Equal(snapshotId, disabled.DevelopmentModeRestore.BackupId);
+        Assert.Equal("1.0.0", disabled.DevelopmentModeRestore.BaselineVersion);
+        Assert.Equal("1.1.0", disabled.DevelopmentModeRestore.CurrentVersion);
+
+        // The baseline is cleared on disable so a re-enable captures a fresh one.
+        var app = await fixture.Apps.GetAppAsync(id);
+        Assert.True(app!.DevelopmentModeBaselines is null || !app.DevelopmentModeBaselines.ContainsKey("release"));
+    }
+
+    [Fact]
+    public async Task ConfigureDevelopmentMode_Disable_NoRestoreHintWhenVersionUnchanged()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var id = await InstallToggleSourceAppAsync(fixture);
+        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
+        Directory.CreateDirectory(dataPath);
+        await File.WriteAllTextAsync(Path.Combine(dataPath, "notes.db"), "v1-data");
+
+        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
+        var disabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: false));
+
+        Assert.Null(disabled.DevelopmentModeRestore);
+    }
+
+    [Fact]
+    public async Task ConfigureDevelopmentMode_Disable_NoRestoreHintWhenEnableTookNoSnapshot()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var id = await InstallToggleSourceAppAsync(fixture);
+        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
+        if (Directory.Exists(dataPath))
+        {
+            Directory.Delete(dataPath, recursive: true);
+        }
+
+        // Enable with no data directory → a baseline is recorded but its BackupId is null.
+        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
+
+        // Even with version drift there is no snapshot to restore, so a disable must not recommend a
+        // rollback (and must not leave the app stranded stopped with no rollback path).
+        _ = await fixture.Apps.UpdateAppAsync(id, current => current with { Version = "1.1.0" });
+        var disabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: false));
+
+        Assert.Null(disabled.DevelopmentModeRestore);
+    }
+
+    // A source (localCommand) app with Development Mode defaulting OFF, plus a data directory the
+    // pre-development-mode snapshot can capture. Mirrors the manifest of the toggle test above.
+    private static async Task<string> InstallToggleSourceAppAsync(LifecycleFixture fixture)
+    {
+        var folder = Path.Combine(fixture.Root, $"toggle-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.toggle",
+              "name": "Toggle",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "release", "type": "localCommand", "default": true }],
+              "defaultRuntime": "release",
+              "services": [{ "key": "app", "runtimes": { "release": { "type": "localCommand", "command": "echo hi" } } }]
+            }
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        return "com.example.toggle";
+    }
+
     [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]
     [InlineData("pre-runtime-switch")]
+    [InlineData("pre-development-mode")]
     [InlineData("scheduled")]
     [InlineData("app-initiated")]
     public async Task CreateManualBackupAsync_RejectsReservedLifecycleReasons(string reason)
