@@ -53,11 +53,12 @@ into the collector's app-data dir at bootstrap, and mounted over the image's def
 (`/etc/otelcol-contrib`) so the stock `--config` entrypoint picks it up. The config is OTLP in →
 Prometheus out for metrics (with `resource_to_telemetry_conversion` so `service.name` / `hosty.app.id`
 become metric labels for P3/P4 attribution) and OTLP in → a rotated newline-delimited JSON **file** out
-for logs (P4). The log file is written to a subdir of the same mounted app-data dir
-(`otlp-logs/logs.jsonl`), which Core tails from the host side. Because the upstream collector image is
-distroless and runs as a non-root UID (10001), Core provisions that sink dir world-writable on Unix at
-bootstrap (`EnsureSystemAppDataSubdirectory`) so the container can create and rotate its log file in
-the bind mount; the contents are non-secret telemetry. Traces are still accepted then dropped (`nop`).
+for logs (P4) and traces (P6, a separate file so the two signals rotate independently). The sink files
+are written to subdirs of the same mounted app-data dir (`otlp-logs/logs.jsonl`,
+`otlp-traces/traces.jsonl`), which Core tails from the host side. Because the upstream collector image
+is distroless and runs as a non-root UID (10001), Core provisions those sink dirs world-writable on
+Unix at bootstrap (`EnsureSystemAppDataSubdirectory`) so the container can create and rotate its files
+in the bind mount; the contents are non-secret telemetry.
 
 ## Enabling it
 
@@ -198,6 +199,33 @@ anticipated):
 
 The two streams stay addressable independently end to end (`…/logs` vs `…/otlp-logs`).
 
+## Traces read boundary (P6): collector file → Core tail → read API
+
+Traces reuse the exact P4 shape — the collector's `traces` pipeline (formerly a `nop` sink) writes
+received OTLP spans as newline-delimited OTLP/JSON to its own sink file (`otlp-traces/traces.jsonl`);
+Core's `TelemetryScrapeService` tails it each tick with the same reader (`FileLogTailReader`, its own
+byte offset), parses spans with a tolerant walker (`OtlpTracesJsonParser`, sharing the low-level
+OTLP/JSON readers with the logs parser via `OtlpJsonParsing`), attributes each span to its app via the
+`hosty.app.id` resource attribute, and records it in an in-memory `ITraceStore` (`InMemoryTraceStore`)
+— the spans analogue of the log store (bounded 1-hour rolling window, per-app span cap, no
+persistence, the same durable-swap seam). Spans keep OTLP nanosecond precision in the store; the read
+API converts to fractional unix-milliseconds (raw nanos exceed the JS safe-integer range).
+
+**Read API.** The read surface is **fleet-shaped from the start** — a distributed trace's spans can
+come from several apps, so unlike metrics/logs there is no per-app twin:
+
+- `GET /api/observability/traces?range=<seconds>&limit=<n>&apps=<csv>&q=<substring>` (admin session;
+  `/control/v1` twin) groups the window's spans by trace id across all installed apps (or the `apps`
+  filter) into summaries — root span name/kind/app (falling back to the earliest span for a partial
+  trace, flagged via `hasRootSpan`), wall-clock start + duration, span/error counts, and the
+  contributing apps — ordered newest-first and capped to `limit` **traces**. `q` matches the root name
+  or trace id, case-insensitively.
+- `GET /api/observability/traces/{traceId}` (admin session; `/control/v1` twin) returns every stored
+  span of one trace merged across apps, each tagged with its source app, ordered by start time. An
+  unknown or aged-out trace id yields an empty span list, never a 404.
+
+Like the other telemetry reads, both endpoints never fail on "no data".
+
 ## Shell Observability tab (P4, superseded)
 
 P4 originally shipped a **per-app** Observability tab (recharts metric charts + a structured OTLP-logs
@@ -218,6 +246,10 @@ overview was dropped — Installed Apps already covers it):
   (`GET …/logs`), kept strictly separate from the OTLP stream.
 - **Structured logs** (`/observability/logs`) — OTLP log records merged across **all** resources into one
   searchable, severity-filterable stream, backed by the new fleet endpoint below.
+- **Traces** (`/observability/traces`, P6) — recent traces across all resources (resource filter +
+  5m/15m/1h range + name/trace-id search) via `GET /api/observability/traces`; selecting a trace opens
+  an indented **span waterfall** (`GET …/traces/{traceId}`): per-app accent colors, offset/width bars
+  over the trace envelope, error highlighting, and click-to-expand span attributes.
 
 The per-app dialog Observability/Logs tabs were removed (they duplicated this section); the shared
 `MetricSeriesCard` / `OtlpLogTable` components now back only the section pages. Cross-resource metrics
@@ -245,16 +277,20 @@ is skipped, never a 404. `ILogStore` is unchanged — the cross-app composition 
 - `DockerRuntimeAdapter.BuildTelemetryEnvironment` (`RuntimeAppManifest.cs`) — `OTEL_*` injection.
 - `MetricStore.cs` — `IMetricStore` + `InMemoryMetricStore` rolling-window store (P3).
 - `LogStore.cs` — `ILogStore` + `InMemoryLogStore` rolling-window OTLP-log store (P4).
+- `TraceStore.cs` — `ITraceStore` + `InMemoryTraceStore` rolling-window span store (P6).
 - `PrometheusTextParser.cs` / `DockerStatsParser.cs` — exposition-format and `docker stats` parsers (P3).
-- `OtlpLogsJsonParser.cs` — tolerant OTLP/JSON logs parser for the collector file output (P4).
+- `OtlpLogsJsonParser.cs` / `OtlpTracesJsonParser.cs` — tolerant OTLP/JSON parsers for the collector
+  file output (P4/P6), sharing the low-level readers in `OtlpJsonParsing.cs`.
 - `TelemetryScrapeService.cs` — the ~10s loop that fills the stores; metrics scrape + `docker stats`
-  (P3) + the `FileLogTailReader` OTLP-logs tail (P4).
-- `CoreLifecycleService.GetMetricsAsync` / `GetOtlpLogsAsync` / `GetFleetOtlpLogsAsync` + the
-  `…/metrics`, `…/otlp-logs`, and `/api/observability/logs` endpoints in `LifecycleEndpoints.cs`.
+  (P3) + the `FileLogTailReader` OTLP-logs/-traces tails (P4/P6).
+- `CoreLifecycleService.GetMetricsAsync` / `GetOtlpLogsAsync` / `GetFleetOtlpLogsAsync` /
+  `GetFleetTracesAsync` / `GetTraceAsync` + the `…/metrics`, `…/otlp-logs`,
+  `/api/observability/logs`, and `/api/observability/traces[/{traceId}]` endpoints in
+  `LifecycleEndpoints.cs`.
 - `apps/shell/src/app/shell/observability/` — shared `MetricSeriesCard` + `OtlpLogTable` components
   (extracted from the removed per-app `observability-panel.tsx`; now used only by the section pages).
 - `apps/shell/src/app/shell/pages/observability/` — the cross-resource Metrics / Console logs /
-  Structured logs pages; routed via `apps/shell/src/app/observability/*` + `shell-routes.ts`.
+  Structured logs / Traces pages; routed via `apps/shell/src/app/observability/*` + `shell-routes.ts`.
 
 ## Roadmap (later phases)
 
@@ -271,7 +307,12 @@ is skipped, never a 404. `ILogStore` is unchanged — the cross-app composition 
   one new fleet endpoint `GET /api/observability/logs` for cross-app structured-logs search/merge.
   (A "Resources" overview was considered but dropped — Installed Apps already covers it.) Traces
   deliberately out of scope.
-- **Later** — **traces** (a real collector sink replacing `nop` + a `…/traces` read surface + a
-  span-waterfall UI) — the largest remaining vertical; the Dashboard **fleet heat-map** (+ a Core
-  fleet-summary endpoint); per-app OTLP ingest auth; localCommand OTLP; external backend (SigNoz /
-  Prometheus + Tempo + Loki) swap (changes only where the collector exports / where Core reads).
+- **P6 (done)** — **traces**: a real collector sink replacing `nop` (`file/traces` →
+  `otlp-traces/traces.jsonl`), a Core tail path (`FileLogTailReader` → `OtlpTracesJsonParser` →
+  `ITraceStore`), fleet read APIs `GET /api/observability/traces` (trace summaries) +
+  `GET /api/observability/traces/{traceId}` (span detail), and the Shell **Traces** page — a
+  cross-resource trace list opening into a span waterfall.
+- **Later** — the Dashboard **fleet heat-map** (+ a Core fleet-summary endpoint); per-app OTLP ingest
+  auth; trace→log correlation links in the UI (the data is already there: OTLP log records carry
+  trace/span ids); external backend (SigNoz / Prometheus + Tempo + Loki) swap (changes only where the
+  collector exports / where Core reads).
