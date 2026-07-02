@@ -832,10 +832,11 @@ function InstalledAppRow({
 }
 
 // Per-runtime mode marker in the switcher, so an operator sees which target runs live from source
-// vs. runs a locked build before switching. Driven by the profile's `development` flag (Core narrows
-// Live/source-override to development runtimes). See runtime-artifact-model.md.
+// vs. runs a locked build before switching. Driven by the effective Development Mode (the operator's
+// per-runtime toggle over the manifest default), falling back to the raw flag for older Core builds.
+// See runtime-artifact-model.md.
 function RuntimeModeBadge({ profile }: { profile: CoreRuntimeProfile }) {
-  const live = profile.development === true;
+  const live = (profile.developmentMode ?? profile.development) === true;
   return (
     <span
       className={cn(
@@ -844,8 +845,8 @@ function RuntimeModeBadge({ profile }: { profile: CoreRuntimeProfile }) {
       )}
       title={
         live
-          ? "Development runtime: runs live from your source folder; the manifest is adopted on restart (no reviewed update)."
-          : "Locked runtime: runs a fixed image/build, advanced by a reviewed update."
+          ? "Development Mode on: runs live from your source folder; the manifest is adopted on restart (no reviewed update)."
+          : "Development Mode off: uses the reviewed manifest/contract — a fixed image/build, or a source runtime not run live — advanced by a reviewed update."
       }
     >
       {live ? <Radio className="h-3 w-3" /> : <Lock className="h-3 w-3" />}

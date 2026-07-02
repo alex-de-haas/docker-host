@@ -164,7 +164,7 @@ This refines two existing derived flags:
 
 ## Development Mode — an operator toggle (design revision, 2026-07-02)
 
-> **Status: agreed, not implemented.** This revision re-scopes the `development` flag: it stays in the manifest as the author's *intent marker and default*, but the liveness decision itself moves to an **operator-controlled, per-runtime Development Mode toggle**. Until this lands, the shipped Phase 1a behavior (flag = gate) remains the implemented state.
+> **Status: implemented (OFF interim).** The `development` flag is re-scoped to the author's *intent marker and default*; the liveness decision now lives in an **operator-controlled, per-runtime Development Mode toggle** (`AppRecord.DevelopmentModes`, `AppSummary.ResolveDevelopmentMode`, `POST /api/apps/{id}/development-mode`, a switch on the Shell's Source tab). `SupportsSource` widened to any source runtime and the "≤1 development runtime" validation was retired. **OFF still uses today's semantics** (reviewed manifest, code from the live folder) — the honest commit-lock is the remaining follow-up (see Prerequisites #2 / Implementation order #3).
 
 Working with the Phase 1a model surfaced that the flag was carrying two orthogonal concepts:
 

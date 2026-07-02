@@ -232,7 +232,15 @@ internal sealed record AppRecord(
     // The contract changes a live source app adopted at its last start (version/capability/mount/
     // endpoint/settings deltas vs the previous start), for operator awareness — informational, not a
     // gate (2b/R11/R12). Null/empty when nothing changed or the app is not a live source app.
-    IReadOnlyList<string>? LiveChanges = null);
+    IReadOnlyList<string>? LiveChanges = null,
+    // Per-runtime Development Mode toggles the operator has explicitly set (runtime key -> on/off). A
+    // key that is absent falls back to the manifest profile's `development` flag as the default; the
+    // operator may flip any source (localCommand) runtime either way. ON runs the runtime live from
+    // source (the folder manifest is adopted on restart). OFF uses the reviewed manifest and hides the
+    // Live affordance; note that OFF is interim — the executed source is not yet commit-locked (the code
+    // still runs from the resolved source root), pending the honest commit-lock. Additive/nullable, so no
+    // AppStateDocument schema bump. See "Development Mode — an operator toggle" in runtime-artifact-model.md.
+    IReadOnlyDictionary<string, bool>? DevelopmentModes = null);
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
 // update for a pinned app. `Kind` is "image" (registry image) in v1; the bundle/source fields are
@@ -281,10 +289,13 @@ internal sealed record AppEndpointContract(
     string? Port = null,
     string? PublicOrigin = null);
 
-// `Development` (additive/defaulted for back-compat) marks a runtime meant for local development:
-// it supports source override and runs live. Gates the Shell's Source tab and drives the "Live"
-// affordance. See docs/features/runtime-artifact-model.md.
-internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default, bool Development = false);
+// `Development` (additive/defaulted for back-compat) is the manifest author's declared default for
+// Development Mode on this runtime — the intent marker. `DevelopmentMode` is the *effective* per-runtime
+// state after the operator's toggle is applied (override else the `Development` default, and always
+// false for a non-source runtime); it is what actually drives liveness, the Source tab, and the
+// Live/Locked badge. Computed on summaries via AppSummary.ResolveDevelopmentMode; the persisted record's
+// profiles leave it false. See "Development Mode — an operator toggle" in runtime-artifact-model.md.
+internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default, bool Development = false, bool DevelopmentMode = false);
 
 internal sealed record AppSourceState(
     string? Type,
@@ -434,6 +445,22 @@ internal sealed record AppSummary(
     // guard), so it is passed in rather than derived here. Clients show it in the "Live" badge tooltip.
     string? SourceLivePath = null)
 {
+    // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
+    // manifest profile's `development` flag as the default. Always false for a non-source runtime
+    // (image/prebuilt have no working copy to bind). Single source of truth shared by the summary
+    // projection here and the lifecycle service's liveness gate, so they never disagree.
+    public static bool ResolveDevelopmentMode(AppRecord app, AppRuntimeProfileSummary profile)
+    {
+        if (!string.Equals(profile.Type, "localCommand", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return app.DevelopmentModes is not null && app.DevelopmentModes.TryGetValue(profile.Key, out var mode)
+            ? mode
+            : profile.Development;
+    }
+
     public static AppSummary From(
         AppRecord app,
         IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null,
@@ -442,7 +469,12 @@ internal sealed record AppSummary(
     {
         var ui = app.Ui;
         var endpoints = AttachPublicOrigins(app.Endpoints, app.Settings);
-        var profiles = runtimeProfiles ?? app.RuntimeProfiles ?? [];
+        // Overlay each runtime's *effective* Development Mode (operator toggle over the manifest default)
+        // so clients render the Live/Locked badge and the toggle switch from what actually governs
+        // liveness, not the raw manifest flag.
+        var profiles = (runtimeProfiles ?? app.RuntimeProfiles ?? [])
+            .Select(profile => profile with { DevelopmentMode = ResolveDevelopmentMode(app, profile) })
+            .ToArray();
         // The UI entry URL is only meaningful when the app declares a `ui` section. A headless
         // app (e.g. a backend service that exposes only a control endpoint for other apps to
         // consume) must not be treated as openable just because it has an HTTP endpoint, so we
@@ -458,15 +490,11 @@ internal sealed record AppSummary(
                 EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path)))
             .ToArray() ?? [];
 
-        // Source-capable when it declares a development runtime (a localCommand profile with
-        // development: true), regardless of how it was installed. Setting a source override is an
-        // explicit operator action that supersedes even a URL/publisher install's reviewed contract, so
-        // the Shell offers the Source tab whenever a development runtime exists — the operator can then
-        // point the app at a folder and select that runtime to run it live. Broader than Live (which
-        // also needs the source to exist and the runtime to be selected). Narrowed from "any
-        // localCommand" so a build-to-production source runtime does not offer override. See
-        // docs/features/runtime-artifact-model.md.
-        var supportsSource = profiles.Any(profile => profile.Development);
+        // Source-capable when it declares any source (localCommand) runtime, regardless of install
+        // channel. Under the Development Mode operator toggle, the operator may point any source runtime
+        // at a local folder and flip it live — so the Source tab appears whenever a source runtime exists,
+        // not only when a runtime is flagged development in the manifest. See runtime-artifact-model.md.
+        var supportsSource = profiles.Any(profile => string.Equals(profile.Type, "localCommand", StringComparison.Ordinal));
 
         return new(
             app.Id,
