@@ -1933,6 +1933,35 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task EnsurePinnedCommit_FetchesWhenReviewedUpdateAdvancesToAnUnfetchedCommit()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // First pin clones the checkout at commit1 (the branch tip at clone time).
+        var first = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = Assert.IsType<string>(first.Source?.ManagedCheckoutPath);
+
+        // The upstream repo advances and a reviewed update records the new commit, which is not yet in the
+        // local clone (the checkout was never fetched).
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        // Record the advanced commit as the reviewed pin (no override, so it is honored, not re-resolved).
+        var record = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(record! with { SourceState = record.SourceState! with { Commit = commit2, LocalOverridePath = null } });
+
+        // The pinned commit is missing locally, so EnsurePinnedCommit fetches and checks it out — the lock
+        // advances (only) via the reviewed commit.
+        var advanced = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        Assert.Equal(commit2, advanced.Source?.Commit);
+        Assert.Equal(commit2, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+    }
+
+    [Fact]
     public async Task InstallAsync_DerivesManifestSubpathFromRawManifestUrl()
     {
         const string manifestUrl = "https://raw.githubusercontent.com/acme/monorepo/main/apps/web/manifest.json";

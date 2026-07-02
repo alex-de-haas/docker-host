@@ -2066,10 +2066,13 @@ internal sealed class CoreLifecycleService(
             return null;
         }
 
-        var checkout = app.SourceState?.ManagedCheckoutPath;
+        // Fall back to the default managed-checkout path for legacy records that never persisted it,
+        // matching EnsurePinnedCommitAsync so the resolved root and the pinned checkout stay consistent.
+        var checkout = app.SourceState?.ManagedCheckoutPath is { Length: > 0 } stored
+            ? stored
+            : Path.Combine(paths.SourcesRoot, app.Id);
         return !string.IsNullOrWhiteSpace(app.ManifestUrl)
             && !string.IsNullOrWhiteSpace(app.SourceState?.Repository)
-            && !string.IsNullOrWhiteSpace(checkout)
             && Directory.Exists(Path.Combine(checkout, ".git"))
             ? checkout
             : null;
