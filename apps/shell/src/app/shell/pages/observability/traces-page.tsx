@@ -62,14 +62,11 @@ export function ObservabilityTracesPage({
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailState>({ loading: false, error: null, response: null });
 
-  // Keep the selection valid as the app set changes (adjust during render, not in an effect).
-  const appsSignature = apps.map((app) => app.id).join(",");
-  const [prevAppsSignature, setPrevAppsSignature] = useState(appsSignature);
-  if (prevAppsSignature !== appsSignature) {
-    setPrevAppsSignature(appsSignature);
-    if (selectedAppId !== ALL && !apps.some((app) => app.id === selectedAppId)) {
-      setSelectedAppId(ALL);
-    }
+  // Keep the selection valid as the app set changes. Adjusted during render (not in an effect) per
+  // React's derived-state guidance; the guard is self-limiting — once reset to ALL the condition is
+  // false on the re-render, so this cannot loop.
+  if (selectedAppId !== ALL && !apps.some((app) => app.id === selectedAppId)) {
+    setSelectedAppId(ALL);
   }
 
   // Debounced typing + manual refresh can overlap; a request token ensures only the latest in-flight
@@ -274,8 +271,16 @@ function TraceListTable({ traces, onOpen }: { traces: FleetTraceSummary[]; onOpe
           {traces.map((trace) => (
             <tr
               key={trace.traceId}
-              className="cursor-pointer border-b align-top last:border-b-0 hover:bg-muted/50"
+              tabIndex={0}
+              aria-label={`Open trace ${trace.rootName || trace.traceId}`}
+              className="cursor-pointer border-b align-top last:border-b-0 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
               onClick={() => onOpen(trace.traceId)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpen(trace.traceId);
+                }
+              }}
             >
               <td className="whitespace-nowrap px-2 py-1.5 font-mono text-muted-foreground">
                 {new Date(trace.startUnixMs).toLocaleTimeString()}
@@ -400,8 +405,17 @@ function TraceWaterfall({
                   return (
                     <tr
                       key={row.span.spanId}
-                      className="cursor-pointer border-b align-top last:border-b-0 hover:bg-muted/50"
+                      tabIndex={0}
+                      aria-expanded={expanded}
+                      aria-label={`Toggle attributes of span ${row.span.name || row.span.spanId}`}
+                      className="cursor-pointer border-b align-top last:border-b-0 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
                       onClick={() => setExpandedSpanId(expanded ? null : row.span.spanId)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setExpandedSpanId(expanded ? null : row.span.spanId);
+                        }
+                      }}
                     >
                       <td className="w-1/2 px-2 py-1.5">
                         <div className="flex items-center gap-1.5" style={{ paddingLeft: `${row.depth * 16}px` }}>
@@ -502,7 +516,12 @@ function buildWaterfallRows(spans: TraceDetailSpan[]): WaterfallRow[] {
   }
 
   const rows: WaterfallRow[] = [];
+  const visited = new Set<string>();
   const visit = (span: TraceDetailSpan, depth: number) => {
+    if (visited.has(span.spanId)) {
+      return; // A duplicate span id or a parent cycle: render each span once.
+    }
+    visited.add(span.spanId);
     rows.push({ span, depth });
     for (const child of childrenByParent.get(span.spanId) ?? []) {
       visit(child, depth + 1);
@@ -510,6 +529,11 @@ function buildWaterfallRows(spans: TraceDetailSpan[]): WaterfallRow[] {
   };
   for (const root of roots) {
     visit(root, 0);
+  }
+  // Malformed parent links can form a cycle with no reachable root; every span must still render
+  // (flat, in the response's start order) rather than vanish from the waterfall.
+  for (const span of spans) {
+    visit(span, 0);
   }
   return rows;
 }

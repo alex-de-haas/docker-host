@@ -1047,7 +1047,7 @@ internal sealed class CoreLifecycleService(
                         DurationMs: NanosToDurationMs(span.StartUnixNano, span.EndUnixNano),
                         StatusCode: span.StatusCode,
                         StatusMessage: span.StatusMessage,
-                        Attributes: span.Attributes ?? new Dictionary<string, string>()));
+                        Attributes: span.Attributes));
                 }
             }
 

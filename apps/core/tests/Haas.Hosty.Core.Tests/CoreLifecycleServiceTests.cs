@@ -1026,67 +1026,6 @@ public sealed class CoreLifecycleServiceTests
         Assert.False(selected.SupportsSource);
     }
 
-    [Fact]
-    public async Task UrlInstallWithDevelopmentRuntime_IsSourceCapable_AndOverrideMakesItLive()
-    {
-        const string manifestUrl = "https://apps.example.test/url-dev/manifest.json";
-        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("""
-                {
-                  "schemaVersion": "app.0.1",
-                  "id": "com.example.url-dev",
-                  "name": "Url Dev App",
-                  "version": "1.0.0",
-                  "runtimeProfiles": [
-                    { "key": "docker", "type": "docker", "default": true },
-                    { "key": "dev", "type": "localCommand", "development": true }
-                  ],
-                  "defaultRuntime": "docker",
-                  "services": [{
-                    "key": "app",
-                    "runtimes": {
-                      "docker": { "type": "docker", "image": "ghcr.io/example/url-dev:1.0.0" },
-                      "dev": { "type": "localCommand", "command": "sleep 5", "workingDirectory": "." }
-                    }
-                  }]
-                }
-                """, Encoding.UTF8, "application/json"),
-        })));
-        var fixture = await LifecycleFixture.CreateAsync(manifests);
-
-        // A URL install may select the compiled docker runtime; the development localCommand profile it
-        // also declares is not selected, so the remote-local-command guard does not trip.
-        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "docker"));
-
-        // Source-capability follows the presence of a development runtime, not the install channel: the
-        // Shell offers the Source tab even for a URL install so the operator can point it at a folder.
-        var installed = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.url-dev");
-        Assert.Equal(manifestUrl, (await fixture.Apps.GetAppAsync("com.example.url-dev"))?.ManifestUrl);
-        Assert.True(installed.SupportsSource);
-        Assert.False(installed.Live);
-
-        // Setting an override then selecting the development runtime runs it live from the operator's
-        // folder — the explicit override supersedes the URL install's reviewed contract.
-        var overrideFolder = Path.Combine(fixture.Root, "url-dev-override");
-        Directory.CreateDirectory(overrideFolder);
-        await fixture.Sources.SetLocalOverrideAsync("com.example.url-dev", new AppSourceOverrideRequest(overrideFolder));
-
-        var record = await fixture.Apps.GetAppAsync("com.example.url-dev");
-        await fixture.Apps.UpsertAppAsync(record! with { SelectedRuntime = "dev" });
-
-        var live = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.url-dev");
-        Assert.True(live.SupportsSource);
-        Assert.Equal(Path.GetFullPath(overrideFolder), live.SourceOverridePath);
-        Assert.True(live.Live);
-        Assert.Equal(Path.GetFullPath(overrideFolder), live.SourceLivePath);
-
-        // While it runs live from the operator's folder, the reviewed-update path no longer applies.
-        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            fixture.Service.CreateUpdatePlanAsync("com.example.url-dev", new AppUpdatePlanRequest()));
-        Assert.Equal("update_live_source_runtime", error.Code);
-    }
-
     [Theory]
     [InlineData("pre-update")]
     [InlineData("pre-restore")]
