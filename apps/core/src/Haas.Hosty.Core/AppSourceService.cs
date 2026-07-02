@@ -76,7 +76,10 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             Commit: string.IsNullOrWhiteSpace(commit) ? existing?.Commit : commit.Trim(),
             ManagedCheckoutPath: existing?.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, appId),
             LocalOverridePath: overridePath,
-            UpdatedAt: clock.UtcNow);
+            UpdatedAt: clock.UtcNow,
+            // Preserve the install-time manifest subpath: an override points at the same repo root, so
+            // the app's manifest keeps the same in-repo offset.
+            ManifestSubpath: existing?.ManifestSubpath);
         await apps.UpdateAppAsync(appId, current => current with { SourceState = state }, cancellationToken);
         return new AppSourceResponse(appId, state);
     }

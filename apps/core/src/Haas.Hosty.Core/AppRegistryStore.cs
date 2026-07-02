@@ -293,7 +293,13 @@ internal sealed record AppSourceState(
     string? Commit,
     string? ManagedCheckoutPath,
     string? LocalOverridePath,
-    DateTimeOffset? UpdatedAt);
+    DateTimeOffset? UpdatedAt,
+    // The manifest's directory relative to the source repository root (e.g. "apps/shell"), or null when
+    // the manifest sits at the root. The source root — an override folder or the managed checkout — is
+    // the repo root by convention (the runtime resolves each service's workingDirectory against it), so
+    // Core reads the live manifest from <sourceRoot>/<ManifestSubpath>/manifest.json for a monorepo app.
+    // Captured at install; additive/nullable so older records read back as null (manifest-at-root).
+    string? ManifestSubpath = null);
 
 internal sealed record AppUiContract(
     string? Category,
