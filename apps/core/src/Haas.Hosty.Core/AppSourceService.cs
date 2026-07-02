@@ -63,13 +63,22 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         var checkoutPath = source.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, appId);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
 
+        // The reviewed commit to pin to. Prefer the recorded commit, but re-resolve from the reviewed ref
+        // when a live override is configured — SetLocalOverrideAsync stamps AppSourceState.Commit from the
+        // override folder, and OFF must pin the reviewed source, not the override's commit. The managed
+        // checkout is not fetched here, so a re-resolve returns a stable commit; only a reviewed
+        // source-resolve/update fetches and advances the ref.
         var commit = source.Commit;
-        if (string.IsNullOrWhiteSpace(commit))
+        if (string.IsNullOrWhiteSpace(commit) || !string.IsNullOrWhiteSpace(source.LocalOverridePath))
         {
             commit = await ResolveCommitAsync(checkoutPath, new AppSourceResolveRequest(), source.ResolvedRef ?? "HEAD", cancellationToken);
         }
 
-        _ = await RunGitAsync(checkoutPath, ["checkout", "--detach", commit], cancellationToken);
+        // Force the working tree to exactly the pinned commit: discard tracked edits and remove untracked
+        // files (e.g. left by a prior Dev-Mode-on live run) so OFF is an honest, reproducible lock. Ignored
+        // build outputs are kept (no `-x`) for `setup` to manage.
+        _ = await RunGitAsync(checkoutPath, ["checkout", "--detach", "--force", commit], cancellationToken);
+        _ = await RunGitAsync(checkoutPath, ["clean", "-fd"], cancellationToken);
 
         var state = source with
         {
