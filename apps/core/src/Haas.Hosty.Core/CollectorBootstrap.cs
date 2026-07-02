@@ -32,12 +32,22 @@ internal static class CollectorBootstrap
     public const string LogsFileName = "logs.jsonl";
     public const string ContainerLogsFile = ContainerConfigDir + "/" + LogsRelativeDir + "/" + LogsFileName;
 
+    // OTLP-traces sink (traces phase): same file-exporter boundary as logs, its own subdir/file so the
+    // two signals rotate independently and the tail offsets never interfere.
+    public const string TracesRelativeDir = "otlp-traces";
+    public const string TracesFileName = "traces.jsonl";
+    public const string ContainerTracesFile = ContainerConfigDir + "/" + TracesRelativeDir + "/" + TracesFileName;
+
     // Host-side path of the OTLP-logs file Core tails, derived from the apps root. Mirrors
     // CoreLifecycleService.GetAppDataPath ({appsRoot}/{appId}/data) for the collector app, so the
     // scrape loop can find the same file the bootstrap provisions without taking a CoreLifecycleService
     // dependency. The "data" segment is the app-data dir name GetAppDataPath appends.
     public static string ResolveHostLogsFilePath(string appsRoot)
         => Path.Combine(CoreDataPaths.ResolveContainedPath(appsRoot, AppId), "data", LogsRelativeDir, LogsFileName);
+
+    // Host-side path of the OTLP-traces file Core tails; same derivation as the logs path.
+    public static string ResolveHostTracesFilePath(string appsRoot)
+        => Path.Combine(CoreDataPaths.ResolveContainedPath(appsRoot, AppId), "data", TracesRelativeDir, TracesFileName);
 
     // Authoritative collector config. OTLP/HTTP in (4318) → Prometheus out (9464) for metrics, and a
     // rotated newline-delimited JSON file for logs (Core tails it). Infra metrics (docker stats) and
@@ -74,10 +84,16 @@ internal static class CollectorBootstrap
             rotation:
               max_megabytes: 8
               max_backups: 1
-          # Traces are accepted then dropped in v1 (no trace store yet): nop keeps the /v1/traces
-          # handler registered so app exporters do not see 404s, without logging span data. A later
-          # phase swaps this for a real trace sink.
-          nop: {}
+          # OTLP traces sink (traces phase): same file boundary as logs — Core tails the spans into its
+          # in-memory trace store. A separate file keeps the two signals' rotation and tail offsets
+          # independent.
+          file/traces:
+            path: /etc/otelcol-contrib/otlp-traces/traces.jsonl
+            format: json
+            flush_interval: 1s
+            rotation:
+              max_megabytes: 8
+              max_backups: 1
 
         service:
           telemetry:
@@ -95,7 +111,7 @@ internal static class CollectorBootstrap
             traces:
               receivers: [otlp]
               processors: [batch]
-              exporters: [nop]
+              exporters: [file/traces]
 
         """;
 }

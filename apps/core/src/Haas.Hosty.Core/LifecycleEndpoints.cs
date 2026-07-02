@@ -333,6 +333,40 @@ internal static class LifecycleEndpoints
                 async () => await HandleLifecycleError(() => lifecycle.GetFleetOtlpLogsAsync(range, severity, limit, ParseAppFilter(apps), q, cancellationToken)),
                 cancellationToken: cancellationToken));
 
+        // Cross-resource trace list (the Shell "Traces" view). `apps` is an optional comma-separated
+        // app-id filter; `q` an optional root-name/trace-id substring. Host-admin only.
+        app.MapGet("/api/observability/traces", async (
+            int? range,
+            int? limit,
+            string? apps,
+            string? q,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetFleetTracesAsync(range, limit, ParseAppFilter(apps), q, cancellationToken)),
+                cancellationToken: cancellationToken));
+
+        // One trace's spans merged across apps (the Shell span-waterfall view). Host-admin only.
+        app.MapGet("/api/observability/traces/{traceId}", async (
+            string traceId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetTraceAsync(traceId, cancellationToken)),
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/apps/{appId}/update-status", async (
             string appId,
             HttpRequest request,
@@ -668,6 +702,27 @@ internal static class LifecycleEndpoints
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.GetFleetOtlpLogsAsync(range, severity, limit, ParseAppFilter(apps), q, cancellationToken))));
+
+        app.MapGet("/control/v1/observability/traces", async (
+            int? range,
+            int? limit,
+            string? apps,
+            string? q,
+            HttpRequest request,
+            ControlSecret secret,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleLifecycleError(() => lifecycle.GetFleetTracesAsync(range, limit, ParseAppFilter(apps), q, cancellationToken))));
+
+        app.MapGet("/control/v1/observability/traces/{traceId}", async (
+            string traceId,
+            HttpRequest request,
+            ControlSecret secret,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleLifecycleError(() => lifecycle.GetTraceAsync(traceId, cancellationToken))));
     }
 
     // Parse the optional comma-separated `apps` query filter into a list of app ids (null = all apps).

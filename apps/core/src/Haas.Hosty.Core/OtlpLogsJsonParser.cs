@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 
 namespace Haas.Hosty.Core;
@@ -13,18 +12,14 @@ internal sealed record ParsedOtlpLog(string AppId, OtlpLogRecord Record);
 // the tree with JsonDocument — AOT-safe (no reflection) — and never throws: a malformed line or a
 // record missing its app attribution is skipped so one bad line cannot poison a tail. Missing record
 // timestamps fall back to `fallbackTimestamp` (the scrape clock) so unstamped records still land in
-// the live window. See docs/features/observability.md.
+// the live window. Low-level OTLP/JSON readers are shared with the traces parser (OtlpJsonParsing).
+// See docs/features/observability.md.
 internal static class OtlpLogsJsonParser
 {
-    // Resource attribute the collector preserves from the OTEL_RESOURCE_ATTRIBUTES Core injects; it
-    // attributes each log record to its app. Records without it cannot be attributed and are dropped.
-    internal const string AppAttributionAttribute = "hosty.app.id";
+    internal const string AppAttributionAttribute = OtlpJsonParsing.AppAttributionAttribute;
 
     // Bound the per-record attribute count so a pathological producer cannot bloat the store.
     private const int MaxAttributesPerRecord = 32;
-
-    private static readonly IReadOnlyDictionary<string, string> EmptyAttributes =
-        new Dictionary<string, string>(StringComparer.Ordinal);
 
     public static IReadOnlyList<ParsedOtlpLog> Parse(string? ndjson, DateTimeOffset fallbackTimestamp)
     {
@@ -71,7 +66,7 @@ internal static class OtlpLogsJsonParser
 
             foreach (var resourceLog in resourceLogs.EnumerateArray())
             {
-                var appId = ResolveAppId(resourceLog);
+                var appId = OtlpJsonParsing.ResolveAppId(resourceLog);
                 if (string.IsNullOrWhiteSpace(appId))
                 {
                     continue;
@@ -100,84 +95,30 @@ internal static class OtlpLogsJsonParser
         }
     }
 
-    // The app id from the resource's `hosty.app.id` attribute, or null when the resource carries none.
-    private static string? ResolveAppId(JsonElement resourceLog)
-    {
-        if (!resourceLog.TryGetProperty("resource", out var resource) ||
-            !resource.TryGetProperty("attributes", out var attributes) ||
-            attributes.ValueKind != JsonValueKind.Array)
-        {
-            return null;
-        }
-
-        foreach (var attribute in attributes.EnumerateArray())
-        {
-            if (attribute.TryGetProperty("key", out var key) &&
-                key.ValueKind == JsonValueKind.String &&
-                string.Equals(key.GetString(), AppAttributionAttribute, StringComparison.Ordinal) &&
-                attribute.TryGetProperty("value", out var value))
-            {
-                var resolved = StringifyAnyValue(value);
-                return string.IsNullOrWhiteSpace(resolved) ? null : resolved;
-            }
-        }
-
-        return null;
-    }
-
     private static OtlpLogRecord ReadRecord(JsonElement logRecord, long fallbackMs)
     {
         var timestampMs = ReadTimestampMs(logRecord, fallbackMs);
         var severityNumber = ReadSeverityNumber(logRecord);
         var severityText = ReadSeverityText(logRecord, severityNumber);
-        var body = logRecord.TryGetProperty("body", out var bodyValue) ? StringifyAnyValue(bodyValue) : string.Empty;
-        var attributes = ReadAttributes(logRecord);
-        var traceId = ReadHexId(logRecord, "traceId");
-        var spanId = ReadHexId(logRecord, "spanId");
+        var body = logRecord.TryGetProperty("body", out var bodyValue)
+            ? OtlpJsonParsing.StringifyAnyValue(bodyValue)
+            : string.Empty;
+        var attributes = OtlpJsonParsing.ReadAttributes(logRecord, MaxAttributesPerRecord);
+        var traceId = OtlpJsonParsing.ReadHexId(logRecord, "traceId");
+        var spanId = OtlpJsonParsing.ReadHexId(logRecord, "spanId");
         return new OtlpLogRecord(timestampMs, severityNumber, severityText, body, attributes, traceId, spanId);
     }
 
-    // OTLP timestamps are int64 nanoseconds, encoded as a JSON string in protojson (but tolerate a
-    // raw number). Prefers timeUnixNano, falls back to observedTimeUnixNano, then the scrape clock.
+    // Prefers timeUnixNano, falls back to observedTimeUnixNano, then the scrape clock.
     private static long ReadTimestampMs(JsonElement logRecord, long fallbackMs)
     {
-        if (TryReadUnixNanos(logRecord, "timeUnixNano", out var ms) ||
-            TryReadUnixNanos(logRecord, "observedTimeUnixNano", out ms))
+        if (OtlpJsonParsing.TryReadUnixNanos(logRecord, "timeUnixNano", out var nanos) ||
+            OtlpJsonParsing.TryReadUnixNanos(logRecord, "observedTimeUnixNano", out nanos))
         {
-            return ms;
+            return nanos / 1_000_000;
         }
 
         return fallbackMs;
-    }
-
-    private static bool TryReadUnixNanos(JsonElement logRecord, string property, out long milliseconds)
-    {
-        milliseconds = 0;
-        if (!logRecord.TryGetProperty(property, out var element))
-        {
-            return false;
-        }
-
-        long nanos;
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.String when long.TryParse(element.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed):
-                nanos = parsed;
-                break;
-            case JsonValueKind.Number when element.TryGetInt64(out var number):
-                nanos = number;
-                break;
-            default:
-                return false;
-        }
-
-        if (nanos <= 0)
-        {
-            return false;
-        }
-
-        milliseconds = nanos / 1_000_000;
-        return true;
     }
 
     // severityNumber is normally the integer OTLP enum value; tolerate the enum name string too.
@@ -206,94 +147,6 @@ internal static class OtlpLogsJsonParser
         }
 
         return SeverityTextFromNumber(severityNumber);
-    }
-
-    private static IReadOnlyDictionary<string, string> ReadAttributes(JsonElement logRecord)
-    {
-        if (!logRecord.TryGetProperty("attributes", out var attributes) ||
-            attributes.ValueKind != JsonValueKind.Array)
-        {
-            return EmptyAttributes;
-        }
-
-        Dictionary<string, string>? parsed = null;
-        foreach (var attribute in attributes.EnumerateArray())
-        {
-            if ((parsed?.Count ?? 0) >= MaxAttributesPerRecord)
-            {
-                break;
-            }
-
-            if (attribute.TryGetProperty("key", out var key) &&
-                key.ValueKind == JsonValueKind.String &&
-                key.GetString() is { Length: > 0 } name &&
-                attribute.TryGetProperty("value", out var value))
-            {
-                (parsed ??= new Dictionary<string, string>(StringComparer.Ordinal))[name] = StringifyAnyValue(value);
-            }
-        }
-
-        return parsed ?? EmptyAttributes;
-    }
-
-    // trace_id / span_id are lowercase-hex strings in OTLP/JSON; an all-zero or empty id means absent.
-    private static string? ReadHexId(JsonElement logRecord, string property)
-    {
-        if (!logRecord.TryGetProperty(property, out var element) || element.ValueKind != JsonValueKind.String)
-        {
-            return null;
-        }
-
-        var value = element.GetString();
-        if (string.IsNullOrEmpty(value) || value.All(static ch => ch == '0'))
-        {
-            return null;
-        }
-
-        return value;
-    }
-
-    // Flattens an OTLP AnyValue to a string: scalars become their text, composites their raw JSON.
-    private static string StringifyAnyValue(JsonElement value)
-    {
-        if (value.ValueKind != JsonValueKind.Object)
-        {
-            return value.ValueKind switch
-            {
-                JsonValueKind.String => value.GetString() ?? string.Empty,
-                JsonValueKind.Null or JsonValueKind.Undefined => string.Empty,
-                _ => value.GetRawText(),
-            };
-        }
-
-        if (value.TryGetProperty("stringValue", out var stringValue) && stringValue.ValueKind == JsonValueKind.String)
-        {
-            return stringValue.GetString() ?? string.Empty;
-        }
-
-        if (value.TryGetProperty("intValue", out var intValue))
-        {
-            return intValue.ValueKind == JsonValueKind.String ? intValue.GetString() ?? string.Empty : intValue.GetRawText();
-        }
-
-        if (value.TryGetProperty("doubleValue", out var doubleValue))
-        {
-            return doubleValue.GetRawText();
-        }
-
-        if (value.TryGetProperty("boolValue", out var boolValue) &&
-            boolValue.ValueKind is JsonValueKind.True or JsonValueKind.False)
-        {
-            return boolValue.GetBoolean() ? "true" : "false";
-        }
-
-        if (value.TryGetProperty("bytesValue", out var bytesValue) && bytesValue.ValueKind == JsonValueKind.String)
-        {
-            return bytesValue.GetString() ?? string.Empty;
-        }
-
-        // arrayValue / kvlistValue (and anything unexpected): keep the structure as compact JSON.
-        return value.GetRawText();
     }
 
     // Maps the OTLP SeverityNumber enum name (e.g. "SEVERITY_NUMBER_INFO2") to its integer value.

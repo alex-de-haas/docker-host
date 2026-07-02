@@ -15,6 +15,7 @@ const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   "obs-metrics": "/observability/metrics",
   "obs-console": "/observability/console",
   "obs-logs": "/observability/logs",
+  "obs-traces": "/observability/traces",
 };
 
 const ADMIN_SHELL_VIEWS = new Set<ShellView>([
@@ -24,6 +25,7 @@ const ADMIN_SHELL_VIEWS = new Set<ShellView>([
   "obs-metrics",
   "obs-console",
   "obs-logs",
+  "obs-traces",
 ]);
 
 export function shellViewRequiresAdmin(view: ShellView) {
@@ -91,6 +93,10 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
 
   if (path === "/observability/logs") {
     return { view: "obs-logs", workspace: null };
+  }
+
+  if (path === "/observability/traces") {
+    return { view: "obs-traces", workspace: null };
   }
 
   return { view: "dashboard", workspace: null };

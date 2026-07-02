@@ -7,6 +7,7 @@ import { InstalledAppsPage } from "./pages/installed-apps-page";
 import { ObservabilityConsoleLogsPage } from "./pages/observability/console-logs-page";
 import { ObservabilityMetricsPage } from "./pages/observability/metrics-page";
 import { ObservabilityStructuredLogsPage } from "./pages/observability/structured-logs-page";
+import { ObservabilityTracesPage } from "./pages/observability/traces-page";
 import { UserManagementPanel } from "./pages/user-management-page";
 import { useShellActions, useShellState } from "./shell-context";
 
@@ -123,6 +124,21 @@ export function ShellObservabilityLogsRoute() {
   return (
     <AdminShellRoute>
       <ObservabilityStructuredLogsPage
+        runtimeApps={shell.runtimeApps}
+        systemApps={shell.systemApps}
+        coreOrigin={shellActions.coreOrigin}
+      />
+    </AdminShellRoute>
+  );
+}
+
+export function ShellObservabilityTracesRoute() {
+  const shell = useShellState();
+  const shellActions = useShellActions();
+
+  return (
+    <AdminShellRoute>
+      <ObservabilityTracesPage
         runtimeApps={shell.runtimeApps}
         systemApps={shell.systemApps}
         coreOrigin={shellActions.coreOrigin}

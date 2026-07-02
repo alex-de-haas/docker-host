@@ -18,6 +18,7 @@ internal sealed class CoreLifecycleService(
     IClock? clock = null,
     IMetricStore? metrics = null,
     ILogStore? logs = null,
+    ITraceStore? traces = null,
     GlobalMountStore? globalMounts = null,
     MountPathPolicy? mountPathPolicy = null)
 {
@@ -36,10 +37,20 @@ internal sealed class CoreLifecycleService(
     private const int DefaultLogsLimit = 500;
     private const int MaxLogsLimit = 2000;
 
+    // Defaults and ceilings for a traces query. Range mirrors logs; the limit caps how many TRACES
+    // (span groups, not spans) one list response carries. The per-app span pull is bounded by the
+    // trace store's own per-app cap, so the grouping pass stays bounded too.
+    private const int DefaultTracesRangeSeconds = 300;
+    private const int MaxTracesRangeSeconds = 3600;
+    private const int DefaultTracesLimit = 50;
+    private const int MaxTracesLimit = 200;
+    private const int MaxSpansPerAppScan = 2000;
+
     // Optional in tests (which exercise lifecycle, not telemetry); DI always supplies the singletons.
     private readonly IClock clock = clock ?? new SystemClock();
     private readonly IMetricStore metrics = metrics ?? new InMemoryMetricStore();
     private readonly ILogStore logs = logs ?? new InMemoryLogStore();
+    private readonly ITraceStore traces = traces ?? new InMemoryTraceStore();
     // Host-level shared-mounts library and the shared host-path policy. Default-constructed in tests
     // (both only need CoreDataPaths); DI supplies the singletons.
     private readonly GlobalMountStore globalMounts = globalMounts ?? new GlobalMountStore(paths);
@@ -715,6 +726,7 @@ internal sealed class CoreLifecycleService(
         // Drop the app's in-memory telemetry so an uninstalled app's series/records do not linger.
         metrics.Remove(appId);
         logs.Remove(appId);
+        traces.Remove(appId);
         await ReconcileIngressAsync(cancellationToken);
         return new AppLifecycleResponse(app is null ? null : await BuildAppSummaryAsync(app, cancellationToken), null, "removed");
     }
@@ -931,6 +943,205 @@ internal sealed class CoreLifecycleService(
         }
 
         return new FleetOtlpLogsResponse(range, present.Count, merged);
+    }
+
+    // Observability v1 traces read path: recent traces merged across ALL installed apps (optionally
+    // narrowed to `appIds`) over the last `range` seconds. Spans are grouped by trace id into
+    // summaries (root span name, wall duration, span/error counts, contributing apps), optionally
+    // filtered to a `query` substring over the root name or trace id, ordered newest-first, and
+    // capped to `limit` traces. The read surface is fleet-shaped from the start — a distributed
+    // trace's spans can come from several apps, so there is no per-app twin. Best-effort like the
+    // fleet logs path: observability off or no traced apps yield an empty list, never an error.
+    public async Task<FleetTracesResponse> GetFleetTracesAsync(
+        int? rangeSeconds,
+        int? limit,
+        IReadOnlyCollection<string>? appIds,
+        string? query,
+        CancellationToken cancellationToken = default)
+    {
+        var range = Math.Clamp(rangeSeconds ?? DefaultTracesRangeSeconds, 1, MaxTracesRangeSeconds);
+        var cappedLimit = Math.Clamp(limit ?? DefaultTracesLimit, 1, MaxTracesLimit);
+        var since = clock.UtcNow.AddSeconds(-range);
+        var trimmedQuery = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+        var filter = appIds is { Count: > 0 } ? new HashSet<string>(appIds, StringComparer.Ordinal) : null;
+
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        var groups = new Dictionary<string, TraceAccumulator>(StringComparer.OrdinalIgnoreCase);
+        foreach (var app in records)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (filter is not null && !filter.Contains(app.Id))
+            {
+                continue;
+            }
+
+            foreach (var span in traces.Query(app.Id, since, MaxSpansPerAppScan))
+            {
+                if (!groups.TryGetValue(span.TraceId, out var group))
+                {
+                    group = new TraceAccumulator(span.TraceId);
+                    groups[span.TraceId] = group;
+                }
+
+                group.Add(app.Id, app.DisplayName, span);
+            }
+        }
+
+        var summaries = new List<FleetTraceSummary>(groups.Count);
+        foreach (var group in groups.Values)
+        {
+            var summary = group.ToSummary();
+            if (trimmedQuery is not null &&
+                !summary.RootName.Contains(trimmedQuery, StringComparison.OrdinalIgnoreCase) &&
+                !summary.TraceId.Contains(trimmedQuery, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            summaries.Add(summary);
+        }
+
+        // Newest trace first, then keep the top `limit` (traces, not spans).
+        summaries.Sort((left, right) => right.StartUnixMs.CompareTo(left.StartUnixMs));
+        if (summaries.Count > cappedLimit)
+        {
+            summaries.RemoveRange(cappedLimit, summaries.Count - cappedLimit);
+        }
+
+        var present = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var summary in summaries)
+        {
+            foreach (var appRef in summary.Apps)
+            {
+                present.Add(appRef.AppId);
+            }
+        }
+
+        return new FleetTracesResponse(range, present.Count, summaries);
+    }
+
+    // Observability v1 trace-detail read path: every stored span of one trace merged across ALL
+    // installed apps, tagged with its source app and ordered by start time (ties: longest first, so a
+    // parent that started the same instant as its child sorts above it in a waterfall). An unknown or
+    // aged-out trace id yields an empty span list — never a 404, matching the other telemetry reads.
+    public async Task<TraceDetailResponse> GetTraceAsync(string traceId, CancellationToken cancellationToken = default)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(traceId) ? null : traceId.Trim();
+        var spans = new List<TraceDetailSpan>();
+        if (trimmed is not null)
+        {
+            var records = await apps.ListAppRecordsAsync(cancellationToken);
+            foreach (var app in records)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var span in traces.QueryTrace(app.Id, trimmed))
+                {
+                    spans.Add(new TraceDetailSpan(
+                        AppId: app.Id,
+                        AppName: app.DisplayName,
+                        SpanId: span.SpanId,
+                        ParentSpanId: span.ParentSpanId,
+                        Name: span.Name,
+                        Kind: span.Kind,
+                        StartUnixMs: NanosToUnixMs(span.StartUnixNano),
+                        DurationMs: NanosToDurationMs(span.StartUnixNano, span.EndUnixNano),
+                        StatusCode: span.StatusCode,
+                        StatusMessage: span.StatusMessage,
+                        Attributes: span.Attributes));
+                }
+            }
+
+            spans.Sort((left, right) =>
+            {
+                var byStart = left.StartUnixMs.CompareTo(right.StartUnixMs);
+                return byStart != 0 ? byStart : right.DurationMs.CompareTo(left.DurationMs);
+            });
+        }
+
+        var startMs = 0d;
+        var durationMs = 0d;
+        if (spans.Count > 0)
+        {
+            startMs = spans[0].StartUnixMs;
+            foreach (var span in spans)
+            {
+                durationMs = Math.Max(durationMs, span.StartUnixMs + span.DurationMs - startMs);
+            }
+        }
+
+        return new TraceDetailResponse(trimmed ?? string.Empty, startMs, durationMs, spans);
+    }
+
+    // OTLP nanosecond timestamps exceed the double/JS-number safe-integer range, so the wire format is
+    // fractional milliseconds: unix-ms doubles keep ~200ns resolution over current dates — plenty for
+    // a waterfall — while staying loss-free to serialize for browser clients.
+    private static double NanosToUnixMs(long unixNano) => unixNano / 1_000_000d;
+
+    private static double NanosToDurationMs(long startUnixNano, long endUnixNano)
+        => endUnixNano > startUnixNano ? (endUnixNano - startUnixNano) / 1_000_000d : 0d;
+
+    // Per-trace aggregation used by GetFleetTracesAsync: tracks the wall-clock envelope, counts, the
+    // contributing apps (first-seen order), and the best "root" candidate — the earliest parentless
+    // span, else the earliest span at all (partial traces whose root aged out still get a name).
+    private sealed class TraceAccumulator(string traceId)
+    {
+        private readonly List<TraceAppRef> apps = [];
+        private readonly HashSet<string> appIds = new(StringComparer.Ordinal);
+        private long minStartNano = long.MaxValue;
+        private long maxEndNano;
+        private int spanCount;
+        private int errorCount;
+        private OtlpSpan? root;
+        private string? rootAppId;
+        private string? rootAppName;
+        private OtlpSpan? earliest;
+        private string? earliestAppId;
+        private string? earliestAppName;
+
+        public void Add(string appId, string appName, OtlpSpan span)
+        {
+            spanCount++;
+            if (string.Equals(span.StatusCode, "error", StringComparison.Ordinal))
+            {
+                errorCount++;
+            }
+
+            minStartNano = Math.Min(minStartNano, span.StartUnixNano);
+            maxEndNano = Math.Max(maxEndNano, span.EndUnixNano);
+            if (appIds.Add(appId))
+            {
+                apps.Add(new TraceAppRef(appId, appName));
+            }
+
+            if (span.ParentSpanId is null && (root is null || span.StartUnixNano < root.StartUnixNano))
+            {
+                (root, rootAppId, rootAppName) = (span, appId, appName);
+            }
+
+            if (earliest is null || span.StartUnixNano < earliest.StartUnixNano)
+            {
+                (earliest, earliestAppId, earliestAppName) = (span, appId, appName);
+            }
+        }
+
+        public FleetTraceSummary ToSummary()
+        {
+            var (representative, representativeAppId, representativeAppName) = root is not null
+                ? (root, rootAppId!, rootAppName!)
+                : (earliest!, earliestAppId!, earliestAppName!);
+            return new FleetTraceSummary(
+                TraceId: traceId,
+                RootName: representative.Name,
+                RootKind: representative.Kind,
+                RootAppId: representativeAppId,
+                RootAppName: representativeAppName,
+                HasRootSpan: root is not null,
+                StartUnixMs: NanosToUnixMs(minStartNano),
+                DurationMs: NanosToDurationMs(minStartNano, maxEndNano),
+                SpanCount: spanCount,
+                ErrorCount: errorCount,
+                Apps: apps);
+        }
     }
 
     // Read-only "update available" detection (runtime-app-marketplace.md, "Update-available
@@ -2059,21 +2270,32 @@ internal sealed class CoreLifecycleService(
 
     // The operator-owned source folder Core re-reads live, or null when the app is not a live source
     // app. Live source = a source-artifact runtime (localCommand in v1) the operator owns locally — a
-    // source-override folder, else the original folder install. A URL/publisher install is never live
-    // source (its contract is reviewed, A7), and an InstallManifestPath that points back into Core's
-    // own app root is the internal copy (legacy capture), not an external source.
+    // source-override folder, else the original folder install. An explicit override supersedes a
+    // URL/publisher install's reviewed contract; without one a URL install is never live source (its
+    // contract is reviewed, A7). An InstallManifestPath that points back into Core's own app root is
+    // the internal copy (legacy capture), not an external source.
     private string? ResolveLiveSourceManifestPath(AppRecord app, RuntimeAppManifestSelection lastGood)
     {
         var isSource = lastGood.Services.Any(service => string.Equals(service.Artifact, "source", StringComparison.Ordinal));
-        if (!isSource || !string.IsNullOrWhiteSpace(app.ManifestUrl))
+        if (!isSource)
         {
             return null;
         }
 
+        // An explicit operator source override is a deliberate local-dev choice that supersedes a
+        // URL/publisher install's reviewed contract, so the override folder is the live manifest source
+        // even for a URL install (mirrors ResolveLiveSourcePath).
         var overridePath = app.SourceState?.LocalOverridePath;
         if (!string.IsNullOrWhiteSpace(overridePath) && Directory.Exists(overridePath))
         {
             return overridePath;
+        }
+
+        // Without an explicit override, a URL/publisher install crosses a trust boundary — its contract
+        // is reviewed even when the code runs live — so the original install is never a live source.
+        if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
+        {
+            return null;
         }
 
         if (!string.IsNullOrWhiteSpace(app.InstallManifestPath) &&
@@ -2088,13 +2310,14 @@ internal sealed class CoreLifecycleService(
 
     // True when the app's selected runtime is a live source artifact owned by the operator: a
     // source-kind runtime (localCommand in v1) whose manifest Core re-reads live from the operator's
-    // own folder (a source-override, else the original folder install), never a URL/publisher install.
-    // For these the contract tracks the folder and is adopted on restart, so the reviewed-update flow
-    // does not apply - clients mark the runtime "Live" and hide the Update affordance, and
-    // CreateUpdatePlanAsync refuses with a clear error (runtime-app-marketplace.md, "Live source").
-    // Determined from the record alone (selected profile type + source ownership) so it is cheap and
-    // never loads or validates a (possibly mid-edit) folder manifest. Mirrors ResolveLiveSourceManifestPath,
-    // using profile type == "localCommand" for the source-artifact check the loaded selection would make.
+    // own folder — an explicit source-override (which supersedes a URL/publisher install), else the
+    // original folder install of a non-URL install. For these the contract tracks the folder and is
+    // adopted on restart, so the reviewed-update flow does not apply - clients mark the runtime "Live"
+    // and hide the Update affordance, and CreateUpdatePlanAsync refuses with a clear error
+    // (runtime-app-marketplace.md, "Live source"). Determined from the record alone (selected profile
+    // type + source ownership) so it is cheap and never loads or validates a (possibly mid-edit) folder
+    // manifest. Mirrors ResolveLiveSourceManifestPath, using profile type == "localCommand" for the
+    // source-artifact check the loaded selection would make.
     private bool IsLiveSourceApp(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
         => ResolveLiveSourcePath(app, profiles) is not null;
 
@@ -2104,13 +2327,6 @@ internal sealed class CoreLifecycleService(
     // "Live" flag, the summary's SourceLivePath (badge tooltip), and the update-plan guard all agree.
     private string? ResolveLiveSourcePath(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
     {
-        // A URL/publisher install crosses a trust boundary: its contract is reviewed even when the
-        // code runs live, so it is never "live source" for the update affordance.
-        if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
-        {
-            return null;
-        }
-
         // Only a development runtime (a localCommand profile with development: true) runs live from an
         // operator folder. A non-development source runtime builds a locked artifact and is updated in
         // review, so it is not "live". Development implies localCommand (manifest-validated).
@@ -2121,10 +2337,20 @@ internal sealed class CoreLifecycleService(
             return null;
         }
 
+        // An explicit operator source override is a deliberate local-dev choice that supersedes a
+        // URL/publisher install's reviewed contract, so the override folder is the live source even for
+        // a URL install.
         var overridePath = app.SourceState?.LocalOverridePath;
         if (!string.IsNullOrWhiteSpace(overridePath) && Directory.Exists(overridePath))
         {
             return overridePath;
+        }
+
+        // Without an explicit override, a URL/publisher install crosses a trust boundary: its contract
+        // is reviewed even when the code runs live, so it is never "live source".
+        if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
+        {
+            return null;
         }
 
         if (!string.IsNullOrWhiteSpace(app.InstallManifestPath)
@@ -3360,6 +3586,57 @@ internal sealed record FleetOtlpLogsResponse(
     long RangeSeconds,
     int AppCount,
     IReadOnlyList<FleetOtlpLogRecord> Records);
+
+// One app that contributed spans to a trace (id + display name, first-seen order).
+internal sealed record TraceAppRef(string AppId, string AppName);
+
+// One trace in the fleet trace list: its spans collapsed to a summary. Root* describe the root span
+// when one was stored (`HasRootSpan`), else the earliest stored span of a partial trace. Timestamps
+// are fractional unix-milliseconds (OTLP nanos exceed the JS safe-integer range); `DurationMs` is the
+// wall-clock envelope over all spans. `ErrorCount` counts spans with an error status.
+internal sealed record FleetTraceSummary(
+    string TraceId,
+    string RootName,
+    string RootKind,
+    string RootAppId,
+    string RootAppName,
+    bool HasRootSpan,
+    double StartUnixMs,
+    double DurationMs,
+    int SpanCount,
+    int ErrorCount,
+    IReadOnlyList<TraceAppRef> Apps);
+
+// Fleet trace-list read response: recent traces merged across all (or the filtered) apps over the
+// resolved range, newest first. `RangeSeconds` echoes the effective (clamped) window; `AppCount` is
+// the number of apps contributing spans to the listed traces.
+internal sealed record FleetTracesResponse(
+    long RangeSeconds,
+    int AppCount,
+    IReadOnlyList<FleetTraceSummary> Traces);
+
+// One span of a trace-detail response, tagged with its source app. Start/Duration are fractional
+// unix-milliseconds (see FleetTraceSummary); ParentSpanId is null for the root span.
+internal sealed record TraceDetailSpan(
+    string AppId,
+    string AppName,
+    string SpanId,
+    string? ParentSpanId,
+    string Name,
+    string Kind,
+    double StartUnixMs,
+    double DurationMs,
+    string StatusCode,
+    string? StatusMessage,
+    IReadOnlyDictionary<string, string> Attributes);
+
+// Trace-detail read response: every stored span of one trace merged across apps, ordered by start
+// time. An unknown or aged-out trace id yields an empty span list (Start/Duration zero), never a 404.
+internal sealed record TraceDetailResponse(
+    string TraceId,
+    double StartUnixMs,
+    double DurationMs,
+    IReadOnlyList<TraceDetailSpan> Spans);
 
 // One supervision observation: an app's aggregate health status at a point in time plus its resolved
 // restart policy, used by the supervisor to reconcile state, detect transitions, and restart crashes.
