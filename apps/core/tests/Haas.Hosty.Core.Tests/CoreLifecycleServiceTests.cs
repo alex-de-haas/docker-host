@@ -1298,8 +1298,8 @@ public sealed class CoreLifecycleServiceTests
         // Core-reserved setting, not a manifest-declared one.
         await fixture.Service.ConfigureAsync(
             "com.example.notes",
-            new AppConfigureRequest(new Dictionary<string, string?>(StringComparer.Ordinal) { ["HOSTY_PORT_APP"] = "7171" }));
-        Assert.Equal("7171", (await fixture.Apps.GetAppAsync("com.example.notes"))?.Settings.GetValueOrDefault("HOSTY_PORT_APP")?.Value);
+            new AppConfigureRequest(new Dictionary<string, string?>(StringComparer.Ordinal) { ["HOSTY_PORT_HTTP"] = "7171" }));
+        Assert.Equal("7171", (await fixture.Apps.GetAppAsync("com.example.notes"))?.Settings.GetValueOrDefault("HOSTY_PORT_HTTP")?.Value);
 
         var plan = await fixture.Service.CreateRuntimeSwitchPlanAsync(
             "com.example.notes",
@@ -1312,7 +1312,7 @@ public sealed class CoreLifecycleServiceTests
         // manifest default.
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
         Assert.Equal("docker-alt", app?.SelectedRuntime);
-        Assert.Equal("7171", app?.Settings.GetValueOrDefault("HOSTY_PORT_APP")?.Value);
+        Assert.Equal("7171", app?.Settings.GetValueOrDefault("HOSTY_PORT_HTTP")?.Value);
     }
 
     [Fact]
