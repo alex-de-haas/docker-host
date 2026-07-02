@@ -623,10 +623,13 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
     }
 
-    // The operator's source root: an override folder, else the managed checkout, else the app root.
-    // Drives source runtimes' working directory and resolves a prebuilt service's relative delivery.
+    // The effective source root: the lifecycle-resolved root (honors Development Mode — e.g. a locked
+    // runtime's pinned checkout) when set, else an override folder, else the managed checkout, else the
+    // app root. Drives source runtimes' working directory and resolves a prebuilt service's relative
+    // delivery.
     private static string ResolveSourceRoot(RuntimeLifecycleContext context)
-        => context.App.SourceState?.LocalOverridePath ??
+        => context.SourceRoot ??
+            context.App.SourceState?.LocalOverridePath ??
             context.App.SourceState?.ManagedCheckoutPath ??
             context.AppRoot;
 

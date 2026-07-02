@@ -1932,7 +1932,12 @@ internal sealed record RuntimeLifecycleContext(
     // The OTLP/HTTP origin of the telemetry collector (host.docker.internal:<port>-rewritable
     // loopback URL), or null when observability is off / the collector is not yet up. The docker
     // adapter injects OTEL_* env from this only for an app whose manifest opts into telemetry.
-    string? TelemetryEndpoint = null);
+    string? TelemetryEndpoint = null,
+    // The effective source root the lifecycle service resolved for this start, honoring the runtime's
+    // Development Mode. Set for a locked (Dev Mode off) source runtime — the managed checkout pinned to
+    // its commit — so execution ignores any live override. Null lets the localCommand adapter fall back
+    // to its own resolution (override → managed checkout → app root), the live/default path.
+    string? SourceRoot = null);
 
 internal sealed record RuntimeAppManifestSelection(
     RuntimeAppManifest Manifest,

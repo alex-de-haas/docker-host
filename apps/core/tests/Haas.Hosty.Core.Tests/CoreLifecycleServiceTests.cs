@@ -1871,6 +1871,97 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task EnsurePinnedCommit_ChecksOutCommitAndHoldsWhenTheBranchAdvances()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var commit1 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // A locked (Development Mode off) source runtime pins the reviewed commit into the managed
+        // checkout (detached), so the working tree is the exact reviewed source, not the branch tip.
+        var pinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = Assert.IsType<string>(pinned.Source?.ManagedCheckoutPath);
+        Assert.Equal(commit1, pinned.Source?.Commit);
+        Assert.Equal(commit1, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+
+        // The upstream branch advances; the lock must hold — a re-pin keeps the same commit checked out
+        // until a reviewed source-resolve/update advances it.
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        Assert.NotEqual(commit1, commit2);
+
+        var repinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        Assert.Equal(commit1, repinned.Source?.Commit);
+        Assert.Equal(commit1, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+    }
+
+    [Fact]
+    public async Task EnsurePinnedCommit_ForcesCleanWorkingTreeAndIgnoresOverrideCommit()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var reviewedCommit = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var pinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = Assert.IsType<string>(pinned.Source?.ManagedCheckoutPath);
+
+        // Simulate a prior live run leaving the checkout dirty: an edited tracked file and a stray untracked
+        // file.
+        var trackedFile = Path.Combine(checkout, "apps", "remote-app", "README.md");
+        await File.WriteAllTextAsync(trackedFile, "locally edited");
+        await File.WriteAllTextAsync(Path.Combine(checkout, "stray.txt"), "untracked");
+
+        // The operator configures a live override, which stamps AppSourceState.Commit from that folder.
+        var overrideRepository = await CreateGitRepositoryAsync(fixture.Root);
+        await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(overrideRepository));
+        var overrideCommit = (await fixture.Apps.GetAppAsync("com.example.notes"))?.SourceState?.Commit;
+        Assert.NotEqual(reviewedCommit, overrideCommit);
+
+        // Re-pin (Dev Mode off): the reviewed commit is restored with a clean working tree, ignoring the
+        // override's commit.
+        var repinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        Assert.Equal(reviewedCommit, repinned.Source?.Commit);
+        Assert.Equal(reviewedCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+        Assert.Equal("remote local command app", (await File.ReadAllTextAsync(trackedFile)).Trim());
+        Assert.False(File.Exists(Path.Combine(checkout, "stray.txt")));
+    }
+
+    [Fact]
+    public async Task EnsurePinnedCommit_FetchesWhenReviewedUpdateAdvancesToAnUnfetchedCommit()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // First pin clones the checkout at commit1 (the branch tip at clone time).
+        var first = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = Assert.IsType<string>(first.Source?.ManagedCheckoutPath);
+
+        // The upstream repo advances and a reviewed update records the new commit, which is not yet in the
+        // local clone (the checkout was never fetched).
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        // Record the advanced commit as the reviewed pin (no override, so it is honored, not re-resolved).
+        var record = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(record! with { SourceState = record.SourceState! with { Commit = commit2, LocalOverridePath = null } });
+
+        // The pinned commit is missing locally, so EnsurePinnedCommit fetches and checks it out — the lock
+        // advances (only) via the reviewed commit.
+        var advanced = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        Assert.Equal(commit2, advanced.Source?.Commit);
+        Assert.Equal(commit2, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+    }
+
+    [Fact]
     public async Task InstallAsync_DerivesManifestSubpathFromRawManifestUrl()
     {
         const string manifestUrl = "https://raw.githubusercontent.com/acme/monorepo/main/apps/web/manifest.json";

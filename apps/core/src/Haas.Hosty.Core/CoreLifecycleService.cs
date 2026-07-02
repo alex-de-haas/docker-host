@@ -2046,7 +2046,36 @@ internal sealed class CoreLifecycleService(
             GetAppDataPath(app.Id),
             await ResolveDependencyUrlsAsync(app, cancellationToken),
             mounts,
-            await ResolveTelemetryEndpointAsync(app, cancellationToken));
+            await ResolveTelemetryEndpointAsync(app, cancellationToken),
+            ResolveLockedSourceRoot(app, await ResolveRuntimeProfilesAsync(app, cancellationToken)));
+    }
+
+    // The source root a locked (Development Mode off) source runtime executes from: the managed checkout
+    // pinned to its commit by EnsureLocalCommandSourceReadyAsync, so the reviewed source runs and any live
+    // override is ignored. Null for a live runtime (Dev Mode on — the adapter uses override/checkout HEAD),
+    // a non-source runtime, or a locked runtime with no pinnable URL/git source (a folder install runs
+    // from its own folder). Passed to the adapter via RuntimeLifecycleContext.SourceRoot.
+    private string? ResolveLockedSourceRoot(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles)
+    {
+        var selectedProfile = ((profiles ?? app.RuntimeProfiles) ?? [])
+            .FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
+        if (selectedProfile is null
+            || !string.Equals(selectedProfile.Type, "localCommand", StringComparison.Ordinal)
+            || AppSummary.ResolveDevelopmentMode(app, selectedProfile))
+        {
+            return null;
+        }
+
+        // Fall back to the default managed-checkout path for legacy records that never persisted it,
+        // matching EnsurePinnedCommitAsync so the resolved root and the pinned checkout stay consistent.
+        var checkout = app.SourceState?.ManagedCheckoutPath is { Length: > 0 } stored
+            ? stored
+            : Path.Combine(paths.SourcesRoot, app.Id);
+        return !string.IsNullOrWhiteSpace(app.ManifestUrl)
+            && !string.IsNullOrWhiteSpace(app.SourceState?.Repository)
+            && Directory.Exists(Path.Combine(checkout, ".git"))
+            ? checkout
+            : null;
     }
 
     // The OTLP/HTTP origin an app should export telemetry to: the collector system app's host-exposed
@@ -2114,6 +2143,30 @@ internal sealed class CoreLifecycleService(
         }
 
         var source = app.SourceState;
+
+        // A locked (Development Mode off) source runtime from a URL/publisher install runs the reviewed
+        // source pinned to its commit, from the managed checkout — ignoring any live override. This is the
+        // honest lock: only a reviewed source-resolve/update advances the commit. A folder install has no
+        // separate reviewed source to pin (the operator's own folder is the source), so it falls through
+        // to the live path below.
+        var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
+        var selectedProfile = profiles.FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
+        var developmentModeOn = selectedProfile is not null && AppSummary.ResolveDevelopmentMode(app, selectedProfile);
+        if (!developmentModeOn
+            && !string.IsNullOrWhiteSpace(app.ManifestUrl)
+            && !string.IsNullOrWhiteSpace(source?.Repository))
+        {
+            if (IsRelativeSourceRepository(source.Repository))
+            {
+                throw new AppLifecycleException(
+                    "source_repository_relative_remote_unsupported",
+                    $"Remote manifest runtime '{selection.RuntimeProfile.Key}' uses localCommand, so source.repository must be an absolute Git URL or local repository path.");
+            }
+
+            await sources.EnsurePinnedCommitAsync(app.Id, cancellationToken);
+            return await RequireAppAsync(app.Id, cancellationToken);
+        }
+
         if (!string.IsNullOrWhiteSpace(source?.LocalOverridePath))
         {
             if (!Directory.Exists(source.LocalOverridePath))

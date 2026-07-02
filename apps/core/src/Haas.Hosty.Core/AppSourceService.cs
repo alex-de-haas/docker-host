@@ -45,6 +45,87 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         return new AppSourceResponse(appId, state);
     }
 
+    // Materializes the managed checkout at the pinned commit (detached HEAD) for a locked source runtime
+    // — Development Mode off. Clones if needed, resolves the recorded ref to a commit when none is pinned
+    // yet, checks that exact commit out (so the working tree is the reviewed, immutable source rather than
+    // the branch tip), and records it. Only a reviewed source-resolve/update advances the commit, which
+    // makes "off" an honest lock. Requires a source repository (a pure folder install cannot be pinned).
+    public async Task<AppSourceResponse> EnsurePinnedCommitAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var source = app.SourceState;
+        if (source?.Repository is null)
+        {
+            throw new AppLifecycleException("source_not_configured", $"Runtime app '{appId}' does not declare a source repository.");
+        }
+
+        ValidateManagedRepository(source.Repository);
+        var checkoutPath = source.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, appId);
+        await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
+
+        // The reviewed commit to pin to. Prefer the recorded commit, but re-resolve from the reviewed ref
+        // when a live override is configured — SetLocalOverrideAsync stamps AppSourceState.Commit from the
+        // override folder, and OFF must pin the reviewed source, not the override's commit. The managed
+        // checkout is not fetched here, so a re-resolve returns a stable commit; only a reviewed
+        // source-resolve/update fetches and advances the ref.
+        var commit = source.Commit;
+        if (string.IsNullOrWhiteSpace(commit) || !string.IsNullOrWhiteSpace(source.LocalOverridePath))
+        {
+            // Resolve locally; if the ref isn't known locally yet (e.g. a reviewed update just advanced it),
+            // fetch once and retry so the advance succeeds.
+            commit = await WithSourceFetchRetryAsync(
+                checkoutPath,
+                () => ResolveCommitAsync(checkoutPath, new AppSourceResolveRequest(), source.ResolvedRef ?? "HEAD", cancellationToken),
+                cancellationToken);
+        }
+
+        // Force the working tree to exactly the pinned commit: discard tracked edits and remove untracked
+        // files (e.g. left by a prior Dev-Mode-on live run) so OFF is an honest, reproducible lock. Ignored
+        // build outputs are kept (no `-x`) for `setup` to manage. Fetch-and-retry when the pinned commit is
+        // not present locally (a reviewed update advanced it to a not-yet-fetched commit).
+        var pinnedCommit = commit;
+        _ = await WithSourceFetchRetryAsync(
+            checkoutPath,
+            () => RunGitAsync(checkoutPath, ["checkout", "--detach", "--force", pinnedCommit], cancellationToken),
+            cancellationToken);
+        _ = await RunGitAsync(checkoutPath, ["clean", "-fd"], cancellationToken);
+
+        // Build the new state from the current record inside the update lambda so a concurrent change to
+        // other AppSourceState fields (override, ref) is not overwritten by this pre-read snapshot.
+        var document = await apps.UpdateAppAsync(appId, current =>
+        {
+            var currentSource = current.SourceState;
+            return currentSource is null
+                ? current
+                : current with
+                {
+                    SourceState = currentSource with
+                    {
+                        Commit = pinnedCommit,
+                        ManagedCheckoutPath = checkoutPath,
+                        UpdatedAt = clock.UtcNow,
+                    },
+                };
+        }, cancellationToken);
+        return new AppSourceResponse(appId, document.App.SourceState);
+    }
+
+    // Runs a git-backed operation against the managed checkout, fetching once and retrying if it fails
+    // because the required object/ref isn't present locally yet. A genuine failure (e.g. the ref does not
+    // exist upstream) surfaces on the retry. Cancellation propagates (never caught here).
+    private static async Task<string> WithSourceFetchRetryAsync(string checkoutPath, Func<Task<string>> operation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await operation();
+        }
+        catch (AppLifecycleException)
+        {
+            _ = await RunGitAsync(checkoutPath, ["fetch", "--all", "--tags", "--prune"], cancellationToken);
+            return await operation();
+        }
+    }
+
     public async Task<AppSourceResponse> SetLocalOverrideAsync(
         string appId,
         AppSourceOverrideRequest request,
