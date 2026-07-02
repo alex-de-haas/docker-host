@@ -2192,7 +2192,7 @@ internal sealed class CoreLifecycleService(
         // last-good snapshot a live source app falls back to when its folder manifest is mid-edit.
         var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
 
-        var livePath = ResolveLiveSourceManifestPath(app, lastGood);
+        var livePath = ResolveLiveSourcePath(app);
         if (livePath is null)
         {
             return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: null);
@@ -2268,63 +2268,24 @@ internal sealed class CoreLifecycleService(
         return updated.App;
     }
 
-    // The operator-owned source folder Core re-reads live, or null when the app is not a live source
-    // app. Live source = a source-artifact runtime (localCommand in v1) the operator owns locally — a
-    // source-override folder, else the original folder install. An explicit override supersedes a
-    // URL/publisher install's reviewed contract; without one a URL install is never live source (its
-    // contract is reviewed, A7). An InstallManifestPath that points back into Core's own app root is
-    // the internal copy (legacy capture), not an external source.
-    private string? ResolveLiveSourceManifestPath(AppRecord app, RuntimeAppManifestSelection lastGood)
-    {
-        var isSource = lastGood.Services.Any(service => string.Equals(service.Artifact, "source", StringComparison.Ordinal));
-        if (!isSource)
-        {
-            return null;
-        }
-
-        // An explicit operator source override is a deliberate local-dev choice that supersedes a
-        // URL/publisher install's reviewed contract, so the override folder is the live manifest source
-        // even for a URL install (mirrors ResolveLiveSourcePath).
-        var overridePath = app.SourceState?.LocalOverridePath;
-        if (!string.IsNullOrWhiteSpace(overridePath) && Directory.Exists(overridePath))
-        {
-            return overridePath;
-        }
-
-        // Without an explicit override, a URL/publisher install crosses a trust boundary — its contract
-        // is reviewed even when the code runs live — so the original install is never a live source.
-        if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
-        {
-            return null;
-        }
-
-        if (!string.IsNullOrWhiteSpace(app.InstallManifestPath) &&
-            !IsInternalAppPath(app.Id, app.InstallManifestPath) &&
-            (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath)))
-        {
-            return app.InstallManifestPath;
-        }
-
-        return null;
-    }
-
     // True when the app's selected runtime is a live source artifact owned by the operator: a
-    // source-kind runtime (localCommand in v1) whose manifest Core re-reads live from the operator's
-    // own folder — an explicit source-override (which supersedes a URL/publisher install), else the
-    // original folder install of a non-URL install. For these the contract tracks the folder and is
-    // adopted on restart, so the reviewed-update flow does not apply - clients mark the runtime "Live"
-    // and hide the Update affordance, and CreateUpdatePlanAsync refuses with a clear error
-    // (runtime-app-marketplace.md, "Live source"). Determined from the record alone (selected profile
-    // type + source ownership) so it is cheap and never loads or validates a (possibly mid-edit) folder
-    // manifest. Mirrors ResolveLiveSourceManifestPath, using profile type == "localCommand" for the
-    // source-artifact check the loaded selection would make.
+    // development runtime (localCommand + development: true) whose source Core re-reads live from the
+    // operator's own folder — an explicit source-override (which supersedes a URL/publisher install),
+    // else the original folder install of a non-URL install. For these the contract tracks the folder
+    // and is adopted on restart, so the reviewed-update flow does not apply - clients mark the runtime
+    // "Live" and hide the Update affordance, and CreateUpdatePlanAsync refuses with a clear error
+    // (runtime-app-marketplace.md, "Live source"). ResolveLiveSourcePath is the single source of truth
+    // for both liveness (this flag) and the folder the live manifest is re-read from, so the two can
+    // never disagree.
     private bool IsLiveSourceApp(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
         => ResolveLiveSourcePath(app, profiles) is not null;
 
-    // The operator-owned source folder a live source app runs from - a source-override folder, else the
-    // original external folder install - or null when the app is not a live source app. Record-only
-    // mirror of ResolveLiveSourceManifestPath (which needs a loaded manifest); kept in sync so the
-    // "Live" flag, the summary's SourceLivePath (badge tooltip), and the update-plan guard all agree.
+    // The operator-owned source folder a live source app both runs from AND re-reads its manifest from —
+    // a source-override folder, else the original external folder install — or null when the app is not a
+    // live source app. The single source of truth for liveness: it feeds the `Live` flag, the summary's
+    // SourceLivePath (badge tooltip), the live-manifest reconcile (LoadSelectionWithStatusAsync), and the
+    // update-plan guard, so they can never disagree. Gated on the selected runtime declaring
+    // development: true (a build-to-production source runtime is locked/reviewed, never live).
     private string? ResolveLiveSourcePath(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
     {
         // Only a development runtime (a localCommand profile with development: true) runs live from an
