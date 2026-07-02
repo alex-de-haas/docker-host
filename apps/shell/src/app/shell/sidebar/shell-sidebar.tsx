@@ -22,6 +22,7 @@ import {
   Sun,
   Terminal,
   Users,
+  Waypoints,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -117,6 +118,7 @@ export function ShellSidebar({
               <SidebarButton compact={compact} active={activeView === "obs-metrics" && !workspace} icon={LineChart} label="Metrics" onClick={() => onNavigate("obs-metrics")} />
               <SidebarButton compact={compact} active={activeView === "obs-console" && !workspace} icon={Terminal} label="Console logs" onClick={() => onNavigate("obs-console")} />
               <SidebarButton compact={compact} active={activeView === "obs-logs" && !workspace} icon={ScrollText} label="Structured logs" onClick={() => onNavigate("obs-logs")} />
+              <SidebarButton compact={compact} active={activeView === "obs-traces" && !workspace} icon={Waypoints} label="Traces" onClick={() => onNavigate("obs-traces")} />
             </NavigationSection>
           )}
 

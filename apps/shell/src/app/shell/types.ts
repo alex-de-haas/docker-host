@@ -251,6 +251,48 @@ export type AppOtlpLogsResponse = { appId: string; rangeSeconds: number; records
 export type FleetOtlpLogRecord = OtlpLogRecord & { appId: string; appName: string };
 export type FleetOtlpLogsResponse = { rangeSeconds: number; appCount: number; records: FleetOtlpLogRecord[] };
 
+// Cross-resource traces from GET /api/observability/traces — recent traces (spans grouped by trace
+// id across apps) collapsed to summaries, newest first. Timestamps/durations are fractional unix
+// milliseconds (OTLP nanos exceed the JS safe-integer range, so Core converts). Root* describe the
+// root span when stored (`hasRootSpan`), else the earliest span of a partial trace.
+export type TraceAppRef = { appId: string; appName: string };
+export type FleetTraceSummary = {
+  traceId: string;
+  rootName: string;
+  rootKind: string;
+  rootAppId: string;
+  rootAppName: string;
+  hasRootSpan: boolean;
+  startUnixMs: number;
+  durationMs: number;
+  spanCount: number;
+  errorCount: number;
+  apps: TraceAppRef[];
+};
+export type FleetTracesResponse = { rangeSeconds: number; appCount: number; traces: FleetTraceSummary[] };
+
+// One trace's spans from GET /api/observability/traces/{traceId}, merged across apps and ordered by
+// start time (the span-waterfall view). `parentSpanId` is null for the root span.
+export type TraceDetailSpan = {
+  appId: string;
+  appName: string;
+  spanId: string;
+  parentSpanId?: string | null;
+  name: string;
+  kind: string;
+  startUnixMs: number;
+  durationMs: number;
+  statusCode: string;
+  statusMessage?: string | null;
+  attributes: Record<string, string>;
+};
+export type TraceDetailResponse = {
+  traceId: string;
+  startUnixMs: number;
+  durationMs: number;
+  spans: TraceDetailSpan[];
+};
+
 export type AppServiceUpdateStatus = {
   service: string;
   lockedDigest?: string | null;
@@ -358,7 +400,8 @@ export type ShellView =
   | "users"
   | "obs-metrics"
   | "obs-console"
-  | "obs-logs";
+  | "obs-logs"
+  | "obs-traces";
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
 export type HostyThemePreference = "light" | "dark" | "system";
