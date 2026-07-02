@@ -1325,6 +1325,22 @@ internal sealed class CoreLifecycleService(
                 return new AppSettingValue(setting.Key, setting.Type, current?.Value ?? setting.Default, setting.Secret, setting.Required);
             },
             StringComparer.Ordinal);
+
+        // Carry forward Core-reserved host-port overrides (HOSTY_PORT_<key>) across a rebuild. They are
+        // not manifest-declared settings, so BuildSettingDefinitions omits them; without this a runtime
+        // switch or update drops the override and the app's assigned host port reverts to the manifest's
+        // localPort — e.g. the Shell (assigned config.ShellPort via the bootstrap) reverting to 3000. An
+        // app's assigned port must not change on switch. See RuntimePortHelper.TryReadHostPortOverride.
+        if (existing is not null)
+        {
+            foreach (var (key, value) in existing.Settings)
+            {
+                if (key.StartsWith("HOSTY_PORT_", StringComparison.Ordinal) && !settings.ContainsKey(key))
+                {
+                    settings[key] = value;
+                }
+            }
+        }
         var storageMappings = selection.DataTarget is null
             ? []
             : new AppStorageMapping[]
