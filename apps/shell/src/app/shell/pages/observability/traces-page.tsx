@@ -1,7 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, LoaderCircle, RefreshCw, Search, Waypoints } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  Layers,
+  LoaderCircle,
+  RefreshCw,
+  Search,
+  Timer,
+  Waypoints,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +28,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../../core-api";
+import { buildServiceAccents, SERVICE_ACCENTS } from "../../observability/service-accents";
 import type { CoreApp, FleetTraceSummary, FleetTracesResponse, TraceDetailResponse, TraceDetailSpan } from "../../types";
 import { EmptyState, PageHeader } from "../../ui";
 
@@ -25,17 +38,6 @@ const RANGES: { label: string; seconds: number }[] = [
   { label: "5m", seconds: 300 },
   { label: "15m", seconds: 900 },
   { label: "1h", seconds: 3600 },
-];
-
-// Muted per-resource accents for waterfall bars and app chips, assigned by first appearance so the
-// same app keeps its color within one trace view. Error spans override with the destructive accent.
-const APP_ACCENTS = [
-  "bg-sky-500/70",
-  "bg-violet-500/70",
-  "bg-emerald-500/70",
-  "bg-amber-500/70",
-  "bg-rose-500/70",
-  "bg-cyan-500/70",
 ];
 
 type ListState = { loading: boolean; error: string | null; response: FleetTracesResponse | null };
@@ -255,67 +257,82 @@ export function ObservabilityTracesPage({
 }
 
 function TraceListTable({ traces, onOpen }: { traces: FleetTraceSummary[]; onOpen: (traceId: string) => void }) {
+  const accents = useMemo(
+    () => buildServiceAccents(traces.flatMap((trace) => trace.apps.map((app) => app.appId))),
+    [traces],
+  );
   return (
-    <div className="max-h-[32rem] min-h-0 overflow-auto rounded-md border">
+    <div className="overflow-hidden rounded-lg border">
       <table className="w-full border-collapse text-left text-xs">
-        <thead className="sticky top-0 bg-background">
-          <tr className="border-b text-muted-foreground">
-            <th className="px-2 py-1.5 font-medium">Time</th>
-            <th className="px-2 py-1.5 font-medium">Name</th>
-            <th className="px-2 py-1.5 font-medium">Resources</th>
-            <th className="px-2 py-1.5 font-medium text-right">Spans</th>
-            <th className="px-2 py-1.5 font-medium text-right">Duration</th>
+        <thead className="bg-muted/30">
+          <tr className="border-b text-[11px] uppercase tracking-wide text-muted-foreground">
+            <th className="px-3 py-2 font-medium">Time</th>
+            <th className="px-3 py-2 font-medium">Name</th>
+            <th className="px-3 py-2 font-medium">Resources</th>
+            <th className="px-3 py-2 text-right font-medium">Spans</th>
+            <th className="px-3 py-2 text-right font-medium">Duration</th>
+            <th className="w-0 px-3 py-2" aria-hidden />
           </tr>
         </thead>
         <tbody>
-          {traces.map((trace) => (
-            <tr
-              key={trace.traceId}
-              tabIndex={0}
-              aria-label={`Open trace ${trace.rootName || trace.traceId}`}
-              className="cursor-pointer border-b align-top last:border-b-0 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
-              onClick={() => onOpen(trace.traceId)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onOpen(trace.traceId);
-                }
-              }}
-            >
-              <td className="whitespace-nowrap px-2 py-1.5 font-mono text-muted-foreground">
-                {new Date(trace.startUnixMs).toLocaleTimeString()}
-              </td>
-              <td className="px-2 py-1.5">
-                <div className="break-words font-mono">
-                  {trace.rootName || "—"}
-                  {!trace.hasRootSpan && (
-                    <span className="ml-1 text-muted-foreground" title="The trace's root span is not in the window.">
-                      (partial)
-                    </span>
-                  )}
-                </div>
-                <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{shortTraceId(trace.traceId)}</div>
-              </td>
-              <td className="px-2 py-1.5">
-                <div className="flex flex-wrap gap-1">
-                  {trace.apps.map((app) => (
-                    <Badge key={app.appId} variant="outline" className="font-normal">
-                      {app.appName || app.appId}
-                    </Badge>
-                  ))}
-                </div>
-              </td>
-              <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono">
-                {trace.spanCount}
-                {trace.errorCount > 0 && (
-                  <Badge variant="outline" className="ml-1.5 border-transparent bg-red-500/10 text-red-700 dark:text-red-300">
-                    {trace.errorCount} err
-                  </Badge>
+          {traces.map((trace) => {
+            const hasError = trace.errorCount > 0;
+            return (
+              <tr
+                key={trace.traceId}
+                tabIndex={0}
+                aria-label={`Open trace ${trace.rootName || trace.traceId}`}
+                className={cn(
+                  "group cursor-pointer border-b align-top transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none",
+                  hasError && "bg-red-500/[0.03]",
                 )}
-              </td>
-              <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono">{formatDuration(trace.durationMs)}</td>
-            </tr>
-          ))}
+                onClick={() => onOpen(trace.traceId)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onOpen(trace.traceId);
+                  }
+                }}
+              >
+                <td className="whitespace-nowrap px-3 py-2 font-mono text-muted-foreground">
+                  {new Date(trace.startUnixMs).toLocaleTimeString()}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="break-words font-mono">
+                    {trace.rootName || "—"}
+                    {!trace.hasRootSpan && (
+                      <span className="ml-1 text-muted-foreground" title="The trace's root span is not in the window.">
+                        (partial)
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">{trace.traceId}</div>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {trace.apps.map((app) => (
+                      <Badge key={app.appId} variant="outline" className="gap-1.5 font-normal">
+                        <span aria-hidden className={cn("h-2 w-2 rounded-full", accents.get(app.appId) ?? SERVICE_ACCENTS[0])} />
+                        {app.appName || app.appId}
+                      </Badge>
+                    ))}
+                  </div>
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono">
+                  {trace.spanCount}
+                  {hasError && (
+                    <Badge variant="outline" className="ml-1.5 border-transparent bg-red-500/10 text-red-700 dark:text-red-300">
+                      {trace.errorCount} err
+                    </Badge>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{formatDuration(trace.durationMs)}</td>
+                <td className="px-3 py-2 align-middle">
+                  <ChevronRight className="h-4 w-4 text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -338,21 +355,29 @@ function TraceWaterfall({
   const [expandedSpanId, setExpandedSpanId] = useState<string | null>(null);
   const response = state.response;
   const rows = useMemo(() => (response ? buildWaterfallRows(response.spans) : []), [response]);
-  const appAccents = useMemo(() => {
-    const accents = new Map<string, string>();
+  const appAccents = useMemo(() => buildServiceAccents(rows.map((row) => row.span.appId)), [rows]);
+  const errorCount = useMemo(
+    () => rows.reduce((count, row) => count + (row.span.statusCode === "error" ? 1 : 0), 0),
+    [rows],
+  );
+  const services = useMemo(() => {
+    const seen = new Map<string, { appId: string; appName: string; accent: string }>();
     for (const row of rows) {
-      if (!accents.has(row.span.appId)) {
-        accents.set(row.span.appId, APP_ACCENTS[accents.size % APP_ACCENTS.length]);
+      if (!seen.has(row.span.appId)) {
+        seen.set(row.span.appId, {
+          appId: row.span.appId,
+          appName: row.span.appName || row.span.appId,
+          accent: appAccents.get(row.span.appId) ?? SERVICE_ACCENTS[0],
+        });
       }
     }
-    return accents;
-  }, [rows]);
+    return [...seen.values()];
+  }, [rows, appAccents]);
 
   return (
     <div className="flex min-h-0 flex-col space-y-6">
       <PageHeader
         title="Trace"
-        description={shortTraceId(traceId)}
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={onBack}>
@@ -382,83 +407,108 @@ function TraceWaterfall({
           description="The trace has no stored spans — it may have aged out of the live window (last hour)."
         />
       ) : (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>
-              Started <span className="font-mono">{new Date(response.startUnixMs).toLocaleTimeString()}</span>
-            </span>
-            <span>
-              Duration <span className="font-mono">{formatDuration(response.durationMs)}</span>
-            </span>
-            <span>
-              {response.spans.length} span{response.spans.length === 1 ? "" : "s"}
-            </span>
-          </div>
+        <div className="space-y-4">
+          <TraceSummaryCard traceId={traceId} response={response} errorCount={errorCount} services={services} />
 
-          <div className="max-h-[32rem] min-h-0 overflow-auto rounded-md border">
+          <div className="overflow-hidden rounded-lg border">
             <table className="w-full border-collapse text-left text-xs">
+              <thead className="bg-muted/30">
+                <tr className="border-b">
+                  <th className="w-[44%] px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Span
+                  </th>
+                  <th className="px-3 py-2">
+                    <div className="flex items-center justify-between text-[10px] font-normal tabular-nums text-muted-foreground/70">
+                      {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
+                        <span key={fraction}>
+                          {fraction === 0
+                            ? "0"
+                            : formatDuration((response.durationMs > 0 ? response.durationMs : 1) * fraction)}
+                        </span>
+                      ))}
+                    </div>
+                  </th>
+                </tr>
+              </thead>
               <tbody>
                 {rows.map((row) => {
                   const isError = row.span.statusCode === "error";
                   const expanded = expandedSpanId === row.span.spanId;
+                  const accent = isError ? "bg-red-500/80" : appAccents.get(row.span.appId) ?? SERVICE_ACCENTS[0];
                   const attributes = Object.entries(row.span.attributes ?? {});
+                  const toggle = () => setExpandedSpanId(expanded ? null : row.span.spanId);
                   return (
-                    <tr
-                      key={row.span.spanId}
-                      tabIndex={0}
-                      aria-expanded={expanded}
-                      aria-label={`Toggle attributes of span ${row.span.name || row.span.spanId}`}
-                      className="cursor-pointer border-b align-top last:border-b-0 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
-                      onClick={() => setExpandedSpanId(expanded ? null : row.span.spanId)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          setExpandedSpanId(expanded ? null : row.span.spanId);
-                        }
-                      }}
-                    >
-                      <td className="w-1/2 px-2 py-1.5">
-                        <div className="flex items-center gap-1.5" style={{ paddingLeft: `${row.depth * 16}px` }}>
-                          <span className={cn("break-words font-mono", isError && "text-red-700 dark:text-red-300")}>
-                            {row.span.name || "—"}
-                          </span>
-                          <Badge variant="outline" className="shrink-0 font-normal">
-                            {row.span.appName || row.span.appId}
-                          </Badge>
-                          {row.span.kind !== "internal" && row.span.kind !== "unspecified" && (
-                            <span className="shrink-0 text-[11px] text-muted-foreground">{row.span.kind}</span>
-                          )}
-                          {isError && (
-                            <Badge variant="outline" className="shrink-0 border-transparent bg-red-500/10 text-red-700 dark:text-red-300">
-                              error
-                            </Badge>
-                          )}
-                        </div>
-                        {expanded && (
-                          <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground" style={{ paddingLeft: `${row.depth * 16}px` }}>
-                            <div className="font-mono">span={row.span.spanId}</div>
-                            {row.span.statusMessage && <div className="font-mono">status={row.span.statusMessage}</div>}
-                            {attributes.map(([key, value]) => (
-                              <div key={key} className="break-all font-mono">
-                                {key}={value}
-                              </div>
-                            ))}
-                            {attributes.length === 0 && !row.span.statusMessage && <div>No attributes.</div>}
-                          </div>
+                    <Fragment key={row.span.spanId}>
+                      <tr
+                        tabIndex={0}
+                        aria-expanded={expanded}
+                        aria-label={`Toggle attributes of span ${row.span.name || row.span.spanId}`}
+                        className={cn(
+                          "group cursor-pointer border-b align-middle transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none",
+                          expanded && "bg-muted/30",
+                          isError && !expanded && "bg-red-500/[0.03]",
                         )}
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <WaterfallBar
-                          span={row.span}
-                          traceStartMs={response.startUnixMs}
-                          traceDurationMs={response.durationMs}
-                          accent={isError ? "bg-red-500/70" : appAccents.get(row.span.appId) ?? APP_ACCENTS[0]}
-                        />
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono text-muted-foreground">
-                        {formatDuration(row.span.durationMs)}
-                      </td>
-                    </tr>
+                        onClick={toggle}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            toggle();
+                          }
+                        }}
+                      >
+                        <td className="max-w-0 px-3 py-1.5">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            {Array.from({ length: row.depth }, (_, level) => (
+                              <span key={level} aria-hidden className="h-5 w-3 shrink-0 border-l border-border/60" />
+                            ))}
+                            <ChevronRight
+                              className={cn(
+                                "h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform group-hover:text-muted-foreground",
+                                expanded && "rotate-90 text-muted-foreground",
+                              )}
+                            />
+                            <span aria-hidden className={cn("h-2 w-2 shrink-0 rounded-full", accent)} />
+                            <span
+                              className={cn("truncate font-mono", isError && "text-red-600 dark:text-red-300")}
+                              title={row.span.name || undefined}
+                            >
+                              {row.span.name || "—"}
+                            </span>
+                            <Badge variant="outline" className="shrink-0 font-normal">
+                              {row.span.appName || row.span.appId}
+                            </Badge>
+                            {row.span.kind !== "internal" && row.span.kind !== "unspecified" && (
+                              <span className="shrink-0 text-[11px] text-muted-foreground">{row.span.kind}</span>
+                            )}
+                            {isError && (
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 gap-1 border-transparent bg-red-500/10 text-red-700 dark:text-red-300"
+                              >
+                                <AlertTriangle className="h-3 w-3" />
+                                error
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <WaterfallBar
+                            span={row.span}
+                            traceStartMs={response.startUnixMs}
+                            traceDurationMs={response.durationMs}
+                            accent={accent}
+                            isError={isError}
+                          />
+                        </td>
+                      </tr>
+                      {expanded && (
+                        <tr className="border-b bg-muted/20">
+                          <td colSpan={2} className="px-3 pb-3 pt-0.5">
+                            <SpanDetails span={row.span} traceStartMs={response.startUnixMs} depth={row.depth} attributes={attributes} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -470,24 +520,203 @@ function TraceWaterfall({
   );
 }
 
+// Header panel that lifts the trace's metadata out of the page heading: a strip of stat tiles plus the
+// full trace id and the services (apps) the trace fanned across, each with its waterfall accent.
+function TraceSummaryCard({
+  traceId,
+  response,
+  errorCount,
+  services,
+}: {
+  traceId: string;
+  response: TraceDetailResponse;
+  errorCount: number;
+  services: { appId: string; appName: string; accent: string }[];
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2">
+        <Waypoints className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate font-mono text-xs text-muted-foreground" title={traceId}>
+          {traceId}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4">
+        <SummaryTile icon={Clock3} label="Started" value={new Date(response.startUnixMs).toLocaleTimeString()} />
+        <SummaryTile icon={Timer} label="Duration" value={formatDuration(response.durationMs)} />
+        <SummaryTile icon={Layers} label="Spans" value={String(response.spans.length)} />
+        <SummaryTile
+          icon={AlertTriangle}
+          label="Errors"
+          value={String(errorCount)}
+          tone={errorCount > 0 ? "error" : "muted"}
+        />
+      </div>
+      {services.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-t px-3 py-2.5">
+          <span className="mr-1 text-[11px] uppercase tracking-wide text-muted-foreground">Services</span>
+          {services.map((service) => (
+            <Badge key={service.appId} variant="outline" className="gap-1.5 font-normal">
+              <span aria-hidden className={cn("h-2 w-2 rounded-full", service.accent)} />
+              {service.appName}
+            </Badge>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryTile({
+  icon: Icon,
+  label,
+  value,
+  tone = "muted",
+}: {
+  icon: typeof Clock3;
+  label: string;
+  value: string;
+  tone?: "muted" | "error";
+}) {
+  return (
+    <div className="flex items-center gap-2.5 bg-card px-3 py-2.5">
+      <Icon className={cn("h-4 w-4 shrink-0", tone === "error" ? "text-red-500" : "text-muted-foreground")} />
+      <div className="min-w-0">
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+        <div className={cn("truncate font-mono text-sm", tone === "error" && "text-red-600 dark:text-red-300")}>
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Full-width detail panel for an expanded span: identity/timing facts as a grid, then the raw
+// attribute bag as an aligned key/value list. Rendered in its own table row so it gets the whole
+// width instead of being squeezed into the half-width name column.
+function SpanDetails({
+  span,
+  traceStartMs,
+  depth,
+  attributes,
+}: {
+  span: TraceDetailSpan;
+  traceStartMs: number;
+  depth: number;
+  attributes: [string, string][];
+}) {
+  const isError = span.statusCode === "error";
+  const status = span.statusMessage ? `${span.statusCode} · ${span.statusMessage}` : span.statusCode;
+  return (
+    <div className="space-y-3 rounded-md border bg-card/60 p-3" style={{ marginLeft: `${depth * 16}px` }}>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3">
+        <DetailField label="Span ID" value={span.spanId} />
+        <DetailField label="Parent" value={span.parentSpanId || "—"} />
+        <DetailField label="Service" value={span.appName || span.appId} mono={false} />
+        <DetailField label="Kind" value={span.kind} mono={false} />
+        <DetailField label="Start offset" value={`+${formatDuration(span.startUnixMs - traceStartMs)}`} />
+        <DetailField label="Duration" value={formatDuration(span.durationMs)} />
+        <DetailField label="Status" value={status} mono={false} tone={isError ? "error" : undefined} />
+      </dl>
+      {attributes.length > 0 ? (
+        <div className="space-y-1.5">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Attributes · {attributes.length}
+          </div>
+          <div className="overflow-hidden rounded border bg-background/60">
+            {attributes.map(([key, value], index) => (
+              <div
+                key={key}
+                className={cn(
+                  "grid grid-cols-[minmax(0,12rem)_1fr] gap-3 px-2.5 py-1.5 text-[11px]",
+                  index > 0 && "border-t",
+                )}
+              >
+                <span className="truncate font-mono text-muted-foreground" title={key}>
+                  {key}
+                </span>
+                <span className="break-all font-mono">{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="text-[11px] text-muted-foreground">No attributes recorded.</div>
+      )}
+    </div>
+  );
+}
+
+function DetailField({
+  label,
+  value,
+  mono = true,
+  tone,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  tone?: "error";
+}) {
+  return (
+    <div className="min-w-0 space-y-0.5">
+      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className={cn("break-all text-xs", mono && "font-mono", tone === "error" && "text-red-600 dark:text-red-300")}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
 function WaterfallBar({
   span,
   traceStartMs,
   traceDurationMs,
   accent,
+  isError,
 }: {
   span: TraceDetailSpan;
   traceStartMs: number;
   traceDurationMs: number;
   accent: string;
+  isError: boolean;
 }) {
   // Guard the zero-duration trace (single instantaneous span): draw a minimal bar at the origin.
   const total = traceDurationMs > 0 ? traceDurationMs : 1;
-  const left = Math.min(Math.max(((span.startUnixMs - traceStartMs) / total) * 100, 0), 100);
-  const width = Math.min(Math.max((span.durationMs / total) * 100, 0.5), 100 - left);
+  const minWidth = 0.75;
+  // Cap the offset so an instantaneous span at the very end of the trace still leaves room for the
+  // minimum bar width — otherwise `100 - left` collapses to 0 and the bar/label disappears.
+  const left = Math.min(Math.max(((span.startUnixMs - traceStartMs) / total) * 100, 0), 100 - minWidth);
+  const width = Math.min(Math.max((span.durationMs / total) * 100, minWidth), 100 - left);
+  const end = left + width;
+  const label = formatDuration(span.durationMs);
+  // Keep the duration readable: sit it just past the bar, unless the bar reaches near the right edge,
+  // in which case tuck it inside against the bar's trailing end.
+  const labelInside = end > 82;
   return (
-    <div className="relative h-4 min-w-24 rounded-sm bg-muted/60">
-      <div className={cn("absolute inset-y-0.5 rounded-sm", accent)} style={{ left: `${left}%`, width: `${width}%` }} />
+    <div className="relative h-5 w-full min-w-32 rounded bg-muted/50">
+      {[25, 50, 75].map((position) => (
+        <div key={position} aria-hidden className="absolute inset-y-0 w-px bg-border/50" style={{ left: `${position}%` }} />
+      ))}
+      <div
+        className={cn("absolute inset-y-1 rounded-[3px]", accent, isError && "ring-1 ring-red-500/40")}
+        style={{ left: `${left}%`, width: `${width}%` }}
+      />
+      {labelInside ? (
+        <span
+          className="absolute inset-y-0 flex items-center pr-1.5 text-[10px] font-medium tabular-nums text-foreground/80"
+          style={{ right: `${100 - end}%` }}
+        >
+          {label}
+        </span>
+      ) : (
+        <span
+          className="absolute inset-y-0 flex items-center whitespace-nowrap pl-1.5 text-[10px] tabular-nums text-muted-foreground"
+          style={{ left: `${end}%` }}
+        >
+          {label}
+        </span>
+      )}
     </div>
   );
 }
@@ -536,10 +765,6 @@ function buildWaterfallRows(spans: TraceDetailSpan[]): WaterfallRow[] {
     visit(span, 0);
   }
   return rows;
-}
-
-function shortTraceId(traceId: string) {
-  return traceId.length > 16 ? `${traceId.slice(0, 16)}…` : traceId;
 }
 
 function formatDuration(durationMs: number) {
