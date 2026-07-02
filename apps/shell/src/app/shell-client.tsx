@@ -39,6 +39,7 @@ import type {
   AppsResponse,
   BackupsResponse,
   CoreApp,
+  CoreAppLifecycleResult,
   CoreBackup,
   CoreBackupCleanupApplyResponse,
   CoreBackupCleanupPlan,
@@ -769,29 +770,53 @@ export function ShellClient({
     [appEndpoint, refresh, sendCsrfJson],
   );
 
-  // Per-runtime Development Mode toggle. Keeps the panel open (like source) so the Source tab
-  // re-derives selectedApp from refreshed state and the switch reflects the new effective mode.
+  // Per-runtime Development Mode toggle. Core owns the stop/backup/flip/restart cycle now, so the
+  // client only reacts to the outcome: it flips the flag (Core restarts the selected running runtime
+  // to apply), and on a risky disable Core leaves the app stopped and returns a rollback recommendation.
+  // Keeps the detail panel open (like source) so the Source tab re-derives the refreshed effective mode.
   const configureAppDevelopmentMode = useCallback(
     async (app: CoreApp, runtime: string, enabled: boolean) => {
       const actionKey = `${app.id}:development-mode`;
       setBusyAction(actionKey);
       setDetailPanel((current) => ({ ...current, error: null }));
       try {
-        await sendCsrfJson(appEndpoint(app, "/development-mode"), { runtime, enabled });
+        const response = await sendCsrfJson(appEndpoint(app, "/development-mode"), { runtime, enabled });
+        const result = (await response.json().catch(() => null)) as CoreAppLifecycleResult | null;
         await refresh();
         toast.success(enabled ? "Development Mode on" : "Development Mode off", {
           description: `${app.displayName} · ${runtime}`,
         });
+
+        // Risky disable: the app ran a newer version live that may have migrated its data one-way, so
+        // Core left it stopped and handed back the pre-development-mode snapshot. Offer to roll back
+        // before the reviewed version starts; declining leaves it stopped so the operator can start it
+        // as-is (accepting the migrated data) or restore later from the Backups tab.
+        const hint = result?.developmentModeRestore;
+        if (hint?.recommended && hint.backupId) {
+          const restore = window.confirm(
+            `${app.displayName} ran version ${hint.currentVersion} in development mode, but the reviewed ` +
+              `version is ${hint.baselineVersion}. Its data may have been migrated and may not work with ` +
+              `${hint.baselineVersion}.\n\nRestore the pre-development-mode snapshot and start the app?\n\n` +
+              `Cancel leaves the app stopped — you can start it as-is or restore later from Backups.`,
+          );
+          if (restore) {
+            await sendCsrfJson(
+              appEndpoint(app, `/backups/${encodeURIComponent(hint.backupId)}/restore`),
+              { createPreRestoreBackup: true },
+            );
+            await sendCsrfJson(appEndpoint(app, "/start"), {});
+            await refresh();
+            toast.success("Snapshot restored", { description: `${app.displayName} · ${hint.backupId}` });
+          }
+        }
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
           return;
         }
 
-        setDetailPanel((current) => ({
-          ...current,
-          loading: false,
-          error: error instanceof Error ? error.message : "Updating Development Mode failed.",
-        }));
+        const message = error instanceof Error ? error.message : "Updating Development Mode failed.";
+        setDetailPanel((current) => ({ ...current, loading: false, error: message }));
+        toast.error("Development Mode change failed", { description: message });
       } finally {
         setBusyAction((current) => (current === actionKey ? null : current));
       }
@@ -1179,12 +1204,14 @@ export function ShellClient({
       openInstallDialog,
       runAppAction,
       switchAppRuntime,
+      configureAppDevelopmentMode,
       createManualBackup,
       openAppPanel,
       openInstalledApps,
       openSharedMounts,
     }),
     [
+      configureAppDevelopmentMode,
       coreOrigin,
       createManualBackup,
       getStandaloneAppHref,
