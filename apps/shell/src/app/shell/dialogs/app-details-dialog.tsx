@@ -663,8 +663,12 @@ function SourceForm({
   onClearSource: (app: CoreApp) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
 }) {
-  // Source (localCommand) runtimes can be flipped between live (Development Mode ON) and locked (OFF).
-  const sourceRuntimes = (app.runtimeProfiles ?? []).filter((profile) => profile.type === "localCommand");
+  // Source (localCommand) runtimes can be flipped between live (Development Mode ON) and reviewed (OFF).
+  // Require developmentMode to be present so the toggle only appears against a Core that supports it
+  // (older Core omits the field and has no /development-mode endpoint).
+  const sourceRuntimes = (app.runtimeProfiles ?? []).filter(
+    (profile) => profile.type === "localCommand" && profile.developmentMode !== undefined,
+  );
   const devBusy = busyAction === `${app.id}:development-mode`;
   const overridePath = app.sourceOverridePath ?? "";
   const [mode, setMode] = useState<"standard" | "custom">(overridePath ? "custom" : "standard");
@@ -708,7 +712,8 @@ function SourceForm({
             <div className="text-sm font-medium">Development Mode</div>
             <p className="text-xs text-muted-foreground">
               On runs the runtime live from the source folder below (edits adopted on restart, no reviewed
-              update). Off runs the reviewed, locked source. Takes effect on the runtime&apos;s next start.
+              update). Off uses the reviewed manifest and hides the Live badge. Takes effect on the
+              runtime&apos;s next start.
             </p>
             <div className="space-y-1.5">
               {sourceRuntimes.map((profile) => {
@@ -723,7 +728,7 @@ function SourceForm({
                         ) : null}
                       </div>
                       <div className={cn("text-xs", on ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
-                        {on ? "Live — runs from source" : "Locked — reviewed source"}
+                        {on ? "Live — runs from source" : "Reviewed — not run live"}
                       </div>
                     </div>
                     <button

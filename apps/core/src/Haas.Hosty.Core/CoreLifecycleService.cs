@@ -242,12 +242,10 @@ internal sealed class CoreLifecycleService(
 
         var document = await apps.UpdateAppAsync(appId, current =>
         {
-            var modes = new Dictionary<string, bool>(
-                current.DevelopmentModes ?? new Dictionary<string, bool>(StringComparer.Ordinal),
-                StringComparer.Ordinal)
-            {
-                [request.Runtime] = request.Enabled,
-            };
+            var modes = current.DevelopmentModes is not null
+                ? new Dictionary<string, bool>(current.DevelopmentModes, StringComparer.Ordinal)
+                : new Dictionary<string, bool>(StringComparer.Ordinal);
+            modes[request.Runtime] = request.Enabled;
             return current with
             {
                 DevelopmentModes = modes,

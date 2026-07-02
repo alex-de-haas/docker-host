@@ -236,8 +236,10 @@ internal sealed record AppRecord(
     // Per-runtime Development Mode toggles the operator has explicitly set (runtime key -> on/off). A
     // key that is absent falls back to the manifest profile's `development` flag as the default; the
     // operator may flip any source (localCommand) runtime either way. ON runs the runtime live from
-    // source; OFF runs it locked/reviewed. Additive/nullable, so no AppStateDocument schema bump. See
-    // "Development Mode — an operator toggle" in docs/features/runtime-artifact-model.md.
+    // source (the folder manifest is adopted on restart). OFF uses the reviewed manifest and hides the
+    // Live affordance; note that OFF is interim — the executed source is not yet commit-locked (the code
+    // still runs from the resolved source root), pending the honest commit-lock. Additive/nullable, so no
+    // AppStateDocument schema bump. See "Development Mode — an operator toggle" in runtime-artifact-model.md.
     IReadOnlyDictionary<string, bool>? DevelopmentModes = null);
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
