@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -26,9 +26,14 @@ export type OtlpLogRow = OtlpLogRecord & { appId?: string; appName?: string };
 // resources are easy to tell apart in the merged stream.
 export function OtlpLogTable({ records, showSource = false }: { records: OtlpLogRow[]; showSource?: boolean }) {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  // Newest first so the latest line is visible without scrolling.
-  const ordered = records.slice().reverse();
-  const accents = buildServiceAccents(ordered.map((record) => record.appId ?? ""));
+  // Newest first so the latest line is visible without scrolling. Capture each record's original index
+  // before reversing: the key uses that (not the reversed position), so appending newer records to the
+  // stream doesn't shift existing rows' keys and collapse an expanded panel.
+  const ordered = useMemo(
+    () => records.map((record, originalIndex) => ({ record, originalIndex })).reverse(),
+    [records],
+  );
+  const accents = useMemo(() => buildServiceAccents(ordered.map(({ record }) => record.appId ?? "")), [ordered]);
   const columnCount = showSource ? 5 : 4;
 
   return (
@@ -44,11 +49,12 @@ export function OtlpLogTable({ records, showSource = false }: { records: OtlpLog
           </tr>
         </thead>
         <tbody>
-          {ordered.map((record, index) => {
+          {ordered.map(({ record, originalIndex }) => {
             // Records carry no server id, and the content key can still collide for chatty same-span
             // logs (e.g. EF Core DbCommand lines within one millisecond, differing only in SQL past the
-            // body-prefix cutoff), so disambiguate with the row's position to keep React keys unique.
-            const key = `${logRowKey(record)}|${index}`;
+            // body-prefix cutoff), so disambiguate with the record's original position to keep React
+            // keys unique and stable as the stream grows.
+            const key = `${logRowKey(record)}|${originalIndex}`;
             const expanded = expandedKey === key;
             const isError = record.severityNumber >= 17;
             const accent = accents.get(record.appId ?? "") ?? SERVICE_ACCENTS[0];

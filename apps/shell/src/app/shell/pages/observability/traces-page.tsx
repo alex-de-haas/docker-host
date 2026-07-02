@@ -683,8 +683,11 @@ function WaterfallBar({
 }) {
   // Guard the zero-duration trace (single instantaneous span): draw a minimal bar at the origin.
   const total = traceDurationMs > 0 ? traceDurationMs : 1;
-  const left = Math.min(Math.max(((span.startUnixMs - traceStartMs) / total) * 100, 0), 100);
-  const width = Math.min(Math.max((span.durationMs / total) * 100, 0.75), 100 - left);
+  const minWidth = 0.75;
+  // Cap the offset so an instantaneous span at the very end of the trace still leaves room for the
+  // minimum bar width — otherwise `100 - left` collapses to 0 and the bar/label disappears.
+  const left = Math.min(Math.max(((span.startUnixMs - traceStartMs) / total) * 100, 0), 100 - minWidth);
+  const width = Math.min(Math.max((span.durationMs / total) * 100, minWidth), 100 - left);
   const end = left + width;
   const label = formatDuration(span.durationMs);
   // Keep the duration readable: sit it just past the bar, unless the bar reaches near the right edge,
