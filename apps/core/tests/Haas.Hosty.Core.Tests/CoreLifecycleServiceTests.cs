@@ -1856,6 +1856,35 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_LeavesManifestSubpathNullForRootManifestWithMultiSegmentRef()
+    {
+        // A multi-segment ref (branch "release/1.0") with the manifest at the repo root: the ref segments
+        // consume the entire in-repo path, so the subpath is null (not "1.0"). See StripRefPrefix.
+        const string manifestUrl = "https://raw.githubusercontent.com/acme/monorepo/release/1.0/manifest.json";
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+                {
+                  "schemaVersion": "app.0.1",
+                  "id": "com.example.web",
+                  "name": "Web App",
+                  "version": "1.0.0",
+                  "source": { "type": "git", "repository": "https://github.com/acme/monorepo.git", "branch": "release/1.0" },
+                  "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+                  "defaultRuntime": "docker",
+                  "services": [{ "key": "app", "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/acme/web:1.0.0" } } }]
+                }
+                """, Encoding.UTF8, "application/json"),
+        })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "docker"));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.web");
+        Assert.Null(app?.SourceState?.ManifestSubpath);
+    }
+
+    [Fact]
     public async Task InstallAsync_LeavesManifestSubpathNullForRootManifest()
     {
         var fixture = await LifecycleFixture.CreateAsync();

@@ -1599,8 +1599,9 @@ internal sealed class CoreLifecycleService(
 
         var canonicalRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceRoot));
         var combined = Path.GetFullPath(Path.Combine(canonicalRoot, manifestSubpath));
-        return combined == canonicalRoot
-            || combined.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+        // OS-aware containment (case-insensitive on Windows), matching PathEqualsOrWithin elsewhere.
+        return string.Equals(combined, canonicalRoot, PathComparison)
+            || combined.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, PathComparison)
             ? combined
             : sourceRoot;
     }
@@ -1697,14 +1698,15 @@ internal sealed class CoreLifecycleService(
     }
 
     // Drops the ref prefix (branch/tag/commit — possibly multi-segment like "release/1.0") from the
-    // path that follows <owner>/<repo>. Falls back to a single-segment ref when the known ref doesn't
-    // match, which is the common case for raw URLs.
+    // path that follows <owner>/<repo>. When the known ref matches, it is stripped whole — including the
+    // case where it consumes the entire remainder (manifest at the repo root ⇒ empty ⇒ null subpath).
+    // Falls back to assuming a single-segment ref when the known ref doesn't match, the common raw-URL case.
     private static string[]? StripRefPrefix(string[] afterRepo, string? refValue)
     {
         if (!string.IsNullOrWhiteSpace(refValue))
         {
             var refSegments = refValue.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            if (refSegments.Length < afterRepo.Length
+            if (refSegments.Length <= afterRepo.Length
                 && afterRepo[..refSegments.Length].SequenceEqual(refSegments, StringComparer.Ordinal))
             {
                 return afterRepo[refSegments.Length..];
