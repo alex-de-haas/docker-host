@@ -3042,6 +3042,63 @@ public sealed class CoreLifecycleServiceTests
             """;
 
     [Fact]
+    public async Task LoadSelection_UrlDevelopmentRuntime_ReadsLiveManifestFromManagedCheckout()
+    {
+        const string manifestUrl = "https://raw.githubusercontent.com/acme/monorepo/main/apps/web/manifest.json";
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(CreateUrlMonorepoDevManifestJson("1.0.0"), Encoding.UTF8, "application/json"),
+        })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+
+        // A URL install may select docker (a localCommand runtime needs the remote opt-in to be selected).
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "docker"));
+        var installed = await fixture.Apps.GetAppAsync("com.example.web");
+        var checkoutPath = Assert.IsType<string>(installed!.SourceState?.ManagedCheckoutPath);
+        Assert.Equal("apps/web", installed.SourceState?.ManifestSubpath);
+
+        // Simulate the managed clone the start step materializes, with an edited manifest in its subpath.
+        Directory.CreateDirectory(Path.Combine(checkoutPath, ".git"));
+        var checkoutAppDirectory = Path.Combine(checkoutPath, "apps", "web");
+        Directory.CreateDirectory(checkoutAppDirectory);
+        await File.WriteAllTextAsync(Path.Combine(checkoutAppDirectory, "manifest.json"), CreateUrlMonorepoDevManifestJson("2.0.0"));
+
+        // Switching to the development runtime runs it live from the checkout, reading the manifest from
+        // <checkout>/apps/web — no override required (Q2).
+        await fixture.Apps.UpsertAppAsync(installed with { SelectedRuntime = "dev" });
+        var app = await fixture.Apps.GetAppAsync("com.example.web");
+
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
+
+        Assert.True(load.LiveReconciled);
+        Assert.Null(load.ManifestError);
+        Assert.Equal("2.0.0", load.Selection.Manifest.Version);
+    }
+
+    private static string CreateUrlMonorepoDevManifestJson(string version)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.web",
+              "name": "Web App",
+              "version": "{{version}}",
+              "source": { "type": "git", "repository": "https://github.com/acme/monorepo.git", "branch": "main" },
+              "runtimeProfiles": [
+                { "key": "docker", "type": "docker", "default": true },
+                { "key": "dev", "type": "localCommand", "development": true }
+              ],
+              "defaultRuntime": "docker",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/acme/web:{{version}}" },
+                  "dev": { "type": "localCommand", "command": "npm run dev", "workingDirectory": "apps/web" }
+                }
+              }]
+            }
+            """;
+
+    [Fact]
     public async Task LoadSelection_LiveSourceFolder_InvalidEdit_FallsBackToLastGoodAndReportsError()
     {
         var fixture = await LifecycleFixture.CreateAsync();

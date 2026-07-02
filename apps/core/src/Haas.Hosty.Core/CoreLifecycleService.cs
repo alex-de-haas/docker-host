@@ -2477,8 +2477,19 @@ internal sealed class CoreLifecycleService(
             return overridePath;
         }
 
-        // Without an explicit override, a URL/publisher install crosses a trust boundary: its contract
-        // is reviewed even when the code runs live, so it is never "live source".
+        // A development runtime with a materialized managed checkout runs live from that clone (Q2): the
+        // operator's own git working tree, which they can edit and re-adopt on restart. The checkout is
+        // cloned lazily at start (EnsureLocalCommandSourceReadyAsync); before it exists the app falls
+        // back to the reviewed copy (identical to the just-cloned HEAD), so there is no first-start skew.
+        var checkoutPath = app.SourceState?.ManagedCheckoutPath;
+        if (!string.IsNullOrWhiteSpace(checkoutPath)
+            && Directory.Exists(Path.Combine(checkoutPath, ".git")))
+        {
+            return checkoutPath;
+        }
+
+        // A URL/publisher install with no override and no materialized checkout crosses a trust
+        // boundary: its contract is reviewed even when the code runs live, so it is not "live source".
         if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
         {
             return null;
