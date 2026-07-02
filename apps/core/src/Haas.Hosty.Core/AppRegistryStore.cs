@@ -452,13 +452,15 @@ internal sealed record AppSummary(
                 EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path)))
             .ToArray() ?? [];
 
-        // Source-capable when it can run from a local folder: a non-URL install that declares a
-        // development runtime (a localCommand profile with development: true). Mirrors the
-        // source-ownership half of IsLiveSourceApp, without requiring a source to already exist (that
-        // is Live). Narrowed from "any localCommand" so a build-to-production source runtime does not
-        // offer override. See docs/features/runtime-artifact-model.md.
-        var supportsSource = string.IsNullOrWhiteSpace(app.ManifestUrl)
-            && profiles.Any(profile => profile.Development);
+        // Source-capable when it declares a development runtime (a localCommand profile with
+        // development: true), regardless of how it was installed. Setting a source override is an
+        // explicit operator action that supersedes even a URL/publisher install's reviewed contract, so
+        // the Shell offers the Source tab whenever a development runtime exists — the operator can then
+        // point the app at a folder and select that runtime to run it live. Broader than Live (which
+        // also needs the source to exist and the runtime to be selected). Narrowed from "any
+        // localCommand" so a build-to-production source runtime does not offer override. See
+        // docs/features/runtime-artifact-model.md.
+        var supportsSource = profiles.Any(profile => profile.Development);
 
         return new(
             app.Id,

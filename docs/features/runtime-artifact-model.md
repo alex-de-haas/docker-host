@@ -1,6 +1,8 @@
 # Runtime Artifact & Storage Model
 
 > **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command), Phase 1a (the `development` flag), Phase 2 (`prebuilt` with folder delivery), and Phase 3 (the Shell Live/Locked mode badges) have shipped. The later prebuilt deliveries (git-release/URL) and per-runtime update-available state are proposed, not built; the isolated Phase 1b storage migration was dropped (see Phasing). This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](../ideas/runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
+>
+> **Design revision (2026-07-02, agreed, not implemented):** liveness is re-scoped from the *declared* `development` flag to an **operator-toggled Development Mode** whose default the flag provides. See "Development Mode — an operator toggle" below; sections describing flag-as-gate semantics remain accurate for the shipped state.
 
 ## Motivation
 
@@ -31,13 +33,15 @@ The primary classifier is **artifact kind**, declared per service-runtime via th
 | --- | --- | --- | --- | --- |
 | `image` | Compiled OCI image | OCI registry | Locked: tag → digest; reviewed update advances the digest (or `rolling` re-resolves each start) | Digest, in Docker store |
 | `prebuilt` | Compiled non-container build (binary, compiled Next.js standalone, static bundle) | git release / folder / URL / OCI-as-files | Locked: content hash; reviewed update advances the hash | Content hash, in Hosty FS |
-| `source` | Buildable/editable source tree | git checkout / operator-owned worktree | **Live *or* locked** — decided by the `live` flag, not by the kind (see below) | commit (locked) / none (live) |
+| `source` | Buildable/editable source tree | git checkout / operator-owned worktree | **Live *or* locked** — decided by **Development Mode** (operator toggle, defaulted by the `development` flag — see the 2026-07-02 revision), not by the kind | commit (locked) / none (live) |
 
 Guiding rule (from the marketplace idea): **the update model is chosen by artifact kind, not by runtime type.** `localCommand` by itself classifies nothing — one may run a `prebuilt` build, another `source`.
 
 **Delivery does not imply kind.** Git can deliver a *compiled* build, not only source; a folder can hold a pre-built app. So the kind is declared, not inferred from where the bytes came from.
 
 ### The `development` flag — a declared marker, not a consequence of the kind
+
+> **Revised 2026-07-02:** the recipe-vs-binding reasoning below stands, but the flag's *gating* role is superseded — liveness becomes an operator-toggled **Development Mode** for which the flag only provides the default. See "Development Mode — an operator toggle" below.
 
 The first draft of this model said "`kind=source` ⟹ live". That is wrong. The **same** source tree can back two different runtimes:
 
@@ -144,6 +148,8 @@ For `kind=prebuilt` there is no `setup` — the artifact is already built; its a
 
 ## Liveness & source override — the `development` flag
 
+> **Revised 2026-07-02:** this section describes the shipped Phase 1a gating (flag = gate) and stays accurate for the implemented state. At the design level it is superseded by the operator-toggled **Development Mode** (next section).
+
 The `development` flag is declared per runtime, not inferred from kind or type (see "The `development` flag" above), and drives two derived facts:
 
 - **`development: true`** (only valid for `artifact: source` on an editable working copy) → the runtime **supports source override** (operator points it at a local folder) and **runs live** against that folder (else the managed checkout): no lock, no reviewed-update path; clients show the **Live** badge and hide **Update**.
@@ -151,8 +157,61 @@ The `development` flag is declared per runtime, not inferred from kind or type (
 
 This refines two existing derived flags:
 
-- [`AppRecord.Live`](../../apps/core/src/Haas.Hosty.Core/AppRegistryStore.cs) / [`IsLiveSourceApp`](../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs) — today inferred from "non-URL install + selected runtime type `localCommand` + operator folder exists", which mislabels a build-to-production source runtime as Live. **Phase 1a** additionally requires the selected runtime declare `development: true`.
-- [`AppSummary.SupportsSource`](../../apps/core/src/Haas.Hosty.Core/AppRegistryStore.cs) — today "non-URL install + **any** `localCommand` profile", which gates the Source tab. **Phase 1a** narrows it to "non-URL install + **any** profile with `development: true`", so the tab appears only when a development runtime exists.
+- [`AppRecord.Live`](../../apps/core/src/Haas.Hosty.Core/AppRegistryStore.cs) / [`IsLiveSourceApp`](../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs) — gated **solely** on the selected runtime declaring `development: true`, with a resolvable operator source folder (an override, else a non-URL folder install). `ResolveLiveSourcePath` is the **single source of truth** for both the `Live` flag *and* the folder the live manifest is re-read from (`LoadSelectionWithStatusAsync`); previously the manifest reconcile keyed on "any `localCommand`" (artifact `source`) and could disagree with the flag — e.g. a folder-installed `localCommand` with no `development` flag re-read its manifest live but showed no Live badge. A build-to-production source runtime (`development: false`) is no longer mislabeled Live and no longer live-reconciles.
+- [`AppSummary.SupportsSource`](../../apps/core/src/Haas.Hosty.Core/AppRegistryStore.cs) — gated on "**any** profile with `development: true`", **independent of install channel**. The earlier "non-URL install" requirement was dropped: setting a source override is an explicit operator action that supersedes even a URL/publisher install's reviewed contract, so a URL-installed app that declares a development runtime still offers the Source tab.
+
+> **Implemented today:** the live source folder is resolved as *override → non-URL original folder install*. The design's "else the **managed checkout**" (a URL/git install running live from Core's clone) is **not yet built** — it needs Core to locate the app's manifest inside the checkout (a monorepo app's manifest is not at the clone root), which `AppSourceState` does not currently record. Until then, a URL-installed development app runs live only once the operator sets a source override.
+
+## Development Mode — an operator toggle (design revision, 2026-07-02)
+
+> **Status: agreed, not implemented.** This revision re-scopes the `development` flag: it stays in the manifest as the author's *intent marker and default*, but the liveness decision itself moves to an **operator-controlled, per-runtime Development Mode toggle**. Until this lands, the shipped Phase 1a behavior (flag = gate) remains the implemented state.
+
+Working with the Phase 1a model surfaced that the flag was carrying two orthogonal concepts:
+
+1. **Source binding** — where code and manifest come from: Core's reviewed copy at a pinned commit (**locked**) or the operator's live working tree (**live**). Inherently an **operator** decision ("run my local checkout"), one Core can honor for *any* source runtime.
+2. **Runtime recipe** — how the runtime starts: `setup` / `command` / (future) image build. Inherently an **author** declaration — Core cannot invent `npm run dev`.
+
+Phase 1a welded both to one declared flag. That meant an operator could not run an unflagged source runtime live without commit rights to the app's manifest, and the future docker-built-from-source case would need *two* declared runtimes differing only in binding.
+
+### The model
+
+**Development Mode is a per-runtime operator toggle**, valid only for `artifact: source` runtimes (`image`/`prebuilt` have no working copy to bind):
+
+- **OFF (default)** — locked: manifest from Core's reviewed copy, execution from the pinned-commit checkout, updates via the reviewed update plan advancing the commit (decision 4).
+- **ON** — live: manifest **and** code from the source folder — the operator's override folder if set, else the managed checkout. Local (even uncommitted) edits take effect; if the command doesn't hot-reload, a restart picks them up. No lock, no reviewed-update path; clients show **Live** and hide **Update**.
+
+**The `development` manifest flag becomes the toggle's default, not its gate:** `development: true` → Development Mode defaults ON for that runtime; absent → defaults OFF. The operator may flip either way; existing manifests keep working unchanged.
+
+| Scenario | Manifest declares | Dev Mode OFF (locked) | Dev Mode ON (live) |
+| --- | --- | --- | --- |
+| Plain source runtime (`npm start`) | `localCommand` + `artifact: source` | reviewed manifest, pinned-commit checkout, update plan | manifest + code from the source folder; restart to pick up edits |
+| Hot-reload runtime (`npm run dev`) | a separate runtime + `development: true` | permitted, pointless | **default ON** (from the flag) |
+| Docker built from source (future) | `docker` + `artifact: source` | build the pinned commit → digest lock | build from the working tree |
+
+Why this factoring wins:
+
+- **The docker-from-source future needs no duplicate runtimes.** Dev vs prod there is the *same* recipe with a different source binding — one runtime, toggled. (Amends decision 9's "out of scope": the model now has a natural slot for it.)
+- **Hot reload stays first-class.** A dev-server command is genuinely a different recipe → a separate declared runtime; the flag just spares the operator a click.
+- **Liveness no longer requires editing the publisher's manifest.** Any source runtime can be run live by the operator (e.g. a `dev` profile that never declared the flag).
+- **"Running from source ≠ live" is preserved** — the default is OFF, so nothing becomes accidentally live; only the *owner* of the decision moves from author to operator, which fits a self-hosted platform.
+
+### What changes vs Phase 1a (when implemented)
+
+- **Gating.** `SupportsSource` (the Source tab) widens from "any `development: true` profile" to "any `artifact: source` runtime". `Live` / `ResolveLiveSourcePath` gate on "selected runtime is `artifact: source` **and** its Development Mode is ON" instead of reading the manifest flag.
+- **State.** Per-runtime Development Mode is operator state seeded from the manifest flag, persisted in the app record — `RuntimeArtifactState.development` becomes operator-writable rather than manifest-derived. Toggled via a new control/web endpoint (autostart-style) plus a switch on the Shell's Source tab.
+- **Validation.** `app_manifest_multiple_development_runtimes` (decision 6) can relax — the flag is only a default, so several flagged profiles are harmless. The **single app-level override remains** and is shared by the app's source runtimes (they are the same source tree by design); per-runtime overrides stay deferred (1b).
+
+### Prerequisites
+
+1. **Manifest subpath inside the checkout (monorepo).** Live mode reads the manifest from the source folder, but a monorepo app's manifest is not at the checkout root (the Shell's is `apps/shell/manifest.json`). Capture a repo-relative `ManifestSubpath` in `AppSourceState` at install (derivable from the manifest URL's in-repo path or the install folder layout) so Core can resolve `<source>/<subpath>/manifest.json`. Per-app checkout copies already isolate monorepo apps from one another; the subpath is the only missing piece. (This is also the blocker for live-from-managed-checkout under the current model.)
+2. **An honest locked mode for source runtimes.** Today "OFF" is half-fictional: the manifest comes from the reviewed copy but the *code* still runs from the live folder/checkout — nothing pins the executed commit. Under the toggle, OFF must mean "checkout at the pinned commit; update plan advances the commit" (decision 4's commit lock).
+3. **Toggle plumbing** — the per-runtime state field, the endpoint, and the Shell switch.
+
+### Implementation order
+
+1. `ManifestSubpath` capture — prerequisite for every live-from-checkout scenario.
+2. The toggle layered over today's live mechanics, with OFF temporarily keeping current semantics (reviewed manifest + existing update plan) until the commit lock exists — documented as transitional.
+3. The commit lock for OFF (pinned-commit checkout, update-plan commit bumps).
 
 ## Manifest surface
 
@@ -195,6 +254,8 @@ Two per-runtime declarations drive the model: the existing `artifact` field (kin
 
 ## Source override & the Source settings tab
 
+> **Revised 2026-07-02:** once the Development Mode revision lands, visibility widens to "any `artifact: source` runtime" and the tab gains the per-runtime Development Mode switch (see above). The gating below describes the shipped state.
+
 The Shell lets the operator configure a development runtime's source override **without switching the app to that runtime**. The [Source settings tab](runtime-source-workflows.md) ([shipped](../../apps/shell)) is refined:
 
 - **Visibility.** The tab shows only when `SupportsSource` is true — i.e. the app has a runtime profile with `development: true` (narrowed from "any `localCommand`"). No development runtime → no tab.
@@ -232,6 +293,7 @@ Switching remains the reviewed [`switch-runtime-plan` / `switch-runtime`](runtim
 7. **`prebuilt` delivery — folder + git-release asset first.** Phase 2 implements the folder and git-release-asset deliveries; URL and OCI-as-files are deferred.
 8. **`localCommand` → `localProcess` rename — deferred.** Cosmetic; not worth the manifest churn now.
 9. **`docker` built from source — out of scope.** The `image` cell covers docker today.
+10. **Development Mode is operator-toggled; the manifest flag is its default (2026-07-02).** Liveness moves from a declared gate to per-runtime operator state seeded by `development: true` — see "Development Mode — an operator toggle". Amends the gating halves of decisions 2–3 (the flag still couples override+live, but as a *default* the operator can flip), allows relaxing decision 6's single-flag validation (the app-level override stays shared across the app's source runtimes), and gives decision 9's docker-built-from-source a natural slot (same recipe, toggled binding).
 
 ## Open questions / out of scope
 
@@ -239,7 +301,8 @@ Switching remains the reviewed [`switch-runtime-plan` / `switch-runtime`](runtim
 - **Private repositories & multi-repo source** — tracked in [Runtime source extensions](../ideas/runtime-source-extensions.md).
 - **`prebuilt` URL / OCI-as-files delivery** — deferred past the folder + git-release-asset first cut (decision 7).
 - **`rolling` mode for a source build-to-prod runtime** — deferred (decision 4).
-- **Multiple `development` runtimes + per-runtime override storage** — deferred (decision 6).
+- **Multiple `development` runtimes + per-runtime override storage** — deferred (decision 6; partially moot under the Development Mode revision, where the flag is only a default).
+- **Development Mode implementation details** — settle at implementation: whether the multiple-flag validation is dropped or kept as a lint; `ManifestSubpath` derivation edge cases (non-GitHub raw URLs, folder installs); UI copy for the toggle.
 
 ## Related
 
