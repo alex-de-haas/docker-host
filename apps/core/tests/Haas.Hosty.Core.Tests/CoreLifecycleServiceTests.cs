@@ -1818,6 +1818,61 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_DerivesManifestSubpathFromRawManifestUrl()
+    {
+        const string manifestUrl = "https://raw.githubusercontent.com/acme/monorepo/main/apps/web/manifest.json";
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+                {
+                  "schemaVersion": "app.0.1",
+                  "id": "com.example.web",
+                  "name": "Web App",
+                  "version": "1.0.0",
+                  "source": { "type": "git", "repository": "https://github.com/acme/monorepo.git", "branch": "main" },
+                  "runtimeProfiles": [
+                    { "key": "docker", "type": "docker", "default": true },
+                    { "key": "dev", "type": "localCommand", "development": true }
+                  ],
+                  "defaultRuntime": "docker",
+                  "services": [{
+                    "key": "app",
+                    "runtimes": {
+                      "docker": { "type": "docker", "image": "ghcr.io/acme/web:1.0.0" },
+                      "dev": { "type": "localCommand", "command": "npm run dev", "workingDirectory": "apps/web" }
+                    }
+                  }]
+                }
+                """, Encoding.UTF8, "application/json"),
+        })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "docker"));
+
+        // Anchored on the repository owner/repo (acme/monorepo) with the ref (main) stripped, the manifest
+        // URL yields the in-repo directory apps/web so a live checkout can find <checkout>/apps/web.
+        var app = await fixture.Apps.GetAppAsync("com.example.web");
+        Assert.Equal("apps/web", app?.SourceState?.ManifestSubpath);
+    }
+
+    [Fact]
+    public async Task InstallAsync_LeavesManifestSubpathNullForRootManifest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repositoryRoot = Path.Combine(fixture.Root, "root-repo");
+        Directory.CreateDirectory(Path.Combine(repositoryRoot, ".git"));
+        var manifestPath = Path.Combine(repositoryRoot, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("1.0.0"));
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+
+        // Manifest at the repo root ⇒ no subpath (reads <root>/manifest.json, the pre-existing behavior).
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(Path.GetFullPath(repositoryRoot), app?.SourceState?.LocalOverridePath);
+        Assert.Null(app?.SourceState?.ManifestSubpath);
+    }
+
+    [Fact]
     public async Task InstallAsync_UsesGitRootAsLocalOverrideForRepositoryRelativeManifest()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -1865,6 +1920,9 @@ public sealed class CoreLifecycleServiceTests
         var localOverridePath = Assert.IsType<string>(app?.SourceState?.LocalOverridePath);
         Assert.True(Directory.Exists(Path.Combine(localOverridePath, ".git")));
         Assert.EndsWith($"{Path.DirectorySeparatorChar}repo", localOverridePath, StringComparison.Ordinal);
+        // The source root is the repo root; the manifest sits one app subtree in — captured so the live
+        // manifest read targets <root>/apps/demo-app/manifest.json.
+        Assert.Equal("apps/demo-app", app?.SourceState?.ManifestSubpath);
 
         try
         {
@@ -2934,6 +2992,54 @@ public sealed class CoreLifecycleServiceTests
         Assert.True(load.LiveReconciled);
         Assert.Equal("2.0.0", load.Selection.Manifest.Version);
     }
+
+    [Fact]
+    public async Task LoadSelection_MonorepoLiveSource_ReadsManifestFromSubpath()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repoRoot = Path.Combine(fixture.Root, "monorepo");
+        Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+        var appDirectory = Path.Combine(repoRoot, "apps", "web");
+        Directory.CreateDirectory(appDirectory);
+        var manifestPath = Path.Combine(appDirectory, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateMonorepoDevManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+
+        // Source root is the repo root; the manifest is one subtree in.
+        var installed = await fixture.Apps.GetAppAsync("com.example.web");
+        Assert.Equal(Path.GetFullPath(repoRoot), installed!.SourceState?.LocalOverridePath);
+        Assert.Equal("apps/web", installed.SourceState?.ManifestSubpath);
+
+        // The operator edits the live manifest in its subfolder; Core must read it from <root>/apps/web,
+        // not <root>/manifest.json (which does not exist for a monorepo app).
+        await File.WriteAllTextAsync(manifestPath, CreateMonorepoDevManifestJson("2.0.0"));
+        var app = await fixture.Apps.GetAppAsync("com.example.web");
+
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
+
+        Assert.True(load.LiveReconciled);
+        Assert.Null(load.ManifestError);
+        Assert.Equal("2.0.0", load.Selection.Manifest.Version);
+    }
+
+    private static string CreateMonorepoDevManifestJson(string version)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.web",
+              "name": "Web App",
+              "version": "{{version}}",
+              "source": { "type": "git", "repository": ".", "branch": "main" },
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true, "development": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "dev": { "type": "localCommand", "command": "echo hi", "workingDirectory": "apps/web" }
+                }
+              }]
+            }
+            """;
 
     [Fact]
     public async Task LoadSelection_LiveSourceFolder_InvalidEdit_FallsBackToLastGoodAndReportsError()

@@ -1555,10 +1555,12 @@ internal sealed class CoreLifecycleService(
                     Commit: null,
                     ManagedCheckoutPath: Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
                     LocalOverridePath: localOverridePath,
-                    UpdatedAt: null));
+                    UpdatedAt: null,
+                    ManifestSubpath: ResolveInstallManifestSubpath(selection, localOverridePath)));
         }
 
         var resolvedRef = source.Commit ?? source.Tag ?? source.Branch;
+        var manifestSubpath = ResolveInstallManifestSubpath(selection, localOverridePath);
         if (existing?.SourceState is not null &&
             string.Equals(existing.SourceState.Repository, source.Repository, StringComparison.Ordinal))
         {
@@ -1571,6 +1573,7 @@ internal sealed class CoreLifecycleService(
                 Commit = source.Commit ?? (resolvedRefChanged ? null : existing.SourceState.Commit),
                 ManagedCheckoutPath = existing.SourceState.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
                 LocalOverridePath = existing.SourceState.LocalOverridePath ?? localOverridePath,
+                ManifestSubpath = manifestSubpath ?? existing.SourceState.ManifestSubpath,
             };
         }
 
@@ -1581,7 +1584,163 @@ internal sealed class CoreLifecycleService(
             Commit: source.Commit,
             ManagedCheckoutPath: Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
             LocalOverridePath: localOverridePath,
-            UpdatedAt: null);
+            UpdatedAt: null,
+            ManifestSubpath: manifestSubpath);
+    }
+
+    // Combines a live source root with its captured manifest subpath, contained within the root. A
+    // null/empty or escaping subpath yields the root unchanged (manifest-at-root / untrusted subpath).
+    private static string CombineManifestSubpath(string sourceRoot, string? manifestSubpath)
+    {
+        if (string.IsNullOrWhiteSpace(manifestSubpath))
+        {
+            return sourceRoot;
+        }
+
+        var canonicalRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceRoot));
+        var combined = Path.GetFullPath(Path.Combine(canonicalRoot, manifestSubpath));
+        return combined == canonicalRoot
+            || combined.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            ? combined
+            : sourceRoot;
+    }
+
+    // The manifest's directory relative to the source repository root (e.g. "apps/shell"), or null when
+    // the manifest is at the root / the layout can't be determined. The source root — override folder or
+    // managed checkout — is the repo root by convention, and each service's workingDirectory is resolved
+    // against it, so the manifest sits at the same offset for a monorepo app. Captured at install so the
+    // live-source manifest read (and the managed-checkout live path) can target the right subfolder.
+    private static string? ResolveInstallManifestSubpath(RuntimeAppManifestSelection selection, string? localSourceRoot)
+    {
+        // Folder/git install: the manifest is a local file under the resolved source root.
+        if (string.IsNullOrWhiteSpace(selection.ManifestUrl)
+            && !string.IsNullOrWhiteSpace(selection.ManifestPath)
+            && !string.IsNullOrWhiteSpace(localSourceRoot))
+        {
+            var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(selection.ManifestPath));
+            return string.IsNullOrWhiteSpace(manifestDirectory)
+                ? null
+                : NormalizeManifestSubpath(Path.GetRelativePath(Path.GetFullPath(localSourceRoot), manifestDirectory));
+        }
+
+        // URL install: derive the in-repo manifest directory from the manifest URL, anchored on the
+        // repository owner/repo and with the known ref stripped (best-effort; null when not confident).
+        return string.IsNullOrWhiteSpace(selection.ManifestUrl)
+            ? null
+            : ResolveManifestSubpathFromUrl(selection.ManifestUrl, selection.Manifest.Source);
+    }
+
+    // Normalizes a computed relative path into a forward-slash in-repo subpath, or null when it denotes
+    // the root ("" / ".") or escapes it ("../…") — neither is a usable subfolder for the live manifest.
+    private static string? NormalizeManifestSubpath(string? relative)
+    {
+        if (string.IsNullOrWhiteSpace(relative))
+        {
+            return null;
+        }
+
+        var normalized = relative.Replace('\\', '/').Trim('/');
+        return normalized is "" or "."
+            || normalized == ".."
+            || normalized.StartsWith("../", StringComparison.Ordinal)
+            ? null
+            : normalized;
+    }
+
+    // Extracts the in-repo manifest directory from a "raw file in repo" manifest URL by anchoring on the
+    // repository's <owner>/<repo> (from source.repository) and stripping the ref segment(s). Works for
+    // raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>, GitLab raw, and similar layouts; returns
+    // null when the URL/repository can't be matched confidently (caller then treats the manifest as
+    // root-level, i.e. the pre-existing behavior).
+    private static string? ResolveManifestSubpathFromUrl(string manifestUrl, RuntimeAppSource? source)
+    {
+        if (!Uri.TryCreate(manifestUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return null;
+        }
+
+        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            return null;
+        }
+
+        // Drop the trailing file name, leaving directory segments.
+        var directorySegments = segments[..^1];
+        var (owner, repository) = ExtractOwnerRepo(source?.Repository);
+        if (owner is null || repository is null)
+        {
+            return null;
+        }
+
+        var anchor = -1;
+        for (var index = 0; index + 1 < directorySegments.Length; index++)
+        {
+            if (string.Equals(directorySegments[index], owner, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(directorySegments[index + 1], repository, StringComparison.OrdinalIgnoreCase))
+            {
+                anchor = index + 2;
+                break;
+            }
+        }
+
+        if (anchor < 0)
+        {
+            return null;
+        }
+
+        var afterRepo = directorySegments[anchor..];
+        var refValue = (source?.Commit ?? source?.Tag ?? source?.Branch)?.Trim('/');
+        var subpathSegments = StripRefPrefix(afterRepo, refValue);
+        return subpathSegments is null ? null : NormalizeManifestSubpath(string.Join('/', subpathSegments));
+    }
+
+    // Drops the ref prefix (branch/tag/commit — possibly multi-segment like "release/1.0") from the
+    // path that follows <owner>/<repo>. Falls back to a single-segment ref when the known ref doesn't
+    // match, which is the common case for raw URLs.
+    private static string[]? StripRefPrefix(string[] afterRepo, string? refValue)
+    {
+        if (!string.IsNullOrWhiteSpace(refValue))
+        {
+            var refSegments = refValue.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (refSegments.Length < afterRepo.Length
+                && afterRepo[..refSegments.Length].SequenceEqual(refSegments, StringComparer.Ordinal))
+            {
+                return afterRepo[refSegments.Length..];
+            }
+        }
+
+        return afterRepo.Length >= 1 ? afterRepo[1..] : null;
+    }
+
+    // The <owner, repo> pair from a git repository reference (HTTPS URL, scp-style SSH, or bare path),
+    // with a trailing ".git" stripped. Null pair when fewer than two path segments are present.
+    private static (string? Owner, string? Repository) ExtractOwnerRepo(string? repository)
+    {
+        if (string.IsNullOrWhiteSpace(repository))
+        {
+            return (null, null);
+        }
+
+        var reference = repository.Trim();
+        var path = Uri.TryCreate(reference, UriKind.Absolute, out var uri) && !uri.IsFile
+            ? uri.AbsolutePath
+            : reference;
+
+        var segments = path.Split(['/', ':'], StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            return (null, null);
+        }
+
+        var repo = segments[^1];
+        if (repo.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            repo = repo[..^4];
+        }
+
+        return (segments[^2], repo);
     }
 
     private string? ResolveInstallLocalSourcePath(RuntimeAppManifestSelection selection, RuntimeAppSource? source)
@@ -2204,9 +2363,14 @@ internal sealed class CoreLifecycleService(
             return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError: null);
         }
 
+        // The live path is the source root (repo root); a monorepo app's manifest lives one subtree in,
+        // so read from <root>/<ManifestSubpath>/manifest.json (LoadAsync resolves manifest.json in a
+        // directory). Null/empty subpath ⇒ the root itself (manifest-at-root, the pre-subpath behavior).
+        var liveManifestPath = CombineManifestSubpath(livePath, app.SourceState?.ManifestSubpath);
+
         try
         {
-            var live = await manifests.LoadAsync(livePath, app.SelectedRuntime, cancellationToken);
+            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken);
             // A folder whose manifest now describes a different app is an operator mistake, not a
             // contract Core should adopt — treat it like an invalid edit and keep the last-good copy.
             if (!string.Equals(live.Manifest.Id, app.Id, StringComparison.Ordinal))
