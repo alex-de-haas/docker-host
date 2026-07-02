@@ -1871,6 +1871,35 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task EnsurePinnedCommit_ChecksOutCommitAndHoldsWhenTheBranchAdvances()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var commit1 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // A locked (Development Mode off) source runtime pins the reviewed commit into the managed
+        // checkout (detached), so the working tree is the exact reviewed source, not the branch tip.
+        var pinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = Assert.IsType<string>(pinned.Source?.ManagedCheckoutPath);
+        Assert.Equal(commit1, pinned.Source?.Commit);
+        Assert.Equal(commit1, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+
+        // The upstream branch advances; the lock must hold — a re-pin keeps the same commit checked out
+        // until a reviewed source-resolve/update advances it.
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        Assert.NotEqual(commit1, commit2);
+
+        var repinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        Assert.Equal(commit1, repinned.Source?.Commit);
+        Assert.Equal(commit1, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+    }
+
+    [Fact]
     public async Task InstallAsync_DerivesManifestSubpathFromRawManifestUrl()
     {
         const string manifestUrl = "https://raw.githubusercontent.com/acme/monorepo/main/apps/web/manifest.json";

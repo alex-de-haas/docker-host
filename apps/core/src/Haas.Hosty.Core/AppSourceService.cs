@@ -45,6 +45,42 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         return new AppSourceResponse(appId, state);
     }
 
+    // Materializes the managed checkout at the pinned commit (detached HEAD) for a locked source runtime
+    // — Development Mode off. Clones if needed, resolves the recorded ref to a commit when none is pinned
+    // yet, checks that exact commit out (so the working tree is the reviewed, immutable source rather than
+    // the branch tip), and records it. Only a reviewed source-resolve/update advances the commit, which
+    // makes "off" an honest lock. Requires a source repository (a pure folder install cannot be pinned).
+    public async Task<AppSourceResponse> EnsurePinnedCommitAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var source = app.SourceState;
+        if (source?.Repository is null)
+        {
+            throw new AppLifecycleException("source_not_configured", $"Runtime app '{appId}' does not declare a source repository.");
+        }
+
+        ValidateManagedRepository(source.Repository);
+        var checkoutPath = source.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, appId);
+        await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
+
+        var commit = source.Commit;
+        if (string.IsNullOrWhiteSpace(commit))
+        {
+            commit = await ResolveCommitAsync(checkoutPath, new AppSourceResolveRequest(), source.ResolvedRef ?? "HEAD", cancellationToken);
+        }
+
+        _ = await RunGitAsync(checkoutPath, ["checkout", "--detach", commit], cancellationToken);
+
+        var state = source with
+        {
+            Commit = commit,
+            ManagedCheckoutPath = checkoutPath,
+            UpdatedAt = clock.UtcNow,
+        };
+        await apps.UpdateAppAsync(appId, current => current with { SourceState = state }, cancellationToken);
+        return new AppSourceResponse(appId, state);
+    }
+
     public async Task<AppSourceResponse> SetLocalOverrideAsync(
         string appId,
         AppSourceOverrideRequest request,

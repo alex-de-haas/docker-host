@@ -164,7 +164,7 @@ This refines two existing derived flags:
 
 ## Development Mode — an operator toggle (design revision, 2026-07-02)
 
-> **Status: implemented (OFF interim).** The `development` flag is re-scoped to the author's *intent marker and default*; the liveness decision now lives in an **operator-controlled, per-runtime Development Mode toggle** (`AppRecord.DevelopmentModes`, `AppSummary.ResolveDevelopmentMode`, `POST /api/apps/{id}/development-mode`, a switch on the Shell's Source tab). `SupportsSource` widened to any source runtime and the "≤1 development runtime" validation was retired. **OFF still uses today's semantics** (reviewed manifest, code from the live folder) — the honest commit-lock is the remaining follow-up (see Prerequisites #2 / Implementation order #3).
+> **Status: implemented.** The `development` flag is re-scoped to the author's *intent marker and default*; the liveness decision now lives in an **operator-controlled, per-runtime Development Mode toggle** (`AppRecord.DevelopmentModes`, `AppSummary.ResolveDevelopmentMode`, `POST /api/apps/{id}/development-mode`, a switch on the Shell's Source tab). `SupportsSource` widened to any source runtime and the "≤1 development runtime" validation was retired. **OFF is now an honest commit-lock for a URL/publisher install:** the managed checkout is pinned to its commit (`AppSourceService.EnsurePinnedCommitAsync`, threaded to the runtime via `RuntimeLifecycleContext.SourceRoot`), so a locked runtime runs the reviewed source — not the branch tip or a live override — advanced only by a reviewed source-resolve/update. A folder install has no separate reviewed source to pin, so its OFF runs its own folder (documented limitation; per-runtime storage would generalize it).
 
 Working with the Phase 1a model surfaced that the flag was carrying two orthogonal concepts:
 
@@ -201,17 +201,17 @@ Why this factoring wins:
 - **State.** Per-runtime Development Mode is operator state seeded from the manifest flag, persisted in the app record — `RuntimeArtifactState.development` becomes operator-writable rather than manifest-derived. Toggled via a new control/web endpoint (autostart-style) plus a switch on the Shell's Source tab.
 - **Validation.** `app_manifest_multiple_development_runtimes` (decision 6) can relax — the flag is only a default, so several flagged profiles are harmless. The **single app-level override remains** and is shared by the app's source runtimes (they are the same source tree by design); per-runtime overrides stay deferred (1b).
 
-### Prerequisites
+### Prerequisites — all shipped
 
-1. **Manifest subpath inside the checkout (monorepo).** Live mode reads the manifest from the source folder, but a monorepo app's manifest is not at the checkout root (the Shell's is `apps/shell/manifest.json`). Capture a repo-relative `ManifestSubpath` in `AppSourceState` at install (derivable from the manifest URL's in-repo path or the install folder layout) so Core can resolve `<source>/<subpath>/manifest.json`. Per-app checkout copies already isolate monorepo apps from one another; the subpath is the only missing piece. (This is also the blocker for live-from-managed-checkout under the current model.)
-2. **An honest locked mode for source runtimes.** Today "OFF" is half-fictional: the manifest comes from the reviewed copy but the *code* still runs from the live folder/checkout — nothing pins the executed commit. Under the toggle, OFF must mean "checkout at the pinned commit; update plan advances the commit" (decision 4's commit lock).
-3. **Toggle plumbing** — the per-runtime state field, the endpoint, and the Shell switch.
+1. **Manifest subpath inside the checkout (monorepo). ✅** Live mode reads the manifest from the source folder, but a monorepo app's manifest is not at the checkout root (the Shell's is `apps/shell/manifest.json`). A repo-relative `ManifestSubpath` is captured in `AppSourceState` at install so Core resolves `<source>/<subpath>/manifest.json`. Also unblocked live-from-managed-checkout.
+2. **An honest locked mode for source runtimes. ✅** OFF used to be half-fictional (reviewed manifest, but code from the live folder/checkout — nothing pinned the executed commit). OFF now checks the managed checkout out to its pinned commit (`AppSourceService.EnsurePinnedCommitAsync`), threaded to the adapter via `RuntimeLifecycleContext.SourceRoot`, for a URL/publisher install. The commit advances only via a reviewed source-resolve/update. A folder install still runs its own folder (no separate reviewed source; per-runtime storage would generalize it).
+3. **Toggle plumbing. ✅** The per-runtime state field, the endpoint, and the Shell switch.
 
-### Implementation order
+### Implementation order — done
 
 1. `ManifestSubpath` capture — prerequisite for every live-from-checkout scenario.
-2. The toggle layered over today's live mechanics, with OFF temporarily keeping current semantics (reviewed manifest + existing update plan) until the commit lock exists — documented as transitional.
-3. The commit lock for OFF (pinned-commit checkout, update-plan commit bumps).
+2. The toggle layered over the live mechanics (OFF initially kept current semantics, documented as transitional).
+3. The commit lock for OFF (pinned-commit checkout). The reviewed-update-advances-the-commit half reuses the existing source-resolve/update flow; a dedicated source-commit update-plan delta remains a future refinement.
 
 ## Manifest surface
 
