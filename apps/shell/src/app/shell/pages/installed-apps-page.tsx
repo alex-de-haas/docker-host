@@ -24,7 +24,6 @@ import {
   Square,
   Trash2,
   TriangleAlert,
-  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -96,6 +95,92 @@ export function InstalledAppsPage({
   const isRefreshing = loading;
   const hasAnyApps = runtimeApps.length > 0 || systemApps.length > 0;
 
+  // Update-available state lives at the page level (not per section) so the header "Check updates"
+  // fleet check and the per-row Update button read from one source of truth. Each entry is a light,
+  // read-only registry probe (GET /api/apps/{id}/update-status); it is populated on demand — on row
+  // expansion or by the fleet check — never automatically for every row on load.
+  const [updateStatusByApp, setUpdateStatusByApp] = useState<Record<string, UpdateStatusState>>({});
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+
+  useEffect(() => {
+    const appIds = new Set([...runtimeApps, ...systemApps].map((app) => app.id));
+    setUpdateStatusByApp((current) => {
+      const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
+  }, [runtimeApps, systemApps]);
+
+  const loadUpdateStatus = useCallback(
+    async (app: CoreApp): Promise<AppUpdateStatusResponse | null> => {
+      setUpdateStatusByApp((current) => ({
+        ...current,
+        [app.id]: { loading: true, error: null, status: current[app.id]?.status ?? null },
+      }));
+
+      try {
+        const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/update-status`, { credentials: "include" });
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+        if (!response.ok) {
+          throw new Error(await readCoreError(response));
+        }
+        const status = (await response.json()) as AppUpdateStatusResponse;
+        setUpdateStatusByApp((current) => ({ ...current, [app.id]: { loading: false, error: null, status } }));
+        return status;
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return null;
+        }
+        setUpdateStatusByApp((current) => ({
+          ...current,
+          [app.id]: {
+            loading: false,
+            error: error instanceof Error ? error.message : "Update status is unavailable.",
+            status: current[app.id]?.status ?? null,
+          },
+        }));
+        return null;
+      }
+    },
+    [coreOrigin],
+  );
+
+  // Fleet "Check updates": probe every runtime app that has a reviewed-update path. Live source apps
+  // (manifest adopted on restart) and apps without the update capability are skipped — mirrors the
+  // per-row `canUpdate` gate. Runs a small concurrency pool so a large fleet does not fan out N
+  // registry lookups at once, then summarises the outcome in a toast.
+  const checkAllUpdates = useCallback(async () => {
+    const targets = runtimeApps.filter((app) => !app.live && app.capabilities.includes("update"));
+    if (targets.length === 0) {
+      toast.info("No updatable apps", { description: "Runtime apps with a reviewed update path will appear here." });
+      return;
+    }
+
+    setCheckingUpdates(true);
+    try {
+      const queue = [...targets];
+      const results: (AppUpdateStatusResponse | null)[] = [];
+      const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+        for (let app = queue.shift(); app; app = queue.shift()) {
+          results.push(await loadUpdateStatus(app));
+        }
+      });
+      await Promise.all(workers);
+
+      const available = results.filter((status) => status?.updateAvailable).length;
+      const failed = targets.length - results.filter(Boolean).length;
+      const failedNote = failed > 0 ? `${failed} app${failed === 1 ? "" : "s"} could not be checked.` : undefined;
+      if (available > 0) {
+        toast.success(`${available} update${available === 1 ? "" : "s"} available`, { description: failedNote });
+      } else if (failed > 0) {
+        toast.warning("No updates found", { description: failedNote });
+      } else {
+        toast.success("All apps up to date");
+      }
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }, [runtimeApps, loadUpdateStatus]);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -106,6 +191,12 @@ export function InstalledAppsPage({
             <Button variant="outline" size="icon" onClick={onRefresh} disabled={isRefreshing} aria-label="Refresh apps">
               <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
             </Button>
+            {canManageApps && (
+              <Button variant="outline" onClick={() => void checkAllUpdates()} disabled={checkingUpdates}>
+                {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
+                Check updates
+              </Button>
+            )}
             {canManageApps && (
               <Button variant="outline" onClick={onOpenSharedMounts}>
                 <HardDrive className="h-4 w-4" />
@@ -140,6 +231,8 @@ export function InstalledAppsPage({
             shellAppId={shellAppId}
             canManageApps={canManageApps}
             busyAction={busyAction}
+            updateStatusByApp={updateStatusByApp}
+            onLoadUpdateStatus={loadUpdateStatus}
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
             onSetDevelopmentMode={onSetDevelopmentMode}
@@ -155,6 +248,8 @@ export function InstalledAppsPage({
             shellAppId={shellAppId}
             canManageApps={canManageApps}
             busyAction={busyAction}
+            updateStatusByApp={updateStatusByApp}
+            onLoadUpdateStatus={loadUpdateStatus}
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
             onSetDevelopmentMode={onSetDevelopmentMode}
@@ -182,8 +277,6 @@ function AppServiceDetailsPanel({
   updateStatusState,
   canConfigurePublicOrigins,
   onConfigurePublicOrigins,
-  canUpdate,
-  onOpenUpdate,
   onRecheckUpdate,
 }: {
   app: CoreApp;
@@ -191,8 +284,6 @@ function AppServiceDetailsPanel({
   updateStatusState?: UpdateStatusState;
   canConfigurePublicOrigins: boolean;
   onConfigurePublicOrigins: () => void;
-  canUpdate: boolean;
-  onOpenUpdate: () => void;
   onRecheckUpdate: () => void;
 }) {
   const serviceRows = buildRuntimeServiceRows(app, healthState?.health);
@@ -223,7 +314,6 @@ function AppServiceDetailsPanel({
     Object.keys(lockedByService).length > 0 ||
     [...runningByService.values()].some((digest) => digest) ||
     statusByService.size > 0;
-  const updateStatus = updateStatusState?.status;
 
   return (
     <div className="space-y-2 rounded-md border bg-background p-3">
@@ -260,25 +350,17 @@ function AppServiceDetailsPanel({
             <UpdatePolicyBadge policy={app.updatePolicy} />
             <UpdateAvailabilityIndicator state={updateStatusState} />
           </div>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 px-2 text-xs"
-              disabled={updateStatusState?.loading}
-              onClick={onRecheckUpdate}
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", updateStatusState?.loading && "animate-spin")} />
-              Check for updates
-            </Button>
-            {canUpdate && updateStatus?.updateAvailable && (
-              <Button type="button" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={onOpenUpdate}>
-                <Upload className="h-3.5 w-3.5" />
-                Update
-              </Button>
-            )}
-          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs"
+            disabled={updateStatusState?.loading}
+            onClick={onRecheckUpdate}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", updateStatusState?.loading && "animate-spin")} />
+            Check for updates
+          </Button>
         </div>
       )}
       {healthState?.loading && (
@@ -491,6 +573,8 @@ function InstalledAppTableSection({
   shellAppId,
   canManageApps,
   busyAction,
+  updateStatusByApp,
+  onLoadUpdateStatus,
   onAction,
   onSwitchRuntime,
   onSetDevelopmentMode,
@@ -505,6 +589,10 @@ function InstalledAppTableSection({
   shellAppId: string;
   canManageApps: boolean;
   busyAction: string | null;
+  // Update-available state is owned by the page (shared with the header "Check updates" button); the
+  // section only reads it and asks the page to (re)load a single app's status.
+  updateStatusByApp: Record<string, UpdateStatusState>;
+  onLoadUpdateStatus: (app: CoreApp) => void | Promise<unknown>;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
@@ -512,7 +600,6 @@ function InstalledAppTableSection({
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
   const [healthByApp, setHealthByApp] = useState<Record<string, RuntimeHealthState>>({});
-  const [updateStatusByApp, setUpdateStatusByApp] = useState<Record<string, UpdateStatusState>>({});
 
   useEffect(() => {
     const appIds = new Set(apps.map((app) => app.id));
@@ -521,10 +608,6 @@ function InstalledAppTableSection({
       return next.size === current.size ? current : next;
     });
     setHealthByApp((current) => {
-      const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
-      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
-    });
-    setUpdateStatusByApp((current) => {
       const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
       return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
     });
@@ -571,45 +654,6 @@ function InstalledAppTableSection({
     }
   }, [coreOrigin]);
 
-  // Read-only update-available probe (light registry lookup in Core). Run on demand when a row is
-  // expanded — never for every row on load — so the N registry lookups stay opt-in.
-  const loadUpdateStatus = useCallback(async (app: CoreApp) => {
-    setUpdateStatusByApp((current) => ({
-      ...current,
-      [app.id]: {
-        loading: true,
-        error: null,
-        status: current[app.id]?.status ?? null,
-      },
-    }));
-
-    try {
-      const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/update-status`, { credentials: "include" });
-      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-      if (!response.ok) {
-        throw new Error(await readCoreError(response));
-      }
-      const status = (await response.json()) as AppUpdateStatusResponse;
-      setUpdateStatusByApp((current) => ({
-        ...current,
-        [app.id]: { loading: false, error: null, status },
-      }));
-    } catch (error) {
-      if (isAuthRequiredRedirectError(error)) {
-        return;
-      }
-
-      setUpdateStatusByApp((current) => ({
-        ...current,
-        [app.id]: {
-          loading: false,
-          error: error instanceof Error ? error.message : "Update status is unavailable.",
-          status: current[app.id]?.status ?? null,
-        },
-      }));
-    }
-  }, [coreOrigin]);
-
   const toggleAppExpanded = (app: CoreApp) => {
     const shouldExpand = !expandedAppIds.has(app.id);
     setExpandedAppIds((current) => {
@@ -624,7 +668,7 @@ function InstalledAppTableSection({
 
     if (shouldExpand) {
       void loadAppHealth(app);
-      void loadUpdateStatus(app);
+      void onLoadUpdateStatus(app);
     }
   };
 
@@ -657,9 +701,6 @@ function InstalledAppTableSection({
                 const expanded = expandedAppIds.has(app.id);
                 const healthState = healthByApp[app.id];
                 const updateStatusState = updateStatusByApp[app.id];
-                // A live source runtime adopts its manifest on restart and has no reviewed-update path,
-                // so the Update affordance is hidden in favour of the "Live" badge (see CoreApp.live).
-                const canUpdate = canManageApps && !app.system && !app.live && app.capabilities.includes("update");
 
                 return (
                   <Fragment key={app.id}>
@@ -670,6 +711,7 @@ function InstalledAppTableSection({
                       healthLoading={healthState?.loading ?? false}
                       canManageApps={canManageApps}
                       busyAction={busyAction}
+                      updateStatusState={updateStatusState}
                       onToggleExpanded={() => toggleAppExpanded(app)}
                       onAction={onAction}
                       onSwitchRuntime={onSwitchRuntime}
@@ -685,9 +727,7 @@ function InstalledAppTableSection({
                             updateStatusState={updateStatusState}
                             canConfigurePublicOrigins={canManageApps}
                             onConfigurePublicOrigins={() => onOpenPanel(app, "settings", { settingsTab: "publicOrigins" })}
-                            canUpdate={canUpdate}
-                            onOpenUpdate={() => onOpenPanel(app, "update")}
-                            onRecheckUpdate={() => void loadUpdateStatus(app)}
+                            onRecheckUpdate={() => void onLoadUpdateStatus(app)}
                           />
                         </TableCell>
                       </TableRow>
@@ -710,6 +750,7 @@ function InstalledAppRow({
   healthLoading,
   canManageApps,
   busyAction,
+  updateStatusState,
   onToggleExpanded,
   onAction,
   onSwitchRuntime,
@@ -722,6 +763,7 @@ function InstalledAppRow({
   healthLoading: boolean;
   canManageApps: boolean;
   busyAction: string | null;
+  updateStatusState?: UpdateStatusState;
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
@@ -736,8 +778,11 @@ function InstalledAppRow({
   // backups, update, and remove stay gated on !app.system via canControl.
   const canConfigure = canManageApps;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
-  // Update menu item is hidden and the "Live" badge is shown instead. See CoreApp.live.
+  // Update affordance is hidden and the "Live" badge is shown instead. See CoreApp.live.
   const canUpdate = canControl && !app.live && app.capabilities.includes("update");
+  // The Update button is promoted out of the actions menu into the row: it appears only once an
+  // update-status probe (row expand or the header "Check updates") has confirmed one is available.
+  const updateAvailable = canUpdate && (updateStatusState?.status?.updateAvailable ?? false);
   const canRemove = canControl && app.capabilities.includes("remove");
   // Development Mode is a per-source-runtime toggle (localCommand + Core reports developmentMode).
   // Surface it in the actions menu only for the *selected* source runtime, so an operator can flip
@@ -821,6 +866,19 @@ function InstalledAppRow({
       </TableCell>
       <TableCell>
         <div className="flex items-center justify-end gap-1">
+          {updateAvailable && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="Update available — review and apply"
+              aria-label="Update available — review and apply"
+              className="text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
+              onClick={() => onOpenPanel(app, "update")}
+            >
+              <ArrowUpCircle className="h-4 w-4" />
+            </Button>
+          )}
           {canControl && (running ? (
             <IconButton title="Stop app" disabled={isBusy("stop")} onClick={() => onAction(app, "stop")}>
               {isBusy("stop") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
@@ -839,7 +897,6 @@ function InstalledAppRow({
             app={app}
             canBackup={canBackup}
             canConfigure={canConfigure}
-            canUpdate={canUpdate}
             canRemove={canRemove}
             devRuntime={canManageApps ? selectedDevRuntime : undefined}
             devWillRestart={!app.system && running}
@@ -945,7 +1002,6 @@ function InstalledAppActionsMenu({
   app,
   canBackup,
   canConfigure,
-  canUpdate,
   canRemove,
   devRuntime,
   devWillRestart,
@@ -956,7 +1012,6 @@ function InstalledAppActionsMenu({
   app: CoreApp;
   canBackup: boolean;
   canConfigure: boolean;
-  canUpdate: boolean;
   canRemove: boolean;
   // The selected source runtime whose Development Mode can be toggled here (undefined when the
   // selected runtime is not a source runtime, or the operator cannot manage apps).
@@ -967,7 +1022,7 @@ function InstalledAppActionsMenu({
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onOpenPanel: OpenAppPanel;
 }) {
-  const hasMenuActions = Boolean(devRuntime) || canBackup || canConfigure || canUpdate || canRemove;
+  const hasMenuActions = Boolean(devRuntime) || canBackup || canConfigure || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -1004,7 +1059,7 @@ function InstalledAppActionsMenu({
                 </div>
               </div>
             </DropdownMenuItem>
-            {(canBackup || canConfigure || canUpdate || canRemove) && <DropdownMenuSeparator />}
+            {(canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
           </>
         )}
         {canBackup && (
@@ -1013,18 +1068,14 @@ function InstalledAppActionsMenu({
             Backups
           </DropdownMenuItem>
         )}
-        {(canConfigure || canUpdate) && <DropdownMenuSeparator />}
         {canConfigure && (
-          <DropdownMenuItem onClick={() => onOpenPanel(app, "settings")}>
-            <Settings2 className="h-4 w-4" />
-            Settings
-          </DropdownMenuItem>
-        )}
-        {canUpdate && (
-          <DropdownMenuItem onClick={() => onOpenPanel(app, "update")}>
-            <Upload className="h-4 w-4" />
-            Update
-          </DropdownMenuItem>
+          <>
+            {canBackup && <DropdownMenuSeparator />}
+            <DropdownMenuItem onClick={() => onOpenPanel(app, "settings")}>
+              <Settings2 className="h-4 w-4" />
+              Settings
+            </DropdownMenuItem>
+          </>
         )}
         {canRemove && (
           <>

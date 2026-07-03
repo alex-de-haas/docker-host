@@ -1329,7 +1329,6 @@ export function ShellClient({
             onConfigureSource={configureAppSource}
             onClearSource={clearAppSource}
             onSetDevelopmentMode={configureAppDevelopmentMode}
-            onReloadUpdatePlan={loadUpdatePlan}
             onApplyUpdate={applyUpdate}
             onRemove={removeApp}
           />
