@@ -166,11 +166,16 @@ export function InstalledAppsPage({
       });
       await Promise.all(workers);
 
+      const checked = results.filter(Boolean).length;
       const available = results.filter((status) => status?.updateAvailable).length;
-      const failed = targets.length - results.filter(Boolean).length;
+      const failed = targets.length - checked;
       const failedNote = failed > 0 ? `${failed} app${failed === 1 ? "" : "s"} could not be checked.` : undefined;
       if (available > 0) {
         toast.success(`${available} update${available === 1 ? "" : "s"} available`, { description: failedNote });
+      } else if (checked === 0) {
+        // Every probe failed (e.g. Core unreachable): nothing was actually checked, so a clean
+        // "up to date"/"no updates" result would be misleading — surface the failure instead.
+        toast.error("Update check failed", { description: "No apps could be checked. Is Core reachable?" });
       } else if (failed > 0) {
         toast.warning("No updates found", { description: failedNote });
       } else {
@@ -192,7 +197,7 @@ export function InstalledAppsPage({
               <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
             </Button>
             {canManageApps && (
-              <Button variant="outline" onClick={() => void checkAllUpdates()} disabled={checkingUpdates}>
+              <Button variant="outline" onClick={() => void checkAllUpdates()} disabled={checkingUpdates || isRefreshing}>
                 {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
                 Check updates
               </Button>

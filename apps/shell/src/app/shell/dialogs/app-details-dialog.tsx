@@ -836,9 +836,11 @@ function UpdatePanel({ app, detail, busyAction, onApplyUpdate }: { app: CoreApp;
 
   // sourceConfigured is optional; only treat an explicit `false` from Core as "not configured".
   const sourceMissing = plan?.sourceConfigured === false;
-  // The plan never switches the runtime — that is the Runtime switcher's job — so currentRuntime and
-  // targetRuntime match here. Surface the card only on the defensive off-chance they diverge.
-  const runtimeChanges = Boolean(plan) && (plan!.currentRuntime || "none") !== plan!.targetRuntime;
+  // The plan never switches the runtime — that is the Runtime switcher's job — so this stays hidden in
+  // the normal flow. Show the card only when Core reports a current runtime that actually differs from
+  // the target (a defensive off-chance); a missing currentRuntime (older Core) is treated as "no
+  // change", not as "none", so it never falsely lights the card.
+  const runtimeChanges = plan?.currentRuntime != null && plan.currentRuntime !== plan.targetRuntime;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -846,7 +848,7 @@ function UpdatePanel({ app, detail, busyAction, onApplyUpdate }: { app: CoreApp;
         {sourceMissing && (
           <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>This plan was built from the source Core recorded at install. To compare against a different folder or URL, set a source override in Settings &rarr; Source, then Recheck.</span>
+            <span>This plan was built from the source Core recorded at install and cannot detect edits to the original. To compare against a specific folder or URL, set a source override in Settings &rarr; Source, then reopen Update to rebuild the plan.</span>
           </div>
         )}
         {detail.loading ? (
@@ -857,7 +859,7 @@ function UpdatePanel({ app, detail, busyAction, onApplyUpdate }: { app: CoreApp;
               <FactCard label="Version" value={`${plan.currentVersion} to ${plan.targetVersion}`} />
               <FactCard label="Backup" value={plan.willCreatePreUpdateBackup ? "pre-update" : "none"} />
               {runtimeChanges && (
-                <FactCard label="Runtime" value={`${plan.currentRuntime || "none"} to ${plan.targetRuntime}`} />
+                <FactCard label="Runtime" value={`${plan.currentRuntime} to ${plan.targetRuntime}`} />
               )}
             </div>
             <div className="rounded-md border p-4">
