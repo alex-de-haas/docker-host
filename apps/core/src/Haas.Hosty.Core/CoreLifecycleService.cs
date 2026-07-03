@@ -982,16 +982,19 @@ internal sealed class CoreLifecycleService(
     public async Task<AppMetricsResponse> GetMetricsAsync(string appId, int? rangeSeconds, CancellationToken cancellationToken = default)
     {
         _ = await RequireAppAsync(appId, cancellationToken);
+        // Clamp locally so an empty/unavailable-backend response still echoes the effective range that
+        // chart axes rely on; a reachable backend re-clamps identically and echoes the same value.
+        var range = Math.Clamp(rangeSeconds ?? DefaultMetricsRangeSeconds, 1, MaxMetricsRangeSeconds);
         var url = await ResolveBackendQueryUrlAsync(cancellationToken);
         if (url is null || backendClient is null)
         {
-            return new AppMetricsResponse(appId, 0, []);
+            return new AppMetricsResponse(appId, range, []);
         }
 
-        // The backend clamps the range and echoes it; its response shape is identical, so it passes
-        // straight through. An unreachable backend degrades to an empty series (never a failure).
+        // The backend's response shape is identical, so it passes straight through. An unreachable
+        // backend degrades to an empty series with the effective range (never a failure).
         return await backendClient.GetMetricsAsync(url, appId, rangeSeconds, cancellationToken)
-            ?? new AppMetricsResponse(appId, 0, []);
+            ?? new AppMetricsResponse(appId, range, []);
     }
 
     // Observability v1 OTLP-logs read path (P4): the app's structured log records held in the in-memory
@@ -1003,14 +1006,15 @@ internal sealed class CoreLifecycleService(
     public async Task<AppOtlpLogsResponse> GetOtlpLogsAsync(string appId, int? rangeSeconds, int? minSeverity, int? limit, CancellationToken cancellationToken = default)
     {
         _ = await RequireAppAsync(appId, cancellationToken);
+        var range = Math.Clamp(rangeSeconds ?? DefaultLogsRangeSeconds, 1, MaxLogsRangeSeconds);
         var url = await ResolveBackendQueryUrlAsync(cancellationToken);
         if (url is null || backendClient is null)
         {
-            return new AppOtlpLogsResponse(appId, 0, []);
+            return new AppOtlpLogsResponse(appId, range, []);
         }
 
         return await backendClient.GetOtlpLogsAsync(url, appId, rangeSeconds, minSeverity, limit, cancellationToken)
-            ?? new AppOtlpLogsResponse(appId, 0, []);
+            ?? new AppOtlpLogsResponse(appId, range, []);
     }
 
     // Observability v1 cross-resource OTLP-logs read path: structured log records merged across ALL
@@ -1028,18 +1032,23 @@ internal sealed class CoreLifecycleService(
         string? query,
         CancellationToken cancellationToken = default)
     {
+        var range = Math.Clamp(rangeSeconds ?? DefaultLogsRangeSeconds, 1, MaxLogsRangeSeconds);
         var url = await ResolveBackendQueryUrlAsync(cancellationToken);
         if (url is null || backendClient is null)
         {
-            return new FleetOtlpLogsResponse(0, 0, []);
+            return new FleetOtlpLogsResponse(range, 0, []);
         }
 
         // The backend does the cross-app merge/filter/cap; Core enriches each record with its app's
-        // display name (which the backend, keyed by app id, does not carry).
+        // display name (which the backend, keyed by app id, does not carry) — loading the registry only
+        // when there is something to enrich.
         var backend = await backendClient.GetFleetLogsAsync(url, rangeSeconds, minSeverity, limit, JoinAppIds(appIds), query, cancellationToken);
-        return backend is null
-            ? new FleetOtlpLogsResponse(0, 0, [])
-            : TelemetryBackendMapping.MapFleetLogs(backend, await ResolveAppNamesAsync(cancellationToken));
+        if (backend is null)
+        {
+            return new FleetOtlpLogsResponse(range, 0, []);
+        }
+
+        return TelemetryBackendMapping.MapFleetLogs(backend, await ResolveNamesForAsync(backend.Records, cancellationToken));
     }
 
     // Observability v1 traces read path: recent traces merged across ALL installed apps (optionally
@@ -1056,18 +1065,22 @@ internal sealed class CoreLifecycleService(
         string? query,
         CancellationToken cancellationToken = default)
     {
+        var range = Math.Clamp(rangeSeconds ?? DefaultTracesRangeSeconds, 1, MaxTracesRangeSeconds);
         var url = await ResolveBackendQueryUrlAsync(cancellationToken);
         if (url is null || backendClient is null)
         {
-            return new FleetTracesResponse(0, 0, []);
+            return new FleetTracesResponse(range, 0, []);
         }
 
         // The backend groups spans into trace summaries; Core enriches root + contributing apps with
-        // their display names.
+        // their display names, loading the registry only when there is something to enrich.
         var backend = await backendClient.GetFleetTracesAsync(url, rangeSeconds, limit, JoinAppIds(appIds), query, cancellationToken);
-        return backend is null
-            ? new FleetTracesResponse(0, 0, [])
-            : TelemetryBackendMapping.MapFleetTraces(backend, await ResolveAppNamesAsync(cancellationToken));
+        if (backend is null)
+        {
+            return new FleetTracesResponse(range, 0, []);
+        }
+
+        return TelemetryBackendMapping.MapFleetTraces(backend, await ResolveNamesForAsync(backend.Traces, cancellationToken));
     }
 
     // Observability v1 trace-detail read path: every stored span of one trace merged across ALL
@@ -1089,11 +1102,14 @@ internal sealed class CoreLifecycleService(
         }
 
         // The backend merges + orders the trace's spans and computes the envelope; Core enriches each
-        // span with its app's display name.
+        // span with its app's display name, loading the registry only when there are spans.
         var backend = await backendClient.GetTraceAsync(url, trimmed, cancellationToken);
-        return backend is null
-            ? new TraceDetailResponse(trimmed, 0, 0, [])
-            : TelemetryBackendMapping.MapTraceDetail(backend, await ResolveAppNamesAsync(cancellationToken));
+        if (backend is null)
+        {
+            return new TraceDetailResponse(trimmed, 0, 0, []);
+        }
+
+        return TelemetryBackendMapping.MapTraceDetail(backend, await ResolveNamesForAsync(backend.Spans, cancellationToken));
     }
 
     // The telemetry backend's query endpoint URL (resolved fresh from the backend system app's declared
@@ -1106,6 +1122,14 @@ internal sealed class CoreLifecycleService(
             string.Equals(candidate.Key, CollectorBootstrap.QueryEndpointKey, StringComparison.Ordinal));
         return string.IsNullOrWhiteSpace(endpoint?.Url) ? null : endpoint.Url.TrimEnd('/');
     }
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyNames =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    // Resolves display names only when the backend actually returned rows to enrich — an empty (or
+    // null, from a missing JSON field) collection skips the registry load entirely.
+    private async Task<IReadOnlyDictionary<string, string>> ResolveNamesForAsync<T>(IReadOnlyList<T>? items, CancellationToken cancellationToken)
+        => items is { Count: > 0 } ? await ResolveAppNamesAsync(cancellationToken) : EmptyNames;
 
     // App id → display name for the fleet mapping (the backend is keyed by id and carries no name).
     private async Task<IReadOnlyDictionary<string, string>> ResolveAppNamesAsync(CancellationToken cancellationToken)

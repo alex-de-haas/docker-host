@@ -53,6 +53,27 @@ public sealed class TelemetryBackendMappingTests
     }
 
     [Fact]
+    public void Map_NullCollectionsFromMissingJsonFieldsAreEmptyNotThrow()
+    {
+        // A backend response whose collection field was absent deserializes to null; mapping must
+        // coalesce it rather than throw.
+        Assert.Empty(TelemetryBackendMapping.MapFleetLogs(new BackendFleetLogsResponse(300, 0, null!), Names).Records);
+        Assert.Empty(TelemetryBackendMapping.MapFleetTraces(new BackendTracesResponse(300, 0, null!), Names).Traces);
+        Assert.Empty(TelemetryBackendMapping.MapTraceDetail(new BackendTraceDetailResponse("t", 0, 0, null!), Names).Spans);
+    }
+
+    [Fact]
+    public void MapFleetTraces_NullAppIdsInSummaryIsEmptyNotThrow()
+    {
+        var backend = new BackendTracesResponse(300, 0,
+        [
+            new BackendTraceSummary("t1", "root", "server", "com.acme.web", true, 0, 0, 1, 0, AppIds: null!),
+        ]);
+
+        Assert.Empty(Assert.Single(TelemetryBackendMapping.MapFleetTraces(backend, Names).Traces).Apps);
+    }
+
+    [Fact]
     public void MapTraceDetail_EnrichesEachSpanAppName()
     {
         var backend = new BackendTraceDetailResponse("trace1", 10.0, 5.0,

@@ -127,8 +127,9 @@ internal static class TelemetryBackendMapping
 {
     public static FleetOtlpLogsResponse MapFleetLogs(BackendFleetLogsResponse backend, IReadOnlyDictionary<string, string> names)
     {
-        var records = new List<FleetOtlpLogRecord>(backend.Records.Count);
-        foreach (var record in backend.Records)
+        var source = backend.Records ?? [];
+        var records = new List<FleetOtlpLogRecord>(source.Count);
+        foreach (var record in source)
         {
             records.Add(new FleetOtlpLogRecord(
                 record.AppId,
@@ -147,11 +148,13 @@ internal static class TelemetryBackendMapping
 
     public static FleetTracesResponse MapFleetTraces(BackendTracesResponse backend, IReadOnlyDictionary<string, string> names)
     {
-        var traces = new List<FleetTraceSummary>(backend.Traces.Count);
-        foreach (var trace in backend.Traces)
+        var source = backend.Traces ?? [];
+        var traces = new List<FleetTraceSummary>(source.Count);
+        foreach (var trace in source)
         {
-            var apps = new List<TraceAppRef>(trace.AppIds.Count);
-            foreach (var appId in trace.AppIds)
+            var appIds = trace.AppIds ?? [];
+            var apps = new List<TraceAppRef>(appIds.Count);
+            foreach (var appId in appIds)
             {
                 apps.Add(new TraceAppRef(appId, ResolveName(names, appId)));
             }
@@ -175,8 +178,9 @@ internal static class TelemetryBackendMapping
 
     public static TraceDetailResponse MapTraceDetail(BackendTraceDetailResponse backend, IReadOnlyDictionary<string, string> names)
     {
-        var spans = new List<TraceDetailSpan>(backend.Spans.Count);
-        foreach (var span in backend.Spans)
+        var source = backend.Spans ?? [];
+        var spans = new List<TraceDetailSpan>(source.Count);
+        foreach (var span in source)
         {
             spans.Add(new TraceDetailSpan(
                 span.AppId,
