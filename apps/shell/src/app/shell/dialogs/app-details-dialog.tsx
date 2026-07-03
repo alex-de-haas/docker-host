@@ -6,7 +6,6 @@ import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle,
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, formatUpdateChange, isAppAutostartEnabled } from "../app-helpers";
@@ -51,7 +50,6 @@ export function AppDetailsDialog({
   onConfigureSource,
   onClearSource,
   onSetDevelopmentMode,
-  onReloadUpdatePlan,
   onApplyUpdate,
   onRemove,
 }: {
@@ -74,7 +72,6 @@ export function AppDetailsDialog({
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
-  onReloadUpdatePlan: (app: CoreApp, manifestPath?: string) => void;
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
 }) {
@@ -122,7 +119,7 @@ export function AppDetailsDialog({
           <InlineError message="You do not have permission to manage app settings." />
         ))}
         {view === "update" && (canMutateApp ? (
-          <UpdatePanel app={app} detail={detail} busyAction={busyAction} onReloadPlan={onReloadUpdatePlan} onApplyUpdate={onApplyUpdate} />
+          <UpdatePanel app={app} detail={detail} busyAction={busyAction} onApplyUpdate={onApplyUpdate} />
         ) : (
           <InlineError message="System app update controls are not available in Shell." />
         ))}
@@ -817,25 +814,12 @@ function SourceForm({
   );
 }
 
-function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: { app: CoreApp; detail: DetailPanelState; busyAction: string | null; onReloadPlan: (app: CoreApp, manifestPath?: string) => void; onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void }) {
+function UpdatePanel({ app, detail, busyAction, onApplyUpdate }: { app: CoreApp; detail: DetailPanelState; busyAction: string | null; onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void }) {
   const plan = detail.updatePlan;
-
-  // Operator-supplied source folder or manifest URL, plus the source the shown plan was built
-  // from. Reset while rendering when the app identity changes instead of in an effect.
-  // https://react.dev/learn/you-might-not-need-an-effect
-  const [source, setSource] = useState("");
-  const [lastCheckedSource, setLastCheckedSource] = useState("");
-  const [prevAppId, setPrevAppId] = useState(app.id);
-  if (prevAppId !== app.id) {
-    setPrevAppId(app.id);
-    setSource("");
-    setLastCheckedSource("");
-  }
 
   // A live source runtime adopts its manifest on restart and has no reviewed-update path; the Update
   // affordance is normally hidden, but a deep link can still open this view, so explain rather than
   // running a plan that Core would refuse (see CoreApp.live, runtime-app-marketplace.md "Live source").
-  // Placed after the hooks above so render order stays stable (react-hooks/rules-of-hooks).
   if (app.live) {
     return (
       <DialogBody>
@@ -850,43 +834,21 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
     );
   }
 
-  const trimmedSource = source.trim();
-  const manifestPath = trimmedSource || undefined;
   // sourceConfigured is optional; only treat an explicit `false` from Core as "not configured".
   const sourceMissing = plan?.sourceConfigured === false;
-  // The shown plan was built from `lastCheckedSource`; if the field changed since, applying would
-  // hit Core's plan-digest guard, so require a Recheck first instead of failing with a raw error.
-  const planStale = Boolean(plan) && trimmedSource !== lastCheckedSource;
-  const updateInputId = `${app.id}-update-source`;
-
-  const recheck = () => {
-    setLastCheckedSource(trimmedSource);
-    onReloadPlan(app, manifestPath);
-  };
+  // The plan never switches the runtime — that is the Runtime switcher's job — so this stays hidden in
+  // the normal flow. Show the card only when Core reports a current runtime that actually differs from
+  // the target (a defensive off-chance); a missing currentRuntime (older Core) is treated as "no
+  // change", not as "none", so it never falsely lights the card.
+  const runtimeChanges = plan?.currentRuntime != null && plan.currentRuntime !== plan.targetRuntime;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div className="w-full space-y-1.5 sm:max-w-md">
-          <Label htmlFor={updateInputId}>Source folder or manifest URL</Label>
-          <Input
-            id={updateInputId}
-            placeholder="/srv/apps/my-app or https://example.com/manifest.json"
-            value={source}
-            onChange={(event) => setSource(event.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">Leave blank to use the source Core recorded when the app was installed.</p>
-        </div>
-        <Button variant="outline" onClick={recheck} disabled={detail.loading}>
-          <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin")} />
-          Recheck
-        </Button>
-      </div>
       <DialogBody className="space-y-4">
         {sourceMissing && (
           <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>Recheck only read Core&apos;s internal copy of this app, so it cannot detect edits to the original source. Enter the source folder or manifest URL above and Recheck again to compare against it.</span>
+            <span>This plan was built from the source Core recorded at install and cannot detect edits to the original. To compare against a specific folder or URL, set a source override in Settings &rarr; Source, then reopen Update to rebuild the plan.</span>
           </div>
         )}
         {detail.loading ? (
@@ -895,9 +857,10 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
           <>
             <div className="grid gap-3 sm:grid-cols-2">
               <FactCard label="Version" value={`${plan.currentVersion} to ${plan.targetVersion}`} />
-              <FactCard label="Runtime" value={`${plan.currentRuntime || "none"} to ${plan.targetRuntime}`} />
               <FactCard label="Backup" value={plan.willCreatePreUpdateBackup ? "pre-update" : "none"} />
-              <FactCard label="Plan digest" value={plan.planDigest.slice(0, 16)} />
+              {runtimeChanges && (
+                <FactCard label="Runtime" value={`${plan.currentRuntime} to ${plan.targetRuntime}`} />
+              )}
             </div>
             <div className="rounded-md border p-4">
               <h3 className="mb-2 text-sm font-medium">Changes</h3>
@@ -916,10 +879,7 @@ function UpdatePanel({ app, detail, busyAction, onReloadPlan, onApplyUpdate }: {
       </DialogBody>
       {!detail.loading && plan && (
         <DialogFooter className="sm:items-center">
-          {planStale && (
-            <p className="text-xs text-amber-700 dark:text-amber-300 sm:mr-auto">Source changed since the last check. Recheck before applying.</p>
-          )}
-          <Button onClick={() => onApplyUpdate(app, plan, manifestPath)} disabled={plan.changes.length === 0 || planStale || busyAction === `${app.id}:update`}>
+          <Button onClick={() => onApplyUpdate(app, plan)} disabled={plan.changes.length === 0 || busyAction === `${app.id}:update`}>
             {busyAction === `${app.id}:update` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Apply update
           </Button>
