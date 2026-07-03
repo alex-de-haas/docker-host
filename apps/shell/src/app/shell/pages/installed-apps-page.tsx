@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpCircle,
   Boxes,
@@ -70,6 +70,7 @@ export function InstalledAppsPage({
   canManageApps,
   loading,
   busyAction,
+  updateStatusInvalidations,
   onRefresh,
   onInstall,
   onAction,
@@ -85,6 +86,9 @@ export function InstalledAppsPage({
   canManageApps: boolean;
   loading: boolean;
   busyAction: string | null;
+  // Per-app counter (owned by ShellClient) that advances when a mutation resets an app's artifact
+  // locks; watched below to re-probe update-status so a just-applied update clears the row icon.
+  updateStatusInvalidations: Record<string, number>;
   onRefresh: () => void;
   onInstall: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
@@ -144,6 +148,29 @@ export function InstalledAppsPage({
     },
     [coreOrigin],
   );
+
+  // ShellClient bumps an app's counter after a mutation that resets its artifact locks (apply update,
+  // switch runtime). The cached verdict for that app is now stale — left alone it would keep showing
+  // "Update available" and the row Update icon until a manual re-check — so re-probe it. `refresh()`
+  // has already reloaded the app list by the time the counter advances, so the app is present here.
+  // Seed the ref with the counters as they stand on mount: any mutation from earlier in the session is
+  // treated as already-seen (rows are collapsed and probe on-demand when expanded), so only new bumps
+  // while this page is mounted trigger an automatic re-probe.
+  const probedInvalidationsRef = useRef<Record<string, number>>({ ...updateStatusInvalidations });
+  useEffect(() => {
+    const appsById = new Map<string, CoreApp>([...runtimeApps, ...systemApps].map((app) => [app.id, app]));
+    for (const [appId, nonce] of Object.entries(updateStatusInvalidations)) {
+      if (probedInvalidationsRef.current[appId] === nonce) {
+        continue;
+      }
+      const app = appsById.get(appId);
+      if (!app) {
+        continue;
+      }
+      probedInvalidationsRef.current[appId] = nonce;
+      void loadUpdateStatus(app);
+    }
+  }, [updateStatusInvalidations, runtimeApps, systemApps, loadUpdateStatus]);
 
   // Fleet "Check updates": probe every runtime app that has a reviewed-update path. Live source apps
   // (manifest adopted on restart) and apps without the update capability are skipped — mirrors the

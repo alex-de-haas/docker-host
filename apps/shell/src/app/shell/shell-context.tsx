@@ -22,6 +22,10 @@ export type ShellContextValue = {
   // have data. Gates both the sidebar section and direct navigation to /observability/*.
   observabilityAvailable: boolean;
   busyAction: string | null;
+  // Per-app counter bumped whenever a mutation resets an app's artifact locks (apply update, switch
+  // runtime), which makes any cached "update available" verdict stale. The Installed Apps page watches
+  // it to re-probe the affected app so the row Update icon does not linger after the update lands.
+  updateStatusInvalidations: Record<string, number>;
 };
 
 export type ShellActionsContextValue = {
