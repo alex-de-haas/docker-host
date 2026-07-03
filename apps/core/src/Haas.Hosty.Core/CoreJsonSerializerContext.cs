@@ -142,6 +142,10 @@ internal static class CoreJson
 [JsonSerializable(typeof(FleetOtlpLogsResponse))]
 [JsonSerializable(typeof(FleetTracesResponse))]
 [JsonSerializable(typeof(TraceDetailResponse))]
+// Phase 2 read proxy: the telemetry backend's appId-keyed fleet responses Core deserializes.
+[JsonSerializable(typeof(BackendFleetLogsResponse))]
+[JsonSerializable(typeof(BackendTracesResponse))]
+[JsonSerializable(typeof(BackendTraceDetailResponse))]
 [JsonSerializable(typeof(AppUpdateStatusResponse))]
 [JsonSerializable(typeof(UserManagementStateResponse))]
 [JsonSerializable(typeof(UserInvitationsResponse))]

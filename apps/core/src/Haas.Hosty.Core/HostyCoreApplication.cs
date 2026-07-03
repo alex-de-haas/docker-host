@@ -64,6 +64,8 @@ internal static class HostyCoreApplication
         // scrape. Registered as a singleton the exposition endpoint reads and run as a hosted service.
         builder.Services.AddSingleton<DockerStatsExposition>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DockerStatsExposition>());
+        // Phase 2 read proxy: HTTP client Core uses to query the telemetry backend.
+        builder.Services.AddSingleton<TelemetryBackendClient>();
         builder.Services.AddSingleton<IIngressController>(sp =>
         {
             var ingressConfig = sp.GetRequiredService<HostyCoreRuntimeConfig>();
