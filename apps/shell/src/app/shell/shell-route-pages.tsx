@@ -83,6 +83,7 @@ export function ShellInstalledAppsRoute() {
         canManageApps={shell.canManageApps}
         loading={shell.state.loading}
         busyAction={shell.busyAction}
+        updateStatusInvalidations={shell.updateStatusInvalidations}
         onRefresh={() => void shellActions.refresh()}
         onInstall={shellActions.openInstallDialog}
         onAction={shellActions.runAppAction}

@@ -95,6 +95,10 @@ export function ShellClient({
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
   const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
   const [sharedMountsOpen, setSharedMountsOpen] = useState(false);
+  // Applying an update / switching runtime resets Core's artifact locks, so the cached update-status
+  // owned by the Installed Apps page goes stale (it would keep showing "Update available"). We can't
+  // reach into that page's state from here, so we bump a per-app counter it watches to re-probe.
+  const [updateStatusInvalidations, setUpdateStatusInvalidations] = useState<Record<string, number>>({});
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(false);
@@ -342,6 +346,10 @@ export function ShellClient({
     [appEndpoint, canManageApps, getStandaloneAppHref, router, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference, workspace?.appId],
   );
 
+  const invalidateUpdateStatus = useCallback((appId: string) => {
+    setUpdateStatusInvalidations((current) => ({ ...current, [appId]: (current[appId] ?? 0) + 1 }));
+  }, []);
+
   const runAppAction = useCallback(
     async (app: CoreApp, action: AppAction) => {
       const actionKey = `${app.id}:${action}`;
@@ -394,6 +402,7 @@ export function ShellClient({
           planDigest: plan.planDigest,
         });
         await refresh();
+        invalidateUpdateStatus(app.id);
         toast.success("Runtime switched", {
           description: `${app.displayName}: ${plan.currentRuntime || "none"} to ${plan.targetRuntime}`,
         });
@@ -409,7 +418,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, coreOrigin, refresh, sendCsrfJson],
+    [appEndpoint, coreOrigin, invalidateUpdateStatus, refresh, sendCsrfJson],
   );
 
   const loadAppBackups = useCallback(
@@ -857,6 +866,7 @@ export function ShellClient({
           selectedRuntime: plan.targetRuntime,
         });
         await refresh();
+        invalidateUpdateStatus(app.id);
         setActivePanel(null);
         toast.success("Update applied", { description: app.displayName });
       } catch (error) {
@@ -873,7 +883,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, refresh, sendCsrfJson],
+    [appEndpoint, invalidateUpdateStatus, refresh, sendCsrfJson],
   );
 
   const removeApp = useCallback(
@@ -1188,6 +1198,7 @@ export function ShellClient({
       canManageApps: Boolean(canManageApps),
       observabilityAvailable,
       busyAction,
+      updateStatusInvalidations,
     }),
     [
       activeUser,
@@ -1198,6 +1209,7 @@ export function ShellClient({
       runtimeApps,
       systemApps,
       uiRuntimeApps,
+      updateStatusInvalidations,
     ],
   );
 
