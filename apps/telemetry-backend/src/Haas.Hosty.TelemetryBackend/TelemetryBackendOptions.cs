@@ -52,8 +52,15 @@ internal sealed record TelemetryBackendOptions
         {
             DatabasePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DB_PATH"))
                 ?? Path.Combine(appData, "telemetry.db"),
-            MetricsScrapeUrl = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_METRICS_URL")),
-            DockerMetricsScrapeUrl = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DOCKER_METRICS_URL")),
+            // Collector Prometheus URL: explicit, else derived from the sibling-service URL Core injects
+            // via `dependsOn` (reachable over the per-app docker network, unlike a host-loopback URL).
+            MetricsScrapeUrl = FirstNonEmpty(
+                Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_METRICS_URL"),
+                Append(Environment.GetEnvironmentVariable("HOSTY_SERVICE_COLLECTOR_URL"), "/metrics")),
+            // Core's docker-stats endpoint: explicit, else derived from the Core origin Core injects.
+            DockerMetricsScrapeUrl = FirstNonEmpty(
+                Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DOCKER_METRICS_URL"),
+                Append(Environment.GetEnvironmentVariable("HOSTY_CORE_ORIGIN"), "/internal/telemetry/metrics")),
             LogsFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_LOGS_FILE"))
                 ?? Path.Combine(appData, "otlp-logs", "logs.jsonl"),
             TracesFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_TRACES_FILE"))
@@ -68,6 +75,10 @@ internal sealed record TelemetryBackendOptions
 
     private static string? FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(static v => !string.IsNullOrWhiteSpace(v));
+
+    // Appends a path to a base URL (trimming a duplicate slash), or null when the base is unset.
+    private static string? Append(string? baseUrl, string path)
+        => string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl.TrimEnd('/') + path;
 
     // Env values are culture-independent, so parse with the invariant culture (belt-and-braces even
     // with InvariantGlobalization on) — otherwise a comma-decimal host could misread "1.5".

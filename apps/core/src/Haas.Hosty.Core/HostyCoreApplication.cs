@@ -1340,6 +1340,9 @@ internal sealed class RuntimeAppSupervisorService(
                 // CollectorBootstrap.ContainerLogsFile / ContainerTracesFile.
                 lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.LogsRelativeDir);
                 lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.TracesRelativeDir);
+                // The telemetry backend (sibling service) writes its SQLite store into the same shared
+                // mount; provision the dir so it can create the database file (Phase 2).
+                lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.StoreRelativeDir);
             }
         }
         // Best-effort bootstrap: catch everything except cancellation so an unexpected failure here

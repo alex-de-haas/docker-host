@@ -1,16 +1,21 @@
 # Observability Phase 2 — telemetry backend as a system app
 
-Status: **2a implemented (PR#1); 2b–2d designed.** Successor to the shipped observability v1 (P3–P6 in
-[observability.md](observability.md)). This doc records the decision to **move the telemetry store and
-query API out of Core** into a dedicated telemetry-backend system app, and the boundary that keeps Core
-from exiting entirely.
+Status: **2a + 2b + 2c + manifest implemented; 2c-shell (Shell) + 2d (SSE) remain.** Successor to the
+shipped observability v1 (P3–P6 in [observability.md](observability.md)). This doc records the decision
+to **move the telemetry store and query API out of Core** into a dedicated telemetry-backend system app,
+and the boundary that keeps Core from exiting entirely.
 
-**Implementation status.** 2a — the standalone `Haas.Hosty.TelemetryBackend` service
-(`apps/telemetry-backend/`): embedded SQLite store + retention, ingest loops (Prometheus scrape + file
-tails, copied parsers), the appId-keyed query API mirroring Core's observability reads, Dockerfile + CI
-image workflow, 19 unit tests — landed non-breaking in **PR#1** (Core untouched, still on its own
-stores). The cutover (2b Core-producer, 2c Core read-proxy, 2c-shell console-logs move) and the
-multi-service manifest wiring are **PR#2**.
+**Implementation status.**
+- **PR#1 (2a, merged)** — the standalone `Haas.Hosty.TelemetryBackend` service (`apps/telemetry-backend/`):
+  embedded SQLite store + retention, ingest loops (Prometheus scrape + file tails, copied parsers), the
+  appId-keyed query API mirroring Core's observability reads, Dockerfile + CI image, tests. Non-breaking.
+- **PR#2 (2b + 2c + manifest)** — the Core cutover: Core exposes `docker stats` at
+  `/internal/telemetry/metrics` (the backend scrapes it as a 2nd target — Prometheus, not OTLP push);
+  Core's 5 read methods proxy the backend via `TelemetryBackendClient` (enriching appId→display name);
+  the in-memory stores + scrape/tail loops + parsers are deleted; the collector app becomes a
+  **multi-service** app (otelcol + backend, shared `/etc/otelcol-contrib` mount, `query` endpoint Core
+  resolves). Console logs stay Core's on-demand `docker logs` (unchanged).
+- **Remaining** — 2c-shell (console logs → per-app dialog + section gating) and 2d (SSE realtime).
 
 ## Motivation
 

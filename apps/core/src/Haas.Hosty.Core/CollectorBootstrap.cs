@@ -40,6 +40,10 @@ internal static class CollectorBootstrap
     public const string TracesFileName = "traces.jsonl";
     public const string ContainerTracesFile = ContainerConfigDir + "/" + TracesRelativeDir + "/" + TracesFileName;
 
+    // The telemetry backend's embedded SQLite store lives here on the same shared mount (Phase 2). Core
+    // provisions it writable at bootstrap so the backend can create its database file.
+    public const string StoreRelativeDir = "store";
+
     // Host-side path of the OTLP-logs file Core tails, derived from the apps root. Mirrors
     // CoreLifecycleService.GetAppDataPath ({appsRoot}/{appId}/data) for the collector app, so the
     // scrape loop can find the same file the bootstrap provisions without taking a CoreLifecycleService
