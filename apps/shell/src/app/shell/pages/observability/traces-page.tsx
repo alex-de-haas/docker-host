@@ -40,6 +40,11 @@ const RANGES: { label: string; seconds: number }[] = [
   { label: "1h", seconds: 3600 },
 ];
 
+const TRACE_ROW_PADDING_X_PX = 12;
+const TRACE_DEPTH_GUIDE_STEP_PX = 18;
+const TRACE_TOGGLE_ICON_CENTER_PX = 7;
+const TRACE_DETAIL_GUIDE_CONTENT_GAP_PX = 16;
+
 type ListState = { loading: boolean; error: string | null; response: FleetTracesResponse | null };
 type DetailState = { loading: boolean; error: string | null; response: TraceDetailResponse | null };
 
@@ -459,7 +464,12 @@ function TraceWaterfall({
                         <td className="max-w-0 px-3 py-1.5">
                           <div className="flex min-w-0 items-center gap-1.5">
                             {Array.from({ length: row.depth }, (_, level) => (
-                              <span key={level} aria-hidden className="h-5 w-3 shrink-0 border-l border-border/60" />
+                              <span key={level} aria-hidden className="relative h-5 w-3 shrink-0">
+                                <span
+                                  className="absolute inset-y-0 block border-l border-border/60"
+                                  style={{ left: `${TRACE_TOGGLE_ICON_CENTER_PX}px` }}
+                                />
+                              </span>
                             ))}
                             <ChevronRight
                               className={cn(
@@ -502,8 +512,8 @@ function TraceWaterfall({
                         </td>
                       </tr>
                       {expanded && (
-                        <tr className="border-b bg-muted/20">
-                          <td colSpan={2} className="px-3 pb-3 pt-0.5">
+                        <tr className="border-b">
+                          <td colSpan={2} className="pb-0 pr-3 pt-0">
                             <SpanDetails span={row.span} traceStartMs={response.startUnixMs} depth={row.depth} attributes={attributes} />
                           </td>
                         </tr>
@@ -591,9 +601,9 @@ function SummaryTile({
   );
 }
 
-// Full-width detail panel for an expanded span: identity/timing facts as a grid, then the raw
-// attribute bag as an aligned key/value list. Rendered in its own table row so it gets the whole
-// width instead of being squeezed into the half-width name column.
+// Full-width details for an expanded span: identity/timing facts as a grid, then the raw attribute
+// bag as an aligned key/value list. Rendered in its own table row so it gets the whole width instead
+// of being squeezed into the half-width name column.
 function SpanDetails({
   span,
   traceStartMs,
@@ -607,42 +617,58 @@ function SpanDetails({
 }) {
   const isError = span.statusCode === "error";
   const status = span.statusMessage ? `${span.statusCode} · ${span.statusMessage}` : span.statusCode;
+  const guideLeftsPx = Array.from(
+    { length: depth },
+    (_, level) => TRACE_ROW_PADDING_X_PX + TRACE_TOGGLE_ICON_CENTER_PX + level * TRACE_DEPTH_GUIDE_STEP_PX,
+  );
+  const lastGuideLeftPx = guideLeftsPx.length > 0 ? guideLeftsPx[guideLeftsPx.length - 1] : null;
+  const contentPaddingLeftPx = lastGuideLeftPx === null ? 0 : lastGuideLeftPx + TRACE_DETAIL_GUIDE_CONTENT_GAP_PX;
   return (
-    <div className="space-y-3 rounded-md border bg-card/60 p-3" style={{ marginLeft: `${depth * 16}px` }}>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3">
-        <DetailField label="Span ID" value={span.spanId} />
-        <DetailField label="Parent" value={span.parentSpanId || "—"} />
-        <DetailField label="Service" value={span.appName || span.appId} mono={false} />
-        <DetailField label="Kind" value={span.kind} mono={false} />
-        <DetailField label="Start offset" value={`+${formatDuration(span.startUnixMs - traceStartMs)}`} />
-        <DetailField label="Duration" value={formatDuration(span.durationMs)} />
-        <DetailField label="Status" value={status} mono={false} tone={isError ? "error" : undefined} />
-      </dl>
-      {attributes.length > 0 ? (
-        <div className="space-y-1.5">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            Attributes · {attributes.length}
+    <div className="relative py-1.5" style={contentPaddingLeftPx ? { paddingLeft: `${contentPaddingLeftPx}px` } : undefined}>
+      {guideLeftsPx.map((guideLeftPx) => (
+        <span
+          key={guideLeftPx}
+          aria-hidden
+          className="absolute bottom-2 top-2 block border-l border-border/70"
+          style={{ left: `${guideLeftPx}px` }}
+        />
+      ))}
+      <div className="space-y-3">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3">
+          <DetailField label="Span ID" value={span.spanId} />
+          <DetailField label="Parent" value={span.parentSpanId || "—"} />
+          <DetailField label="Service" value={span.appName || span.appId} mono={false} />
+          <DetailField label="Kind" value={span.kind} mono={false} />
+          <DetailField label="Start offset" value={`+${formatDuration(span.startUnixMs - traceStartMs)}`} />
+          <DetailField label="Duration" value={formatDuration(span.durationMs)} />
+          <DetailField label="Status" value={status} mono={false} tone={isError ? "error" : undefined} />
+        </dl>
+        {attributes.length > 0 ? (
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Attributes · {attributes.length}
+            </div>
+            <div className="divide-y divide-border/60">
+              {attributes.map(([key, value], index) => (
+                <div
+                  key={key}
+                  className={cn(
+                    "grid grid-cols-1 gap-0.5 py-1.5 text-[11px] sm:grid-cols-[minmax(0,12rem)_1fr] sm:gap-3",
+                    index === 0 && "pt-0",
+                  )}
+                >
+                  <span className="truncate font-mono text-muted-foreground" title={key}>
+                    {key}
+                  </span>
+                  <span className="break-all font-mono">{value}</span>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="overflow-hidden rounded border bg-background/60">
-            {attributes.map(([key, value], index) => (
-              <div
-                key={key}
-                className={cn(
-                  "grid grid-cols-[minmax(0,12rem)_1fr] gap-3 px-2.5 py-1.5 text-[11px]",
-                  index > 0 && "border-t",
-                )}
-              >
-                <span className="truncate font-mono text-muted-foreground" title={key}>
-                  {key}
-                </span>
-                <span className="break-all font-mono">{value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="text-[11px] text-muted-foreground">No attributes recorded.</div>
-      )}
+        ) : (
+          <div className="text-[11px] text-muted-foreground">No attributes recorded.</div>
+        )}
+      </div>
     </div>
   );
 }
