@@ -1273,6 +1273,43 @@ internal sealed class CoreLifecycleService(
         return results;
     }
 
+    // Startup sweep: kills localCommand process trees a previous, non-gracefully-exited Core left
+    // orphaned (holding their ports) by reading the durable pidfiles under each app's {AppRoot}/run.
+    // Runs regardless of an app's currently selected runtime — an orphan survives a runtime switch — and
+    // per-file failures are logged without breaking the loop. Returns how many trees were reclaimed.
+    public async Task<int> ReclaimOrphanedLocalCommandProcessesAsync(CancellationToken cancellationToken = default)
+    {
+        var reclaimed = 0;
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var runDirectory = Path.Combine(GetAppRoot(app.Id), "run");
+            if (!Directory.Exists(runDirectory))
+            {
+                continue;
+            }
+
+            foreach (var pidFilePath in Directory.EnumerateFiles(runDirectory, "*.json"))
+            {
+                var serviceKey = Path.GetFileNameWithoutExtension(pidFilePath);
+                try
+                {
+                    if (await LocalCommandProcessReclaim.ReclaimAsync(GetAppRoot(app.Id), serviceKey, logger, cancellationToken))
+                    {
+                        reclaimed++;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Failed to reclaim orphaned localCommand process for app {AppId} service {Service}.", app.Id, serviceKey);
+                }
+            }
+        }
+
+        return reclaimed;
+    }
+
     private AppRecord BuildAppRecord(
         RuntimeAppManifestSelection selection,
         string manifestPath,

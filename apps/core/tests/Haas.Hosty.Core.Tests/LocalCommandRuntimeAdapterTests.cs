@@ -162,6 +162,92 @@ public sealed class LocalCommandRuntimeAdapterTests
         }
     }
 
+    [Fact]
+    public async Task StartAsync_WritesPidFileMatchingRegistryProcess()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // The command here is a POSIX shell script; Core runs sh only off-Windows.
+        }
+
+        var workRoot = CreateTempDirectory();
+        try
+        {
+            var (adapter, registry, context) = CreateSetupScenario(workRoot, setup: null, command: "sleep 30");
+
+            await adapter.StartAsync(context);
+
+            var running = registry.Get("com.example.app", "app");
+            Assert.NotNull(running);
+
+            var pidFilePath = LocalCommandProcessReclaim.PidFilePath(workRoot, "app");
+            Assert.True(File.Exists(pidFilePath));
+            var pidFile = await JsonStorage.ReadAsync<LocalCommandPidFile>(pidFilePath);
+            Assert.NotNull(pidFile);
+            Assert.Equal(running!.Process.Id, pidFile!.Pid);
+            Assert.Equal("com.example.app", pidFile.AppId);
+            Assert.Equal("app", pidFile.ServiceKey);
+            // Tests build the adapter without shim options, so the direct-spawn (non-group) path is used.
+            Assert.False(pidFile.ProcessGroup);
+
+            await adapter.StopAsync(context);
+        }
+        finally
+        {
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task StopAsync_KillsOrphanViaPidFileWhenRegistryHandleWasLost()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // The command here is a POSIX shell script; Core runs sh only off-Windows.
+        }
+
+        var workRoot = CreateTempDirectory();
+        try
+        {
+            var (adapter, registry, context) = CreateSetupScenario(workRoot, setup: null, command: "sleep 30");
+
+            await adapter.StartAsync(context);
+            var running = registry.Get("com.example.app", "app");
+            Assert.NotNull(running);
+            var pid = running!.Process.Id;
+
+            // Simulate a Core restart that lost the in-memory handle: the process keeps running and its
+            // pidfile survives, but the registry no longer knows about it.
+            registry.Remove("com.example.app", "app");
+            Assert.True(File.Exists(LocalCommandProcessReclaim.PidFilePath(workRoot, "app")));
+
+            await adapter.StopAsync(context);
+
+            Assert.False(IsProcessAlive(pid));
+            Assert.False(File.Exists(LocalCommandProcessReclaim.PidFilePath(workRoot, "app")));
+        }
+        finally
+        {
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    private static bool IsProcessAlive(int pid)
+    {
+        try
+        {
+            return !System.Diagnostics.Process.GetProcessById(pid).HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreatePrebuiltScenario(
         string appRoot, string deliveryPath, string command, string? workingDirectory = null)
     {
