@@ -144,11 +144,12 @@ function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: strin
   const [state, setState] = useState<ConsoleLogsState>({ loading: false, error: null, text: "", services: [] });
   const [activeService, setActiveService] = useState<string | null>(null);
 
-  const loadLogs = useCallback(async () => {
+  const loadLogs = useCallback(async (signal?: AbortSignal) => {
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
       const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/logs?tail=200`, {
         credentials: "include",
+        signal,
       });
       redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) {
@@ -161,6 +162,10 @@ function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: strin
         current && services.some((segment) => segment.service === current) ? current : services[0]?.service ?? null,
       );
     } catch (error) {
+      // A superseded request (app switched / dialog closed) aborts — leave the newer request's state.
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       if (isAuthRequiredRedirectError(error)) {
         return;
       }
@@ -173,8 +178,12 @@ function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: strin
     }
   }, [app.id, coreOrigin]);
 
+  // Abort an in-flight fetch when the app changes or the dialog closes, so a slow response for a
+  // previous app can never overwrite the current one's logs.
   useEffect(() => {
-    void loadLogs();
+    const controller = new AbortController();
+    void loadLogs(controller.signal);
+    return () => controller.abort();
   }, [loadLogs]);
 
   const hasTabs = state.services.length > 1;
