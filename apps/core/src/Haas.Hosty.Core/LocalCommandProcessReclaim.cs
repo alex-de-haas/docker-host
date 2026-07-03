@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
@@ -34,7 +35,7 @@ internal static class LocalCommandProcessReclaim
     // then always removes the file. Returns whether anything was killed. Safe to call when no pidfile
     // exists (returns false) — it is both the startup-sweep entry point and the stop-time fallback that
     // reaps orphans a previous Core left behind.
-    public static async Task<bool> ReclaimAsync(string appRoot, string serviceKey, CancellationToken cancellationToken = default)
+    public static async Task<bool> ReclaimAsync(string appRoot, string serviceKey, ILogger? logger = null, CancellationToken cancellationToken = default)
     {
         var path = PidFilePath(appRoot, serviceKey);
         LocalCommandPidFile? pidFile;
@@ -61,7 +62,7 @@ internal static class LocalCommandProcessReclaim
 
         try
         {
-            return await ReclaimRecordedProcessAsync(pidFile, cancellationToken);
+            return await ReclaimRecordedProcessAsync(pidFile, logger, cancellationToken);
         }
         finally
         {
@@ -69,7 +70,7 @@ internal static class LocalCommandProcessReclaim
         }
     }
 
-    private static async Task<bool> ReclaimRecordedProcessAsync(LocalCommandPidFile pidFile, CancellationToken cancellationToken)
+    private static async Task<bool> ReclaimRecordedProcessAsync(LocalCommandPidFile pidFile, ILogger? logger, CancellationToken cancellationToken)
     {
         var leader = TryGetProcess(pidFile.Pid);
         var leaderStartTime = TryReadStartTime(leader);
@@ -101,6 +102,16 @@ internal static class LocalCommandProcessReclaim
                 return true;
             }
 
+            if (probe == ProcessGroupProbe.Foreign)
+            {
+                // The recorded pid was recycled into a process group owned by another user (the kill
+                // probe returned EPERM). By pgid pinning our own tree is already gone, so we leave the
+                // foreign group untouched and only clear our stale record below.
+                logger?.LogWarning(
+                    "localCommand reclaim for {AppId}/{Service}: pgid {Pid} resolves to a process group this Core cannot signal (EPERM); leaving it untouched.",
+                    pidFile.AppId, pidFile.ServiceKey, pidFile.Pid);
+            }
+
             return false;
         }
 
@@ -112,9 +123,10 @@ internal static class LocalCommandProcessReclaim
             {
                 leader.Kill(entireProcessTree: true);
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
-                // Already exited between the liveness read and the kill.
+                // Already exited between the liveness read and the kill, or could not be terminated;
+                // reclaim is best-effort, so this must not surface to the stop/start flow.
             }
 
             await WaitForProcessExitAsync(leader, cancellationToken);
@@ -130,8 +142,11 @@ internal static class LocalCommandProcessReclaim
         {
             return System.Diagnostics.Process.GetProcessById(pid);
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
+            // ArgumentException = no process with this id (dead); InvalidOperationException = it could
+            // not be located. Either way there is no handle to verify/kill — on the real (process-group)
+            // path the pgid probe still reaps any surviving member, so no orphan is missed.
             return null;
         }
     }
@@ -175,8 +190,9 @@ internal static class LocalCommandProcessReclaim
 
     private static async Task WaitForGroupExitAsync(int pgid, CancellationToken cancellationToken)
     {
-        var deadline = DateTime.UtcNow + KillWaitTimeout;
-        while (DateTime.UtcNow < deadline && UnixProcessControl.ProcessGroupExists(pgid))
+        // Monotonic clock so a wall-clock adjustment (NTP step, sleep/wake) cannot skew the deadline.
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        while (stopwatch.Elapsed < KillWaitTimeout && UnixProcessControl.ProcessGroupExists(pgid))
         {
             try
             {

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
@@ -9,7 +10,8 @@ internal sealed class LocalCommandRuntimeAdapter(
     LocalCommandProcessRegistry registry,
     AppServiceTokenService serviceTokens,
     IHealthProbe? probe = null,
-    LocalCommandShimOptions? shim = null) : IAppRuntimeAdapter
+    LocalCommandShimOptions? shim = null,
+    ILogger<LocalCommandRuntimeAdapter>? logger = null) : IAppRuntimeAdapter
 {
     public string Type => "localCommand";
 
@@ -707,23 +709,38 @@ internal sealed class LocalCommandRuntimeAdapter(
         var running = registry.Remove(appId, serviceKey);
         if (running is not null && !running.Process.HasExited)
         {
-            if (running.ProcessGroup && !OperatingSystem.IsWindows())
+            try
             {
-                UnixProcessControl.TryKillProcessGroup(running.Process.Id);
-            }
-            else
-            {
-                running.Process.Kill(entireProcessTree: true);
-            }
+                if (running.ProcessGroup && !OperatingSystem.IsWindows())
+                {
+                    UnixProcessControl.TryKillProcessGroup(running.Process.Id);
+                }
+                else
+                {
+                    running.Process.Kill(entireProcessTree: true);
+                }
 
-            await running.Process.WaitForExitAsync(cancellationToken);
+                await running.Process.WaitForExitAsync(cancellationToken);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // The process exited between the HasExited check and the kill — the outcome we wanted.
+            }
         }
 
         running?.Process.Dispose();
 
-        // Always run the pidfile fallback: it reaps a tree an earlier (crashed) Core left behind that
-        // this instance never had a registry handle for, and it deletes the pidfile on a clean stop.
-        await LocalCommandProcessReclaim.ReclaimAsync(appRoot, serviceKey, cancellationToken);
+        // Always run the pidfile fallback (best-effort): it reaps a tree an earlier (crashed) Core left
+        // behind that this instance never had a registry handle for, and deletes the pidfile on a clean
+        // stop. A reclaim failure (e.g. an unreadable run/*.json) must never fail the stop/start flow.
+        try
+        {
+            await LocalCommandProcessReclaim.ReclaimAsync(appRoot, serviceKey, logger, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger?.LogWarning(ex, "Failed to reclaim orphaned localCommand process for {AppId}/{Service}.", appId, serviceKey);
+        }
     }
 
     private AppRuntimeServiceHealth BuildServiceHealth(RuntimeLifecycleContext context, RuntimeSelectedService service)

@@ -1295,7 +1295,7 @@ internal sealed class CoreLifecycleService(
                 var serviceKey = Path.GetFileNameWithoutExtension(pidFilePath);
                 try
                 {
-                    if (await LocalCommandProcessReclaim.ReclaimAsync(GetAppRoot(app.Id), serviceKey, cancellationToken))
+                    if (await LocalCommandProcessReclaim.ReclaimAsync(GetAppRoot(app.Id), serviceKey, logger, cancellationToken))
                     {
                         reclaimed++;
                     }
