@@ -1,6 +1,13 @@
 using System.Net.Sockets;
 using Haas.Hosty.Core;
 
+// Hidden re-exec: Core spawns localCommand roots by re-execing itself as a setsid process-group
+// leader (see LocalCommandShim) so a later Core can reclaim the whole tree by process group.
+if (args.Length >= 2 && args[0] == LocalCommandShim.Verb)
+{
+    return await LocalCommandShim.RunAsync(args);
+}
+
 var builder = WebApplication.CreateSlimBuilder(args);
 HostyCoreApplication.ConfigureServices(builder);
 

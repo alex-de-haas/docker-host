@@ -8,7 +8,8 @@ internal sealed class LocalCommandRuntimeAdapter(
     HostyCoreRuntimeConfig config,
     LocalCommandProcessRegistry registry,
     AppServiceTokenService serviceTokens,
-    IHealthProbe? probe = null) : IAppRuntimeAdapter
+    IHealthProbe? probe = null,
+    LocalCommandShimOptions? shim = null) : IAppRuntimeAdapter
 {
     public string Type => "localCommand";
 
@@ -21,7 +22,7 @@ internal sealed class LocalCommandRuntimeAdapter(
         var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
         foreach (var service in context.Manifest.Services)
         {
-            await StopServiceAsync(context.App.Id, service.Key, cancellationToken);
+            await StopServiceAsync(context.App.Id, service.Key, context.AppRoot, cancellationToken);
         }
 
         EnsureExplicitPortsAvailable(context);
@@ -87,7 +88,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     throw;
                 }
 
-                var startInfo = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
+                var (startInfo, processGroup) = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
                 InjectEnvironment(startInfo, context, service, endpoints, servicePorts);
                 var process = new System.Diagnostics.Process
                 {
@@ -121,7 +122,8 @@ internal sealed class LocalCommandRuntimeAdapter(
                     throw;
                 }
 
-                registry.Set(context.App.Id, service.Key, new LocalCommandProcess(process, logPath, workingDirectory, servicePorts[service.Key]));
+                registry.Set(context.App.Id, service.Key, new LocalCommandProcess(process, logPath, workingDirectory, servicePorts[service.Key], processGroup));
+                await WritePidFileAsync(context, service.Key, process, processGroup, cancellationToken);
                 startedServices.Add(service.Key);
                 await Task.Delay(250, cancellationToken);
                 if (process.HasExited)
@@ -134,7 +136,7 @@ internal sealed class LocalCommandRuntimeAdapter(
         {
             foreach (var serviceKey in startedServices.AsEnumerable().Reverse())
             {
-                await StopServiceAsync(context.App.Id, serviceKey, CancellationToken.None);
+                await StopServiceAsync(context.App.Id, serviceKey, context.AppRoot, CancellationToken.None);
             }
 
             throw;
@@ -162,7 +164,9 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
 
         logWriter.TryWriteLine($"[hosty] setup: {setup}");
-        var startInfo = CreateShellStartInfo(setup, workingDirectory);
+        // Setup is short-lived and killed with entireProcessTree on cancel, so it does not need the
+        // group-leader pidfile the long-running command gets; the group flag is discarded here.
+        var (startInfo, _) = CreateShellStartInfo(setup, workingDirectory);
         // Setup sees the same environment as `command`; the endpoints list is throwaway here so the
         // real start remains the single source of truth for recorded endpoints.
         InjectEnvironment(startInfo, context, service, [], servicePorts);
@@ -257,7 +261,7 @@ internal sealed class LocalCommandRuntimeAdapter(
     {
         foreach (var service in context.Manifest.Services)
         {
-            await StopServiceAsync(context.App.Id, service.Key, cancellationToken);
+            await StopServiceAsync(context.App.Id, service.Key, context.AppRoot, cancellationToken);
         }
 
         return new AppRuntimeOperationResult("stopped");
@@ -389,7 +393,12 @@ internal sealed class LocalCommandRuntimeAdapter(
         return new HealthProbeTarget(healthcheck.Type, "127.0.0.1", hostPort, path, timeout);
     }
 
-    private static System.Diagnostics.ProcessStartInfo CreateShellStartInfo(string command, string workingDirectory)
+    // Builds the start info for a shell command and reports whether the process is a reclaimable group
+    // leader. When the setsid shim is available (non-Windows + a resolved shim path), Core re-execs
+    // itself as the group leader instead of spawning /bin/sh directly; the shim then launches the shell
+    // inheriting these same stdio pipes, so log capture is unchanged. A null shim path (dll-hosted run,
+    // Windows, or tests) falls back to the direct spawn with no group tracking.
+    private (System.Diagnostics.ProcessStartInfo StartInfo, bool ProcessGroup) CreateShellStartInfo(string command, string workingDirectory)
     {
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
@@ -404,15 +413,21 @@ internal sealed class LocalCommandRuntimeAdapter(
             startInfo.FileName = "cmd.exe";
             startInfo.ArgumentList.Add("/c");
             startInfo.ArgumentList.Add(command);
-        }
-        else
-        {
-            startInfo.FileName = "/bin/sh";
-            startInfo.ArgumentList.Add("-c");
-            startInfo.ArgumentList.Add(command);
+            return (startInfo, false);
         }
 
-        return startInfo;
+        if (shim?.ShimPath is { } shimPath)
+        {
+            startInfo.FileName = shimPath;
+            startInfo.ArgumentList.Add(LocalCommandShim.Verb);
+            startInfo.ArgumentList.Add(command);
+            return (startInfo, true);
+        }
+
+        startInfo.FileName = "/bin/sh";
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add(command);
+        return (startInfo, false);
     }
 
     private void InjectEnvironment(
@@ -664,21 +679,51 @@ internal sealed class LocalCommandRuntimeAdapter(
     private static string ResolveWorkingDirectory(RuntimeLifecycleContext context, RuntimeSelectedService service)
         => CombineWorkingDirectory(ResolveSourceRoot(context), service.Runtime.WorkingDirectory);
 
-    private async Task StopServiceAsync(string appId, string serviceKey, CancellationToken cancellationToken)
+    // Records the just-started root so a future Core can reclaim its process tree if this Core exits
+    // non-gracefully and loses the in-memory registry handle. Reading StartTime of a process that
+    // exited between Start() and here can throw; on failure the write is skipped — the 250ms HasExited
+    // check in the caller fails the start regardless, so no orphan is left unrecorded.
+    private static async Task WritePidFileAsync(
+        RuntimeLifecycleContext context, string serviceKey, System.Diagnostics.Process process, bool processGroup, CancellationToken cancellationToken)
     {
-        var running = registry.Remove(appId, serviceKey);
-        if (running is null)
+        DateTimeOffset startedAtUtc;
+        try
+        {
+            startedAtUtc = process.StartTime.ToUniversalTime();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             return;
         }
 
-        if (!running.Process.HasExited)
+        await LocalCommandProcessReclaim.WriteAsync(
+            context.AppRoot,
+            new LocalCommandPidFile(process.Id, startedAtUtc, context.App.Id, serviceKey, processGroup),
+            cancellationToken);
+    }
+
+    private async Task StopServiceAsync(string appId, string serviceKey, string appRoot, CancellationToken cancellationToken)
+    {
+        var running = registry.Remove(appId, serviceKey);
+        if (running is not null && !running.Process.HasExited)
         {
-            running.Process.Kill(entireProcessTree: true);
+            if (running.ProcessGroup && !OperatingSystem.IsWindows())
+            {
+                UnixProcessControl.TryKillProcessGroup(running.Process.Id);
+            }
+            else
+            {
+                running.Process.Kill(entireProcessTree: true);
+            }
+
             await running.Process.WaitForExitAsync(cancellationToken);
         }
 
-        running.Process.Dispose();
+        running?.Process.Dispose();
+
+        // Always run the pidfile fallback: it reaps a tree an earlier (crashed) Core left behind that
+        // this instance never had a registry handle for, and it deletes the pidfile on a clean stop.
+        await LocalCommandProcessReclaim.ReclaimAsync(appRoot, serviceKey, cancellationToken);
     }
 
     private AppRuntimeServiceHealth BuildServiceHealth(RuntimeLifecycleContext context, RuntimeSelectedService service)
@@ -733,7 +778,14 @@ internal sealed record LocalCommandProcess(
     System.Diagnostics.Process Process,
     string LogPath,
     string WorkingDirectory,
-    IReadOnlyDictionary<string, int> Ports);
+    IReadOnlyDictionary<string, int> Ports,
+    bool ProcessGroup);
+
+// The resolved path Core re-execs to spawn a localCommand root as a setsid group leader, or null when
+// the shim is unavailable (Windows / dll-hosted run) so the adapter falls back to a direct spawn. A
+// singleton built once at startup from LocalCommandShim.ResolveShimPath(); optional so tests (and any
+// unregistered path) get the direct-spawn default.
+internal sealed record LocalCommandShimOptions(string? ShimPath);
 
 internal sealed class LocalCommandLogWriter(TextWriter writer) : IDisposable
 {

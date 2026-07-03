@@ -44,6 +44,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
+        // Resolve the setsid shim path once so the localCommand adapter spawns reclaimable process-group
+        // leaders. Null (Windows / dll-hosted run) makes the adapter fall back to a direct /bin/sh spawn.
+        builder.Services.AddSingleton(new LocalCommandShimOptions(LocalCommandShim.ResolveShimPath()));
         builder.Services.AddSingleton<IHealthProbe, NetworkHealthProbe>();
         // Shared docker CLI runner so the runtime adapter and the telemetry scrape loop go through one
         // instance; the adapter's optional ctor param picks this up via DI in production.
@@ -936,6 +939,7 @@ internal sealed class RuntimeAppSupervisorService(
     {
         await Task.Yield();
 
+        await ReclaimOrphanedRuntimeProcessesAsync(stoppingToken);
         await EnsureShellInstalledAsync(stoppingToken);
         await EnsureCollectorInstalledAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
@@ -1409,6 +1413,28 @@ internal sealed class RuntimeAppSupervisorService(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
             logger.LogWarning(ex, "Hosty runtime app autostart did not complete.");
+        }
+    }
+
+    // Kills localCommand process trees a prior Core left orphaned before any app is (re)started, so a
+    // reclaimed app's port is free for its own restart below. Best-effort: a failure is logged and
+    // startup continues (the pre-start stop loop's own reclaim is a second line of defense per app).
+    private async Task ReclaimOrphanedRuntimeProcessesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var reclaimed = await lifecycle.ReclaimOrphanedLocalCommandProcessesAsync(cancellationToken);
+            if (reclaimed > 0)
+            {
+                logger.LogInformation("Reclaimed {Count} orphaned localCommand process tree(s) left by a previous Core.", reclaimed);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Hosty orphaned localCommand process reclaim did not complete.");
         }
     }
 

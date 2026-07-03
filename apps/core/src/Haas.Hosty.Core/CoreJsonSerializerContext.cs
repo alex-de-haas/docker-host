@@ -44,6 +44,9 @@ internal static class CoreJson
 // persisted state carrying the Development-Mode enable snapshot bookkeeping.
 [JsonSerializable(typeof(DevelopmentModeBaseline))]
 [JsonSerializable(typeof(RetainedAppConfig))]
+// Durable localCommand pidfile ({AppRoot}/run/{serviceKey}.json) the orphan-reclaim reads back to
+// find and kill process trees the in-memory registry lost across a non-graceful Core exit.
+[JsonSerializable(typeof(LocalCommandPidFile))]
 [JsonSerializable(typeof(RuntimeAppManifest))]
 [JsonSerializable(typeof(AuditRecord))]
 [JsonSerializable(typeof(AppIdentityClaims))]
