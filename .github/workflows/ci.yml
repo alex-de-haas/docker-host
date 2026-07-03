@@ -19,6 +19,9 @@ on:
       - ".github/workflows/shell-image.yml"
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
+      - "apps/telemetry-backend/**"
+      - "Directory.Build.props"
+      - ".github/workflows/telemetry-backend-image.yml"
   push:
     branches:
       - main
@@ -37,6 +40,9 @@ on:
       - ".github/workflows/shell-image.yml"
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
+      - "apps/telemetry-backend/**"
+      - "Directory.Build.props"
+      - ".github/workflows/telemetry-backend-image.yml"
 
 permissions:
   contents: read
@@ -123,3 +129,21 @@ jobs:
 
       - name: Test CLI
         run: npm run cli:test
+
+  telemetry-backend:
+    name: Telemetry Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build Telemetry Backend
+        run: npm run telemetry-backend:build
+
+      - name: Test Telemetry Backend
+        run: npm run telemetry-backend:test
