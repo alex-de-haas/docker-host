@@ -22,6 +22,8 @@ internal static class CollectorBootstrap
     // Endpoint keys the manifest declares; OTLP discovery reads the otlp-http endpoint URL.
     public const string OtlpEndpointKey = "otlp-http";
     public const string MetricsEndpointKey = "metrics";
+    // The telemetry-backend service's query API endpoint (Phase 2), resolved by Core's read proxy.
+    public const string QueryEndpointKey = "query";
 
     // OTLP-logs sink (P4). The `file` exporter writes received logs as newline-delimited OTLP/JSON
     // into a subdir of the mounted config dir, which Core reads back from the host side and tails into

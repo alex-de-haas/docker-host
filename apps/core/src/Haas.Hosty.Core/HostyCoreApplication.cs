@@ -51,15 +51,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();
-        // Observability v1 (P3): in-memory telemetry store + the loop that fills it. The store is
-        // always available (the read API returns empty when nothing was scraped); the scrape loop
-        // no-ops unless ObservabilityEnabled.
-        builder.Services.AddSingleton<IMetricStore, InMemoryMetricStore>();
-        builder.Services.AddSingleton<ILogStore, InMemoryLogStore>();
-        builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
-        builder.Services.AddSingleton<IMetricsScrapeClient, HttpMetricsScrapeClient>();
-        builder.Services.AddSingleton<ILogTailReader, FileLogTailReader>();
-        builder.Services.AddHostedService<TelemetryScrapeService>();
+        // Observability Phase 2: the telemetry store + query API live in the telemetry-backend system
+        // app. Core is a producer (docker stats) + a read proxy — it keeps no telemetry store.
         // Phase 2 producer: re-expose host-collected `docker stats` as Prometheus for the backend to
         // scrape. Registered as a singleton the exposition endpoint reads and run as a hosted service.
         builder.Services.AddSingleton<DockerStatsExposition>();
