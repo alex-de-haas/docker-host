@@ -383,6 +383,13 @@ internal static class LifecycleEndpoints
                 async () => await HandleLifecycleError(() => lifecycle.GetTraceAsync(traceId, cancellationToken)),
                 cancellationToken: cancellationToken));
 
+        // Phase 2 producer endpoint: host-collected `docker stats` infra metrics as Prometheus text for
+        // the telemetry backend to scrape (its second metrics target). Deliberately unauthenticated —
+        // it exposes only container cpu/mem on the trusted internal network, mirroring the collector's
+        // own unauthenticated scrape surface. See docs/features/observability-phase-2-backend.md.
+        app.MapGet("/internal/telemetry/metrics", (DockerStatsExposition exposition)
+            => Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4"));
+
         app.MapGet("/api/apps/{appId}/update-status", async (
             string appId,
             HttpRequest request,

@@ -11,9 +11,15 @@ internal sealed record TelemetryBackendOptions
     // Embedded SQLite database file. Persistent (survives restarts) — the whole point of Phase 2.
     public required string DatabasePath { get; init; }
 
-    // The collector's Prometheus `/metrics` scrape URL (metrics ingest). Null when unset — metrics
-    // ingest is then idle, which is fine for a logs/traces-only run.
+    // The collector's Prometheus `/metrics` scrape URL (app OTLP metrics ingest). Null when unset —
+    // metrics ingest is then idle, which is fine for a logs/traces-only run.
     public string? MetricsScrapeUrl { get; init; }
+
+    // Core's Prometheus endpoint for host-privileged `docker stats` infra metrics (CPU/mem), which Core
+    // collects and re-exposes because they need host Docker access the backend deliberately lacks. The
+    // backend scrapes it as a second target and attributes it the same way (hosty_app_id label). Null
+    // when unset (e.g. a docker-less host or dev run).
+    public string? DockerMetricsScrapeUrl { get; init; }
 
     // The collector's file sinks on the shared volume (logs/traces ingest), tailed continuously.
     public required string LogsFilePath { get; init; }
@@ -47,6 +53,7 @@ internal sealed record TelemetryBackendOptions
             DatabasePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DB_PATH"))
                 ?? Path.Combine(appData, "telemetry.db"),
             MetricsScrapeUrl = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_METRICS_URL")),
+            DockerMetricsScrapeUrl = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DOCKER_METRICS_URL")),
             LogsFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_LOGS_FILE"))
                 ?? Path.Combine(appData, "otlp-logs", "logs.jsonl"),
             TracesFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_TRACES_FILE"))

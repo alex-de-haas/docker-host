@@ -60,6 +60,10 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IMetricsScrapeClient, HttpMetricsScrapeClient>();
         builder.Services.AddSingleton<ILogTailReader, FileLogTailReader>();
         builder.Services.AddHostedService<TelemetryScrapeService>();
+        // Phase 2 producer: re-expose host-collected `docker stats` as Prometheus for the backend to
+        // scrape. Registered as a singleton the exposition endpoint reads and run as a hosted service.
+        builder.Services.AddSingleton<DockerStatsExposition>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<DockerStatsExposition>());
         builder.Services.AddSingleton<IIngressController>(sp =>
         {
             var ingressConfig = sp.GetRequiredService<HostyCoreRuntimeConfig>();

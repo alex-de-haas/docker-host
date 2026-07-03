@@ -81,19 +81,28 @@ internal sealed class TelemetryIngestService(
 
     private async Task ScrapeMetricsAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(options.MetricsScrapeUrl))
+        var nowMs = now.ToUnixTimeMilliseconds();
+        var samples = new List<MetricSample>();
+        // Two Prometheus targets: the collector (app OTLP metrics) and Core (host-privileged docker
+        // stats). Both promote the app id to a `hosty_app_id` label, so attribution is identical.
+        await ScrapeIntoAsync(samples, options.MetricsScrapeUrl, nowMs, cancellationToken);
+        await ScrapeIntoAsync(samples, options.DockerMetricsScrapeUrl, nowMs, cancellationToken);
+        store.RecordMetrics(samples);
+    }
+
+    private async Task ScrapeIntoAsync(List<MetricSample> samples, string? url, long nowMs, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(url))
         {
             return;
         }
 
-        var text = await FetchAsync(options.MetricsScrapeUrl, cancellationToken);
+        var text = await FetchAsync(url, cancellationToken);
         if (text is null)
         {
             return;
         }
 
-        var nowMs = now.ToUnixTimeMilliseconds();
-        var samples = new List<MetricSample>();
         foreach (var sample in PrometheusTextParser.Parse(text))
         {
             if (!sample.Labels.TryGetValue(AppAttributionLabel, out var appId) || string.IsNullOrWhiteSpace(appId))
@@ -118,8 +127,6 @@ internal sealed class TelemetryIngestService(
 
             samples.Add(new MetricSample(appId, sample.Name, labels, sample.Value, nowMs));
         }
-
-        store.RecordMetrics(samples);
     }
 
     private async Task TailLogsAsync(DateTimeOffset now, CancellationToken cancellationToken)
