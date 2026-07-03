@@ -153,7 +153,10 @@ export function InstalledAppsPage({
   // switch runtime). The cached verdict for that app is now stale — left alone it would keep showing
   // "Update available" and the row Update icon until a manual re-check — so re-probe it. `refresh()`
   // has already reloaded the app list by the time the counter advances, so the app is present here.
-  const probedInvalidationsRef = useRef<Record<string, number>>({});
+  // Seed the ref with the counters as they stand on mount: any mutation from earlier in the session is
+  // treated as already-seen (rows are collapsed and probe on-demand when expanded), so only new bumps
+  // while this page is mounted trigger an automatic re-probe.
+  const probedInvalidationsRef = useRef<Record<string, number>>({ ...updateStatusInvalidations });
   useEffect(() => {
     const appsById = new Map<string, CoreApp>([...runtimeApps, ...systemApps].map((app) => [app.id, app]));
     for (const [appId, nonce] of Object.entries(updateStatusInvalidations)) {

@@ -350,6 +350,17 @@ export function ShellClient({
     setUpdateStatusInvalidations((current) => ({ ...current, [appId]: (current[appId] ?? 0) + 1 }));
   }, []);
 
+  // Keep the invalidation map bounded: drop counters for apps that no longer exist (removed, or gone
+  // after a refresh) so it does not accumulate stale keys over a long-lived session. Only rewrites
+  // state when something actually needs pruning, so it never loops.
+  useEffect(() => {
+    setUpdateStatusInvalidations((current) => {
+      const liveIds = new Set(state.apps.map((app) => app.id));
+      const kept = Object.entries(current).filter(([appId]) => liveIds.has(appId));
+      return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept);
+    });
+  }, [state.apps]);
+
   const runAppAction = useCallback(
     async (app: CoreApp, action: AppAction) => {
       const actionKey = `${app.id}:${action}`;
