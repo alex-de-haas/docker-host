@@ -141,6 +141,28 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public void TailOffset_PersistsAndDefaultsToZero()
+    {
+        var s = Store();
+        Assert.Equal(0, s.GetTailOffset("logs"));
+        s.SaveTailOffset("logs", 4242);
+        s.SaveTailOffset("logs", 5000); // upsert overwrites
+        Assert.Equal(5000, s.GetTailOffset("logs"));
+        Assert.Equal(0, s.GetTailOffset("traces"));
+    }
+
+    [Fact]
+    public void Traces_TraceIdNormalizedToLowercaseOnWrite()
+    {
+        var s = Store();
+        s.RecordSpans([Span("a", "ABCDEF", "s1", null, 10_000, 20_000)]);
+
+        // Stored lowercase, so both mixed- and lower-case lookups resolve via the binary index.
+        Assert.Single(s.QueryTraceSpans("abcdef"));
+        Assert.Single(s.QueryTraceSpans("AbCdEf"));
+    }
+
+    [Fact]
     public void Prune_EvictsDataPastAgeCap()
     {
         var s = Store(metricsRetention: TimeSpan.FromMinutes(30));

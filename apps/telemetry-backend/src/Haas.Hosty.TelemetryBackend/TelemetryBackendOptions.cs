@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Haas.Hosty.TelemetryBackend;
 
 // Runtime configuration for the telemetry backend, resolved from the environment Hosty Core injects at
@@ -60,10 +62,12 @@ internal sealed record TelemetryBackendOptions
     private static string? FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(static v => !string.IsNullOrWhiteSpace(v));
 
+    // Env values are culture-independent, so parse with the invariant culture (belt-and-braces even
+    // with InvariantGlobalization on) — otherwise a comma-decimal host could misread "1.5".
     private static TimeSpan ParseDays(string name, double fallbackDays)
     {
         var raw = Environment.GetEnvironmentVariable(name);
-        return double.TryParse(raw, out var days) && days > 0
+        return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var days) && days > 0
             ? TimeSpan.FromDays(days)
             : TimeSpan.FromDays(fallbackDays);
     }
@@ -71,12 +75,16 @@ internal sealed record TelemetryBackendOptions
     private static long ParseBytes(string name, long fallback)
     {
         var raw = Environment.GetEnvironmentVariable(name);
-        return long.TryParse(raw, out var bytes) && bytes > 0 ? bytes : fallback;
+        return long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var bytes) && bytes > 0
+            ? bytes
+            : fallback;
     }
 
     private static int ParseInt(string name, int fallback)
     {
         var raw = Environment.GetEnvironmentVariable(name);
-        return int.TryParse(raw, out var value) && value > 0 ? value : fallback;
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value > 0
+            ? value
+            : fallback;
     }
 }

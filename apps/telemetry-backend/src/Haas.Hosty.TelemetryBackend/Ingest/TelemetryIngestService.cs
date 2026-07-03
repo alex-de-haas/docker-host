@@ -19,16 +19,32 @@ internal sealed class TelemetryIngestService(
     // underscores). It attributes a scraped series to its app and is then dropped from the stored set.
     private const string AppAttributionLabel = "hosty_app_id";
 
+    // Persisted-offset keys in the store's ingest_state table.
+    private const string LogsTailKey = "logs";
+    private const string TracesTailKey = "traces";
+
+    // Pruning (DELETE + size check + vacuum + checkpoint) is expensive, so it runs on its own cadence
+    // rather than every ingest tick; retention is coarse-grained so once a minute is ample.
+    private static readonly TimeSpan PruneInterval = TimeSpan.FromMinutes(1);
+
     private readonly FileTailReader tailReader = new();
     private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(5) };
 
     // Byte offsets into the collector's OTLP-logs/-traces files the tail loops resume from each tick.
+    // Loaded from the store at startup so a restart resumes instead of replaying the whole file.
     private long logTailOffset;
     private long traceTailOffset;
+    private DateTimeOffset lastPruneUtc = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Yield();
+
+        // Resume from where the last run left off so a restart does not re-read (and re-insert) the
+        // whole otelcol file-sink history.
+        logTailOffset = store.GetTailOffset(LogsTailKey);
+        traceTailOffset = store.GetTailOffset(TracesTailKey);
+
         using var timer = new PeriodicTimer(options.IngestInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
@@ -53,7 +69,14 @@ internal sealed class TelemetryIngestService(
         await ScrapeMetricsAsync(now, cancellationToken);
         await TailLogsAsync(now, cancellationToken);
         await TailTracesAsync(cancellationToken);
-        store.Prune(now);
+
+        // Prune on its own cadence, not every tick — the deletes/vacuum/checkpoint are far heavier than
+        // an ingest tick and retention is coarse.
+        if (now - lastPruneUtc >= PruneInterval)
+        {
+            store.Prune(now);
+            lastPruneUtc = now;
+        }
     }
 
     private async Task ScrapeMetricsAsync(DateTimeOffset now, CancellationToken cancellationToken)
@@ -107,13 +130,18 @@ internal sealed class TelemetryIngestService(
             return;
         }
 
-        logTailOffset = chunk.NextOffset;
-        if (string.IsNullOrEmpty(chunk.Content))
+        // Record first; only advance (and persist) the offset once the write succeeds, so a transient
+        // store failure re-reads the chunk next tick instead of silently dropping it.
+        if (!string.IsNullOrEmpty(chunk.Content))
         {
-            return;
+            store.RecordLogs(OtlpLogsJsonParser.Parse(chunk.Content, now));
         }
 
-        store.RecordLogs(OtlpLogsJsonParser.Parse(chunk.Content, now));
+        if (chunk.NextOffset != logTailOffset)
+        {
+            logTailOffset = chunk.NextOffset;
+            store.SaveTailOffset(LogsTailKey, logTailOffset);
+        }
     }
 
     private async Task TailTracesAsync(CancellationToken cancellationToken)
@@ -124,13 +152,17 @@ internal sealed class TelemetryIngestService(
             return;
         }
 
-        traceTailOffset = chunk.NextOffset;
-        if (string.IsNullOrEmpty(chunk.Content))
+        // Record first, then advance/persist the offset — see TailLogsAsync.
+        if (!string.IsNullOrEmpty(chunk.Content))
         {
-            return;
+            store.RecordSpans(OtlpTracesJsonParser.Parse(chunk.Content));
         }
 
-        store.RecordSpans(OtlpTracesJsonParser.Parse(chunk.Content));
+        if (chunk.NextOffset != traceTailOffset)
+        {
+            traceTailOffset = chunk.NextOffset;
+            store.SaveTailOffset(TracesTailKey, traceTailOffset);
+        }
     }
 
     // GETs the scrape endpoint, returning null on any transport/timeout/non-success so the loop treats

@@ -49,6 +49,12 @@ internal sealed class SqliteTelemetryStore : IDisposable
         Execute("PRAGMA synchronous=NORMAL;");
         Execute("PRAGMA busy_timeout=5000;");
         Execute("PRAGMA auto_vacuum=INCREMENTAL;");
+        // auto_vacuum only takes effect on an empty database, so a db created by an earlier build with
+        // auto_vacuum=NONE keeps it until a full VACUUM rewrites the file. Convert once on startup.
+        if (QueryScalarLong("PRAGMA auto_vacuum;") != 2)
+        {
+            Execute("VACUUM;");
+        }
 
         Execute("""
             CREATE TABLE IF NOT EXISTS metric_points (
@@ -90,6 +96,11 @@ internal sealed class SqliteTelemetryStore : IDisposable
             CREATE INDEX IF NOT EXISTS ix_spans_trace ON spans(trace_id);
             CREATE INDEX IF NOT EXISTS ix_spans_app_start ON spans(app_id, start_nano);
             CREATE INDEX IF NOT EXISTS ix_spans_start ON spans(start_nano);
+
+            CREATE TABLE IF NOT EXISTS ingest_state (
+                name   TEXT    NOT NULL PRIMARY KEY,
+                offset INTEGER NOT NULL
+            );
             """);
     }
 
@@ -219,7 +230,9 @@ internal sealed class SqliteTelemetryStore : IDisposable
                 }
 
                 pApp.Value = parsed.AppId;
-                pTrace.Value = span.TraceId;
+                // Normalize the trace id to lowercase on write so trace-detail lookups can use the
+                // default (binary) index with an ordinal `=` instead of a full-scan COLLATE NOCASE.
+                pTrace.Value = span.TraceId.ToLowerInvariant();
                 pSpan.Value = span.SpanId;
                 pParent.Value = (object?)span.ParentSpanId ?? DBNull.Value;
                 pName.Value = span.Name;
@@ -404,8 +417,9 @@ internal sealed class SqliteTelemetryStore : IDisposable
             using var cmd = connection.CreateCommand();
             cmd.CommandText =
                 "SELECT app_id, trace_id, span_id, parent_span_id, name, kind, start_nano, end_nano, status_code, status_message, attrs_json " +
-                "FROM spans WHERE trace_id = $trace COLLATE NOCASE;";
-            AddParam(cmd, "$trace", traceId.Trim());
+                "FROM spans WHERE trace_id = $trace;";
+            // Trace ids are stored lowercase, so match on the lowercased input via the binary index.
+            AddParam(cmd, "$trace", traceId.Trim().ToLowerInvariant());
             return ReadSpans(cmd);
         }
     }
@@ -458,6 +472,9 @@ internal sealed class SqliteTelemetryStore : IDisposable
 
             EnforceSizeCeiling();
             Execute("PRAGMA incremental_vacuum;");
+            // Fold the WAL back into the main db and truncate it, so on-disk usage (db + wal) stays
+            // near the logical size the ceiling measures rather than growing unbounded under writes.
+            Execute("PRAGMA wal_checkpoint(TRUNCATE);");
         }
     }
 
@@ -489,14 +506,51 @@ internal sealed class SqliteTelemetryStore : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    // Logical active size = (allocated − freelist) pages × page size. Excluding freelist pages is
+    // essential for EnforceSizeCeiling: DELETE moves pages to the freelist without shrinking page_count
+    // (that waits for the vacuum), so a raw page_count would not fall between loop iterations and the
+    // loop would over-delete. The freed pages are reclaimed by incremental_vacuum after the loop.
     private long DatabaseBytes()
     {
+        var pageCount = QueryScalarLong("PRAGMA page_count;");
+        var freelistCount = QueryScalarLong("PRAGMA freelist_count;");
+        var pageSize = QueryScalarLong("PRAGMA page_size;");
+        return Math.Max(0, pageCount - freelistCount) * pageSize;
+    }
+
+    private long QueryScalarLong(string sql)
+    {
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = "PRAGMA page_count;";
-        var pageCount = Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
-        cmd.CommandText = "PRAGMA page_size;";
-        var pageSize = Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
-        return pageCount * pageSize;
+        cmd.CommandText = sql;
+        return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
+    }
+
+    // ---- Ingest tail state (persisted so a restart resumes instead of replaying the whole file) ----
+
+    public long GetTailOffset(string name)
+    {
+        lock (gate)
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "SELECT offset FROM ingest_state WHERE name = $name;";
+            AddParam(cmd, "$name", name);
+            var value = cmd.ExecuteScalar();
+            return value is null or DBNull ? 0 : Convert.ToInt64(value);
+        }
+    }
+
+    public void SaveTailOffset(string name, long offset)
+    {
+        lock (gate)
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText =
+                "INSERT INTO ingest_state (name, offset) VALUES ($name, $offset) " +
+                "ON CONFLICT(name) DO UPDATE SET offset = excluded.offset;";
+            AddParam(cmd, "$name", name);
+            AddParam(cmd, "$offset", offset);
+            cmd.ExecuteNonQuery();
+        }
     }
 
     // ---- Helpers --------------------------------------------------------------------------------
