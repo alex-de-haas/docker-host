@@ -1,6 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { AvailableAppsPage } from "./pages/available-apps-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { InstalledAppsPage } from "./pages/installed-apps-page";
@@ -8,11 +10,32 @@ import { ObservabilityMetricsPage } from "./pages/observability/metrics-page";
 import { ObservabilityStructuredLogsPage } from "./pages/observability/structured-logs-page";
 import { ObservabilityTracesPage } from "./pages/observability/traces-page";
 import { UserManagementPanel } from "./pages/user-management-page";
+import { getShellViewHref } from "./shell-routes";
 import { useShellActions, useShellState } from "./shell-context";
 
 function AdminShellRoute({ children }: { children: ReactNode }) {
   const shell = useShellState();
   return shell.canManageApps ? children : <ShellAvailableAppsRoute />;
+}
+
+// Admin gate + Observability gate: the backend-backed Observability routes are only valid when the
+// telemetry backend app is running. On direct navigation while it is off, redirect to the dashboard
+// (the nav section is hidden too) rather than surface an empty page. Waits for apps to load so a
+// running backend is not briefly treated as absent.
+function ObservabilityRoute({ children }: { children: ReactNode }) {
+  const shell = useShellState();
+  const router = useRouter();
+  const blocked = !shell.state.loading && !shell.observabilityAvailable;
+  useEffect(() => {
+    if (blocked) {
+      router.replace(getShellViewHref("dashboard"));
+    }
+  }, [blocked, router]);
+  if (blocked) {
+    return null;
+  }
+
+  return <AdminShellRoute>{children}</AdminShellRoute>;
 }
 
 export function ShellAvailableAppsRoute() {
@@ -92,13 +115,13 @@ export function ShellObservabilityMetricsRoute() {
   const shellActions = useShellActions();
 
   return (
-    <AdminShellRoute>
+    <ObservabilityRoute>
       <ObservabilityMetricsPage
         runtimeApps={shell.runtimeApps}
         systemApps={shell.systemApps}
         coreOrigin={shellActions.coreOrigin}
       />
-    </AdminShellRoute>
+    </ObservabilityRoute>
   );
 }
 
@@ -107,13 +130,13 @@ export function ShellObservabilityLogsRoute() {
   const shellActions = useShellActions();
 
   return (
-    <AdminShellRoute>
+    <ObservabilityRoute>
       <ObservabilityStructuredLogsPage
         runtimeApps={shell.runtimeApps}
         systemApps={shell.systemApps}
         coreOrigin={shellActions.coreOrigin}
       />
-    </AdminShellRoute>
+    </ObservabilityRoute>
   );
 }
 
@@ -122,13 +145,13 @@ export function ShellObservabilityTracesRoute() {
   const shellActions = useShellActions();
 
   return (
-    <AdminShellRoute>
+    <ObservabilityRoute>
       <ObservabilityTracesPage
         runtimeApps={shell.runtimeApps}
         systemApps={shell.systemApps}
         coreOrigin={shellActions.coreOrigin}
       />
-    </AdminShellRoute>
+    </ObservabilityRoute>
   );
 }
 
