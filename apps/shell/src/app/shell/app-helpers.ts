@@ -399,6 +399,8 @@ export function detailTitle(view: DetailView) {
       return "Update";
     case "remove":
       return "Remove";
+    case "logs":
+      return "Console logs";
   }
 }
 

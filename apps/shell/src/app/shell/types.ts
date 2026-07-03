@@ -408,7 +408,9 @@ export type CoreError = {
 };
 
 export type AppAction = "start" | "stop" | "restart" | "backup";
-export type DetailView = "backups" | "settings" | "update" | "remove";
+// "logs" is the per-app console-logs (docker logs) dialog, opened from the Installed Apps actions menu
+// — distinct from the structured OTLP-logs stream in the Observability section.
+export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
 export type SettingsTab = "app" | "publicOrigins" | "mounts" | "source";
@@ -418,7 +420,6 @@ export type ShellView =
   | "installed-apps"
   | "users"
   | "obs-metrics"
-  | "obs-console"
   | "obs-logs"
   | "obs-traces";
 export type AppOpenTarget = "workspace" | "tab";

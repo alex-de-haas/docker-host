@@ -13,7 +13,6 @@ const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   "installed-apps": "/installed-apps",
   users: "/users",
   "obs-metrics": "/observability/metrics",
-  "obs-console": "/observability/console",
   "obs-logs": "/observability/logs",
   "obs-traces": "/observability/traces",
 };
@@ -23,7 +22,6 @@ const ADMIN_SHELL_VIEWS = new Set<ShellView>([
   "installed-apps",
   "users",
   "obs-metrics",
-  "obs-console",
   "obs-logs",
   "obs-traces",
 ]);
@@ -85,10 +83,6 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
 
   if (path === "/observability/metrics") {
     return { view: "obs-metrics", workspace: null };
-  }
-
-  if (path === "/observability/console") {
-    return { view: "obs-console", workspace: null };
   }
 
   if (path === "/observability/logs") {

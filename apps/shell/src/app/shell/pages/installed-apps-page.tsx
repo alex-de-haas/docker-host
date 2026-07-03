@@ -22,6 +22,7 @@ import {
   RotateCcw,
   Settings2,
   Square,
+  Terminal,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
@@ -1027,7 +1028,10 @@ function InstalledAppActionsMenu({
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onOpenPanel: OpenAppPanel;
 }) {
-  const hasMenuActions = Boolean(devRuntime) || canBackup || canConfigure || canRemove;
+  // Console logs (docker logs) are served on-demand by Core, so the action shows for any app that
+  // declares the `logs` capability — independent of the telemetry backend.
+  const canViewLogs = app.capabilities.includes("logs");
+  const hasMenuActions = Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -1064,8 +1068,14 @@ function InstalledAppActionsMenu({
                 </div>
               </div>
             </DropdownMenuItem>
-            {(canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
+            {(canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
           </>
+        )}
+        {canViewLogs && (
+          <DropdownMenuItem onClick={() => onOpenPanel(app, "logs")}>
+            <Terminal className="h-4 w-4" />
+            Console logs
+          </DropdownMenuItem>
         )}
         {canBackup && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "backups")}>
