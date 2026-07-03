@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, formatUpdateChange, isAppAutostartEnabled } from "../app-helpers";
+import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import {
   buildPublicOriginGroups,
   isPublicOriginSettingKey,
@@ -24,6 +25,8 @@ import type {
   CoreUpdatePlan,
   DetailPanelState,
   DetailView,
+  LogsResponse,
+  LogsServiceSegment,
   MountBindingInput,
   RemoveOptions,
   SettingsTab,
@@ -34,6 +37,7 @@ export function AppDetailsDialog({
   app,
   view,
   settingsTab,
+  coreOrigin,
   globalMounts,
   canManageApps,
   busyAction,
@@ -56,6 +60,7 @@ export function AppDetailsDialog({
   app: CoreApp;
   view: DetailView;
   settingsTab?: SettingsTab;
+  coreOrigin: string;
   globalMounts: CoreGlobalMount[];
   canManageApps: boolean;
   busyAction: string | null;
@@ -124,8 +129,99 @@ export function AppDetailsDialog({
           <InlineError message="System app update controls are not available in Shell." />
         ))}
         {view === "remove" && <RemovePanel app={app} busyAction={busyAction} canRemove={canMutateApp} onRemove={onRemove} />}
+        {view === "logs" && <ConsoleLogsPanel app={app} coreOrigin={coreOrigin} />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+type ConsoleLogsState = { loading: boolean; error: string | null; text: string; services: LogsServiceSegment[] };
+
+// Per-app console logs (docker logs) tail, opened from the Installed Apps actions menu. Served
+// on-demand by Core, so it works even when the telemetry backend is off — deliberately distinct from
+// the structured OTLP-logs stream in the Observability section. Multi-service apps get a tab per service.
+function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: string }) {
+  const [state, setState] = useState<ConsoleLogsState>({ loading: false, error: null, text: "", services: [] });
+  const [activeService, setActiveService] = useState<string | null>(null);
+
+  const loadLogs = useCallback(async (signal?: AbortSignal) => {
+    setState((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/logs?tail=200`, {
+        credentials: "include",
+        signal,
+      });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+      if (!response.ok) {
+        throw new Error(await readCoreError(response));
+      }
+      const payload = (await response.json()) as LogsResponse;
+      const services = payload.services ?? [];
+      setState({ loading: false, error: null, text: payload.text || "", services });
+      setActiveService((current) =>
+        current && services.some((segment) => segment.service === current) ? current : services[0]?.service ?? null,
+      );
+    } catch (error) {
+      // A superseded request (app switched / dialog closed) aborts — leave the newer request's state.
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      if (isAuthRequiredRedirectError(error)) {
+        return;
+      }
+      setState({
+        loading: false,
+        error: error instanceof Error ? error.message : "Console logs are unavailable.",
+        text: "",
+        services: [],
+      });
+    }
+  }, [app.id, coreOrigin]);
+
+  // Abort an in-flight fetch when the app changes or the dialog closes, so a slow response for a
+  // previous app can never overwrite the current one's logs.
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadLogs(controller.signal);
+    return () => controller.abort();
+  }, [loadLogs]);
+
+  const hasTabs = state.services.length > 1;
+  const activeSegment = state.services.find((segment) => segment.service === activeService) ?? state.services[0];
+  const body = state.loading
+    ? "Loading logs"
+    : state.services.length > 0
+      ? activeSegment?.text || "No logs"
+      : state.text || "No logs";
+
+  return (
+    <DialogBody className="flex min-h-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => void loadLogs()} disabled={state.loading}>
+          <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin")} />
+          Refresh
+        </Button>
+        {hasTabs &&
+          state.services.map((segment) => (
+            <Button
+              key={segment.service}
+              variant={segment.service === activeService ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setActiveService(segment.service)}
+            >
+              {segment.service}
+            </Button>
+          ))}
+      </div>
+      {state.error && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+          {state.error}
+        </div>
+      )}
+      <pre className="min-h-[20rem] min-w-0 max-w-full flex-1 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">
+        {body}
+      </pre>
+    </DialogBody>
   );
 }
 

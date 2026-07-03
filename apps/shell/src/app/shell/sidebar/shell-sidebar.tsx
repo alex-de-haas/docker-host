@@ -20,7 +20,6 @@ import {
   PanelLeftOpen,
   ScrollText,
   Sun,
-  Terminal,
   Users,
   Waypoints,
 } from "lucide-react";
@@ -53,6 +52,7 @@ export function ShellSidebar({
   shellVersion,
   activeUser,
   canManageApps,
+  observabilityAvailable,
   runtimeApps,
   busyAction,
   onCompactChange,
@@ -69,6 +69,9 @@ export function ShellSidebar({
   shellVersion: string;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
+  // The telemetry backend system app is installed + running, so the backend-backed Observability
+  // section (Metrics / Structured logs / Traces) has data to show. Hidden otherwise.
+  observabilityAvailable: boolean;
   runtimeApps: CoreApp[];
   busyAction: string | null;
   onCompactChange: (compact: boolean) => void;
@@ -113,10 +116,9 @@ export function ShellSidebar({
             </NavigationSection>
           )}
 
-          {canManageApps && (
+          {canManageApps && observabilityAvailable && (
             <NavigationSection title="Observability" compact={compact}>
               <SidebarButton compact={compact} active={activeView === "obs-metrics" && !workspace} icon={LineChart} label="Metrics" onClick={() => onNavigate("obs-metrics")} />
-              <SidebarButton compact={compact} active={activeView === "obs-console" && !workspace} icon={Terminal} label="Console logs" onClick={() => onNavigate("obs-console")} />
               <SidebarButton compact={compact} active={activeView === "obs-logs" && !workspace} icon={ScrollText} label="Structured logs" onClick={() => onNavigate("obs-logs")} />
               <SidebarButton compact={compact} active={activeView === "obs-traces" && !workspace} icon={Waypoints} label="Traces" onClick={() => onNavigate("obs-traces")} />
             </NavigationSection>

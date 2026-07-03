@@ -989,6 +989,12 @@ export function ShellClient({
 
   const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
   const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
+  // The Observability section reads from the telemetry backend system app; show it only when that app
+  // is installed and running (its Metrics/Structured logs/Traces have nothing to show otherwise).
+  const observabilityAvailable = useMemo(
+    () => state.apps.some((app) => app.id === "hosty.observability.collector" && app.runtimeState === "running"),
+    [state.apps],
+  );
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
   const effectiveView = getAuthorizedShellView(shellRoute.view, Boolean(canManageApps));
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
@@ -1180,12 +1186,14 @@ export function ShellClient({
       uiRuntimeApps,
       activeUser,
       canManageApps: Boolean(canManageApps),
+      observabilityAvailable,
       busyAction,
     }),
     [
       activeUser,
       busyAction,
       canManageApps,
+      observabilityAvailable,
       state,
       runtimeApps,
       systemApps,
@@ -1248,6 +1256,7 @@ export function ShellClient({
             shellVersion={shellVersion}
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
+            observabilityAvailable={observabilityAvailable}
             runtimeApps={uiRuntimeApps}
             busyAction={busyAction}
             onCompactChange={setCompact}
@@ -1313,6 +1322,7 @@ export function ShellClient({
             app={selectedApp}
             view={activePanel.view}
             settingsTab={activePanel.settingsTab}
+            coreOrigin={coreOrigin}
             globalMounts={globalMounts}
             canManageApps={Boolean(canManageApps)}
             busyAction={busyAction}

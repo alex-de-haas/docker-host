@@ -1,9 +1,9 @@
 # Observability Phase 2 — telemetry backend as a system app
 
-Status: **2a + 2b + 2c + manifest implemented; 2c-shell (Shell) + 2d (SSE) remain.** Successor to the
-shipped observability v1 (P3–P6 in [observability.md](observability.md)). This doc records the decision
-to **move the telemetry store and query API out of Core** into a dedicated telemetry-backend system app,
-and the boundary that keeps Core from exiting entirely.
+Status: **2a + 2b + 2c + manifest + 2c-shell implemented (E2E live-verified); only 2d (SSE) remains.**
+Successor to the shipped observability v1 (P3–P6 in [observability.md](observability.md)). This doc
+records the decision to **move the telemetry store and query API out of Core** into a dedicated
+telemetry-backend system app, and the boundary that keeps Core from exiting entirely.
 
 **Implementation status.**
 - **PR#1 (2a, merged)** — the standalone `Haas.Hosty.TelemetryBackend` service (`apps/telemetry-backend/`):
@@ -14,8 +14,13 @@ and the boundary that keeps Core from exiting entirely.
   Core's 5 read methods proxy the backend via `TelemetryBackendClient` (enriching appId→display name);
   the in-memory stores + scrape/tail loops + parsers are deleted; the collector app becomes a
   **multi-service** app (otelcol + backend, shared `/etc/otelcol-contrib` mount, `query` endpoint Core
-  resolves). Console logs stay Core's on-demand `docker logs` (unchanged).
-- **Remaining** — 2c-shell (console logs → per-app dialog + section gating) and 2d (SSE realtime).
+  resolves). Console logs stay Core's on-demand `docker logs` (unchanged). E2E live-verified on a docker
+  host (metrics/logs/traces render in Shell through the proxy).
+- **PR#3 (2c-shell)** — Shell: console logs move out of the Observability section into a per-app
+  **Console logs** action + dialog (Installed Apps actions menu, gated on the `logs` capability, reusing
+  `GET /api/apps/{id}/logs`); the Observability section becomes backend-backed only (Metrics / Structured
+  logs / Traces) and is hidden when the telemetry backend app is not installed/running.
+- **Remaining** — 2d (SSE realtime).
 
 ## Motivation
 
