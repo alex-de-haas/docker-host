@@ -1,6 +1,7 @@
-using Haas.Hosty.Core;
+using Xunit;
+using Haas.Hosty.TelemetryBackend;
 
-namespace Haas.Hosty.Core.Tests;
+namespace Haas.Hosty.TelemetryBackend.Tests;
 
 public sealed class PrometheusTextParserTests
 {

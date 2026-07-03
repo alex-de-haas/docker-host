@@ -22,6 +22,8 @@ internal static class CollectorBootstrap
     // Endpoint keys the manifest declares; OTLP discovery reads the otlp-http endpoint URL.
     public const string OtlpEndpointKey = "otlp-http";
     public const string MetricsEndpointKey = "metrics";
+    // The telemetry-backend service's query API endpoint (Phase 2), resolved by Core's read proxy.
+    public const string QueryEndpointKey = "query";
 
     // OTLP-logs sink (P4). The `file` exporter writes received logs as newline-delimited OTLP/JSON
     // into a subdir of the mounted config dir, which Core reads back from the host side and tails into
@@ -37,6 +39,10 @@ internal static class CollectorBootstrap
     public const string TracesRelativeDir = "otlp-traces";
     public const string TracesFileName = "traces.jsonl";
     public const string ContainerTracesFile = ContainerConfigDir + "/" + TracesRelativeDir + "/" + TracesFileName;
+
+    // The telemetry backend's embedded SQLite store lives here on the same shared mount (Phase 2). Core
+    // provisions it writable at bootstrap so the backend can create its database file.
+    public const string StoreRelativeDir = "store";
 
     // Host-side path of the OTLP-logs file Core tails, derived from the apps root. Mirrors
     // CoreLifecycleService.GetAppDataPath ({appsRoot}/{appId}/data) for the collector app, so the

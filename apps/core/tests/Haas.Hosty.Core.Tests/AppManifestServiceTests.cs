@@ -739,9 +739,12 @@ public sealed class AppManifestServiceTests
         var selection = await new AppManifestService().LoadAsync(manifestPath);
 
         Assert.Equal(CollectorBootstrap.AppId, selection.Manifest.Id);
-        var ports = selection.Services.Single().Runtime.Ports;
+        var ports = selection.Services.Single(service => service.Key == "collector").Runtime.Ports;
         Assert.Contains(ports, port => port.Key == "otlp-http" && port.ContainerPort == 4318 && string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(ports, port => port.Key == "metrics" && port.ContainerPort == 9464);
+        // Phase 2: the telemetry backend is a second service exposing the query API Core proxies.
+        var backend = selection.Services.Single(service => service.Key == "backend");
+        Assert.Contains(backend.Runtime.Ports, port => port.Key == "query" && port.ContainerPort == 8080);
         Assert.Equal("/etc/otelcol-contrib", selection.DataTarget?.ContainerPath);
     }
 

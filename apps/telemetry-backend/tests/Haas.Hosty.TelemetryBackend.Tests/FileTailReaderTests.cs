@@ -1,12 +1,13 @@
 using System.Text;
-using Haas.Hosty.Core;
+using Xunit;
+using Haas.Hosty.TelemetryBackend;
 
-namespace Haas.Hosty.Core.Tests;
+namespace Haas.Hosty.TelemetryBackend.Tests;
 
-public sealed class LogTailReaderTests : IDisposable
+public sealed class FileTailReaderTests : IDisposable
 {
     private readonly string path = Path.Combine(Path.GetTempPath(), $"hosty-otlp-logs-{Guid.NewGuid():N}.jsonl");
-    private readonly FileLogTailReader reader = new();
+    private readonly FileTailReader reader = new();
 
     [Fact]
     public async Task ReadAsync_ReturnsNullWhenFileMissing()

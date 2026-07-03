@@ -11,9 +11,15 @@ internal sealed record TelemetryBackendOptions
     // Embedded SQLite database file. Persistent (survives restarts) — the whole point of Phase 2.
     public required string DatabasePath { get; init; }
 
-    // The collector's Prometheus `/metrics` scrape URL (metrics ingest). Null when unset — metrics
-    // ingest is then idle, which is fine for a logs/traces-only run.
+    // The collector's Prometheus `/metrics` scrape URL (app OTLP metrics ingest). Null when unset —
+    // metrics ingest is then idle, which is fine for a logs/traces-only run.
     public string? MetricsScrapeUrl { get; init; }
+
+    // Core's Prometheus endpoint for host-privileged `docker stats` infra metrics (CPU/mem), which Core
+    // collects and re-exposes because they need host Docker access the backend deliberately lacks. The
+    // backend scrapes it as a second target and attributes it the same way (hosty_app_id label). Null
+    // when unset (e.g. a docker-less host or dev run).
+    public string? DockerMetricsScrapeUrl { get; init; }
 
     // The collector's file sinks on the shared volume (logs/traces ingest), tailed continuously.
     public required string LogsFilePath { get; init; }
@@ -46,7 +52,15 @@ internal sealed record TelemetryBackendOptions
         {
             DatabasePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DB_PATH"))
                 ?? Path.Combine(appData, "telemetry.db"),
-            MetricsScrapeUrl = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_METRICS_URL")),
+            // Collector Prometheus URL: explicit, else derived from the sibling-service URL Core injects
+            // via `dependsOn` (reachable over the per-app docker network, unlike a host-loopback URL).
+            MetricsScrapeUrl = FirstNonEmpty(
+                Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_METRICS_URL"),
+                Append(Environment.GetEnvironmentVariable("HOSTY_SERVICE_COLLECTOR_URL"), "/metrics")),
+            // Core's docker-stats endpoint: explicit, else derived from the Core origin Core injects.
+            DockerMetricsScrapeUrl = FirstNonEmpty(
+                Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DOCKER_METRICS_URL"),
+                Append(Environment.GetEnvironmentVariable("HOSTY_CORE_ORIGIN"), "/internal/telemetry/metrics")),
             LogsFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_LOGS_FILE"))
                 ?? Path.Combine(appData, "otlp-logs", "logs.jsonl"),
             TracesFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_TRACES_FILE"))
@@ -61,6 +75,10 @@ internal sealed record TelemetryBackendOptions
 
     private static string? FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(static v => !string.IsNullOrWhiteSpace(v));
+
+    // Appends a path to a base URL (trimming a duplicate slash), or null when the base is unset.
+    private static string? Append(string? baseUrl, string path)
+        => string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl.TrimEnd('/') + path;
 
     // Env values are culture-independent, so parse with the invariant culture (belt-and-braces even
     // with InvariantGlobalization on) — otherwise a comma-decimal host could misread "1.5".
