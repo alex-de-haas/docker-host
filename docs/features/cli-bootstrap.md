@@ -63,6 +63,8 @@ HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 
 `HOSTY_SHELL_MANIFEST_PATH` can be a local manifest file path, local app directory, or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
 
+`HOSTY_RUNTIME_PUBLIC_HOST` (optional, default `127.0.0.1`) is the host Core advertises and dials for a runtime app's published loopback port. It defaults to the IPv4 loopback literal on purpose: docker publishes these ports on `127.0.0.1` only, and on hosts where `localhost` resolves to `::1` first (Windows, dual-stack Linux) .NET's `HttpClient` stalls on the unbound `::1` until the request times out, so telemetry and health reads silently return empty. Override it only for a deployment that publishes runtime-app ports on a different address.
+
 Legacy `HOST_DATA_ROOT_HOST`, `HOSTY_CORE_DATA_ROOT`, `HOST_CORE_PUBLIC_ORIGIN`, `HOST_SHELL_PUBLIC_ORIGIN`, and `HOST_PUBLIC_ORIGIN` settings are not read.
 
 ## Core Bootstrap

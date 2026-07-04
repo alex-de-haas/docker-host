@@ -107,6 +107,28 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
+    public void FromEnvironment_DefaultsRuntimePublicHostToIpv4Loopback()
+    {
+        using var runtimeHostEnv = TemporaryEnvironment.With("HOSTY_RUNTIME_PUBLIC_HOST", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        // Not "localhost": on IPv6-first hosts .NET's HttpClient stalls on ::1 (where docker publishes
+        // only 127.0.0.1), silently emptying every telemetry/health read to a runtime app.
+        Assert.Equal("127.0.0.1", config.RuntimePublicHost);
+    }
+
+    [Fact]
+    public void FromEnvironment_UsesExplicitRuntimePublicHost()
+    {
+        using var runtimeHostEnv = TemporaryEnvironment.With("HOSTY_RUNTIME_PUBLIC_HOST", " 0.0.0.0 ");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.Equal("0.0.0.0", config.RuntimePublicHost);
+    }
+
+    [Fact]
     public void CoreStatusResponse_ReportsEffectivePublicOrigins()
     {
         using var coreUrlEnv = TemporaryEnvironment.With("HOSTY_CORE_URL", null);

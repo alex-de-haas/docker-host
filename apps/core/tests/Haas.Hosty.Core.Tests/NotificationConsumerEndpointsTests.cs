@@ -87,6 +87,32 @@ public sealed class NotificationConsumerEndpointsTests
         Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(result));
     }
 
+    [Fact]
+    public async Task StreamForSessionAsync_WritesInitialCommentAndIdleHeartbeat()
+    {
+        var fixture = await Fixture.CreateAsync();
+        var context = new DefaultHttpContext();
+        context.Request.Headers.Cookie = $"{CoreSessionAuthorization.SessionCookieName}=session_1";
+        var body = new MemoryStream();
+        context.Response.Body = body;
+
+        // No notification is ever published, so the stream stays idle — the keep-alive must still fire.
+        using var cts = new CancellationTokenSource();
+        var stream = NotificationEndpoints.StreamForSessionAsync(
+            context.Request, context.Response, fixture.Users, fixture.Clock, new NotificationBroadcaster(),
+            cts.Token, heartbeat: TimeSpan.FromMilliseconds(30));
+
+        await Task.Delay(200);
+        cts.Cancel();
+        await stream;
+
+        var text = System.Text.Encoding.UTF8.GetString(body.ToArray());
+        // Real body bytes forward the response start immediately (the Cloudflare 524 fix)...
+        Assert.StartsWith(": connected\n\n", text, StringComparison.Ordinal);
+        // ...and an idle stream keeps emitting comments so the proxy never reaps it.
+        Assert.Contains(": ping\n\n", text, StringComparison.Ordinal);
+    }
+
     private static HttpRequest Request(bool session = true, bool csrf = false)
     {
         var context = new DefaultHttpContext();

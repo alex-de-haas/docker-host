@@ -695,7 +695,13 @@ internal sealed record HostyCoreRuntimeConfig(
             $"http://localhost:{corePort}";
         var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_PUBLIC_ORIGIN"));
         var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_PUBLIC_ORIGIN"));
-        var runtimePublicHost = "localhost";
+        // The host Core advertises (and dials) for an app's published loopback port. Must be the IPv4
+        // loopback literal, NOT "localhost": docker publishes these ports on 127.0.0.1 only, but on
+        // hosts where "localhost" resolves to ::1 first (Windows, dual-stack Linux) .NET's HttpClient
+        // connects to resolved addresses sequentially with no Happy-Eyeballs fallback — it stalls on
+        // ::1 (nothing listens there) until the request times out, and every telemetry/health read to a
+        // runtime app silently degrades to empty. Overridable for hosts that publish on another address.
+        var runtimePublicHost = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_RUNTIME_PUBLIC_HOST")) ?? "127.0.0.1";
         var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
             ResolveDefaultShellManifestPath();
         var collectorManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_MANIFEST_PATH")) ??
