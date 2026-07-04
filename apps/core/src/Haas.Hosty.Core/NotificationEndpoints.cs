@@ -235,6 +235,12 @@ internal static class NotificationEndpoints
             requireCsrf: true,
             cancellationToken: cancellationToken);
 
+    // Keep-alive cadence well under Cloudflare's ~100s origin-response timeout. A notification
+    // stream is idle most of the time; without periodic bytes an intermediary proxy closes the
+    // connection (surfacing as a Cloudflare 524), so we send a comment even when there is nothing
+    // to deliver.
+    private static readonly TimeSpan StreamHeartbeat = TimeSpan.FromSeconds(20);
+
     public static Task<IResult> StreamForSessionAsync(
         HttpRequest request,
         HttpResponse response,
@@ -253,14 +259,45 @@ internal static class NotificationEndpoints
                 response.Headers["X-Accel-Buffering"] = "no";
 
                 using var subscription = broadcaster.Subscribe(user.Id);
+
+                // Emit an initial comment so the whole proxy chain (cloudflared -> Cloudflare edge)
+                // forwards the response start with real body bytes. A header-only flush can be held
+                // back until the first byte and time out as a Cloudflare 524.
+                await response.WriteAsync(": connected\n\n", cancellationToken);
                 await response.Body.FlushAsync(cancellationToken);
 
                 try
                 {
-                    await foreach (var view in subscription.Reader.ReadAllAsync(cancellationToken))
+                    while (true)
                     {
-                        var json = JsonSerializer.Serialize(view, CoreJsonSerializerContext.Default.NotificationView);
-                        await response.WriteAsync($"data: {json}\n\n", cancellationToken);
+                        // Cancel only the read wait (not the request) when the heartbeat elapses, so an
+                        // idle stream sends a keep-alive comment instead of stalling past the proxy timeout.
+                        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        heartbeatCts.CancelAfter(StreamHeartbeat);
+
+                        bool dataAvailable;
+                        try
+                        {
+                            dataAvailable = await subscription.Reader.WaitToReadAsync(heartbeatCts.Token);
+                        }
+                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            await response.WriteAsync(": ping\n\n", cancellationToken);
+                            await response.Body.FlushAsync(cancellationToken);
+                            continue;
+                        }
+
+                        if (!dataAvailable)
+                        {
+                            break; // Subscription completed (client disposed).
+                        }
+
+                        while (subscription.Reader.TryRead(out var view))
+                        {
+                            var json = JsonSerializer.Serialize(view, CoreJsonSerializerContext.Default.NotificationView);
+                            await response.WriteAsync($"data: {json}\n\n", cancellationToken);
+                        }
+
                         await response.Body.FlushAsync(cancellationToken);
                     }
                 }
