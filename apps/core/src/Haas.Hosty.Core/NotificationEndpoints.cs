@@ -247,7 +247,9 @@ internal static class NotificationEndpoints
         UserDirectoryStore users,
         IClock clock,
         NotificationBroadcaster broadcaster,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        // Overridable only so tests can exercise the idle keep-alive without waiting the full cadence.
+        TimeSpan? heartbeat = null)
         => CoreSessionAuthorization.RequireSessionAsync(
             request,
             users,
@@ -273,7 +275,7 @@ internal static class NotificationEndpoints
                         // Cancel only the read wait (not the request) when the heartbeat elapses, so an
                         // idle stream sends a keep-alive comment instead of stalling past the proxy timeout.
                         using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                        heartbeatCts.CancelAfter(StreamHeartbeat);
+                        heartbeatCts.CancelAfter(heartbeat ?? StreamHeartbeat);
 
                         bool dataAvailable;
                         try
