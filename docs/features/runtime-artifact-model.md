@@ -1,8 +1,8 @@
 # Runtime Artifact & Storage Model
 
-> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command), Phase 1a (the `development` flag), Phase 2 (`prebuilt` with folder delivery), and Phase 3 (the Shell Live/Locked mode badges) have shipped. The later prebuilt deliveries (git-release/URL) and per-runtime update-available state are proposed, not built; the isolated Phase 1b storage migration was dropped (see Phasing). This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](../ideas/runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
+> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command), Phase 1a (the `development` flag), Phase 2 (`prebuilt` with folder delivery), and Phase 3 (the Shell Live/Locked mode badges) have shipped, followed by the 2026-07-02 operator-toggled **Development Mode** revision (see below — also shipped). The later prebuilt deliveries (git-release/URL) and per-runtime update-available state are proposed, not built; the isolated Phase 1b storage migration was dropped (see Phasing). This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](../ideas/runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
 >
-> **Design revision (2026-07-02, agreed, not implemented):** liveness is re-scoped from the *declared* `development` flag to an **operator-toggled Development Mode** whose default the flag provides. See "Development Mode — an operator toggle" below; sections describing flag-as-gate semantics remain accurate for the shipped state.
+> **Design revision (2026-07-02) — shipped:** liveness is re-scoped from the *declared* `development` flag to an **operator-toggled Development Mode** whose default the flag provides (Core `POST /api/apps/{id}/development-mode` + `AppSummary.ResolveDevelopmentMode`, a switch on the Shell's Source tab; the single-development-runtime validation was retired). See "Development Mode — an operator toggle" below; earlier sections describing flag-as-gate semantics still describe the now-superseded Phase 1a state.
 
 ## Motivation
 
@@ -195,7 +195,7 @@ Why this factoring wins:
 - **Liveness no longer requires editing the publisher's manifest.** Any source runtime can be run live by the operator (e.g. a `dev` profile that never declared the flag).
 - **"Running from source ≠ live" is preserved** — the default is OFF, so nothing becomes accidentally live; only the *owner* of the decision moves from author to operator, which fits a self-hosted platform.
 
-### What changes vs Phase 1a (when implemented)
+### What changes vs Phase 1a (as shipped)
 
 - **Gating.** `SupportsSource` (the Source tab) widens from "any `development: true` profile" to "any `artifact: source` runtime". `Live` / `ResolveLiveSourcePath` gate on "selected runtime is `artifact: source` **and** its Development Mode is ON" instead of reading the manifest flag.
 - **State.** Per-runtime Development Mode is operator state seeded from the manifest flag, persisted in the app record — `RuntimeArtifactState.development` becomes operator-writable rather than manifest-derived. Toggled via a new control/web endpoint (autostart-style) plus a switch on the Shell's Source tab.
@@ -254,7 +254,7 @@ Two per-runtime declarations drive the model: the existing `artifact` field (kin
 
 ## Source override & the Source settings tab
 
-> **Revised 2026-07-02:** once the Development Mode revision lands, visibility widens to "any `artifact: source` runtime" and the tab gains the per-runtime Development Mode switch (see above). The gating below describes the shipped state.
+> **Revised 2026-07-02 (shipped):** the Development Mode revision has landed — visibility has widened to "any `artifact: source` runtime" and the tab now carries the per-runtime Development Mode switch (see above). The narrower gating described below is the superseded Phase 1a behavior, retained here for context.
 
 The Shell lets the operator configure a development runtime's source override **without switching the app to that runtime**. The [Source settings tab](runtime-source-workflows.md) ([shipped](../../apps/shell)) is refined:
 
