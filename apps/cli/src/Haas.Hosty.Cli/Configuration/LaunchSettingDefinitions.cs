@@ -3,7 +3,7 @@ namespace Haas.Hosty.Cli.Configuration;
 internal static class LaunchSettingDefinitions
 {
     private const string DefaultShellManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
-    private const string DefaultCollectorManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/collector/manifest.json";
+    private const string DefaultCollectorManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json";
     public const string HostyDataRoot = "HOSTY_DATA_ROOT";
     public const string HostyCorePort = "HOSTY_CORE_PORT";
     public const string HostyShellPort = "HOSTY_SHELL_PORT";
@@ -27,7 +27,7 @@ internal static class LaunchSettingDefinitions
         // Observability (P4): the collector is installed/started only when enabled. Mirrors Core's
         // HOSTY_OBSERVABILITY_ENABLED / HOSTY_COLLECTOR_AUTOSTART env vars. The collector manifest path
         // carries a remote default (like the Shell) so an installed standalone Core — which has no repo
-        // layout on disk to discover apps/collector/manifest.json — can still bootstrap the collector;
+        // layout on disk to discover apps/telemetry/manifest.json — can still bootstrap the collector;
         // only HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME stays an advanced ambient-env-only knob.
         new(HostyObservabilityEnabled, _ => "false", true, ValidateBoolean),
         new(HostyCollectorAutostart, _ => "true", true, ValidateBoolean),

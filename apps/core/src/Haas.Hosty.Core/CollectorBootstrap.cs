@@ -12,7 +12,7 @@ internal static class CollectorBootstrap
 {
     // Stable app id of the collector system app (referenced by the supervisor bootstrap and by the
     // OTLP endpoint resolution in CoreLifecycleService).
-    public const string AppId = "hosty.observability.collector";
+    public const string AppId = "hosty.telemetry";
 
     // The collector's app-data dir is mounted here; the upstream image's default CMD reads
     // `--config /etc/otelcol-contrib/config.yaml`, so the file Core writes must land at this path.

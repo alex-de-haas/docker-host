@@ -1,7 +1,7 @@
 {
   "schemaVersion": "app.0.1",
-  "id": "hosty.observability.collector",
-  "name": "Hosty Telemetry Backend",
+  "id": "hosty.telemetry",
+  "name": "Hosty Telemetry",
   "description": "OpenTelemetry collector + telemetry backend: receives OTLP from Hosty runtime apps, stores metrics/logs/traces in an embedded SQLite store, and serves the query API Core's read proxy reads.",
   "version": "0.2.0",
   "runtimeProfiles": [

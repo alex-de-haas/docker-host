@@ -39,8 +39,8 @@ runtime apps ──OTLP/HTTP──▶ OTel collector (Hosty system app) ──Pr
                                                                   + `docker stats` infra metrics (P3)
 ```
 
-The collector is installed as a **hidden system app** (`hosty.observability.collector`), like the
-Shell. Its manifest (`apps/collector/manifest.json`) runs the upstream
+The collector is installed as a **hidden system app** (`hosty.telemetry`), like the
+Shell. Its manifest (`apps/telemetry/manifest.json`) runs the upstream
 `otel/opentelemetry-collector-contrib` image with two ports:
 
 - `otlp-http` (4318) — **host-exposed and pinned** (`expose: host`, `localPort: 4318`) so sibling
@@ -74,7 +74,7 @@ hosty core start   # or restart if already running — the flag is read only at 
 - `HOSTY_OBSERVABILITY_ENABLED` — install + run the collector (default `false`).
 - `HOSTY_COLLECTOR_AUTOSTART` — start the collector with the other autostart apps (default `true`).
 - `HOSTY_COLLECTOR_MANIFEST_PATH` — where Core reads the collector manifest (default: the
-  `apps/collector/manifest.json` published from this repo on GitHub `main`). A **standalone installed
+  `apps/telemetry/manifest.json` published from this repo on GitHub `main`). A **standalone installed
   Core has no repo layout on disk**, so this remote default is what lets it bootstrap the collector at
   all — without it the bootstrap is skipped (`"no collector manifest path was configured"`). Override
   with a local path or a different URL for a fork / air-gapped mirror.
@@ -269,7 +269,7 @@ is skipped, never a 404. `ILogStore` is unchanged — the cross-app composition 
 
 ## Key code
 
-- `apps/collector/manifest.json` — collector system-app manifest.
+- `apps/telemetry/manifest.json` — collector system-app manifest.
 - `apps/core/src/Haas.Hosty.Core/CollectorBootstrap.cs` — app id, container paths, the owned config.
 - `EnsureCollectorInstalledAsync` (`HostyCoreApplication.cs`) — install + config write + autostart.
 - `RuntimeTelemetrySettings.FromManifest` / `RuntimeAppTelemetryManifest` (`RuntimeAppManifest.cs`).

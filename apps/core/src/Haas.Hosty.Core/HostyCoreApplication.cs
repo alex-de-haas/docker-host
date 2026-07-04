@@ -869,7 +869,7 @@ internal sealed record HostyCoreRuntimeConfig(
         => ResolveDefaultBundledManifestPath("shell");
 
     private static string? ResolveDefaultCollectorManifestPath()
-        => ResolveDefaultBundledManifestPath("collector");
+        => ResolveDefaultBundledManifestPath("telemetry");
 
     // Walks up from the working dir and the binary's base dir looking for a manifest bundled next to
     // Core under apps/<name>/manifest.json (or <name>/manifest.json). Shared by the Shell and the

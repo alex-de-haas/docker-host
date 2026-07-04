@@ -734,7 +734,7 @@ public sealed class AppManifestServiceTests
     [Fact]
     public async Task LoadAsync_AcceptsBundledCollectorManifest()
     {
-        var manifestPath = ResolveRepoFile(Path.Combine("apps", "collector", "manifest.json"));
+        var manifestPath = ResolveRepoFile(Path.Combine("apps", "telemetry", "manifest.json"));
 
         var selection = await new AppManifestService().LoadAsync(manifestPath);
 
