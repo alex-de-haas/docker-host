@@ -201,3 +201,24 @@ Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>
 ```
 
 The response includes enabled Host users explicitly assigned to that app.
+
+## Catalog Metadata
+
+Optional marketplace/catalog display metadata for an app. It is **entirely optional** and lives **outside runtime validation** — a manifest without it is fully valid, and malformed metadata never blocks install (Core normalizes it best-effort and surfaces it for display only). Strict shape checks (SPDX license, category enum) are enforced by the catalog CI, not by Core. See [Runtime app marketplace](runtime-app-marketplace.md) for the full model.
+
+```json
+"catalogMetadata": {
+  "publisher": { "name": "Example Co", "url": "https://example.com", "email": "team@example.com" },
+  "category": "Productivity",
+  "tags": ["notes", "sync"],
+  "icon": "assets/icon.png",
+  "screenshots": ["assets/1.png", "assets/2.png"],
+  "license": "AGPL-3.0-only",
+  "links": { "website": "https://example.com", "docs": "https://example.com/docs", "support": "https://example.com/help" },
+  "summary": "Take notes.",
+  "description": "A longer description shown on the app detail page.",
+  "changelog": "0.1.0 — initial release"
+}
+```
+
+All fields are optional; blanks are dropped and an all-empty block is ignored. `category` here is the marketplace category, distinct from the simpler `ui.category` used by the app directory. `icon` is an asset path or URL (richer than `ui.icon`, which is a Lucide name). Core exposes the normalized block on each app summary as `catalogMetadata` for storefront cards and the app-detail view.
