@@ -180,3 +180,9 @@ npm run cli:build   # build the standalone CLI project
 npm run cli:test    # run the xUnit CLI test suite
 npm run ci          # run the same aggregate checks as CI
 ```
+
+## License
+
+Hosty is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
+
+In short: you are free to use, self-host, modify, and redistribute Hosty — including for personal and internal commercial use. If you distribute a modified version, or run one that users interact with over a network — whether they are external customers or people inside your organization — you must offer those users its source code under the same license. For commercial licensing outside these terms, contact the author.
