@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowUpCircle, Download, LoaderCircle, Package } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Download, LoaderCircle, Package } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,9 +9,23 @@ import { getCatalogApp } from "../catalog-api";
 import type { CatalogAppVersion, CatalogDetailState } from "../types";
 import { EmptyState, Fact, InlineError } from "../ui";
 
-// Marketplace detail for one catalog app. Loads the full entry (display + resolved feed versions) and
-// lets the operator kick off an install/update for a chosen version — which hands its manifestRef to the
-// existing reviewed install flow (the catalog installs nothing itself).
+// Only follow http(s) links from catalog metadata (authored by external sources), never javascript:/data:.
+function httpUrl(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+// Marketplace detail for one catalog app. Loads the full entry (display + resolved feed versions). For an
+// app that is not installed, a version's Install button hands its manifestRef to the existing reviewed
+// install flow (the catalog installs nothing itself). Already-installed apps are managed from Installed
+// Apps — installing a version there would just return "already installed", so it is not offered here.
 export function CatalogAppDetailsDialog({
   coreOrigin,
   appId,
@@ -24,26 +38,37 @@ export function CatalogAppDetailsDialog({
   onInstall: (manifestRef: string) => void;
 }) {
   const [state, setState] = useState<CatalogDetailState>({ loading: true, error: null, app: null });
+  const abortRef = useRef<AbortController | null>(null);
 
   // Load after the fetch resolves only (initial `loading: true` comes from the initial state), so the
-  // mount effect does not setState synchronously. The dialog is remounted per app via a `key`.
-  const load = useCallback(async () => {
+  // mount effect does not setState synchronously. The dialog is remounted per app via a `key`; an
+  // AbortSignal cancels the fetch on unmount so a stale response can't setState the wrong app.
+  const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const app = await getCatalogApp(coreOrigin, appId);
+      const app = await getCatalogApp(coreOrigin, appId, signal);
       setState({ loading: false, error: null, app });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
       setState({ loading: false, error: error instanceof Error ? error.message : "Failed to load catalog app.", app: null });
     }
   }, [coreOrigin, appId]);
 
   // Defer to a macrotask so the setState lands outside the effect's synchronous body (matches the
-  // observability pages' load pattern).
+  // observability pages' load pattern); abort on unmount.
   useEffect(() => {
-    const handle = setTimeout(() => void load(), 0);
-    return () => clearTimeout(handle);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const handle = setTimeout(() => void load(controller.signal), 0);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
   }, [load]);
 
   const app = state.app;
+  const publisherUrl = httpUrl(app?.publisher?.url);
   const installVersion = (version: CatalogAppVersion) => {
     onInstall(version.manifestRef);
     onClose();
@@ -63,13 +88,6 @@ export function CatalogAppDetailsDialog({
 
           {app && (
             <>
-              {app.updateAvailable && app.installedVersion && app.stableVersion && (
-                <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-                  <ArrowUpCircle className="h-4 w-4 shrink-0" />
-                  Update available: {app.installedVersion} → {app.stableVersion}
-                </div>
-              )}
-
               <div className="grid gap-3 sm:grid-cols-2">
                 <Fact label="Publisher" value={app.publisher?.name || "Unknown"} />
                 <Fact label="Category" value={app.category || "Uncategorized"} />
@@ -77,7 +95,7 @@ export function CatalogAppDetailsDialog({
                 <Fact label="Installed" value={app.installed ? app.installedVersion || "yes" : "no"} />
               </div>
 
-              {app.tags.length > 0 && (
+              {app.tags && app.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {app.tags.map((tag) => (
                     <Badge key={tag} variant="outline">
@@ -87,7 +105,7 @@ export function CatalogAppDetailsDialog({
                 </div>
               )}
 
-              {app.screenshots.length > 0 && (
+              {app.screenshots && app.screenshots.length > 0 && (
                 <div className="flex gap-2 overflow-x-auto">
                   {app.screenshots.map((src) => (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -113,21 +131,30 @@ export function CatalogAppDetailsDialog({
                           {version.artifact?.kind && <Badge variant="outline">{version.artifact.kind}</Badge>}
                           {version.version === app.installedVersion && <Badge variant="outline">Installed</Badge>}
                         </div>
-                        <Button type="button" size="sm" variant="outline" onClick={() => installVersion(version)}>
-                          {app.installed ? <ArrowUpCircle className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-                          {app.installed ? "Install version" : "Install"}
-                        </Button>
+                        {!app.installed && (
+                          <Button type="button" size="sm" variant="outline" onClick={() => installVersion(version)}>
+                            <Download className="h-4 w-4" />
+                            Install
+                          </Button>
+                        )}
                       </div>
                     ))}
                   </div>
                 )}
+                {app.installed && (
+                  <p className="text-sm text-muted-foreground">
+                    {app.updateAvailable && app.installedVersion && app.stableVersion
+                      ? `Update available: ${app.installedVersion} → ${app.stableVersion}. Manage updates from Installed Apps.`
+                      : `Installed${app.installedVersion ? ` (${app.installedVersion})` : ""}. Manage updates from Installed Apps.`}
+                  </p>
+                )}
               </div>
 
-              {app.publisher?.url && (
+              {publisherUrl && (
                 <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
                   <Package className="h-4 w-4" />
-                  <a href={app.publisher.url} target="_blank" rel="noreferrer" className="underline">
-                    {app.publisher.url}
+                  <a href={publisherUrl} target="_blank" rel="noreferrer" className="underline">
+                    {publisherUrl}
                   </a>
                 </p>
               )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, LoaderCircle, Package, RefreshCw, Search, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,28 +21,42 @@ export function MarketplacePage({ coreOrigin, onInstall }: { coreOrigin: string;
   const [category, setCategory] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  const abortRef = useRef<AbortController | null>(null);
+
   // No synchronous setState here: `load` only writes state after the fetch resolves (the initial
   // `loading: true` comes from the initial state), so calling it from the mount effect does not trigger
-  // a cascading render. The Refresh button flips `loading` in its own click handler via `refresh`.
-  const load = useCallback(async () => {
+  // a cascading render. An AbortSignal cancels an in-flight fetch so a stale response can't overwrite a
+  // newer one (or a fetch after unmount). The Refresh button flips `loading` in its own click handler.
+  const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await getCatalogApps(coreOrigin);
-      setState({ loading: false, error: null, apps: data.apps });
+      const data = await getCatalogApps(coreOrigin, signal);
+      setState({ loading: false, error: null, apps: data.apps ?? [] });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
       setState({ loading: false, error: error instanceof Error ? error.message : "Failed to load the catalog.", apps: [] });
     }
   }, [coreOrigin]);
 
   const refresh = useCallback(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setState((current) => ({ ...current, loading: true, error: null }));
-    void load();
+    void load(controller.signal);
   }, [load]);
 
   // Defer the initial fetch to a macrotask so the setState lands outside the effect's synchronous body
-  // (the same pattern the observability pages use for their loads).
+  // (the same pattern the observability pages use for their loads); abort it on unmount/reload.
   useEffect(() => {
-    const handle = setTimeout(() => void load(), 0);
-    return () => clearTimeout(handle);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const handle = setTimeout(() => void load(controller.signal), 0);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
   }, [load]);
 
   const categories = useMemo(() => {
@@ -68,7 +82,7 @@ export function MarketplacePage({ coreOrigin, onInstall }: { coreOrigin: string;
         app.name.toLowerCase().includes(needle) ||
         app.id.toLowerCase().includes(needle) ||
         (app.summary?.toLowerCase().includes(needle) ?? false) ||
-        app.tags.some((tag) => tag.toLowerCase().includes(needle))
+        (app.tags ?? []).some((tag) => tag.toLowerCase().includes(needle))
       );
     });
   }, [state.apps, query, category]);
@@ -168,7 +182,7 @@ function MarketplaceCard({ app, onOpen }: { app: CatalogAppSummary; onOpen: () =
 
       <div className="mt-3 flex flex-wrap gap-1.5">
         {app.category && <Badge variant="secondary">{app.category}</Badge>}
-        {app.tags.slice(0, 3).map((tag) => (
+        {(app.tags ?? []).slice(0, 3).map((tag) => (
           <Badge key={tag} variant="outline">
             {tag}
           </Badge>
