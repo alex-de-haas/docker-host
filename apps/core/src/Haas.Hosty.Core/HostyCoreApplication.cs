@@ -42,6 +42,11 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<NotificationBroadcaster>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
+        // Marketplace catalog read side (WS2): fetch/cache/merge configured catalog sources and serve the
+        // storefront. A discovery/trust index over existing transport — it installs nothing.
+        builder.Services.AddSingleton<ICatalogDocumentFetcher>(sp =>
+            new HttpCatalogDocumentFetcher(sp.GetRequiredService<IClock>()));
+        builder.Services.AddSingleton<CatalogService>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         // Resolve the setsid shim path once so the localCommand adapter spawns reclaimable process-group
@@ -233,6 +238,7 @@ internal static class HostyCoreApplication
         AppDirectoryEndpoints.Map(app);
         AppBackupEndpoints.Map(app);
         NotificationEndpoints.Map(app);
+        CatalogEndpoints.Map(app);
     }
 
     internal static IResult RequireControlSecret(HttpRequest request, ControlSecret secret, Func<IResult> action)
@@ -673,9 +679,15 @@ internal sealed record HostyCoreRuntimeConfig(
     bool ObservabilityEnabled = false,
     string? CollectorManifestPath = null,
     string CollectorBootstrapRuntime = "docker",
-    bool CollectorAutostart = true)
+    bool CollectorAutostart = true,
+    // Ordered marketplace catalog source URLs (http/https or local paths), highest priority first. Empty
+    // by default — the marketplace is opt-in and non-intrusive, so no source means an empty storefront and
+    // nothing changes for existing installs. Set HOSTY_CATALOG_SOURCES to a comma-separated list.
+    IReadOnlyList<string>? CatalogSources = null)
 {
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
+
+    public IReadOnlyList<string> EffectiveCatalogSources => CatalogSources ?? [];
 
     public string EffectiveShellPublicOrigin => ShellPublicOrigin ?? $"http://localhost:{ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
 
@@ -740,7 +752,30 @@ internal sealed record HostyCoreRuntimeConfig(
             ReadBoolean("HOSTY_OBSERVABILITY_ENABLED", defaultValue: false),
             collectorManifestPath,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME")) ?? "docker",
-            ReadBoolean("HOSTY_COLLECTOR_AUTOSTART", defaultValue: true));
+            ReadBoolean("HOSTY_COLLECTOR_AUTOSTART", defaultValue: true),
+            ReadList("HOSTY_CATALOG_SOURCES"));
+    }
+
+    // Parses a comma-separated env var into a trimmed, de-duplicated, order-preserving list; null when unset.
+    private static IReadOnlyList<string>? ReadList(string name)
+    {
+        var value = NormalizeOptional(Environment.GetEnvironmentVariable(name));
+        if (value is null)
+        {
+            return null;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>();
+        foreach (var part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (seen.Add(part))
+            {
+                result.Add(part);
+            }
+        }
+
+        return result.Count > 0 ? result : null;
     }
 
     private static string? ReadFirst(params string[] names)

@@ -20,6 +20,10 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 - `POST /api/apps/{appId}/switch-runtime/plan` - admin runtime switch review for browser Shell clients.
 - `POST /api/apps/{appId}/switch-runtime` - admin runtime switch apply for browser Shell clients; CSRF-protected and requires the reviewed plan digest.
 - `GET /api/internal/apps/{appId}/directory/users` - scoped app directory for runtime apps with `HOSTY_APP_SERVICE_TOKEN`.
+- `GET /api/catalog/apps` - marketplace storefront across the configured catalog sources, each entry joined with install state; admin-only, read-only. Empty when no sources are configured.
+- `GET /api/catalog/apps/{id}` - one catalog app's detail (display metadata, resolved feed versions + `stable`/`beta`, install/update state); `404` when no source lists the id. Clients install/update by passing a version's `manifestRef` to the existing `/api/apps/install*` and `/api/apps/{appId}/update*` endpoints — the catalog installs nothing itself.
+
+Catalog sources are configured via `HOSTY_CATALOG_SOURCES` (comma-separated `http(s)` URLs or local paths, highest priority first; an id declared by more than one source resolves to the highest-priority one). The marketplace is opt-in and non-intrusive: with no sources set the catalog is empty and nothing changes for existing installs. See [Runtime app marketplace](runtime-app-marketplace.md).
 
 `/api/core/status` reports effective public origins. If `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is unset, Core falls back to `http://localhost:<core-port>` and `http://localhost:<shell-port>`.
 

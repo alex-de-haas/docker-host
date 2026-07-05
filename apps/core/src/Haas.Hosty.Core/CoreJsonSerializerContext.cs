@@ -59,6 +59,9 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppUpdatePlanDigestSeed))]
 [JsonSerializable(typeof(AppRuntimeSwitchDigestSeed))]
 [JsonSerializable(typeof(NotificationState))]
+// Marketplace catalog wire schema Core fetches and deserializes (index + per-app version feed).
+[JsonSerializable(typeof(CatalogIndex))]
+[JsonSerializable(typeof(VersionFeed))]
 
 // HTTP request bodies.
 [JsonSerializable(typeof(AuthSessionCreateRequest))]
@@ -160,4 +163,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(HostUserUpdateResponse))]
 [JsonSerializable(typeof(HostUserDisableResponse))]
 [JsonSerializable(typeof(HostUserAssignmentsResponse))]
+// Marketplace catalog read API responses (WS2).
+[JsonSerializable(typeof(CatalogAppsResponse))]
+[JsonSerializable(typeof(CatalogAppDetailResponse))]
 internal sealed partial class CoreJsonSerializerContext : JsonSerializerContext;
