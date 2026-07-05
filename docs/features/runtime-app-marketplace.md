@@ -1,8 +1,12 @@
 # Runtime App Marketplace
 
-Status: Idea
+Status: Accepted — implementation-ready. The update/artifact/lock/live-source
+**foundation is shipped** (app channels removed; per-runtime `artifact` kind;
+`ArtifactLocks` + `pinned`/`rolling`; live-source reconcile; Development Mode). The
+**catalog storefront itself is not started**. Scope is closed — see "Implementation
+Readiness (confirmed 2026-07-05)".
 Created: 2026-06-25
-Updated: 2026-06-26
+Updated: 2026-07-05
 
 ## Motivation
 
@@ -526,12 +530,22 @@ Per-app version feed (`releasesUrl`, author-hosted, signed by author):
 ```json
 {
   "versions": [
-    { "version": "0.3.0", "manifestRef": "...", "imageDigest": "sha256:..." },
-    { "version": "0.3.1", "manifestRef": "...", "imageDigest": "sha256:..." }
+    { "version": "0.3.0", "manifestRef": "...", "artifact": { "kind": "image", "imageDigest": "sha256:..." } },
+    { "version": "0.3.1", "manifestRef": "...", "artifact": { "kind": "image", "imageDigest": "sha256:..." } },
+    { "version": "1.4.0", "manifestRef": "...", "artifact": { "kind": "source", "commit": "abc123", "ref": "refs/tags/v1.4.0" } }
   ],
   "tags": { "stable": "0.3.1", "beta": "0.4.0-rc1" }
 }
 ```
+
+**The feed is artifact-agnostic** (revised 2026-07-05, per Q7 - the catalog does not
+restrict runtime kind). A version always carries `manifestRef`; the resolved artifact
+identity is a **discriminated** `artifact` object keyed by `kind`: `image` ->
+`imageDigest`, `source` -> `commit` (+ optional `ref`), `prebuilt` -> `bundleHash`
+(deferred). `artifact` is **optional** - Core re-resolves it at install from the
+manifest's declared runtime (clone -> commit / pull -> digest), so a bare
+`{ version, manifestRef }` feed is valid; the resolved identity is a post-publish
+optimization and the provenance anchor for signing.
 
 Lowest-friction alternative to a feed file: the entry points directly at an OCI repo
 / Git repo and Core lists **tags directly** as versions - zero per-release author
@@ -694,8 +708,17 @@ Update model / artifact (A):
   the artifact delta is marked "unknown" and the full pull happens at apply.
 - **A5** The live source-reconcile is its own phase (**2b**), after image pinning (**2a**).
 - **A6** `prebuilt` is **out of v1** (image + source only). Spec retained under Deferred.
-- **A7** Core-fetched publisher source is **out of v1** (only the operator-owned dev
-  folder is "source"); expected to arrive with git-URL install.
+- **A7** ~~Core-fetched publisher source is out of v1 (only the operator-owned dev
+  folder is "source").~~ **Revised 2026-07-05 (Q7): the catalog is runtime-agnostic and
+  Core-fetched source is IN v1 at the mechanism level** - it already works.
+  `AppSourceService.ResolveManagedAsync`/`EnsureCheckoutAsync` `git clone` a public
+  http/https source repo into `SourcesRoot/<appId>`, and Development Mode
+  (`AppSummary.ResolveDevelopmentMode`) decouples live (edit/re-fetch) from pinned-to-commit
+  (reviewed update) independently of operator-vs-publisher ownership. So `source ⇒
+  operator-owned` (R15/R18) no longer holds. What is NOT yet coded: the strict "reviewed
+  contract on publisher-source change" branch - in MVP that is covered by install-review +
+  the 2b reconcile-diff (surfaced) + the mount-binding host-access gate. See "Implementation
+  Readiness (confirmed 2026-07-05)".
 - **A8** Remove `pullPolicy` from the manifest model; pull behaviour derives from the
   `pinned`/`rolling` policy.
 - **A9** AppRecord changes are additive/nullable - no `SchemaVersion` transform; locks are
@@ -852,10 +875,82 @@ runtime switch (R17) can land as a second increment.
   reconcile re-evaluates the full run profile every start (no in-place patching); ports/ingress
   re-register on the same start path; orphaned slots and stale settings are non-destructive.
 
+## Implementation Readiness (confirmed 2026-07-05)
+
+Closes the implementation-readiness Q&A. Baseline at this point: platform **0.30.1** /
+Shell **0.18.2**; the whole update/artifact/lock/live-source foundation (channels removed,
+`artifact` kind, `ArtifactLocks` + `pinned`/`rolling`, live-source reconcile, Development
+Mode) is **merged**. Only the catalog storefront remains.
+
+### Governing invariant - marketplace is optional and non-intrusive
+
+The catalog is a discovery/trust index over existing transport, **never a required source**:
+
+- All current install paths stay unchanged: local file, local directory, HTTP(S) manifest
+  URL, and git-URL source. Install-from-catalog is a thin wrapper that feeds a `manifestRef`
+  into the same `CreateInstallPlanAsync`.
+- The manifest `catalogMetadata` block is **optional** and kept **out of** runtime `app.0.1`
+  validation (B5). A manifest without it is fully valid.
+- An installed app **need not belong to any catalog**. `releasesUrl` / `signerIdentity` /
+  provenance are properties of the catalog **entry**, not of the manifest or `AppRecord`;
+  they are `null` for non-catalog installs.
+- Feed-based update-available is **opt-in per app**. Without a feed, the existing
+  reviewed-update (manifest/digest, or source commit) runs exactly as today.
+
+### Runtime-agnostic catalog (Q7)
+
+The catalog does **not** restrict runtime kind - an entry is just a pointer to a manifest,
+and the manifest may declare `docker`/`image` **or** `localCommand`/`source` (real case:
+`transcode-engine` has no image; on prod it runs `localCommand` from source with runtime
+compilation). This is already supported at the mechanism level (see the revised **A7**):
+`AppSourceService` git-clones a public source repo into a managed checkout, and Development
+Mode pins-to-commit vs runs-live independently of who owns the source. Consequence: the
+version feed schema is **artifact-agnostic** (see "Schemas") and install/update reuse the
+existing paths for both kinds. `prebuilt` **catalog delivery** stays deferred (A6) only
+because no catalog delivery path exists for it yet - not because the catalog rejects it.
+
+### Confirmed answers (Q1-Q11)
+
+| # | Decision |
+| --- | --- |
+| **Q1** | Ship an **MVP first**: WS1 + WS2 + WS3 + WS6, single official source, **unsigned** (trust rides on the existing install-review). Signing (WS5) and federation (WS7) are follow-ups. |
+| **Q2** | Public `hosty-catalog` GitHub repo, published via GitHub Pages. |
+| **Q3** | v1 verifies the **index + feed only**, not image bits (cosign image verify deferred). |
+| **Q4** | ECDsa P-256: private key = catalog-CI secret; public key **embedded** in Core + config-override for rotation. Keyless sigstore deferred. |
+| **Q5** | Manifest `catalogMetadata` is the **display source of truth**; the catalog `entry` holds only pointers + trust (`signerIdentity`, `releasesUrl`) + curation overrides. |
+| **Q6** | Category = a **small fixed enum** in the schema + free-form `tags[]` for the long tail. |
+| **Q7** | Catalog is **runtime-agnostic** - no image-only restriction (see above). |
+| **Q8** | Versions resolve from an explicit **`releasesUrl` feed only** (bare OCI/git tag enumeration deferred). |
+| **Q9** | Icons/screenshots served from the catalog's Pages as https URLs; confirm Shell CSP allows the catalog host (small icons may be data-URI-inlined in the index). |
+| **Q10** | API namespace = `catalog` (`/api/catalog/...`); user-facing UI label = **"Marketplace"**. |
+| **Q11** | App channels stay removed / untouched; a stability-track feature is a separate future concern if ever needed. |
+
+### Workstreams and build order
+
+| WS | Scope | Doc phase | Side | Version |
+| --- | --- | --- | --- | --- |
+| **WS1** | `catalogMetadata` (optional, outside runtime validation) + artifact-agnostic `marketplace.0.1` schemas (index / entry / feed) + AOT DTO registration + surface metadata on `AppSummary` | 1 | Core | platform -> 0.31.0 |
+| **WS2** | `CatalogSourceStore` + `CatalogService` (fetch/cache/merge) + `CatalogEndpoints` (`GET /api/catalog/apps`, `/apps/{id}`) + install-from-catalog + update-from-feed - all reuse existing install / reviewed-update, no runtime restriction | 3 (Core) | Core | platform -> 0.32.0 |
+| **WS3** | Shell `/marketplace` page (cards, search, detail) reusing the install-review dialog + app-details components; version/policy/Live badges | 3 (Shell) | Shell | Shell -> 0.19.0 |
+| **WS4** | `hosty catalog` CLI (`list` / `show` / `install` / `sources`) reusing install-plan/apply | 3 (CLI) | CLI | folded into platform bump |
+| **WS5** | ECDsa P-256 detached signature verification of index + feed; two-level trust; pinned public key | 4 | Core | platform -> 0.33.0 |
+| **WS6** | Public `hosty-catalog` repo + CI: PR validation (entry + referenced manifest against `app.0.1`, id uniqueness, ref resolves, capability/mount sanity) -> merge generates + publishes (and later signs) `catalog.json` | B6 | separate repo | - |
+| **WS7** | Federation - operator-configured additional catalog sources (Variant B) | 5 | Core+Shell+CLI | platform minor |
+
+Critical path: **WS1 -> WS2 -> WS3/WS4**; **WS6** parallels WS2 (WS2 develops against a
+local fixture `catalog.json`); **WS5** attaches once WS6 publishes a signed index; **WS7**
+after MVP. Smallest shippable MVP = WS1 + WS2 + WS3 + WS6 with one official source, unsigned.
+
+Per-phase = platform minor bump (C2); Shell tracks its own minor. AOT: every new DTO is
+registered in `CoreJsonSerializerContext`; ECDsa P-256 is AOT-proven (B3 spike). No
+signing/verification scaffolding exists in Core today (only HMAC app-identity), so **WS5 is
+net-new**.
+
 ## Links
 
-- [Update channels](update-channels.md) - refined by this document (app channels folded in; product channels retained).
-- [Runtime app repository install](runtime-app-repository-install.md)
-- [Runtime source extensions](runtime-source-extensions.md)
-- [Runtime app manifest](../features/runtime-app-manifest.md)
-- [Final Hosty architecture](../features/final-hosty-architecture.md)
+- [Update channels](../ideas/update-channels.md) - refined by this document (app channels folded in; product channels retained).
+- [Runtime app repository install](../ideas/runtime-app-repository-install.md)
+- [Runtime source extensions](../ideas/runtime-source-extensions.md)
+- [Runtime app manifest](runtime-app-manifest.md)
+- [Final Hosty architecture](final-hosty-architecture.md)
+- [Runtime artifact & storage model](runtime-artifact-model.md) - the artifact-kind foundation this builds on.

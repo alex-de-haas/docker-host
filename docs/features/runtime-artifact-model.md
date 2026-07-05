@@ -1,6 +1,6 @@
 # Runtime Artifact & Storage Model
 
-> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command), Phase 1a (the `development` flag), Phase 2 (`prebuilt` with folder delivery), and Phase 3 (the Shell Live/Locked mode badges) have shipped, followed by the 2026-07-02 operator-toggled **Development Mode** revision (see below — also shipped). The later prebuilt deliveries (git-release/URL) and per-runtime update-available state are proposed, not built; the isolated Phase 1b storage migration was dropped (see Phasing). This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](../ideas/runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
+> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command), Phase 1a (the `development` flag), Phase 2 (`prebuilt` with folder delivery), and Phase 3 (the Shell Live/Locked mode badges) have shipped, followed by the 2026-07-02 operator-toggled **Development Mode** revision (see below — also shipped). The later prebuilt deliveries (git-release/URL) and per-runtime update-available state are proposed, not built; the isolated Phase 1b storage migration was dropped (see Phasing). This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](runtime-app-marketplace.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
 >
 > **Design revision (2026-07-02) — shipped:** liveness is re-scoped from the *declared* `development` flag to an **operator-toggled Development Mode** whose default the flag provides (Core `POST /api/apps/{id}/development-mode` + `AppSummary.ResolveDevelopmentMode`, a switch on the Shell's Source tab; the single-development-runtime validation was retired). See "Development Mode — an operator toggle" below; earlier sections describing flag-as-gate semantics still describe the now-superseded Phase 1a state.
 
@@ -306,7 +306,7 @@ Switching remains the reviewed [`switch-runtime-plan` / `switch-runtime`](runtim
 
 ## Related
 
-- [Runtime app marketplace](../ideas/runtime-app-marketplace.md) — the artifact-kind direction this elaborates.
+- [Runtime app marketplace](runtime-app-marketplace.md) — the artifact-kind direction this elaborates.
 - [Runtime source workflows](runtime-source-workflows.md) — current source checkout / override / switching (single-source model this evolves).
 - [Runtime app manifest](runtime-app-manifest.md) — `artifact` field, `setup`, per-runtime service fields.
 - [Runtime app update](runtime-app-update.md) — lock + reviewed-update mechanics for compiled artifacts.
