@@ -35,7 +35,9 @@ export type ShellActionsContextValue = {
   sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
   launchAppPage: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   getStandaloneAppHref: (app: CoreApp, page: AppPageLink) => string;
-  openInstallDialog: () => void;
+  // Opens the install review dialog. An optional manifest path/URL pre-fills the review field — the
+  // marketplace passes a catalog version's manifestRef so install flows through the existing reviewed path.
+  openInstallDialog: (manifestPath?: string) => void;
   runAppAction: (app: CoreApp, action: AppAction) => Promise<void>;
   switchAppRuntime: (app: CoreApp, targetRuntime: string) => Promise<void>;
   configureAppDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => Promise<void>;

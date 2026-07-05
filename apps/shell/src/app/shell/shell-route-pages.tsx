@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AvailableAppsPage } from "./pages/available-apps-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { InstalledAppsPage } from "./pages/installed-apps-page";
+import { MarketplacePage } from "./pages/marketplace-page";
 import { ObservabilityMetricsPage } from "./pages/observability/metrics-page";
 import { ObservabilityStructuredLogsPage } from "./pages/observability/structured-logs-page";
 import { ObservabilityTracesPage } from "./pages/observability/traces-page";
@@ -92,6 +93,16 @@ export function ShellInstalledAppsRoute() {
         onOpenPanel={shellActions.openAppPanel}
         onOpenSharedMounts={shellActions.openSharedMounts}
       />
+    </AdminShellRoute>
+  );
+}
+
+export function ShellMarketplaceRoute() {
+  const shellActions = useShellActions();
+
+  return (
+    <AdminShellRoute>
+      <MarketplacePage coreOrigin={shellActions.coreOrigin} onInstall={shellActions.openInstallDialog} />
     </AdminShellRoute>
   );
 }

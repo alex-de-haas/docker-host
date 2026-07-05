@@ -19,6 +19,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ScrollText,
+  Store,
   Sun,
   Users,
   Waypoints,
@@ -112,6 +113,7 @@ export function ShellSidebar({
             <NavigationSection title="Host" compact={compact}>
               <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
               <SidebarButton compact={compact} active={activeView === "installed-apps" && !workspace} icon={Boxes} label="Installed Apps" onClick={() => onNavigate("installed-apps")} />
+              <SidebarButton compact={compact} active={activeView === "marketplace" && !workspace} icon={Store} label="Marketplace" onClick={() => onNavigate("marketplace")} />
               <SidebarButton compact={compact} active={activeView === "users"} icon={Users} label="User Management" onClick={() => onNavigate("users")} />
             </NavigationSection>
           )}
