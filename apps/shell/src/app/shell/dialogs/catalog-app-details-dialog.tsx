@@ -116,7 +116,7 @@ export function CatalogAppDetailsDialog({
 
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">Versions</h3>
-                {app.versions.length === 0 ? (
+                {!app.versions || app.versions.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     {app.releasesUrl ? "No versions published in the release feed." : "This app declares no release feed; install it from its source directly."}
                   </p>
