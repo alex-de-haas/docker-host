@@ -1,10 +1,13 @@
 # Runtime App Marketplace
 
-Status: Accepted — implementation-ready. The update/artifact/lock/live-source
-**foundation is shipped** (app channels removed; per-runtime `artifact` kind;
-`ArtifactLocks` + `pinned`/`rolling`; live-source reconcile; Development Mode). The
-**catalog storefront itself is not started**. Scope is closed — see "Implementation
-Readiness (confirmed 2026-07-05)".
+Status: **MVP shipped (2026-07-05).** The update/artifact/lock/live-source foundation was
+already shipped; the catalog storefront now is too — **WS1** (catalogMetadata, PR #105),
+**WS2** (`/api/catalog`, PR #106), and **WS3** (Shell `/marketplace`, PR #107) are merged to
+`main` (platform 0.32.0 / Shell 0.19.0), and **WS6** (the public
+[`hosty-catalog`](https://github.com/alex-de-haas/hosty-catalog) repo + CI publishing
+`catalog.json` to GitHub Pages) is live and end-to-end verified. Remaining, deferred:
+**WS4** (`hosty catalog` CLI), **WS5** (signing), **WS7** (federation). See "Implementation
+Readiness" for the plan and "Delivery status" for what shipped.
 Created: 2026-06-25
 Updated: 2026-07-05
 
@@ -936,6 +939,21 @@ because no catalog delivery path exists for it yet - not because the catalog rej
 | **WS5** | ECDsa P-256 detached signature verification of index + feed; two-level trust; pinned public key | 4 | Core | platform -> 0.33.0 |
 | **WS6** | Public `hosty-catalog` repo + CI: PR validation (entry + referenced manifest against `app.0.1`, id uniqueness, ref resolves, capability/mount sanity) -> merge generates + publishes (and later signs) `catalog.json` | B6 | separate repo | - |
 | **WS7** | Federation - operator-configured additional catalog sources (Variant B) | 5 | Core+Shell+CLI | platform minor |
+
+### Delivery status (2026-07-05)
+
+| WS | Status |
+| --- | --- |
+| **WS1** | **Shipped** — PR #105, platform 0.31.0. `catalogMetadata` block, normalized + persisted + surfaced on `AppSummary`. |
+| **WS2** | **Shipped** — PR #106, platform 0.32.0. `CatalogService` + `HttpCatalogDocumentFetcher` (streaming byte-cap) + `CatalogEndpoints`; `HOSTY_CATALOG_SOURCES` config; strict `schemaVersion` check. Install/update reuse existing endpoints (no new install path). |
+| **WS3** | **Shipped** — PR #107, Shell 0.19.0. `/marketplace` storefront (cards, search, category chips) + `CatalogAppDetailsDialog`; install via the existing review dialog seeded with a version's `manifestRef`. |
+| **WS6** | **Shipped** — public [`hosty-catalog`](https://github.com/alex-de-haas/hosty-catalog): `marketplace.0.1` schemas, dependency-free validate/generate tooling, PR-gate + Pages-publish workflows, an app-submission issue form, and a seed entry. Live at `https://alex-de-haas.github.io/hosty-catalog/catalog.json`. |
+| **WS4 / WS5 / WS7** | **Deferred** — CLI `hosty catalog`, index/feed signing (ECDsa P-256), and federation. |
+
+**End-to-end verified (2026-07-05):** a Core 0.32.0 configured with
+`HOSTY_CATALOG_SOURCES=https://alex-de-haas.github.io/hosty-catalog/catalog.json` served the
+published catalog and feed through `GET /api/catalog/apps[/{id}]` (list + version resolution).
+Operators on Core ≥ 0.32.0 opt in with `hosty config set HOSTY_CATALOG_SOURCES <url>` + restart.
 
 Critical path: **WS1 -> WS2 -> WS3/WS4**; **WS6** parallels WS2 (WS2 develops against a
 local fixture `catalog.json`); **WS5** attaches once WS6 publishes a signed index; **WS7**
