@@ -92,6 +92,7 @@ export function ShellClient({
   const [activePanel, setActivePanel] = useState<ActivePanel | null>(null);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
+  const [installInitialManifest, setInstallInitialManifest] = useState<string | null>(null);
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
   const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
   const [sharedMountsOpen, setSharedMountsOpen] = useState(false);
@@ -1189,7 +1190,8 @@ export function ShellClient({
     window.localStorage.setItem(SIDEBAR_COMPACT_STORAGE_KEY, String(compact));
   }
 
-  const openInstallDialog = useCallback(() => {
+  const openInstallDialog = useCallback((manifestPath?: string) => {
+    setInstallInitialManifest(manifestPath ?? null);
     setInstallOpen(true);
     setInstallPanel(emptyInstallPanelState());
   }, []);
@@ -1332,7 +1334,9 @@ export function ShellClient({
         </div>
 
         <InstallReviewDialog
+          key={installInitialManifest ?? "manual"}
           opened={installOpen}
+          initialManifestPath={installInitialManifest ?? ""}
           detail={installPanel}
           busyAction={busyAction}
           onClose={() => setInstallOpen(false)}

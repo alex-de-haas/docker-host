@@ -15,6 +15,7 @@ import { CheckboxRow, EmptyState, FactCard, InlineError } from "../ui";
 
 export function InstallReviewDialog({
   opened,
+  initialManifestPath = "",
   detail,
   busyAction,
   onClose,
@@ -22,13 +23,16 @@ export function InstallReviewDialog({
   onApply,
 }: {
   opened: boolean;
+  // Seeds the manifest field (e.g. a catalog version's manifestRef). The parent remounts the dialog via
+  // a `key` when this changes, so the field starts pre-filled without an effect.
+  initialManifestPath?: string;
   detail: InstallPanelState;
   busyAction: string | null;
   onClose: () => void;
   onReview: (manifestPath: string, selectedRuntime?: string | null) => void;
   onApply: (plan: CoreInstallPlan, settings: Record<string, string | null>, autostart: boolean) => void;
 }) {
-  const [manifestPath, setManifestPath] = useState("");
+  const [manifestPath, setManifestPath] = useState(initialManifestPath);
   const [selectedRuntime, setSelectedRuntime] = useState("");
   const [reviewedManifestPath, setReviewedManifestPath] = useState<string | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Record<string, string>>({});

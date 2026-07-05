@@ -418,6 +418,7 @@ export type ShellView =
   | "available-apps"
   | "dashboard"
   | "installed-apps"
+  | "marketplace"
   | "users"
   | "obs-metrics"
   | "obs-logs"
@@ -600,4 +601,74 @@ export type NotificationsResponse = {
 export type NotificationMarkReadResponse = {
   updated: number;
   unreadCount: number;
+};
+
+// ---- Marketplace catalog (GET /api/catalog/*) ----------------------------------------------------
+
+export type CatalogPublisher = {
+  name?: string | null;
+  url?: string | null;
+  email?: string | null;
+};
+
+export type CatalogArtifact = {
+  kind?: string | null;
+  imageDigest?: string | null;
+  commit?: string | null;
+  ref?: string | null;
+  bundleHash?: string | null;
+};
+
+export type CatalogAppSummary = {
+  id: string;
+  name: string;
+  summary?: string | null;
+  category?: string | null;
+  tags: string[];
+  icon?: string | null;
+  publisher?: CatalogPublisher | null;
+  sourceName: string;
+  installed: boolean;
+  installedVersion?: string | null;
+};
+
+export type CatalogAppVersion = {
+  version: string;
+  // A manifest URL/path passed straight to the existing install/update flow.
+  manifestRef: string;
+  artifact?: CatalogArtifact | null;
+};
+
+export type CatalogAppDetail = {
+  id: string;
+  name: string;
+  summary?: string | null;
+  category?: string | null;
+  tags: string[];
+  icon?: string | null;
+  screenshots: string[];
+  publisher?: CatalogPublisher | null;
+  sourceName: string;
+  signerIdentity?: string | null;
+  releasesUrl?: string | null;
+  versions: CatalogAppVersion[];
+  stableVersion?: string | null;
+  betaVersion?: string | null;
+  installed: boolean;
+  installedVersion?: string | null;
+  updateAvailable: boolean;
+};
+
+export type CatalogAppsResponse = { apps: CatalogAppSummary[] };
+
+export type CatalogListState = {
+  loading: boolean;
+  error: string | null;
+  apps: CatalogAppSummary[];
+};
+
+export type CatalogDetailState = {
+  loading: boolean;
+  error: string | null;
+  app: CatalogAppDetail | null;
 };
