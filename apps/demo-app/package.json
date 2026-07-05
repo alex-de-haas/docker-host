@@ -2,6 +2,7 @@
   "name": "@haas/hosty-demo-app",
   "version": "0.4.2",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "npm run dev:frontend",

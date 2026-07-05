@@ -185,4 +185,4 @@ npm run ci          # run the same aggregate checks as CI
 
 Hosty is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
 
-In short: you are free to use, self-host, modify, and redistribute Hosty — including for personal and internal commercial use. If you distribute a modified version or offer it to others as a network service, you must make your source code available under the same license. For commercial licensing outside these terms, contact the author.
+In short: you are free to use, self-host, modify, and redistribute Hosty — including for personal and internal commercial use. If you distribute a modified version, or run one that users interact with over a network — whether they are external customers or people inside your organization — you must offer those users its source code under the same license. For commercial licensing outside these terms, contact the author.

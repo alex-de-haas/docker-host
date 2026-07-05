@@ -2,6 +2,7 @@
   "name": "@haas/hosty-shell",
   "version": "0.18.2",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "next dev --hostname ${HOSTNAME:-localhost} --port ${PORT:-3000}",
