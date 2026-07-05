@@ -204,7 +204,7 @@ The response includes enabled Host users explicitly assigned to that app.
 
 ## Catalog Metadata
 
-Optional marketplace/catalog display metadata for an app. It is **entirely optional** and lives **outside runtime validation** — a manifest without it is fully valid, and malformed metadata never blocks install (Core normalizes it best-effort and surfaces it for display only). Strict shape checks (SPDX license, category enum) are enforced by the catalog CI, not by Core. See [Runtime app marketplace](runtime-app-marketplace.md) for the full model.
+Optional marketplace/catalog display metadata for an app. It is **entirely optional** and its content lives **outside runtime validation** — a manifest without it is fully valid, and its values never fail runtime validation (Core normalizes them best-effort *after* parsing and surfaces them for display only). It must still be well-formed, deserializable JSON of the shape below: a type mismatch (e.g. `tags` as a string instead of an array) fails the whole manifest parse like any other field. Strict content checks (SPDX license, category enum) are enforced by the catalog CI, not by Core. See [Runtime app marketplace](runtime-app-marketplace.md) for the full model.
 
 ```json
 "catalogMetadata": {

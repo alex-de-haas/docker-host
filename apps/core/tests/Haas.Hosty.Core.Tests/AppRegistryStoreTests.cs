@@ -135,6 +135,39 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public async Task ListAppsAsync_WithUiAlreadyPersisted_SkipsManifestReadForCatalogMetadata()
+    {
+        // Perf gate: a record that already has Ui (the common case) short-circuits before the manifest
+        // read, so it never re-reads on every list just because catalogMetadata is unset. We prove the
+        // short-circuit by leaving catalogMetadata null even though the on-disk manifest declares one.
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var appRoot = Path.Combine(paths.AppsRoot, "com.example.notes");
+        Directory.CreateDirectory(appRoot);
+        await File.WriteAllTextAsync(Path.Combine(appRoot, "manifest.json"), """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{ "key": "app", "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/notes:1.0.0" } } }],
+              "catalogMetadata": { "summary": "Should not be read." }
+            }
+            """);
+        var store = new AppRegistryStore(paths);
+        await store.UpsertAppAsync(CreateApp("com.example.notes") with
+        {
+            ManifestPath = Path.Combine(appRoot, "manifest.json"),
+            Ui = new AppUiContract(Category: null, Icon: null, EndpointKey: null, EntryPath: "/", Navigation: []),
+        });
+
+        var app = Assert.Single(await store.ListAppsAsync());
+
+        Assert.Null(app.CatalogMetadata); // gate short-circuited on Ui; the manifest was not re-read
+    }
+
+    [Fact]
     public async Task UpsertAppAsync_RoundTripsPersistedCatalogMetadata()
     {
         var root = await CreateTempRootAsync();

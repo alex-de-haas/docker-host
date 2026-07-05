@@ -129,9 +129,13 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
     private static async Task<AppRecord> HydrateAppUiAsync(AppRecord app, string appRoot, CancellationToken cancellationToken)
     {
         // Lazily backfill display metadata from the reviewed manifest copy for records installed before
-        // the field existed. Both Ui and CatalogMetadata are additive display data; hydrate whichever is
-        // absent from a single manifest read.
-        if (app.Ui is not null && app.CatalogMetadata is not null)
+        // it was persisted. Gate on Ui only (as before CatalogMetadata existed): Ui is set for every app
+        // that declares a `ui` block, so the common case skips the manifest read. CatalogMetadata is
+        // backfilled opportunistically in that same read — gating on it too would force a manifest re-read
+        // on every list/get for the many apps that legitimately declare no catalogMetadata. New/updated
+        // records get both set directly by BuildAppRecord (and the live reconcile), so they never reach
+        // here. This projection is not persisted, so a flag would not spare legacy records the read.
+        if (app.Ui is not null)
         {
             return app;
         }
@@ -419,9 +423,11 @@ internal sealed record AppUiContract(
 internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey);
 
 // Normalized marketplace/catalog display metadata, denormalized onto the app record and surfaced on
-// the summary (like AppUiContract). Best-effort normalization only — blanks are dropped and an
-// all-empty block collapses to null — so malformed metadata never blocks install (it is outside
-// runtime validation; see runtime-app-marketplace.md, B5). Strict validation lives in the catalog CI.
+// the summary (like AppUiContract). Normalization is best-effort and applied *after* the manifest
+// deserializes — blanks are dropped and an all-empty block collapses to null. The block's *content*
+// never fails runtime validation (it is outside it; see runtime-app-marketplace.md, B5), though the
+// manifest as a whole must still be well-formed, deserializable JSON. Strict content checks (SPDX,
+// category enum, shape) live in the catalog CI.
 internal sealed record AppCatalogMetadataContract(
     AppPublisherContract? Publisher,
     string? Category,

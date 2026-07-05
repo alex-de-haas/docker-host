@@ -2000,8 +2000,10 @@ internal sealed class RuntimeAppManifest
     public RuntimeAppUiManifest? Ui { get; init; }
     // Optional marketplace/catalog display metadata (publisher, tags, screenshots, license, links, …).
     // Deliberately kept OUT of app.0.1 runtime validation (see runtime-app-marketplace.md, B5): a
-    // manifest without it is fully valid, and malformed metadata never blocks install — it is
+    // manifest without it is fully valid, and its content never fails runtime validation — it is
     // normalized best-effort by AppCatalogMetadataContract.FromManifest and surfaced for display only.
+    // (It must still be deserializable JSON of the shape below; a type mismatch fails the whole manifest
+    // parse like any other field. Strict content checks live in the catalog CI, not here.)
     public RuntimeAppCatalogMetadataManifest? CatalogMetadata { get; init; }
     public IReadOnlyList<RuntimeAppSettingManifest> Settings { get => field ?? []; init; } = [];
     public IReadOnlyList<RuntimeAppDependencyManifest> Dependencies { get => field ?? []; init; } = [];
