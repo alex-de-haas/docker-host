@@ -100,6 +100,38 @@ public sealed class CatalogServiceTests
     }
 
     [Fact]
+    public async Task GetAppsAsync_UnsupportedSchemaVersion_IsSkipped()
+    {
+        var fetcher = new FakeFetcher
+        {
+            [IndexUrl] = """
+                { "schemaVersion": "marketplace.9.9", "apps": [ { "id": "com.example.notes", "name": "Notes" } ] }
+                """,
+        };
+        var service = await CreateServiceAsync(fetcher, sources: [IndexUrl]);
+
+        var response = await service.GetAppsAsync(CancellationToken.None);
+
+        Assert.Empty(response.Apps);
+    }
+
+    [Fact]
+    public async Task GetAppsAsync_JoinsInstalledState_CaseInsensitively()
+    {
+        // App ids are lowercase by contract, but a catalog entry authored with different casing must still
+        // join the installed record.
+        var fetcher = new FakeFetcher { [IndexUrl] = Index(Entry("Com.Example.Notes", "Notes")) };
+        var service = await CreateServiceAsync(
+            fetcher,
+            sources: [IndexUrl],
+            installed: [("com.example.notes", "1.0.0")]);
+
+        var app = Assert.Single((await service.GetAppsAsync(CancellationToken.None)).Apps);
+        Assert.True(app.Installed);
+        Assert.Equal("1.0.0", app.InstalledVersion);
+    }
+
+    [Fact]
     public async Task GetAppAsync_UnknownId_ReturnsNull()
     {
         var fetcher = new FakeFetcher { [IndexUrl] = Index(Entry("com.example.notes", "Notes")) };

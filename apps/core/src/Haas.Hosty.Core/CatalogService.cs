@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
@@ -36,13 +37,16 @@ internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDis
             return null;
         }
 
+        // Normalize once so the cache lookup, the fetch, and the cache store all key on the same string
+        // (otherwise the same URL with stray whitespace produces duplicate entries / spurious misses).
+        source = source.Trim();
         var now = clock.UtcNow;
         if (cache.TryGetValue(source, out var cached) && cached.Expiry > now)
         {
             return cached.Document;
         }
 
-        var document = await FetchRawAsync(source.Trim(), cancellationToken);
+        var document = await FetchRawAsync(source, cancellationToken);
         cache[source] = new CacheEntry(document, now + ttl);
         return document;
     }
@@ -60,8 +64,10 @@ internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDis
                     return null;
                 }
 
-                var text = await response.Content.ReadAsStringAsync(cancellationToken);
-                return text.Length > MaxBytes ? null : text;
+                // Stream and enforce the cap while reading: a source that omits Content-Length (or uses
+                // chunked encoding) would otherwise let ReadAsStringAsync buffer an unbounded body (DoS).
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                return await ReadCappedTextAsync(stream, cancellationToken);
             }
 
             var path = uri is { IsFile: true } ? uri.LocalPath : source;
@@ -79,6 +85,26 @@ internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDis
         {
             return null;
         }
+    }
+
+    // Reads a stream into text, returning null as soon as it would exceed MaxBytes so an unbounded or
+    // Content-Length-less response cannot exhaust memory.
+    private static async Task<string?> ReadCappedTextAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[8192];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, cancellationToken)) > 0)
+        {
+            if (buffer.Length + read > MaxBytes)
+            {
+                return null;
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
     }
 
     private readonly record struct CacheEntry(string? Document, DateTimeOffset Expiry);
@@ -180,7 +206,9 @@ internal sealed class CatalogService(
     private async Task<(IReadOnlyDictionary<string, LocatedEntry> Entries, int SourceCount)> LoadMergedEntriesAsync(
         CancellationToken cancellationToken)
     {
-        var merged = new Dictionary<string, LocatedEntry>(StringComparer.Ordinal);
+        // App ids are lowercase by contract, but match case-insensitively so a catalog entry authored with
+        // different casing still de-dupes across sources and joins with the installed registry.
+        var merged = new Dictionary<string, LocatedEntry>(StringComparer.OrdinalIgnoreCase);
         var sources = config.EffectiveCatalogSources;
         foreach (var source in sources)
         {
@@ -220,15 +248,35 @@ internal sealed class CatalogService(
             return null;
         }
 
+        CatalogIndex? index;
         try
         {
-            return JsonSerializer.Deserialize(raw, CoreJsonSerializerContext.Default.CatalogIndex);
+            index = JsonSerializer.Deserialize(raw, CoreJsonSerializerContext.Default.CatalogIndex);
         }
         catch (JsonException ex)
         {
             logger.LogWarning("Catalog source '{Source}' returned invalid JSON: {Message}", source, ex.Message);
             return null;
         }
+
+        if (index is null)
+        {
+            return null;
+        }
+
+        // Reject an unsupported/absent schema version rather than silently accept a document of an
+        // unknown shape (parity with the app manifest loader's strict schemaVersion check).
+        if (!string.Equals(index.SchemaVersion, CatalogSchema.Version, StringComparison.Ordinal))
+        {
+            logger.LogWarning(
+                "Catalog source '{Source}' declares unsupported schemaVersion '{Version}'; expected '{Expected}'.",
+                source,
+                index.SchemaVersion ?? "(none)",
+                CatalogSchema.Version);
+            return null;
+        }
+
+        return index;
     }
 
     private async Task<VersionFeed?> LoadFeedAsync(string? releasesUrl, CancellationToken cancellationToken)
@@ -281,7 +329,8 @@ internal sealed class CatalogService(
     private async Task<Dictionary<string, string>> LoadInstalledVersionsAsync(CancellationToken cancellationToken)
     {
         var installed = await apps.ListAppsAsync(cancellationToken);
-        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Case-insensitive so a catalog entry id joins the installed record regardless of authored casing.
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var app in installed)
         {
             map[app.Id] = app.Version;
