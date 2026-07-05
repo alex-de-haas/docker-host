@@ -1394,6 +1394,7 @@ internal sealed class CoreLifecycleService(
             UpdatedAt: default,
             SourceState: BuildSourceState(selection, existing),
             Ui: AppUiContract.FromManifest(manifest.Ui),
+            CatalogMetadata: AppCatalogMetadataContract.FromManifest(manifest.CatalogMetadata),
             Autostart: existing?.Autostart ?? true,
             RuntimeProfiles: BuildRuntimeProfileSummaries(manifest),
             MountSlots: BuildMountSlots(manifest),
@@ -2540,6 +2541,7 @@ internal sealed class CoreLifecycleService(
                 MountSlots = reconciled.MountSlots,
                 Mounts = reconciled.Mounts,
                 Ui = reconciled.Ui,
+                CatalogMetadata = reconciled.CatalogMetadata,
                 RuntimeProfiles = reconciled.RuntimeProfiles,
                 SourceState = reconciled.SourceState,
                 // Record this start's adopted deltas; null when nothing changed so clients show no badge.

@@ -128,6 +128,13 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
 
     private static async Task<AppRecord> HydrateAppUiAsync(AppRecord app, string appRoot, CancellationToken cancellationToken)
     {
+        // Lazily backfill display metadata from the reviewed manifest copy for records installed before
+        // it was persisted. Gate on Ui only (as before CatalogMetadata existed): Ui is set for every app
+        // that declares a `ui` block, so the common case skips the manifest read. CatalogMetadata is
+        // backfilled opportunistically in that same read — gating on it too would force a manifest re-read
+        // on every list/get for the many apps that legitimately declare no catalogMetadata. New/updated
+        // records get both set directly by BuildAppRecord (and the live reconcile), so they never reach
+        // here. This projection is not persisted, so a flag would not spare legacy records the read.
         if (app.Ui is not null)
         {
             return app;
@@ -142,8 +149,11 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
         try
         {
             var manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, cancellationToken);
-            var ui = AppUiContract.FromManifest(manifest?.Ui);
-            return ui is null ? app : app with { Ui = ui };
+            var ui = app.Ui ?? AppUiContract.FromManifest(manifest?.Ui);
+            var catalogMetadata = app.CatalogMetadata ?? AppCatalogMetadataContract.FromManifest(manifest?.CatalogMetadata);
+            return ui == app.Ui && catalogMetadata == app.CatalogMetadata
+                ? app
+                : app with { Ui = ui, CatalogMetadata = catalogMetadata };
         }
         catch (IOException)
         {
@@ -250,7 +260,12 @@ internal sealed record AppRecord(
     // recommending — a likely one-way data migration the reviewed version may not read. Cleared on
     // disable. Additive/nullable, so no AppStateDocument schema bump. See "Development Mode — an operator
     // toggle" in runtime-artifact-model.md.
-    IReadOnlyDictionary<string, DevelopmentModeBaseline>? DevelopmentModeBaselines = null);
+    IReadOnlyDictionary<string, DevelopmentModeBaseline>? DevelopmentModeBaselines = null,
+    // Optional marketplace/catalog display metadata (publisher, tags, screenshots, license, links, …),
+    // captured from the manifest at install/update and re-read on each start for a live source app.
+    // Display-only; never gates anything. Additive/nullable, so no AppStateDocument schema bump. See
+    // runtime-app-marketplace.md ("Manifest Metadata Extensions", B5).
+    AppCatalogMetadataContract? CatalogMetadata = null);
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
 // update for a pinned app. `Kind` is "image" (registry image) in v1; the bundle/source fields are
@@ -407,6 +422,120 @@ internal sealed record AppUiContract(
 
 internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey);
 
+// Normalized marketplace/catalog display metadata, denormalized onto the app record and surfaced on
+// the summary (like AppUiContract). Normalization is best-effort and applied *after* the manifest
+// deserializes — blanks are dropped and an all-empty block collapses to null. The block's *content*
+// never fails runtime validation (it is outside it; see runtime-app-marketplace.md, B5), though the
+// manifest as a whole must still be well-formed, deserializable JSON. Strict content checks (SPDX,
+// category enum, shape) live in the catalog CI.
+internal sealed record AppCatalogMetadataContract(
+    AppPublisherContract? Publisher,
+    string? Category,
+    IReadOnlyList<string> Tags,
+    string? Icon,
+    IReadOnlyList<string> Screenshots,
+    string? License,
+    AppCatalogLinksContract? Links,
+    string? Summary,
+    string? Description,
+    string? Changelog)
+{
+    public static AppCatalogMetadataContract? FromManifest(RuntimeAppCatalogMetadataManifest? metadata)
+    {
+        if (metadata is null)
+        {
+            return null;
+        }
+
+        var publisher = AppPublisherContract.FromManifest(metadata.Publisher);
+        var links = AppCatalogLinksContract.FromManifest(metadata.Links);
+        var contract = new AppCatalogMetadataContract(
+            Publisher: publisher,
+            Category: NullIfBlank(metadata.Category),
+            Tags: NormalizeList(metadata.Tags),
+            Icon: NullIfBlank(metadata.Icon),
+            Screenshots: NormalizeList(metadata.Screenshots),
+            License: NullIfBlank(metadata.License),
+            Links: links,
+            Summary: NullIfBlank(metadata.Summary),
+            Description: NullIfBlank(metadata.Description),
+            Changelog: NullIfBlank(metadata.Changelog));
+
+        // A `catalogMetadata: {}` (or all-blank) block carries no information; collapse it to null so
+        // summaries and persisted records do not accumulate empty noise.
+        var isEmpty = contract.Publisher is null
+            && contract.Category is null
+            && contract.Tags.Count == 0
+            && contract.Icon is null
+            && contract.Screenshots.Count == 0
+            && contract.License is null
+            && contract.Links is null
+            && contract.Summary is null
+            && contract.Description is null
+            && contract.Changelog is null;
+        return isEmpty ? null : contract;
+    }
+
+    internal static string? NullIfBlank(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    // Trim, drop blanks, and de-duplicate (ordinal) while preserving first-seen order.
+    internal static IReadOnlyList<string> NormalizeList(IReadOnlyList<string>? values)
+    {
+        if (values is null || values.Count == 0)
+        {
+            return [];
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>(values.Count);
+        foreach (var value in values)
+        {
+            var trimmed = NullIfBlank(value);
+            if (trimmed is not null && seen.Add(trimmed))
+            {
+                result.Add(trimmed);
+            }
+        }
+
+        return result;
+    }
+}
+
+internal sealed record AppPublisherContract(string? Name, string? Url, string? Email)
+{
+    public static AppPublisherContract? FromManifest(RuntimeAppPublisherManifest? publisher)
+    {
+        if (publisher is null)
+        {
+            return null;
+        }
+
+        var name = AppCatalogMetadataContract.NullIfBlank(publisher.Name);
+        var url = AppCatalogMetadataContract.NullIfBlank(publisher.Url);
+        var email = AppCatalogMetadataContract.NullIfBlank(publisher.Email);
+        return name is null && url is null && email is null ? null : new AppPublisherContract(name, url, email);
+    }
+}
+
+internal sealed record AppCatalogLinksContract(string? Website, string? Docs, string? Support)
+{
+    public static AppCatalogLinksContract? FromManifest(RuntimeAppCatalogLinksManifest? links)
+    {
+        if (links is null)
+        {
+            return null;
+        }
+
+        var website = AppCatalogMetadataContract.NullIfBlank(links.Website);
+        var docs = AppCatalogMetadataContract.NullIfBlank(links.Docs);
+        var support = AppCatalogMetadataContract.NullIfBlank(links.Support);
+        return website is null && docs is null && support is null
+            ? null
+            : new AppCatalogLinksContract(website, docs, support);
+    }
+}
+
 internal sealed record AppSummary(
     string Id,
     string DisplayName,
@@ -458,7 +587,10 @@ internal sealed record AppSummary(
     // The folder a live source app actually runs from (the override folder, else the original external
     // folder install), or null when not live. Computed by the lifecycle service (needs the internal-path
     // guard), so it is passed in rather than derived here. Clients show it in the "Live" badge tooltip.
-    string? SourceLivePath = null)
+    string? SourceLivePath = null,
+    // Optional marketplace/catalog display metadata (publisher, tags, screenshots, license, links, …)
+    // for storefront cards and the app-detail view. Null when the manifest declares none. Additive.
+    AppCatalogMetadataContract? CatalogMetadata = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
     // manifest profile's `development` flag as the default. Always false for a non-source runtime
@@ -541,7 +673,8 @@ internal sealed record AppSummary(
             supportsSource,
             app.SourceState?.LocalOverridePath,
             app.SourceState?.ManagedCheckoutPath,
-            liveSourcePath);
+            liveSourcePath,
+            app.CatalogMetadata);
     }
 
     private static IReadOnlyList<AppMountSummary> BuildMountSummaries(

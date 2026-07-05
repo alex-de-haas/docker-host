@@ -30,6 +30,92 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_WithoutCatalogMetadata_LeavesBlockNull()
+    {
+        var manifestPath = await WriteManifestAsync("com.example.notes");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        // Back-compat: a manifest that declares no catalogMetadata is fully valid and carries none.
+        Assert.Null(selection.Manifest.CatalogMetadata);
+        Assert.Null(AppCatalogMetadataContract.FromManifest(selection.Manifest.CatalogMetadata));
+    }
+
+    [Fact]
+    public async Task LoadAsync_ParsesAndNormalizesCatalogMetadata()
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            catalogMetadata: """
+                , "catalogMetadata": {
+                    "publisher": { "name": "Example Co", "url": "https://example.com", "email": "  " },
+                    "category": " Productivity ",
+                    "tags": ["notes", " sync ", "", "notes"],
+                    "icon": "assets/icon.png",
+                    "screenshots": ["assets/1.png", "assets/2.png"],
+                    "license": "AGPL-3.0-only",
+                    "links": { "website": "https://example.com", "docs": "  ", "support": "https://example.com/help" },
+                    "summary": "Take notes.",
+                    "description": "A longer description.",
+                    "changelog": "0.1.0 initial"
+                  }
+                """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        var metadata = AppCatalogMetadataContract.FromManifest(selection.Manifest.CatalogMetadata);
+
+        Assert.NotNull(metadata);
+        Assert.Equal("Example Co", metadata!.Publisher!.Name);
+        Assert.Equal("https://example.com", metadata.Publisher.Url);
+        Assert.Null(metadata.Publisher.Email); // blank collapses to null
+        Assert.Equal("Productivity", metadata.Category); // trimmed
+        Assert.Equal(new[] { "notes", "sync" }, metadata.Tags); // trimmed, blanks dropped, de-duplicated
+        Assert.Equal("assets/icon.png", metadata.Icon);
+        Assert.Equal(new[] { "assets/1.png", "assets/2.png" }, metadata.Screenshots);
+        Assert.Equal("AGPL-3.0-only", metadata.License);
+        Assert.Equal("https://example.com", metadata.Links!.Website);
+        Assert.Null(metadata.Links.Docs); // blank collapses to null
+        Assert.Equal("https://example.com/help", metadata.Links.Support);
+        Assert.Equal("Take notes.", metadata.Summary);
+        Assert.Equal("A longer description.", metadata.Description);
+        Assert.Equal("0.1.0 initial", metadata.Changelog);
+    }
+
+    [Fact]
+    public async Task LoadAsync_EmptyCatalogMetadata_CollapsesToNull()
+    {
+        // An all-blank block carries no information and must never surface as empty noise, nor block install.
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            catalogMetadata: """
+                , "catalogMetadata": { "category": "   ", "tags": [" "], "publisher": { "name": "" }, "links": {} }
+                """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Null(AppCatalogMetadataContract.FromManifest(selection.Manifest.CatalogMetadata));
+    }
+
+    [Fact]
+    public void CatalogMetadata_FromManifest_PartialPublisherAndLinksKeepOnlyNonBlank()
+    {
+        var metadata = AppCatalogMetadataContract.FromManifest(new RuntimeAppCatalogMetadataManifest
+        {
+            Publisher = new RuntimeAppPublisherManifest { Email = "team@example.com" },
+            Links = new RuntimeAppCatalogLinksManifest { Docs = "https://docs.example.com" },
+        });
+
+        Assert.NotNull(metadata);
+        Assert.NotNull(metadata!.Publisher);
+        Assert.Null(metadata.Publisher!.Name);
+        Assert.Null(metadata.Publisher.Url);
+        Assert.Equal("team@example.com", metadata.Publisher.Email);
+        Assert.NotNull(metadata.Links);
+        Assert.Equal("https://docs.example.com", metadata.Links!.Docs);
+        Assert.Null(metadata.Links.Website);
+    }
+
+    [Fact]
     public async Task LoadAsync_AcceptsExternalMountsAndDefaultsKindAndMode()
     {
         var manifestPath = await WriteManifestAsync(
@@ -765,7 +851,7 @@ public sealed class AppManifestServiceTests
         throw new FileNotFoundException($"Could not locate '{relativePath}' walking up from {AppContext.BaseDirectory}.");
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null)
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null, string? catalogMetadata = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -785,7 +871,7 @@ public sealed class AppManifestServiceTests
                     "image": "ghcr.io/example/notes:1.0.0"{{runtimeArtifact ?? ""}}{{runtimeNetwork ?? ""}}{{ports ?? ""}}{{healthcheck ?? ""}}
                   }
                 }
-              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}{{telemetry ?? ""}}
+              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}{{telemetry ?? ""}}{{catalogMetadata ?? ""}}
             }
             """);
         return path;

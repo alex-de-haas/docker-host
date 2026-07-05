@@ -1998,6 +1998,13 @@ internal sealed class RuntimeAppManifest
     public IReadOnlyList<RuntimeAppServiceManifest> Services { get => field ?? []; init; } = [];
     public RuntimeAppDataManifest? Data { get; init; }
     public RuntimeAppUiManifest? Ui { get; init; }
+    // Optional marketplace/catalog display metadata (publisher, tags, screenshots, license, links, …).
+    // Deliberately kept OUT of app.0.1 runtime validation (see runtime-app-marketplace.md, B5): a
+    // manifest without it is fully valid, and its content never fails runtime validation — it is
+    // normalized best-effort by AppCatalogMetadataContract.FromManifest and surfaced for display only.
+    // (It must still be deserializable JSON of the shape below; a type mismatch fails the whole manifest
+    // parse like any other field. Strict content checks live in the catalog CI, not here.)
+    public RuntimeAppCatalogMetadataManifest? CatalogMetadata { get; init; }
     public IReadOnlyList<RuntimeAppSettingManifest> Settings { get => field ?? []; init; } = [];
     public IReadOnlyList<RuntimeAppDependencyManifest> Dependencies { get => field ?? []; init; } = [];
     public IReadOnlyList<RuntimeAppEndpointManifest> Endpoints { get => field ?? []; init; } = [];
@@ -2299,6 +2306,41 @@ internal sealed class RuntimeAppUiNavigationItemManifest
     public string? Path { get; init; }
     public string? Endpoint { get; init; }
     public string? PortKey { get; init; }
+}
+
+// Marketplace/catalog display metadata (fields modeled on Flathub AppStream). Optional and outside
+// runtime validation: the manifest author owns it as the display source of truth (see
+// runtime-app-marketplace.md, Q5). `Category` here is the marketplace category; the simpler
+// `ui.category` remains for the existing app-directory display. Strict shape checks (SPDX, enum
+// category) live in the catalog CI schema, not in Core's lean runtime validation.
+internal sealed class RuntimeAppCatalogMetadataManifest
+{
+    public RuntimeAppPublisherManifest? Publisher { get; init; }
+    public string? Category { get; init; }
+    public IReadOnlyList<string> Tags { get => field ?? []; init; } = [];
+    // Icon as an asset path or URL (richer than ui.icon, which is a Lucide name).
+    public string? Icon { get; init; }
+    public IReadOnlyList<string> Screenshots { get => field ?? []; init; } = [];
+    // SPDX license identifier (e.g. "AGPL-3.0-only"). Free-form here; not validated at runtime.
+    public string? License { get; init; }
+    public RuntimeAppCatalogLinksManifest? Links { get; init; }
+    public string? Summary { get; init; }
+    public string? Description { get; init; }
+    public string? Changelog { get; init; }
+}
+
+internal sealed class RuntimeAppPublisherManifest
+{
+    public string? Name { get; init; }
+    public string? Url { get; init; }
+    public string? Email { get; init; }
+}
+
+internal sealed class RuntimeAppCatalogLinksManifest
+{
+    public string? Website { get; init; }
+    public string? Docs { get; init; }
+    public string? Support { get; init; }
 }
 
 internal sealed class RuntimeAppSettingManifest
