@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -33,6 +34,38 @@ internal static class JsonStorage
         catch (DirectoryNotFoundException)
         {
             return default;
+        }
+    }
+
+    // Atomically writes already-serialized text (JSON, YAML, …) via temp+rename, so a crash mid-write
+    // can never leave a half-written file that bricks a later read. Same durability contract as
+    // WriteAsync<T> but for content the caller has already rendered to a string.
+    public static async Task WriteTextAsync(string path, string content, CancellationToken cancellationToken = default)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(tempPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken);
+            File.Move(tempPath, path, overwrite: true);
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best-effort cleanup of the abandoned temp file.
+            }
+
+            throw;
         }
     }
 

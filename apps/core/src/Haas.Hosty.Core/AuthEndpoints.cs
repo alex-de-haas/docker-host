@@ -204,16 +204,26 @@ internal static class AuthEndpoints
         IClock clock,
         CancellationToken cancellationToken)
     {
-        var state = await users.ReadAsync(cancellationToken);
-        var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal));
-        if (user is null || user.Disabled)
+        var now = clock.UtcNow;
+        var result = await users.UpdateAsync<AuthSessionCreateResult>(state =>
+        {
+            var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal));
+            if (user is null || user.Disabled)
+            {
+                // Abort the write without mutating: return the unchanged state.
+                return (state, new AuthSessionCreateResult(false, null));
+            }
+
+            var newSession = new AuthSessionRecord(CreateSessionId(), user.Id, now, now.AddHours(12), null);
+            return (state with { Sessions = state.Sessions.Append(newSession).ToArray() }, new AuthSessionCreateResult(true, user, newSession));
+        }, cancellationToken);
+
+        if (!result.Succeeded || result.Session is null)
         {
             return new AuthSessionCreateResult(false, null);
         }
 
-        var now = clock.UtcNow;
-        var session = new AuthSessionRecord(CreateSessionId(), user.Id, now, now.AddHours(12), null);
-        await users.WriteAsync(state with { Sessions = state.Sessions.Append(session).ToArray() }, cancellationToken);
+        var session = result.Session;
         response.Cookies.Append(CoreSessionAuthorization.SessionCookieName, session.Id, new CookieOptions
         {
             HttpOnly = true,
@@ -222,7 +232,7 @@ internal static class AuthEndpoints
             Expires = session.ExpiresAt,
         });
 
-        return new AuthSessionCreateResult(true, user);
+        return new AuthSessionCreateResult(true, result.User);
     }
 
     internal static async Task LogoutAsync(
@@ -232,16 +242,17 @@ internal static class AuthEndpoints
         IClock clock,
         CancellationToken cancellationToken)
     {
-        var state = await users.ReadAsync(cancellationToken);
         var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
-            var sessions = state.Sessions
-                .Select(session => string.Equals(session.Id, sessionId, StringComparison.Ordinal)
-                    ? session with { RevokedAt = clock.UtcNow }
-                    : session)
-                .ToArray();
-            await users.WriteAsync(state with { Sessions = sessions }, cancellationToken);
+            await users.UpdateAsync(state => state with
+            {
+                Sessions = state.Sessions
+                    .Select(session => string.Equals(session.Id, sessionId, StringComparison.Ordinal)
+                        ? session with { RevokedAt = clock.UtcNow }
+                        : session)
+                    .ToArray(),
+            }, cancellationToken);
         }
 
         response.Cookies.Delete(CoreSessionAuthorization.SessionCookieName);
@@ -254,7 +265,7 @@ internal sealed record AuthSessionCreateRequest(string UserId, bool SecureCookie
 
 internal sealed record AuthSessionResponse(bool Authenticated, HostUserRecord? User);
 
-internal sealed record AuthSessionCreateResult(bool Succeeded, HostUserRecord? User);
+internal sealed record AuthSessionCreateResult(bool Succeeded, HostUserRecord? User, AuthSessionRecord? Session = null);
 
 internal sealed record LogoutResponse(string Status);
 

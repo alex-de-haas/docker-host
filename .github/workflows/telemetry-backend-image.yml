@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "apps/telemetry-backend/**"
+      - "apps/telemetry/manifest.json"
       - "global.json"
       - "Directory.Build.props"
       - ".github/workflows/telemetry-backend-image.yml"
@@ -17,11 +18,35 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Gate the image push on the telemetry-backend tests: the Docker build only catches compile errors,
+  # so without this a commit whose tests fail still pushes a :latest image referenced by the manifest.
+  test:
+    name: Gate on tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build Telemetry Backend
+        run: npm run telemetry-backend:build
+
+      - name: Test Telemetry Backend
+        run: npm run telemetry-backend:test
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      # Signed build-provenance attestation for the pushed image (I-M2).
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out repository
@@ -31,6 +56,20 @@ jobs:
         id: image
         shell: bash
         run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/hosty-telemetry-backend" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve app version
+        id: version
+        shell: bash
+        # Tag the image with the telemetry app's manifest version so the manifest can pin a real release
+        # tag instead of :latest (which the docker adapter TOFU-freezes at install time, leaving no update
+        # path — R-M1). Bump apps/telemetry/manifest.json version + the manifest tag together on release.
+        run: |
+          version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' apps/telemetry/manifest.json | head -n1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+          if [[ -z "$version" ]]; then
+            echo "Could not resolve version from apps/telemetry/manifest.json" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
@@ -45,6 +84,7 @@ jobs:
           images: ${{ steps.image.outputs.name }}
           tags: |
             type=sha,prefix=sha-
+            type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Log in to GitHub Container Registry
@@ -55,6 +95,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish Telemetry Backend image
+        id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
@@ -64,4 +105,13 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=telemetry-backend-image
-          cache-to: type=gha,scope=telemetry-backend-image,mode=min
+          # mode=max caches the expensive restore/publish stages too, not just the thin final layer, so
+          # QEMU arm64 builds don't rebuild from scratch each run (I-M4).
+          cache-to: type=gha,scope=telemetry-backend-image,mode=max
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

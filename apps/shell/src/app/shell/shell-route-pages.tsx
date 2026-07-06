@@ -1,8 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { AvailableAppsPage } from "./pages/available-apps-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { InstalledAppsPage } from "./pages/installed-apps-page";
@@ -11,7 +9,6 @@ import { ObservabilityMetricsPage } from "./pages/observability/metrics-page";
 import { ObservabilityStructuredLogsPage } from "./pages/observability/structured-logs-page";
 import { ObservabilityTracesPage } from "./pages/observability/traces-page";
 import { UserManagementPanel } from "./pages/user-management-page";
-import { getShellViewHref } from "./shell-routes";
 import { useShellActions, useShellState } from "./shell-context";
 
 function AdminShellRoute({ children }: { children: ReactNode }) {
@@ -19,24 +16,29 @@ function AdminShellRoute({ children }: { children: ReactNode }) {
   return shell.canManageApps ? children : <ShellAvailableAppsRoute />;
 }
 
-// Admin gate + Observability gate: the backend-backed Observability routes are only valid when the
-// telemetry backend app is running. On direct navigation while it is off, redirect to the dashboard
-// (the nav section is hidden too) rather than surface an empty page. Waits for apps to load so a
-// running backend is not briefly treated as absent.
+// Admin gate + Observability gate: the backend-backed Observability routes need the telemetry backend
+// app running. When it is off (or Core is briefly reporting it as not-running — its runtimeState can lag
+// reality), show an inline empty state instead of a silent redirect to the dashboard, so a stale-state
+// false negative no longer makes the whole section vanish (S-H2). Non-admins are handled by
+// AdminShellRoute. Waits for apps to load so a running backend is not briefly treated as absent.
 function ObservabilityRoute({ children }: { children: ReactNode }) {
   const shell = useShellState();
-  const router = useRouter();
-  const blocked = !shell.state.loading && !shell.observabilityAvailable;
-  useEffect(() => {
-    if (blocked) {
-      router.replace(getShellViewHref("dashboard"));
-    }
-  }, [blocked, router]);
-  if (blocked) {
-    return null;
-  }
+  const unavailable = !shell.state.loading && !shell.observabilityAvailable;
+  return <AdminShellRoute>{unavailable ? <TelemetryBackendUnavailable /> : children}</AdminShellRoute>;
+}
 
-  return <AdminShellRoute>{children}</AdminShellRoute>;
+function TelemetryBackendUnavailable() {
+  return (
+    <div className="flex flex-1 items-center justify-center p-8">
+      <div className="max-w-md text-center">
+        <h2 className="text-lg font-semibold">Telemetry backend is not running</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Observability reads from the telemetry backend system app. Start it from Installed apps to see
+          metrics, structured logs, and traces. If you just started it, this refreshes on the next load.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 export function ShellAvailableAppsRoute() {

@@ -16,6 +16,7 @@ internal sealed partial class CoreControlClient : IDisposable
 
     private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan DefaultOperationTimeout = TimeSpan.FromMinutes(10);
+    private static readonly IReadOnlyDictionary<string, string> EmptyHeaders = new Dictionary<string, string>();
 
     private readonly HttpClient httpClient;
     private readonly TimeSpan probeTimeout;
@@ -81,7 +82,7 @@ internal sealed partial class CoreControlClient : IDisposable
         {
             Timeout = Timeout.InfiniteTimeSpan,
         };
-        foreach (var header in discovery.RequiredHeaders)
+        foreach (var header in discovery.RequiredHeaders ?? EmptyHeaders)
         {
             httpClient.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
         }
@@ -167,7 +168,9 @@ internal sealed partial class CoreControlClient : IDisposable
 
     internal sealed record ControlDiscoveryDocument(
         string ControlBaseUrl,
-        IReadOnlyDictionary<string, string> RequiredHeaders,
+        // Nullable so an older control.json (or a partial write) that omits the map degrades to "no
+        // headers" rather than NRE-ing the foreach that applies them.
+        IReadOnlyDictionary<string, string>? RequiredHeaders = null,
         int? ProcessId = null,
         string? Nonce = null);
 }

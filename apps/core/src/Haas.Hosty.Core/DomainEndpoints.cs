@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Haas.Hosty.Core;
 
 internal static class DomainEndpoints
@@ -38,7 +41,7 @@ internal static class DomainEndpoints
                 async () =>
                 {
                     var state = await store.ReadAsync(cancellationToken);
-                    return CoreJson.Json(new UsersResponse(state.Users, state.Invitations, state.Assignments, state.Sessions));
+                    return CoreJson.Json(BuildUsersResponse(state));
                 },
                 cancellationToken: cancellationToken));
 
@@ -46,7 +49,7 @@ internal static class DomainEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
             {
                 var state = await store.ReadAsync(cancellationToken);
-                return CoreJson.Json(new UsersResponse(state.Users, state.Invitations, state.Assignments, state.Sessions));
+                return CoreJson.Json(BuildUsersResponse(state));
             }));
 
         app.MapGet("/control/v1/audit/recent", async (HttpRequest request, ControlSecret secret, AuditStore store, CancellationToken cancellationToken) =>
@@ -75,6 +78,27 @@ internal static class DomainEndpoints
         return appAssignments.Length == 0 ||
             appAssignments.Any(assignment => string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal));
     }
+
+    // Session ids ARE the bearer credential (they are compared directly to the hosty_session cookie), so
+    // they must never leave Core. Expose only a non-reversible fingerprint plus lifecycle timestamps so
+    // admin tooling can still count/age sessions without holding a token it could replay.
+    private static UsersResponse BuildUsersResponse(UserDirectoryState state)
+        => new(
+            state.Users,
+            state.Invitations,
+            state.Assignments,
+            state.Sessions.Select(ToSummary).ToArray());
+
+    private static AuthSessionSummary ToSummary(AuthSessionRecord session)
+        => new(
+            FingerprintSessionId(session.Id),
+            session.UserId,
+            session.CreatedAt,
+            session.ExpiresAt,
+            session.RevokedAt);
+
+    private static string FingerprintSessionId(string id)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)))[..12].ToLowerInvariant();
 }
 
 internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
@@ -83,6 +107,14 @@ internal sealed record UsersResponse(
     IReadOnlyList<HostUserRecord> Users,
     IReadOnlyList<HostInvitationRecord> Invitations,
     IReadOnlyList<AppAssignmentRecord> Assignments,
-    IReadOnlyList<AuthSessionRecord> Sessions);
+    IReadOnlyList<AuthSessionSummary> Sessions);
+
+// A leak-safe projection of AuthSessionRecord: the id is a SHA-256 fingerprint, never the replayable token.
+internal sealed record AuthSessionSummary(
+    string Id,
+    string UserId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ExpiresAt,
+    DateTimeOffset? RevokedAt);
 
 internal sealed record AuditResponse(IReadOnlyList<AuditRecord> Events);

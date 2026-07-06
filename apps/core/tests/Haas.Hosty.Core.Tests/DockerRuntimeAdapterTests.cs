@@ -658,6 +658,147 @@ public sealed class DockerRuntimeAdapterTests
             ArtifactLocks: locks,
             UpdatePolicy: updatePolicy);
 
+    [Fact]
+    public async Task StartAsync_SettingsAndServiceToken_PassedViaEnvironmentNotArgv()
+    {
+        var runner = new FakeDockerCommandRunner();
+        var app = CreateDockerAppRecord(updatePolicy: null, locks: null) with
+        {
+            Settings = new Dictionary<string, AppSettingValue>(StringComparer.Ordinal)
+            {
+                ["API_KEY"] = new("API_KEY", "string", "s3cr3t-value", Secret: true),
+            },
+        };
+
+        await CreateAdapter(runner).StartAsync(CreateDockerContext(app));
+
+        var run = runner.Find("run")!;
+        // The value must never appear on the argv (ps/cmdline is readable by other local users) — only
+        // the NAME is passed via -e, with the value delivered through the docker process environment.
+        Assert.DoesNotContain(run, arg => arg.Contains("s3cr3t-value", StringComparison.Ordinal));
+        Assert.Contains("API_KEY", run);
+        Assert.DoesNotContain(run, arg => arg.StartsWith("HOSTY_APP_SERVICE_TOKEN=", StringComparison.Ordinal));
+
+        var environment = runner.RunEnvironment();
+        Assert.NotNull(environment);
+        Assert.Equal("s3cr3t-value", environment!["API_KEY"]);
+        Assert.True(environment.ContainsKey("HOSTY_APP_SERVICE_TOKEN"));
+    }
+
+    [Fact]
+    public async Task StartAsync_ExistingContainerLabelledForAnotherApp_IsNotRemoved()
+    {
+        // Simulate a name-collision squatter: the container that shares this app's normalized name is
+        // labelled for a different app. It must be left in place (C-M2), never force-removed.
+        var runner = new FakeDockerCommandRunner(args =>
+            args is ["inspect", "--format", _, ..] && args[2].Contains("hosty.app.id", StringComparison.Ordinal)
+                ? new DockerCommandResult(0, "some.other.app", "")
+                : new DockerCommandResult(0, "", ""));
+
+        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord(updatePolicy: null, locks: null)));
+
+        Assert.False(runner.Ran("rm", "-f", "hosty-com-example-app-app"));
+    }
+
+    [Fact]
+    public async Task StartAsync_PartialMultiServiceStart_UnwindsStartedContainers()
+    {
+        var running = new HashSet<string>(StringComparer.Ordinal);
+        var runner = new FakeDockerCommandRunner(args =>
+        {
+            switch (args[0])
+            {
+                case "run":
+                    var runName = args[args.ToList().IndexOf("--name") + 1];
+                    if (runName.EndsWith("-worker", StringComparison.Ordinal))
+                    {
+                        return new DockerCommandResult(1, "", "worker failed to start");
+                    }
+
+                    running.Add(runName);
+                    return new DockerCommandResult(0, "", "");
+                case "inspect" when args[2].Contains("hosty.app.id", StringComparison.Ordinal):
+                    var name = args[^1];
+                    return running.Contains(name)
+                        ? new DockerCommandResult(0, "com.example.app", "")
+                        : new DockerCommandResult(1, "", "no such container");
+                case "rm":
+                    running.Remove(args[^1]);
+                    return new DockerCommandResult(0, "", "");
+                default:
+                    return new DockerCommandResult(0, "", "");
+            }
+        });
+
+        await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            CreateAdapter(runner).StartAsync(CreateMultiServiceDockerContext("app", "worker")));
+
+        // The successfully-started "app" container must be unwound so a failed multi-service start
+        // leaves nothing running (C-H5). BuildContainerName normalizes dots to dashes.
+        Assert.Empty(running);
+        Assert.True(runner.Ran("rm", "-f", "hosty-com-example-app-app"));
+    }
+
+    [Fact]
+    public async Task StopAsync_ContainerStillRunningAfterStop_Throws()
+    {
+        var runner = new FakeDockerCommandRunner(args =>
+            args is ["inspect", "--format", "{{.State.Running}}", ..]
+                ? new DockerCommandResult(0, "true", "")
+                : new DockerCommandResult(0, "", ""));
+
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            CreateAdapter(runner).StopAsync(CreateDockerContext(CreateDockerAppRecord(updatePolicy: null, locks: null))));
+
+        Assert.Equal("docker_stop_incomplete", ex.Code);
+    }
+
+    [Fact]
+    public async Task StopAsync_ContainerStopped_ReturnsStopped()
+    {
+        var runner = new FakeDockerCommandRunner(args =>
+            args is ["inspect", "--format", "{{.State.Running}}", ..]
+                ? new DockerCommandResult(0, "false", "")
+                : new DockerCommandResult(0, "", ""));
+
+        var result = await CreateAdapter(runner).StopAsync(CreateDockerContext(CreateDockerAppRecord(updatePolicy: null, locks: null)));
+
+        Assert.Equal("stopped", result.RuntimeState);
+    }
+
+    [Fact]
+    public async Task ListRunningAppIdsAsync_ParsesDistinctLabelledAppIds()
+    {
+        var runner = new FakeDockerCommandRunner(args =>
+            args[0] == "ps" ? new DockerCommandResult(0, "app.one\napp.two\napp.one\n", "") : new DockerCommandResult(0, "", ""));
+
+        var running = await CreateAdapter(runner).ListRunningAppIdsAsync();
+
+        Assert.Equal(new HashSet<string> { "app.one", "app.two" }, running);
+    }
+
+    private static RuntimeLifecycleContext CreateMultiServiceDockerContext(params string[] serviceKeys)
+    {
+        var services = serviceKeys
+            .Select(key => new RuntimeSelectedService(
+                key,
+                [],
+                new RuntimeServiceProfileManifest { Type = "docker" },
+                new RuntimeDockerImage("ghcr.io/example/app", "latest"),
+                "image"))
+            .ToArray();
+        var manifest = new RuntimeAppManifest { SchemaVersion = "app.0.1", Id = "com.example.app", Name = "App", Version = "1.0.0" };
+        var profile = new RuntimeProfileManifest { Key = "docker", Type = "docker", Default = true };
+        var selection = new RuntimeAppManifestSelection(manifest, "/tmp/manifest.json", "digest", profile, services, null, "{}", null);
+        return new RuntimeLifecycleContext(
+            CreateDockerAppRecord(updatePolicy: null, locks: null),
+            selection,
+            "/tmp/app",
+            "/tmp/app/data",
+            new Dictionary<string, string>(),
+            []);
+    }
+
     private sealed class FakeDockerCommandRunner(Func<IReadOnlyList<string>, DockerCommandResult>? responder = null)
         : IDockerCommandRunner
     {
@@ -666,10 +807,21 @@ public sealed class DockerRuntimeAdapterTests
 
         public List<IReadOnlyList<string>> Commands { get; } = [];
 
-        public Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, CancellationToken cancellationToken = default)
+        // Environment injected into the docker process on the matching call (C-M5); null when none.
+        public List<IReadOnlyDictionary<string, string>?> Environments { get; } = [];
+
+        public Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
         {
             Commands.Add(args.ToArray());
+            Environments.Add(environment);
             return Task.FromResult(responder(args));
+        }
+
+        // The environment passed alongside the first `run` command.
+        public IReadOnlyDictionary<string, string>? RunEnvironment()
+        {
+            var index = Commands.FindIndex(command => command.Count > 0 && command[0] == "run");
+            return index >= 0 ? Environments[index] : null;
         }
 
         public bool Ran(params string[] prefix) => Commands.Any(command => StartsWith(command, prefix));

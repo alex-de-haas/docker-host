@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ChevronDown, LineChart, ListChecks, LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -99,8 +99,12 @@ export function ObservabilityMetricsPage({
     [apps, selectedAppId],
   );
 
+  // Monotonic generation stamped on each refresh so a slow response from a superseded range/selection
+  // cannot overwrite fresher data (switching 1h→5m must not leave 1h data under a "5m" label) (S-H1).
+  const requestGenerationRef = useRef(0);
+
   const loadAppMetrics = useCallback(
-    async (app: CoreApp, range: number) => {
+    async (app: CoreApp, range: number, generation: number) => {
       setMetricsByApp((current) => ({
         ...current,
         [app.id]: { loading: true, error: null, metrics: current[app.id]?.metrics ?? null },
@@ -114,9 +118,12 @@ export function ObservabilityMetricsPage({
           throw new Error(await readCoreError(response));
         }
         const metrics = (await response.json()) as AppMetricsResponse;
+        if (generation !== requestGenerationRef.current) {
+          return;
+        }
         setMetricsByApp((current) => ({ ...current, [app.id]: { loading: false, error: null, metrics } }));
       } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
+        if (isAuthRequiredRedirectError(error) || generation !== requestGenerationRef.current) {
           return;
         }
         setMetricsByApp((current) => ({
@@ -134,8 +141,9 @@ export function ObservabilityMetricsPage({
 
   const refresh = useCallback(
     (range: number) => {
+      const generation = ++requestGenerationRef.current;
       for (const app of targetApps) {
-        void loadAppMetrics(app, range);
+        void loadAppMetrics(app, range, generation);
       }
     },
     [targetApps, loadAppMetrics],

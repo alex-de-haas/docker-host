@@ -136,6 +136,12 @@ internal sealed partial class AppsCommand(CommandContext context)
         var response = await core.PostAsync<AppUpdatePlan>($"apps/{Uri.EscapeDataString(options.AppId)}/update/plan", new AppUpdatePlanRequest(
             ManifestPath: options.ManifestPath,
             SelectedRuntime: options.SelectedRuntime));
+        if (response is null)
+        {
+            context.Error.MarkupLine("[red]Hosty Core returned no update plan.[/]");
+            return 1;
+        }
+
         RenderUpdatePlan(response);
         return 0;
     }
@@ -258,7 +264,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         var app = (response?.Apps ?? []).FirstOrDefault(candidate => string.Equals(candidate.Id, appId, StringComparison.Ordinal));
         if (app is null)
         {
-            context.Console.MarkupLine($"[yellow]App not found:[/] {Markup.Escape(appId)}");
+            context.Error.MarkupLine($"[yellow]App not found:[/] {Markup.Escape(appId)}");
             return 1;
         }
 
@@ -305,10 +311,14 @@ internal sealed partial class AppsCommand(CommandContext context)
         using var core = await OpenCoreAsync();
         var response = await core.DeleteAsync<AppBackupDeleteResponse>(
             $"apps/{Uri.EscapeDataString(options.AppId)}/backups/{Uri.EscapeDataString(options.BackupId)}");
-        context.Console.MarkupLine(response?.Deleted == true
-            ? $"[green]Deleted backup:[/] {Markup.Escape(options.BackupId)}"
-            : $"[yellow]Backup not found:[/] {Markup.Escape(options.BackupId)}");
-        return response?.Deleted == true ? 0 : 1;
+        if (response?.Deleted == true)
+        {
+            context.Console.MarkupLine($"[green]Deleted backup:[/] {Markup.Escape(options.BackupId)}");
+            return 0;
+        }
+
+        context.Error.MarkupLine($"[yellow]Backup not found:[/] {Markup.Escape(options.BackupId)}");
+        return 1;
     }
 
     private async Task<int> BackupCleanupPlanAsync(string[] args)
@@ -417,6 +427,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             new AppIdentityIssueRequest(options.User));
         if (response is null)
         {
+            context.Error.MarkupLine("[red]Hosty Core returned an empty identity response.[/]");
             return 1;
         }
 
@@ -433,6 +444,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             new AppOpenLinkRequest(options.User, options.Mode, options.RedirectUri));
         if (response is null)
         {
+            context.Error.MarkupLine("[red]Hosty Core returned an empty open-link response.[/]");
             return 1;
         }
 
@@ -453,9 +465,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         var core = await CoreControlClient.TryCreateAsync(context);
         if (core is null)
         {
-            throw new CommandUsageException(
-                "Hosty Core is not running or local control discovery is unavailable. Run `hosty core start` first.",
-                Usage);
+            throw new CoreNotRunningException();
         }
 
         return core;

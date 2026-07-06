@@ -60,6 +60,10 @@ import type {
   WorkspaceRoute,
 } from "./shell/types";
 
+// The system app that backs the Observability section. A bare string literal here already survived one
+// app rename silently; keeping it in one named place makes the next rename a single-line change (S-H2).
+export const TELEMETRY_BACKEND_APP_ID = "hosty.telemetry";
+
 export function ShellClient({
   coreOrigin,
   shellAppId,
@@ -397,17 +401,9 @@ export function ShellClient({
       setBusyAction(actionKey);
       setState((current) => ({ ...current, error: null }));
       try {
-        const planResponse = await fetch(appEndpoint(app, "/switch-runtime/plan"), {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ targetRuntime }),
-        });
-        redirectToCoreLoginIfAuthRequired(planResponse, coreOrigin);
-        if (!planResponse.ok) {
-          throw new Error(await readCoreError(planResponse));
-        }
-
+        // Plan routes are session-authenticated POSTs and now require the CSRF header like their apply
+        // twins (C-M9); sendCsrfJson attaches it and throws on !ok.
+        const planResponse = await sendCsrfJson(appEndpoint(app, "/switch-runtime/plan"), { targetRuntime });
         const plan = (await planResponse.json()) as CoreRuntimeSwitchPlan;
         await sendCsrfJson(appEndpoint(app, "/switch-runtime"), {
           targetRuntime: plan.targetRuntime,
@@ -471,17 +467,8 @@ export function ShellClient({
       setDetailPanel({ loading: true, error: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
         const source = manifestPath?.trim();
-        const response = await fetch(appEndpoint(app, "/update/plan"), {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ manifestPath: source ? source : null }),
-        });
-        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-        if (!response.ok) {
-          throw new Error(await readCoreError(response));
-        }
-
+        // Plan routes require the CSRF header like their apply twins (C-M9); sendCsrfJson attaches it.
+        const response = await sendCsrfJson(appEndpoint(app, "/update/plan"), { manifestPath: source ? source : null });
         const payload = (await response.json()) as CoreUpdatePlan;
         if (requestToken !== detailRequestRef.current) {
           return;
@@ -496,7 +483,7 @@ export function ShellClient({
         setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Update plan is unavailable.", backups: null, backupCleanupPlan: null, updatePlan: null });
       }
     },
-    [appEndpoint, coreOrigin],
+    [appEndpoint, sendCsrfJson],
   );
 
   const openAppPanel = useCallback(
@@ -941,21 +928,12 @@ export function ShellClient({
     async (manifestPath: string, selectedRuntime?: string | null) => {
       setInstallPanel((current) => ({ loading: true, error: null, plan: current.plan }));
       try {
-        const response = await fetch(`${coreOrigin}/api/apps/install/plan`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            manifestPath,
-            selectedRuntime: selectedRuntime?.trim() || null,
-            system: false,
-          }),
+        // Plan routes require the CSRF header like their apply twins (C-M9); sendCsrfJson attaches it.
+        const response = await sendCsrfJson(`${coreOrigin}/api/apps/install/plan`, {
+          manifestPath,
+          selectedRuntime: selectedRuntime?.trim() || null,
+          system: false,
         });
-        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-        if (!response.ok) {
-          throw new Error(await readCoreError(response));
-        }
-
         const plan = (await response.json()) as CoreInstallPlan;
         setInstallPanel({ loading: false, error: null, plan });
       } catch (error) {
@@ -970,7 +948,7 @@ export function ShellClient({
         });
       }
     },
-    [coreOrigin],
+    [coreOrigin, sendCsrfJson],
   );
 
   const applyInstall = useCallback(
@@ -1014,7 +992,7 @@ export function ShellClient({
   // The Observability section reads from the telemetry backend system app; show it only when that app
   // is installed and running (its Metrics/Structured logs/Traces have nothing to show otherwise).
   const observabilityAvailable = useMemo(
-    () => state.apps.some((app) => app.id === "hosty.telemetry" && app.runtimeState === "running"),
+    () => state.apps.some((app) => app.id === TELEMETRY_BACKEND_APP_ID && app.runtimeState === "running"),
     [state.apps],
   );
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);

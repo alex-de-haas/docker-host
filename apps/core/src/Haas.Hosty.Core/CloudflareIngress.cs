@@ -100,7 +100,9 @@ internal sealed class CloudflaredIngressController(
                 SecureFileSystem.EnsurePrivateDirectory(directory);
             }
 
-            await File.WriteAllTextAsync(path, yaml, cancellationToken);
+            // Atomic temp+rename (the parent dir is already ensured private above): a partial write here
+            // would feed cloudflared a truncated config on its next reload.
+            await JsonStorage.WriteTextAsync(path, yaml, cancellationToken);
             logger.LogInformation("Hosty ingress config written to {Path} with {RouteCount} route(s).", path, routes.Count);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)

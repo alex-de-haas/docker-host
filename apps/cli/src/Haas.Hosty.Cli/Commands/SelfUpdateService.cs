@@ -5,7 +5,7 @@ using Spectre.Console;
 
 internal sealed class SelfUpdateService(CommandContext context)
 {
-    public async Task<SelfUpdateResult> UpdateAsync(CancellationToken cancellationToken = default)
+    public async Task<SelfUpdateResult> UpdateAsync(string? releaseTag = null, CancellationToken cancellationToken = default)
     {
         var processPath = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(processPath))
@@ -20,9 +20,12 @@ internal sealed class SelfUpdateService(CommandContext context)
         }
 
         var artifact = ReleaseArtifactNames.GetCliArtifactName();
-        var releaseArtifacts = new ReleaseArtifactService(context);
+        var releaseArtifacts = new ReleaseArtifactService(context, releaseTag);
 
-        using var httpClient = new HttpClient();
+        // No overall client timeout: the default 100 s cancels the whole request — including the streamed
+        // artifact body read — so a large binary on a slow link fails mid-download even under
+        // ResponseHeadersRead. Cancellation comes from the caller's token (Ctrl+C) instead (L-M1).
+        using var httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         var checksums = await releaseArtifacts.DownloadChecksumsAsync(
             httpClient,
             cancellationToken);

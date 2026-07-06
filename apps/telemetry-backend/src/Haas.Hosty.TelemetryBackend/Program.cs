@@ -2,9 +2,14 @@ using Haas.Hosty.TelemetryBackend;
 
 // Hosty telemetry backend (observability Phase 2). Ingests from the otelcol collector (Prometheus
 // scrape + file sinks on the shared volume) into an embedded SQLite store and serves a query API that
-// mirrors the shapes Core used to serve (appId-keyed; Core's read proxy adds display names). Reached
-// only by Core's read proxy over the internal network, so it carries no auth of its own. See
-// docs/features/observability-phase-2-backend.md.
+// mirrors the shapes Core used to serve (appId-keyed; Core's read proxy adds display names).
+//
+// SECURITY (known-open, tracked in docs/features/observability-phase-2-backend.md §2d): this query API
+// currently carries NO auth. It is NOT confined to an internal-only network — the query port is
+// container-published to host loopback (that is how Core reaches it), and the collector's OTLP ingest
+// port is host-exposed too. So any local process can read the fleet's telemetry and inject spoofed
+// spans/metrics attributed to any hosty.app.id. Do not add functionality that assumes a trust boundary
+// here until Core mints a shared-secret bearer token for query + ingest.
 var options = TelemetryBackendOptions.FromEnvironment();
 
 var builder = WebApplication.CreateBuilder(args);

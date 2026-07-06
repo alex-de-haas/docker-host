@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -54,6 +55,29 @@ internal sealed class CoreLifecycleService(
     private readonly GlobalMountStore globalMounts = globalMounts ?? new GlobalMountStore(paths);
     private readonly MountPathPolicy mountPathPolicy = mountPathPolicy ?? new MountPathPolicy(paths);
 
+    // Per-app operation lock. AppRegistryStore.appLocks only serializes a single record write; a whole
+    // lifecycle verb reads a record, runs a long operation, then commits a rebuilt record, so two verbs
+    // on one app can still interleave — a concurrent Configure committing mid-update is silently reverted,
+    // concurrent Starts interleave docker rm -f/run. This holds one app's verb to completion. Keyed by app
+    // id and unbounded like appLocks (bounded in practice by the number of distinct apps ever operated).
+    // NOT reentrant: verbs that internally start an app (ConfigureDevelopmentMode, ApplyUpdate,
+    // ApplyRuntimeSwitch, CreateManualBackup) call StartCoreAsync — the unlocked body — never StartAsync.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> operationLocks = new(StringComparer.Ordinal);
+
+    private async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken)
+    {
+        var mutex = operationLocks.GetOrAdd(appId, _ => new SemaphoreSlim(1, 1));
+        await mutex.WaitAsync(cancellationToken);
+        try
+        {
+            return await operation();
+        }
+        finally
+        {
+            mutex.Release();
+        }
+    }
+
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
         var records = await apps.ListAppRecordsAsync(cancellationToken);
@@ -108,6 +132,11 @@ internal sealed class CoreLifecycleService(
     public async Task<AppLifecycleResponse> InstallAsync(AppInstallRequest request, CancellationToken cancellationToken = default)
     {
         var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
+        return await WithAppLockAsync(selection.Manifest.Id!, () => InstallCoreAsync(request, selection, cancellationToken), cancellationToken);
+    }
+
+    private async Task<AppLifecycleResponse> InstallCoreAsync(AppInstallRequest request, RuntimeAppManifestSelection selection, CancellationToken cancellationToken)
+    {
         var appRoot = GetAppRoot(selection.Manifest.Id!);
         var manifestCopyPath = Path.Combine(appRoot, "manifest.json");
 
@@ -162,7 +191,10 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "installed");
     }
 
-    public async Task<AppLifecycleResponse> ConfigureAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken = default)
+    public Task<AppLifecycleResponse> ConfigureAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => ConfigureCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> ConfigureCoreAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken)
     {
         var policy = NormalizeConfiguredUpdatePolicy(request.UpdatePolicy);
         var document = await apps.UpdateAppAsync(appId, app =>
@@ -201,10 +233,16 @@ internal sealed class CoreLifecycleService(
         return trimmed.ToLowerInvariant();
     }
 
-    public async Task<AppLifecycleResponse> ConfigureAutostartAsync(
+    public Task<AppLifecycleResponse> ConfigureAutostartAsync(
         string appId,
         AppAutostartRequest request,
         CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => ConfigureAutostartCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> ConfigureAutostartCoreAsync(
+        string appId,
+        AppAutostartRequest request,
+        CancellationToken cancellationToken)
     {
         var document = await apps.UpdateAppAsync(appId, app => app with
         {
@@ -222,10 +260,16 @@ internal sealed class CoreLifecycleService(
     // for a source (localCommand) runtime — image/prebuilt have no working copy to run live. Takes effect
     // on the next start of that runtime; when it is the selected runtime the summary's Live flag flips
     // immediately.
-    public async Task<AppLifecycleResponse> ConfigureDevelopmentModeAsync(
+    public Task<AppLifecycleResponse> ConfigureDevelopmentModeAsync(
         string appId,
         AppDevelopmentModeRequest request,
         CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => ConfigureDevelopmentModeCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> ConfigureDevelopmentModeCoreAsync(
+        string appId,
+        AppDevelopmentModeRequest request,
+        CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
@@ -336,7 +380,7 @@ internal sealed class CoreLifecycleService(
             // the snapshot (via the returned hint) before the reviewed version boots onto migrated data.
             if (wasRunning && restoreHint is null)
             {
-                var restarted = await StartAsync(appId, cancellationToken);
+                var restarted = await StartCoreAsync(appId, cancellationToken);
                 return new AppLifecycleResponse(restarted.App, backup, "configured", restoreHint);
             }
 
@@ -349,7 +393,7 @@ internal sealed class CoreLifecycleService(
             // a cancelled operation still restarts; a restart failure surfaces through StartAsync.
             if (wasRunning && !completed)
             {
-                _ = await StartAsync(appId, CancellationToken.None);
+                _ = await StartCoreAsync(appId, CancellationToken.None);
             }
         }
     }
@@ -357,10 +401,16 @@ internal sealed class CoreLifecycleService(
     // Operator-configured external mount bindings. Replaces the full set for the app (idempotent
     // PUT semantics), validating each host path against the manifest-declared slots and the path
     // policy before persisting. Existence of the host paths is enforced lazily at start time.
-    public async Task<AppLifecycleResponse> ConfigureMountsAsync(
+    public Task<AppLifecycleResponse> ConfigureMountsAsync(
         string appId,
         AppMountsRequest request,
         CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => ConfigureMountsCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> ConfigureMountsCoreAsync(
+        string appId,
+        AppMountsRequest request,
+        CancellationToken cancellationToken)
     {
         // Read the library snapshot up front (async); validation itself is synchronous and runs
         // against the current record inside UpdateAppAsync so bindings are checked against the
@@ -457,7 +507,10 @@ internal sealed class CoreLifecycleService(
     private static StringComparison PathComparison
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
-    public async Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
+    public Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => StartCoreAsync(appId, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> StartCoreAsync(string appId, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         IAppRuntimeAdapter? adapter = null;
@@ -518,7 +571,10 @@ internal sealed class CoreLifecycleService(
         }
     }
 
-    public async Task<AppLifecycleResponse> StopAsync(string appId, CancellationToken cancellationToken = default)
+    public Task<AppLifecycleResponse> StopAsync(string appId, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => StopCoreAsync(appId, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> StopCoreAsync(string appId, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         var selection = await LoadSelectionForAppAsync(app, cancellationToken);
@@ -536,7 +592,10 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "stopped");
     }
 
-    public async Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
+    public Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         IAppRuntimeAdapter? adapter = null;
@@ -641,7 +700,10 @@ internal sealed class CoreLifecycleService(
             SourceConfigured: sourceConfigured);
     }
 
-    public async Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
+    public Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => ApplyUpdateCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> ApplyUpdateCoreAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken)
     {
         var plan = await CreateUpdatePlanAsync(appId, new AppUpdatePlanRequest(request.ManifestPath, request.SelectedRuntime), cancellationToken);
         if (!string.Equals(plan.PlanDigest, request.PlanDigest, StringComparison.Ordinal))
@@ -681,7 +743,7 @@ internal sealed class CoreLifecycleService(
         var document = await apps.UpsertAppAsync(next, cancellationToken);
         if (wasRunning)
         {
-            var restarted = await StartAsync(appId, cancellationToken);
+            var restarted = await StartCoreAsync(appId, cancellationToken);
             return new AppLifecycleResponse(restarted.App, backup, "updated");
         }
 
@@ -735,10 +797,16 @@ internal sealed class CoreLifecycleService(
             Changes: changes);
     }
 
-    public async Task<AppLifecycleResponse> ApplyRuntimeSwitchAsync(
+    public Task<AppLifecycleResponse> ApplyRuntimeSwitchAsync(
         string appId,
         AppRuntimeSwitchApplyRequest request,
         CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => ApplyRuntimeSwitchCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> ApplyRuntimeSwitchCoreAsync(
+        string appId,
+        AppRuntimeSwitchApplyRequest request,
+        CancellationToken cancellationToken)
     {
         var plan = await CreateRuntimeSwitchPlanAsync(appId, new AppRuntimeSwitchPlanRequest(request.TargetRuntime), cancellationToken);
         if (!string.Equals(plan.PlanDigest, request.PlanDigest, StringComparison.Ordinal))
@@ -779,7 +847,7 @@ internal sealed class CoreLifecycleService(
         {
             try
             {
-                var restarted = await StartAsync(appId, cancellationToken);
+                var restarted = await StartCoreAsync(appId, cancellationToken);
                 return new AppLifecycleResponse(restarted.App, backup, "runtime-switched");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -795,7 +863,10 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(document is null ? null : await BuildAppSummaryAsync(document, cancellationToken), backup, "runtime-switched");
     }
 
-    public async Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken = default)
+    public Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => RemoveCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken)
     {
         var app = await apps.GetAppAsync(appId, cancellationToken);
         if (app is not null && !string.IsNullOrWhiteSpace(app.ManifestPath))
@@ -870,7 +941,10 @@ internal sealed class CoreLifecycleService(
         return new AppBackupsResponse(await backups.ListBackupsAsync(appId, cancellationToken));
     }
 
-    public async Task<AppBackupResponse> CreateManualBackupAsync(string appId, AppManualBackupRequest request, CancellationToken cancellationToken = default)
+    public Task<AppBackupResponse> CreateManualBackupAsync(string appId, AppManualBackupRequest request, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => CreateManualBackupCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppBackupResponse> CreateManualBackupCoreAsync(string appId, AppManualBackupRequest request, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         var reason = string.IsNullOrWhiteSpace(request.Reason) ? "manual" : request.Reason.Trim();
@@ -912,12 +986,15 @@ internal sealed class CoreLifecycleService(
             // surfaces through StartAsync (recorded + thrown), which is the right signal.
             if (wasRunning)
             {
-                _ = await StartAsync(appId, CancellationToken.None);
+                _ = await StartCoreAsync(appId, CancellationToken.None);
             }
         }
     }
 
-    public async Task<AppBackupResponse> RestoreBackupAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken = default)
+    public Task<AppBackupResponse> RestoreBackupAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => RestoreBackupCoreAsync(appId, backupId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppBackupResponse> RestoreBackupCoreAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
@@ -3567,7 +3644,62 @@ internal sealed class CoreLifecycleService(
             }
         }
 
+        await ReconcileStoppedButRunningDockerAppsAsync(records, cancellationToken);
         return observations;
+    }
+
+    // The per-app observation above only probes apps Core already believes running, so it cannot catch the
+    // inverse drift: a docker container still running while the record says stopped (a failed/racing stop,
+    // or a container revived out-of-band). One `docker ps --filter label=hosty.app.id` per tick discovers
+    // the truth and reconciles those records back to "running" so the next tick observes them (C-M1).
+    private async Task ReconcileStoppedButRunningDockerAppsAsync(IReadOnlyList<AppRecord> records, CancellationToken cancellationToken)
+    {
+        var probe = adapters.OfType<IRunningContainerProbe>().FirstOrDefault();
+        if (probe is null)
+        {
+            return;
+        }
+
+        IReadOnlySet<string> runningAppIds;
+        try
+        {
+            runningAppIds = await probe.ListRunningAppIdsAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to probe running docker containers for state reconciliation.");
+            return;
+        }
+
+        foreach (var app in records)
+        {
+            if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
+                string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) ||
+                !runningAppIds.Contains(app.Id))
+            {
+                continue;
+            }
+
+            // Take the per-app operation lock non-blockingly: if a lifecycle verb is mid-flight (e.g.
+            // StopAsync tearing the container down), skip this app and let a later tick reconcile it —
+            // otherwise the sweep could overwrite that verb's "stopped" back to "running" (the very drift
+            // this sweep exists to remove). A record that is still genuinely stopped-but-running is caught
+            // next tick; a wrongly-set "running" self-heals via ObserveRuntimeHealthForAppAsync.
+            var mutex = operationLocks.GetOrAdd(app.Id, _ => new SemaphoreSlim(1, 1));
+            if (!await mutex.WaitAsync(0, cancellationToken))
+            {
+                continue;
+            }
+
+            try
+            {
+                _ = await apps.UpdateAppAsync(app.Id, current => current with { RuntimeState = "running" }, cancellationToken);
+            }
+            finally
+            {
+                mutex.Release();
+            }
+        }
     }
 
     private async Task<AppHealthObservation?> ObserveRuntimeHealthForAppAsync(AppRecord app, bool supervised, CancellationToken cancellationToken)

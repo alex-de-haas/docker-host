@@ -380,31 +380,33 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
     private static async Task<string> RunGitAsync(string workingDirectory, IReadOnlyList<string> args, CancellationToken cancellationToken)
         => await RunGitProcessAsync(workingDirectory, args, cancellationToken);
 
+    // Git clone/fetch on small source repos should never approach this; it bounds a hung git (e.g. an
+    // interactive-credential prompt that the env vars in CreateGitStartInfo try to suppress).
+    private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(10);
+
     private static async Task<string> RunGitProcessAsync(string? workingDirectory, IReadOnlyList<string> args, CancellationToken cancellationToken)
     {
-        var process = new System.Diagnostics.Process
-        {
-            StartInfo = CreateGitStartInfo(workingDirectory, args),
-        };
-
+        ProcessRunResult result;
         try
         {
-            process.Start();
+            result = await ProcessRunner.RunAsync(CreateGitStartInfo(workingDirectory, args), GitTimeout, cancellationToken);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             throw new AppLifecycleException("source_git_unavailable", $"Git is not available: {ex.Message}");
         }
 
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        if (process.ExitCode != 0)
+        if (result.TimedOut)
         {
-            throw new AppLifecycleException("source_git_failed", string.IsNullOrWhiteSpace(stderr) ? $"Git exited with code {process.ExitCode}." : stderr.Trim());
+            throw new AppLifecycleException("source_git_timed_out", $"Git command timed out after {GitTimeout.TotalMinutes:0} minutes.");
         }
 
-        return stdout.Trim();
+        if (result.ExitCode != 0)
+        {
+            throw new AppLifecycleException("source_git_failed", string.IsNullOrWhiteSpace(result.StandardError) ? $"Git exited with code {result.ExitCode}." : result.StandardError.Trim());
+        }
+
+        return result.StandardOutput.Trim();
     }
 
     internal static System.Diagnostics.ProcessStartInfo CreateGitStartInfo(string? workingDirectory, IReadOnlyList<string> args)

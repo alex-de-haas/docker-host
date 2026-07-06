@@ -103,7 +103,20 @@ internal static class HostyCoreApplication
         app.UseCors("HostyShell");
 
         app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok")));
-        app.MapGet("/api/core/status", (HostyCoreRuntimeConfig config) => CoreJson.Json(CoreStatusResponse.From(config)));
+        app.MapGet("/api/core/status", async (
+            HttpRequest request,
+            HostyCoreRuntimeConfig config,
+            UserDirectoryStore users,
+            IClock clock,
+            CancellationToken cancellationToken) =>
+        {
+            // Detailed status (host paths, ingress config, warnings) is admin-only; anonymous callers —
+            // including anyone who reaches core.<domain> through ingress — get only liveness/version.
+            var user = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, cancellationToken);
+            return CoreJson.Json(user is not null && string.Equals(user.Role, "host.admin", StringComparison.Ordinal)
+                ? CoreStatusResponse.From(config)
+                : CoreStatusResponse.Public());
+        });
         app.MapGet("/control/v1/core/status", (HttpRequest request, HostyCoreRuntimeConfig config, ControlSecret secret) =>
             RequireControlSecret(request, secret, () => CoreJson.Json(CoreStatusResponse.From(config))));
         app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime) =>
@@ -1812,6 +1825,28 @@ internal sealed record CoreStatusResponse(
                 : null,
             [.. config.BuildPublicOriginWarnings(), .. config.BuildIngressWarnings()],
             DateTimeOffset.UtcNow);
+
+    // Public liveness payload. `/api/core/status` is unauthenticated and, under cloudflared, published at
+    // core.<domain>, so the detailed From() payload (DataRoot, manifest/ingress paths, host-path warnings)
+    // must not be served to anonymous callers. Keep only status/component/version/serverTime; blank the rest.
+    public static CoreStatusResponse Public()
+        => new(
+            "running",
+            "hosty-core",
+            PlatformVersion,
+            DataRoot: "",
+            ListenUrl: "",
+            CorePort: 0,
+            ShellPort: 0,
+            CorePublicOrigin: null,
+            ShellPublicOrigin: null,
+            RuntimePublicHost: "",
+            ShellManifestPath: null,
+            ShellAutostart: false,
+            IngressProvider: "",
+            IngressConfigPath: null,
+            Warnings: [],
+            ServerTime: DateTimeOffset.UtcNow);
 }
 
 internal sealed record StopResponse(string Status);

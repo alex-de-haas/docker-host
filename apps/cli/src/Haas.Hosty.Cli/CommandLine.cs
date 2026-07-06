@@ -1,6 +1,7 @@
 namespace Haas.Hosty.Cli;
 
 using System.Reflection;
+using System.Text.Json;
 using Haas.Hosty.Cli.Commands;
 using Haas.Hosty.Cli.Configuration;
 using Spectre.Console;
@@ -68,6 +69,14 @@ public static class CommandLine
             error.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
             return 2;
         }
+        catch (CoreNotRunningException ex)
+        {
+            // A down Core is an environment state, not a bad invocation — clean message + exit 1 so
+            // scripts don't misclassify it as a usage error (exit 2).
+            error.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
+            error.MarkupLine("Run [grey]hosty core start[/] first.");
+            return 1;
+        }
         catch (CoreControlException ex)
         {
             error.MarkupLine($"[red]Hosty Core API failed:[/] {Markup.Escape(ex.Message)}");
@@ -82,6 +91,14 @@ public static class CommandLine
         {
             error.MarkupLine($"[red]Hosty Core did not respond in time:[/] {Markup.Escape(ex.Message)}");
             error.MarkupLine("[grey]The operation may still be running in Hosty Core. Check it with [white]hosty core status[/] and [white]hosty apps list[/].[/]");
+            return 1;
+        }
+        catch (JsonException ex)
+        {
+            // A half-started Core, or an older-schema control.json, can return a body that does not
+            // deserialize. Surface a clean message instead of a raw stack-trace dump.
+            error.MarkupLine("[red]Hosty Core returned an invalid response.[/]");
+            error.MarkupLine($"[grey]{Markup.Escape(ex.Message)}[/]");
             return 1;
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)

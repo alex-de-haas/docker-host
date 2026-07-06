@@ -47,7 +47,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-backend",
-            "tag": "latest"
+            "tag": "0.2.0"
           },
           "environment": {
             "HOSTY_TELEMETRY_LOGS_FILE": "/etc/otelcol-contrib/otlp-logs/logs.jsonl",

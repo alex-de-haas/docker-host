@@ -14,13 +14,13 @@ internal sealed class CoreInstallationService(CommandContext context)
         }
 
         context.Console.MarkupLine("[yellow]Hosty Core executable is not installed; downloading it now.[/]");
-        return await DownloadAndInstallAsync(executablePath, cancellationToken);
+        return await DownloadAndInstallAsync(executablePath, releaseTag: null, cancellationToken);
     }
 
-    internal async Task<CoreInstallationResult> UpdateAsync(CancellationToken cancellationToken = default)
+    internal async Task<CoreInstallationResult> UpdateAsync(string? releaseTag = null, CancellationToken cancellationToken = default)
     {
         var executablePath = GetInstalledExecutablePath(context.Environment);
-        return await DownloadAndInstallAsync(executablePath, cancellationToken);
+        return await DownloadAndInstallAsync(executablePath, releaseTag, cancellationToken);
     }
 
     internal static string GetInstalledExecutablePath(HostyEnvironment environment)
@@ -32,12 +32,15 @@ internal sealed class CoreInstallationService(CommandContext context)
 
     private async Task<CoreInstallationResult> DownloadAndInstallAsync(
         string executablePath,
+        string? releaseTag,
         CancellationToken cancellationToken)
     {
         var artifact = ReleaseArtifactNames.GetCoreArtifactName();
-        var releaseArtifacts = new ReleaseArtifactService(context);
+        var releaseArtifacts = new ReleaseArtifactService(context, releaseTag);
 
-        using var httpClient = new HttpClient();
+        // No overall client timeout: the default 100 s would cancel a large streamed Core-binary download
+        // even under ResponseHeadersRead; cancellation comes from the caller's token instead (L-M1).
+        using var httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         var checksums = await releaseArtifacts.DownloadChecksumsAsync(httpClient, cancellationToken);
         var expectedSha256 = ReleaseArtifactService.RequireChecksum(checksums, artifact);
         if (File.Exists(executablePath) &&
