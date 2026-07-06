@@ -17,6 +17,8 @@ export type CoreSetting = {
   value?: string | null;
   secret: boolean;
   required?: boolean;
+  label?: string | null;
+  description?: string | null;
 };
 
 export type CoreEndpoint = {
@@ -366,6 +368,8 @@ export type CoreInstallSetting = {
   defaultValue?: string | null;
   secret: boolean;
   required?: boolean;
+  label?: string | null;
+  description?: string | null;
 };
 
 export type CoreRuntimeProfile = {

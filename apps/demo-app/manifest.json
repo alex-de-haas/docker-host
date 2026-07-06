@@ -141,22 +141,30 @@
     {
       "key": "DEMO_GREETING",
       "type": "string",
-      "default": "Hello from Hosty"
+      "default": "Hello from Hosty",
+      "label": "Greeting",
+      "description": "Message shown on the demo app's home page."
     },
     {
       "key": "DEMO_RELEASE_CHANNEL",
       "type": "string",
-      "default": "local"
+      "default": "local",
+      "label": "Release channel",
+      "description": "Which build channel the demo reports (local, stable, beta)."
     },
     {
       "key": "DEMO_REFRESH_SECONDS",
       "type": "number",
-      "default": "30"
+      "default": "30",
+      "label": "Refresh interval (seconds)",
+      "description": "How often the demo page polls the backend for updates."
     },
     {
       "key": "DEMO_AUTH_PREVIEW",
       "type": "boolean",
-      "default": "true"
+      "default": "true",
+      "label": "Auth preview",
+      "description": "Enable the experimental authentication preview panel."
     }
   ],
   "data": {

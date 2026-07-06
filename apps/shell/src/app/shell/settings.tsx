@@ -1,10 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Globe, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { CoreApp, CoreEndpoint, CoreInstallSetting, CoreSetting } from "./types";
 
@@ -52,23 +55,124 @@ export function PublicOriginInput({ setting, endpoint, value, disabled, onChange
 }
 
 export function SettingInput({ setting, value, disabled, onChange }: { setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {
-  const label = formatSettingLabel(setting.key);
+  const controlId = `setting-${setting.key}`;
+  const label = setting.label?.trim() || formatSettingLabel(setting.key);
+  const description = setting.description?.trim();
   return (
     <div className="space-y-2">
-      <Label htmlFor={`setting-${setting.key}`} className="flex items-center gap-2" title={setting.key}>
-        {label}
+      <div className="flex items-center gap-2">
+        <Label htmlFor={controlId} className="min-w-0 truncate" title={setting.key}>
+          {label}
+        </Label>
         <Badge variant="outline">{setting.secret ? "secret" : setting.type}</Badge>
         {setting.required && <Badge variant="secondary">required</Badge>}
-      </Label>
+        {description && <SettingDescriptionHint description={description} />}
+      </div>
+      <SettingControl controlId={controlId} setting={setting} value={value} disabled={disabled} onChange={onChange} />
+    </div>
+  );
+}
+
+// Info affordance shown next to a setting's label when the manifest provides a description. The text
+// lives in a hover/focus tooltip so the form stays compact regardless of how many settings declare one.
+function SettingDescriptionHint({ description }: { description: string }) {
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label="Setting description"
+            className="text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs text-pretty">{description}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+// Renders the editor matched to the setting's declared type: a toggle for booleans, a numeric field
+// for numbers, an icon-prefixed URL field, a reveal-able password for secrets, and plain text otherwise.
+function SettingControl({ controlId, setting, value, disabled, onChange }: { controlId: string; setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+  const [revealed, setRevealed] = useState(false);
+
+  if (setting.secret) {
+    return (
+      <div className="relative">
+        <Input
+          id={controlId}
+          type={revealed ? "text" : "password"}
+          className="pr-9"
+          value={value}
+          placeholder="Unchanged"
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button
+          type="button"
+          aria-label={revealed ? "Hide value" : "Show value"}
+          className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          disabled={disabled}
+          onClick={() => setRevealed((current) => !current)}
+        >
+          {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
+    );
+  }
+
+  if (setting.type === "boolean") {
+    const checked = value.trim().toLowerCase() === "true";
+    return (
+      <div className="flex items-center gap-2">
+        <Switch id={controlId} checked={checked} disabled={disabled} onCheckedChange={(next) => onChange(next ? "true" : "false")} />
+        <span className="text-sm text-muted-foreground">{checked ? "Enabled" : "Disabled"}</span>
+      </div>
+    );
+  }
+
+  if (setting.type === "number") {
+    return (
       <Input
-        id={`setting-${setting.key}`}
-        type={setting.secret ? "password" : setting.type === "url" ? "url" : "text"}
+        id={controlId}
+        type="number"
+        inputMode="decimal"
         value={value}
-        placeholder={setting.secret ? "Unchanged" : setting.type === "url" ? "https://app.example.com" : undefined}
+        placeholder="0"
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       />
-    </div>
+    );
+  }
+
+  if (setting.type === "url") {
+    return (
+      <div className="relative">
+        <Globe className="pointer-events-none absolute inset-y-0 left-3 my-auto h-4 w-4 text-muted-foreground" />
+        <Input
+          id={controlId}
+          type="url"
+          className="pl-9"
+          value={value}
+          placeholder="https://app.example.com"
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <Input
+      id={controlId}
+      type="text"
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    />
   );
 }
 

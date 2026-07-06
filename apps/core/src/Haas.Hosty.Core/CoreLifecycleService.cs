@@ -125,7 +125,7 @@ internal sealed class CoreLifecycleService(
             RuntimeProfiles: BuildRuntimeProfileSummaries(selection.Manifest),
             Settings: selection.Manifest.Settings
                 .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
-                .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret, setting.Required))
+                .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret, setting.Required, setting.Label, setting.Description))
                 .ToArray());
     }
 
@@ -1400,7 +1400,7 @@ internal sealed class CoreLifecycleService(
             setting =>
             {
                 var current = existing?.Settings.GetValueOrDefault(setting.Key);
-                return new AppSettingValue(setting.Key, setting.Type, current?.Value ?? setting.Default, setting.Secret, setting.Required);
+                return new AppSettingValue(setting.Key, setting.Type, current?.Value ?? setting.Default, setting.Secret, setting.Required, setting.Label, setting.Description);
             },
             StringComparer.Ordinal);
 
@@ -3910,7 +3910,7 @@ internal sealed record AppInstallPlan(
     IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
 
-internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret, bool Required = false);
+internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret, bool Required = false, string? Label = null, string? Description = null);
 
 internal sealed record AppUpdatePlan(
     string AppId,

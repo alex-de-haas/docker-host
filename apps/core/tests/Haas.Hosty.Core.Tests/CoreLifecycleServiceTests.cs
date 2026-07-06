@@ -365,6 +365,32 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateInstallPlanAsync_CarriesSettingLabelAndDescription()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: """
+              "settings": [{
+                "key": "APP_MODE",
+                "type": "string",
+                "label": "Operating mode",
+                "description": "Controls how the app runs."
+              }],
+            """);
+
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+        var install = await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var planSetting = Assert.Single(plan.Settings);
+        Assert.Equal("Operating mode", planSetting.Label);
+        Assert.Equal("Controls how the app runs.", planSetting.Description);
+
+        // Label/Description survive the manifest -> persisted AppSettingValue -> AppSettingSummary chain.
+        var appSetting = Assert.Single(install.App!.Settings, setting => setting.Key == "APP_MODE");
+        Assert.Equal("Operating mode", appSetting.Label);
+        Assert.Equal("Controls how the app runs.", appSetting.Description);
+    }
+
+    [Fact]
     public async Task StartAsync_RefusesWhenRequiredSettingMissing()
     {
         var fixture = await LifecycleFixture.CreateAsync();

@@ -73,7 +73,22 @@ Use explicit `localPort` only when a fixed local port is a real requirement. If 
 
 ## Settings
 
-Manifest settings are app-owned configuration. Each entry supports `key`, `type`, `default`, `secret`, and `required`. Settings marked `required: true` are highlighted in the Shell and surface a configuration warning until the operator provides a value. Do not define settings with the `HOSTY_PUBLIC_ORIGIN_` prefix. That prefix is reserved for Hosty-managed public endpoint origin settings, and Core ignores manifest-provided entries with that prefix so apps cannot pre-seed redirect origins.
+Manifest settings are app-owned configuration. Each entry supports `key`, `type`, `default`, `secret`, `required`, and the optional presentation fields `label` and `description`. Settings marked `required: true` are highlighted in the Shell and surface a configuration warning until the operator provides a value. Do not define settings with the `HOSTY_PUBLIC_ORIGIN_` prefix. That prefix is reserved for Hosty-managed public endpoint origin settings, and Core ignores manifest-provided entries with that prefix so apps cannot pre-seed redirect origins.
+
+`label` and `description` are presentation-only hints for the Shell settings and install-review UI: `label` replaces the raw env-var `key` as the field's friendly name (the `key` stays visible on hover), and `description` renders as help text under it. Both are optional — omit them and the Shell falls back to showing the `key`. Core never validates or acts on either.
+
+```jsonc
+"settings": [
+  {
+    "key": "APP_MODE",
+    "type": "string",           // "string" | "number" | "boolean" | "url"
+    "default": "standard",
+    "required": true,
+    "label": "Operating mode",  // optional: friendly name shown instead of the key
+    "description": "Controls how the app processes incoming requests." // optional: help text
+  }
+]
+```
 
 ## Storage And Backups
 
