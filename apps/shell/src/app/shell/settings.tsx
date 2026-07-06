@@ -98,6 +98,9 @@ function SettingDescriptionHint({ description }: { description: string }) {
 // for numbers, an icon-prefixed URL field, a reveal-able password for secrets, and plain text otherwise.
 function SettingControl({ controlId, setting, value, disabled, onChange }: { controlId: string; setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {
   const [revealed, setRevealed] = useState(false);
+  // The value prop is typed string, but upstream setting values are nullable; coalesce so .trim()
+  // never throws and the Input stays controlled even if a null slips through.
+  const safeValue = value ?? "";
 
   if (setting.secret) {
     return (
@@ -106,7 +109,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
           id={controlId}
           type={revealed ? "text" : "password"}
           className="pr-9"
-          value={value}
+          value={safeValue}
           placeholder="Unchanged"
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
@@ -125,7 +128,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
   }
 
   if (setting.type === "boolean") {
-    const checked = value.trim().toLowerCase() === "true";
+    const checked = safeValue.trim().toLowerCase() === "true";
     return (
       <div className="flex items-center gap-2">
         <Switch id={controlId} checked={checked} disabled={disabled} onCheckedChange={(next) => onChange(next ? "true" : "false")} />
@@ -140,7 +143,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
         id={controlId}
         type="number"
         inputMode="decimal"
-        value={value}
+        value={safeValue}
         placeholder="0"
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
@@ -156,7 +159,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
           id={controlId}
           type="url"
           className="pl-9"
-          value={value}
+          value={safeValue}
           placeholder="https://app.example.com"
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
@@ -169,7 +172,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
     <Input
       id={controlId}
       type="text"
-      value={value}
+      value={safeValue}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
     />
