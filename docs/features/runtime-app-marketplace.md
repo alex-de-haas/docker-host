@@ -9,7 +9,7 @@ already shipped; the catalog storefront now is too — **WS1** (catalogMetadata,
 **WS4** (`hosty catalog` CLI), **WS5** (signing), **WS7** (federation). See "Implementation
 Readiness" for the plan and "Delivery status" for what shipped.
 Created: 2026-06-25
-Updated: 2026-07-05
+Updated: 2026-07-06
 
 ## Motivation
 
@@ -953,7 +953,11 @@ because no catalog delivery path exists for it yet - not because the catalog rej
 **End-to-end verified (2026-07-05):** a Core 0.32.0 configured with
 `HOSTY_CATALOG_SOURCES=https://alex-de-haas.github.io/hosty-catalog/catalog.json` served the
 published catalog and feed through `GET /api/catalog/apps[/{id}]` (list + version resolution).
-Operators on Core ≥ 0.32.0 opt in with `hosty config set HOSTY_CATALOG_SOURCES <url>` + restart.
+Installed CLI launches now include that official catalog source in `launch.env` by default. Operators
+can override it with `hosty config set HOSTY_CATALOG_SOURCES <comma-separated-sources>`, restore it
+with `hosty config reset HOSTY_CATALOG_SOURCES`, or clear it with
+`hosty config set HOSTY_CATALOG_SOURCES=` before restarting Core. A direct Core process still reads the plain
+`HOSTY_CATALOG_SOURCES` environment variable and serves an empty catalog when it is unset.
 
 Critical path: **WS1 -> WS2 -> WS3/WS4**; **WS6** parallels WS2 (WS2 develops against a
 local fixture `catalog.json`); **WS5** attaches once WS6 publishes a signed index; **WS7**
