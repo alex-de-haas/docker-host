@@ -47,7 +47,7 @@ The installed Core executable is not placed on `PATH`. The CLI owns it under:
 
 On Windows the executable names use `.exe`.
 
-`launch.env` also carries the default Core launch settings passed to Core:
+The managed Core launch settings have these defaults:
 
 ```text
 HOSTY_DATA_ROOT=$HOME/.hosty
@@ -62,6 +62,10 @@ HOSTY_COLLECTOR_AUTOSTART=true
 HOSTY_COLLECTOR_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json
 HOSTY_CATALOG_SOURCES=https://alex-de-haas.github.io/hosty-catalog/catalog.json
 ```
+
+`hosty core start` reads these defaults directly when `launch.env` has not been written yet.
+`hosty config list`, `hosty config set`, and `hosty config reset` create or rewrite
+`~/.hosty/config/launch.env` with the managed settings.
 
 `HOSTY_DATA_ROOT` defines the Hosty state root used by Core. `HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
 

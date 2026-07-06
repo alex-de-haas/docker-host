@@ -47,7 +47,7 @@ internal sealed class LaunchSettings
     public string ResolveHostyCatalogSources(HostyEnvironment environment)
         => string.Join(',', HostyCatalogSources
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(source => ResolveCatalogSource(source, environment))
+            .Select(source => ResolveManifestReference(source, environment))
             .Distinct(StringComparer.Ordinal));
 
     // A manifest reference is either an http(s) URL (used verbatim) or a local path (resolved against
@@ -59,15 +59,6 @@ internal sealed class LaunchSettings
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
             ? manifestPath
             : environment.ResolvePath(manifestPath);
-    }
-
-    private static string ResolveCatalogSource(string source, HostyEnvironment environment)
-    {
-        var catalogSource = source.Trim();
-        return Uri.TryCreate(catalogSource, UriKind.Absolute, out var uri) &&
-            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-            ? catalogSource
-            : environment.ResolvePath(catalogSource);
     }
 
     public void Validate(HostyEnvironment environment)
