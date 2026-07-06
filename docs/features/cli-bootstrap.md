@@ -47,7 +47,7 @@ The installed Core executable is not placed on `PATH`. The CLI owns it under:
 
 On Windows the executable names use `.exe`.
 
-`launch.env` also carries the default Shell bootstrap settings passed to Core:
+`launch.env` also carries the default Core launch settings passed to Core:
 
 ```text
 HOSTY_DATA_ROOT=$HOME/.hosty
@@ -57,11 +57,17 @@ HOSTY_CORE_PUBLIC_ORIGIN=
 HOSTY_SHELL_PUBLIC_ORIGIN=
 HOSTY_SHELL_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json
 HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
+HOSTY_OBSERVABILITY_ENABLED=false
+HOSTY_COLLECTOR_AUTOSTART=true
+HOSTY_COLLECTOR_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json
+HOSTY_CATALOG_SOURCES=https://alex-de-haas.github.io/hosty-catalog/catalog.json
 ```
 
 `HOSTY_DATA_ROOT` defines the Hosty state root used by Core. `HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
 
 `HOSTY_SHELL_MANIFEST_PATH` can be a local manifest file path, local app directory, or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
+
+`HOSTY_CATALOG_SOURCES` is a comma-separated list of marketplace catalog `http(s)` URLs or local paths, highest priority first. It defaults to the public Hosty catalog. Use `hosty config set HOSTY_CATALOG_SOURCES <sources>` to point at another catalog, `hosty config reset HOSTY_CATALOG_SOURCES` to restore the default, or `hosty config set HOSTY_CATALOG_SOURCES=` to run with no catalog sources after restarting Core.
 
 `HOSTY_RUNTIME_PUBLIC_HOST` (optional, default `127.0.0.1`) is the host Core advertises and dials for a runtime app's published loopback port. It defaults to the IPv4 loopback literal on purpose: docker publishes these ports on `127.0.0.1` only, and on hosts where `localhost` resolves to `::1` first (Windows, dual-stack Linux) .NET's `HttpClient` stalls on the unbound `::1` until the request times out, so telemetry and health reads silently return empty. Override it only for a deployment that publishes runtime-app ports on a different address.
 

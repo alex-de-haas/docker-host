@@ -108,8 +108,14 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
             // Canonicalize boolean settings so the persisted launch.env always reads true/false.
             LaunchSettingDefinitions.HostyObservabilityEnabled or LaunchSettingDefinitions.HostyCollectorAutostart =>
                 LaunchSettingDefinitions.IsTruthy(value) ? "true" : "false",
+            LaunchSettingDefinitions.HostyCatalogSources => NormalizeList(value),
             _ => value,
         };
+
+    private static string NormalizeList(string value)
+        => string.Join(',', value
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.Ordinal));
 
     private static IEnumerable<(string Key, string Value)> Parse(IEnumerable<string> lines)
     {

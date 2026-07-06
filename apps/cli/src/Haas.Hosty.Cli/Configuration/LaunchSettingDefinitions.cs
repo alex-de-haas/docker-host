@@ -4,6 +4,7 @@ internal static class LaunchSettingDefinitions
 {
     private const string DefaultShellManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
     private const string DefaultCollectorManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json";
+    public const string DefaultCatalogSources = "https://alex-de-haas.github.io/hosty-catalog/catalog.json";
     public const string HostyDataRoot = "HOSTY_DATA_ROOT";
     public const string HostyCorePort = "HOSTY_CORE_PORT";
     public const string HostyShellPort = "HOSTY_SHELL_PORT";
@@ -14,6 +15,7 @@ internal static class LaunchSettingDefinitions
     public const string HostyObservabilityEnabled = "HOSTY_OBSERVABILITY_ENABLED";
     public const string HostyCollectorAutostart = "HOSTY_COLLECTOR_AUTOSTART";
     public const string HostyCollectorManifestPath = "HOSTY_COLLECTOR_MANIFEST_PATH";
+    public const string HostyCatalogSources = "HOSTY_CATALOG_SOURCES";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
@@ -32,6 +34,7 @@ internal static class LaunchSettingDefinitions
         new(HostyObservabilityEnabled, _ => "false", true, ValidateBoolean),
         new(HostyCollectorAutostart, _ => "true", true, ValidateBoolean),
         new(HostyCollectorManifestPath, _ => DefaultCollectorManifestPath, true, ValidateManifestReference),
+        new(HostyCatalogSources, _ => DefaultCatalogSources, true, ValidateCatalogSources),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);
@@ -152,5 +155,42 @@ internal static class LaunchSettingDefinitions
         return trimmed.Length <= 63 && trimmed.All(character => char.IsAsciiLetterLower(character) || char.IsAsciiDigit(character) || character == '-')
             ? null
             : "Shell bootstrap runtime must match ^[a-z][a-z0-9-]{0,62}$.";
+    }
+
+    private static string? ValidateCatalogSources(string value, HostyEnvironment environment)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var sources = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var source in sources)
+        {
+            var error = ValidateCatalogSource(source, environment);
+            if (error is not null)
+            {
+                return error;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ValidateCatalogSource(string source, HostyEnvironment environment)
+    {
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            return string.IsNullOrWhiteSpace(uri.UserInfo) ? null : "Catalog source URL must not include credentials.";
+        }
+
+        if (source.Contains("://", StringComparison.Ordinal))
+        {
+            return "Catalog source URL must use http or https.";
+        }
+
+        var resolved = environment.ResolvePath(source);
+        return Path.IsPathFullyQualified(resolved) ? null : "Catalog source path must resolve to an absolute path or be an http(s) URL.";
     }
 }

@@ -239,6 +239,9 @@ internal sealed partial class CoreCommand(CommandContext context)
         // no repo layout to discover apps/telemetry/manifest.json on disk, so without this the collector
         // bootstrap is skipped. Injected unconditionally; Core only consults it when observability is on.
         AddOptional(environment, LaunchSettingDefinitions.HostyCollectorManifestPath, settings.ResolveHostyCollectorManifestPath(context.Environment));
+        // Catalog sources are a managed setting with an empty value meaning "disable all sources", so
+        // inject even an empty string to avoid inheriting an ambient HOSTY_CATALOG_SOURCES export.
+        environment[LaunchSettingDefinitions.HostyCatalogSources] = settings.ResolveHostyCatalogSources(context.Environment);
         return environment;
     }
 
