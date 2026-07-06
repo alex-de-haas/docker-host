@@ -94,6 +94,15 @@ function SettingDescriptionHint({ description }: { description: string }) {
   );
 }
 
+// Values that read as "on" for a boolean setting. The switch writes the canonical "true"/"false", but a
+// setting edited before typed controls existed (or by an app using looser parsing) may hold any of these,
+// so we recognise the common truthy spellings when deciding the toggle's displayed state.
+const truthyBooleanSettingValues = new Set(["true", "1", "yes", "on", "enabled"]);
+
+function isBooleanSettingChecked(value: string) {
+  return truthyBooleanSettingValues.has(value.trim().toLowerCase());
+}
+
 // Renders the editor matched to the setting's declared type: a toggle for booleans, a numeric field
 // for numbers, an icon-prefixed URL field, a reveal-able password for secrets, and plain text otherwise.
 function SettingControl({ controlId, setting, value, disabled, onChange }: { controlId: string; setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {
@@ -117,6 +126,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
         <button
           type="button"
           aria-label={revealed ? "Hide value" : "Show value"}
+          aria-pressed={revealed}
           className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
           disabled={disabled}
           onClick={() => setRevealed((current) => !current)}
@@ -128,7 +138,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
   }
 
   if (setting.type === "boolean") {
-    const checked = safeValue.trim().toLowerCase() === "true";
+    const checked = isBooleanSettingChecked(safeValue);
     return (
       <div className="flex items-center gap-2">
         <Switch id={controlId} checked={checked} disabled={disabled} onCheckedChange={(next) => onChange(next ? "true" : "false")} />
