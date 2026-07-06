@@ -59,16 +59,17 @@ export function SettingInput({ setting, value, disabled, onChange }: { setting: 
   const label = setting.label?.trim() || formatSettingLabel(setting.key);
   const description = setting.description?.trim();
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
+    <div className="grid gap-2 sm:grid-cols-[1fr_2fr] sm:items-center sm:gap-4">
+      <div className="flex min-w-0 items-center gap-2">
         <Label htmlFor={controlId} className="min-w-0 truncate" title={setting.key}>
           {label}
         </Label>
-        <Badge variant="outline">{setting.secret ? "secret" : setting.type}</Badge>
         {setting.required && <Badge variant="secondary">required</Badge>}
         {description && <SettingDescriptionHint description={description} />}
       </div>
-      <SettingControl controlId={controlId} setting={setting} value={value} disabled={disabled} onChange={onChange} />
+      <div className="min-w-0">
+        <SettingControl controlId={controlId} setting={setting} value={value} disabled={disabled} onChange={onChange} />
+      </div>
     </div>
   );
 }
