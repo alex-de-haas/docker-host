@@ -10,6 +10,14 @@ namespace Haas.Hosty.TelemetryBackend;
 // ingest loop owns one instance. See docs/features/observability-phase-2-backend.md (T-H2).
 internal sealed class MetricDeduplicator
 {
+    // Upper bound on tracked series. Distinct series is normally in the hundreds, but app reinstalls
+    // with new label sets grow the map over a long-running process, so it is capped to prevent unbounded
+    // memory growth. When exceeded, the least-recently-recorded entries are evicted — those are stale or
+    // gone series, since any active one (even a flat one) refreshes its RecordedMs at least every
+    // heartbeat. RecordedMs is stamped from the host-authoritative scrape clock, so this eviction is not
+    // fooled by exporter/client clock skew.
+    private const int MaxTrackedSeries = 20_000;
+
     private readonly Dictionary<string, (double Value, long RecordedMs)> lastBySeries = new(StringComparer.Ordinal);
 
     public List<MetricSample> Filter(IReadOnlyList<MetricSample> samples, long nowMs, long heartbeatMs)
@@ -30,7 +38,26 @@ internal sealed class MetricDeduplicator
             recorded.Add(sample);
         }
 
+        if (lastBySeries.Count > MaxTrackedSeries)
+        {
+            EvictStaleSeries();
+        }
+
         return recorded;
+    }
+
+    // Keeps the most-recently-recorded MaxTrackedSeries and drops the rest. Runs only when the cap is
+    // exceeded (rare), so the O(n log n) ordering cost is not paid on the normal path.
+    private void EvictStaleSeries()
+    {
+        foreach (var key in lastBySeries
+            .OrderByDescending(entry => entry.Value.RecordedMs)
+            .Skip(MaxTrackedSeries)
+            .Select(entry => entry.Key)
+            .ToArray())
+        {
+            lastBySeries.Remove(key);
+        }
     }
 
     // Stable identity for a metric series: a unit-separator between every field, labels ordered, so two

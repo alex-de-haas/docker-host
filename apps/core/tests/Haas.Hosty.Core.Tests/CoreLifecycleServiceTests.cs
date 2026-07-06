@@ -458,6 +458,36 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ObserveRuntimeHealth_SkipsReconcileWhileAppVerbHoldsLock()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        fixture.Adapter.RunningAppIds.Add("com.example.notes");
+
+        using var startEntered = new ManualResetEventSlim(false);
+        using var releaseStart = new ManualResetEventSlim(false);
+        fixture.Adapter.OnStarted = () =>
+        {
+            startEntered.Set();
+            releaseStart.Wait(TimeSpan.FromSeconds(5));
+        };
+
+        // Hold the per-app operation lock via an in-flight StartAsync.
+        var startTask = fixture.Service.StartAsync("com.example.notes");
+        Assert.True(startEntered.Wait(TimeSpan.FromSeconds(5)), "start never reached the adapter");
+
+        // The sweep must NOT flip the record while a lifecycle verb owns the lock — otherwise it could
+        // race a concurrent Stop and overwrite its "stopped" back to "running".
+        await fixture.Service.ObserveRuntimeHealthAsync(new HashSet<string>(StringComparer.Ordinal));
+        var duringHold = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("stopped", duringHold!.RuntimeState);
+
+        releaseStart.Set();
+        await startTask;
+    }
+
+    [Fact]
     public async Task RemoveAsync_RetainsConfigWhenDataKept_RestoredOnReinstall()
     {
         var fixture = await LifecycleFixture.CreateAsync();

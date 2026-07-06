@@ -109,8 +109,10 @@ internal sealed record TelemetryBackendOptions
     private static TimeSpan ParseSeconds(string name, double fallbackSeconds, double minimumSeconds)
     {
         var raw = Environment.GetEnvironmentVariable(name);
-        var seconds = double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value >= minimumSeconds
-            ? value
+        // A parsed value is floored at minimumSeconds (a too-small override is clamped, not silently
+        // swapped for the default); only a missing/unparseable value falls back to fallbackSeconds.
+        var seconds = double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? Math.Max(value, minimumSeconds)
             : fallbackSeconds;
         return TimeSpan.FromSeconds(seconds);
     }

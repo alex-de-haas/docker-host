@@ -13,10 +13,17 @@ const read = (relative) => readFileSync(join(repoRoot, relative), "utf8");
 const json = (relative) => JSON.parse(read(relative));
 
 const problems = [];
-// Records a check: `label` names the invariant, `values` maps each source → its version string. A check
-// passes when every non-null value is identical.
+// Records a check: `label` names the invariant, `values` maps each source → its version string. Every
+// source is expected to resolve; a null (a regex/format change that failed to capture) is reported
+// loudly rather than silently skipped, so parsing failures can't let the check pass without verifying.
 function expectEqual(label, values) {
-  const present = Object.entries(values).filter(([, value]) => value != null);
+  const entries = Object.entries(values);
+  const missing = entries.filter(([, value]) => value == null);
+  if (missing.length > 0) {
+    problems.push(`${label} missing sources: ${missing.map(([source]) => source).join(", ")}`);
+  }
+
+  const present = entries.filter(([, value]) => value != null);
   const distinct = new Set(present.map(([, value]) => value));
   if (distinct.size > 1) {
     problems.push(

@@ -3673,11 +3673,31 @@ internal sealed class CoreLifecycleService(
 
         foreach (var app in records)
         {
-            if (string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
-                !string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) &&
-                runningAppIds.Contains(app.Id))
+            if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
+                string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) ||
+                !runningAppIds.Contains(app.Id))
+            {
+                continue;
+            }
+
+            // Take the per-app operation lock non-blockingly: if a lifecycle verb is mid-flight (e.g.
+            // StopAsync tearing the container down), skip this app and let a later tick reconcile it —
+            // otherwise the sweep could overwrite that verb's "stopped" back to "running" (the very drift
+            // this sweep exists to remove). A record that is still genuinely stopped-but-running is caught
+            // next tick; a wrongly-set "running" self-heals via ObserveRuntimeHealthForAppAsync.
+            var mutex = operationLocks.GetOrAdd(app.Id, _ => new SemaphoreSlim(1, 1));
+            if (!await mutex.WaitAsync(0, cancellationToken))
+            {
+                continue;
+            }
+
+            try
             {
                 _ = await apps.UpdateAppAsync(app.Id, current => current with { RuntimeState = "running" }, cancellationToken);
+            }
+            finally
+            {
+                mutex.Release();
             }
         }
     }
