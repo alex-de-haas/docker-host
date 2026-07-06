@@ -39,7 +39,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json", settings.HostyShellManifestPath);
         Assert.Equal("docker", settings.HostyShellBootstrapRuntime);
         // A launch.env that predates the collector-manifest setting still resolves its default, so an
-        // existing install self-heals (Core gets the collector manifest URL → bootstrap proceeds).
+        // existing install self-heals (Core gets the collector manifest URL; bootstrap proceeds).
         Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json", settings.HostyCollectorManifestPath);
         // Existing installs also self-heal with the default public catalog source, so Marketplace is
         // populated after the next Core restart without hand-editing launch.env.
