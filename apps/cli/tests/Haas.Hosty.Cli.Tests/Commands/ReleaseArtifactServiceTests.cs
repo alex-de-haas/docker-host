@@ -4,6 +4,24 @@ namespace Haas.Hosty.Cli.Tests.Commands;
 
 public sealed class ReleaseArtifactServiceTests
 {
+    [Theory]
+    [InlineData("stable", "stable")]
+    [InlineData("v0.32.0", "v0.32.0")]
+    [InlineData("cli-dev", "cli-dev")]
+    public void ResolveTag_ValidTag_IsUsed(string tag, string expected)
+        => Assert.Equal(expected, ReleaseArtifactService.ResolveTag(tag));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("bad tag with spaces")]
+    [InlineData("../../etc/passwd")]
+    [InlineData("release/0.32")]
+    [InlineData("tag?query=1")]
+    public void ResolveTag_MissingOrUnsafe_FallsBackToDefault(string? tag)
+        => Assert.Equal(ReleaseArtifactService.DefaultReleaseTag, ReleaseArtifactService.ResolveTag(tag));
+
     [Fact]
     public void RequireChecksum_ArtifactEntryExists_ReturnsChecksum()
     {

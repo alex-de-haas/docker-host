@@ -11,6 +11,9 @@ if (port) {
 
 const child = spawn(nextBin, args, {
   stdio: "inherit",
+  // Node's CVE-2024-27980 hardening refuses to spawn a `.cmd`/`.bat` (next.cmd) without a shell,
+  // throwing EINVAL. Run through the shell on Windows; POSIX spawns the `next` binary directly (D-M1).
+  shell: process.platform === "win32",
 });
 
 child.on("exit", (code, signal) => {

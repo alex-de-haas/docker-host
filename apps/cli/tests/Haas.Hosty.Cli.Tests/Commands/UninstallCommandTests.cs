@@ -19,15 +19,23 @@ public sealed class UninstallCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_UninstallWithArguments_ReturnsUsageError()
+    public async Task RunAsync_WithoutConfirmation_ReturnsUsageError()
     {
-        var exitCode = await CommandLine.RunAsync(["uninstall", "--delete-data"]);
+        // Data destruction must be explicit: no --yes means a usage error, not a silent wipe.
+        Assert.Equal(2, await CommandLine.RunAsync(["uninstall"]));
+        Assert.Equal(2, await CommandLine.RunAsync(["uninstall", "--delete-data"]));
+    }
+
+    [Fact]
+    public async Task RunAsync_UnknownArgument_ReturnsUsageError()
+    {
+        var exitCode = await CommandLine.RunAsync(["uninstall", "--yes", "--bogus"]);
 
         Assert.Equal(2, exitCode);
     }
 
     [Fact]
-    public void Delete_DefaultRoot_RemovesHostyFilesAndPreservesCliBin()
+    public void Delete_DefaultRootWithDeleteData_RemovesHostyFilesAndPreservesCliBin()
     {
         var environment = HostyEnvironment.Current();
         Directory.CreateDirectory(environment.BinDirectory);
@@ -40,7 +48,7 @@ public sealed class UninstallCommandTests : IDisposable
         File.WriteAllText(Path.Combine(environment.RootDirectory, "apps.json"), "{}");
         File.WriteAllText(Path.Combine(environment.RootDirectory, "host-cache.txt"), "cache");
 
-        var result = HostUninstallFileCleanup.Delete(environment, environment.RootDirectory);
+        var result = HostUninstallFileCleanup.Delete(environment, environment.RootDirectory, deleteData: true);
 
         Assert.Contains(Path.Combine(environment.RootDirectory, "apps.json"), result.DeletedPaths);
         Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "hosty")));
@@ -53,7 +61,28 @@ public sealed class UninstallCommandTests : IDisposable
     }
 
     [Fact]
-    public void Delete_ExternalDataRoot_RemovesKnownHostyStateOnly()
+    public void Delete_DefaultRootWithoutDeleteData_PreservesAppData()
+    {
+        var environment = HostyEnvironment.Current();
+        Directory.CreateDirectory(environment.BinDirectory);
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "core"));
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "apps"));
+        Directory.CreateDirectory(Path.Combine(environment.RootDirectory, "backups"));
+        File.WriteAllText(Path.Combine(environment.RootDirectory, "apps.json"), "{}");
+
+        HostUninstallFileCleanup.Delete(environment, environment.RootDirectory, deleteData: false);
+
+        // Install state (config + Core runtime dir) is removed; user data survives.
+        Assert.False(Directory.Exists(environment.ConfigDirectory));
+        Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "core")));
+        Assert.True(File.Exists(Path.Combine(environment.RootDirectory, "apps.json")));
+        Assert.True(Directory.Exists(Path.Combine(environment.RootDirectory, "apps")));
+        Assert.True(Directory.Exists(Path.Combine(environment.RootDirectory, "backups")));
+    }
+
+    [Fact]
+    public void Delete_ExternalDataRootWithDeleteData_RemovesKnownHostyStateOnly()
     {
         var environment = HostyEnvironment.Current();
         var externalDataRoot = Path.Combine(Path.GetTempPath(), $"hosty-data-{Guid.NewGuid():N}");
@@ -69,7 +98,7 @@ public sealed class UninstallCommandTests : IDisposable
 
         try
         {
-            HostUninstallFileCleanup.Delete(environment, externalDataRoot);
+            HostUninstallFileCleanup.Delete(environment, externalDataRoot, deleteData: true);
 
             Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "hosty")));
             Assert.False(Directory.Exists(environment.ConfigDirectory));
@@ -98,11 +127,41 @@ public sealed class UninstallCommandTests : IDisposable
         File.WriteAllText(Path.Combine(environment.BinDirectory, "hosty"), "binary");
         var context = CreateContext(environment);
 
-        var exitCode = await new UninstallCommand(context).ExecuteAsync([]);
+        var exitCode = await new UninstallCommand(context).ExecuteAsync(["--yes"]);
 
         Assert.Equal(0, exitCode);
         Assert.True(File.Exists(Path.Combine(environment.BinDirectory, "hosty")));
         Assert.False(Directory.Exists(Path.Combine(environment.RootDirectory, "core")));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithConfiguredExternalDataRoot_DeletesResolvedDataRoot()
+    {
+        var environment = HostyEnvironment.Current();
+        var externalDataRoot = Path.Combine(Path.GetTempPath(), $"hosty-data-exec-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(environment.BinDirectory);
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        Directory.CreateDirectory(Path.Combine(externalDataRoot, "apps"));
+        File.WriteAllText(Path.Combine(externalDataRoot, "apps.json"), "{}");
+        // The data root lives in launch.env, not in RootDirectory — the command must resolve it.
+        File.WriteAllText(environment.LaunchConfigPath, $"{LaunchSettingDefinitions.HostyDataRoot}={externalDataRoot}\n");
+        var context = CreateContext(environment);
+
+        try
+        {
+            var exitCode = await new UninstallCommand(context).ExecuteAsync(["--yes", "--delete-data"]);
+
+            Assert.Equal(0, exitCode);
+            Assert.False(File.Exists(Path.Combine(externalDataRoot, "apps.json")));
+            Assert.False(Directory.Exists(Path.Combine(externalDataRoot, "apps")));
+        }
+        finally
+        {
+            if (Directory.Exists(externalDataRoot))
+            {
+                Directory.Delete(externalDataRoot, recursive: true);
+            }
+        }
     }
 
     public void Dispose()

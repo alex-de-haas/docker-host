@@ -18,8 +18,36 @@ permissions:
   contents: read
 
 jobs:
+  # Gate publishing on the tests for exactly what this workflow ships (Core + CLI). Without it a commit
+  # whose tests fail still force-retags `cli-dev` — the default install/update target — and re-uploads
+  # binaries, since publishing ran in parallel with (not gated on) CI. Every publish job needs this.
+  test:
+    name: Gate on tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build Core
+        run: npm run core:build
+
+      - name: Test Core
+        run: npm run core:test
+
+      - name: Build CLI
+        run: npm run cli:build
+
+      - name: Test CLI
+        run: npm run cli:test
+
   publish-artifacts:
     name: Build ${{ matrix.rid }}
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -137,6 +165,11 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
+      # Provenance attestation (I-M2): SHA256SUMS is same-origin with the binaries (integrity, not
+      # authenticity). A signed build-provenance attestation lets consumers verify the binaries were
+      # produced by this repo's workflow. Needs an OIDC token + attestations write.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out repository
@@ -182,6 +215,11 @@ jobs:
             sha256sum "${expected[@]}" > SHA256SUMS
             ls -la
           )
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/hosty-*"
 
       - name: Publish rolling prerelease
         shell: bash

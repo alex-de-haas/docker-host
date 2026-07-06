@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
@@ -7,11 +8,17 @@ namespace Haas.Hosty.Core;
 // display name (from Core's registry — telemetry identity/display is Core's domain, not the backend's).
 // Metrics and per-app OTLP logs come back in Core's own shapes (AppMetricsResponse / AppOtlpLogsResponse)
 // and pass straight through; only the fleet reads need enrichment. Best-effort: any transport failure
-// yields null so an unreachable backend degrades to "no data", never an error. See
-// docs/features/observability-phase-2-backend.md.
-internal sealed class TelemetryBackendClient : IDisposable
+// yields null so an unreachable backend degrades to "no data", never an error — but the failure is logged
+// (on reachability transitions, not per-request) so a misconfigured backend is distinguishable from
+// genuinely-absent data. See docs/features/observability-phase-2-backend.md.
+internal sealed class TelemetryBackendClient(ILogger<TelemetryBackendClient>? logger = null) : IDisposable
 {
     private readonly HttpClient client = new() { Timeout = TimeSpan.FromSeconds(10) };
+    private readonly ILogger<TelemetryBackendClient>? logger = logger;
+
+    // Reachability is logged only on transitions so a persistently-down backend doesn't flood the log.
+    // 1 = last call succeeded, 0 = last call failed; starts "reachable" so the first failure is reported.
+    private int lastReachable = 1;
 
     public Task<AppMetricsResponse?> GetMetricsAsync(string baseUrl, string appId, int? range, CancellationToken cancellationToken)
         => GetAsync($"{baseUrl}/api/apps/{Uri.EscapeDataString(appId)}/metrics{Query(("range", range?.ToString()))}",
@@ -41,17 +48,37 @@ internal sealed class TelemetryBackendClient : IDisposable
             using var response = await client.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                MarkFailure(url, $"HTTP {(int)response.StatusCode}", exception: null);
                 return null;
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            return await JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken);
+            var result = await JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken);
+            MarkSuccess();
+            return result;
         }
         catch (Exception ex) when (
             ex is HttpRequestException or IOException or UriFormatException or InvalidOperationException or JsonException ||
             (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
+            MarkFailure(url, ex.Message, ex);
             return null;
+        }
+    }
+
+    private void MarkSuccess()
+    {
+        if (Interlocked.Exchange(ref lastReachable, 1) == 0)
+        {
+            logger?.LogInformation("Telemetry backend is reachable again.");
+        }
+    }
+
+    private void MarkFailure(string url, string reason, Exception? exception)
+    {
+        if (Interlocked.Exchange(ref lastReachable, 0) == 1)
+        {
+            logger?.LogWarning(exception, "Telemetry backend query failed ({Reason}); observability data will read as empty until it recovers. URL: {Url}", reason, url);
         }
     }
 

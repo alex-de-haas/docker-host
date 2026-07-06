@@ -33,6 +33,8 @@ internal sealed class LaunchSettings
 
     public string HostyCollectorManifestPath => this[LaunchSettingDefinitions.HostyCollectorManifestPath];
 
+    public string HostyCatalogSources => this[LaunchSettingDefinitions.HostyCatalogSources];
+
     public string ResolveHostDataRoot(HostyEnvironment environment)
         => environment.ResolvePath(HostyDataRootRaw);
 
@@ -41,6 +43,12 @@ internal sealed class LaunchSettings
 
     public string ResolveHostyCollectorManifestPath(HostyEnvironment environment)
         => ResolveManifestReference(HostyCollectorManifestPath, environment);
+
+    public string ResolveHostyCatalogSources(HostyEnvironment environment)
+        => string.Join(',', HostyCatalogSources
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(source => ResolveCatalogSource(source, environment))
+            .Distinct(StringComparer.Ordinal));
 
     // A manifest reference is either an http(s) URL (used verbatim) or a local path (resolved against
     // the host environment). Shared by the Shell and the telemetry collector bootstrap references.
@@ -51,6 +59,15 @@ internal sealed class LaunchSettings
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
             ? manifestPath
             : environment.ResolvePath(manifestPath);
+    }
+
+    private static string ResolveCatalogSource(string source, HostyEnvironment environment)
+    {
+        var catalogSource = source.Trim();
+        return Uri.TryCreate(catalogSource, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? catalogSource
+            : environment.ResolvePath(catalogSource);
     }
 
     public void Validate(HostyEnvironment environment)

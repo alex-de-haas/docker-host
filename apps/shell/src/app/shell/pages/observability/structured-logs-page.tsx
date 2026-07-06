@@ -94,11 +94,12 @@ export function ObservabilityStructuredLogsPage({
         if (isAuthRequiredRedirectError(error) || token !== requestRef.current) {
           return;
         }
-        setState({
+        // Keep the previously loaded logs on a transient failure rather than blanking the table (S-M2).
+        setState((current) => ({
           loading: false,
           error: error instanceof Error ? error.message : "Structured logs are unavailable.",
-          response: null,
-        });
+          response: current.response,
+        }));
       }
     },
     [coreOrigin],

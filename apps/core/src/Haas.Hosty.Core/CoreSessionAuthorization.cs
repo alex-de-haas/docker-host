@@ -63,6 +63,18 @@ internal static class CoreSessionAuthorization
         return await action(authorization.User!);
     }
 
+    // Non-throwing session probe for endpoints that stay public but reveal more to a signed-in caller
+    // (e.g. /api/core/status). Returns the user on a valid session, null otherwise — never an error result.
+    public static async Task<HostUserRecord?> TryResolveSessionAsync(
+        HttpRequest request,
+        UserDirectoryStore users,
+        IClock clock,
+        CancellationToken cancellationToken = default)
+    {
+        var authorization = await ResolveSessionAsync(request, users, clock, cancellationToken);
+        return authorization.User;
+    }
+
     public static string? ReadBearerToken(HttpRequest request)
     {
         if (!request.Headers.TryGetValue("Authorization", out var header))

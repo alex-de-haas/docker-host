@@ -4,10 +4,20 @@ using System.Net;
 using System.Text;
 using Spectre.Console;
 
-internal sealed class ReleaseArtifactService(CommandContext context)
+internal sealed class ReleaseArtifactService(CommandContext context, string? releaseTag = null)
 {
-    internal const string ReleaseBaseUrl = "https://github.com/alex-de-haas/docker-host/releases/download/cli-dev";
+    // Rolling development tag every main build force-pushes; the default when no channel selects another.
+    internal const string DefaultReleaseTag = "cli-dev";
+    private const string ReleaseBaseUrlFormat = "https://github.com/alex-de-haas/docker-host/releases/download/{0}";
     private const int DownloadBufferSize = 81920;
+
+    // The channel's release tag actually drives which GitHub release the CLI/Core binaries are pulled
+    // from — previously this was hard-pinned to cli-dev, so `--channel <x>` silently installed cli-dev
+    // regardless (L-H3). An empty/whitespace tag falls back to the rolling default.
+    private readonly string releaseBaseUrl = string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        ReleaseBaseUrlFormat,
+        ResolveTag(releaseTag));
 
     internal async Task<string?> DownloadChecksumsAsync(
         HttpClient httpClient,
@@ -15,7 +25,7 @@ internal sealed class ReleaseArtifactService(CommandContext context)
     {
         var checksumsBytes = await TryDownloadBytesAsync(
             httpClient,
-            $"{ReleaseBaseUrl}/SHA256SUMS",
+            $"{releaseBaseUrl}/SHA256SUMS",
             "SHA256SUMS",
             cancellationToken);
 
@@ -28,9 +38,25 @@ internal sealed class ReleaseArtifactService(CommandContext context)
         CancellationToken cancellationToken)
         => await DownloadBytesAsync(
             httpClient,
-            $"{ReleaseBaseUrl}/{artifact}",
+            $"{releaseBaseUrl}/{artifact}",
             artifact,
             cancellationToken);
+
+    // A release tag becomes a URL path segment, so constrain it to safe git-tag characters (no '/' and no
+    // ".." so it can't traverse the releases path); anything else (or empty) falls back to the rolling
+    // default rather than building a malformed/hostile URL.
+    internal static string ResolveTag(string? releaseTag)
+    {
+        var tag = releaseTag?.Trim();
+        if (string.IsNullOrEmpty(tag) ||
+            tag.Contains("..", StringComparison.Ordinal) ||
+            !tag.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'))
+        {
+            return DefaultReleaseTag;
+        }
+
+        return tag;
+    }
 
     private async Task<byte[]?> TryDownloadBytesAsync(
         HttpClient httpClient,

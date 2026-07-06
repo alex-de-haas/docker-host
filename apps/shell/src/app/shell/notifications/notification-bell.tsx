@@ -9,7 +9,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { isAuthRequiredRedirectError } from "../core-api";
 import { useShellActions } from "../shell-context";
 import type {
   NotificationMarkReadResponse,
@@ -115,8 +117,14 @@ export function NotificationBell({ compact }: { compact: boolean }) {
 
       setUnread(data.unreadCount);
       setItems((current) => current.map((n) => (n.read ? n : { ...n, read: true })));
-    } catch {
-      // sendCsrfJson surfaces auth/Core errors; leave state to the next load.
+    } catch (error) {
+      // sendCsrfJson throws on failure (auth-required triggers a login redirect, so stay silent there);
+      // any other failure is surfaced so "mark all read" doesn't silently no-op (S-M1).
+      if (!isAuthRequiredRedirectError(error)) {
+        toast.error("Could not mark notifications as read", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     } finally {
       if (mounted.current) {
         setBusy(false);

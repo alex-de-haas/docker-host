@@ -43,6 +43,7 @@ const RANGES: { label: string; seconds: number }[] = [
 const TRACE_ROW_PADDING_X_PX = 12;
 const TRACE_DEPTH_GUIDE_STEP_PX = 18;
 const TRACE_TOGGLE_ICON_CENTER_PX = 7;
+const TRACE_DETAIL_ROOT_ICON_OFFSET_PX = 5;
 const TRACE_DETAIL_GUIDE_CONTENT_GAP_PX = 16;
 
 type ListState = { loading: boolean; error: string | null; response: FleetTracesResponse | null };
@@ -108,11 +109,13 @@ export function ObservabilityTracesPage({
         if (isAuthRequiredRedirectError(error) || token !== listRequestRef.current) {
           return;
         }
-        setList({
+        // Keep the previously loaded traces on a transient failure (e.g. a 502 mid-typing on the
+        // debounced search) rather than blanking the table — show the error alongside stale data (S-M2).
+        setList((current) => ({
           loading: false,
           error: error instanceof Error ? error.message : "Traces are unavailable.",
-          response: null,
-        });
+          response: current.response,
+        }));
       }
     },
     [coreOrigin],
@@ -622,7 +625,10 @@ function SpanDetails({
     (_, level) => TRACE_ROW_PADDING_X_PX + TRACE_TOGGLE_ICON_CENTER_PX + level * TRACE_DEPTH_GUIDE_STEP_PX,
   );
   const lastGuideLeftPx = guideLeftsPx.length > 0 ? guideLeftsPx[guideLeftsPx.length - 1] : null;
-  const contentPaddingLeftPx = lastGuideLeftPx === null ? 0 : lastGuideLeftPx + TRACE_DETAIL_GUIDE_CONTENT_GAP_PX;
+  const contentPaddingLeftPx =
+    lastGuideLeftPx === null
+      ? TRACE_ROW_PADDING_X_PX + TRACE_DETAIL_ROOT_ICON_OFFSET_PX
+      : lastGuideLeftPx + TRACE_DETAIL_GUIDE_CONTENT_GAP_PX;
   return (
     <div className="relative py-1.5" style={contentPaddingLeftPx ? { paddingLeft: `${contentPaddingLeftPx}px` } : undefined}>
       {guideLeftsPx.map((guideLeftPx) => (

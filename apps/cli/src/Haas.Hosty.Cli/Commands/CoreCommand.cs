@@ -13,12 +13,14 @@ internal sealed partial class CoreCommand(CommandContext context)
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
-    [JsonSerializable(typeof(ControlDiscoveryDocument))]
     [JsonSerializable(typeof(CoreStatusDocument))]
     internal partial class CoreJsonContext : JsonSerializerContext;
 
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan HealthProbeTimeout = TimeSpan.FromSeconds(2);
+    // Short deadline for control-plane probes (status/stop) so an unresponsive Core fails fast instead
+    // of hanging the CLI. Shared with the one CoreControlClient stack — no second discovery/client copy.
+    private static readonly TimeSpan ControlProbeTimeout = TimeSpan.FromSeconds(3);
     // Upper bound on waiting for a stopped Core to fully exit. Core's own shutdown stops runtime apps
     // under a 15s bound plus listener drain, so 30s leaves margin before we report a stuck process.
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(30);
@@ -84,8 +86,8 @@ internal sealed partial class CoreCommand(CommandContext context)
         var status = await WaitForStatusAsync();
         if (status is null)
         {
-            context.Console.MarkupLine("[yellow]Hosty Core process started, but local control discovery was not ready before the timeout.[/]");
-            context.Console.MarkupLine($"[grey]Check status with [white]hosty core status[/].[/]");
+            context.Error.MarkupLine("[yellow]Hosty Core process started, but local control discovery was not ready before the timeout.[/]");
+            context.Error.MarkupLine($"[grey]Check status with [white]hosty core status[/].[/]");
             return 1;
         }
 
@@ -239,6 +241,9 @@ internal sealed partial class CoreCommand(CommandContext context)
         // no repo layout to discover apps/telemetry/manifest.json on disk, so without this the collector
         // bootstrap is skipped. Injected unconditionally; Core only consults it when observability is on.
         AddOptional(environment, LaunchSettingDefinitions.HostyCollectorManifestPath, settings.ResolveHostyCollectorManifestPath(context.Environment));
+        // Catalog sources are a managed setting with an empty value meaning "disable all sources", so
+        // inject even an empty string to avoid inheriting an ambient HOSTY_CATALOG_SOURCES export.
+        environment[LaunchSettingDefinitions.HostyCatalogSources] = settings.ResolveHostyCatalogSources(context.Environment);
         return environment;
     }
 
@@ -337,8 +342,8 @@ internal sealed partial class CoreCommand(CommandContext context)
     // discovery file. Error messages are printed here; the caller maps the outcome to an exit code.
     private async Task<StopOutcome> StopCoreAsync()
     {
-        var discovery = await ReadControlDiscoveryAsync();
-        if (discovery is null)
+        var core = await CoreControlClient.TryCreateAsync(context, probeTimeout: ControlProbeTimeout, operationTimeout: StopTimeout);
+        if (core is null)
         {
             return StopOutcome.NotRunning;
         }
@@ -347,45 +352,40 @@ internal sealed partial class CoreCommand(CommandContext context)
         // exit, so show a spinner while we wait. Outcome messages are printed by the caller after the
         // spinner clears; errors go to the separate stderr console, which stays safe under the live
         // status display.
-        return await CommandStatus.RunAsync(
-            context,
-            "Stopping Hosty Core…",
-            () => RequestStopAndWaitAsync(discovery));
+        using (core)
+        {
+            return await CommandStatus.RunAsync(
+                context,
+                "Stopping Hosty Core…",
+                () => RequestStopAndWaitAsync(core));
+        }
     }
 
-    private async Task<StopOutcome> RequestStopAndWaitAsync(ControlDiscoveryDocument discovery)
+    private async Task<StopOutcome> RequestStopAndWaitAsync(CoreControlClient core)
     {
-        using var httpClient = CreateControlClient(discovery);
-        HttpResponseMessage response;
         try
         {
-            response = await httpClient.PostAsync($"{discovery.ControlBaseUrl.TrimEnd('/')}/core/stop", content: null);
+            await core.PostAsync("core/stop");
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+        catch (CoreControlException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            context.Error.MarkupLine("[red]Unable to stop Hosty Core:[/] local control secret was rejected.");
+            context.Error.MarkupLine($"[grey]This usually means the control discovery file is stale or belongs to another Core process: {Markup.Escape(GetControlDiscoveryPath())}[/]");
+            context.Error.MarkupLine("[grey]Run `hosty core status` to verify the active Core. If no matching Core is running, remove the stale discovery file and start Core again.[/]");
+            return StopOutcome.Failed;
+        }
+        catch (CoreControlException ex)
+        {
+            context.Error.MarkupLine($"[red]Unable to stop Hosty Core:[/] HTTP {(int)ex.StatusCode}: {Markup.Escape(ex.ResponseBody)}");
+            return StopOutcome.Failed;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or CoreControlTimeoutException)
         {
             context.Error.MarkupLine($"[red]Unable to reach Hosty Core:[/] {Markup.Escape(ex.Message)}");
             return StopOutcome.Failed;
         }
 
-        using (response)
-        {
-            if (!response.IsSuccessStatusCode)
-            {
-                var body = await response.Content.ReadAsStringAsync();
-                if (response.StatusCode == HttpStatusCode.Unauthorized)
-                {
-                    context.Error.MarkupLine("[red]Unable to stop Hosty Core:[/] local control secret was rejected.");
-                    context.Error.MarkupLine($"[grey]This usually means the control discovery file is stale or belongs to another Core process: {Markup.Escape(GetControlDiscoveryPath())}[/]");
-                    context.Error.MarkupLine("[grey]Run `hosty core status` to verify the active Core. If no matching Core is running, remove the stale discovery file and start Core again.[/]");
-                    return StopOutcome.Failed;
-                }
-
-                context.Error.MarkupLine($"[red]Unable to stop Hosty Core:[/] HTTP {(int)response.StatusCode}: {Markup.Escape(body)}");
-                return StopOutcome.Failed;
-            }
-        }
-
-        return await WaitForCoreFullyStoppedAsync(discovery.ProcessId, discovery.ControlBaseUrl)
+        return await WaitForCoreFullyStoppedAsync(core.CoreProcessId, core.ControlBaseUrl)
             ? StopOutcome.Stopped
             : StopOutcome.TimedOut;
     }
@@ -438,8 +438,8 @@ internal sealed partial class CoreCommand(CommandContext context)
         var logPath = Path.Combine(context.Environment.RootDirectory, "core", "logs", "core.log");
         if (!File.Exists(logPath))
         {
-            context.Console.MarkupLine($"[yellow]Hosty Core log was not found.[/]");
-            context.Console.MarkupLine($"[grey]Log:[/] {Markup.Escape(logPath)}");
+            context.Error.MarkupLine($"[yellow]Hosty Core log was not found.[/]");
+            context.Error.MarkupLine($"[grey]Log:[/] {Markup.Escape(logPath)}");
             return Task.FromResult(1);
         }
 
@@ -541,81 +541,23 @@ internal sealed partial class CoreCommand(CommandContext context)
 
     private async Task<CoreStatusDocument?> ReadCoreStatusAsync(bool suppressErrors = false)
     {
-        var discovery = await ReadControlDiscoveryAsync();
-        if (discovery is null)
+        // One shared discovery+client stack (CoreControlClient) — it already handles the mid-write file,
+        // stale-PID self-clean, and required headers, so CoreCommand no longer keeps its own copy (L-M4).
+        using var core = await CoreControlClient.TryCreateAsync(context, probeTimeout: ControlProbeTimeout);
+        if (core is null)
         {
             return null;
         }
 
         try
         {
-            using var httpClient = CreateControlClient(discovery);
-            using var response = await httpClient.GetAsync($"{discovery.ControlBaseUrl.TrimEnd('/')}/core/status");
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            return await CliJson.DeserializeAsync<CoreStatusDocument>(stream);
+            return await core.GetAsync<CoreStatusDocument>("core/status");
         }
-        catch (Exception ex) when (suppressErrors && ex is HttpRequestException or IOException or TaskCanceledException or JsonException)
+        catch (Exception ex) when (suppressErrors &&
+            ex is CoreControlException or CoreControlTimeoutException or HttpRequestException or IOException or TaskCanceledException or JsonException)
         {
             return null;
         }
-    }
-
-    private HttpClient CreateControlClient(ControlDiscoveryDocument discovery)
-    {
-        var httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(3),
-        };
-
-        foreach (var header in discovery.RequiredHeaders)
-        {
-            httpClient.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
-        }
-
-        return httpClient;
-    }
-
-    private async Task<ControlDiscoveryDocument?> ReadControlDiscoveryAsync()
-    {
-        var path = GetControlDiscoveryPath();
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        // A locked, truncated, or mid-write control.json must degrade to "not running" rather than
-        // crash stop/restart. FileShare.ReadWrite tolerates the writer holding it open.
-        ControlDiscoveryDocument? discovery;
-        try
-        {
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            discovery = await CliJson.DeserializeAsync<ControlDiscoveryDocument>(stream);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
-        {
-            return null;
-        }
-
-        if (discovery is null)
-        {
-            return null;
-        }
-
-        // A discovery file whose recorded PID is no longer alive is an orphan left by a hard-killed
-        // Core (its ApplicationStopped cleanup never ran). Treat it as not running and remove it so
-        // it stops shadowing a truly-stopped Core. PID absent => trust the file (older Core).
-        if (discovery.ProcessId is int pid && pid > 0 && !ProcessLiveness.IsAlive(pid))
-        {
-            ControlDiscovery.TryDeleteStale(path);
-            return null;
-        }
-
-        return discovery;
     }
 
     private string GetControlDiscoveryPath()
@@ -731,12 +673,6 @@ internal sealed partial class CoreCommand(CommandContext context)
             }
         }
     }
-
-    internal sealed record ControlDiscoveryDocument(
-        string ControlBaseUrl,
-        IReadOnlyDictionary<string, string> RequiredHeaders,
-        int? ProcessId = null,
-        string? Nonce = null);
 
     internal sealed record CoreStatusDocument(
         string? Status,

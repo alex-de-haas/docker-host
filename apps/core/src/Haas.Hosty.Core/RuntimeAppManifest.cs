@@ -63,7 +63,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             return;
         }
 
-        await File.WriteAllTextAsync(targetPath, selection.ManifestJson, Encoding.UTF8, cancellationToken);
+        // Atomic temp+rename: a plain WriteAllText that crashes mid-write leaves a truncated manifest that
+        // fails validation (manifest_json_invalid) on every later lifecycle verb with no self-heal.
+        await JsonStorage.WriteTextAsync(targetPath, selection.ManifestJson, cancellationToken);
     }
 
     public RuntimeAppManifestSelection Select(
@@ -947,51 +949,70 @@ internal interface IImageDigestResolver
     Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default);
 }
 
+// Discovers which apps currently have a running Hosty-labelled container, so the supervisor can reconcile
+// the "persisted stopped but actually running" drift (C-M1) that per-app health observation — which only
+// probes apps Core already believes running — never catches.
+internal interface IRunningContainerProbe
+{
+    Task<IReadOnlySet<string>> ListRunningAppIdsAsync(CancellationToken cancellationToken = default);
+}
+
 // Indirection over the `docker` CLI so the adapter's resolve/run/inspect logic is unit-testable
 // without a daemon. Unlike RunDockerAsync it never throws on a non-zero exit — callers inspect
 // ExitCode — but a missing CLI surfaces as DockerUnavailableException.
 internal interface IDockerCommandRunner
 {
-    Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, CancellationToken cancellationToken = default);
+    // `environment` is injected into the docker CLI process (not the argv), so secret-bearing values
+    // referenced by `-e KEY` (name only) never appear in ps/`/proc/*/cmdline` (C-M5).
+    Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default);
 }
 
 internal sealed record DockerCommandResult(int ExitCode, string StandardOutput, string StandardError);
 
 internal sealed class DockerUnavailableException(string message) : Exception(message);
 
-// Default runner: shells out to the `docker` CLI. Mirrors the previous in-adapter process logic.
-internal sealed class ProcessDockerCommandRunner : IDockerCommandRunner
+// Default runner: shells out to the `docker` CLI via the shared ProcessRunner (concurrent stream drain,
+// kill-on-cancel, disposal). The absolute deadline is deliberately generous: docker control ops are
+// quick, but `docker pull` can legitimately run for minutes on large images, so it only bounds a
+// genuinely wedged daemon rather than a slow-but-progressing pull.
+internal sealed class ProcessDockerCommandRunner(TimeSpan? timeout = null) : IDockerCommandRunner
 {
-    public async Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, CancellationToken cancellationToken = default)
+    private readonly TimeSpan timeout = timeout ?? TimeSpan.FromMinutes(30);
+
+    public async Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
     {
-        using var process = new System.Diagnostics.Process
-        {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "docker",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            },
-        };
+        var startInfo = new System.Diagnostics.ProcessStartInfo { FileName = "docker" };
         foreach (var arg in args)
         {
-            process.StartInfo.ArgumentList.Add(arg);
+            startInfo.ArgumentList.Add(arg);
         }
 
+        // Inject secret env values into the docker process (read by `-e KEY` name-only args), keeping
+        // them out of the argv other local users can read via ps/`/proc/*/cmdline` (C-M5).
+        if (environment is not null)
+        {
+            foreach (var pair in environment)
+            {
+                startInfo.Environment[pair.Key] = pair.Value;
+            }
+        }
+
+        ProcessRunResult result;
         try
         {
-            process.Start();
+            result = await ProcessRunner.RunAsync(startInfo, timeout, cancellationToken);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             throw new DockerUnavailableException(ex.Message);
         }
 
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        return new DockerCommandResult(process.ExitCode, stdout, stderr);
+        if (result.TimedOut)
+        {
+            throw new DockerUnavailableException($"docker command timed out after {timeout.TotalSeconds:0}s: docker {string.Join(' ', args)}");
+        }
+
+        return new DockerCommandResult(result.ExitCode, result.StandardOutput, result.StandardError);
     }
 }
 
@@ -999,7 +1020,7 @@ internal sealed class DockerRuntimeAdapter(
     HostyCoreRuntimeConfig config,
     AppServiceTokenService serviceTokens,
     ILogger<DockerRuntimeAdapter> logger,
-    IDockerCommandRunner? dockerRunner = null) : IAppRuntimeAdapter, IImageDigestResolver
+    IDockerCommandRunner? dockerRunner = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
 {
     // App ids already advised about WSL2 P2P throttling, so the warning is logged once per app
     // per Core process rather than on every (health-driven) restart. Instance field on the DI
@@ -1034,6 +1055,12 @@ internal sealed class DockerRuntimeAdapter(
             _ = await RunDockerAsync(["network", "create", dependencyNetwork], ignoreFailures: true, cancellationToken);
         }
 
+        // Track containers this start actually created so a later service failing can unwind them (C-H5):
+        // otherwise service B failing leaves service A running while the record is recorded stopped, and
+        // the health observer (which only probes persisted-running apps) never reconciles it.
+        var startedContainers = new List<string>();
+        try
+        {
         foreach (var service in services)
         {
             if (service.Image is null)
@@ -1043,7 +1070,7 @@ internal sealed class DockerRuntimeAdapter(
 
             var hostNetwork = service.Runtime.IsHostNetwork;
             var containerName = BuildContainerName(context.App.Id, service.Key);
-            _ = await RunDockerAsync(["rm", "-f", containerName], ignoreFailures: true, cancellationToken);
+            await RemoveContainerIfOwnedAsync(context.App.Id, containerName, cancellationToken);
 
             // Resolve what to run from the lock + policy instead of blindly running the mutable tag:
             // pinned reuses the locked digest (pulling it only if missing), rolling re-resolves the
@@ -1051,6 +1078,10 @@ internal sealed class DockerRuntimeAdapter(
             var existingLock = context.App.ArtifactLocks?.GetValueOrDefault(service.Key);
             var (runReference, resolvedLock) = await ResolveImageRunReferenceAsync(service.Image, existingLock, policy, cancellationToken);
             resolvedLocks[service.Key] = resolvedLock;
+
+            // Secret-bearing env (app settings + the service token) is passed by NAME on the argv and by
+            // VALUE through the docker process environment, so the values never land in ps/cmdline (C-M5).
+            var containerEnvironment = new Dictionary<string, string>(StringComparer.Ordinal);
 
             var runArgs = new List<string>
             {
@@ -1106,7 +1137,8 @@ internal sealed class DockerRuntimeAdapter(
                 if (!string.IsNullOrWhiteSpace(setting.Value))
                 {
                     runArgs.Add("-e");
-                    runArgs.Add($"{setting.Key}={setting.Value}");
+                    runArgs.Add(setting.Key);
+                    containerEnvironment[setting.Key] = setting.Value!;
                 }
             }
 
@@ -1117,7 +1149,8 @@ internal sealed class DockerRuntimeAdapter(
             }
 
             runArgs.Add("-e");
-            runArgs.Add($"HOSTY_APP_SERVICE_TOKEN={serviceTokens.CreateToken(context.App.Id)}");
+            runArgs.Add("HOSTY_APP_SERVICE_TOKEN");
+            containerEnvironment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
 
             foreach (var telemetry in BuildTelemetryEnvironment(context, service.Key))
             {
@@ -1186,7 +1219,8 @@ internal sealed class DockerRuntimeAdapter(
             }
 
             runArgs.Add(runReference);
-            _ = await RunDockerAsync(runArgs, ignoreFailures: false, cancellationToken);
+            _ = await RunDockerAsync(runArgs, ignoreFailures: false, cancellationToken, environment: containerEnvironment);
+            startedContainers.Add(containerName);
 
             foreach (var port in service.Runtime.Ports.Where(port => port.ContainerPort is not null))
             {
@@ -1205,15 +1239,48 @@ internal sealed class DockerRuntimeAdapter(
                     Port: key));
             }
         }
+        }
+        catch
+        {
+            // Unwind the partial start: remove the containers we created (owned-checked) and drop the
+            // per-app network if we created it, so a failed multi-service start leaves nothing running.
+            foreach (var containerName in startedContainers)
+            {
+                await RemoveContainerIfOwnedAsync(context.App.Id, containerName, CancellationToken.None);
+            }
+
+            if (dependencyNetwork is not null)
+            {
+                _ = await RunDockerAsync(["network", "rm", dependencyNetwork], ignoreFailures: true, CancellationToken.None);
+            }
+
+            throw;
+        }
 
         return new AppRuntimeStartResult("running", endpoints, resolvedLocks);
     }
 
     public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
+        var stillRunning = new List<string>();
         foreach (var service in context.Manifest.Services)
         {
-            _ = await RunDockerAsync(["stop", BuildContainerName(context.App.Id, service.Key)], ignoreFailures: true, cancellationToken);
+            var containerName = BuildContainerName(context.App.Id, service.Key);
+            _ = await RunDockerAsync(["stop", containerName], ignoreFailures: true, cancellationToken);
+            if (await IsContainerRunningAsync(containerName, cancellationToken))
+            {
+                stillRunning.Add(containerName);
+            }
+        }
+
+        if (stillRunning.Count > 0)
+        {
+            // Never report "stopped" while a container is actually still running: that is the exact drift
+            // where the record says stopped, health observation (which only probes persisted-running apps)
+            // skips it, and it stays wrong forever (C-M1). Surface a failure so the record stays truthful.
+            throw new AppLifecycleException(
+                "docker_stop_incomplete",
+                $"docker stop did not stop container(s): {string.Join(", ", stillRunning)}.");
         }
 
         return new AppRuntimeOperationResult("stopped");
@@ -1223,7 +1290,7 @@ internal sealed class DockerRuntimeAdapter(
     {
         foreach (var service in context.Manifest.Services)
         {
-            _ = await RunDockerAsync(["rm", "-f", BuildContainerName(context.App.Id, service.Key)], ignoreFailures: true, cancellationToken);
+            await RemoveContainerIfOwnedAsync(context.App.Id, BuildContainerName(context.App.Id, service.Key), cancellationToken);
         }
 
         // Drop the per-app discovery network (no-op when it was never created); containers are
@@ -1459,12 +1526,62 @@ internal sealed class DockerRuntimeAdapter(
     {
         try
         {
-            return await runner.RunAsync(args, cancellationToken);
+            return await runner.RunAsync(args, cancellationToken: cancellationToken);
         }
         catch (DockerUnavailableException ex)
         {
             return new DockerCommandResult(127, string.Empty, ex.Message);
         }
+    }
+
+    // BuildContainerName normalizes every non-alphanumeric char to '-', so `my.app` and `my-app` (and
+    // app `x-y`/service `z` vs app `x`/service `y-z`) collide on the same container name. A blind
+    // `docker rm -f <name>` could therefore destroy a *different* app's — or a user's — container that
+    // happens to share the normalized name. Only remove when the container carries this app's
+    // hosty.app.id label; a mismatch is left in place (the later `docker run --name` surfaces a clear
+    // name-conflict error) and an absent container is a no-op (C-M2).
+    private async Task RemoveContainerIfOwnedAsync(string appId, string containerName, CancellationToken cancellationToken)
+    {
+        var inspect = await RunRawAsync(["inspect", "--format", "{{ index .Config.Labels \"hosty.app.id\" }}", containerName], cancellationToken);
+        if (inspect.ExitCode != 0)
+        {
+            return;
+        }
+
+        var owner = inspect.StandardOutput.Trim();
+        if (!string.Equals(owner, appId, StringComparison.Ordinal))
+        {
+            logger.LogWarning(
+                "Not removing container '{Container}': it is labelled for app '{Owner}', not '{AppId}'. A docker name conflict will surface instead of destroying another app's container.",
+                containerName, string.IsNullOrEmpty(owner) ? "<none>" : owner, appId);
+            return;
+        }
+
+        _ = await RunDockerAsync(["rm", "-f", containerName], ignoreFailures: true, cancellationToken);
+    }
+
+    private async Task<bool> IsContainerRunningAsync(string containerName, CancellationToken cancellationToken)
+    {
+        var inspect = await RunRawAsync(["inspect", "--format", "{{.State.Running}}", containerName], cancellationToken);
+        return inspect.ExitCode == 0 &&
+            string.Equals(inspect.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Reports the app ids that currently own a running Hosty-labelled container. One `docker ps` per
+    // supervision tick (not per app); `{{.Label "..."}}` prints the label value per running container.
+    public async Task<IReadOnlySet<string>> ListRunningAppIdsAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunRawAsync(
+            ["ps", "--filter", "label=hosty.app.id", "--format", "{{.Label \"hosty.app.id\"}}"],
+            cancellationToken);
+        if (result.ExitCode != 0)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        return result.StandardOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     // True when the reference is already present in the local image store (so a pinned restart need
@@ -1639,12 +1756,12 @@ internal sealed class DockerRuntimeAdapter(
     // Runs a docker command through the injected runner and returns stdout, throwing on a non-zero
     // exit (or unavailable docker) unless ignoreFailures. The exit-code-aware resolve/inspect helpers
     // call the runner directly; this wrapper preserves the throw-on-failure semantics callers rely on.
-    private async Task<string> RunDockerAsync(IReadOnlyList<string> args, bool ignoreFailures, CancellationToken cancellationToken)
+    private async Task<string> RunDockerAsync(IReadOnlyList<string> args, bool ignoreFailures, CancellationToken cancellationToken, IReadOnlyDictionary<string, string>? environment = null)
     {
         DockerCommandResult result;
         try
         {
-            result = await runner.RunAsync(args, cancellationToken);
+            result = await runner.RunAsync(args, environment, cancellationToken);
         }
         catch (DockerUnavailableException) when (ignoreFailures)
         {

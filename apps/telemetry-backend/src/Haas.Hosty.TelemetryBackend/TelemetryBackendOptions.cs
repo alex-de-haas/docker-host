@@ -25,9 +25,20 @@ internal sealed record TelemetryBackendOptions
     public required string LogsFilePath { get; init; }
     public required string TracesFilePath { get; init; }
 
-    // How often the ingest loop ticks (scrape + tail + retention prune). Kept short: the backend's job
-    // is ingestion, so unlike Core's old 10 s poll it tails aggressively for near-real-time freshness.
+    // How often the ingest loop ticks. Logs/traces are tailed every tick (near-real-time), so this stays
+    // short. Metrics are NOT scraped every tick — see MetricsScrapeInterval.
     public TimeSpan IngestInterval { get; init; } = TimeSpan.FromSeconds(1);
+
+    // How often metrics are scraped, decoupled from the tail tick. The Prometheus exporter re-serves the
+    // last value every scrape, so scraping at the 1 s tail cadence inserted ~1 row/series/second (≈4.3 M
+    // rows/day/app) of mostly-identical data, collapsing the intended 14-day retention to hours of prune
+    // churn. Scraping every ~15 s (plus the unchanged-sample skip below) restores it. (T-H2)
+    public TimeSpan MetricsScrapeInterval { get; init; } = TimeSpan.FromSeconds(15);
+
+    // A flat series is skipped rather than re-inserted every scrape, but is still re-recorded at least
+    // this often so it stays legible as "live" and range queries keep an anchor point. Set to zero to
+    // record every scrape (no unchanged-skip).
+    public TimeSpan MetricsHeartbeat { get; init; } = TimeSpan.FromSeconds(60);
 
     // Per-signal age caps (retention intent) + a global size ceiling (hard safety so telemetry can
     // never fill the disk). Evicted by the periodic prune. See the retention decision in the doc.
@@ -65,6 +76,9 @@ internal sealed record TelemetryBackendOptions
                 ?? Path.Combine(appData, "otlp-logs", "logs.jsonl"),
             TracesFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_TRACES_FILE"))
                 ?? Path.Combine(appData, "otlp-traces", "traces.jsonl"),
+            IngestInterval = ParseSeconds("HOSTY_TELEMETRY_INGEST_INTERVAL_SECONDS", 1, minimumSeconds: 0.1),
+            MetricsScrapeInterval = ParseSeconds("HOSTY_TELEMETRY_METRICS_INTERVAL_SECONDS", 15, minimumSeconds: 1),
+            MetricsHeartbeat = ParseSeconds("HOSTY_TELEMETRY_METRICS_HEARTBEAT_SECONDS", 60, minimumSeconds: 0),
             MetricsRetention = ParseDays("HOSTY_TELEMETRY_METRICS_RETENTION_DAYS", 14),
             LogsRetention = ParseDays("HOSTY_TELEMETRY_LOGS_RETENTION_DAYS", 3),
             TracesRetention = ParseDays("HOSTY_TELEMETRY_TRACES_RETENTION_DAYS", 3),
@@ -88,6 +102,17 @@ internal sealed record TelemetryBackendOptions
         return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var days) && days > 0
             ? TimeSpan.FromDays(days)
             : TimeSpan.FromDays(fallbackDays);
+    }
+
+    // A duration in (fractional) seconds, floored at minimumSeconds so a misconfigured 0 can't spin the
+    // ingest loop. A minimum of 0 allows disabling (e.g. the unchanged-skip heartbeat).
+    private static TimeSpan ParseSeconds(string name, double fallbackSeconds, double minimumSeconds)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        var seconds = double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value >= minimumSeconds
+            ? value
+            : fallbackSeconds;
+        return TimeSpan.FromSeconds(seconds);
     }
 
     private static long ParseBytes(string name, long fallback)

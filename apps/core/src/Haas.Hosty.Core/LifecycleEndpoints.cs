@@ -16,6 +16,7 @@ internal static class LifecycleEndpoints
                 users,
                 clock,
                 async () => await HandleLifecycleError(() => lifecycle.CreateInstallPlanAsync(input, cancellationToken)),
+                requireCsrf: true,
                 cancellationToken: cancellationToken));
 
         app.MapPost("/api/apps/install", async (
@@ -203,6 +204,7 @@ internal static class LifecycleEndpoints
                 users,
                 clock,
                 async () => await HandleLifecycleError(() => lifecycle.CreateUpdatePlanAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
                 cancellationToken: cancellationToken));
 
         app.MapPost("/api/apps/{appId}/update", async (
@@ -234,6 +236,7 @@ internal static class LifecycleEndpoints
                 users,
                 clock,
                 async () => await HandleLifecycleError(() => lifecycle.CreateRuntimeSwitchPlanAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
                 cancellationToken: cancellationToken));
 
         app.MapPost("/api/apps/{appId}/switch-runtime", async (

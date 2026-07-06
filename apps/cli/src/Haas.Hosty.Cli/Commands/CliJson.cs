@@ -15,6 +15,10 @@ internal static class CliJson
     /// <summary>Web defaults (camelCase, case-insensitive reads, numbers-from-string) over the combined source-gen resolver.</summary>
     public static JsonSerializerOptions Options { get; } = new(JsonSerializerDefaults.Web)
     {
+        // Enforce the DTOs' nullable annotations on reads: a missing/null value for a non-nullable
+        // property throws JsonException (surfaced as a clean "invalid response" by CommandLine) instead
+        // of null-collapsing into a non-nullable slot and NRE-ing deep in a render path (L-H4).
+        RespectNullableAnnotations = true,
         TypeInfoResolver = JsonTypeInfoResolver.Combine(
             AppsCommand.AppsJsonContext.Default,
             StorageCommand.StorageJsonContext.Default,

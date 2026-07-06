@@ -57,19 +57,6 @@ internal sealed class UserManagementService(
         var role = NormalizeRole(request.Role);
         var ttl = NormalizeInviteTtl(request.TtlMs);
         var now = clock.UtcNow;
-        var state = await users.ReadAsync(cancellationToken);
-        if (state.Users.Any(user => string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new UserManagementException("email_exists", "A Host user with this email already exists.", StatusCodes.Status409Conflict);
-        }
-
-        if (state.Invitations.Any(invitation =>
-            string.Equals(invitation.Email, email, StringComparison.OrdinalIgnoreCase) &&
-            GetInvitationStatus(invitation, now) == "pending"))
-        {
-            throw new UserManagementException("invitation_exists", "An active invitation for this email already exists.", StatusCodes.Status409Conflict);
-        }
-
         var token = $"dhstp_{Base64UrlEncode(RandomNumberGenerator.GetBytes(32))}";
         var invitation = new HostInvitationRecord(
             Id: $"invite_{Guid.NewGuid():N}",
@@ -83,7 +70,22 @@ internal sealed class UserManagementService(
             TokenHash: HashToken(token),
             CreatedByUserId: actor.Id);
 
-        await users.WriteAsync(state with { Invitations = state.Invitations.Append(invitation).ToArray() }, cancellationToken);
+        await users.UpdateAsync(state =>
+        {
+            if (state.Users.Any(user => string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new UserManagementException("email_exists", "A Host user with this email already exists.", StatusCodes.Status409Conflict);
+            }
+
+            if (state.Invitations.Any(candidate =>
+                string.Equals(candidate.Email, email, StringComparison.OrdinalIgnoreCase) &&
+                GetInvitationStatus(candidate, now) == "pending"))
+            {
+                throw new UserManagementException("invitation_exists", "An active invitation for this email already exists.", StatusCodes.Status409Conflict);
+            }
+
+            return state with { Invitations = state.Invitations.Append(invitation).ToArray() };
+        }, cancellationToken);
         await AppendAuditAsync("auth.invitation.created", "auth.invitation", invitation.Id, actor.Id, "succeeded", new Dictionary<string, string>
         {
             ["email"] = email,
@@ -113,41 +115,44 @@ internal sealed class UserManagementService(
         CancellationToken cancellationToken = default)
     {
         var now = clock.UtcNow;
-        var state = await users.ReadAsync(cancellationToken);
-        var invitation = FindValidInvitation(state, request.SetupToken, now) ??
-            throw new UserManagementException("invitation_invalid", "Invitation token is invalid or expired.", StatusCodes.Status404NotFound);
-        if (state.Users.Any(user => string.Equals(user.Email, invitation.Email, StringComparison.OrdinalIgnoreCase)))
+        var (user, invitation, committedState) = await users.UpdateAsync<(HostUserRecord User, HostInvitationRecord Invitation, UserDirectoryState State)>(state =>
         {
-            throw new UserManagementException("email_exists", "A Host user with this email already exists.", StatusCodes.Status409Conflict);
-        }
+            var pending = FindValidInvitation(state, request.SetupToken, now) ??
+                throw new UserManagementException("invitation_invalid", "Invitation token is invalid or expired.", StatusCodes.Status404NotFound);
+            if (state.Users.Any(existing => string.Equals(existing.Email, pending.Email, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new UserManagementException("email_exists", "A Host user with this email already exists.", StatusCodes.Status409Conflict);
+            }
 
-        var user = new HostUserRecord(
-            Id: $"user_{Guid.NewGuid():N}",
-            Email: invitation.Email,
-            DisplayName: NormalizeOptional(request.DisplayName) ?? invitation.DisplayName ?? invitation.Email,
-            Role: invitation.Role,
-            Disabled: false,
-            CreatedAt: now,
-            UpdatedAt: now);
-        var assignmentIds = invitation.Role == "host.admin" ? [] : invitation.AssignedAppIds ?? [];
-        var assignments = assignmentIds
-            .Select(appId => new AppAssignmentRecord(appId, user.Id, now))
-            .ToArray();
-        var invitations = state.Invitations
-            .Select(candidate => string.Equals(candidate.Id, invitation.Id, StringComparison.Ordinal)
-                ? candidate with { Status = "used", UsedAt = now }
-                : candidate)
-            .ToArray();
-        var credentials = passwords.UpsertCredential(state.PasswordCredentials, user.Id, request.Password, now);
+            var created = new HostUserRecord(
+                Id: $"user_{Guid.NewGuid():N}",
+                Email: pending.Email,
+                DisplayName: NormalizeOptional(request.DisplayName) ?? pending.DisplayName ?? pending.Email,
+                Role: pending.Role,
+                Disabled: false,
+                CreatedAt: now,
+                UpdatedAt: now);
+            var assignmentIds = pending.Role == "host.admin" ? [] : pending.AssignedAppIds ?? [];
+            var assignments = assignmentIds
+                .Select(appId => new AppAssignmentRecord(appId, created.Id, now))
+                .ToArray();
+            var invitations = state.Invitations
+                .Select(candidate => string.Equals(candidate.Id, pending.Id, StringComparison.Ordinal)
+                    ? candidate with { Status = "used", UsedAt = now }
+                    : candidate)
+                .ToArray();
+            var credentials = passwords.UpsertCredential(state.PasswordCredentials, created.Id, request.Password, now);
 
-        var nextState = state with
-        {
-            Users = state.Users.Append(user).ToArray(),
-            Invitations = invitations,
-            Assignments = state.Assignments.Concat(assignments).ToArray(),
-            PasswordCredentials = credentials,
-        };
-        await users.WriteAsync(nextState, cancellationToken);
+            var nextState = state with
+            {
+                Users = state.Users.Append(created).ToArray(),
+                Invitations = invitations,
+                Assignments = state.Assignments.Concat(assignments).ToArray(),
+                PasswordCredentials = credentials,
+            };
+            return (nextState, (created, pending, nextState));
+        }, cancellationToken);
+
         await AppendAuditAsync("auth.invitation.accepted", "auth.user", user.Id, user.Id, "succeeded", new Dictionary<string, string>
         {
             ["invitationId"] = invitation.Id,
@@ -155,7 +160,7 @@ internal sealed class UserManagementService(
             ["role"] = invitation.Role,
         }, cancellationToken);
 
-        return SummarizeUser(nextState, user, now);
+        return SummarizeUser(committedState, user, now);
     }
 
     public async Task<UserInvitationRevokeResponse> RevokeInvitationAsync(
@@ -164,26 +169,28 @@ internal sealed class UserManagementService(
         CancellationToken cancellationToken = default)
     {
         var now = clock.UtcNow;
-        var state = await users.ReadAsync(cancellationToken);
-        var found = false;
-        var invitations = state.Invitations
-            .Select(invitation =>
-            {
-                if (!string.Equals(invitation.Id, invitationId, StringComparison.Ordinal))
-                {
-                    return invitation;
-                }
-
-                found = true;
-                return invitation with { Status = "revoked", RevokedAt = now };
-            })
-            .ToArray();
-        if (!found)
+        await users.UpdateAsync(state =>
         {
-            throw new UserManagementException("invitation_not_found", "Invitation was not found.", StatusCodes.Status404NotFound);
-        }
+            var found = false;
+            var invitations = state.Invitations
+                .Select(invitation =>
+                {
+                    if (!string.Equals(invitation.Id, invitationId, StringComparison.Ordinal))
+                    {
+                        return invitation;
+                    }
 
-        await users.WriteAsync(state with { Invitations = invitations }, cancellationToken);
+                    found = true;
+                    return invitation with { Status = "revoked", RevokedAt = now };
+                })
+                .ToArray();
+            if (!found)
+            {
+                throw new UserManagementException("invitation_not_found", "Invitation was not found.", StatusCodes.Status404NotFound);
+            }
+
+            return state with { Invitations = invitations };
+        }, cancellationToken);
         await AppendAuditAsync(
             "auth.invitation.revoked",
             "auth.invitation",
@@ -202,43 +209,46 @@ internal sealed class UserManagementService(
         CancellationToken cancellationToken = default)
     {
         var now = clock.UtcNow;
-        var state = await users.ReadAsync(cancellationToken);
-        var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal) && !candidate.Disabled) ??
-            throw new UserManagementException("user_not_found", "The Host user is disabled or does not exist.", StatusCodes.Status404NotFound);
-        var nextRole = string.IsNullOrWhiteSpace(request.Role) ? user.Role : NormalizeRole(request.Role);
-        if (user.Role == "host.admin" && nextRole != "host.admin" && CountActiveAdmins(state.Users) <= 1)
+        var (updated, committedState, roleChanged) = await users.UpdateAsync<(HostUserRecord Updated, UserDirectoryState State, bool RoleChanged)>(state =>
         {
-            throw new UserManagementException("last_admin", "At least one active Host administrator must remain.", StatusCodes.Status409Conflict);
-        }
+            var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal) && !candidate.Disabled) ??
+                throw new UserManagementException("user_not_found", "The Host user is disabled or does not exist.", StatusCodes.Status404NotFound);
+            var nextRole = string.IsNullOrWhiteSpace(request.Role) ? user.Role : NormalizeRole(request.Role);
+            if (user.Role == "host.admin" && nextRole != "host.admin" && CountActiveAdmins(state.Users) <= 1)
+            {
+                throw new UserManagementException("last_admin", "At least one active Host administrator must remain.", StatusCodes.Status409Conflict);
+            }
 
-        if (string.Equals(user.Id, actor.Id, StringComparison.Ordinal) &&
-            user.Role == "host.admin" &&
-            nextRole != "host.admin")
-        {
-            throw new UserManagementException("self_role_change_forbidden", "Administrators cannot change their own role to user.", StatusCodes.Status409Conflict);
-        }
+            if (string.Equals(user.Id, actor.Id, StringComparison.Ordinal) &&
+                user.Role == "host.admin" &&
+                nextRole != "host.admin")
+            {
+                throw new UserManagementException("self_role_change_forbidden", "Administrators cannot change their own role to user.", StatusCodes.Status409Conflict);
+            }
 
-        var updated = user with
-        {
-            DisplayName = request.DisplayName is null ? user.DisplayName : NormalizeOptional(request.DisplayName),
-            Role = nextRole,
-            UpdatedAt = now,
-        };
-        var roleChanged = !string.Equals(user.Role, updated.Role, StringComparison.Ordinal);
-        var sessions = roleChanged ? RevokeSessions(state.Sessions, user.Id, now, out _) : state.Sessions;
-        var nextState = state with
-        {
-            Users = state.Users.Select(candidate => string.Equals(candidate.Id, user.Id, StringComparison.Ordinal) ? updated : candidate).ToArray(),
-            Sessions = sessions,
-        };
-        await users.WriteAsync(nextState, cancellationToken);
-        await AppendAuditAsync("auth.user.updated", "auth.user", user.Id, actor.Id, "succeeded", new Dictionary<string, string>
+            var next = user with
+            {
+                DisplayName = request.DisplayName is null ? user.DisplayName : NormalizeOptional(request.DisplayName),
+                Role = nextRole,
+                UpdatedAt = now,
+            };
+            var changed = !string.Equals(user.Role, next.Role, StringComparison.Ordinal);
+            var sessions = changed ? RevokeSessions(state.Sessions, user.Id, now, out _) : state.Sessions;
+            var nextState = state with
+            {
+                Users = state.Users.Select(candidate => string.Equals(candidate.Id, user.Id, StringComparison.Ordinal) ? next : candidate).ToArray(),
+                Sessions = sessions,
+            };
+            return (nextState, (next, nextState, changed));
+        }, cancellationToken);
+
+        await AppendAuditAsync("auth.user.updated", "auth.user", updated.Id, actor.Id, "succeeded", new Dictionary<string, string>
         {
             ["role"] = updated.Role,
             ["roleChanged"] = roleChanged.ToString(System.Globalization.CultureInfo.InvariantCulture),
         }, cancellationToken);
 
-        return new HostUserUpdateResponse(SummarizeUser(nextState, updated, now));
+        return new HostUserUpdateResponse(SummarizeUser(committedState, updated, now));
     }
 
     public async Task<HostUserDisableResponse> DisableUserAsync(
@@ -252,31 +262,35 @@ internal sealed class UserManagementService(
         }
 
         var now = clock.UtcNow;
-        var state = await users.ReadAsync(cancellationToken);
-        var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal) && !candidate.Disabled) ??
-            throw new UserManagementException("user_not_found", "The Host user is disabled or does not exist.", StatusCodes.Status404NotFound);
-        if (user.Role == "host.admin" && CountActiveAdmins(state.Users) <= 1)
-        {
-            throw new UserManagementException("last_admin", "At least one active Host administrator must remain.", StatusCodes.Status409Conflict);
-        }
+        var (disabled, committedState, revokedSessionCount, removedAssignmentCount) =
+            await users.UpdateAsync<(HostUserRecord Disabled, UserDirectoryState State, int RevokedSessions, int RemovedAssignments)>(state =>
+            {
+                var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal) && !candidate.Disabled) ??
+                    throw new UserManagementException("user_not_found", "The Host user is disabled or does not exist.", StatusCodes.Status404NotFound);
+                if (user.Role == "host.admin" && CountActiveAdmins(state.Users) <= 1)
+                {
+                    throw new UserManagementException("last_admin", "At least one active Host administrator must remain.", StatusCodes.Status409Conflict);
+                }
 
-        var disabled = user with { Disabled = true, UpdatedAt = now };
-        var sessions = RevokeSessions(state.Sessions, user.Id, now, out var revokedSessionCount);
-        var assignments = state.Assignments.Where(assignment => !string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal)).ToArray();
-        var nextState = state with
-        {
-            Users = state.Users.Select(candidate => string.Equals(candidate.Id, user.Id, StringComparison.Ordinal) ? disabled : candidate).ToArray(),
-            Sessions = sessions,
-            Assignments = assignments,
-        };
-        await users.WriteAsync(nextState, cancellationToken);
-        await AppendAuditAsync("auth.user.disabled", "auth.user", user.Id, actor.Id, "succeeded", new Dictionary<string, string>
+                var next = user with { Disabled = true, UpdatedAt = now };
+                var sessions = RevokeSessions(state.Sessions, user.Id, now, out var revokedSessions);
+                var assignments = state.Assignments.Where(assignment => !string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal)).ToArray();
+                var nextState = state with
+                {
+                    Users = state.Users.Select(candidate => string.Equals(candidate.Id, user.Id, StringComparison.Ordinal) ? next : candidate).ToArray(),
+                    Sessions = sessions,
+                    Assignments = assignments,
+                };
+                return (nextState, (next, nextState, revokedSessions, state.Assignments.Count - assignments.Length));
+            }, cancellationToken);
+
+        await AppendAuditAsync("auth.user.disabled", "auth.user", disabled.Id, actor.Id, "succeeded", new Dictionary<string, string>
         {
             ["revokedSessionCount"] = revokedSessionCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["removedAssignmentCount"] = (state.Assignments.Count - assignments.Length).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["removedAssignmentCount"] = removedAssignmentCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
         }, cancellationToken);
 
-        return new HostUserDisableResponse(SummarizeUser(nextState, disabled, now), true);
+        return new HostUserDisableResponse(SummarizeUser(committedState, disabled, now), true);
     }
 
     public async Task<HostUserAssignmentsResponse> ReplaceAssignmentsAsync(
@@ -286,22 +300,25 @@ internal sealed class UserManagementService(
         CancellationToken cancellationToken = default)
     {
         var now = clock.UtcNow;
-        var state = await users.ReadAsync(cancellationToken);
-        var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal) && !candidate.Disabled) ??
-            throw new UserManagementException("user_not_found", "The Host user is disabled or does not exist.", StatusCodes.Status404NotFound);
-        var assignedAppIds = user.Role == "host.admin" ? [] : NormalizeIds(request.AssignedAppIds ?? []);
-        var assignments = state.Assignments
-            .Where(assignment => !string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal))
-            .Concat(assignedAppIds.Select(appId => new AppAssignmentRecord(appId, user.Id, now)))
-            .ToArray();
+        var (userAssignments, assignedAppIds) = await users.UpdateAsync<(IReadOnlyList<AppAssignmentRecord> UserAssignments, IReadOnlyList<string> AssignedAppIds)>(state =>
+        {
+            var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal) && !candidate.Disabled) ??
+                throw new UserManagementException("user_not_found", "The Host user is disabled or does not exist.", StatusCodes.Status404NotFound);
+            var ids = user.Role == "host.admin" ? [] : NormalizeIds(request.AssignedAppIds ?? []);
+            var assignments = state.Assignments
+                .Where(assignment => !string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal))
+                .Concat(ids.Select(appId => new AppAssignmentRecord(appId, user.Id, now)))
+                .ToArray();
+            var forUser = assignments.Where(assignment => string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal)).ToArray();
+            return (state with { Assignments = assignments }, (forUser, ids));
+        }, cancellationToken);
 
-        await users.WriteAsync(state with { Assignments = assignments }, cancellationToken);
-        await AppendAuditAsync("auth.user.assignments.updated", "auth.user", user.Id, actor.Id, "succeeded", new Dictionary<string, string>
+        await AppendAuditAsync("auth.user.assignments.updated", "auth.user", userId, actor.Id, "succeeded", new Dictionary<string, string>
         {
             ["assignedAppIds"] = string.Join(",", assignedAppIds),
         }, cancellationToken);
 
-        return new HostUserAssignmentsResponse(assignments.Where(assignment => string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal)).ToArray());
+        return new HostUserAssignmentsResponse(userAssignments);
     }
 
     private static UserManagementHostUserSummary SummarizeUser(UserDirectoryState state, HostUserRecord user, DateTimeOffset now)

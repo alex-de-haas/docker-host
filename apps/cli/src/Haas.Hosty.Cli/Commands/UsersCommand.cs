@@ -101,9 +101,7 @@ internal sealed partial class UsersCommand(CommandContext context)
         var core = await CoreControlClient.TryCreateAsync(context);
         if (core is null)
         {
-            throw new CommandUsageException(
-                "Hosty Core is not running or local control discovery is unavailable. Run `hosty core start` first.",
-                Usage);
+            throw new CoreNotRunningException();
         }
 
         return core;

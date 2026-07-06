@@ -79,20 +79,6 @@ internal sealed class AuthBootstrapService(
             throw new AuthBootstrapException("invalid_email", "Enter a valid email address.", StatusCodes.Status400BadRequest);
         }
 
-        var userState = await users.ReadAsync(cancellationToken);
-        if (HasEnabledAdmin(userState))
-        {
-            throw new AuthBootstrapException(
-                "setup_unavailable",
-                "First administrator setup is unavailable after an enabled Host administrator exists.",
-                StatusCodes.Status409Conflict);
-        }
-
-        if (userState.Users.Any(user => string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new AuthBootstrapException("email_exists", "A Host user with this email already exists. Use recovery-token to restore an existing account.", StatusCodes.Status409Conflict);
-        }
-
         var user = new HostUserRecord(
             Id: $"user_{Guid.NewGuid():N}",
             Email: email,
@@ -101,11 +87,29 @@ internal sealed class AuthBootstrapService(
             Disabled: false,
             CreatedAt: now,
             UpdatedAt: now);
-        var credentials = passwords.UpsertCredential(userState.PasswordCredentials, user.Id, request.Password, now);
-        await users.WriteAsync(userState with
+        await users.UpdateAsync(userState =>
         {
-            Users = userState.Users.Append(user).ToArray(),
-            PasswordCredentials = credentials,
+            // Re-check against the freshest state under the lock so two racing setups can't both create
+            // the first admin.
+            if (HasEnabledAdmin(userState))
+            {
+                throw new AuthBootstrapException(
+                    "setup_unavailable",
+                    "First administrator setup is unavailable after an enabled Host administrator exists.",
+                    StatusCodes.Status409Conflict);
+            }
+
+            if (userState.Users.Any(existing => string.Equals(existing.Email, email, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new AuthBootstrapException("email_exists", "A Host user with this email already exists. Use recovery-token to restore an existing account.", StatusCodes.Status409Conflict);
+            }
+
+            var credentials = passwords.UpsertCredential(userState.PasswordCredentials, user.Id, request.Password, now);
+            return userState with
+            {
+                Users = userState.Users.Append(user).ToArray(),
+                PasswordCredentials = credentials,
+            };
         }, cancellationToken);
         await MarkTokenUsedAsync(tokenState, token.Id, now, cancellationToken);
         await AppendAuditAsync("auth.bootstrap.completed", "auth.user", user.Id, "succeeded", new Dictionary<string, string>
@@ -127,51 +131,48 @@ internal sealed class AuthBootstrapService(
             throw new AuthBootstrapException("invalid_email", "Enter a valid email address.", StatusCodes.Status400BadRequest);
         }
 
-        var userState = await users.ReadAsync(cancellationToken);
-        var existing = userState.Users.FirstOrDefault(user => string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase));
-        HostUserRecord recovered;
-        UserDirectoryState nextState;
-        if (existing is null)
+        var (recovered, hadExistingUser) = await users.UpdateAsync<(HostUserRecord Recovered, bool HadExisting)>(userState =>
         {
-            recovered = new HostUserRecord(
-                Id: $"user_{Guid.NewGuid():N}",
-                Email: email,
-                DisplayName: NormalizeOptional(request.DisplayName) ?? email,
-                Role: "host.admin",
-                Disabled: false,
-                CreatedAt: now,
-                UpdatedAt: now);
-            var credentials = passwords.UpsertCredential(userState.PasswordCredentials, recovered.Id, request.Password, now);
-            nextState = userState with
+            var existing = userState.Users.FirstOrDefault(user => string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
             {
-                Users = userState.Users.Append(recovered).ToArray(),
-                PasswordCredentials = credentials,
-            };
-        }
-        else
-        {
-            recovered = existing with
+                var created = new HostUserRecord(
+                    Id: $"user_{Guid.NewGuid():N}",
+                    Email: email,
+                    DisplayName: NormalizeOptional(request.DisplayName) ?? email,
+                    Role: "host.admin",
+                    Disabled: false,
+                    CreatedAt: now,
+                    UpdatedAt: now);
+                var credentials = passwords.UpsertCredential(userState.PasswordCredentials, created.Id, request.Password, now);
+                return (userState with
+                {
+                    Users = userState.Users.Append(created).ToArray(),
+                    PasswordCredentials = credentials,
+                }, (created, false));
+            }
+
+            var restored = existing with
             {
                 DisplayName = NormalizeOptional(request.DisplayName) ?? existing.DisplayName ?? email,
                 Role = "host.admin",
                 Disabled = false,
                 UpdatedAt = now,
             };
-            var credentials = passwords.UpsertCredential(userState.PasswordCredentials, recovered.Id, request.Password, now);
-            nextState = userState with
+            var restoredCredentials = passwords.UpsertCredential(userState.PasswordCredentials, restored.Id, request.Password, now);
+            return (userState with
             {
-                Users = userState.Users.Select(user => string.Equals(user.Id, existing.Id, StringComparison.Ordinal) ? recovered : user).ToArray(),
+                Users = userState.Users.Select(user => string.Equals(user.Id, existing.Id, StringComparison.Ordinal) ? restored : user).ToArray(),
                 Sessions = RevokeSessions(userState.Sessions, existing.Id, now),
-                PasswordCredentials = credentials,
-            };
-        }
+                PasswordCredentials = restoredCredentials,
+            }, (restored, true));
+        }, cancellationToken);
 
-        await users.WriteAsync(nextState, cancellationToken);
         await MarkTokenUsedAsync(tokenState, token.Id, now, cancellationToken);
         await AppendAuditAsync("auth.recovery.completed", "auth.user", recovered.Id, "succeeded", new Dictionary<string, string>
         {
             ["email"] = email,
-            ["existingUser"] = (existing is not null).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["existingUser"] = hadExistingUser.ToString(System.Globalization.CultureInfo.InvariantCulture),
         }, cancellationToken);
         return recovered;
     }

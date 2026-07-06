@@ -20,6 +20,9 @@ on:
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
       - "apps/telemetry-backend/**"
+      - "apps/telemetry/manifest.json"
+      - "channels/**"
+      - "scripts/**"
       - "Directory.Build.props"
       - ".github/workflows/telemetry-backend-image.yml"
   push:
@@ -41,6 +44,9 @@ on:
       - ".github/workflows/demo-app-image.yml"
       - ".github/workflows/cli-release.yml"
       - "apps/telemetry-backend/**"
+      - "apps/telemetry/manifest.json"
+      - "channels/**"
+      - "scripts/**"
       - "Directory.Build.props"
       - ".github/workflows/telemetry-backend-image.yml"
 
@@ -48,6 +54,16 @@ permissions:
   contents: read
 
 jobs:
+  versions:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Check version consistency
+        run: node scripts/check-versions.mjs
+
   shell:
     name: Shell
     runs-on: ubuntu-latest

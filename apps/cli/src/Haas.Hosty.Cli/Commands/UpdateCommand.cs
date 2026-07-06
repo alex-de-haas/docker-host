@@ -32,9 +32,15 @@ internal sealed partial class UpdateCommand(CommandContext context)
             selectedChannel = await SelectChannelAsync(options);
         }
 
+        var releaseTag = ReleaseArtifactService.ResolveTag(selectedChannel?.ReleaseTag);
+        // Surface which release the binaries come from — this used to be silent, so `--channel <x>`
+        // looked like it selected a build while everyone actually got cli-dev (L-H3).
+        context.Console.MarkupLine($"[grey]Updating CLI and Core from release tag[/] [white]{Markup.Escape(releaseTag)}[/][grey].[/]");
+        WarnOnDowngrade(selectedChannel);
+
         try
         {
-            await new SelfUpdateService(context).UpdateAsync();
+            await new SelfUpdateService(context).UpdateAsync(releaseTag);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
@@ -47,7 +53,7 @@ internal sealed partial class UpdateCommand(CommandContext context)
         try
         {
             await TryStopWindowsCoreBeforeExecutableUpdateAsync();
-            await new CoreInstallationService(context).UpdateAsync();
+            await new CoreInstallationService(context).UpdateAsync(releaseTag);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
@@ -60,6 +66,24 @@ internal sealed partial class UpdateCommand(CommandContext context)
         await CheckCoreAndShellAsync(selectedChannel);
 
         return 0;
+    }
+
+    // Warns when the selected channel's declared CLI version is older than what is installed, so a
+    // `--channel <older>` downgrade is not silent (the SHA-currency check alone can't tell up from down).
+    private void WarnOnDowngrade(ProductChannel? channel)
+    {
+        if (channel?.CliVersion is not { } targetVersion ||
+            !Version.TryParse(targetVersion, out var target) ||
+            !Version.TryParse(CommandLine.Version, out var current))
+        {
+            return;
+        }
+
+        if (target < current)
+        {
+            context.Console.MarkupLine(
+                $"[yellow]Warning:[/] channel [white]{Markup.Escape(channel.Id)}[/] targets CLI [white]{Markup.Escape(targetVersion)}[/], older than the installed [white]{Markup.Escape(CommandLine.Version)}[/] — this is a downgrade.");
+        }
     }
 
     private async Task TryStopWindowsCoreBeforeExecutableUpdateAsync()
@@ -288,7 +312,10 @@ internal sealed partial class UpdateCommand(CommandContext context)
         string Label,
         string? CliVersion,
         string? CoreArtifactPrefix,
-        string? ShellManifestPath);
+        string? ShellManifestPath,
+        // The GitHub release tag the CLI/Core binaries are pulled from for this channel. Absent => the
+        // rolling cli-dev default (ReleaseArtifactService.DefaultReleaseTag).
+        string? ReleaseTag = null);
 
     private const string Usage = """
         Usage:

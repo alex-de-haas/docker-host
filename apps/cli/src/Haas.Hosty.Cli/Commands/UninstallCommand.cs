@@ -5,16 +5,19 @@ using Spectre.Console;
 
 internal sealed class UninstallCommand(CommandContext context)
 {
+    private const string Usage = "Usage: hosty uninstall --yes [--delete-data]";
+
     public async Task<int> ExecuteAsync(string[] args)
     {
-        if (args.Length > 0)
-        {
-            throw new CommandUsageException("uninstall does not accept arguments.", "Usage: hosty uninstall");
-        }
+        var options = ParseOptions(args);
 
         await TryStopCoreAsync();
 
-        var fileCleanup = HostUninstallFileCleanup.Delete(context.Environment, context.Environment.RootDirectory);
+        // Resolve the real data root (an operator may have pointed HOSTY_DATA_ROOT outside ~/.hosty);
+        // always passing RootDirectory would silently orphan an external data root while claiming success.
+        var dataRoot = context.SettingsStore.Load().ResolveHostDataRoot(context.Environment);
+
+        var fileCleanup = HostUninstallFileCleanup.Delete(context.Environment, dataRoot, options.DeleteData);
         foreach (var path in fileCleanup.DeletedPaths)
         {
             context.Console.MarkupLine($"Removed [grey]{Markup.Escape(path)}[/]");
@@ -27,8 +30,43 @@ internal sealed class UninstallCommand(CommandContext context)
 
         context.Console.MarkupLine("[green]Hosty local state has been uninstalled.[/]");
         context.Console.MarkupLine($"CLI directory preserved: [grey]{Markup.Escape(context.Environment.BinDirectory)}[/]");
+        if (!options.DeleteData)
+        {
+            context.Console.MarkupLine($"App data preserved: [grey]{Markup.Escape(dataRoot)}[/]");
+            context.Console.MarkupLine("Rerun with [grey]hosty uninstall --yes --delete-data[/] to also delete app data, backups, and sources.");
+        }
+
         context.Console.MarkupLine("Run [grey]hosty install[/] to recreate local Hosty directories.");
         return 0;
+    }
+
+    private static UninstallOptions ParseOptions(string[] args)
+    {
+        var confirmed = false;
+        var deleteData = false;
+        foreach (var arg in args)
+        {
+            switch (arg)
+            {
+                case "--yes":
+                    confirmed = true;
+                    break;
+                case "--delete-data":
+                    deleteData = true;
+                    break;
+                default:
+                    throw new CommandUsageException($"Unknown uninstall argument '{arg}'.", Usage);
+            }
+        }
+
+        if (!confirmed)
+        {
+            throw new CommandUsageException(
+                "hosty uninstall permanently removes Hosty local state and requires --yes to confirm. Add --delete-data to also delete app data, backups, and sources.",
+                Usage);
+        }
+
+        return new UninstallOptions(deleteData);
     }
 
     private async Task TryStopCoreAsync()
@@ -39,17 +77,35 @@ internal sealed class UninstallCommand(CommandContext context)
             return;
         }
 
+        var processId = core.CoreProcessId;
         try
         {
             await core.PostAsync("core/stop");
             context.Console.MarkupLine("[grey]Hosty Core stop requested.[/]");
-            await Task.Delay(750);
+
+            // Wait for the process to actually exit before deleting files a dying Core may still hold or
+            // recreate (on Windows a locked exe throws mid-deletion). /core/stop only signals shutdown; the
+            // 15s Core shutdown budget can outlast a fixed short delay. Fall back to a short delay when the
+            // discovery file records no PID (older Core).
+            if (processId is int pid && pid > 0)
+            {
+                if (!await ProcessLiveness.WaitForExitAsync(pid, TimeSpan.FromSeconds(20)))
+                {
+                    context.Error.MarkupLine("[yellow]Hosty Core did not exit within 20s; some files may be locked or recreated during uninstall.[/]");
+                }
+            }
+            else
+            {
+                await Task.Delay(750);
+            }
         }
         catch (Exception ex) when (ex is CoreControlException or HttpRequestException or IOException or TaskCanceledException)
         {
             context.Console.MarkupLine($"[yellow]Could not stop Hosty Core before uninstall:[/] {Markup.Escape(ex.Message)}");
         }
     }
+
+    private sealed record UninstallOptions(bool DeleteData);
 }
 
 internal sealed record HostUninstallFileCleanupResult(
@@ -58,7 +114,7 @@ internal sealed record HostUninstallFileCleanupResult(
 
 internal static class HostUninstallFileCleanup
 {
-    public static HostUninstallFileCleanupResult Delete(HostyEnvironment environment, string dataRoot)
+    public static HostUninstallFileCleanupResult Delete(HostyEnvironment environment, string dataRoot, bool deleteData)
     {
         var deletedPaths = new List<string>();
         var skippedPaths = new List<string>();
@@ -68,14 +124,24 @@ internal static class HostUninstallFileCleanup
 
         try
         {
-            if (IsSamePath(dataRootDirectory, rootDirectory))
+            // The launch config (launch.env / auth.json) is install state and is always removed.
+            DeletePath(environment.ConfigDirectory, deletedPaths);
+
+            if (deleteData)
             {
-                DeleteDirectoryContentsExcept(rootDirectory, binDirectory, deletedPaths);
+                if (IsSamePath(dataRootDirectory, rootDirectory))
+                {
+                    DeleteDirectoryContentsExcept(rootDirectory, binDirectory, deletedPaths);
+                }
+                else
+                {
+                    DeleteDataRoot(environment, dataRootDirectory, deletedPaths, skippedPaths);
+                }
             }
             else
             {
-                DeletePath(environment.ConfigDirectory, deletedPaths);
-                DeleteDataRoot(environment, dataRootDirectory, deletedPaths, skippedPaths);
+                // Keep user data (apps.json, apps/, backups/, sources/); remove only Core runtime state.
+                DeleteCoreRuntimeState(environment, dataRootDirectory, deletedPaths, skippedPaths);
             }
 
             Directory.CreateDirectory(rootDirectory);
@@ -87,6 +153,21 @@ internal static class HostUninstallFileCleanup
         }
 
         return new HostUninstallFileCleanupResult(deletedPaths, skippedPaths);
+    }
+
+    private static void DeleteCoreRuntimeState(
+        HostyEnvironment environment,
+        string dataRoot,
+        ICollection<string> deletedPaths,
+        ICollection<string> skippedPaths)
+    {
+        if (IsSamePath(dataRoot, environment.BinDirectory) || IsChildPath(dataRoot, environment.BinDirectory))
+        {
+            skippedPaths.Add(dataRoot);
+            return;
+        }
+
+        DeletePath(Path.Combine(dataRoot, "core"), deletedPaths);
     }
 
     private static void DeleteDataRoot(

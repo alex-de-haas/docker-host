@@ -1,0 +1,41 @@
+# Keeps dependencies current and surfaces security advisories across every ecosystem in the repo.
+# Note (I-M3): the docker/* actions in the image workflows are SHA-pinned; the actions/* ones are still
+# tag-pinned. Dependabot keeps whatever is pinned up to date and (with the config below) opens PRs that
+# can be reviewed to advance to a pinned SHA. Converting the tag pins to SHA pins is a manual one-time
+# edit that needs the resolved digests.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+
+  - package-ecosystem: nuget
+    directories:
+      - /apps/core/src/Haas.Hosty.Core
+      - /apps/cli/src/Haas.Hosty.Cli
+      - /apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend
+    schedule:
+      interval: weekly
+    groups:
+      nuget:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - /apps/shell
+      - /apps/demo-app
+      - /apps/telemetry-backend
+    schedule:
+      interval: weekly

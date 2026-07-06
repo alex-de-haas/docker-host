@@ -17,11 +17,36 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Gate the image push on the Shell build (mirrors CI's Shell job). Catches a broken Shell before the
+  # expensive multi-arch image build/push, so publishing is not decoupled from a passing build.
+  test:
+    name: Gate on build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build Shell
+        run: npm run shell:build
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      # Signed build-provenance attestation for the pushed image (I-M2).
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out repository
@@ -55,6 +80,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish Shell image
+        id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
@@ -64,4 +90,12 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=shell-image
-          cache-to: type=gha,scope=shell-image,mode=min
+          # mode=max caches the npm ci/build stages too, not just the thin final layer (I-M4).
+          cache-to: type=gha,scope=shell-image,mode=max
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

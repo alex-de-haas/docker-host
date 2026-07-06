@@ -404,6 +404,60 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task PerAppLock_SerializesConcurrentVerbsOnSameApp()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: """
+              "settings": [{ "key": "APP_MODE", "type": "string" }],
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        using var startEntered = new ManualResetEventSlim(false);
+        using var releaseStart = new ManualResetEventSlim(false);
+        fixture.Adapter.OnStarted = () =>
+        {
+            startEntered.Set();
+            // Hold the app's operation lock open (inside StartCoreAsync) until the test releases it.
+            releaseStart.Wait(TimeSpan.FromSeconds(5));
+        };
+
+        var startTask = fixture.Service.StartAsync("com.example.notes");
+        Assert.True(startEntered.Wait(TimeSpan.FromSeconds(5)), "start never reached the adapter");
+
+        // A concurrent verb on the same app must block on the per-app lock until Start releases it —
+        // this is what stops a Configure from committing mid-operation and being silently reverted.
+        var configureTask = fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["APP_MODE"] = "staging" }));
+        await Task.Delay(200);
+        Assert.False(configureTask.IsCompleted, "configure ran while start held the per-app lock");
+
+        releaseStart.Set();
+        var startResult = await startTask;
+        await configureTask;
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("running", startResult.App?.RuntimeState);
+        Assert.Equal("staging", app!.Settings["APP_MODE"].Value);
+    }
+
+    [Fact]
+    public async Task ObserveRuntimeHealth_DockerContainerRunningButRecordStopped_ReconcilesToRunning()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        // Record says stopped (fresh install) but a labelled container is actually running — the exact
+        // "stopped but running" drift per-app observation cannot see (C-M1).
+        fixture.Adapter.RunningAppIds.Add("com.example.notes");
+
+        await fixture.Service.ObserveRuntimeHealthAsync(new HashSet<string>(StringComparer.Ordinal));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("running", app!.RuntimeState);
+    }
+
+    [Fact]
     public async Task RemoveAsync_RetainsConfigWhenDataKept_RestoredOnReinstall()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -3829,9 +3883,15 @@ public sealed class CoreLifecycleServiceTests
         }
     }
 
-    private sealed class RecordingRuntimeAdapter : IAppRuntimeAdapter, IImageDigestResolver
+    private sealed class RecordingRuntimeAdapter : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
     {
         public string Type => "docker";
+
+        // App ids the fake docker daemon reports as having a running labelled container (C-M1 sweep).
+        public HashSet<string> RunningAppIds { get; } = new(StringComparer.Ordinal);
+
+        public Task<IReadOnlySet<string>> ListRunningAppIdsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlySet<string>>(RunningAppIds);
 
         public int StartCount { get; private set; }
 

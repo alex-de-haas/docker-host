@@ -145,7 +145,7 @@ internal sealed class DockerStatsExposition(
     {
         try
         {
-            var result = await dockerRunner.RunAsync(args, cancellationToken);
+            var result = await dockerRunner.RunAsync(args, cancellationToken: cancellationToken);
             return result.ExitCode == 0 ? result.StandardOutput : string.Empty;
         }
         catch (DockerUnavailableException)

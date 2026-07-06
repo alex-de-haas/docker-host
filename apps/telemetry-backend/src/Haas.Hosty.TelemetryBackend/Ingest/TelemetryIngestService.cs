@@ -35,6 +35,10 @@ internal sealed class TelemetryIngestService(
     private long logTailOffset;
     private long traceTailOffset;
     private DateTimeOffset lastPruneUtc = DateTimeOffset.MinValue;
+    private DateTimeOffset lastMetricsScrapeUtc = DateTimeOffset.MinValue;
+
+    // Skips re-inserting unchanged metric samples (the exporter re-serves last values every scrape).
+    private readonly MetricDeduplicator metricDeduplicator = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -66,7 +70,16 @@ internal sealed class TelemetryIngestService(
     private async Task IngestTickAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        await ScrapeMetricsAsync(now, cancellationToken);
+
+        // Tail logs/traces every tick for near-real-time freshness, but scrape metrics on their own
+        // slower cadence — the exporter re-serves last values, so tail-rate scraping just inflates the
+        // store with duplicate rows (T-H2).
+        if (now - lastMetricsScrapeUtc >= options.MetricsScrapeInterval)
+        {
+            await ScrapeMetricsAsync(now, cancellationToken);
+            lastMetricsScrapeUtc = now;
+        }
+
         await TailLogsAsync(now, cancellationToken);
         await TailTracesAsync(cancellationToken);
 
@@ -87,7 +100,7 @@ internal sealed class TelemetryIngestService(
         // stats). Both promote the app id to a `hosty_app_id` label, so attribution is identical.
         await ScrapeIntoAsync(samples, options.MetricsScrapeUrl, nowMs, cancellationToken);
         await ScrapeIntoAsync(samples, options.DockerMetricsScrapeUrl, nowMs, cancellationToken);
-        store.RecordMetrics(samples);
+        store.RecordMetrics(metricDeduplicator.Filter(samples, nowMs, (long)options.MetricsHeartbeat.TotalMilliseconds));
     }
 
     private async Task ScrapeIntoAsync(List<MetricSample> samples, string? url, long nowMs, CancellationToken cancellationToken)

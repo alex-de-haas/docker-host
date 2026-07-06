@@ -349,6 +349,29 @@ public sealed class AppRegistryStoreTests
         Assert.Empty(state.Sessions);
     }
 
+    [Fact]
+    public async Task UserDirectoryStore_UpdateAsync_ConcurrentAppends_NoLostWrites()
+    {
+        var root = await CreateTempRootAsync();
+        var store = new UserDirectoryStore(CreatePaths(root));
+        var now = DateTimeOffset.UtcNow;
+
+        // Fire many overlapping read-modify-write appends. A bare Read+Write races last-writer-wins and
+        // drops records; the serialized UpdateAsync must preserve every one.
+        var appends = Enumerable.Range(0, 50).Select(index => Task.Run(() =>
+            store.UpdateAsync(state => state with
+            {
+                Sessions = state.Sessions
+                    .Append(new AuthSessionRecord($"session-{index}", $"user-{index}", now, now.AddHours(1), null))
+                    .ToArray(),
+            })));
+        await Task.WhenAll(appends);
+
+        var state = await store.ReadAsync();
+        Assert.Equal(50, state.Sessions.Count);
+        Assert.Equal(50, state.Sessions.Select(session => session.Id).Distinct(StringComparer.Ordinal).Count());
+    }
+
     private static AppRecord CreateApp(string id)
         => new(
             Id: id,
