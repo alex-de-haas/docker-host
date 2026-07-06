@@ -284,7 +284,10 @@ internal sealed record ArtifactLock(
 // `pre-development-mode` backup taken at that moment (null when the app has no data directory to snapshot).
 internal sealed record DevelopmentModeBaseline(string Version, string? BackupId);
 
-internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret, bool Required = false);
+// Label/Description are optional manifest-derived presentation metadata (like Type/Secret/Required),
+// denormalized here and refreshed from the manifest on each BuildAppRecord. Additive and nullable, so
+// old persisted state deserializes fine (missing => null) with no AppStateDocument schema bump.
+internal sealed record AppSettingValue(string Key, string Type, string? Value, bool Secret, bool Required = false, string? Label = null, string? Description = null);
 
 internal sealed record AppStorageMapping(string Key, string HostPath, string TargetPath, bool ReadOnly);
 
@@ -712,7 +715,7 @@ internal sealed record AppSummary(
         IReadOnlyList<AppEndpointContract> endpoints)
     {
         var summaries = settings.Values
-            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret, setting.Required), StringComparer.Ordinal);
+            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret, setting.Required, setting.Label, setting.Description), StringComparer.Ordinal);
         foreach (var endpoint in endpoints.Where(endpoint => endpoint.Public))
         {
             var key = PublicOriginSettings.BuildSettingKey(endpoint.Key);
@@ -801,7 +804,7 @@ internal sealed record AppSummary(
     }
 }
 
-internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false);
+internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false, string? Label = null, string? Description = null);
 
 internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl);
 

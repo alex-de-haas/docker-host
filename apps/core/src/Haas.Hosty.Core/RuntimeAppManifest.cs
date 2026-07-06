@@ -2467,6 +2467,12 @@ internal sealed class RuntimeAppSettingManifest
     public string? Default { get; init; }
     public bool Secret { get; init; }
     public bool Required { get; init; }
+
+    // Optional human-readable metadata surfaced by the Shell settings/install UI. Label is a friendly
+    // name shown instead of the raw env-var Key; Description is help text explaining what the setting
+    // does. Both are presentation-only — Core never validates or acts on them.
+    public string? Label { get; init; }
+    public string? Description { get; init; }
 }
 
 internal sealed class RuntimeAppDependencyManifest
