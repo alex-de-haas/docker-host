@@ -124,6 +124,20 @@ internal sealed class CatalogSourceService(CatalogSourceStore store, HostyCoreRu
         return value;
     }
 
+    // Dedup/lookup equality. For http(s) URLs, compare as Uri so scheme/host casing and default ports
+    // normalize (github.io == GitHub.io); for local paths stay Ordinal — Unix paths are case-sensitive,
+    // so folding case there would wrongly treat distinct paths as the same source.
     private static bool UrlEquals(string left, string right)
-        => string.Equals(left.Trim(), right.Trim(), StringComparison.Ordinal);
+    {
+        var l = left.Trim();
+        var r = right.Trim();
+        if (Uri.TryCreate(l, UriKind.Absolute, out var leftUri) &&
+            Uri.TryCreate(r, UriKind.Absolute, out var rightUri) &&
+            (leftUri.Scheme == Uri.UriSchemeHttp || leftUri.Scheme == Uri.UriSchemeHttps))
+        {
+            return leftUri == rightUri;
+        }
+
+        return string.Equals(l, r, StringComparison.Ordinal);
+    }
 }

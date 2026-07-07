@@ -51,7 +51,10 @@ export function MarketplaceSourcesDialog({
         }
         setError(caught instanceof Error ? caught.message : "Loading catalog sources failed.");
       } finally {
-        setLoading(false);
+        // Don't flip loading off for a superseded/aborted load — a newer one may be in flight.
+        if (!signal?.aborted) {
+          setLoading(false);
+        }
       }
     },
     [coreOrigin],

@@ -55,6 +55,17 @@ public sealed class CatalogSourceServiceTests
         Assert.Equal("catalog_source_exists", ex.Code);
     }
 
+    [Fact]
+    public async Task AddAsync_HostCaseInsensitiveDuplicate_ThrowsExists()
+    {
+        // http(s) sources compare as URIs, so a host/scheme-cased variant is the same source.
+        var (service, _) = CreateService([Official]);
+
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(
+            () => service.AddAsync("https://Alex-De-Haas.GitHub.io/hosty-catalog/catalog.json", CancellationToken.None));
+        Assert.Equal("catalog_source_exists", ex.Code);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("ftp://example/catalog.json")]

@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Haas.Hosty.Core;
 
 // Host-level list of catalog sources an operator has configured (WS7 federation). Persisted at
@@ -13,9 +15,18 @@ internal sealed class CatalogSourceStore(CoreDataPaths paths)
     // to the env default. A present-but-empty list means the operator deliberately cleared every source.
     public async Task<CatalogSourceState?> ReadAsync(CancellationToken cancellationToken = default)
     {
-        var state = await JsonStorage.ReadAsync<CatalogSourceState>(StatePath, cancellationToken);
-        // A corrupted/hand-edited file with "sources": null would otherwise NRE in the service.
-        return state is null ? null : state with { Sources = state.Sources ?? [] };
+        try
+        {
+            var state = await JsonStorage.ReadAsync<CatalogSourceState>(StatePath, cancellationToken);
+            // A corrupted/hand-edited file with "sources": null would otherwise NRE in the service.
+            return state is null ? null : state with { Sources = state.Sources ?? [] };
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            // A corrupt/locked catalog-sources.json must degrade to the env-seeded default (null), never
+            // 500 the best-effort storefront read. OperationCanceledException still propagates.
+            return null;
+        }
     }
 
     public async Task WriteAsync(CatalogSourceState state, CancellationToken cancellationToken = default)
