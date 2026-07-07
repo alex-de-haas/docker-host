@@ -46,6 +46,10 @@ internal static class HostyCoreApplication
         // storefront. A discovery/trust index over existing transport — it installs nothing.
         builder.Services.AddSingleton<ICatalogDocumentFetcher>(sp =>
             new HttpCatalogDocumentFetcher(sp.GetRequiredService<IClock>()));
+        // WS7 federation: operator-managed catalog sources, seeded from HOSTY_CATALOG_SOURCES and mutable
+        // at runtime. CatalogService reads the effective list from here on every storefront fetch.
+        builder.Services.AddSingleton<CatalogSourceStore>();
+        builder.Services.AddSingleton<CatalogSourceService>();
         builder.Services.AddSingleton<CatalogService>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();

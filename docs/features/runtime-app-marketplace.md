@@ -1,15 +1,16 @@
 # Runtime App Marketplace
 
-Status: **MVP shipped (2026-07-05).** The update/artifact/lock/live-source foundation was
-already shipped; the catalog storefront now is too — **WS1** (catalogMetadata, PR #105),
-**WS2** (`/api/catalog`, PR #106), and **WS3** (Shell `/marketplace`, PR #107) are merged to
-`main` (platform 0.32.0 / Shell 0.19.0), and **WS6** (the public
+Status: **MVP shipped (2026-07-05); CLI + federation shipped (2026-07-07).** The
+update/artifact/lock/live-source foundation was already shipped; the catalog storefront now is
+too — **WS1** (catalogMetadata, PR #105), **WS2** (`/api/catalog`, PR #106), and **WS3** (Shell
+`/marketplace`, PR #107) are merged to `main`, and **WS6** (the public
 [`hosty-catalog`](https://github.com/alex-de-haas/hosty-catalog) repo + CI publishing
-`catalog.json` to GitHub Pages) is live and end-to-end verified. Remaining, deferred:
-**WS4** (`hosty catalog` CLI), **WS5** (signing), **WS7** (federation). See "Implementation
-Readiness" for the plan and "Delivery status" for what shipped.
+`catalog.json` to GitHub Pages) is live and end-to-end verified. **WS4** (`hosty catalog` CLI)
+and **WS7** (operator-managed catalog sources — runtime-mutable, no restart) shipped on
+2026-07-07 (platform 0.34.0 / Shell 0.21.0). Remaining, deferred: **WS5** (signing). See
+"Implementation Readiness" for the plan and "Delivery status" for what shipped.
 Created: 2026-06-25
-Updated: 2026-07-06
+Updated: 2026-07-07
 
 ## Motivation
 
@@ -946,9 +947,11 @@ because no catalog delivery path exists for it yet - not because the catalog rej
 | --- | --- |
 | **WS1** | **Shipped** — PR #105, platform 0.31.0. `catalogMetadata` block, normalized + persisted + surfaced on `AppSummary`. |
 | **WS2** | **Shipped** — PR #106, platform 0.32.0. `CatalogService` + `HttpCatalogDocumentFetcher` (streaming byte-cap) + `CatalogEndpoints`; `HOSTY_CATALOG_SOURCES` config; strict `schemaVersion` check. Install/update reuse existing endpoints (no new install path). |
-| **WS3** | **Shipped** — PR #107, Shell 0.19.0. `/marketplace` storefront (cards, search, category chips) + `CatalogAppDetailsDialog`; install via the existing review dialog seeded with a version's `manifestRef`. |
+| **WS3** | **Shipped** — PR #107, Shell 0.19.0. `/marketplace` storefront (cards, search, category chips) + `CatalogAppDetailsDialog`; install via the existing review dialog seeded with a version's `manifestRef`. Cards keep category/tag badges on one row with a `+N` overflow tooltip, and uninstalled apps expose a card-level Install action next to Details. |
 | **WS6** | **Shipped** — public [`hosty-catalog`](https://github.com/alex-de-haas/hosty-catalog): `marketplace.0.1` schemas, dependency-free validate/generate tooling, PR-gate + Pages-publish workflows, an app-submission issue form, and a seed entry. Live at `https://alex-de-haas.github.io/hosty-catalog/catalog.json`. |
-| **WS4 / WS5 / WS7** | **Deferred** — CLI `hosty catalog`, index/feed signing (ECDsa P-256), and federation. |
+| **WS4** | **Shipped (2026-07-07)** — platform 0.34.0. `hosty catalog list` / `show <id>` / `install <id> [--version]` / `sources` over new `/control/v1/catalog/*` twins of the read API. Install resolves a version's `manifestRef` and reuses the existing reviewed `apps/install` path (the catalog installs nothing itself). AOT-clean per-command source-gen context. |
+| **WS7** | **Shipped (2026-07-07)** — platform 0.34.0 / Shell 0.21.0. Operator-managed catalog sources: a runtime-mutable `CatalogSourceStore` seeded from `HOSTY_CATALOG_SOURCES` and served/edited via `GET/POST/DELETE /api/catalog/sources` (session + CSRF) and `/control/v1/catalog/sources` (control secret). Changes take effect on the next storefront fetch — no Core restart. Managed by the Shell `/marketplace` **Sources** dialog and the CLI `hosty catalog sources add/remove`. The env var is the seed/default; the store takes over on the first edit. Each app already carries `sourceName` for federation legibility. |
+| **WS5** | **Deferred** — index/feed signing (ECDsa P-256, two-level trust). Feasibility proven (B3 spike); net-new crypto path in Core + signing in the `hosty-catalog` CI. |
 
 **End-to-end verified (2026-07-05):** a Core 0.32.0 configured with
 `HOSTY_CATALOG_SOURCES=https://alex-de-haas.github.io/hosty-catalog/catalog.json` served the

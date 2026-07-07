@@ -1169,7 +1169,7 @@ export function ShellClient({
   }
 
   const openInstallDialog = useCallback((manifestPath?: string) => {
-    setInstallInitialManifest(manifestPath ?? null);
+    setInstallInitialManifest(typeof manifestPath === "string" ? manifestPath : null);
     setInstallOpen(true);
     setInstallPanel(emptyInstallPanelState());
   }, []);

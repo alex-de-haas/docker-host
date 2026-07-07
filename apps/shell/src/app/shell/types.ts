@@ -665,6 +665,19 @@ export type CatalogAppDetail = {
 
 export type CatalogAppsResponse = { apps: CatalogAppSummary[] };
 
+// One operator-configured catalog source (WS7 federation). `name` is derived by Core from the URL host.
+export type CatalogSource = {
+  url: string;
+  name: string;
+};
+
+// `managed` is false while the list is still the untouched HOSTY_CATALOG_SOURCES default and true once an
+// operator has added/removed a source (the list is then persisted; env changes no longer apply).
+export type CatalogSourcesResponse = {
+  sources: CatalogSource[];
+  managed: boolean;
+};
+
 export type CatalogListState = {
   loading: boolean;
   error: string | null;

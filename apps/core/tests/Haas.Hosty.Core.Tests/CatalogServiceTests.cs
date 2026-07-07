@@ -282,7 +282,10 @@ public sealed class CatalogServiceTests
         }
 
         var config = CreateConfig(root, sources);
-        return new CatalogService(config, store, fetcher, NullLogger<CatalogService>.Instance);
+        // No catalog-sources.json is written, so the source service falls back to the env-seeded
+        // config.EffectiveCatalogSources — behaviour identical to reading the sources directly.
+        var sourceService = new CatalogSourceService(new CatalogSourceStore(paths), config);
+        return new CatalogService(sourceService, store, fetcher, NullLogger<CatalogService>.Instance);
     }
 
     private static HostyCoreRuntimeConfig CreateConfig(string root, IReadOnlyList<string> sources)

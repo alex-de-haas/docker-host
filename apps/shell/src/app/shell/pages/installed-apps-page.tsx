@@ -237,7 +237,7 @@ export function InstalledAppsPage({
               </Button>
             )}
             {canManageApps && (
-              <Button onClick={onInstall}>
+              <Button onClick={() => onInstall()}>
                 <Plus className="h-4 w-4" />
                 Install App
               </Button>
