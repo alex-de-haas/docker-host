@@ -47,11 +47,9 @@ internal sealed class CatalogSourceService(CatalogSourceStore store, HostyCoreRu
 
     public async Task<CatalogSourcesResponse> RemoveAsync(string? url, CancellationToken cancellationToken = default)
     {
-        var target = url?.Trim() ?? string.Empty;
-        if (target.Length == 0)
-        {
-            throw new AppLifecycleException("catalog_source_invalid", "Catalog source cannot be empty.");
-        }
+        // Validate the same way as AddAsync so a malformed URL/path is a 400 (catalog_source_invalid),
+        // not a misleading 404 — consistent with the documented error contract.
+        var target = NormalizeAndValidate(url);
 
         await mutationLock.WaitAsync(cancellationToken);
         try

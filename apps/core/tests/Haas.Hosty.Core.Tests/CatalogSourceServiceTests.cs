@@ -104,6 +104,20 @@ public sealed class CatalogSourceServiceTests
         Assert.Empty(await service.GetEffectiveSourcesAsync(CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("relative/catalog.json")]
+    [InlineData("ftp://example/catalog.json")]
+    public async Task RemoveAsync_InvalidSource_ThrowsInvalid(string url)
+    {
+        // A malformed remove target is a 400 (invalid), consistent with AddAsync — not a misleading 404.
+        var (service, _) = CreateService([Official]);
+
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(
+            () => service.RemoveAsync(url, CancellationToken.None));
+        Assert.Equal("catalog_source_invalid", ex.Code);
+    }
+
     [Fact]
     public async Task RemoveAsync_NotConfigured_ThrowsNotFound()
     {
