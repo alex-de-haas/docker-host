@@ -206,7 +206,10 @@ function MarketplaceCard({
       const detail = await getCatalogApp(coreOrigin, app.id);
       const version = selectInstallVersion(detail);
       if (!version) {
-        throw new Error("No installable release is published for this app.");
+        // No unambiguous version to one-click install (no releases, or several untagged versions) —
+        // send the operator to Details to choose explicitly rather than guessing a feed entry.
+        onOpen();
+        return;
       }
 
       onInstall(version.manifestRef);
@@ -215,7 +218,7 @@ function MarketplaceCard({
     } finally {
       setInstalling(false);
     }
-  }, [app.id, coreOrigin, onInstall]);
+  }, [app.id, coreOrigin, onInstall, onOpen]);
 
   return (
     <div className="flex flex-col rounded-lg border bg-card p-4">
@@ -418,7 +421,10 @@ function selectInstallVersion(app: CatalogAppDetail): CatalogAppVersion | null {
     }
   }
 
-  return app.versions[0] ?? null;
+  // Don't guess: the feed order is arbitrary, so with several untagged versions defer to Details for an
+  // explicit choice (parity with the CLI's `hosty catalog install`, which requires --version here). Only
+  // the sole version auto-installs.
+  return app.versions.length === 1 ? app.versions[0] : null;
 }
 
 function CategoryChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
