@@ -2,7 +2,8 @@
 
 Status: **Planned — design confirmed 2026-07-07, nothing implemented.** All
 decisions Q1–Q13 (including the Q3/D1–D7 endpoint design) are confirmed.
-Promoted from `docs/ideas/manifest-level-app-assets.md`.
+Distilled from the 2026-07-07 design discussion; the interim idea draft was
+folded into this document rather than committed.
 Created: 2026-07-07
 
 ## Motivation
@@ -107,8 +108,12 @@ consumer). Not on the control plane — the CLI has no use for image bytes.
   resolution at all.
 - **Symlink containment (D3).** The one enforced check that remains: the
   realpath of the final target (junctions included on Windows) must sit under
-  the realpath of the root, comparing canonicalized paths on both sides
-  (case-insensitive filesystems defeat naive prefix checks). A repo shipping
+  the realpath of the root. Canonicalize both sides first, then compare
+  **case-sensitively** (`StringComparison.Ordinal`): canonicalization yields
+  the true on-disk casing, which is what handles case-insensitive
+  filesystems — whereas a case-insensitive *comparison* would false-match
+  distinct sibling paths on case-sensitive Unix filesystems, turning a
+  convenience into a containment bypass. A repo shipping
   `icon.png -> ../../secret` gets a 404.
 - **Allowlist and content type (D4).** `svg png webp jpg jpeg gif avif md`
   (gif because animated README previews are common practice). Content-Type
@@ -142,7 +147,10 @@ consumer). Not on the control plane — the CLI has no use for image bytes.
   description ≤ 256 KB. Manifest-by-URL vendoring additionally capped at
   ~32 files / 20 MB total. Violations are treated-as-absent and logged — an
   install never fails over display assets; an unreachable asset simply means
-  no icon.
+  no icon. Remote fetches **stream through a capped reader** that aborts at
+  the byte limit — never trust `Content-Length`, never buffer unbounded
+  (chunked transfer encoding can omit or lie about size); same pattern as
+  WS2's `HttpCatalogDocumentFetcher`.
 - Uninstall cleanup rides the existing internal-copy removal.
 
 ### Manifest contract additions
@@ -231,6 +239,12 @@ plus global `fetch`):
    rewriting unnecessary, a discovery miss degrades to a visibly broken image
    at review while a mutation bug would corrupt content, and a byte-identical
    file stays diffable at review and hashable/signable under a future WS5.
+   Discovery **fails loudly on what it can see**: every discovered image
+   construct must resolve to either an absolute http(s) URL or an in-root
+   relative path — anything else (a ref escaping the root, a reference-style
+   image with no matching definition, a captured-but-malformed target) fails
+   the build rather than being skipped. Only constructs the regexes cannot
+   recognize at all remain a review-time concern.
 4. Emit a generated `display.descriptionUrl` on the published entry.
 
 Publish budgets mirror D7: description ≤ 256 KB, image ≤ 2 MB, ~32 files /
@@ -297,15 +311,18 @@ to verify the catalog-independent path.
   segments (ADS), URL-encoded variants, case-insensitive prefix collisions,
   symlink/junction escapes → 404.
 - Vendoring: budgets (count/total/per-file), treated-as-absent on violation,
-  declared+parsed set for manifest-by-URL, Development Mode live-serve.
+  declared+parsed set for manifest-by-URL, Development Mode live-serve;
+  capped-stream fetch aborts an oversized body regardless of
+  `Content-Length`.
 - Header assertions: nosniff + CSP on every asset response; immutable caching
   only with `v`.
 - Shell: Lucide fallback when `iconUrl` absent; raw HTML in markdown renders
   as text; relative-ref base resolution (including refs escaping the root →
   plain alt text); external absolute images render as links.
 - Catalog: regex discovery forms (`![...](...)`, `<img src>`, reference
-  definitions); build failure on referenced-image fetch failure; vendored md
-  byte-identical to source.
+  definitions); build failure on referenced-image fetch failure AND on
+  discovered-but-unresolvable refs (root escape, dangling reference-style
+  id, malformed target); vendored md byte-identical to source.
 
 ## Boundaries
 
