@@ -26,12 +26,16 @@ updates:
         update-types: ["minor", "patch"]
     ignore:
       # eslint 10 and typescript 6 majors are gated on the Next.js lint preset:
-      # eslint-config-next@16.2.x bundles eslint-plugin-react that crashes under
-      # eslint 10 (removed context.getFilename API), and @typescript-eslint (pulled
-      # transitively by the preset) only peers typescript <6.1.0 from 8.63+. Adopt
-      # eslint 10 + typescript 6 + the typescript-eslint bump together once
-      # eslint-config-next ships eslint-10 support; block the weekly no-op majors
-      # until then. Minor/patch (eslint 9.x, typescript 5.x) still flow via the group.
+      #   - eslint 10: eslint-config-next@16.2.x bundles an eslint-plugin-react that
+      #     crashes under eslint 10 (calls the removed context.getFilename API).
+      #   - typescript 6: @typescript-eslint is pulled in transitively by the preset.
+      #     The version installed today (8.48.x) peers "typescript <6.0.0", so it
+      #     excludes TS 6. Adopting TS 6 requires bumping that stack to >=8.63, which
+      #     widens the peer to "typescript <6.1.0".
+      # Both Dependabot majors are therefore lockfile no-ops right now. Adopt eslint 10
+      # + typescript 6 + the typescript-eslint bump together once eslint-config-next
+      # ships eslint-10 support; block the weekly no-op majors until then. Minor/patch
+      # (eslint 9.x, typescript 5.x) still flow via the group.
       - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]
       - dependency-name: "typescript"
