@@ -119,7 +119,7 @@ internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDis
 // and non-intrusive: no sources configured => an empty catalog, and installed apps need not belong to one.
 // See docs/features/runtime-app-marketplace.md (B2, and the optionality invariant).
 internal sealed class CatalogService(
-    HostyCoreRuntimeConfig config,
+    CatalogSourceService sourceService,
     AppRegistryStore apps,
     ICatalogDocumentFetcher fetcher,
     ILogger<CatalogService> logger)
@@ -209,7 +209,7 @@ internal sealed class CatalogService(
         // App ids are lowercase by contract, but match case-insensitively so a catalog entry authored with
         // different casing still de-dupes across sources and joins with the installed registry.
         var merged = new Dictionary<string, LocatedEntry>(StringComparer.OrdinalIgnoreCase);
-        var sources = config.EffectiveCatalogSources;
+        var sources = await sourceService.GetEffectiveSourcesAsync(cancellationToken);
         foreach (var source in sources)
         {
             var index = await LoadIndexAsync(source, cancellationToken);
@@ -358,8 +358,9 @@ internal sealed class CatalogService(
     }
 
     // "https://raw.githubusercontent.com/org/hosty-catalog/…" -> "raw.githubusercontent.com"; a local
-    // path -> its file name. Cosmetic source label for federation legibility.
-    private static string DeriveSourceName(string source)
+    // path -> its file name. Cosmetic source label for federation legibility. Shared with
+    // CatalogSourceService so the sources list and the storefront cards derive the same name.
+    internal static string DeriveSourceName(string source)
     {
         if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && !uri.IsFile)
         {

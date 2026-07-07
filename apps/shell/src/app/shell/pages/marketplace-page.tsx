@@ -1,25 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, LoaderCircle, Package, RefreshCw, Search, Store } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CheckCircle2, Download, LoaderCircle, Package, RefreshCw, Search, Settings2, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { getCatalogApps } from "../catalog-api";
+import { getCatalogApp, getCatalogApps } from "../catalog-api";
 import { CatalogAppDetailsDialog } from "../dialogs/catalog-app-details-dialog";
-import type { CatalogAppSummary, CatalogListState } from "../types";
+import { MarketplaceSourcesDialog } from "../dialogs/marketplace-sources-dialog";
+import type { CatalogAppDetail, CatalogAppSummary, CatalogAppVersion, CatalogListState } from "../types";
 import { EmptyState, PageHeader } from "../ui";
+
+type SendCsrfJson = (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
 
 // The marketplace storefront: a discovery layer over the configured catalog sources. Browsing and
 // install both go through Core's existing reviewed flow — a card opens the app detail, and installing a
 // version hands its manifestRef to the install dialog. Optional/non-intrusive: an empty catalog (no
 // sources configured) simply shows an empty state.
-export function MarketplacePage({ coreOrigin, onInstall }: { coreOrigin: string; onInstall: (manifestRef: string) => void }) {
+export function MarketplacePage({
+  coreOrigin,
+  onInstall,
+  sendCsrfJson,
+}: {
+  coreOrigin: string;
+  onInstall: (manifestRef: string) => void;
+  sendCsrfJson: SendCsrfJson;
+}) {
   const [state, setState] = useState<CatalogListState>({ loading: true, error: null, apps: [] });
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -93,10 +105,16 @@ export function MarketplacePage({ coreOrigin, onInstall }: { coreOrigin: string;
         title="Marketplace"
         description="Discover and install runtime apps from the configured catalog sources."
         actions={
-          <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={state.loading}>
-            {state.loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setSourcesOpen(true)}>
+              <Settings2 className="h-4 w-4" />
+              Sources
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={state.loading}>
+              {state.loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -129,14 +147,14 @@ export function MarketplacePage({ coreOrigin, onInstall }: { coreOrigin: string;
         <EmptyState
           icon={Store}
           title="No catalog apps"
-          description="No marketplace source is configured, or the configured sources are empty. Set HOSTY_CATALOG_SOURCES on Core to add one."
+          description="No marketplace source is configured, or the configured sources are empty. Use Sources to add one."
         />
       ) : filtered.length === 0 ? (
         <EmptyState icon={Search} title="No matches" description="No catalog app matches the current search or category." />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((app) => (
-            <MarketplaceCard key={app.id} app={app} onOpen={() => setSelectedId(app.id)} />
+            <MarketplaceCard key={app.id} app={app} coreOrigin={coreOrigin} onOpen={() => setSelectedId(app.id)} onInstall={onInstall} />
           ))}
         </div>
       )}
@@ -150,11 +168,58 @@ export function MarketplacePage({ coreOrigin, onInstall }: { coreOrigin: string;
           onInstall={onInstall}
         />
       )}
+
+      <MarketplaceSourcesDialog
+        open={sourcesOpen}
+        coreOrigin={coreOrigin}
+        sendCsrfJson={sendCsrfJson}
+        onClose={() => setSourcesOpen(false)}
+        onChanged={refresh}
+      />
     </div>
   );
 }
 
-function MarketplaceCard({ app, onOpen }: { app: CatalogAppSummary; onOpen: () => void }) {
+type MarketplaceCardBadge = {
+  label: string;
+  variant: "secondary" | "outline";
+};
+
+function MarketplaceCard({
+  app,
+  coreOrigin,
+  onOpen,
+  onInstall,
+}: {
+  app: CatalogAppSummary;
+  coreOrigin: string;
+  onOpen: () => void;
+  onInstall: (manifestRef: string) => void;
+}) {
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+
+  const startInstall = useCallback(async () => {
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      const detail = await getCatalogApp(coreOrigin, app.id);
+      const version = selectInstallVersion(detail);
+      if (!version) {
+        // No unambiguous version to one-click install (no releases, or several untagged versions) —
+        // send the operator to Details to choose explicitly rather than guessing a feed entry.
+        onOpen();
+        return;
+      }
+
+      onInstall(version.manifestRef);
+    } catch (error) {
+      setInstallError(error instanceof Error ? error.message : "Install review is unavailable.");
+    } finally {
+      setInstalling(false);
+    }
+  }, [app.id, coreOrigin, onInstall, onOpen]);
+
   return (
     <div className="flex flex-col rounded-lg border bg-card p-4">
       <div className="flex min-w-0 items-start gap-3">
@@ -180,22 +245,186 @@ function MarketplaceCard({ app, onOpen }: { app: CatalogAppSummary; onOpen: () =
 
       {app.summary && <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{app.summary}</p>}
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {app.category && <Badge variant="secondary">{app.category}</Badge>}
-        {(app.tags ?? []).slice(0, 3).map((tag) => (
-          <Badge key={tag} variant="outline">
-            {tag}
-          </Badge>
-        ))}
-      </div>
+      <MarketplaceCardBadges category={app.category} tags={app.tags ?? []} />
 
       <div className="mt-4 flex items-center gap-2">
         <Button type="button" size="sm" onClick={onOpen}>
           Details
         </Button>
+        {!app.installed && (
+          <Button type="button" size="sm" variant="outline" onClick={startInstall} disabled={installing}>
+            {installing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Install
+          </Button>
+        )}
+      </div>
+      {installError && <p className="mt-2 text-xs text-destructive">{installError}</p>}
+    </div>
+  );
+}
+
+function MarketplaceCardBadges({ category, tags }: { category?: string | null; tags: string[] }) {
+  const items = useMemo<MarketplaceCardBadge[]>(() => {
+    const badges: MarketplaceCardBadge[] = [];
+    if (category) {
+      badges.push({ label: category, variant: "secondary" });
+    }
+    for (const tag of tags) {
+      badges.push({ label: tag, variant: "outline" });
+    }
+    return badges;
+  }, [category, tags]);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const measuringRef = useRef<HTMLDivElement | null>(null);
+  const moreMeasureRef = useRef<HTMLSpanElement | null>(null);
+  const badgeRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const [visibleCount, setVisibleCount] = useState(items.length);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowTooltipId = useId();
+
+  useEffect(() => {
+    if (items.length === 0) {
+      return;
+    }
+
+    const calculateVisibleCount = () => {
+      const container = containerRef.current;
+      const measuring = measuringRef.current;
+      const more = moreMeasureRef.current;
+      if (!container || !measuring || !more) {
+        return;
+      }
+
+      const containerWidth = container.getBoundingClientRect().width;
+      const gap = Number.parseFloat(getComputedStyle(measuring).columnGap || "0") || 0;
+      const widths = items.map((_, index) => badgeRefs.current[index]?.getBoundingClientRect().width ?? 0);
+      const totalBadgesWidth = widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, widths.length - 1);
+      if (totalBadgesWidth <= containerWidth) {
+        setVisibleCount((current) => (current === items.length ? current : items.length));
+        return;
+      }
+
+      const moreWidth = more.getBoundingClientRect().width;
+      let visible = 0;
+      for (let count = items.length - 1; count >= 0; count -= 1) {
+        const visibleWidth = widths.slice(0, count).reduce((sum, width) => sum + width, 0);
+        const gaps = count > 0 ? gap * count : 0;
+        const candidateWidth = visibleWidth + gaps + moreWidth;
+        if (candidateWidth <= containerWidth) {
+          visible = count;
+          break;
+        }
+      }
+
+      setVisibleCount((current) => (current === visible ? current : visible));
+    };
+
+    calculateVisibleCount();
+    const observer = new ResizeObserver(calculateVisibleCount);
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+    window.addEventListener("resize", calculateVisibleCount);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", calculateVisibleCount);
+    };
+  }, [items]);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  const visible = items.slice(0, visibleCount);
+  const hidden = items.slice(visibleCount);
+
+  return (
+    <div className="relative mt-3">
+      <div ref={containerRef} className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-hidden">
+        {visible.map((item, index) => (
+          <MarketplaceTagBadge key={`${item.label}-${index}`} item={item} />
+        ))}
+        {hidden.length > 0 && (
+          <span
+            tabIndex={0}
+            aria-describedby={overflowOpen ? overflowTooltipId : undefined}
+            aria-label={`${hidden.length} hidden tag${hidden.length === 1 ? "" : "s"}: ${hidden.map((item) => item.label).join(", ")}`}
+            className="inline-flex outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            onBlur={() => setOverflowOpen(false)}
+            onFocus={() => setOverflowOpen(true)}
+            onMouseEnter={() => setOverflowOpen(true)}
+            onMouseLeave={() => setOverflowOpen(false)}
+          >
+            <Badge variant="outline" className="cursor-default tabular-nums">
+              +{hidden.length}
+            </Badge>
+          </span>
+        )}
+      </div>
+
+      {hidden.length > 0 && overflowOpen && (
+        <div
+          id={overflowTooltipId}
+          role="tooltip"
+          className="absolute bottom-full right-0 z-50 mb-2 max-w-xs rounded-md bg-foreground px-3 py-1.5 text-xs text-background shadow-md"
+        >
+          <div className="flex max-w-xs flex-wrap gap-1.5">
+            {hidden.map((item, index) => (
+              <MarketplaceTagBadge key={`${item.label}-${index}`} item={item} tooltip />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div
+        ref={measuringRef}
+        aria-hidden="true"
+        className="pointer-events-none invisible fixed left-0 top-0 flex max-w-none flex-nowrap items-center gap-1.5 whitespace-nowrap"
+      >
+        {items.map((item, index) => (
+          <span key={`${item.label}-${index}`} ref={(node) => { badgeRefs.current[index] = node; }} className="inline-flex">
+            <MarketplaceTagBadge item={item} />
+          </span>
+        ))}
+        <span ref={moreMeasureRef} className="inline-flex">
+          <Badge variant="outline" className="tabular-nums">
+            +{items.length}
+          </Badge>
+        </span>
       </div>
     </div>
   );
+}
+
+function MarketplaceTagBadge({ item, tooltip = false }: { item: MarketplaceCardBadge; tooltip?: boolean }) {
+  return (
+    <Badge
+      variant={item.variant}
+      className={cn("max-w-full", tooltip && "border-background/20 bg-background/10 text-background")}
+    >
+      <span className="min-w-0 truncate">{item.label}</span>
+    </Badge>
+  );
+}
+
+function selectInstallVersion(app: CatalogAppDetail): CatalogAppVersion | null {
+  if (!app.versions || app.versions.length === 0) {
+    return null;
+  }
+
+  if (app.stableVersion) {
+    const stable = app.versions.find((version) => version.version === app.stableVersion);
+    if (stable) {
+      return stable;
+    }
+  }
+
+  // Don't guess: the feed order is arbitrary, so with several untagged versions defer to Details for an
+  // explicit choice (parity with the CLI's `hosty catalog install`, which requires --version here). Only
+  // the sole version auto-installs.
+  return app.versions.length === 1 ? app.versions[0] : null;
 }
 
 function CategoryChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {

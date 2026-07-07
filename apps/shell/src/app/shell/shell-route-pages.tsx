@@ -104,7 +104,11 @@ export function ShellMarketplaceRoute() {
 
   return (
     <AdminShellRoute>
-      <MarketplacePage coreOrigin={shellActions.coreOrigin} onInstall={shellActions.openInstallDialog} />
+      <MarketplacePage
+        coreOrigin={shellActions.coreOrigin}
+        onInstall={shellActions.openInstallDialog}
+        sendCsrfJson={shellActions.sendCsrfJson}
+      />
     </AdminShellRoute>
   );
 }

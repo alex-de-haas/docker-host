@@ -133,3 +133,14 @@ internal sealed record CatalogAppDetailResponse(
     bool UpdateAvailable);
 
 internal sealed record CatalogAppVersion(string Version, string ManifestRef, CatalogArtifact? Artifact);
+
+// ---- API responses (`/api/catalog/sources`, `/control/v1/catalog/sources`) -----------------------
+
+// The configured catalog sources (WS7 federation). `Managed` is false while the list is still the
+// untouched env default (`HOSTY_CATALOG_SOURCES`) and true once an operator has added/removed a source
+// (the list is then persisted and env changes no longer apply). `Name` is derived from the URL host.
+internal sealed record CatalogSourcesResponse(IReadOnlyList<CatalogSourceSummary> Sources, bool Managed);
+
+internal sealed record CatalogSourceSummary(string Url, string Name);
+
+internal sealed record CatalogSourceUpsertRequest(string? Url = null);
