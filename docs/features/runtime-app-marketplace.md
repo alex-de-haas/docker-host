@@ -979,3 +979,4 @@ net-new**.
 - [Runtime app manifest](runtime-app-manifest.md)
 - [Final Hosty architecture](final-hosty-architecture.md)
 - [Runtime artifact & storage model](runtime-artifact-model.md) - the artifact-kind foundation this builds on.
+- [Manifest-level app assets](manifest-level-app-assets.md) - planned follow-up: app repos become the source of truth for icons/screenshots/description; catalog vendors them at publish (revises Q9's hand-hosted assets).
