@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS base
+FROM node:24-bookworm-slim AS base
 WORKDIR /repo
 
 FROM base AS deps
@@ -12,7 +12,7 @@ COPY --from=deps /repo/node_modules ./node_modules
 COPY . .
 RUN npm run demo-app:build
 
-FROM node:22-bookworm-slim AS runner
+FROM node:24-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000

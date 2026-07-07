@@ -18,8 +18,12 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Bundle only minor/patch bumps into one weekly PR. Major bumps (breaking, e.g.
+      # eslint 9->10, typescript 5->6, lucide-react 0.x->1.x) arrive as individual PRs so
+      # each can be reviewed and merged on its own instead of blocking the group.
       npm:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: nuget
     directories:
@@ -39,3 +43,12 @@ updates:
       - /apps/telemetry-backend
     schedule:
       interval: weekly
+    ignore:
+      # Pin the Node base image to the current Active LTS line (24). Node 26 is still a
+      # "Current" release until ~Nov 2026; jumping onto a non-LTS line for a production
+      # image should be deliberate, not automatic. `node:24-bookworm-slim` is a rolling
+      # tag, so the only bumps Dependabot proposes are new majors (25, 26, ...); block
+      # those with `versions` (semver `update-types` is unreliable for Docker tags that
+      # carry a non-semver suffix). Drop/raise this bound once the target major is LTS.
+      - dependency-name: "node"
+        versions: [">= 25"]

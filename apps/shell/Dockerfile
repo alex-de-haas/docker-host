@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS builder
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS builder
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY apps/shell/package.json apps/shell/package.json
@@ -8,7 +8,7 @@ ENV NODE_ENV=production
 RUN npm run shell:build \
   && npm cache clean --force
 
-FROM node:22-bookworm-slim AS runner
+FROM node:24-bookworm-slim AS runner
 WORKDIR /repo
 ENV NODE_ENV=production
 ENV PORT=3000
