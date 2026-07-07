@@ -46,7 +46,9 @@ updates:
     ignore:
       # Pin the Node base image to the current Active LTS line (24). Node 26 is still a
       # "Current" release until ~Nov 2026; jumping onto a non-LTS line for a production
-      # image is deliberate, not automatic. Patch/minor bumps within 24 still flow through.
-      # Revisit (drop this ignore) once the desired major reaches Active LTS.
+      # image should be deliberate, not automatic. `node:24-bookworm-slim` is a rolling
+      # tag, so the only bumps Dependabot proposes are new majors (25, 26, ...); block
+      # those with `versions` (semver `update-types` is unreliable for Docker tags that
+      # carry a non-semver suffix). Drop/raise this bound once the target major is LTS.
       - dependency-name: "node"
-        update-types: ["version-update:semver-major"]
+        versions: [">= 25"]
