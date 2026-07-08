@@ -441,6 +441,7 @@ internal sealed record AppCatalogMetadataContract(
     AppCatalogLinksContract? Links,
     string? Summary,
     string? Description,
+    string? DescriptionFile,
     string? Changelog)
 {
     public static AppCatalogMetadataContract? FromManifest(RuntimeAppCatalogMetadataManifest? metadata)
@@ -462,6 +463,7 @@ internal sealed record AppCatalogMetadataContract(
             Links: links,
             Summary: NullIfBlank(metadata.Summary),
             Description: NullIfBlank(metadata.Description),
+            DescriptionFile: NullIfBlank(metadata.DescriptionFile),
             Changelog: NullIfBlank(metadata.Changelog));
 
         // A `catalogMetadata: {}` (or all-blank) block carries no information; collapse it to null so
@@ -475,6 +477,7 @@ internal sealed record AppCatalogMetadataContract(
             && contract.Links is null
             && contract.Summary is null
             && contract.Description is null
+            && contract.DescriptionFile is null
             && contract.Changelog is null;
         return isEmpty ? null : contract;
     }
@@ -593,7 +596,14 @@ internal sealed record AppSummary(
     string? SourceLivePath = null,
     // Optional marketplace/catalog display metadata (publisher, tags, screenshots, license, links, …)
     // for storefront cards and the app-detail view. Null when the manifest declares none. Additive.
-    AppCatalogMetadataContract? CatalogMetadata = null)
+    AppCatalogMetadataContract? CatalogMetadata = null,
+    // Resolved, ready-to-render URLs for the app's manifest-declared display assets (manifest-level app
+    // assets). A relative icon/descriptionFile becomes a Core asset-endpoint URL served from the app's
+    // folder (`/api/apps/{id}/assets/{path}?v=<version>`); an absolute https icon passes through. Null
+    // when the manifest declares none. Clients render `<img src=iconUrl>` (fallback to the Lucide
+    // `ui.icon`) and fetch the markdown description from descriptionUrl. Additive/nullable.
+    string? IconUrl = null,
+    string? DescriptionUrl = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
     // manifest profile's `development` flag as the default. Always false for a non-source runtime
@@ -677,8 +687,38 @@ internal sealed record AppSummary(
             app.SourceState?.LocalOverridePath,
             app.SourceState?.ManagedCheckoutPath,
             liveSourcePath,
-            app.CatalogMetadata);
+            app.CatalogMetadata,
+            ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, app.Version),
+            ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, app.Version));
     }
+
+    // A manifest-declared icon is either an absolute https URL (passed through) or a manifest-relative
+    // path served from the app's folder by the asset endpoint. Returns null when no icon is declared.
+    private static string? ResolveIconUrl(string? icon, string appId, string version)
+        => string.IsNullOrWhiteSpace(icon) || IsAbsoluteHttpUrl(icon)
+            ? AppCatalogMetadataContract.NullIfBlank(icon)
+            : ResolveAssetUrl(icon, appId, version);
+
+    // Build the Core asset-endpoint URL for a manifest-relative asset path, per-segment escaped and
+    // cache-busted by the app version (which bumps whenever the vendored assets change). Returns null
+    // for a blank, absolute, or otherwise unclean ref (empty/./.././':'/'%' segment) so AppSummary only
+    // ever emits a URL the endpoint can actually serve — the same normalization the vendor uses, so the
+    // emitted URL matches the path the asset was written to.
+    private static string? ResolveAssetUrl(string? relativePath, string appId, string version)
+    {
+        var path = CoreDataPaths.NormalizeRelativeAssetPath("", relativePath);
+        if (path is null)
+        {
+            return null;
+        }
+
+        var escaped = string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
+        return $"/api/apps/{Uri.EscapeDataString(appId)}/assets/{escaped}?v={Uri.EscapeDataString(version)}";
+    }
+
+    private static bool IsAbsoluteHttpUrl(string value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     private static IReadOnlyList<AppMountSummary> BuildMountSummaries(
         IReadOnlyList<AppMountSlot>? slots,

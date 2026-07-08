@@ -185,6 +185,7 @@ public sealed class AppRegistryStoreTests
                 Links: new AppCatalogLinksContract("https://example.com", null, null),
                 Summary: "Take notes.",
                 Description: null,
+                DescriptionFile: "docs/store.md",
                 Changelog: null),
         });
 
@@ -196,6 +197,71 @@ public sealed class AppRegistryStoreTests
         Assert.Equal("assets/icon.png", app.CatalogMetadata.Icon);
         Assert.Equal(new[] { "assets/1.png" }, app.CatalogMetadata.Screenshots);
         Assert.Equal("https://example.com", app.CatalogMetadata.Links!.Website);
+    }
+
+    [Fact]
+    public void From_ResolvesManifestAssetUrlsFromCatalogMetadata()
+    {
+        var app = CreateApp("com.example.notes") with
+        {
+            Version = "0.4.3",
+            CatalogMetadata = AppCatalogMetadataContract.FromManifest(new RuntimeAppCatalogMetadataManifest
+            {
+                Icon = "assets/icon.svg",
+                DescriptionFile = "docs/store.md",
+            }),
+        };
+
+        var summary = AppSummary.From(app);
+
+        // Relative assets become Core asset-endpoint URLs, cache-busted by the app version.
+        Assert.Equal("/api/apps/com.example.notes/assets/assets/icon.svg?v=0.4.3", summary.IconUrl);
+        Assert.Equal("/api/apps/com.example.notes/assets/docs/store.md?v=0.4.3", summary.DescriptionUrl);
+    }
+
+    [Fact]
+    public void From_PassesThroughAbsoluteIconAndOmitsUndeclaredAssets()
+    {
+        var app = CreateApp("com.example.notes") with
+        {
+            CatalogMetadata = AppCatalogMetadataContract.FromManifest(new RuntimeAppCatalogMetadataManifest
+            {
+                Icon = "https://cdn.example.com/icon.png",
+            }),
+        };
+
+        var summary = AppSummary.From(app);
+
+        Assert.Equal("https://cdn.example.com/icon.png", summary.IconUrl);
+        Assert.Null(summary.DescriptionUrl);
+    }
+
+    [Fact]
+    public void From_WithoutCatalogMetadata_HasNoAssetUrls()
+    {
+        var summary = AppSummary.From(CreateApp("com.example.notes"));
+
+        Assert.Null(summary.IconUrl);
+        Assert.Null(summary.DescriptionUrl);
+    }
+
+    [Fact]
+    public void From_AssetUrls_AreNormalizedAndRejectUnsafeDeclarations()
+    {
+        // A messy-but-safe declaration normalizes to the same path the vendor writes / the endpoint serves.
+        var normalized = AppSummary.From(CreateApp("com.example.notes") with
+        {
+            Version = "0.4.3",
+            CatalogMetadata = AppCatalogMetadataContract.FromManifest(new RuntimeAppCatalogMetadataManifest { Icon = "./assets//icon.svg" }),
+        });
+        Assert.Equal("/api/apps/com.example.notes/assets/assets/icon.svg?v=0.4.3", normalized.IconUrl);
+
+        // An unsafe declaration emits no URL, so AppSummary never advertises something the endpoint 404s.
+        var unsafeIcon = AppSummary.From(CreateApp("com.example.notes") with
+        {
+            CatalogMetadata = AppCatalogMetadataContract.FromManifest(new RuntimeAppCatalogMetadataManifest { Icon = "../secret.svg" }),
+        });
+        Assert.Null(unsafeIcon.IconUrl);
     }
 
     [Fact]

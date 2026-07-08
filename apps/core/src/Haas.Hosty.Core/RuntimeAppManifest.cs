@@ -68,6 +68,253 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         await JsonStorage.WriteTextAsync(targetPath, selection.ManifestJson, cancellationToken);
     }
 
+    // Per-file caps for vendored display assets (D7). Mirrors the catalog tooling.
+    private const long IconMaxBytes = 512 * 1024;
+    private const long ScreenshotMaxBytes = 2 * 1024 * 1024;
+    private const long DescriptionMaxBytes = 256 * 1024;
+    private const long ImageMaxBytes = 2 * 1024 * 1024;
+    private const int PerAppMaxAssetFiles = 32;
+    private const long PerAppMaxAssetBytes = 20 * 1024 * 1024;
+    private static readonly string[] ImageAssetExtensions = [".svg", ".png", ".webp", ".jpg", ".jpeg", ".gif", ".avif"];
+    private static readonly Regex MarkdownInlineImage = new(@"!\[[^\]]*\]\(\s*(<[^>]*>|[^)\s]+)", RegexOptions.Compiled);
+    private static readonly Regex MarkdownHtmlImage = new("""<img\b[^>]*?\s+src\s*=\s*(?:"([^"]*)"|'([^']*)')""", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // Copy an installed app's manifest-declared display assets (icon, screenshots, markdown
+    // descriptionFile and the images it references) next to the internal manifest copy under
+    // <appRoot>, so the asset endpoint can serve them (manifest-level app assets). The source is the
+    // manifest's own folder (local install) or the manifest URL's folder (URL install). Everything is
+    // best-effort and display-only: any asset that is missing, too large, escapes the manifest folder,
+    // or fails to fetch is simply skipped — this never throws and never blocks an install/update.
+    public async Task VendorDisplayAssetsAsync(
+        RuntimeAppManifestSelection selection,
+        string appRoot,
+        CancellationToken cancellationToken = default)
+    {
+        var meta = selection.Manifest.CatalogMetadata;
+        if (meta is null)
+        {
+            return;
+        }
+
+        Func<string, long, Task<byte[]?>>? read = null;
+        if (!string.IsNullOrWhiteSpace(selection.ManifestUrl) &&
+            Uri.TryCreate(selection.ManifestUrl, UriKind.Absolute, out var manifestUri) &&
+            (manifestUri.Scheme == Uri.UriSchemeHttp || manifestUri.Scheme == Uri.UriSchemeHttps))
+        {
+            var root = new Uri(manifestUri, ".");
+            read = (rootRel, cap) => ReadUrlAssetAsync(root, rootRel, cap, cancellationToken);
+        }
+        else
+        {
+            var baseDir = Path.GetDirectoryName(Path.GetFullPath(selection.ManifestPath));
+            if (!string.IsNullOrEmpty(baseDir))
+            {
+                read = (rootRel, cap) => ReadLocalAssetAsync(baseDir, rootRel, cap, cancellationToken);
+            }
+        }
+
+        if (read is null)
+        {
+            return;
+        }
+
+        var budget = new AssetBudget();
+
+        async Task VendorAsync(string? relativeRef, string dirRootRel, long cap, bool imageOnly)
+        {
+            var rootRel = CoreDataPaths.NormalizeRelativeAssetPath(dirRootRel, relativeRef);
+            if (rootRel is null || (imageOnly && !ImageAssetExtensions.Contains(Path.GetExtension(rootRel), StringComparer.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            var bytes = await read(rootRel, cap);
+            if (bytes is null || !budget.TryAdd(bytes.Length))
+            {
+                return;
+            }
+
+            WriteVendoredAsset(appRoot, rootRel, bytes);
+        }
+
+        // A relative icon (an absolute https icon is served as-is, not vendored) and screenshots.
+        if (!IsAbsoluteHttpAsset(meta.Icon))
+        {
+            await VendorAsync(meta.Icon, "", IconMaxBytes, imageOnly: true);
+        }
+
+        foreach (var screenshot in meta.Screenshots)
+        {
+            if (!IsAbsoluteHttpAsset(screenshot))
+            {
+                await VendorAsync(screenshot, "", ScreenshotMaxBytes, imageOnly: true);
+            }
+        }
+
+        // The markdown description, then the relative images it references (resolved against the
+        // description's own folder but contained under the manifest folder — a doc in docs/ may
+        // reference ../assets/icon.svg).
+        var descriptionRootRel = CoreDataPaths.NormalizeRelativeAssetPath("", meta.DescriptionFile);
+        if (descriptionRootRel is not null && string.Equals(Path.GetExtension(descriptionRootRel), ".md", StringComparison.OrdinalIgnoreCase))
+        {
+            var markdown = await read(descriptionRootRel, DescriptionMaxBytes);
+            if (markdown is not null && budget.TryAdd(markdown.Length))
+            {
+                WriteVendoredAsset(appRoot, descriptionRootRel, markdown);
+
+                var descriptionDir = descriptionRootRel.Contains('/') ? descriptionRootRel[..descriptionRootRel.LastIndexOf('/')] : "";
+                foreach (var imageRef in DiscoverMarkdownImageRefs(Encoding.UTF8.GetString(markdown)))
+                {
+                    await VendorAsync(imageRef, descriptionDir, ImageMaxBytes, imageOnly: true);
+                }
+            }
+        }
+    }
+
+    private static bool IsAbsoluteHttpAsset(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+            Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static IEnumerable<string> DiscoverMarkdownImageRefs(string markdown)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Match match in MarkdownInlineImage.Matches(markdown))
+        {
+            var value = match.Groups[1].Value.Trim().Trim('<', '>').Trim();
+            if (value.Length > 0 && seen.Add(value))
+            {
+                yield return value;
+            }
+        }
+
+        foreach (Match match in MarkdownHtmlImage.Matches(markdown))
+        {
+            var value = (match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value).Trim();
+            if (value.Length > 0 && seen.Add(value))
+            {
+                yield return value;
+            }
+        }
+    }
+
+    private async Task<byte[]?> ReadLocalAssetAsync(string baseDir, string rootRel, long cap, CancellationToken cancellationToken)
+    {
+        if (!CoreDataPaths.TryResolveContainedRelativePath(baseDir, rootRel, out var fullPath) || !File.Exists(fullPath))
+        {
+            return null;
+        }
+
+        var info = new FileInfo(fullPath);
+        if (info.Length > cap)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await File.ReadAllBytesAsync(fullPath, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // Display-only best-effort: only genuine caller cancellation propagates; any IO/access error
+            // leaves the asset absent (endpoint 404s) rather than failing the install.
+            return null;
+        }
+    }
+
+    private async Task<byte[]?> ReadUrlAssetAsync(Uri root, string rootRel, long cap, CancellationToken cancellationToken)
+    {
+        Uri assetUri;
+        try
+        {
+            assetUri = new Uri(root, rootRel);
+        }
+        catch (UriFormatException)
+        {
+            return null;
+        }
+
+        if (!assetUri.AbsoluteUri.StartsWith(root.AbsoluteUri, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var response = await httpClient.GetAsync(assetUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength is > 0 and var declared && declared > cap)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var buffer = new MemoryStream();
+            var chunk = new byte[81920];
+            long total = 0;
+            while (true)
+            {
+                var count = await stream.ReadAsync(chunk, cancellationToken);
+                if (count == 0)
+                {
+                    break;
+                }
+
+                total += count;
+                if (total > cap)
+                {
+                    return null;
+                }
+
+                buffer.Write(chunk, 0, count);
+            }
+
+            return buffer.ToArray();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // Best-effort: an HTTP error, socket drop, disposed stream, or fetch timeout leaves the asset
+            // absent instead of failing the install; only genuine caller cancellation propagates.
+            return null;
+        }
+    }
+
+    private static void WriteVendoredAsset(string appRoot, string rootRel, byte[] bytes)
+    {
+        if (!CoreDataPaths.TryResolveContainedRelativePath(appRoot, rootRel, out var dest))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.WriteAllBytes(dest, bytes);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Display-only: a failed write leaves the asset absent and the endpoint 404s.
+        }
+    }
+
+    private sealed class AssetBudget
+    {
+        private int files;
+        private long bytes;
+
+        public bool TryAdd(long size)
+        {
+            if (files + 1 > PerAppMaxAssetFiles || bytes + size > PerAppMaxAssetBytes)
+            {
+                return false;
+            }
+
+            files++;
+            bytes += size;
+            return true;
+        }
+    }
+
     public RuntimeAppManifestSelection Select(
         RuntimeAppManifest manifest,
         string manifestPath,
@@ -2443,6 +2690,9 @@ internal sealed class RuntimeAppCatalogMetadataManifest
     public RuntimeAppCatalogLinksManifest? Links { get; init; }
     public string? Summary { get; init; }
     public string? Description { get; init; }
+    // Manifest-relative path to a markdown long-description (e.g. "docs/store.md"). Served through the
+    // per-app asset endpoint; the app repo owns it. Display-only, outside runtime validation.
+    public string? DescriptionFile { get; init; }
     public string? Changelog { get; init; }
 }
 

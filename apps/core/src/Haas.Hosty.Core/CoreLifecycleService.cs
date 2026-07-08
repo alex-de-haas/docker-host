@@ -141,6 +141,7 @@ internal sealed class CoreLifecycleService(
         var manifestCopyPath = Path.Combine(appRoot, "manifest.json");
 
         await manifests.SaveManifestCopyAsync(selection, appRoot, cancellationToken);
+        await manifests.VendorDisplayAssetsAsync(selection, appRoot, cancellationToken);
         if (selection.Manifest.Data?.Enabled == true)
         {
             Directory.CreateDirectory(GetAppDataPath(selection.Manifest.Id!));
@@ -727,6 +728,7 @@ internal sealed class CoreLifecycleService(
             : null;
 
         await manifests.SaveManifestCopyAsync(selection, GetAppRoot(appId), cancellationToken);
+        await manifests.VendorDisplayAssetsAsync(selection, GetAppRoot(appId), cancellationToken);
         var manifestCopyPath = Path.Combine(GetAppRoot(appId), "manifest.json");
         var next = BuildAppRecord(
             selection,
@@ -2596,6 +2598,7 @@ internal sealed class CoreLifecycleService(
             : BuildUpdateChanges(app, load.Baseline, selection);
 
         await manifests.SaveManifestCopyAsync(selection, GetAppRoot(app.Id), cancellationToken);
+        await manifests.VendorDisplayAssetsAsync(selection, GetAppRoot(app.Id), cancellationToken);
 
         // Build the reconciled contract from the fresh `current` record inside the update lambda, not
         // the stale `app` captured before the lock, so a setting/mount change applied concurrently
