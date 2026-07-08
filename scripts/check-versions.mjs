@@ -40,12 +40,16 @@ function capture(text, pattern) {
 
 const platformVersion = capture(read("Directory.Build.props"), /<Version>([^<]+)<\/Version>/);
 
-// demo-app: manifest ↔ package ↔ the two baked copies (Dockerfile ENV + the config default).
+// demo-app: manifest ↔ package ↔ the two baked copies (Dockerfile ENV + the config default) ↔ the
+// author-hosted release feed's stable tag. The catalog entry points `releasesUrl` at this
+// releases.json (raw main), so pinning stable == manifest.version here means a version bump and its
+// feed advertisement ship together and the feed can never drift behind the manifest.
 expectEqual("demo-app version", {
   manifest: json("apps/demo-app/manifest.json").version,
   packageJson: json("apps/demo-app/package.json").version,
   dockerfile: capture(read("apps/demo-app/Dockerfile"), /HOSTY_APP_VERSION=([^\s]+)/),
   demoConfig: capture(read("apps/demo-app/src/lib/demo-config.ts"), /defaultAppVersion\s*=\s*"([^"]+)"/),
+  releasesStable: json("apps/demo-app/releases.json").tags?.stable,
 });
 
 // shell: manifest ↔ package.
