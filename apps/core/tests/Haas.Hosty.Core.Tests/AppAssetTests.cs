@@ -31,6 +31,33 @@ public sealed class AppAssetTests
     }
 
     [Fact]
+    public async Task VendorDisplayAssets_CopiesNavigationIconAssets()
+    {
+        var source = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(source, "assets", "nav"));
+        await File.WriteAllTextAsync(Path.Combine(source, "assets", "nav", "people.svg"), "<svg id='people'/>");
+        var path = Path.Combine(source, "manifest.json");
+        await File.WriteAllTextAsync(path, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{ "key": "app", "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/notes:1.0.0" } } }],
+              "ui": { "entrypoint": { "path": "/" }, "navigation": [{ "label": "People", "path": "/people", "iconAsset": "assets/nav/people.svg" }] }
+            }
+            """);
+
+        var appRoot = NewTempDir();
+        var selection = await new AppManifestService().LoadAsync(path);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        // A nav icon is vendored even when the app declares no catalogMetadata.
+        Assert.Equal("<svg id='people'/>", await File.ReadAllTextAsync(Path.Combine(appRoot, "assets", "nav", "people.svg")));
+    }
+
+    [Fact]
     public async Task VendorDisplayAssets_SkipsMissingDeclaredAssetsWithoutThrowing()
     {
         var source = NewTempDir();
