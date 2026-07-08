@@ -199,7 +199,8 @@ internal sealed class CatalogService(
             BetaVersion: beta,
             Installed: installedVersion is not null,
             InstalledVersion: installedVersion,
-            UpdateAvailable: updateAvailable);
+            UpdateAvailable: updateAvailable,
+            DescriptionUrl: NullIfBlank(entry.Display?.DescriptionUrl));
     }
 
     // Merge every configured source's index into an id-keyed map, first source wins an id conflict.

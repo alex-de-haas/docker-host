@@ -57,6 +57,9 @@ internal sealed class CatalogDisplay
     public string? Summary { get; init; }
     public string? Icon { get; init; }
     public IReadOnlyList<string> Screenshots { get => field ?? []; init; } = [];
+    // Absolute URL to a markdown long-description, generated at publish by vendoring the manifest's
+    // catalogMetadata.descriptionFile (manifest-level app assets). Null when the entry declares none.
+    public string? DescriptionUrl { get; init; }
 }
 
 // ---- Wire schema: per-app version feed (`releasesUrl`) --------------------------------------------
@@ -130,7 +133,8 @@ internal sealed record CatalogAppDetailResponse(
     string? BetaVersion,
     bool Installed,
     string? InstalledVersion,
-    bool UpdateAvailable);
+    bool UpdateAvailable,
+    string? DescriptionUrl = null);
 
 internal sealed record CatalogAppVersion(string Version, string ManifestRef, CatalogArtifact? Artifact);
 

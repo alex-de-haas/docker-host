@@ -662,6 +662,9 @@ export type CatalogAppDetail = {
   tags: string[];
   icon?: string | null;
   screenshots: string[];
+  // Absolute URL to a vendored markdown long-description (manifest-level app assets), or null. Rendered
+  // on the detail dialog; relative images inside it resolve against this URL's folder.
+  descriptionUrl?: string | null;
   publisher?: CatalogPublisher | null;
   sourceName: string;
   signerIdentity?: string | null;

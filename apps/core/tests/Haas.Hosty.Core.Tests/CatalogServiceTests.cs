@@ -163,6 +163,7 @@ public sealed class CatalogServiceTests
         Assert.NotNull(detail);
         Assert.Equal("0.3.1", detail!.StableVersion);
         Assert.Equal("0.4.0-rc1", detail.BetaVersion);
+        Assert.Equal("https://cdn.example.test/com.example.notes/store.md", detail.DescriptionUrl);
         Assert.Collection(
             detail.Versions,
             version =>
@@ -256,7 +257,7 @@ public sealed class CatalogServiceTests
     {
         var releases = releasesUrl is null ? "" : $$""", "releasesUrl": "{{releasesUrl}}" """;
         return $$"""
-            { "id": "{{id}}", "name": "{{name}}", "category": "Productivity", "tags": ["a", "b"], "display": { "summary": "{{name}} summary", "icon": "icon.png" }, "publisher": { "name": "Example Co" }{{releases}} }
+            { "id": "{{id}}", "name": "{{name}}", "category": "Productivity", "tags": ["a", "b"], "display": { "summary": "{{name}} summary", "icon": "icon.png", "descriptionUrl": "https://cdn.example.test/{{id}}/store.md" }, "publisher": { "name": "Example Co" }{{releases}} }
             """;
     }
 
