@@ -1,11 +1,14 @@
 # Manifest-Level App Assets
 
 Status: **In progress.** Design (Q1–Q13, incl. Q3/D1–D7) confirmed 2026-07-07.
-**A3** (demo-app reference) and **A4** (catalog publish-time vendoring) shipped
-2026-07-08. **A1** (Core: asset endpoint + `descriptionFile` + vendoring +
-resolved `iconUrl`/`descriptionUrl`) is this change (platform → 0.35.0);
-`ui.navigation[].iconAsset` is deferred to **A2** (Shell rendering), which
-remains.
+Shipped 2026-07-08: **A3** (demo-app reference), **A4** (catalog publish-time
+vendoring), **A1** (Core: asset endpoint + `descriptionFile` + vendoring +
+resolved `iconUrl`/`descriptionUrl`; platform 0.35.0). **A2** (Shell) is this
+change: app icons in the sidebar and Installed Apps, per-page sidebar icons via
+`ui.navigation[].iconAsset` (added to the Core contract + vendored here), with a
+Lucide fallback (Shell 0.22.0, demo-app 0.4.4). Remaining: **A2c** — the
+markdown long-description rendered from `descriptionUrl` on app-details and the
+marketplace detail (react-markdown + remark-gfm), still to do.
 Created: 2026-07-07
 
 ## Motivation

@@ -46,8 +46,10 @@ import {
   formatUpdateChange,
   getEndpointPublicOrigin,
   isAppAutostartEnabled,
+  resolveAssetSrc,
   shortDigest,
 } from "../app-helpers";
+import { AppIcon } from "../app-icon";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import type {
@@ -739,6 +741,7 @@ function InstalledAppTableSection({
                   <Fragment key={app.id}>
                     <InstalledAppRow
                       app={app}
+                      coreOrigin={coreOrigin}
                       isShell={app.id === shellAppId}
                       expanded={expanded}
                       healthLoading={healthState?.loading ?? false}
@@ -778,6 +781,7 @@ function InstalledAppTableSection({
 
 function InstalledAppRow({
   app,
+  coreOrigin,
   isShell,
   expanded,
   healthLoading,
@@ -791,6 +795,7 @@ function InstalledAppRow({
   onOpenPanel,
 }: {
   app: CoreApp;
+  coreOrigin: string;
   isShell: boolean;
   expanded: boolean;
   healthLoading: boolean;
@@ -852,6 +857,7 @@ function InstalledAppRow({
               <ChevronRight className="h-4 w-4" />
             )}
           </Button>
+          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={Boxes} className="mt-0.5 h-5 w-5 rounded" alt="" />
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <span className="truncate font-medium">{app.displayName}</span>

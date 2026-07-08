@@ -39,7 +39,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { getAccountInitials, getAppPageLinks } from "../app-helpers";
+import { getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
+import { AppIcon } from "../app-icon";
 import { NotificationBell } from "../notifications/notification-bell";
 import type { AppOpenTarget, AppPageLink, CoreApp, EmbeddedWorkspace, SessionResponse, ShellView } from "../types";
 
@@ -134,6 +135,7 @@ export function ShellSidebar({
                 <RuntimeAppNavigationItem
                   key={app.id}
                   app={app}
+                  coreOrigin={coreOrigin}
                   compact={compact}
                   busyAction={busyAction}
                   workspace={workspace}
@@ -267,6 +269,7 @@ function NavigationPlaceholder({ compact, icon: Icon, label }: { compact: boolea
 
 function RuntimeAppNavigationItem({
   app,
+  coreOrigin,
   compact,
   busyAction,
   workspace,
@@ -274,6 +277,7 @@ function RuntimeAppNavigationItem({
   getStandaloneHref,
 }: {
   app: CoreApp;
+  coreOrigin: string;
   compact: boolean;
   busyAction: string | null;
   workspace: EmbeddedWorkspace | null;
@@ -322,7 +326,7 @@ function RuntimeAppNavigationItem({
             }
           }}
         >
-          <LayoutGrid className="h-4 w-4 shrink-0" />
+          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={LayoutGrid} className="h-4 w-4 rounded-sm" alt="" />
           {!compact && (
             <span className="min-w-0 flex-1 truncate text-left">{app.displayName}</span>
           )}
@@ -373,7 +377,11 @@ function RuntimeAppNavigationItem({
               disabled={busyAction === `${app.id}:open`}
               onClick={() => void onLaunch(app, page, "workspace")}
             >
-              {busyAction === `${app.id}:open` ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Home className="h-3.5 w-3.5" />}
+              {busyAction === `${app.id}:open` ? (
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <AppIcon src={resolveAssetSrc(coreOrigin, page.iconUrl)} fallback={Home} className="h-3.5 w-3.5 rounded-sm" alt="" />
+              )}
               <span className="truncate">{page.label}</span>
             </button>
           ))}

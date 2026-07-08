@@ -36,6 +36,9 @@ export type CoreNavigationItem = {
   path: string;
   entryPath?: string | null;
   embeddedUrl?: string | null;
+  // Core-origin-relative URL for this page link's manifest-declared icon (manifest-level app assets),
+  // or null when the manifest declares none. Prefix with coreOrigin to load; fall back to a Lucide icon.
+  iconUrl?: string | null;
 };
 
 export type CoreApp = {
@@ -59,6 +62,12 @@ export type CoreApp = {
   navigation?: CoreNavigationItem[];
   entryPath?: string | null;
   embeddedUrl?: string | null;
+  // Core-origin-relative URLs for the app's manifest-declared display assets (manifest-level app
+  // assets): iconUrl for the sidebar/app-card icon, descriptionUrl for a markdown long-description.
+  // Null when the manifest declares none; an absolute https icon passes through unchanged. Prefix a
+  // relative value with coreOrigin to load. Optional for backwards compatibility with older Core builds.
+  iconUrl?: string | null;
+  descriptionUrl?: string | null;
   mounts?: CoreMountSlot[];
   // Compiled-artifact pull/lock policy ("pinned"/"rolling") and per-service run-locks (the locked
   // image digest). Optional for backwards compatibility with older Core builds. See digest pinning.
@@ -552,6 +561,8 @@ export type AppPageLink = {
   label: string;
   path: string;
   redirectUri: string;
+  // Core-origin-relative icon URL for this page link, or null to fall back to a Lucide icon.
+  iconUrl?: string | null;
 };
 
 export type EmbeddedWorkspace = {

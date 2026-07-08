@@ -366,7 +366,7 @@ internal sealed record AppUiContract(
                 var path = NormalizePath(string.IsNullOrWhiteSpace(item.Path) ? entry.Path : item.Path);
                 var label = string.IsNullOrWhiteSpace(item.Label) ? path : item.Label.Trim();
                 var endpointKey = FirstNonBlank(item.Endpoint, item.PortKey, entry.EndpointKey);
-                return new AppNavigationContract(label, path, endpointKey);
+                return new AppNavigationContract(label, path, endpointKey, NullIfBlank(item.IconAsset));
             })
             .ToArray();
 
@@ -423,7 +423,7 @@ internal sealed record AppUiContract(
     private sealed record UiEntrypoint(string? EndpointKey, string Path);
 }
 
-internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey);
+internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null);
 
 // Normalized marketplace/catalog display metadata, denormalized onto the app record and surfaced on
 // the summary (like AppUiContract). Normalization is best-effort and applied *after* the manifest
@@ -647,7 +647,8 @@ internal sealed record AppSummary(
                 Label: item.Label,
                 Path: item.Path,
                 EntryPath: item.Path,
-                EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path)))
+                EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path),
+                IconUrl: ResolveAssetUrl(item.IconAsset, app.Id, app.Version)))
             .ToArray() ?? [];
 
         // Source-capable when it declares any source (localCommand) runtime, regardless of install
@@ -846,7 +847,7 @@ internal sealed record AppSummary(
 
 internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false, string? Label = null, string? Description = null);
 
-internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl);
+internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl, string? IconUrl = null);
 
 internal sealed record AppMountSummary(
     string Key,

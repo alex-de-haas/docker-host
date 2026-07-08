@@ -11,6 +11,17 @@ import type {
 import { normalizeAppPath } from "./shell-routes";
 import { buildPublicOriginSettingKey } from "./settings";
 
+// Resolve a Core asset URL (iconUrl / descriptionUrl / page iconUrl) to something loadable: an
+// absolute https URL passes through; a Core-origin-relative path is prefixed with the Core origin so
+// the browser sends the same-site session cookie the asset endpoint requires. Null when there is none.
+export function resolveAssetSrc(coreOrigin: string, url?: string | null): string | null {
+  if (!url) {
+    return null;
+  }
+
+  return /^https?:\/\//i.test(url) ? url : `${coreOrigin}${url}`;
+}
+
 export function isAppAutostartEnabled(app: CoreApp) {
   return app.autostart ?? true;
 }
@@ -240,9 +251,9 @@ export function getAppPageLinks(app: CoreApp): AppPageLink[] {
   const navigation = app.navigation || [];
   if (navigation.length > 0) {
     return navigation
-      .map((item) => {
+      .map((item): AppPageLink | null => {
         const redirectUri = item.embeddedUrl || buildRedirectUriFromAppPath(app, item.path);
-        return redirectUri ? { label: item.label, path: item.path, redirectUri } : null;
+        return redirectUri ? { label: item.label, path: item.path, redirectUri, iconUrl: item.iconUrl ?? null } : null;
       })
       .filter((item): item is AppPageLink => item !== null);
   }

@@ -91,7 +91,11 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         CancellationToken cancellationToken = default)
     {
         var meta = selection.Manifest.CatalogMetadata;
-        if (meta is null)
+        var navIconAssets = (selection.Manifest.Ui?.Navigation ?? [])
+            .Select(item => item.IconAsset)
+            .Where(icon => !string.IsNullOrWhiteSpace(icon))
+            .ToArray();
+        if (meta is null && navIconAssets.Length == 0)
         {
             return;
         }
@@ -137,37 +141,46 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             WriteVendoredAsset(appRoot, rootRel, bytes);
         }
 
-        // A relative icon (an absolute https icon is served as-is, not vendored) and screenshots.
-        if (!IsAbsoluteHttpAsset(meta.Icon))
+        if (meta is not null)
         {
-            await VendorAsync(meta.Icon, "", IconMaxBytes, imageOnly: true);
-        }
-
-        foreach (var screenshot in meta.Screenshots)
-        {
-            if (!IsAbsoluteHttpAsset(screenshot))
+            // A relative icon (an absolute https icon is served as-is, not vendored) and screenshots.
+            if (!IsAbsoluteHttpAsset(meta.Icon))
             {
-                await VendorAsync(screenshot, "", ScreenshotMaxBytes, imageOnly: true);
+                await VendorAsync(meta.Icon, "", IconMaxBytes, imageOnly: true);
             }
-        }
 
-        // The markdown description, then the relative images it references (resolved against the
-        // description's own folder but contained under the manifest folder — a doc in docs/ may
-        // reference ../assets/icon.svg).
-        var descriptionRootRel = CoreDataPaths.NormalizeRelativeAssetPath("", meta.DescriptionFile);
-        if (descriptionRootRel is not null && string.Equals(Path.GetExtension(descriptionRootRel), ".md", StringComparison.OrdinalIgnoreCase))
-        {
-            var markdown = await read(descriptionRootRel, DescriptionMaxBytes);
-            if (markdown is not null && budget.TryAdd(markdown.Length))
+            foreach (var screenshot in meta.Screenshots)
             {
-                WriteVendoredAsset(appRoot, descriptionRootRel, markdown);
-
-                var descriptionDir = descriptionRootRel.Contains('/') ? descriptionRootRel[..descriptionRootRel.LastIndexOf('/')] : "";
-                foreach (var imageRef in DiscoverMarkdownImageRefs(Encoding.UTF8.GetString(markdown)))
+                if (!IsAbsoluteHttpAsset(screenshot))
                 {
-                    await VendorAsync(imageRef, descriptionDir, ImageMaxBytes, imageOnly: true);
+                    await VendorAsync(screenshot, "", ScreenshotMaxBytes, imageOnly: true);
                 }
             }
+
+            // The markdown description, then the relative images it references (resolved against the
+            // description's own folder but contained under the manifest folder — a doc in docs/ may
+            // reference ../assets/icon.svg).
+            var descriptionRootRel = CoreDataPaths.NormalizeRelativeAssetPath("", meta.DescriptionFile);
+            if (descriptionRootRel is not null && string.Equals(Path.GetExtension(descriptionRootRel), ".md", StringComparison.OrdinalIgnoreCase))
+            {
+                var markdown = await read(descriptionRootRel, DescriptionMaxBytes);
+                if (markdown is not null && budget.TryAdd(markdown.Length))
+                {
+                    WriteVendoredAsset(appRoot, descriptionRootRel, markdown);
+
+                    var descriptionDir = descriptionRootRel.Contains('/') ? descriptionRootRel[..descriptionRootRel.LastIndexOf('/')] : "";
+                    foreach (var imageRef in DiscoverMarkdownImageRefs(Encoding.UTF8.GetString(markdown)))
+                    {
+                        await VendorAsync(imageRef, descriptionDir, ImageMaxBytes, imageOnly: true);
+                    }
+                }
+            }
+        }
+
+        // Per-page sidebar icons (ui.navigation[].iconAsset), served through the same asset endpoint.
+        foreach (var navIcon in navIconAssets)
+        {
+            await VendorAsync(navIcon, "", ImageMaxBytes, imageOnly: true);
         }
     }
 
@@ -2670,6 +2683,9 @@ internal sealed class RuntimeAppUiNavigationItemManifest
     public string? Path { get; init; }
     public string? Endpoint { get; init; }
     public string? PortKey { get; init; }
+    // Optional manifest-relative image for this page's sidebar link (manifest-level app assets),
+    // served through the per-app asset endpoint. Clients fall back to a Lucide icon. Display-only.
+    public string? IconAsset { get; init; }
 }
 
 // Marketplace/catalog display metadata (fields modeled on Flathub AppStream). Optional and outside

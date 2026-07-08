@@ -237,6 +237,29 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public void From_ResolvesNavigationIconAssetUrls()
+    {
+        var app = CreateApp("com.example.notes") with
+        {
+            Version = "0.4.3",
+            Ui = AppUiContract.FromManifest(new RuntimeAppUiManifest
+            {
+                Path = "/",
+                Navigation =
+                [
+                    new RuntimeAppUiNavigationItemManifest { Label = "People", Path = "/people", IconAsset = "assets/people.svg" },
+                    new RuntimeAppUiNavigationItemManifest { Label = "Plain", Path = "/plain" },
+                ],
+            }),
+        };
+
+        var summary = AppSummary.From(app);
+
+        Assert.Equal("/api/apps/com.example.notes/assets/assets/people.svg?v=0.4.3", summary.Navigation[0].IconUrl);
+        Assert.Null(summary.Navigation[1].IconUrl); // no iconAsset declared → no URL, client uses its Lucide fallback
+    }
+
+    [Fact]
     public void From_WithoutCatalogMetadata_HasNoAssetUrls()
     {
         var summary = AppSummary.From(CreateApp("com.example.notes"));
