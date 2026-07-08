@@ -51,9 +51,12 @@ expectEqual("demo-app version", {
   dockerfile: capture(read("apps/demo-app/Dockerfile"), /HOSTY_APP_VERSION=([^\s]+)/),
   demoConfig: capture(read("apps/demo-app/src/lib/demo-config.ts"), /defaultAppVersion\s*=\s*"([^"]+)"/),
   releasesStable: demoReleases.tags?.stable,
-  // Resolve the stable tag inside versions[] too, so a stable tag that names a version the feed does
-  // not actually list (a typo or a forgotten entry) surfaces as a missing source rather than passing.
-  releasesVersionsStable: demoReleases.versions?.find((entry) => entry.version === demoReleases.tags?.stable)?.version,
+  // Resolve the stable tag to a concrete versions[] entry that also carries a manifestRef, so a stable
+  // tag naming a version the feed does not list (typo / forgotten entry) or an entry missing its
+  // manifestRef (which install/update can't resolve) surfaces as a missing source rather than passing.
+  releasesVersionsStable: demoReleases.versions?.find(
+    (entry) => entry.version === demoReleases.tags?.stable && entry.manifestRef,
+  )?.version,
 });
 
 // shell: manifest ↔ package.
