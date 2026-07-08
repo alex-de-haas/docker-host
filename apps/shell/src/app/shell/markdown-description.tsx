@@ -18,17 +18,21 @@ export function MarkdownDescription({ src, className }: { src: string; className
   const [state, setState] = useState<{ src: string; error: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    fetch(src, { credentials: "include" })
+    const controller = new AbortController();
+    fetch(src, { credentials: "include", signal: controller.signal })
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
       .then((text) => {
-        if (!cancelled) setState({ src, error: false, text });
+        setState({ src, error: false, text });
       })
-      .catch(() => {
-        if (!cancelled) setState({ src, error: true, text: "" });
+      .catch((error) => {
+        // An aborted fetch (src changed / unmount) must not overwrite the newer request's state.
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
+        }
+        setState({ src, error: true, text: "" });
       });
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [src]);
 
