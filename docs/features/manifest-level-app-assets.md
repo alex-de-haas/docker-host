@@ -1,9 +1,11 @@
 # Manifest-Level App Assets
 
-Status: **Planned — design confirmed 2026-07-07, nothing implemented.** All
-decisions Q1–Q13 (including the Q3/D1–D7 endpoint design) are confirmed.
-Distilled from the 2026-07-07 design discussion; the interim idea draft was
-folded into this document rather than committed.
+Status: **In progress.** Design (Q1–Q13, incl. Q3/D1–D7) confirmed 2026-07-07.
+**A3** (demo-app reference) and **A4** (catalog publish-time vendoring) shipped
+2026-07-08. **A1** (Core: asset endpoint + `descriptionFile` + vendoring +
+resolved `iconUrl`/`descriptionUrl`) is this change (platform → 0.35.0);
+`ui.navigation[].iconAsset` is deferred to **A2** (Shell rendering), which
+remains.
 Created: 2026-07-07
 
 ## Motivation

@@ -42,8 +42,39 @@ internal sealed record CoreDataPaths(
             return false;
         }
 
+        return TryContain(root, segment, out fullPath);
+    }
+
+    // Resolve a forward-slash-separated relative path (e.g. "docs/store.md") under <root>, enforcing
+    // containment. Each segment must be a plain name — no empty/./.. segments, no backslash, and no ':'
+    // (which would allow an NTFS alternate data stream). The combined path is normalized and required
+    // to stay strictly under root; a caller that needs symlink-escape protection resolves link targets
+    // separately. Used by the per-app asset endpoint to serve a manifest-relative asset path.
+    public static bool TryResolveContainedRelativePath(string root, string relativePath, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(relativePath) || relativePath.IndexOf('\\') >= 0)
+        {
+            return false;
+        }
+
+        var segments = relativePath.Split('/');
+        foreach (var segment in segments)
+        {
+            if (string.IsNullOrEmpty(segment) || segment is "." or ".." || segment.IndexOf(':') >= 0)
+            {
+                return false;
+            }
+        }
+
+        return TryContain(root, string.Join(Path.DirectorySeparatorChar, segments), out fullPath);
+    }
+
+    private static bool TryContain(string root, string relative, out string fullPath)
+    {
+        fullPath = string.Empty;
         var fullRoot = Path.GetFullPath(root);
-        var combined = Path.GetFullPath(Path.Combine(fullRoot, segment));
+        var combined = Path.GetFullPath(Path.Combine(fullRoot, relative));
         var rootPrefix = fullRoot.EndsWith(Path.DirectorySeparatorChar)
             ? fullRoot
             : fullRoot + Path.DirectorySeparatorChar;
