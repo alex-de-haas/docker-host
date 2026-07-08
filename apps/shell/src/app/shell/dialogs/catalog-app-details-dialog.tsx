@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getCatalogApp } from "../catalog-api";
+import { MarkdownDescription } from "../markdown-description";
 import type { CatalogAppVersion, CatalogDetailState } from "../types";
 import { EmptyState, Fact, InlineError } from "../ui";
 
@@ -113,6 +114,8 @@ export function CatalogAppDetailsDialog({
                   ))}
                 </div>
               )}
+
+              {app.descriptionUrl && <MarkdownDescription src={app.descriptionUrl} />}
 
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">Versions</h3>

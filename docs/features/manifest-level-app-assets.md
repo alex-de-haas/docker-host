@@ -6,9 +6,14 @@ vendoring), **A1** (Core: asset endpoint + `descriptionFile` + vendoring +
 resolved `iconUrl`/`descriptionUrl`; platform 0.35.0). **A2** (Shell) is this
 change: app icons in the sidebar and Installed Apps, per-page sidebar icons via
 `ui.navigation[].iconAsset` (added to the Core contract + vendored here), with a
-Lucide fallback (Shell 0.22.0, demo-app 0.4.4). Remaining: **A2c** — the
-markdown long-description rendered from `descriptionUrl` on app-details and the
-marketplace detail (react-markdown + remark-gfm), still to do.
+Lucide fallback (Shell 0.22.0, demo-app 0.4.4). **A2c** ships the markdown
+long-description: Core surfaces the catalog `display.descriptionUrl` on the
+catalog detail API, and the marketplace detail dialog renders it with
+react-markdown + remark-gfm (no raw HTML; relative refs resolve against the
+doc's folder; cross-origin images render as links). Platform 0.36.0 / Shell
+0.23.0. Only follow-up left: the same markdown description on the *installed*
+app-details dialog (needs a new "About" view), plus the deferred hosty-catalog
+seed-entry cleanup.
 Created: 2026-07-07
 
 ## Motivation
