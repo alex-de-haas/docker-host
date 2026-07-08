@@ -11,7 +11,19 @@ import { cn } from "@/lib/utils";
 // safe by construction. Relative image/link refs resolve against the document's own folder; javascript:
 // and data: URLs are dropped, and an image hosted on a different origin than the document renders as a
 // link rather than being inlined (no third-party hotloading — mirrors the publish-time boundary).
-export function MarkdownDescription({ src, className }: { src: string; className?: string }) {
+export function MarkdownDescription({
+  src,
+  className,
+  // Public catalog (GitHub Pages/CDN) assets are served with `Access-Control-Allow-Origin: *`, which a
+  // credentialed request is incompatible with — so the marketplace fetches without credentials (the
+  // default). The installed-app usage (deferred) points at a same-site Core asset URL that needs the
+  // session cookie and would pass "include".
+  credentials = "omit",
+}: {
+  src: string;
+  className?: string;
+  credentials?: RequestCredentials;
+}) {
   // State carries the src it belongs to; while a new src's fetch is in flight the stale/old state's src
   // no longer matches and the component renders nothing. All setState happens in async callbacks (never
   // synchronously in the effect body), so there is no reset-render on every src change.
@@ -19,7 +31,7 @@ export function MarkdownDescription({ src, className }: { src: string; className
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(src, { credentials: "include", signal: controller.signal })
+    fetch(src, { credentials, signal: controller.signal })
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
       .then((text) => {
         setState({ src, error: false, text });
@@ -34,7 +46,7 @@ export function MarkdownDescription({ src, className }: { src: string; className
     return () => {
       controller.abort();
     };
-  }, [src]);
+  }, [src, credentials]);
 
   // Resolve refs against the document's own folder. A blank result drops the ref (react-markdown then
   // renders no href/src), which is how we neutralize javascript:/data: and unresolvable URLs.
