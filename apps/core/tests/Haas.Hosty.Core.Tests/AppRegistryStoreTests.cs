@@ -246,6 +246,25 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public void From_AssetUrls_AreNormalizedAndRejectUnsafeDeclarations()
+    {
+        // A messy-but-safe declaration normalizes to the same path the vendor writes / the endpoint serves.
+        var normalized = AppSummary.From(CreateApp("com.example.notes") with
+        {
+            Version = "0.4.3",
+            CatalogMetadata = AppCatalogMetadataContract.FromManifest(new RuntimeAppCatalogMetadataManifest { Icon = "./assets//icon.svg" }),
+        });
+        Assert.Equal("/api/apps/com.example.notes/assets/assets/icon.svg?v=0.4.3", normalized.IconUrl);
+
+        // An unsafe declaration emits no URL, so AppSummary never advertises something the endpoint 404s.
+        var unsafeIcon = AppSummary.From(CreateApp("com.example.notes") with
+        {
+            CatalogMetadata = AppCatalogMetadataContract.FromManifest(new RuntimeAppCatalogMetadataManifest { Icon = "../secret.svg" }),
+        });
+        Assert.Null(unsafeIcon.IconUrl);
+    }
+
+    [Fact]
     public async Task ListAppsAsync_HeadlessAppWithEndpointHasNoUiEntry()
     {
         // A headless app declares no `ui` section but still exposes an endpoint for other apps

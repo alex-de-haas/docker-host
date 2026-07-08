@@ -1,3 +1,5 @@
+using Microsoft.Net.Http.Headers;
+
 namespace Haas.Hosty.Core;
 
 // Serves an installed app's manifest-declared display assets (icon, screenshots, markdown description
@@ -40,42 +42,49 @@ internal static class AppAssetEndpoints
                 request,
                 users,
                 clock,
-                _ => ServeAsync(appId, assetPath, request, response, paths, cancellationToken),
+                _ => Task.FromResult(Serve(appId, assetPath, request, response, paths)),
                 cancellationToken: cancellationToken));
     }
 
-    private static async Task<IResult> ServeAsync(
+    private static IResult Serve(
         string appId,
         string assetPath,
         HttpRequest request,
         HttpResponse response,
-        CoreDataPaths paths,
-        CancellationToken cancellationToken)
+        CoreDataPaths paths)
     {
         if (!TryResolveAsset(paths.AppsRoot, appId, assetPath, out var fullPath, out var contentType))
         {
             return Results.NotFound();
         }
 
-        var info = new FileInfo(fullPath);
-        var etag = $"W/\"{info.Length:x}-{info.LastWriteTimeUtc.Ticks:x}\"";
+        FileInfo info;
+        try
+        {
+            info = new FileInfo(fullPath);
+            if (!info.Exists)
+            {
+                return Results.NotFound();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The file vanished or became inaccessible between resolution and serving — stay defensive.
+            return Results.NotFound();
+        }
 
         response.Headers["X-Content-Type-Options"] = "nosniff";
         response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
-        response.Headers.ETag = etag;
         // A ?v= cache-buster (the app version) makes the URL change whenever the asset does, so the body
         // is safe to cache immutably; without it, revalidate against the ETag.
         response.Headers.CacheControl = request.Query.ContainsKey("v")
             ? "public, max-age=31536000, immutable"
             : "no-cache";
 
-        if (request.Headers.IfNoneMatch.Any(value => string.Equals(value, etag, StringComparison.Ordinal)))
-        {
-            return Results.StatusCode(StatusCodes.Status304NotModified);
-        }
-
-        var bytes = await File.ReadAllBytesAsync(fullPath, cancellationToken);
-        return Results.Bytes(bytes, contentType);
+        // Stream from disk (assets can be sizeable) and let the file result handle conditional GET
+        // (If-None-Match / If-Modified-Since) against the weak ETag; range processing is disabled.
+        var etag = new EntityTagHeaderValue($"\"{info.Length:x}-{info.LastWriteTimeUtc.Ticks:x}\"", isWeak: true);
+        return Results.File(fullPath, contentType, lastModified: info.LastWriteTimeUtc, entityTag: etag, enableRangeProcessing: false);
     }
 
     // Resolve a requested asset to a servable file: allowlisted extension, contained under the app's
@@ -109,8 +118,10 @@ internal static class AppAssetEndpoints
         {
             return File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
         {
+            // Could not resolve a link target — fall back to the already-contained path; the containment
+            // check on it still holds, so a resolution error degrades to a normal serve, not a 500.
             return path;
         }
     }

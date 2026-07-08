@@ -70,6 +70,50 @@ internal sealed record CoreDataPaths(
         return TryContain(root, string.Join(Path.DirectorySeparatorChar, segments), out fullPath);
     }
 
+    // Normalize a forward-slash relative reference (resolved against `baseDirRootRel`, itself a clean
+    // root-relative dir or empty) into a clean root-relative path — no empty, "." or ".." segments in
+    // the result. Returns null if the reference is absolute, uses a backslash, contains a ':' or '%'
+    // segment (NTFS ADS / percent-encoded traversal), or climbs above the root. Shared by the asset
+    // vendor, the AppSummary URL projection, and (implicitly) the asset endpoint so the vendored path,
+    // the emitted URL, and the served path are always identical.
+    public static string? NormalizeRelativeAssetPath(string? baseDirRootRel, string? reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference) || reference.IndexOf('\\') >= 0 || reference.StartsWith('/') ||
+            Uri.TryCreate(reference, UriKind.Absolute, out _))
+        {
+            return null;
+        }
+
+        var parts = string.IsNullOrEmpty(baseDirRootRel) ? new List<string>() : [.. baseDirRootRel.Split('/')];
+        foreach (var segment in reference.Split('/'))
+        {
+            if (segment.Length == 0 || segment == ".")
+            {
+                continue;
+            }
+
+            if (segment == "..")
+            {
+                if (parts.Count == 0)
+                {
+                    return null;
+                }
+
+                parts.RemoveAt(parts.Count - 1);
+                continue;
+            }
+
+            if (segment.IndexOf(':') >= 0 || segment.IndexOf('%') >= 0)
+            {
+                return null;
+            }
+
+            parts.Add(segment);
+        }
+
+        return parts.Count == 0 ? null : string.Join('/', parts);
+    }
+
     private static bool TryContain(string root, string relative, out string fullPath)
     {
         fullPath = string.Empty;

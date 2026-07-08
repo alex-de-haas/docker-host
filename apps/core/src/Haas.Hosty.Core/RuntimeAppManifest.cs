@@ -122,7 +122,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
 
         async Task VendorAsync(string? relativeRef, string dirRootRel, long cap, bool imageOnly)
         {
-            var rootRel = NormalizeRootRelative(dirRootRel, relativeRef);
+            var rootRel = CoreDataPaths.NormalizeRelativeAssetPath(dirRootRel, relativeRef);
             if (rootRel is null || (imageOnly && !ImageAssetExtensions.Contains(Path.GetExtension(rootRel), StringComparer.OrdinalIgnoreCase)))
             {
                 return;
@@ -154,7 +154,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         // The markdown description, then the relative images it references (resolved against the
         // description's own folder but contained under the manifest folder — a doc in docs/ may
         // reference ../assets/icon.svg).
-        var descriptionRootRel = NormalizeRootRelative("", meta.DescriptionFile);
+        var descriptionRootRel = CoreDataPaths.NormalizeRelativeAssetPath("", meta.DescriptionFile);
         if (descriptionRootRel is not null && string.Equals(Path.GetExtension(descriptionRootRel), ".md", StringComparison.OrdinalIgnoreCase))
         {
             var markdown = await read(descriptionRootRel, DescriptionMaxBytes);
@@ -175,47 +175,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         => !string.IsNullOrWhiteSpace(value) &&
             Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
-
-    // Normalize a forward-slash relative reference against a root-relative directory into a clean
-    // root-relative path (posix, no leading slash). Returns null if it is absolute, uses a backslash or
-    // ':' segment, or escapes above the manifest folder.
-    private static string? NormalizeRootRelative(string? dirRootRel, string? reference)
-    {
-        if (string.IsNullOrWhiteSpace(reference) || reference.IndexOf('\\') >= 0 || reference.StartsWith('/') ||
-            Uri.TryCreate(reference, UriKind.Absolute, out _))
-        {
-            return null;
-        }
-
-        var parts = string.IsNullOrEmpty(dirRootRel) ? new List<string>() : [.. dirRootRel.Split('/')];
-        foreach (var segment in reference.Split('/'))
-        {
-            if (segment.Length == 0 || segment == ".")
-            {
-                continue;
-            }
-
-            if (segment == "..")
-            {
-                if (parts.Count == 0)
-                {
-                    return null;
-                }
-
-                parts.RemoveAt(parts.Count - 1);
-                continue;
-            }
-
-            if (segment.IndexOf(':') >= 0)
-            {
-                return null;
-            }
-
-            parts.Add(segment);
-        }
-
-        return parts.Count == 0 ? null : string.Join('/', parts);
-    }
 
     private static IEnumerable<string> DiscoverMarkdownImageRefs(string markdown)
     {
@@ -256,12 +215,10 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         {
             return await File.ReadAllBytesAsync(fullPath, cancellationToken);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
+            // Display-only best-effort: only genuine caller cancellation propagates; any IO/access error
+            // leaves the asset absent (endpoint 404s) rather than failing the install.
             return null;
         }
     }
@@ -314,12 +271,10 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
 
             return buffer.ToArray();
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            return null;
-        }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
+            // Best-effort: an HTTP error, socket drop, disposed stream, or fetch timeout leaves the asset
+            // absent instead of failing the install; only genuine caller cancellation propagates.
             return null;
         }
     }
@@ -336,12 +291,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             File.WriteAllBytes(dest, bytes);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Display-only: a failed write leaves the asset absent and the endpoint 404s.
-        }
-        catch (UnauthorizedAccessException)
-        {
         }
     }
 

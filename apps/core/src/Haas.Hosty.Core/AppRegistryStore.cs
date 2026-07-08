@@ -701,18 +701,18 @@ internal sealed record AppSummary(
 
     // Build the Core asset-endpoint URL for a manifest-relative asset path, per-segment escaped and
     // cache-busted by the app version (which bumps whenever the vendored assets change). Returns null
-    // for a blank or absolute-URL ref (the latter is the caller's concern; description files are always
-    // relative). The endpoint 404s if the asset was not vendored, and clients fall back gracefully.
+    // for a blank, absolute, or otherwise unclean ref (empty/./.././':'/'%' segment) so AppSummary only
+    // ever emits a URL the endpoint can actually serve — the same normalization the vendor uses, so the
+    // emitted URL matches the path the asset was written to.
     private static string? ResolveAssetUrl(string? relativePath, string appId, string version)
     {
-        var path = AppCatalogMetadataContract.NullIfBlank(relativePath);
-        if (path is null || IsAbsoluteHttpUrl(path))
+        var path = CoreDataPaths.NormalizeRelativeAssetPath("", relativePath);
+        if (path is null)
         {
             return null;
         }
 
-        var segments = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-        var escaped = string.Join('/', segments.Select(Uri.EscapeDataString));
+        var escaped = string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
         return $"/api/apps/{Uri.EscapeDataString(appId)}/assets/{escaped}?v={Uri.EscapeDataString(version)}";
     }
 

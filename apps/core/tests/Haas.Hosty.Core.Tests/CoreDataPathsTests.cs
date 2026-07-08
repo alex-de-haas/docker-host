@@ -69,4 +69,29 @@ public sealed class CoreDataPathsTests
 
         Assert.False(CoreDataPaths.TryResolveContainedRelativePath(root, relativePath, out _));
     }
+
+    [Theory]
+    [InlineData("", "assets/icon.svg", "assets/icon.svg")]
+    [InlineData("", "./docs/store.md", "docs/store.md")] // "." normalized away
+    [InlineData("", "assets//icon.svg", "assets/icon.svg")] // empty segment collapsed
+    [InlineData("docs", "../assets/pic.png", "assets/pic.png")] // sibling ref stays within the root
+    [InlineData("docs/sub", "../../assets/pic.png", "assets/pic.png")]
+    public void NormalizeRelativeAssetPath_ProducesCleanRootRelativePath(string baseDir, string reference, string expected)
+    {
+        Assert.Equal(expected, CoreDataPaths.NormalizeRelativeAssetPath(baseDir, reference));
+    }
+
+    [Theory]
+    [InlineData("", "../escape.png")] // climbs above the root
+    [InlineData("docs", "../../escape.png")] // climbs above the root from a subfolder
+    [InlineData("", "%2e%2e/escape.png")] // percent-encoded traversal
+    [InlineData("", "assets%2ficon.svg")] // percent-encoded slash
+    [InlineData("", "assets/icon.svg:stream")] // NTFS alternate data stream
+    [InlineData("", "assets\\icon.svg")] // backslash
+    [InlineData("", "/etc/passwd")] // absolute
+    [InlineData("", "https://evil/x.png")] // absolute URL
+    public void NormalizeRelativeAssetPath_RejectsUnsafeOrEscapingRefs(string baseDir, string reference)
+    {
+        Assert.Null(CoreDataPaths.NormalizeRelativeAssetPath(baseDir, reference));
+    }
 }
