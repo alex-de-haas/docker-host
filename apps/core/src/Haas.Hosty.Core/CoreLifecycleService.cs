@@ -206,6 +206,8 @@ internal sealed class CoreLifecycleService(
             }
             catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
             {
+                // Intentionally swallowed: StartCoreAsync already recorded the failure on the app
+                // (LastError + RuntimeState "stopped"). Install still succeeds and returns "installed".
             }
 
             installed = await RequireAppAsync(installed.Id, cancellationToken);
@@ -3853,9 +3855,9 @@ internal sealed record AppInstallRequest(
     IReadOnlyDictionary<string, string?>? Settings = null,
     bool? Autostart = null,
     // Whether to start the app immediately after installing, when Autostart is enabled. Only an explicit
-    // true starts it: the interactive install endpoints coerce a client's absent value to true, while
-    // internal boot bootstraps (shell/collector) leave it null so the boot reconciliation starts them
-    // once, in the right order (StartAutostartAppsAsync). See InstallCoreAsync.
+    // true starts it (null and false both mean "don't start now"): the interactive install endpoints coerce
+    // a client's absent value to true, while internal boot bootstraps (shell/collector) pass false so the
+    // boot reconciliation starts them once, in the right order (StartAutostartAppsAsync). See InstallCoreAsync.
     bool? StartOnInstall = null);
 
 internal sealed record AppConfigureRequest(
