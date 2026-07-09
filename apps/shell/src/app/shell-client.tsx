@@ -886,11 +886,9 @@ export function ShellClient({
   );
 
   const removeApp = useCallback(
+    // The RemovePanel is itself the confirmation (it names the app, lists the delete-data/backups/source
+    // options, and gates behind a destructive "Remove app" button), so no extra window.confirm here.
     async (app: CoreApp, options: RemoveOptions) => {
-      if (!window.confirm(`Remove ${app.displayName}?`)) {
-        return;
-      }
-
       const actionKey = `${app.id}:remove`;
       setBusyAction(actionKey);
       try {
