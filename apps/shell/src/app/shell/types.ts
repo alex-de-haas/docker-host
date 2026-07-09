@@ -68,6 +68,9 @@ export type CoreApp = {
   // relative value with coreOrigin to load. Optional for backwards compatibility with older Core builds.
   iconUrl?: string | null;
   descriptionUrl?: string | null;
+  // The catalog feed this install follows (catalog-hosted-app-feeds.md A3), for the feed selector and
+  // choose-a-feed guidance. Null/absent = no feed set. Optional for older Core builds.
+  followedFeedId?: string | null;
   mounts?: CoreMountSlot[];
   // Compiled-artifact pull/lock policy ("pinned"/"rolling") and per-service run-locks (the locked
   // image digest). Optional for backwards compatibility with older Core builds. See digest pinning.
@@ -626,14 +629,6 @@ export type CatalogPublisher = {
   email?: string | null;
 };
 
-export type CatalogArtifact = {
-  kind?: string | null;
-  imageDigest?: string | null;
-  commit?: string | null;
-  ref?: string | null;
-  bundleHash?: string | null;
-};
-
 export type CatalogAppSummary = {
   id: string;
   name: string;
@@ -647,11 +642,14 @@ export type CatalogAppSummary = {
   installedVersion?: string | null;
 };
 
-export type CatalogAppVersion = {
-  version: string;
-  // A manifest URL/path passed straight to the existing install/update flow.
+// A feed: an author-named pointer at the app's manifest at a moving ref (catalog-hosted-app-feeds.md).
+// `default` is normalized by Core (a sole feed reports true), so A4 quick-install just picks the
+// default-flagged feed and defers to Details when none is.
+export type CatalogAppFeed = {
+  id: string;
+  // A manifest URL passed straight to the existing install/update flow.
   manifestRef: string;
-  artifact?: CatalogArtifact | null;
+  default: boolean;
 };
 
 export type CatalogAppDetail = {
@@ -668,12 +666,13 @@ export type CatalogAppDetail = {
   publisher?: CatalogPublisher | null;
   sourceName: string;
   signerIdentity?: string | null;
-  releasesUrl?: string | null;
-  versions: CatalogAppVersion[];
-  stableVersion?: string | null;
-  betaVersion?: string | null;
+  feeds: CatalogAppFeed[];
   installed: boolean;
   installedVersion?: string | null;
+  // The installed app's recorded feed; null means "no feed set" (pre-feeds install or cleared) and the
+  // UI surfaces choose-a-feed guidance instead of an update state.
+  followedFeedId?: string | null;
+  // Digest-aware: the followed feed head's manifest content differs from the installed copy.
   updateAvailable: boolean;
 };
 

@@ -36,8 +36,9 @@ export type ShellActionsContextValue = {
   launchAppPage: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   getStandaloneAppHref: (app: CoreApp, page: AppPageLink) => string;
   // Opens the install review dialog. An optional manifest path/URL pre-fills the review field — the
-  // marketplace passes a catalog version's manifestRef so install flows through the existing reviewed path.
-  openInstallDialog: (manifestPath?: string) => void;
+  // marketplace passes a catalog feed's manifestRef (plus the feed id, recorded as the followed feed)
+  // so install flows through the existing reviewed path.
+  openInstallDialog: (manifestPath?: string, catalogFeedId?: string) => void;
   runAppAction: (app: CoreApp, action: AppAction) => Promise<void>;
   switchAppRuntime: (app: CoreApp, targetRuntime: string) => Promise<void>;
   configureAppDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => Promise<void>;
