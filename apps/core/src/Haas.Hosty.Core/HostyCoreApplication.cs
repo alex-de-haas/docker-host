@@ -35,8 +35,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<LocalPasswordAuthService>();
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
-        builder.Services.AddSingleton(sp => new AppManifestService(
-            allowRemoteLocalCommand: sp.GetRequiredService<HostyCoreRuntimeConfig>().AllowRemoteLocalCommand));
+        builder.Services.AddSingleton(sp => new AppManifestService());
         builder.Services.AddSingleton<AppBackupService>();
         builder.Services.AddSingleton<NotificationStore>();
         builder.Services.AddSingleton<NotificationBroadcaster>();
@@ -688,7 +687,6 @@ internal sealed record HostyCoreRuntimeConfig(
     bool ShellBootstrapEnabled,
     bool ShellAutostart,
     string? TrustedProxySecret = null,
-    bool AllowRemoteLocalCommand = false,
     string IngressProvider = "none",
     string? IngressBaseDomain = null,
     string? IngressConfigPath = null,
@@ -761,7 +759,6 @@ internal sealed record HostyCoreRuntimeConfig(
             ReadBoolean("HOSTY_SHELL_BOOTSTRAP_ENABLED", defaultValue: true),
             ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_TRUSTED_PROXY_SECRET")),
-            ReadBoolean("HOSTY_ALLOW_REMOTE_LOCAL_COMMAND", defaultValue: false),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_PROVIDER")) ?? "none",
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_BASE_DOMAIN")),
             ingressConfigPath,

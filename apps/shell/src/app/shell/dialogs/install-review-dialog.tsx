@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
-import { ChevronDown, LoaderCircle, Plus, RefreshCw } from "lucide-react";
+import { ChevronDown, LoaderCircle, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -187,6 +187,15 @@ export function InstallReviewDialog({
                   </DropdownMenu>
                 </div>
               </div>
+              {selectedRuntimeProfile?.type === "localCommand" && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    This runtime runs a command directly on your host machine, outside any container. Install it only from a
+                    source you trust — you do so at your own risk.
+                  </span>
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <FactCard label="App" value={reviewedPlan.displayName} />
                 <FactCard label="Version" value={reviewedPlan.currentVersion ? `${reviewedPlan.currentVersion} to ${reviewedPlan.targetVersion}` : reviewedPlan.targetVersion} />
