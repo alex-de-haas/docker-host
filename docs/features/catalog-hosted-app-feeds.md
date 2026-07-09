@@ -1,6 +1,6 @@
 # Catalog-Hosted App Feeds
 
-Status: **Design confirmed 2026-07-09** (A1–A3 below, from a design discussion
+Status: **Design confirmed 2026-07-09** (A1–A4 below, from a design discussion
 after a real delivery failure — see Motivation). Implementation not started.
 Created: 2026-07-09
 
@@ -125,13 +125,32 @@ Instead the feed reference becomes explicit operator-visible state:
 - Non-catalog installs (folder, git URL, live source) keep their existing
   content-driven behaviors; feeds are a catalog concept only.
 
+### A4 — Install UX: one-click when unambiguous, never guess
+
+- The **marketplace detail dialog** lists every feed the entry declares
+  (feed id + where its `manifestRef` points), each directly installable;
+  installing records that feed as the followed one (A3). This replaces
+  today's version list.
+- The **list-card Install button** transplants the existing "don't guess"
+  rule (`selectInstallVersion`, marketplace-page.tsx) unchanged:
+  - exactly one feed → install it directly (the overwhelming common case —
+    one-click parity with today's stable-tag behavior);
+  - several feeds, one marked `"default": true` → install the default;
+  - several feeds, no default → the button opens Details for an explicit
+    choice.
+- `default` is an **optional flag** on a feed — the `runtimeProfiles[].default`
+  idiom, playing the role the `stable` dist-tag played. At most one per entry
+  (validated). Array order stays meaningless, per the codebase's stated rule —
+  no order-based conventions.
+
 ## Data Model / API Changes
 
-- **hosty-catalog**: `entry.schema.json` + `feeds[]` (id, manifestRef),
-  − `releasesUrl`; delete `feed.schema.json`; `validate.mjs` validates feeds
-  inline (unique ids, https manifestRef) and **fails loudly** — a missing or
-  unparseable entry/feed section is a CI failure, never silently skipped
-  (same reject-don't-skip rule as the publish pipeline's asset discovery);
+- **hosty-catalog**: `entry.schema.json` + `feeds[]` (id, manifestRef,
+  optional `default`), − `releasesUrl`; delete `feed.schema.json`;
+  `validate.mjs` validates feeds inline (unique ids, https manifestRef, at
+  most one `default`) and **fails loudly** — a missing or unparseable
+  entry/feed section is a CI failure, never silently skipped (same
+  reject-don't-skip rule as the publish pipeline's asset discovery);
   convert existing entries; delete
   `releases.json` from app repos (project-manager, demo-app).
 - **Core**: `CatalogService` resolves feeds from the entry (drop
@@ -142,7 +161,7 @@ Instead the feed reference becomes explicit operator-visible state:
   "up to date". AOT DTO registration for changed shapes.
 - **Shell**: feed selector in the installed app's settings; update badge and
   update-source display; "no feed set" prompt on check-updates; marketplace
-  detail lists feeds instead of versions.
+  detail lists feeds instead of versions; list-card quick install per A4.
 - **Docs**: runtime-app-marketplace.md (WS1 feed schema, update-available,
   Q8 note) updated to reference this doc.
 
@@ -153,17 +172,22 @@ Instead the feed reference becomes explicit operator-visible state:
 | **A1** | Feeds live in the catalog entry (`entry.json` `feeds[]`); a feed is a named moving manifest ref; the entry changes per-topology, never per-release. `releasesUrl` and the standalone feed file are removed. |
 | **A2** | `version` is informational only; update detection is digest compare (manifest + artifact) per the marketplace doc's read-only detection spec; one reviewed-update apply path; feeds never auto-apply. |
 | **A3** | No legacy feed format, no auto-migration. Installs record the followed feed; the feed is changeable in app settings; installs without a usable feed get an explicit "choose a feed" prompt on check-updates (also covers feeds deleted from the catalog). |
+| **A4** | Quick install never guesses: one feed → install it; several with an explicit `"default": true` → install the default; several without → defer to Details. The optional `default` flag (at most one, `runtimeProfiles[].default` idiom) replaces the `stable` dist-tag; array order carries no meaning. |
 
 ## Testing
 
 - Entry parsing: feeds present/absent, duplicate feed ids, non-https
-  manifestRef rejected; `releasesUrl` rejected by schema.
+  manifestRef rejected; more than one `default: true` rejected;
+  `releasesUrl` rejected by schema.
 - Badge: feed head advanced → available; head digest equal → not available;
   content changed under same version string → available (the regression
   case); artifact-only change (re-pushed tag) → available.
 - Feed state: install records feed; settings re-point changes the followed
   ref; recorded feed missing from catalog → no-feed guidance; pre-feeds
   install → no-feed guidance; non-catalog installs unaffected.
+- Quick install (A4): single feed installs directly; multi-feed with default
+  installs the default; multi-feed without default defers to Details; detail
+  dialog installs from any listed feed and records it.
 - Plan/apply: version delta shown when bumped; `manifest` fallback when not;
   applied update re-vendors manifest-URL assets from the new head.
 
