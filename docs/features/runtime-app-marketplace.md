@@ -529,7 +529,12 @@ releasesUrl: https://<author>/releases.json   # or: registry/git tag source
 signerIdentity: github.com/<author>/<repo>     # trust anchor for the feed
 ```
 
-Per-app version feed (`releasesUrl`, author-hosted, signed by author):
+Per-app version feed (`releasesUrl`, author-hosted, signed by author).
+**Superseded (2026-07-09):** the pinned `versions[]+tags` feed and `releasesUrl`
+are replaced by `entry.json` `feeds[]` — named moving manifest refs with
+digest-aware update detection; see
+[catalog-hosted-app-feeds.md](catalog-hosted-app-feeds.md). The sketch below is
+kept for the historical record:
 
 ```json
 {

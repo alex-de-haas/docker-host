@@ -97,6 +97,10 @@ export function ShellClient({
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
   const [installInitialManifest, setInstallInitialManifest] = useState<string | null>(null);
+  // The catalog feed a marketplace-initiated install follows (catalog-hosted-app-feeds.md A3). Sent
+  // with the install request only while the reviewed manifest is still the feed's manifestRef — a
+  // manually edited path in the dialog means the install no longer comes from that feed.
+  const [installCatalogFeedId, setInstallCatalogFeedId] = useState<string | null>(null);
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
   const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
   const [sharedMountsOpen, setSharedMountsOpen] = useState(false);
@@ -484,6 +488,33 @@ export function ShellClient({
       }
     },
     [appEndpoint, sendCsrfJson],
+  );
+
+  // Points an installed app at one of its catalog entry's feeds (catalog-hosted-app-feeds.md A3).
+  // Core re-points ManifestUrl at the feed head, so the update plan is rebuilt right after to compare
+  // against the newly followed feed.
+  const setAppFeed = useCallback(
+    async (app: CoreApp, feedId: string) => {
+      setBusyAction(`${app.id}:feed`);
+      try {
+        await sendCsrfJson(appEndpoint(app, "/feed"), { feedId });
+        await refresh();
+        toast.success("Feed updated", {
+          description: feedId.length > 0 ? `Now following '${feedId}'.` : "No longer following a feed.",
+        });
+        void loadUpdatePlan(app);
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+        toast.error("Failed to set the feed", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      } finally {
+        setBusyAction((current) => (current === `${app.id}:feed` ? null : current));
+      }
+    },
+    [appEndpoint, loadUpdatePlan, refresh, sendCsrfJson],
   );
 
   const openAppPanel = useCallback(
@@ -959,6 +990,8 @@ export function ShellClient({
           system: false,
           settings,
           autostart,
+          // Record the followed feed only when the reviewed manifest is still the feed's manifestRef.
+          catalogFeedId: installCatalogFeedId && plan.manifestPath === installInitialManifest ? installCatalogFeedId : null,
         });
         await refresh();
         setInstallOpen(false);
@@ -978,7 +1011,7 @@ export function ShellClient({
         setBusyAction((current) => (current === "install" ? null : current));
       }
     },
-    [coreOrigin, refresh, sendCsrfJson],
+    [coreOrigin, installCatalogFeedId, installInitialManifest, refresh, sendCsrfJson],
   );
 
   useEffect(() => {
@@ -1166,8 +1199,10 @@ export function ShellClient({
     window.localStorage.setItem(SIDEBAR_COMPACT_STORAGE_KEY, String(compact));
   }
 
-  const openInstallDialog = useCallback((manifestPath?: string) => {
+  const openInstallDialog = useCallback((manifestPath?: string, catalogFeedId?: string) => {
     setInstallInitialManifest(typeof manifestPath === "string" ? manifestPath : null);
+    // The feed id rides along only for a marketplace-initiated install; a manual open has none.
+    setInstallCatalogFeedId(typeof catalogFeedId === "string" ? catalogFeedId : null);
     setInstallOpen(true);
     setInstallPanel(emptyInstallPanelState());
   }, []);
@@ -1343,6 +1378,7 @@ export function ShellClient({
             onClearSource={clearAppSource}
             onSetDevelopmentMode={configureAppDevelopmentMode}
             onApplyUpdate={applyUpdate}
+            onSetFeed={setAppFeed}
             onRemove={removeApp}
           />
         )}

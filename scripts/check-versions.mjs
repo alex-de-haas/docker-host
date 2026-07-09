@@ -40,23 +40,15 @@ function capture(text, pattern) {
 
 const platformVersion = capture(read("Directory.Build.props"), /<Version>([^<]+)<\/Version>/);
 
-// demo-app: manifest ↔ package ↔ the two baked copies (Dockerfile ENV + the config default) ↔ the
-// author-hosted release feed's stable tag. The catalog entry points `releasesUrl` at this
-// releases.json (raw main), so pinning stable == manifest.version here means a version bump and its
-// feed advertisement ship together and the feed can never drift behind the manifest.
-const demoReleases = json("apps/demo-app/releases.json");
+// demo-app: manifest ↔ package ↔ the two baked copies (Dockerfile ENV + the config default). The
+// per-release feed file is gone (catalog-hosted-app-feeds.md): the catalog entry points its `main`
+// feed at the manifest on the main branch, so the version is informational and ships with the push —
+// there is no separate feed advertisement left to drift.
 expectEqual("demo-app version", {
   manifest: json("apps/demo-app/manifest.json").version,
   packageJson: json("apps/demo-app/package.json").version,
   dockerfile: capture(read("apps/demo-app/Dockerfile"), /HOSTY_APP_VERSION=([^\s]+)/),
   demoConfig: capture(read("apps/demo-app/src/lib/demo-config.ts"), /defaultAppVersion\s*=\s*"([^"]+)"/),
-  releasesStable: demoReleases.tags?.stable,
-  // Resolve the stable tag to a concrete versions[] entry that also carries a manifestRef, so a stable
-  // tag naming a version the feed does not list (typo / forgotten entry) or an entry missing its
-  // manifestRef (which install/update can't resolve) surfaces as a missing source rather than passing.
-  releasesVersionsStable: demoReleases.versions?.find(
-    (entry) => entry.version === demoReleases.tags?.stable && entry.manifestRef,
-  )?.version,
 });
 
 // shell: manifest ↔ package.

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -113,11 +114,12 @@ internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDis
 }
 
 // Reads the configured catalog sources and serves the Shell/CLI storefront. A discovery/trust index over
-// existing transport: it never installs anything — clients take a version's `manifestRef` and drive the
+// existing transport: it never installs anything — clients take a feed's `manifestRef` and drive the
 // existing reviewed install/update. Sources are merged by priority (first configured source wins an id
 // conflict), and each entry is joined with Core's registry so cards show install/update state. Optional
 // and non-intrusive: no sources configured => an empty catalog, and installed apps need not belong to one.
-// See docs/features/runtime-app-marketplace.md (B2, and the optionality invariant).
+// See docs/features/runtime-app-marketplace.md (B2, and the optionality invariant) and
+// docs/features/catalog-hosted-app-feeds.md (feeds + digest-aware update detection).
 internal sealed class CatalogService(
     CatalogSourceService sourceService,
     AppRegistryStore apps,
@@ -132,13 +134,13 @@ internal sealed class CatalogService(
             return new CatalogAppsResponse([]);
         }
 
-        var installed = await LoadInstalledVersionsAsync(cancellationToken);
+        var installed = await LoadInstalledAppsAsync(cancellationToken);
         var summaries = new List<CatalogAppSummary>(entries.Count);
         foreach (var located in entries.Values)
         {
             var entry = located.Entry;
             var id = entry.Id!;
-            installed.TryGetValue(id, out var installedVersion);
+            installed.TryGetValue(id, out var installedApp);
             summaries.Add(new CatalogAppSummary(
                 Id: id,
                 Name: ResolveName(entry),
@@ -148,8 +150,8 @@ internal sealed class CatalogService(
                 Icon: NullIfBlank(entry.Display?.Icon),
                 Publisher: NormalizePublisher(entry.Publisher),
                 SourceName: located.SourceName,
-                Installed: installedVersion is not null,
-                InstalledVersion: installedVersion));
+                Installed: installedApp is not null,
+                InstalledVersion: installedApp?.Version));
         }
 
         summaries.Sort((left, right) => string.Compare(left.Name, right.Name, StringComparison.OrdinalIgnoreCase));
@@ -171,16 +173,17 @@ internal sealed class CatalogService(
         }
 
         var entry = located.Entry;
-        var feed = await LoadFeedAsync(entry.ReleasesUrl, cancellationToken);
-        var versions = ResolveVersions(feed);
-        var stable = NullIfBlank(feed?.Tags?.Stable);
-        var beta = NullIfBlank(feed?.Tags?.Beta);
+        var feeds = ResolveFeeds(entry);
 
-        var installed = await LoadInstalledVersionsAsync(cancellationToken);
-        installed.TryGetValue(entry.Id!, out var installedVersion);
-        var updateAvailable = installedVersion is not null
-            && stable is not null
-            && !string.Equals(stable, installedVersion, StringComparison.Ordinal);
+        var installed = await LoadInstalledAppsAsync(cancellationToken);
+        installed.TryGetValue(entry.Id!, out var installedApp);
+        var followedFeedId = NullIfBlank(installedApp?.FollowedFeedId);
+        var followedFeed = followedFeedId is null
+            ? null
+            : feeds.FirstOrDefault(feed => string.Equals(feed.Id, followedFeedId, StringComparison.Ordinal));
+        var updateAvailable = installedApp is not null
+            && followedFeed is not null
+            && await IsFeedHeadNewerAsync(installedApp, followedFeed, cancellationToken);
 
         return new CatalogAppDetailResponse(
             Id: entry.Id!,
@@ -193,12 +196,10 @@ internal sealed class CatalogService(
             Publisher: NormalizePublisher(entry.Publisher),
             SourceName: located.SourceName,
             SignerIdentity: NullIfBlank(entry.SignerIdentity),
-            ReleasesUrl: NullIfBlank(entry.ReleasesUrl),
-            Versions: versions,
-            StableVersion: stable,
-            BetaVersion: beta,
-            Installed: installedVersion is not null,
-            InstalledVersion: installedVersion,
+            Feeds: feeds,
+            Installed: installedApp is not null,
+            InstalledVersion: installedApp?.Version,
+            FollowedFeedId: followedFeedId,
             UpdateAvailable: updateAvailable,
             DescriptionUrl: NullIfBlank(entry.Display?.DescriptionUrl));
     }
@@ -280,61 +281,96 @@ internal sealed class CatalogService(
         return index;
     }
 
-    private async Task<VersionFeed?> LoadFeedAsync(string? releasesUrl, CancellationToken cancellationToken)
+    // Normalizes an entry's declared feeds for the detail response: blank ids/refs are dropped, and
+    // `Default` is resolved to what A4 quick-install needs — the explicitly flagged feed, or the sole
+    // one. Publish-time validation enforces "at most one default", but a hand-crafted index could still
+    // flag several; normalization keeps the first and logs, mirroring the id-conflict handling.
+    private IReadOnlyList<CatalogAppFeed> ResolveFeeds(CatalogAppEntry entry)
     {
-        if (string.IsNullOrWhiteSpace(releasesUrl))
-        {
-            return null;
-        }
-
-        var raw = await fetcher.FetchAsync(releasesUrl, cancellationToken);
-        if (raw is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize(raw, CoreJsonSerializerContext.Default.VersionFeed);
-        }
-        catch (JsonException ex)
-        {
-            logger.LogWarning("Catalog version feed '{Feed}' returned invalid JSON: {Message}", releasesUrl, ex.Message);
-            return null;
-        }
-    }
-
-    private static IReadOnlyList<CatalogAppVersion> ResolveVersions(VersionFeed? feed)
-    {
-        if (feed is null || feed.Versions.Count == 0)
+        if (entry.Feeds.Count == 0)
         {
             return [];
         }
 
-        var result = new List<CatalogAppVersion>(feed.Versions.Count);
-        foreach (var version in feed.Versions)
+        var result = new List<CatalogAppFeed>(entry.Feeds.Count);
+        var sawDefault = false;
+        foreach (var feed in entry.Feeds)
         {
-            var number = NullIfBlank(version.Version);
-            var manifestRef = NullIfBlank(version.ManifestRef);
-            if (number is null || manifestRef is null)
+            var id = NullIfBlank(feed.Id);
+            var manifestRef = NullIfBlank(feed.ManifestRef);
+            if (id is null || manifestRef is null)
             {
                 continue;
             }
 
-            result.Add(new CatalogAppVersion(number, manifestRef, version.Artifact));
+            var isDefault = feed.Default == true;
+            if (isDefault && sawDefault)
+            {
+                logger.LogWarning(
+                    "Catalog entry '{Id}' flags more than one default feed; keeping the first.",
+                    entry.Id);
+                isDefault = false;
+            }
+
+            sawDefault |= isDefault;
+            result.Add(new CatalogAppFeed(id, manifestRef, isDefault));
+        }
+
+        // A sole feed is the de-facto default even without the flag, so clients need no special case.
+        if (result.Count == 1 && !result[0].Default)
+        {
+            result[0] = result[0] with { Default = true };
         }
 
         return result;
     }
 
-    private async Task<Dictionary<string, string>> LoadInstalledVersionsAsync(CancellationToken cancellationToken)
+    // Digest-aware update detection (catalog-hosted-app-feeds.md A2): the feed head's manifest content
+    // vs the installed internal copy — SaveManifestCopyAsync writes the fetched text byte-identically,
+    // so equal digests mean "already at the head". Best-effort like every catalog read: an unreachable
+    // head or missing local copy yields false (no update badge), never an error.
+    private async Task<bool> IsFeedHeadNewerAsync(AppRecord app, CatalogAppFeed feed, CancellationToken cancellationToken)
     {
-        var installed = await apps.ListAppsAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(app.ManifestPath))
+        {
+            return false;
+        }
+
+        var head = await fetcher.FetchAsync(feed.ManifestRef, cancellationToken);
+        if (head is null)
+        {
+            return false;
+        }
+
+        // The installed copy is read directly, not through the fetcher: the TTL cache is right for the
+        // remote head (a storefront render fans out repeated fetches) but would keep serving the
+        // pre-update copy for up to the TTL right after an applied update, flashing a phantom badge.
+        // A local file read is cheap enough to skip caching.
+        string installedCopy;
+        try
+        {
+            installedCopy = await File.ReadAllTextAsync(app.ManifestPath, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+
+        return !string.Equals(ManifestDigest(head), ManifestDigest(installedCopy), StringComparison.Ordinal);
+    }
+
+    // Same digest recipe as the manifest loader (RuntimeAppManifest): SHA-256 hex of the raw JSON text.
+    private static string ManifestDigest(string json)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
+
+    private async Task<Dictionary<string, AppRecord>> LoadInstalledAppsAsync(CancellationToken cancellationToken)
+    {
+        var installed = await apps.ListAppRecordsAsync(cancellationToken);
         // Case-insensitive so a catalog entry id joins the installed record regardless of authored casing.
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var map = new Dictionary<string, AppRecord>(StringComparer.OrdinalIgnoreCase);
         foreach (var app in installed)
         {
-            map[app.Id] = app.Version;
+            map[app.Id] = app;
         }
 
         return map;

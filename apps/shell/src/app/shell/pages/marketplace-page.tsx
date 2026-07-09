@@ -9,22 +9,22 @@ import { cn } from "@/lib/utils";
 import { getCatalogApp, getCatalogApps } from "../catalog-api";
 import { CatalogAppDetailsDialog } from "../dialogs/catalog-app-details-dialog";
 import { MarketplaceSourcesDialog } from "../dialogs/marketplace-sources-dialog";
-import type { CatalogAppDetail, CatalogAppSummary, CatalogAppVersion, CatalogListState } from "../types";
+import type { CatalogAppDetail, CatalogAppFeed, CatalogAppSummary, CatalogListState } from "../types";
 import { EmptyState, PageHeader } from "../ui";
 
 type SendCsrfJson = (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
 
 // The marketplace storefront: a discovery layer over the configured catalog sources. Browsing and
-// install both go through Core's existing reviewed flow — a card opens the app detail, and installing a
-// version hands its manifestRef to the install dialog. Optional/non-intrusive: an empty catalog (no
-// sources configured) simply shows an empty state.
+// install both go through Core's existing reviewed flow — a card opens the app detail, and installing
+// from a feed hands its manifestRef (plus the feed id, recorded as the followed feed) to the install
+// dialog. Optional/non-intrusive: an empty catalog (no sources configured) simply shows an empty state.
 export function MarketplacePage({
   coreOrigin,
   onInstall,
   sendCsrfJson,
 }: {
   coreOrigin: string;
-  onInstall: (manifestRef: string) => void;
+  onInstall: (manifestRef: string, catalogFeedId?: string) => void;
   sendCsrfJson: SendCsrfJson;
 }) {
   const [state, setState] = useState<CatalogListState>({ loading: true, error: null, apps: [] });
@@ -194,7 +194,7 @@ function MarketplaceCard({
   app: CatalogAppSummary;
   coreOrigin: string;
   onOpen: () => void;
-  onInstall: (manifestRef: string) => void;
+  onInstall: (manifestRef: string, catalogFeedId?: string) => void;
 }) {
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
@@ -204,15 +204,15 @@ function MarketplaceCard({
     setInstallError(null);
     try {
       const detail = await getCatalogApp(coreOrigin, app.id);
-      const version = selectInstallVersion(detail);
-      if (!version) {
-        // No unambiguous version to one-click install (no releases, or several untagged versions) —
-        // send the operator to Details to choose explicitly rather than guessing a feed entry.
+      const feed = selectInstallFeed(detail);
+      if (!feed) {
+        // No unambiguous feed to one-click install (no feeds, or several without a default) — send the
+        // operator to Details to choose explicitly rather than guessing (A4: feed order carries no meaning).
         onOpen();
         return;
       }
 
-      onInstall(version.manifestRef);
+      onInstall(feed.manifestRef, feed.id);
     } catch (error) {
       setInstallError(error instanceof Error ? error.message : "Install review is unavailable.");
     } finally {
@@ -409,22 +409,11 @@ function MarketplaceTagBadge({ item, tooltip = false }: { item: MarketplaceCardB
   );
 }
 
-function selectInstallVersion(app: CatalogAppDetail): CatalogAppVersion | null {
-  if (!app.versions || app.versions.length === 0) {
-    return null;
-  }
-
-  if (app.stableVersion) {
-    const stable = app.versions.find((version) => version.version === app.stableVersion);
-    if (stable) {
-      return stable;
-    }
-  }
-
-  // Don't guess: the feed order is arbitrary, so with several untagged versions defer to Details for an
-  // explicit choice (parity with the CLI's `hosty catalog install`, which requires --version here). Only
-  // the sole version auto-installs.
-  return app.versions.length === 1 ? app.versions[0] : null;
+// A4 quick install: the default-flagged feed installs directly (Core normalizes a sole feed to
+// default: true); anything ambiguous defers to Details for an explicit choice (parity with the CLI's
+// `hosty catalog install`, which requires --feed there). Never guesses — feed order carries no meaning.
+function selectInstallFeed(app: CatalogAppDetail): CatalogAppFeed | null {
+  return app.feeds?.find((feed) => feed.default) ?? null;
 }
 
 function CategoryChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {

@@ -19,7 +19,10 @@ internal sealed class CoreLifecycleService(
     IClock? clock = null,
     TelemetryBackendClient? backendClient = null,
     GlobalMountStore? globalMounts = null,
-    MountPathPolicy? mountPathPolicy = null)
+    MountPathPolicy? mountPathPolicy = null,
+    // Set-feed validation only (catalog-hosted-app-feeds.md A3): resolving a requested feed id against
+    // the app's catalog entry. Optional so tests without a catalog construct the service unchanged.
+    CatalogService? catalog = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -158,6 +161,10 @@ internal sealed class CoreLifecycleService(
             RuntimeState = "stopped",
             LastOperation = "install",
             Autostart = request.Autostart ?? true,
+            // Record the catalog feed this install follows (catalog-hosted-app-feeds.md A3) — the
+            // installer passed the feed's moving manifestRef as ManifestPath, so ManifestUrl already
+            // points at the feed head; this id is the bookkeeping the Shell's feed selector shows.
+            FollowedFeedId = string.IsNullOrWhiteSpace(request.CatalogFeedId) ? null : request.CatalogFeedId.Trim(),
         };
 
         // Restore operator config retained from a prior uninstall-that-kept-data, before applying
@@ -274,6 +281,56 @@ internal sealed class CoreLifecycleService(
             Autostart = request.Autostart,
             OperationStatus = "configured",
             LastOperation = "configure-autostart",
+            LastError = null,
+        }, cancellationToken);
+
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
+    }
+
+    // Points an installed app at one of its catalog entry's feeds (catalog-hosted-app-feeds.md A3).
+    // Setting a feed re-points ManifestUrl at the feed's moving manifestRef, so the existing reviewed
+    // update flow (plan → confirm digest → apply) reads the feed head with no special casing. Clearing
+    // (null/blank id) only drops the bookkeeping — ManifestUrl keeps its current value.
+    public Task<AppLifecycleResponse> SetFeedAsync(
+        string appId,
+        AppFeedRequest request,
+        CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => SetFeedCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> SetFeedCoreAsync(
+        string appId,
+        AppFeedRequest request,
+        CancellationToken cancellationToken)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var feedId = string.IsNullOrWhiteSpace(request.FeedId) ? null : request.FeedId.Trim();
+        string? manifestUrl = null;
+        if (feedId is not null)
+        {
+            if (catalog is null)
+            {
+                throw new AppLifecycleException("catalog_unavailable", "The catalog service is not available.");
+            }
+
+            var detail = await catalog.GetAppAsync(app.Id, cancellationToken)
+                ?? throw new AppLifecycleException(
+                    "catalog_app_not_found",
+                    $"No catalog app '{app.Id}' was found in any configured source.");
+            var feed = detail.Feeds.FirstOrDefault(candidate => string.Equals(candidate.Id, feedId, StringComparison.Ordinal))
+                ?? throw new AppLifecycleException(
+                    "catalog_feed_not_found",
+                    detail.Feeds.Count == 0
+                        ? $"Catalog app '{app.Id}' declares no feeds."
+                        : $"Catalog app '{app.Id}' has no feed '{feedId}'. Declared feeds: {string.Join(", ", detail.Feeds.Select(candidate => candidate.Id))}.");
+            manifestUrl = feed.ManifestRef;
+        }
+
+        var document = await apps.UpdateAppAsync(appId, current => current with
+        {
+            FollowedFeedId = feedId,
+            ManifestUrl = manifestUrl ?? current.ManifestUrl,
+            OperationStatus = "configured",
+            LastOperation = "set-feed",
             LastError = null,
         }, cancellationToken);
 
@@ -1518,7 +1575,10 @@ internal sealed class CoreLifecycleService(
             // ArtifactLocks is deliberately left null on (re)build: install has nothing to lock yet,
             // and update/runtime-switch must drop the old lock so the next start re-resolves the new
             // target (a re-pushed tag advances the digest). The policy is operator config, preserved.
-            UpdatePolicy: existing?.UpdatePolicy);
+            UpdatePolicy: existing?.UpdatePolicy,
+            // The followed catalog feed is operator/install bookkeeping, not manifest contract —
+            // preserved across update/switch/reconcile like UpdatePolicy.
+            FollowedFeedId: existing?.FollowedFeedId);
     }
 
     // External-mount slots are redeclared from the manifest on every (re)build, like runtime
@@ -3858,7 +3918,15 @@ internal sealed record AppInstallRequest(
     // true starts it (null and false both mean "don't start now"): the interactive install endpoints coerce
     // a client's absent value to true, while internal boot bootstraps (shell/collector) pass false so the
     // boot reconciliation starts them once, in the right order (StartAutostartAppsAsync). See InstallCoreAsync.
-    bool? StartOnInstall = null);
+    bool? StartOnInstall = null,
+    // The catalog feed id this install follows, when the installer resolved ManifestPath from a catalog
+    // feed's manifestRef (catalog-hosted-app-feeds.md A3). Recorded on the app for the Shell's feed
+    // selector; null for non-catalog installs.
+    string? CatalogFeedId = null);
+
+// Set-feed request (catalog-hosted-app-feeds.md A3): points an installed app at one of its catalog
+// entry's feeds. Null/blank FeedId clears the followed feed (the app keeps its current ManifestUrl).
+internal sealed record AppFeedRequest(string? FeedId = null);
 
 internal sealed record AppConfigureRequest(
     IReadOnlyDictionary<string, string?>? Settings = null,

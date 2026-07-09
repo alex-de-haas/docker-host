@@ -59,9 +59,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppUpdatePlanDigestSeed))]
 [JsonSerializable(typeof(AppRuntimeSwitchDigestSeed))]
 [JsonSerializable(typeof(NotificationState))]
-// Marketplace catalog wire schema Core fetches and deserializes (index + per-app version feed).
+// Marketplace catalog wire schema Core fetches and deserializes (index; entries carry feeds inline).
 [JsonSerializable(typeof(CatalogIndex))]
-[JsonSerializable(typeof(VersionFeed))]
 // WS7 federation: operator-managed catalog sources persisted at core/catalog-sources.json.
 [JsonSerializable(typeof(CatalogSourceState))]
 
@@ -79,6 +78,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppInstallRequest))]
 [JsonSerializable(typeof(AppConfigureRequest))]
 [JsonSerializable(typeof(AppAutostartRequest))]
+[JsonSerializable(typeof(AppFeedRequest))]
 [JsonSerializable(typeof(AppDevelopmentModeRequest))]
 [JsonSerializable(typeof(AppMountsRequest))]
 [JsonSerializable(typeof(GlobalMountUpsertRequest))]

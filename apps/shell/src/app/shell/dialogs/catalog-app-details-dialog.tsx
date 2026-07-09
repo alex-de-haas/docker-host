@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getCatalogApp } from "../catalog-api";
 import { MarkdownDescription } from "../markdown-description";
-import type { CatalogAppVersion, CatalogDetailState } from "../types";
+import type { CatalogAppFeed, CatalogDetailState } from "../types";
 import { EmptyState, Fact, InlineError } from "../ui";
 
 // Only follow http(s) links from catalog metadata (authored by external sources), never javascript:/data:.
@@ -23,10 +23,11 @@ function httpUrl(value: string | null | undefined): string | null {
   }
 }
 
-// Marketplace detail for one catalog app. Loads the full entry (display + resolved feed versions). For an
-// app that is not installed, a version's Install button hands its manifestRef to the existing reviewed
-// install flow (the catalog installs nothing itself). Already-installed apps are managed from Installed
-// Apps — installing a version there would just return "already installed", so it is not offered here.
+// Marketplace detail for one catalog app. Loads the full entry (display + declared feeds). For an app
+// that is not installed, a feed's Install button hands its manifestRef (and the feed id, recorded as
+// the followed feed) to the existing reviewed install flow (the catalog installs nothing itself).
+// Already-installed apps are managed from Installed Apps — installing there would just return
+// "already installed", so it is not offered here.
 export function CatalogAppDetailsDialog({
   coreOrigin,
   appId,
@@ -36,7 +37,7 @@ export function CatalogAppDetailsDialog({
   coreOrigin: string;
   appId: string;
   onClose: () => void;
-  onInstall: (manifestRef: string) => void;
+  onInstall: (manifestRef: string, catalogFeedId?: string) => void;
 }) {
   const [state, setState] = useState<CatalogDetailState>({ loading: true, error: null, app: null });
   const abortRef = useRef<AbortController | null>(null);
@@ -69,9 +70,10 @@ export function CatalogAppDetailsDialog({
   }, [load]);
 
   const app = state.app;
+  const feeds = app?.feeds ?? [];
   const publisherUrl = httpUrl(app?.publisher?.url);
-  const installVersion = (version: CatalogAppVersion) => {
-    onInstall(version.manifestRef);
+  const installFeed = (feed: CatalogAppFeed) => {
+    onInstall(feed.manifestRef, feed.id);
     onClose();
   };
 
@@ -133,24 +135,20 @@ export function CatalogAppDetailsDialog({
               {app.descriptionUrl && <MarkdownDescription src={app.descriptionUrl} />}
 
               <div className="space-y-2">
-                <h3 className="text-sm font-medium">Versions</h3>
-                {!app.versions || app.versions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {app.releasesUrl ? "No versions published in the release feed." : "This app declares no release feed; install it from its source directly."}
-                  </p>
+                <h3 className="text-sm font-medium">Feeds</h3>
+                {feeds.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">This app declares no feeds; install it from its source directly.</p>
                 ) : (
                   <div className="divide-y rounded-md border">
-                    {app.versions.map((version) => (
-                      <div key={version.version} className="flex items-center justify-between gap-3 px-3 py-2">
+                    {feeds.map((feed) => (
+                      <div key={feed.id} className="flex items-center justify-between gap-3 px-3 py-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="font-medium">{version.version}</span>
-                          {version.version === app.stableVersion && <Badge variant="secondary">Stable</Badge>}
-                          {version.version === app.betaVersion && <Badge variant="outline">Beta</Badge>}
-                          {version.artifact?.kind && <Badge variant="outline">{version.artifact.kind}</Badge>}
-                          {version.version === app.installedVersion && <Badge variant="outline">Installed</Badge>}
+                          <span className="font-medium">{feed.id}</span>
+                          {feed.default && feeds.length > 1 && <Badge variant="secondary">Default</Badge>}
+                          {app.installed && feed.id === app.followedFeedId && <Badge variant="outline">Followed</Badge>}
                         </div>
                         {!app.installed && (
-                          <Button type="button" size="sm" variant="outline" onClick={() => installVersion(version)}>
+                          <Button type="button" size="sm" variant="outline" onClick={() => installFeed(feed)}>
                             <Download className="h-4 w-4" />
                             Install
                           </Button>
@@ -161,9 +159,11 @@ export function CatalogAppDetailsDialog({
                 )}
                 {app.installed && (
                   <p className="text-sm text-muted-foreground">
-                    {app.updateAvailable && app.installedVersion && app.stableVersion
-                      ? `Update available: ${app.installedVersion} → ${app.stableVersion}. Manage updates from Installed Apps.`
-                      : `Installed${app.installedVersion ? ` (${app.installedVersion})` : ""}. Manage updates from Installed Apps.`}
+                    {app.updateAvailable
+                      ? `Update available from the '${app.followedFeedId}' feed. Manage updates from Installed Apps.`
+                      : app.followedFeedId
+                        ? `Installed${app.installedVersion ? ` (${app.installedVersion})` : ""}, following '${app.followedFeedId}'. Manage updates from Installed Apps.`
+                        : `Installed${app.installedVersion ? ` (${app.installedVersion})` : ""}. No feed set — choose one in the app's settings to receive updates.`}
                   </p>
                 )}
               </div>

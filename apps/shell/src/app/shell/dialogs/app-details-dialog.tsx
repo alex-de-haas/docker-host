@@ -2,13 +2,14 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, formatUpdateChange, isAppAutostartEnabled } from "../app-helpers";
+import { getCatalogApp } from "../catalog-api";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import {
   buildPublicOriginGroups,
@@ -17,6 +18,7 @@ import {
   SettingInput,
 } from "../settings";
 import type {
+  CatalogAppFeed,
   CoreApp,
   CoreBackup,
   CoreBackupCleanupPlan,
@@ -55,6 +57,7 @@ export function AppDetailsDialog({
   onClearSource,
   onSetDevelopmentMode,
   onApplyUpdate,
+  onSetFeed,
   onRemove,
 }: {
   app: CoreApp;
@@ -78,6 +81,7 @@ export function AppDetailsDialog({
   onClearSource: (app: CoreApp) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
+  onSetFeed: (app: CoreApp, feedId: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
 }) {
   // Settings (env/public origins/mounts/source) are available for system apps too; only backups,
@@ -124,7 +128,7 @@ export function AppDetailsDialog({
           <InlineError message="You do not have permission to manage app settings." />
         ))}
         {view === "update" && (canMutateApp ? (
-          <UpdatePanel app={app} detail={detail} busyAction={busyAction} onApplyUpdate={onApplyUpdate} />
+          <UpdatePanel app={app} detail={detail} coreOrigin={coreOrigin} canManageApps={canMutateApp} busyAction={busyAction} onApplyUpdate={onApplyUpdate} onSetFeed={onSetFeed} />
         ) : (
           <InlineError message="System app update controls are not available in Shell." />
         ))}
@@ -910,7 +914,23 @@ function SourceForm({
   );
 }
 
-function UpdatePanel({ app, detail, busyAction, onApplyUpdate }: { app: CoreApp; detail: DetailPanelState; busyAction: string | null; onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void }) {
+function UpdatePanel({
+  app,
+  detail,
+  coreOrigin,
+  canManageApps,
+  busyAction,
+  onApplyUpdate,
+  onSetFeed,
+}: {
+  app: CoreApp;
+  detail: DetailPanelState;
+  coreOrigin: string;
+  canManageApps: boolean;
+  busyAction: string | null;
+  onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
+  onSetFeed: (app: CoreApp, feedId: string) => void;
+}) {
   const plan = detail.updatePlan;
 
   // A live source runtime adopts its manifest on restart and has no reviewed-update path; the Update
@@ -941,6 +961,7 @@ function UpdatePanel({ app, detail, busyAction, onApplyUpdate }: { app: CoreApp;
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
+        <FeedSection app={app} coreOrigin={coreOrigin} canManageApps={canManageApps} busyAction={busyAction} onSetFeed={onSetFeed} />
         {sourceMissing && (
           <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -981,6 +1002,114 @@ function UpdatePanel({ app, detail, busyAction, onApplyUpdate }: { app: CoreApp;
           </Button>
         </DialogFooter>
       )}
+    </div>
+  );
+}
+
+// The followed-feed selector for a catalog-listed app (catalog-hosted-app-feeds.md A3). Renders
+// nothing when the app is not in any configured catalog (or the catalog is unreachable) — feeds are a
+// catalog concept only. Surfaces the explicit choose-a-feed guidance for a pre-feeds install (no feed
+// recorded) and for a recorded feed the entry no longer declares, instead of pretending "up to date".
+function FeedSection({
+  app,
+  coreOrigin,
+  canManageApps,
+  busyAction,
+  onSetFeed,
+}: {
+  app: CoreApp;
+  coreOrigin: string;
+  canManageApps: boolean;
+  busyAction: string | null;
+  onSetFeed: (app: CoreApp, feedId: string) => void;
+}) {
+  const [feeds, setFeeds] = useState<CatalogAppFeed[] | null>(null);
+  const followed = app.followedFeedId ?? null;
+  const [selected, setSelected] = useState<string>(followed ?? "");
+
+  useEffect(() => {
+    // Abort the in-flight fetch on unmount or app change so a stale response can't overwrite newer
+    // state (the same pattern the marketplace pages use).
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const detail = await getCatalogApp(coreOrigin, app.id, controller.signal);
+        setFeeds(detail.feeds ?? []);
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
+        }
+        // Not catalog-listed (404) or catalog unreachable — no feed UI, same as before feeds existed.
+        setFeeds(null);
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [coreOrigin, app.id]);
+
+  // Track the record when a save lands (the app prop refreshes with the new followed feed) — the
+  // render-time reset pattern SettingsDialog uses, which the set-state-in-effect lint rule prefers.
+  const [prevFollowed, setPrevFollowed] = useState<string | null>(followed);
+  if (prevFollowed !== followed) {
+    setPrevFollowed(followed);
+    setSelected(followed ?? "");
+  }
+
+  if (!feeds || feeds.length === 0) {
+    return null;
+  }
+
+  const followedMissing = followed !== null && !feeds.some((feed) => feed.id === followed);
+  const busy = busyAction === `${app.id}:feed`;
+
+  return (
+    <div className="space-y-3 rounded-md border p-4">
+      <div className="flex items-center gap-2">
+        <Rss className="h-4 w-4 text-muted-foreground" />
+        <h3 className="text-sm font-medium">Update feed</h3>
+      </div>
+      {followed === null && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>No feed set — catalog updates are not detected for this app. Choose a feed to follow.</span>
+        </div>
+      )}
+      {followedMissing && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>The followed feed &lsquo;{followed}&rsquo; is no longer declared in the catalog. Choose another feed.</span>
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <select
+          value={selected}
+          onChange={(event) => setSelected(event.target.value)}
+          disabled={!canManageApps || busy}
+          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
+          aria-label="Update feed"
+        >
+          {/* Clearing is a first-class action (the endpoint accepts a blank feedId), so a followed app
+              offers "None"; an unfollowed one just prompts for a choice. */}
+          {followed === null ? <option value="">Choose a feed…</option> : <option value="">None (stop following)</option>}
+          {followedMissing && <option value={followed}>{followed} (missing)</option>}
+          {feeds.map((feed) => (
+            <option key={feed.id} value={feed.id}>
+              {feed.id}
+              {feed.default && feeds.length > 1 ? " (default)" : ""}
+            </option>
+          ))}
+        </select>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => onSetFeed(app, selected)}
+          disabled={!canManageApps || busy || selected === followed || (followed === null && selected.length === 0)}
+        >
+          {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Rss className="h-4 w-4" />}
+          {selected.length === 0 && followed !== null ? "Stop following" : "Follow feed"}
+        </Button>
+      </div>
     </div>
   );
 }

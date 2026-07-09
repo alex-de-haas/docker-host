@@ -265,7 +265,15 @@ internal sealed record AppRecord(
     // captured from the manifest at install/update and re-read on each start for a live source app.
     // Display-only; never gates anything. Additive/nullable, so no AppStateDocument schema bump. See
     // runtime-app-marketplace.md ("Manifest Metadata Extensions", B5).
-    AppCatalogMetadataContract? CatalogMetadata = null);
+    AppCatalogMetadataContract? CatalogMetadata = null,
+    // The catalog feed this install follows (catalog-hosted-app-feeds.md A3): recorded at
+    // install-from-catalog, changeable via the set-feed operation. Setting a feed also re-points
+    // ManifestUrl at the feed's moving manifestRef, so the existing reviewed-update flow reads the
+    // feed head with no special casing. Null = no feed set (pre-feeds install, non-catalog install,
+    // or cleared) — clients surface choose-a-feed guidance instead of pretending "up to date".
+    // Resolution is by feed id against the merged catalog entry for this app id; a feed that no
+    // longer exists folds into the same guidance. Additive/nullable, so no schema bump.
+    string? FollowedFeedId = null);
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
 // update for a pinned app. `Kind` is "image" (registry image) in v1; the bundle/source fields are
@@ -603,7 +611,10 @@ internal sealed record AppSummary(
     // when the manifest declares none. Clients render `<img src=iconUrl>` (fallback to the Lucide
     // `ui.icon`) and fetch the markdown description from descriptionUrl. Additive/nullable.
     string? IconUrl = null,
-    string? DescriptionUrl = null)
+    string? DescriptionUrl = null,
+    // The catalog feed this install follows (AppRecord.FollowedFeedId), for the Shell's feed selector
+    // and choose-a-feed guidance. Null = no feed set. Additive/nullable.
+    string? FollowedFeedId = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
     // manifest profile's `development` flag as the default. Always false for a non-source runtime
@@ -690,7 +701,8 @@ internal sealed record AppSummary(
             liveSourcePath,
             app.CatalogMetadata,
             ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, app.Version),
-            ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, app.Version));
+            ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, app.Version),
+            app.FollowedFeedId);
     }
 
     // A manifest-declared icon is either an absolute https URL (passed through) or a manifest-relative
