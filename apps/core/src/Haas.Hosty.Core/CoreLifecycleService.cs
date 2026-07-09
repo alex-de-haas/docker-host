@@ -189,7 +189,29 @@ internal sealed class CoreLifecycleService(
             TryDelete(GetRetainedConfigPath(selection.Manifest.Id!));
         }
 
-        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "installed");
+        var installed = document.App;
+        // An interactive install with autostart enabled starts the app right away, matching the operator's
+        // intent ("this app should be running") instead of leaving it stopped until the next Core restart —
+        // the only other time Autostart is honored (StartAutostartAppsAsync at boot). We already hold this
+        // app's operation lock, so we call the unlocked StartCoreAsync directly (see the operationLocks note).
+        // Best-effort: a recordable start failure (missing required setting, runtime unavailable) is already
+        // recorded on the app by StartCoreAsync and leaves it stopped, but the install itself still succeeds.
+        if (request.StartOnInstall == true &&
+            string.Equals(installed.Kind, "runtime", StringComparison.Ordinal) &&
+            (installed.Autostart ?? true))
+        {
+            try
+            {
+                await StartCoreAsync(installed.Id, cancellationToken);
+            }
+            catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
+            {
+            }
+
+            installed = await RequireAppAsync(installed.Id, cancellationToken);
+        }
+
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(installed, cancellationToken), null, "installed");
     }
 
     public Task<AppLifecycleResponse> ConfigureAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken = default)
@@ -3829,7 +3851,12 @@ internal sealed record AppInstallRequest(
     string? SelectedRuntime = null,
     bool System = false,
     IReadOnlyDictionary<string, string?>? Settings = null,
-    bool? Autostart = null);
+    bool? Autostart = null,
+    // Whether to start the app immediately after installing, when Autostart is enabled. Only an explicit
+    // true starts it: the interactive install endpoints coerce a client's absent value to true, while
+    // internal boot bootstraps (shell/collector) leave it null so the boot reconciliation starts them
+    // once, in the right order (StartAutostartAppsAsync). See InstallCoreAsync.
+    bool? StartOnInstall = null);
 
 internal sealed record AppConfigureRequest(
     IReadOnlyDictionary<string, string?>? Settings = null,

@@ -206,6 +206,65 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_StartsAppImmediatelyWhenStartOnInstallAndAutostartEnabled()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var install = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, StartOnInstall: true));
+
+        Assert.Equal("installed", install.Status);
+        Assert.Equal("running", install.App?.RuntimeState);
+        Assert.Equal(1, fixture.Adapter.StartCount);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("running", app!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task InstallAsync_DoesNotStartWhenAutostartDisabled()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        // Autostart off means "this app should not be running", so a start-on-install request is a no-op.
+        var install = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, Autostart: false, StartOnInstall: true));
+
+        Assert.Equal("stopped", install.App?.RuntimeState);
+        Assert.Equal(0, fixture.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task InstallAsync_DoesNotStartWhenStartOnInstallNotRequested()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        // The default (StartOnInstall null) preserves install-then-stopped for callers that reconcile
+        // starts separately, e.g. the boot bootstraps deferring to StartAutostartAppsAsync.
+        var install = await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        Assert.Equal("stopped", install.App?.RuntimeState);
+        Assert.Equal(0, fixture.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task InstallAsync_StillSucceedsWhenStartOnInstallStartFails()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        fixture.Adapter.FailOnStartCount = 1;
+
+        // A start failure is recorded on the app but must not fail the install itself.
+        var install = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, StartOnInstall: true));
+
+        Assert.Equal("installed", install.Status);
+        Assert.Equal("stopped", install.App?.RuntimeState);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("stopped", app!.RuntimeState);
+        Assert.False(string.IsNullOrEmpty(app.LastError));
+    }
+
+    [Fact]
     public async Task GetLogsAsync_ReturnsPerServiceSegmentsAlongsideCombinedText()
     {
         var fixture = await LifecycleFixture.CreateAsync();

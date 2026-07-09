@@ -30,7 +30,9 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.InstallAsync(input, cancellationToken)),
+                // Interactive installs start the app immediately unless the client opts out (StartOnInstall
+                // false); an absent value defaults to true so autostart apps run without a Core restart.
+                async () => await HandleLifecycleError(() => lifecycle.InstallAsync(input with { StartOnInstall = input.StartOnInstall ?? true }, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -512,7 +514,9 @@ internal static class LifecycleEndpoints
             AppInstallRequest input,
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                await HandleLifecycleError(() => lifecycle.InstallAsync(input, cancellationToken))));
+                // Interactive installs start the app immediately unless the client opts out; an absent
+                // value defaults to true so autostart apps run without a Core restart.
+                await HandleLifecycleError(() => lifecycle.InstallAsync(input with { StartOnInstall = input.StartOnInstall ?? true }, cancellationToken))));
 
         app.MapPost("/control/v1/apps/{appId}/configure", async (
             string appId,

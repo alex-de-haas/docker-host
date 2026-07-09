@@ -1242,7 +1242,10 @@ internal sealed class RuntimeAppSupervisorService(
                     SelectedRuntime: config.ShellBootstrapRuntime,
                     System: true,
                     Settings: BuildShellBootstrapSettings(config),
-                    Autostart: config.ShellAutostart), cancellationToken);
+                    Autostart: config.ShellAutostart,
+                    // Started by the boot reconciliation below (StartAutostartAppsAsync), in collector-first
+                    // order — not inline here, which would double-start and race the collector bootstrap.
+                    StartOnInstall: false), cancellationToken);
                 shell = await apps.GetAppAsync(ShellAppId, cancellationToken);
             }
             else
@@ -1373,7 +1376,9 @@ internal sealed class RuntimeAppSupervisorService(
                     SelectedRuntime: config.CollectorBootstrapRuntime,
                     System: true,
                     Settings: null,
-                    Autostart: config.CollectorAutostart), cancellationToken);
+                    Autostart: config.CollectorAutostart,
+                    // Started by the boot reconciliation below (StartAutostartAppsAsync); not inline here.
+                    StartOnInstall: false), cancellationToken);
                 collector = await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
             }
             else
