@@ -666,7 +666,9 @@ export type CatalogAppDetail = {
   publisher?: CatalogPublisher | null;
   sourceName: string;
   signerIdentity?: string | null;
-  feeds: CatalogAppFeed[];
+  // Optional to reflect the wire: an older Core's detail response carries no feeds field, and the raw
+  // JSON is cast to this type with no normalization — callers must guard (see selectInstallFeed).
+  feeds?: CatalogAppFeed[];
   installed: boolean;
   installedVersion?: string | null;
   // The installed app's recorded feed; null means "no feed set" (pre-feeds install or cleared) and the

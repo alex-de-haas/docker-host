@@ -70,6 +70,7 @@ export function CatalogAppDetailsDialog({
   }, [load]);
 
   const app = state.app;
+  const feeds = app?.feeds ?? [];
   const publisherUrl = httpUrl(app?.publisher?.url);
   const installFeed = (feed: CatalogAppFeed) => {
     onInstall(feed.manifestRef, feed.id);
@@ -135,15 +136,15 @@ export function CatalogAppDetailsDialog({
 
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">Feeds</h3>
-                {!app.feeds || app.feeds.length === 0 ? (
+                {feeds.length === 0 ? (
                   <p className="text-sm text-muted-foreground">This app declares no feeds; install it from its source directly.</p>
                 ) : (
                   <div className="divide-y rounded-md border">
-                    {app.feeds.map((feed) => (
+                    {feeds.map((feed) => (
                       <div key={feed.id} className="flex items-center justify-between gap-3 px-3 py-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <span className="font-medium">{feed.id}</span>
-                          {feed.default && app.feeds.length > 1 && <Badge variant="secondary">Default</Badge>}
+                          {feed.default && feeds.length > 1 && <Badge variant="secondary">Default</Badge>}
                           {app.installed && feed.id === app.followedFeedId && <Badge variant="outline">Followed</Badge>}
                         </div>
                         {!app.installed && (

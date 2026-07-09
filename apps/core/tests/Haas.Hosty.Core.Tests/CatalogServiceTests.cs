@@ -8,7 +8,6 @@ public sealed class CatalogServiceTests
     private const string IndexUrl = "https://catalog.example/catalog.json";
     private const string SecondIndexUrl = "https://other.example/catalog.json";
     private const string FeedManifestUrl = "https://raw.example/notes/main/manifest.json";
-    private const string InstalledManifestPath = "/installed/com.example.notes/manifest.json";
 
     [Fact]
     public async Task GetAppsAsync_NoSourcesConfigured_ReturnsEmpty()
@@ -191,12 +190,11 @@ public sealed class CatalogServiceTests
         {
             [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
             [FeedManifestUrl] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1", "ui": { "navigation": [ { "label": "Home", "path": "/", "iconAsset": "assets/nav/home.svg" } ] } }""",
-            [InstalledManifestPath] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""",
         };
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, "main")]);
+            installed: [("com.example.notes", "0.3.1", """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""", "main")]);
 
         var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
@@ -213,12 +211,11 @@ public sealed class CatalogServiceTests
         {
             [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
             [FeedManifestUrl] = manifest,
-            [InstalledManifestPath] = manifest,
         };
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, "main")]);
+            installed: [("com.example.notes", "0.3.1", manifest, "main")]);
 
         var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
@@ -234,12 +231,11 @@ public sealed class CatalogServiceTests
         {
             [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
             [FeedManifestUrl] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "9.9.9" }""",
-            [InstalledManifestPath] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""",
         };
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, null)]);
+            installed: [("com.example.notes", "0.3.1", """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""", null)]);
 
         var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
@@ -257,12 +253,11 @@ public sealed class CatalogServiceTests
         {
             [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
             [FeedManifestUrl] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "9.9.9" }""",
-            [InstalledManifestPath] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""",
         };
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, "renamed-away")]);
+            installed: [("com.example.notes", "0.3.1", """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""", "renamed-away")]);
 
         var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
@@ -277,12 +272,11 @@ public sealed class CatalogServiceTests
         var fetcher = new FakeFetcher
         {
             [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
-            [InstalledManifestPath] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""",
         };
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, "main")]);
+            installed: [("com.example.notes", "0.3.1", """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""", "main")]);
 
         var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
@@ -307,7 +301,10 @@ public sealed class CatalogServiceTests
     private static async Task<CatalogService> CreateServiceAsync(
         ICatalogDocumentFetcher fetcher,
         IReadOnlyList<string> sources,
-        IReadOnlyList<(string Id, string Version, string? ManifestPath, string? FollowedFeedId)>? installed = null)
+        // InstalledManifestJson (when non-null) is written to a real file under the test root and its
+        // path recorded on the app — the digest compare reads the installed copy straight from disk
+        // (bypassing the fetcher cache), so the fixture must be a file, not a FakeFetcher entry.
+        IReadOnlyList<(string Id, string Version, string? InstalledManifestJson, string? FollowedFeedId)>? installed = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-catalog-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -320,8 +317,16 @@ public sealed class CatalogServiceTests
             AuthRoot: Path.Combine(root, "core", "auth"),
             AuditLogPath: Path.Combine(root, "core", "audit", "audit.ndjson"));
         var store = new AppRegistryStore(paths);
-        foreach (var (id, version, manifestPath, followedFeedId) in installed ?? [])
+        foreach (var (id, version, installedManifestJson, followedFeedId) in installed ?? [])
         {
+            string? manifestPath = null;
+            if (installedManifestJson is not null)
+            {
+                manifestPath = Path.Combine(root, "installed", id, "manifest.json");
+                Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
+                await File.WriteAllTextAsync(manifestPath, installedManifestJson);
+            }
+
             await store.UpsertAppAsync(CreateApp(id, version, manifestPath, followedFeedId));
         }
 

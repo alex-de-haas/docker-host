@@ -342,8 +342,16 @@ internal sealed class CatalogService(
             return false;
         }
 
-        var installedCopy = await fetcher.FetchAsync(app.ManifestPath, cancellationToken);
-        if (installedCopy is null)
+        // The installed copy is read directly, not through the fetcher: the TTL cache is right for the
+        // remote head (a storefront render fans out repeated fetches) but would keep serving the
+        // pre-update copy for up to the TTL right after an applied update, flashing a phantom badge.
+        // A local file read is cheap enough to skip caching.
+        string installedCopy;
+        try
+        {
+            installedCopy = await File.ReadAllTextAsync(app.ManifestPath, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             return false;
         }
