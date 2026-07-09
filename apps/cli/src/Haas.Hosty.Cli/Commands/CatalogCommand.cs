@@ -6,8 +6,8 @@ using Spectre.Console;
 
 // Browses the marketplace catalog and manages catalog sources (WS4 + WS7). Talks to the Core control
 // endpoints (/control/v1/catalog/*). Install reuses the existing reviewed install path: it resolves a
-// version's manifestRef from the catalog, then posts it to apps/install — the catalog installs nothing
-// itself. Source edits are runtime-mutable and take effect on the next fetch, no Core restart.
+// feed's manifestRef from the catalog entry, then posts it to apps/install — the catalog installs
+// nothing itself. Source edits are runtime-mutable and take effect on the next fetch, no Core restart.
 internal sealed partial class CatalogCommand(CommandContext context)
 {
     [JsonSourceGenerationOptions(
@@ -100,39 +100,34 @@ internal sealed partial class CatalogCommand(CommandContext context)
         }
 
         table.Field("Installed", detail.Installed ? detail.InstalledVersion ?? "yes" : "no");
+        if (detail.Installed)
+        {
+            table.Field("Feed", detail.FollowedFeedId ?? "not set");
+        }
+
         if (detail.UpdateAvailable)
         {
-            table.Field("Update", $"available (stable {detail.StableVersion})");
-        }
-
-        if (detail.StableVersion is { Length: > 0 } stable)
-        {
-            table.Field("Stable", stable);
-        }
-
-        if (detail.BetaVersion is { Length: > 0 } beta)
-        {
-            table.Field("Beta", beta);
+            table.Field("Update", $"available (feed {detail.FollowedFeedId})");
         }
 
         context.Console.Write(table);
 
-        if (detail.Versions.Count == 0)
+        if (detail.Feeds.Count == 0)
         {
-            context.Console.MarkupLine("[grey]No installable versions in the feed.[/]");
+            context.Console.MarkupLine("[grey]No feeds declared — the app is not installable from the catalog.[/]");
             return 0;
         }
 
-        var versions = ConsoleUi.CreateTable("Version", "Artifact", "Manifest");
-        foreach (var version in detail.Versions)
+        var feeds = ConsoleUi.CreateTable("Feed", "Default", "Manifest");
+        foreach (var feed in detail.Feeds)
         {
-            versions.AddRow(
-                Markup.Escape(version.Version),
-                Markup.Escape(DescribeArtifact(version.Artifact)),
-                Markup.Escape(version.ManifestRef));
+            feeds.AddRow(
+                Markup.Escape(feed.Id),
+                feed.Default ? "yes" : "[grey]—[/]",
+                Markup.Escape(feed.ManifestRef));
         }
 
-        context.Console.Write(versions);
+        context.Console.Write(feeds);
         context.Console.MarkupLine($"[grey]Install with [white]hosty catalog install {Markup.Escape(detail.Id)}[/].[/]");
         return 0;
     }
@@ -142,15 +137,16 @@ internal sealed partial class CatalogCommand(CommandContext context)
         var options = ParseInstallOptions(args);
         using var core = await OpenCoreAsync();
         var detail = await GetDetailAsync(core, options.Id);
-        var manifestRef = ResolveManifestRef(detail, options.Version);
+        var feed = ResolveFeed(detail, options.Feed);
 
         var response = await core.PostAsync<AppsCommand.AppLifecycleResponse>(
             "apps/install",
             new AppsCommand.AppInstallRequest(
-                ManifestPath: manifestRef,
+                ManifestPath: feed.ManifestRef,
                 SelectedRuntime: options.SelectedRuntime,
                 System: false,
-                Autostart: options.Autostart));
+                Autostart: options.Autostart,
+                CatalogFeedId: feed.Id));
         RenderLifecycle(response);
         return 0;
     }
@@ -238,41 +234,26 @@ internal sealed partial class CatalogCommand(CommandContext context)
         context.Console.MarkupLine($"[grey]Runtime:[/] {Markup.Escape(response.App.SelectedRuntime ?? "none")} / {Markup.Escape(response.App.RuntimeState)}");
     }
 
-    // Resolves the version to install: an explicit --version, else the feed's stable tag, else the sole
-    // version when the feed lists exactly one. Refuses to guess among several untagged versions.
-    private static string ResolveManifestRef(CatalogAppDetailResponse detail, string? requestedVersion)
+    // Resolves the feed to install from (catalog-hosted-app-feeds.md A4): an explicit --feed, else the
+    // default-flagged feed, else the sole one. Refuses to guess among several unflagged feeds.
+    private static CatalogAppFeed ResolveFeed(CatalogAppDetailResponse detail, string? requestedFeed)
     {
-        if (detail.Versions.Count == 0)
+        if (detail.Feeds.Count == 0)
         {
-            throw new CommandUsageException($"Catalog app '{detail.Id}' has no installable versions in its feed.");
+            throw new CommandUsageException($"Catalog app '{detail.Id}' declares no feeds.");
         }
 
-        if (requestedVersion is { Length: > 0 })
+        if (requestedFeed is { Length: > 0 })
         {
-            var match = detail.Versions.FirstOrDefault(version =>
-                string.Equals(version.Version, requestedVersion, StringComparison.Ordinal));
-            return match?.ManifestRef
+            return detail.Feeds.FirstOrDefault(feed => string.Equals(feed.Id, requestedFeed, StringComparison.Ordinal))
                 ?? throw new CommandUsageException(
-                    $"Version '{requestedVersion}' is not in the feed for '{detail.Id}'. Available: {string.Join(", ", detail.Versions.Select(version => version.Version))}.");
+                    $"Feed '{requestedFeed}' is not declared for '{detail.Id}'. Available: {string.Join(", ", detail.Feeds.Select(feed => feed.Id))}.");
         }
 
-        if (detail.StableVersion is { Length: > 0 } stable)
-        {
-            var match = detail.Versions.FirstOrDefault(version =>
-                string.Equals(version.Version, stable, StringComparison.Ordinal));
-            if (match is not null)
-            {
-                return match.ManifestRef;
-            }
-        }
-
-        if (detail.Versions.Count == 1)
-        {
-            return detail.Versions[0].ManifestRef;
-        }
-
-        throw new CommandUsageException(
-            $"'{detail.Id}' has no stable version; pass --version. Available: {string.Join(", ", detail.Versions.Select(version => version.Version))}.");
+        var fallback = detail.Feeds.FirstOrDefault(feed => feed.Default);
+        return fallback
+            ?? throw new CommandUsageException(
+                $"'{detail.Id}' declares several feeds and none is the default; pass --feed. Available: {string.Join(", ", detail.Feeds.Select(feed => feed.Id))}.");
     }
 
     private async Task<CatalogAppDetailResponse> GetDetailAsync(CoreControlClient core, string id)
@@ -288,21 +269,10 @@ internal sealed partial class CatalogCommand(CommandContext context)
         }
     }
 
-    private static string DescribeArtifact(CatalogArtifact? artifact)
-    {
-        if (artifact?.Kind is not { Length: > 0 } kind)
-        {
-            return "—";
-        }
-
-        var identity = artifact.ImageDigest ?? artifact.Commit ?? artifact.Ref;
-        return identity is { Length: > 0 } ? $"{kind} ({identity})" : kind;
-    }
-
     private InstallOptions ParseInstallOptions(string[] args)
     {
         string? id = null;
-        string? version = null;
+        string? feed = null;
         string? selectedRuntime = null;
         bool? autostart = null;
 
@@ -310,8 +280,8 @@ internal sealed partial class CatalogCommand(CommandContext context)
         {
             switch (args[index])
             {
-                case "--version":
-                    version = RequireOptionValue(args, ref index, "--version");
+                case "--feed":
+                    feed = RequireOptionValue(args, ref index, "--feed");
                     break;
                 case "--runtime":
                     selectedRuntime = RequireOptionValue(args, ref index, "--runtime");
@@ -346,7 +316,7 @@ internal sealed partial class CatalogCommand(CommandContext context)
             throw new CommandUsageException("catalog install requires an app id.", Usage);
         }
 
-        return new InstallOptions(id, version, selectedRuntime, autostart);
+        return new InstallOptions(id, feed, selectedRuntime, autostart);
     }
 
     private static string RequireSingleId(string[] args, string command)
@@ -387,8 +357,8 @@ internal sealed partial class CatalogCommand(CommandContext context)
 
         Browse:
           list                       List catalog apps across all configured sources
-          show <id>                  Show one app's detail and available versions
-          install <id> [--version <v>] [--runtime <key>] [--autostart|--no-autostart]
+          show <id>                  Show one app's detail and declared feeds
+          install <id> [--feed <id>] [--runtime <key>] [--autostart|--no-autostart]
 
         Sources (federation):
           sources [list]             List configured catalog sources
@@ -396,11 +366,11 @@ internal sealed partial class CatalogCommand(CommandContext context)
           sources remove <url>       Remove a configured source
 
         Sources are seeded from HOSTY_CATALOG_SOURCES and become runtime-managed on the first
-        add/remove (no Core restart). Install resolves a version's manifest and reuses the normal
-        reviewed install path.
+        add/remove (no Core restart). Install resolves a feed's manifest head (the default feed
+        when --feed is omitted) and reuses the normal reviewed install path.
         """;
 
-    private sealed record InstallOptions(string Id, string? Version, string? SelectedRuntime, bool? Autostart);
+    private sealed record InstallOptions(string Id, string? Feed, string? SelectedRuntime, bool? Autostart);
 
     // ---- wire DTOs (Core /control/v1/catalog/* responses; camelCase) ------------------------------
 
@@ -431,17 +401,13 @@ internal sealed partial class CatalogCommand(CommandContext context)
         CatalogPublisher? Publisher,
         string SourceName,
         string? SignerIdentity,
-        string? ReleasesUrl,
-        IReadOnlyList<CatalogAppVersion> Versions,
-        string? StableVersion,
-        string? BetaVersion,
+        IReadOnlyList<CatalogAppFeed> Feeds,
         bool Installed,
         string? InstalledVersion,
+        string? FollowedFeedId,
         bool UpdateAvailable);
 
-    internal sealed record CatalogAppVersion(string Version, string ManifestRef, CatalogArtifact? Artifact);
-
-    internal sealed record CatalogArtifact(string? Kind, string? ImageDigest, string? Commit, string? Ref, string? BundleHash);
+    internal sealed record CatalogAppFeed(string Id, string ManifestRef, bool Default);
 
     internal sealed record CatalogSourcesResponse(IReadOnlyList<CatalogSourceSummary> Sources, bool Managed);
 

@@ -7,7 +7,8 @@ public sealed class CatalogServiceTests
 {
     private const string IndexUrl = "https://catalog.example/catalog.json";
     private const string SecondIndexUrl = "https://other.example/catalog.json";
-    private const string FeedUrl = "https://feeds.example/notes.json";
+    private const string FeedManifestUrl = "https://raw.example/notes/main/manifest.json";
+    private const string InstalledManifestPath = "/installed/com.example.notes/manifest.json";
 
     [Fact]
     public async Task GetAppsAsync_NoSourcesConfigured_ReturnsEmpty()
@@ -65,7 +66,7 @@ public sealed class CatalogServiceTests
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "1.2.0")]);
+            installed: [("com.example.notes", "1.2.0", null, null)]);
 
         var response = await service.GetAppsAsync(CancellationToken.None);
 
@@ -124,7 +125,7 @@ public sealed class CatalogServiceTests
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "1.0.0")]);
+            installed: [("com.example.notes", "1.0.0", null, null)]);
 
         var app = Assert.Single((await service.GetAppsAsync(CancellationToken.None)).Apps);
         Assert.True(app.Installed);
@@ -141,105 +142,147 @@ public sealed class CatalogServiceTests
     }
 
     [Fact]
-    public async Task GetAppAsync_ResolvesFeedVersionsAndTags()
+    public async Task GetAppAsync_ResolvesFeeds_SoleFeedIsDefault()
     {
         var fetcher = new FakeFetcher
         {
-            [IndexUrl] = Index(Entry("com.example.notes", "Notes", releasesUrl: FeedUrl)),
-            [FeedUrl] = """
-                {
-                  "versions": [
-                    { "version": "0.3.0", "manifestRef": "https://a/0.3.0/manifest.json", "artifact": { "kind": "image", "imageDigest": "sha256:aaa" } },
-                    { "version": "0.3.1", "manifestRef": "https://a/0.3.1/manifest.json", "artifact": { "kind": "image", "imageDigest": "sha256:bbb" } }
-                  ],
-                  "tags": { "stable": "0.3.1", "beta": "0.4.0-rc1" }
-                }
-                """,
+            [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
         };
         var service = await CreateServiceAsync(fetcher, sources: [IndexUrl]);
 
         var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
         Assert.NotNull(detail);
-        Assert.Equal("0.3.1", detail!.StableVersion);
-        Assert.Equal("0.4.0-rc1", detail.BetaVersion);
-        Assert.Equal("https://cdn.example.test/com.example.notes/store.md", detail.DescriptionUrl);
-        Assert.Collection(
-            detail.Versions,
-            version =>
-            {
-                Assert.Equal("0.3.0", version.Version);
-                Assert.Equal("https://a/0.3.0/manifest.json", version.ManifestRef);
-                Assert.Equal("image", version.Artifact!.Kind);
-                Assert.Equal("sha256:aaa", version.Artifact.ImageDigest);
-            },
-            version => Assert.Equal("0.3.1", version.Version));
+        Assert.Equal("https://cdn.example.test/com.example.notes/store.md", detail!.DescriptionUrl);
+        var feed = Assert.Single(detail.Feeds);
+        Assert.Equal("main", feed.Id);
+        Assert.Equal(FeedManifestUrl, feed.ManifestRef);
+        Assert.True(feed.Default); // a sole feed is the de-facto default even without the flag
         Assert.False(detail.UpdateAvailable); // not installed
+        Assert.Null(detail.FollowedFeedId);
     }
 
     [Fact]
-    public async Task GetAppAsync_ArtifactAgnosticFeed_KeepsSourceCommit()
+    public async Task GetAppAsync_ResolvesFeeds_ExplicitDefaultWinsRegardlessOfOrder()
     {
-        // A localCommand/source app carries a source commit, not an image digest — the feed must not assume image.
         var fetcher = new FakeFetcher
         {
-            [IndexUrl] = Index(Entry("com.example.transcode", "Transcode", releasesUrl: FeedUrl)),
-            [FeedUrl] = """
-                {
-                  "versions": [
-                    { "version": "1.4.0", "manifestRef": "https://a/manifest.json", "artifact": { "kind": "source", "commit": "abc123", "ref": "refs/tags/v1.4.0" } }
-                  ],
-                  "tags": { "stable": "1.4.0" }
-                }
-                """,
+            [IndexUrl] = Index(Entry(
+                "com.example.notes",
+                "Notes",
+                feeds: """[ { "id": "beta", "manifestRef": "https://raw.example/notes/develop/manifest.json" }, { "id": "main", "manifestRef": "https://raw.example/notes/main/manifest.json", "default": true } ]""")),
         };
         var service = await CreateServiceAsync(fetcher, sources: [IndexUrl]);
 
-        var detail = await service.GetAppAsync("com.example.transcode", CancellationToken.None);
+        var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
-        var version = Assert.Single(detail!.Versions);
-        Assert.Equal("source", version.Artifact!.Kind);
-        Assert.Equal("abc123", version.Artifact.Commit);
-        Assert.Equal("refs/tags/v1.4.0", version.Artifact.Ref);
-        Assert.Null(version.Artifact.ImageDigest);
+        Assert.Equal(2, detail!.Feeds.Count);
+        Assert.False(detail.Feeds[0].Default);
+        Assert.True(detail.Feeds[1].Default);
+        Assert.Equal("main", detail.Feeds[1].Id);
     }
 
     [Fact]
-    public async Task GetAppAsync_UpdateAvailable_WhenInstalledDiffersFromStable()
+    public async Task GetAppAsync_UpdateAvailable_WhenFeedHeadContentDiffers_EvenAtSameVersion()
     {
+        // The regression this design fixes: content moved under an unchanged version string. Detection
+        // is a digest compare of the feed head vs the installed copy — the version field is irrelevant.
         var fetcher = new FakeFetcher
         {
-            [IndexUrl] = Index(Entry("com.example.notes", "Notes", releasesUrl: FeedUrl)),
-            [FeedUrl] = """
-                { "versions": [ { "version": "0.3.1", "manifestRef": "https://a/manifest.json" } ], "tags": { "stable": "0.3.1" } }
-                """,
+            [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
+            [FeedManifestUrl] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1", "ui": { "navigation": [ { "label": "Home", "path": "/", "iconAsset": "assets/nav/home.svg" } ] } }""",
+            [InstalledManifestPath] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""",
         };
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "0.3.0")]);
+            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, "main")]);
 
         var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
         Assert.True(detail!.Installed);
-        Assert.Equal("0.3.0", detail.InstalledVersion);
+        Assert.Equal("main", detail.FollowedFeedId);
         Assert.True(detail.UpdateAvailable);
     }
 
     [Fact]
-    public async Task GetAppAsync_NoUpdate_WhenInstalledMatchesStable()
+    public async Task GetAppAsync_NoUpdate_WhenFeedHeadMatchesInstalledCopy()
     {
+        const string manifest = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""";
         var fetcher = new FakeFetcher
         {
-            [IndexUrl] = Index(Entry("com.example.notes", "Notes", releasesUrl: FeedUrl)),
-            [FeedUrl] = """
-                { "versions": [ { "version": "0.3.1", "manifestRef": "https://a/manifest.json" } ], "tags": { "stable": "0.3.1" } }
-                """,
+            [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
+            [FeedManifestUrl] = manifest,
+            [InstalledManifestPath] = manifest,
         };
         var service = await CreateServiceAsync(
             fetcher,
             sources: [IndexUrl],
-            installed: [("com.example.notes", "0.3.1")]);
+            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, "main")]);
+
+        var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
+
+        Assert.False(detail!.UpdateAvailable);
+    }
+
+    [Fact]
+    public async Task GetAppAsync_NoUpdate_WhenNoFeedIsFollowed()
+    {
+        // A pre-feeds install (or a cleared feed) never gets a phantom badge: no followed feed means
+        // clients surface choose-a-feed guidance instead (catalog-hosted-app-feeds.md A3).
+        var fetcher = new FakeFetcher
+        {
+            [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
+            [FeedManifestUrl] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "9.9.9" }""",
+            [InstalledManifestPath] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""",
+        };
+        var service = await CreateServiceAsync(
+            fetcher,
+            sources: [IndexUrl],
+            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, null)]);
+
+        var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
+
+        Assert.True(detail!.Installed);
+        Assert.Null(detail.FollowedFeedId);
+        Assert.False(detail.UpdateAvailable);
+    }
+
+    [Fact]
+    public async Task GetAppAsync_NoUpdate_WhenFollowedFeedNoLongerExists()
+    {
+        // The recorded feed id is still reported (so clients can show "feed missing — choose another"),
+        // but a feed the entry no longer declares never produces an update badge.
+        var fetcher = new FakeFetcher
+        {
+            [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
+            [FeedManifestUrl] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "9.9.9" }""",
+            [InstalledManifestPath] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""",
+        };
+        var service = await CreateServiceAsync(
+            fetcher,
+            sources: [IndexUrl],
+            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, "renamed-away")]);
+
+        var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
+
+        Assert.Equal("renamed-away", detail!.FollowedFeedId);
+        Assert.False(detail.UpdateAvailable);
+    }
+
+    [Fact]
+    public async Task GetAppAsync_NoUpdate_WhenFeedHeadIsUnreachable()
+    {
+        // Catalog reads are best-effort: an unreachable head degrades to "no badge", never an error.
+        var fetcher = new FakeFetcher
+        {
+            [IndexUrl] = Index(Entry("com.example.notes", "Notes", feeds: $$"""[ { "id": "main", "manifestRef": "{{FeedManifestUrl}}" } ]""")),
+            [InstalledManifestPath] = """{ "schemaVersion": "app.0.1", "id": "com.example.notes", "version": "0.3.1" }""",
+        };
+        var service = await CreateServiceAsync(
+            fetcher,
+            sources: [IndexUrl],
+            installed: [("com.example.notes", "0.3.1", InstalledManifestPath, "main")]);
 
         var detail = await service.GetAppAsync("com.example.notes", CancellationToken.None);
 
@@ -253,18 +296,18 @@ public sealed class CatalogServiceTests
             { "schemaVersion": "marketplace.0.1", "source": { "name": "Test Source" }, "apps": [ {{string.Join(",", entries)}} ] }
             """;
 
-    private static string Entry(string id, string name, string? releasesUrl = null)
+    private static string Entry(string id, string name, string? feeds = null)
     {
-        var releases = releasesUrl is null ? "" : $$""", "releasesUrl": "{{releasesUrl}}" """;
+        var feedsJson = feeds is null ? "" : $$""", "feeds": {{feeds}} """;
         return $$"""
-            { "id": "{{id}}", "name": "{{name}}", "category": "Productivity", "tags": ["a", "b"], "display": { "summary": "{{name}} summary", "icon": "icon.png", "descriptionUrl": "https://cdn.example.test/{{id}}/store.md" }, "publisher": { "name": "Example Co" }{{releases}} }
+            { "id": "{{id}}", "name": "{{name}}", "category": "Productivity", "tags": ["a", "b"], "display": { "summary": "{{name}} summary", "icon": "icon.png", "descriptionUrl": "https://cdn.example.test/{{id}}/store.md" }, "publisher": { "name": "Example Co" }{{feedsJson}} }
             """;
     }
 
     private static async Task<CatalogService> CreateServiceAsync(
         ICatalogDocumentFetcher fetcher,
         IReadOnlyList<string> sources,
-        IReadOnlyList<(string Id, string Version)>? installed = null)
+        IReadOnlyList<(string Id, string Version, string? ManifestPath, string? FollowedFeedId)>? installed = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-catalog-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -277,9 +320,9 @@ public sealed class CatalogServiceTests
             AuthRoot: Path.Combine(root, "core", "auth"),
             AuditLogPath: Path.Combine(root, "core", "audit", "audit.ndjson"));
         var store = new AppRegistryStore(paths);
-        foreach (var (id, version) in installed ?? [])
+        foreach (var (id, version, manifestPath, followedFeedId) in installed ?? [])
         {
-            await store.UpsertAppAsync(CreateApp(id, version));
+            await store.UpsertAppAsync(CreateApp(id, version, manifestPath, followedFeedId));
         }
 
         var config = CreateConfig(root, sources);
@@ -307,7 +350,7 @@ public sealed class CatalogServiceTests
             ShellAutostart: false,
             CatalogSources: sources);
 
-    private static AppRecord CreateApp(string id, string version)
+    private static AppRecord CreateApp(string id, string version, string? manifestPath = null, string? followedFeedId = null)
         => new(
             Id: id,
             DisplayName: id,
@@ -316,7 +359,7 @@ public sealed class CatalogServiceTests
             Kind: "runtime",
             System: false,
             Source: "installed",
-            ManifestPath: null,
+            ManifestPath: manifestPath,
             ManifestUrl: null,
             SelectedRuntime: "docker",
             OperationStatus: "installed",
@@ -329,7 +372,8 @@ public sealed class CatalogServiceTests
             Dependencies: [],
             Endpoints: [],
             InstalledAt: DateTimeOffset.UtcNow,
-            UpdatedAt: DateTimeOffset.UtcNow);
+            UpdatedAt: DateTimeOffset.UtcNow,
+            FollowedFeedId: followedFeedId);
 
     private sealed class FakeFetcher : Dictionary<string, string?>, ICatalogDocumentFetcher
     {

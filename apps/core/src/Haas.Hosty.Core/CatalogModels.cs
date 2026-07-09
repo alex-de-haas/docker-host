@@ -1,10 +1,12 @@
 namespace Haas.Hosty.Core;
 
-// Marketplace catalog data contracts (`marketplace.0.1`). Two layers, both fetched by Core, never
-// written by it: the catalog INDEX (`catalog.json` — the membership/storefront directory) and the
-// per-app version FEED (`releasesUrl` — author-owned release list). The index is runtime-agnostic:
-// an entry only points at a manifest; the manifest declares docker/image or localCommand/source. See
-// docs/features/runtime-app-marketplace.md ("Schemas", B1/B4, and the artifact-agnostic feed revision).
+// Marketplace catalog data contracts (`marketplace.0.1`). One layer, fetched by Core, never written
+// by it: the catalog INDEX (`catalog.json` — the membership/storefront directory). Each entry carries
+// its FEEDS inline — named pointers at moving manifest refs (branch raw URLs); releasing = pushing to
+// the ref, and update detection compares content digests, never version strings. The index is
+// runtime-agnostic: a feed only points at a manifest; the manifest declares docker/image or
+// localCommand/source. See docs/features/catalog-hosted-app-feeds.md (A1–A4) and
+// docs/features/runtime-app-marketplace.md ("Schemas", B1/B4).
 //
 // Deserialized via the source-generated context, so absent arrays coalesce to empty (matching the
 // manifest-model convention) rather than throwing under Native AOT.
@@ -31,8 +33,8 @@ internal sealed class CatalogSourceInfo
 }
 
 // One catalog membership entry: pointers + trust + display metadata only. The app's code lives in the
-// author's own repo/registry; the catalog never contains it. `releasesUrl` points at the version feed;
-// `signerIdentity` is the trust anchor the feed's signature must match (verified in WS5).
+// author's own repo/registry; the catalog never contains it. `feeds` are the app's update feeds;
+// `signerIdentity` is the trust anchor for the entry (verified in WS5).
 internal sealed class CatalogAppEntry
 {
     public string? Id { get; init; }
@@ -41,8 +43,18 @@ internal sealed class CatalogAppEntry
     public string? Category { get; init; }
     public IReadOnlyList<string> Tags { get => field ?? []; init; } = [];
     public CatalogDisplay? Display { get; init; }
-    public string? ReleasesUrl { get; init; }
+    public IReadOnlyList<CatalogFeedEntry> Feeds { get => field ?? []; init; } = [];
     public string? SignerIdentity { get; init; }
+}
+
+// A feed: an author-named pointer at the app's manifest at a moving ref (typically a branch raw URL).
+// `Default` marks the quick-install feed when several are declared (at most one per entry, validated
+// at catalog publish); feed array order carries no meaning.
+internal sealed class CatalogFeedEntry
+{
+    public string? Id { get; init; }
+    public string? ManifestRef { get; init; }
+    public bool? Default { get; init; }
 }
 
 internal sealed class CatalogPublisher
@@ -60,39 +72,6 @@ internal sealed class CatalogDisplay
     // Absolute URL to a markdown long-description, generated at publish by vendoring the manifest's
     // catalogMetadata.descriptionFile (manifest-level app assets). Null when the entry declares none.
     public string? DescriptionUrl { get; init; }
-}
-
-// ---- Wire schema: per-app version feed (`releasesUrl`) --------------------------------------------
-
-internal sealed class VersionFeed
-{
-    public IReadOnlyList<VersionFeedEntry> Versions { get => field ?? []; init; } = [];
-    public VersionFeedTags? Tags { get; init; }
-}
-
-internal sealed class VersionFeedEntry
-{
-    public string? Version { get; init; }
-    public string? ManifestRef { get; init; }
-    // Optional resolved artifact identity, discriminated by `kind` (image/source/prebuilt). Optional
-    // because Core re-resolves it at install from the manifest's declared runtime; it is a post-publish
-    // optimization and the provenance anchor for signing. See the artifact-agnostic feed revision.
-    public CatalogArtifact? Artifact { get; init; }
-}
-
-internal sealed class CatalogArtifact
-{
-    public string? Kind { get; init; }
-    public string? ImageDigest { get; init; }
-    public string? Commit { get; init; }
-    public string? Ref { get; init; }
-    public string? BundleHash { get; init; }
-}
-
-internal sealed class VersionFeedTags
-{
-    public string? Stable { get; init; }
-    public string? Beta { get; init; }
 }
 
 // ---- API responses (`/api/catalog/*`) ------------------------------------------------------------
@@ -113,9 +92,12 @@ internal sealed record CatalogAppSummary(
     bool Installed,
     string? InstalledVersion);
 
-// App detail: the entry's display + the resolved feed versions + install/update state. `UpdateAvailable`
-// is a display hint (installed and the feed's stable version differs from the installed one); applying an
-// update still goes through the existing reviewed-update flow with the version's `manifestRef`.
+// App detail: the entry's display + its feeds + install/update state. `UpdateAvailable` is a display
+// hint: installed, following a feed, and the feed head's manifest content digest differs from the
+// installed copy — version strings never gate detection (catalog-hosted-app-feeds.md A2). Applying an
+// update still goes through the existing reviewed-update flow with the feed's `manifestRef`.
+// `FollowedFeedId` is the installed app's recorded feed; null means "no feed set" (pre-feeds install
+// or cleared) and clients surface the choose-a-feed guidance instead of an update state (A3).
 internal sealed record CatalogAppDetailResponse(
     string Id,
     string Name,
@@ -127,16 +109,16 @@ internal sealed record CatalogAppDetailResponse(
     CatalogPublisher? Publisher,
     string SourceName,
     string? SignerIdentity,
-    string? ReleasesUrl,
-    IReadOnlyList<CatalogAppVersion> Versions,
-    string? StableVersion,
-    string? BetaVersion,
+    IReadOnlyList<CatalogAppFeed> Feeds,
     bool Installed,
     string? InstalledVersion,
+    string? FollowedFeedId,
     bool UpdateAvailable,
     string? DescriptionUrl = null);
 
-internal sealed record CatalogAppVersion(string Version, string ManifestRef, CatalogArtifact? Artifact);
+// One resolvable feed on the detail response. `Default` is normalized (absent -> false, and a sole
+// feed reports true) so clients can drive A4 quick-install without re-deriving the rule.
+internal sealed record CatalogAppFeed(string Id, string ManifestRef, bool Default);
 
 // ---- API responses (`/api/catalog/sources`, `/control/v1/catalog/sources`) -----------------------
 

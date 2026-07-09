@@ -1583,7 +1583,7 @@ internal sealed partial class AppsCommand(CommandContext context)
 
     internal sealed record MountsSetOptions(string AppId, IReadOnlyList<AppMountBindingInput> Bindings);
 
-    internal sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, bool System, bool? Autostart);
+    internal sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, bool System, bool? Autostart, string? CatalogFeedId = null);
 
     internal sealed record AppAutostartRequest(bool Autostart);
 
