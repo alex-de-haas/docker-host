@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -38,6 +38,11 @@ export function InstallReviewDialog({
   const [settingsDraft, setSettingsDraft] = useState<Record<string, string>>({});
   const [autostartDraft, setAutostartDraft] = useState(true);
 
+  // A pre-seeded manifest means the install was launched from the marketplace (a catalog version's
+  // manifestRef), where the manifest is already chosen. There we skip the manual manifest input and
+  // review the plan immediately, instead of asking the operator to paste a path they can't know.
+  const preseeded = initialManifestPath.trim().length > 0;
+
   // Reset the settings draft while rendering when the reviewed plan changes, instead
   // of in an effect. https://react.dev/learn/you-might-not-need-an-effect
   const reviewedPlan = detail.plan && manifestPath.trim() === reviewedManifestPath ? detail.plan : null;
@@ -52,6 +57,18 @@ export function InstallReviewDialog({
       setAutostartDraft(reviewedPlan.defaultAutostart ?? true);
     }
   }
+
+  // The parent remounts this dialog via `key` per manifest, so a mount-only auto-review fires once for
+  // each catalog install. Manual installs (empty seed) keep the input + Review button instead.
+  useEffect(() => {
+    if (!preseeded) {
+      return;
+    }
+    const seed = initialManifestPath.trim();
+    setReviewedManifestPath(seed);
+    onReview(seed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const runtimeProfiles =
     reviewedPlan?.runtimeProfiles && reviewedPlan.runtimeProfiles.length > 0
       ? reviewedPlan.runtimeProfiles
@@ -99,27 +116,41 @@ export function InstallReviewDialog({
           <DialogDescription>Review a runtime app manifest before installing it into Core.</DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={submitReview} className="shrink-0 space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="manifestPath">Manifest, app directory, or URL</Label>
-            <Input
-              id="manifestPath"
-              value={manifestPath}
-              onChange={(event) => setManifestPath(event.target.value)}
-              placeholder="/path/to/app, /path/to/manifest.json, or https://example.test/manifest.json"
-              required
-            />
-          </div>
-          <div className="flex justify-end">
-            <Button type="submit" variant="outline" disabled={detail.loading || manifestPath.trim().length === 0}>
-              {detail.loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Review
-            </Button>
-          </div>
-        </form>
+        {!preseeded && (
+          <form onSubmit={submitReview} className="shrink-0 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="manifestPath">Manifest, app directory, or URL</Label>
+              <Input
+                id="manifestPath"
+                value={manifestPath}
+                onChange={(event) => setManifestPath(event.target.value)}
+                placeholder="/path/to/app, /path/to/manifest.json, or https://example.test/manifest.json"
+                required
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit" variant="outline" disabled={detail.loading || manifestPath.trim().length === 0}>
+                {detail.loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Review
+              </Button>
+            </div>
+          </form>
+        )}
 
         <DialogBody className="space-y-4">
-          {detail.error && <InlineError message={detail.error} />}
+          {detail.error && (
+            <div className="space-y-2">
+              <InlineError message={detail.error} />
+              {preseeded && (
+                <div className="flex justify-end">
+                  <Button type="button" variant="outline" onClick={() => onReview(initialManifestPath.trim())} disabled={detail.loading}>
+                    {detail.loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    Retry
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
           {detail.loading && !reviewedPlan && <EmptyState icon={LoaderCircle} title="Loading install review" iconClassName="animate-spin" />}
 
           {reviewedPlan && (
@@ -171,7 +202,7 @@ export function InstallReviewDialog({
                 </div>
               )}
               <div className="rounded-md border bg-muted/30 p-3">
-                <CheckboxRow label="Start at Core startup" checked={autostartDraft} onChange={setAutostartDraft} />
+                <CheckboxRow label="Start automatically (now and on Core startup)" checked={autostartDraft} onChange={setAutostartDraft} />
               </div>
             </div>
           )}

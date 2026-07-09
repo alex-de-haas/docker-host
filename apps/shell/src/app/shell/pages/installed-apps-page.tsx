@@ -857,7 +857,7 @@ function InstalledAppRow({
               <ChevronRight className="h-4 w-4" />
             )}
           </Button>
-          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={Boxes} className="mt-0.5 h-5 w-5 rounded" alt="" />
+          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={Boxes} className="h-8 w-8 self-center rounded-md" alt="" />
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <span className="truncate font-medium">{app.displayName}</span>

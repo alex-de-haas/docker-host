@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, LoaderCircle, Package } from "lucide-react";
+import { CheckCircle2, Download, LoaderCircle, Package } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -79,8 +79,24 @@ export function CatalogAppDetailsDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{app?.name ?? appId}</DialogTitle>
-          <DialogDescription>{app?.summary ?? "Marketplace app details."}</DialogDescription>
+          <div className="flex items-center gap-3">
+            {app?.icon && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={app.icon} alt="" className="size-14 shrink-0 rounded-md object-contain" />
+            )}
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <DialogTitle className="truncate">{app?.name ?? appId}</DialogTitle>
+                {app?.installed && (
+                  <Badge variant="outline" className="shrink-0 gap-1 border-transparent bg-emerald-500/10 text-emerald-700">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Installed
+                  </Badge>
+                )}
+              </div>
+              <DialogDescription>{app?.summary ?? "Marketplace app details."}</DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         <DialogBody className="space-y-4">
@@ -93,7 +109,6 @@ export function CatalogAppDetailsDialog({
                 <Fact label="Publisher" value={app.publisher?.name || "Unknown"} />
                 <Fact label="Category" value={app.category || "Uncategorized"} />
                 <Fact label="Source" value={app.sourceName} />
-                <Fact label="Installed" value={app.installed ? app.installedVersion || "yes" : "no"} />
               </div>
 
               {app.tags && app.tags.length > 0 && (
