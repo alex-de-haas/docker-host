@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppManifestService(HttpClient? httpClient = null, bool allowRemoteLocalCommand = false)
+internal sealed class AppManifestService(HttpClient? httpClient = null)
 {
     private const string ManifestFileName = "manifest.json";
     private const string SupportedSchemaVersion = "app.0.1";
@@ -418,16 +418,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, bool all
         if (selectedProfile is null)
         {
             errors.Add(new("app_manifest_selected_runtime_missing", $"Selected runtime '{resolvedRuntime}' does not reference a runtime profile.", "$.defaultRuntime"));
-        }
-
-        if (selectedProfile is { Type: "localCommand" } &&
-            !string.IsNullOrWhiteSpace(manifestUrl) &&
-            !allowRemoteLocalCommand)
-        {
-            errors.Add(new(
-                "app_manifest_remote_local_command_blocked",
-                "Remotely fetched manifests cannot select a localCommand runtime because it runs arbitrary commands on the host. Install from a reviewed local manifest path, or set HOSTY_ALLOW_REMOTE_LOCAL_COMMAND=1 to opt in.",
-                "$.runtimeProfiles[].type"));
         }
 
         if (manifest.Services.Count == 0)

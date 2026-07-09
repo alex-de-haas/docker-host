@@ -2341,7 +2341,7 @@ public sealed class CoreLifecycleServiceTests
         var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(CreateRemoteLocalCommandManifestJson(repository!), Encoding.UTF8, "application/json"),
-        })), allowRemoteLocalCommand: true);
+        })));
         var fixture = await LifecycleFixture.CreateAsync(manifests);
         repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
 
@@ -2379,7 +2379,7 @@ public sealed class CoreLifecycleServiceTests
         var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(CreateRemoteLocalCommandManifestJson("."), Encoding.UTF8, "application/json"),
-        })), allowRemoteLocalCommand: true);
+        })));
         var fixture = await LifecycleFixture.CreateAsync(manifests);
         await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "dev"));
 
@@ -2390,8 +2390,11 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task InstallAsync_BlocksRemoteManifestLocalCommandRuntimeByDefault()
+    public async Task InstallAsync_AllowsRemoteManifestLocalCommandRuntime()
     {
+        // A remotely-fetched manifest may select a localCommand runtime (it runs a host command). This is
+        // no longer blocked in Core; the operator is warned in the install UI that it runs at their own
+        // risk. See the marketplace install-review dialog for the warning.
         const string manifestUrl = "https://apps.example.test/remote-local/manifest.json";
         var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -2399,10 +2402,11 @@ public sealed class CoreLifecycleServiceTests
         })));
         var fixture = await LifecycleFixture.CreateAsync(manifests);
 
-        var error = await Assert.ThrowsAsync<AppManifestException>(() =>
-            fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "dev")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "dev"));
 
-        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_remote_local_command_blocked");
+        var app = await fixture.Apps.GetAppAsync("com.example.remote-local");
+        Assert.Equal("dev", app?.SelectedRuntime);
+        Assert.Equal(manifestUrl, app?.ManifestUrl);
     }
 
     [Fact]
