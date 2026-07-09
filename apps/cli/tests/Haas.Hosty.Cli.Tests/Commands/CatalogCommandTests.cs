@@ -23,9 +23,9 @@ public sealed class CatalogCommandTests : IDisposable
         {
           "id": "com.example.notes", "name": "Notes", "summary": "Take notes", "category": "Productivity",
           "tags": ["a"], "icon": null, "screenshots": [], "publisher": { "name": "Example Co", "url": null, "email": null },
-          "sourceName": "catalog.example", "signerIdentity": null, "releasesUrl": "https://feeds.example/notes.json",
-          "versions": [ { "version": "1.2.0", "manifestRef": "https://a/1.2.0/manifest.json", "artifact": { "kind": "image", "imageDigest": "sha256:aaa", "commit": null, "ref": null, "bundleHash": null } } ],
-          "stableVersion": "1.2.0", "betaVersion": null, "installed": false, "installedVersion": null, "updateAvailable": false
+          "sourceName": "catalog.example", "signerIdentity": null,
+          "feeds": [ { "id": "main", "manifestRef": "https://raw.example/notes/main/manifest.json", "default": true } ],
+          "installed": false, "installedVersion": null, "followedFeedId": null, "updateAvailable": false
         }
         """;
     private const string SourcesResponse = """
@@ -61,7 +61,7 @@ public sealed class CatalogCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ShowAsync_RendersDetailAndVersions()
+    public async Task ShowAsync_RendersDetailAndFeeds()
     {
         using var server = new FakeCoreServer(DetailResponse);
         WriteCoreDiscovery(server);
@@ -74,8 +74,8 @@ public sealed class CatalogCommandTests : IDisposable
         Assert.Equal("GET", server.Method);
         Assert.Equal("/control/v1/catalog/apps/com.example.notes", server.PathAndQuery);
         var rendered = output.ToString();
-        Assert.Contains("1.2.0", rendered);
-        Assert.Contains("image", rendered);
+        Assert.Contains("main", rendered);
+        Assert.Contains("manifest.json", rendered);
     }
 
     [Fact]
