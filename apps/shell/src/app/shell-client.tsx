@@ -499,7 +499,9 @@ export function ShellClient({
       try {
         await sendCsrfJson(appEndpoint(app, "/feed"), { feedId });
         await refresh();
-        toast.success("Feed updated", { description: `Now following '${feedId}'.` });
+        toast.success("Feed updated", {
+          description: feedId.length > 0 ? `Now following '${feedId}'.` : "No longer following a feed.",
+        });
         void loadUpdatePlan(app);
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {

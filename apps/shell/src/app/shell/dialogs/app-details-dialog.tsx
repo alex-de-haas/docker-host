@@ -1028,22 +1028,23 @@ function FeedSection({
   const [selected, setSelected] = useState<string>(followed ?? "");
 
   useEffect(() => {
-    let cancelled = false;
+    // Abort the in-flight fetch on unmount or app change so a stale response can't overwrite newer
+    // state (the same pattern the marketplace pages use).
+    const controller = new AbortController();
     (async () => {
       try {
-        const detail = await getCatalogApp(coreOrigin, app.id);
-        if (!cancelled) {
-          setFeeds(detail.feeds ?? []);
+        const detail = await getCatalogApp(coreOrigin, app.id, controller.signal);
+        setFeeds(detail.feeds ?? []);
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
         }
-      } catch {
         // Not catalog-listed (404) or catalog unreachable — no feed UI, same as before feeds existed.
-        if (!cancelled) {
-          setFeeds(null);
-        }
+        setFeeds(null);
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [coreOrigin, app.id]);
 
@@ -1088,7 +1089,9 @@ function FeedSection({
           className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
           aria-label="Update feed"
         >
-          {followed === null && <option value="">Choose a feed…</option>}
+          {/* Clearing is a first-class action (the endpoint accepts a blank feedId), so a followed app
+              offers "None"; an unfollowed one just prompts for a choice. */}
+          {followed === null ? <option value="">Choose a feed…</option> : <option value="">None (stop following)</option>}
           {followedMissing && <option value={followed}>{followed} (missing)</option>}
           {feeds.map((feed) => (
             <option key={feed.id} value={feed.id}>
@@ -1101,10 +1104,10 @@ function FeedSection({
           type="button"
           variant="outline"
           onClick={() => onSetFeed(app, selected)}
-          disabled={!canManageApps || busy || selected.length === 0 || selected === followed}
+          disabled={!canManageApps || busy || selected === followed || (followed === null && selected.length === 0)}
         >
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Rss className="h-4 w-4" />}
-          Follow feed
+          {selected.length === 0 && followed !== null ? "Stop following" : "Follow feed"}
         </Button>
       </div>
     </div>
