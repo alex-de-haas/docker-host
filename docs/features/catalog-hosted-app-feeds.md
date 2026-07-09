@@ -6,8 +6,9 @@ Created: 2026-07-09
 
 ## Motivation
 
-The author-hosted version feed (`releases.json`, runtime-app-marketplace.md
-WS4) pins every version's `manifestRef` to a **commit**. Delivering any change
+The author-hosted version feed (`releases.json`, defined in
+[runtime-app-marketplace.md](runtime-app-marketplace.md) — "Schemas (Sketch)",
+shipped as WS1) pins every version's `manifestRef` to a **commit**. Delivering any change
 to installed apps therefore requires a per-release, hand-maintained dance:
 bump `version` in `manifest.json`, push, take the new commit hash, append a
 `versions[]` entry, move `tags.stable`, push again. Forgetting any step — most
@@ -128,7 +129,10 @@ Instead the feed reference becomes explicit operator-visible state:
 
 - **hosty-catalog**: `entry.schema.json` + `feeds[]` (id, manifestRef),
   − `releasesUrl`; delete `feed.schema.json`; `validate.mjs` validates feeds
-  inline (unique ids, https manifestRef); convert existing entries; delete
+  inline (unique ids, https manifestRef) and **fails loudly** — a missing or
+  unparseable entry/feed section is a CI failure, never silently skipped
+  (same reject-don't-skip rule as the publish pipeline's asset discovery);
+  convert existing entries; delete
   `releases.json` from app repos (project-manager, demo-app).
 - **Core**: `CatalogService` resolves feeds from the entry (drop
   `LoadFeedAsync` versions/tags handling); digest-aware `UpdateAvailable`;
@@ -139,7 +143,7 @@ Instead the feed reference becomes explicit operator-visible state:
 - **Shell**: feed selector in the installed app's settings; update badge and
   update-source display; "no feed set" prompt on check-updates; marketplace
   detail lists feeds instead of versions.
-- **Docs**: runtime-app-marketplace.md (WS4 feed schema, update-available,
+- **Docs**: runtime-app-marketplace.md (WS1 feed schema, update-available,
   Q8 note) updated to reference this doc.
 
 ## Confirmed Decisions
@@ -191,8 +195,9 @@ Instead the feed reference becomes explicit operator-visible state:
 
 ## Links
 
-- [Runtime app marketplace](runtime-app-marketplace.md) — feed schema (WS4),
-  update-available detection spec, "Channels: Decision" (PR #67 removal).
+- [Runtime app marketplace](runtime-app-marketplace.md) — feed schema
+  ("Schemas (Sketch)", WS1), update-available detection spec,
+  "Channels: Decision" (PR #67 removal).
 - [Runtime app update](runtime-app-update.md) — plan digest, `changes`
   categories the version-delta display rides on.
 - [Manifest-level app assets](manifest-level-app-assets.md) — the incident
