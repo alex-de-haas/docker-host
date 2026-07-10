@@ -103,6 +103,25 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_SystemUi_RejectsUnknownNavigationPortKeyWhenEndpointIsBlank()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "navigation": [
+                      { "label": "Page", "path": "/page", "endpoint": "   ", "portKey": "missing" }
+                    ]
+                  }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_unknown");
+    }
+
+    [Fact]
     public async Task LoadAsync_SystemUi_RejectsNonHttpEndpoint()
     {
         var manifestPath = await WriteSystemUiManifestAsync(
@@ -117,13 +136,29 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_not_http");
     }
 
+    [Fact]
+    public async Task LoadAsync_SystemUi_AcceptsMixedCaseHttpEndpointProtocol()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            endpointProtocol: "Https",
+            ui: """
+                , "ui": { "entrypoint": { "endpoint": "web", "path": "/" } }
+                """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("Https", Assert.Single(selection.Manifest.Endpoints).Protocol);
+    }
+
     [Theory]
     [InlineData("sources")]
     [InlineData("/a?x=1")]
     [InlineData("/a#frag")]
     [InlineData("https://evil.example/x")]
     [InlineData("//evil.example/x")]
-    public async Task LoadAsync_SystemUi_RejectsNonRootRelativePagePaths(string pagePath)
+    [InlineData("/\\\\evil.example/x")]
+    public async Task LoadAsync_SystemUi_RejectsUnsafePagePaths(string pagePath)
     {
         var manifestPath = await WriteSystemUiManifestAsync(
             role: "system",

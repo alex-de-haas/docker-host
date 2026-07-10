@@ -957,7 +957,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
                 ValidateSystemUiPath(item.Path.Trim(), "$.ui.navigation[].path", errors);
             }
 
-            var itemEndpointKey = item.Endpoint ?? item.PortKey;
+            // Match AppUiContract's first-non-blank runtime resolution: a blank endpoint must not
+            // hide a portKey that will be used after the manifest has passed validation.
+            var itemEndpointKey = string.IsNullOrWhiteSpace(item.Endpoint) ? item.PortKey : item.Endpoint;
             if (!string.IsNullOrWhiteSpace(itemEndpointKey))
             {
                 ValidateSystemUiEndpointReference(manifest, itemEndpointKey.Trim(), "$.ui.navigation[].endpoint", errors);
@@ -988,7 +990,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             return;
         }
 
-        if (declared.Protocol is not (null or "http" or "https"))
+        if (declared.Protocol is not null &&
+            !string.Equals(declared.Protocol, "http", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(declared.Protocol, "https", StringComparison.OrdinalIgnoreCase))
         {
             errors.Add(new(
                 "app_manifest_system_ui_endpoint_not_http",
@@ -1002,13 +1006,14 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         var valid = value.StartsWith("/", StringComparison.Ordinal) &&
             !value.StartsWith("//", StringComparison.Ordinal) &&
             !value.Contains("://", StringComparison.Ordinal) &&
-            !value.Contains('?', StringComparison.Ordinal) &&
-            !value.Contains('#', StringComparison.Ordinal);
+            !value.Contains('?') &&
+            !value.Contains('#') &&
+            !value.Contains('\\');
         if (!valid)
         {
             errors.Add(new(
                 "app_manifest_system_ui_path_invalid",
-                $"System app UI page path '{value}' must be root-relative and contain no scheme, host, query, or fragment.",
+                $"System app UI page path '{value}' must be root-relative and contain no scheme, host, query, fragment, or backslash.",
                 path));
         }
     }

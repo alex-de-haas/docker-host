@@ -51,7 +51,7 @@ Install stores the role as the app record's `System` flag and reports it on the 
 
 System apps are administrator surfaces: Core requires an enabled `host.admin` in every app identity flow for them (`system_app_admin_required`), they are hidden from ordinary users' app listings, and they are excluded from user assignments.
 
-A system app that declares `ui` is validated strictly and fail-closed: the entrypoint must name an explicit endpoint that resolves to a declared http(s) endpoint (`app_manifest_system_ui_endpoint_required` / `_unknown` / `_not_http`), page paths must be root-relative with no scheme, host, query, or fragment (`app_manifest_system_ui_path_invalid`), and duplicate page paths are rejected (`app_manifest_system_ui_path_duplicate`). Ordinary manifests keep the permissive runtime behavior (endpoint fallback, path prefixing).
+A system app that declares `ui` is validated strictly and fail-closed: the entrypoint must name an explicit endpoint that resolves to a declared http(s) endpoint (`app_manifest_system_ui_endpoint_required` / `app_manifest_system_ui_endpoint_unknown` / `app_manifest_system_ui_endpoint_not_http`), page paths must be root-relative with no scheme, host, query, fragment, or backslash (`app_manifest_system_ui_path_invalid`), and duplicate page paths are rejected (`app_manifest_system_ui_path_duplicate`). Ordinary manifests keep the permissive runtime behavior (endpoint fallback, path prefixing).
 
 ## Runtime Profiles
 
