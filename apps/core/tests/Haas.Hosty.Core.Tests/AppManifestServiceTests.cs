@@ -55,6 +55,168 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_SystemUi_AcceptsExplicitResolvableDeclaration()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "navigation": [
+                      { "label": "Storefront", "path": "/" },
+                      { "label": "Sources", "path": "/sources" }
+                    ]
+                  }
+                """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("system", selection.Manifest.Role);
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_RequiresExplicitEntrypointEndpoint()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": { "entrypoint": { "path": "/" } }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_required");
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_RejectsUnknownEndpointReferences()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": { "entrypoint": { "endpoint": "missing", "path": "/" } }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_unknown");
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_RejectsUnknownNavigationPortKeyWhenEndpointIsBlank()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "navigation": [
+                      { "label": "Page", "path": "/page", "endpoint": "   ", "portKey": "missing" }
+                    ]
+                  }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_unknown");
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_RejectsNonHttpEndpoint()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            endpointProtocol: "ws",
+            ui: """
+                , "ui": { "entrypoint": { "endpoint": "web", "path": "/" } }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_not_http");
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_AcceptsMixedCaseHttpEndpointProtocol()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            endpointProtocol: "Https",
+            ui: """
+                , "ui": { "entrypoint": { "endpoint": "web", "path": "/" } }
+                """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("Https", Assert.Single(selection.Manifest.Endpoints).Protocol);
+    }
+
+    [Theory]
+    [InlineData("sources")]
+    [InlineData("/a?x=1")]
+    [InlineData("/a#frag")]
+    [InlineData("https://evil.example/x")]
+    [InlineData("//evil.example/x")]
+    [InlineData("/\\\\evil.example/x")]
+    public async Task LoadAsync_SystemUi_RejectsUnsafePagePaths(string pagePath)
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: $$"""
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "navigation": [{ "label": "Page", "path": "{{pagePath}}" }]
+                  }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_path_invalid");
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_RejectsDuplicatePagePaths()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "navigation": [
+                      { "label": "One", "path": "/x" },
+                      { "label": "Two", "path": "/x" }
+                    ]
+                  }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_path_duplicate");
+    }
+
+    [Fact]
+    public async Task LoadAsync_OrdinaryAppUi_KeepsPermissiveBehavior()
+    {
+        // The same loose declarations that fail closed for role: system stay valid for ordinary
+        // apps: runtime fallback and path prefixing remain their compatibility behavior.
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: null,
+            ui: """
+                , "ui": {
+                    "entrypoint": { "path": "/" },
+                    "navigation": [
+                      { "label": "One", "path": "x" },
+                      { "label": "Two", "path": "x" }
+                    ]
+                  }
+                """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Null(selection.Manifest.Role);
+    }
+
+    [Fact]
     public async Task LoadAsync_WithoutCatalogMetadata_LeavesBlockNull()
     {
         var manifestPath = await WriteManifestAsync("com.example.notes");
@@ -874,6 +1036,38 @@ public sealed class AppManifestServiceTests
         }
 
         throw new FileNotFoundException($"Could not locate '{relativePath}' walking up from {AppContext.BaseDirectory}.");
+    }
+
+    // Manifest with a declared http port + endpoint for exercising the strict system-app UI
+    // validation; role null keeps the same shape as an ordinary runtime app manifest.
+    private static async Task<string> WriteSystemUiManifestAsync(string? role, string ui, string endpointProtocol = "http")
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "manifest.json");
+        await File.WriteAllTextAsync(path, $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "hosty.sysui",
+              "name": "System UI App",
+              "version": "1.0.0",{{(role is null ? "" : $"\n  \"role\": \"{role}\",")}}
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": {
+                    "type": "docker",
+                    "image": "ghcr.io/example/sysui:1.0.0",
+                    "ports": [{ "key": "http", "containerPort": 8080, "protocol": "http" }]
+                  }
+                }
+              }],
+              "endpoints": [
+                { "key": "web", "service": "app", "port": "http", "protocol": "{{endpointProtocol}}", "public": true }
+              ]{{ui}}
+            }
+            """);
+        return path;
     }
 
     private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null, string? catalogMetadata = null, string? role = null)

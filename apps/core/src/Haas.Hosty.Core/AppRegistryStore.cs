@@ -386,7 +386,9 @@ internal sealed record AppUiContract(
             Navigation: navigation);
     }
 
-    private static UiEntrypoint ResolveEntrypoint(RuntimeAppUiManifest ui)
+    // Raw declared entrypoint (endpoint key + un-normalized path) shared with the strict system-app
+    // manifest validation, which must see exactly what the author wrote before any normalization.
+    internal static (string? EndpointKey, string? Path) ReadDeclaredEntrypoint(RuntimeAppUiManifest ui)
     {
         var endpointKey = NullIfBlank(ui.PortKey);
         var path = NullIfBlank(ui.Path);
@@ -394,7 +396,7 @@ internal sealed record AppUiContract(
         {
             if (entrypoint.ValueKind == System.Text.Json.JsonValueKind.String)
             {
-                path ??= entrypoint.GetString();
+                path ??= NullIfBlank(entrypoint.GetString());
             }
             else if (entrypoint.ValueKind == System.Text.Json.JsonValueKind.Object)
             {
@@ -403,6 +405,12 @@ internal sealed record AppUiContract(
             }
         }
 
+        return (endpointKey, path);
+    }
+
+    private static UiEntrypoint ResolveEntrypoint(RuntimeAppUiManifest ui)
+    {
+        var (endpointKey, path) = ReadDeclaredEntrypoint(ui);
         return new UiEntrypoint(endpointKey, NormalizePath(path));
     }
 
