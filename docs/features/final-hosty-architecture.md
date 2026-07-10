@@ -1,12 +1,15 @@
 # Final Hosty architecture boundaries
 
-This document records the implemented Hosty final architecture boundaries. It replaces the completed planning document as the source of truth for Core, Shell, CLI, runtime apps, backups, source state, and local command runtimes. Channel and Agent Bridge concepts are ideas until they are approved for implementation.
+Created: 2026-06-02
+Updated: 2026-07-10
+
+This document records the implemented Hosty final architecture boundaries. It replaces the completed planning document as the source of truth for Core, Shell, CLI, runtime apps, backups, source state, and local command runtimes. Repository-owned feeds and Agent Bridge concepts are ideas until they are approved for implementation.
 
 ## Components
 
 Hosty has three primary first-party components:
 
-- `apps/core` - Hosty Core, a local-first ASP.NET Core Minimal API process. Core owns auth pages, public and local APIs, app state, runtime lifecycle, source state, channels, backups, logs, diagnostics, and policy.
+- `apps/core` - Hosty Core, a local-first ASP.NET Core Minimal API process. Core owns auth pages, public and local APIs, app state, runtime lifecycle, source state, followed-feed state, backups, logs, diagnostics, and policy.
 - `apps/shell` - Hosty Shell, a Core-managed runtime app. Shell owns only the browser UI client and is installed, started, stopped, restarted, updated, logged, and health-checked through the same Core runtime lifecycle used by user apps.
 - `apps/cli` - `hosty`, the bootstrap executable and local Core API client. The CLI installs or repairs Core, starts and stops Core, locates Core, updates bootstrap components, and delegates ordinary domain commands to Core APIs.
 
@@ -35,8 +38,8 @@ Core owns the public and local API surface. API groups are organized around app-
 - app settings, secrets references, storage mappings, dependency contracts, endpoint contracts, and app data directory resolution;
 - source repository state, managed checkouts, and local source overrides;
 - runtime profile switching plans and apply;
-- possible runtime app channel discovery and switching;
-- possible product channel discovery and coordinated CLI/Core/Shell updates.
+- runtime app catalog-feed selection and followed-feed state;
+- possible repository-owned runtime feed discovery.
 
 Shell calls Core APIs through the browser-facing Core public origin. Shell must not contain Core-owned backend, auth, app lifecycle, or state mutation routes. Runtime process-to-Core access uses `HOSTY_CORE_ORIGIN`; browser Shell access uses `HOSTY_CORE_PUBLIC_ORIGIN` or Core's localhost fallback, so Docker-only origins such as `host.docker.internal` never appear in Shell browser fetches or login links.
 
@@ -51,7 +54,7 @@ Core exposes local control APIs under `/control/v1` and public browser/app APIs 
 - Lifecycle: install, configure, start, stop, restart, update-plan, update, remove, logs. Browser Shell can call public start, stop, restart, logs, and backup endpoints; local control endpoints keep the complete lifecycle surface.
 - Backups: list, manual backup, restore, delete, cleanup preview, and cleanup apply; update apply creates automatic pre-update backups. Browser Shell can use backup restore, delete, and cleanup routes with Core session, CSRF, and confirmation UX.
 - Runtime switching: `switch-runtime/plan` and `switch-runtime` with plan digest review.
-- Runtime app channels: channel list, `switch-channel/plan`, and `switch-channel` exist as low-level placeholders, but channel generation and Shell channel UI are tracked as an idea in [Update Channels](../ideas/update-channels.md).
+- Runtime app feeds: `POST /api/apps/{appId}/feed` and its control counterpart set or clear the followed catalog feed. Selecting a feed re-points the stored manifest URL; any app change still uses the ordinary reviewed update plan/apply flow. Moving the same behavior to repository-owned `feeds.json` is tracked in [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md).
 - Source state: managed checkout resolution, immutable commit storage, local source override set/clear.
 - Identity helpers: sanitized user summaries, app-scoped identity token issuance, Shell/standalone open links.
 - Auth: Core-owned session, CSRF, trusted proxy session, logout, app auth code, token exchange, and app session revalidation.
@@ -74,7 +77,7 @@ Shell has the same lifecycle shape as other runtime apps:
 - update;
 - status;
 - logs;
-- selected channel;
+- selected catalog feed;
 - selected runtime profile.
 
 The active Shell UI should hide its own self-stop action because stopping the UI from itself is confusing. Core APIs and CLI commands may still stop or restart Shell.
@@ -93,7 +96,7 @@ The `hosty` CLI is a bootstrap and Core API client:
 - `hosty apps identity` issues app-scoped identity through Core.
 - `hosty apps open` asks Core for Shell or standalone app launch links.
 - `hosty update` runs bootstrap CLI update first, then installs or replaces the managed Core executable, then performs Core reachability and Shell update planning through Core APIs when Core is running.
-- `hosty update --list-channels` and `hosty update --channel <channel-id>` can read the local product channel index, but full product-channel publishing is tracked as an idea in [Update Channels](../ideas/update-channels.md).
+- `hosty update --list-channels` and `hosty update --channel <channel-id>` can read the local product channel index. No generated product-channel publishing workflow is part of the current release model.
 
 The legacy developer harness route is no longer exposed. Existing users are used for app identity helpers; deterministic development-user seeding is not part of the final workflow.
 
@@ -128,9 +131,9 @@ Local source overrides are never written back to public app manifests.
 
 For `localCommand` runtimes, Core resolves the source root before runtime start. Local manifest file and app directory installs record a local worktree and do not clone source; remote manifest URL installs require an absolute clonable source repository and prepare the managed checkout under `sources/<app-id>/`.
 
-Runtime app channel switching is tracked as an idea in [Update Channels](../ideas/update-channels.md). The low-level Core shape resolves a channel to a concrete manifest snapshot and reuses update planning/apply, but Shell UI, generated indexes, pull request channels, and remote manifest resolution are intentionally out of the current stabilization scope.
+Runtime apps currently follow feeds declared inline by catalog entries. Core stores the followed feed id and concrete manifest URL; the Shell exposes feed selection, and actual app changes reuse reviewed update planning/apply. The removed `switch-channel` contract is not part of the current system. Moving the same feed model unchanged into runtime-app-owned `feeds.json` is tracked in [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md).
 
-Product channels are described by `channels/product-channels.json` as a local placeholder. Generated product channels and coordinated CLI/Core/Shell rollout are tracked as an idea in [Update Channels](../ideas/update-channels.md); the current Core entry identifies the release artifact family, not a source project path.
+Product channels are described by `channels/product-channels.json` as a local placeholder that the CLI can read explicitly. There is no generated publishing workflow; the current Core entry identifies the release artifact family, not a source project path.
 
 ## Storage layout
 

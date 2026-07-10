@@ -42,19 +42,18 @@ flowchart LR
     N["Notification channel plugin"]
     M["Marketplace app"]
   end
-  S --> Core
-  S -->|"/api/ext/{appId}/..."| M
+  S -->|"install / update lifecycle"| Core
+  S -->|"read-only catalog API"| M
   R -->|"provider contract call"| T
   N -->|"SSE subscribe with cursor"| E
-  M -->|"scoped control-plane call"| Core
 ```
 
 ### Four Extension Forms
 
-1. **Provider contracts (Core calls the plugin).** The manifest declares `provides: [{ contract, version, endpoint }]`, e.g. `hosty.telemetry.store@1` bound to the app's `query` endpoint key. Core keeps a capability registry mapping contract → app → endpoint; endpoints are resolved live from `AppRecord.Endpoints` at call time (literal IPv4, never `localhost`). Candidate contracts: telemetry store (retrofit of the existing integration), notification delivery channel, backup target, auth provider, catalog source resolver. Runtime adapters stay in Core: they need docker.sock-level privileges.
+1. **Provider contracts (Core calls the plugin).** The manifest declares `provides: [{ contract, version, endpoint }]`, e.g. `hosty.telemetry.store@1` bound to the app's `query` endpoint key. Core keeps a capability registry mapping contract → app → endpoint; endpoints are resolved live from `AppRecord.Endpoints` at call time (literal IPv4, never `localhost`). Candidate contracts: telemetry store (retrofit of the existing integration), notification delivery channel, backup target, and auth provider. Runtime adapters stay in Core: they need docker.sock-level privileges.
 2. **Event subscriptions (the plugin pulls from Core).** Core writes domain events (`app.installed`, `app.started`, `app.crashed`, `backup.completed`, ...) into a durable log with monotonic sequence numbers. A plugin subscribes over SSE/long-poll using its `HOSTY_APP_SERVICE_TOKEN` and a persisted cursor, and re-reads from the cursor after reconnect — at-least-once delivery with no Core-side retry queue. Pull is preferred over webhooks because plugin→Core dialing already works (host gateway), the plugin needs no inbound endpoint, and Core→container calls would require published ports and reintroduce the `localhost`/IPv6 dial hazards.
-3. **Service extensions (clients call the plugin).** A plugin exposes its own API surface for Shell/CLI, either directly (as the metrics fan-out does today) or through a generic Core proxy route `/api/ext/{appId}/...` that applies Core session auth before forwarding.
-4. **UI contribution points (Shell).** A system app contributes a navigation item and a page; Shell stays the frame and renders the app's UI (pragmatically an iframe over the app's endpoint, not module federation). This is what lets a marketplace app own the catalog page instead of Shell embedding it.
+3. **Service extensions (clients call the plugin).** A plugin exposes its own versioned API surface for Shell/CLI, either directly or through a bounded Core proxy route `/api/ext/{appId}/...`. A read-only service such as Marketplace needs no Core scope merely to serve its own data.
+4. **System app pages (Shell).** A UI-capable system app reuses `ui.entrypoint` and `ui.navigation`; Shell renders it through the existing app-origin iframe/SSO machinery in a separate administrator-only System group. Native Shell contribution slots are a different future mechanism and are unnecessary for ordinary system app pages.
 
 ### Provider Lifecycle
 
@@ -69,7 +68,7 @@ flowchart TB
 
 Cross-cutting rules:
 
-- **Manifest.** `role: system` plus two symmetric sections: `provides` (contracts the app implements) and `requires` (control-plane scopes the app requests, e.g. `apps.install`, `catalog.read`). Naming must avoid the existing lifecycle `capabilities` field.
+- **Manifest.** `role: system` plus two symmetric sections when needed: `provides` (contracts the app implements) and `requires` (control-plane scopes the app requests). A system app that only serves its own read-only API may declare an interface without requesting any Core scope. Naming must avoid the existing lifecycle `capabilities` field.
 - **Trust.** `provides`/`requires` declarations are inert until the operator explicitly confirms them at install/update review; later, catalog signing (marketplace WS5) can strengthen this. A random catalog app must not be able to nominate itself as an auth provider silently.
 - **Auth.** One scoped-token mint covers both directions: Core→plugin contract calls present a Core-issued token the plugin can verify, and plugin→Core control-plane/event-stream calls present the app's service token extended with granted scopes. This generalizes the deferred observability ingest auth and matches the AI-agent-bridge decision that data planes use Core-issued signed tokens.
 - **Versioning.** Contract identifiers carry an integer version (`hosty.auth.provider@1`). Core advertises supported contracts (e.g. `GET /api/capabilities`); installing an app that provides an unsupported contract version fails manifest validation.
@@ -77,14 +76,18 @@ Cross-cutting rules:
 
 ## Worked Example: Marketplace As A System App
 
-The marketplace is the inverse of a provider: it supplies nothing Core calls; instead it is a privileged client plus a UI contribution. Its manifest would declare `requires: [apps.install, catalog.read]` and a navigation contribution for the catalog page. The flow: Shell opens the marketplace UI → the marketplace aggregates external catalog feeds → the user picks an app → the marketplace asks Core to install it via the scoped control-plane API.
+Marketplace is a read-only service extension plus an administrator system-app page. It owns catalog sources, fetching, federation, diagnostics, and catalog display data. It requests no registry, proposal, install, or update scope from Core.
 
-Two hard boundaries:
+The flow is: Shell/CLI reads catalog information from Marketplace → a catalog entry supplies `feedsUrl` for the runtime app's repository-owned `feeds.json` → Shell/CLI passes that untrusted URL to Core → Core fetches and validates the feeds document and selected manifest → Core presents and applies the reviewed install plan. Marketplace never resolves a feed or calls a Core lifecycle endpoint.
 
-- **The install decision never leaves Core.** Manifest validation, operator consent, and (later) signature verification run in Core regardless of who initiates the install. A plugin holding `apps.install` can propose installations, not bypass review.
-- **Bootstrap.** The marketplace app itself must install without a marketplace — a bundled well-known system app, like the collector today — and the base install paths (CLI, direct manifest URL) remain in Core permanently, consistent with the marketplace MVP decision that the catalog is optional and non-intrusive.
+Hard boundaries:
 
-Migration can be staged: first ship the marketplace app as a thin UI over the existing Core `/api/catalog` (this proves UI contribution and `requires` scopes without moving logic); then move feed fetching and federation (`CatalogSourceService` and friends) into the app, leaving Core with only the install API and trust checks. The second step also removes catalog federation from the AOT kernel and lets it update independently.
+- **The install decision never leaves Core.** Feed resolution, manifest validation, operator consent, artifact locks, and any install-blocking trust policy run in Core. Marketplace output is treated like an operator-pasted URL.
+- **Bootstrap.** The marketplace app itself must install without a marketplace — from a bundled/default system-app bootstrap descriptor — and the base install paths (CLI, direct manifest URL) remain in Core permanently, consistent with the marketplace MVP decision that the catalog is optional and non-intrusive. The final mechanism should be generic rather than another app-id-specific bootstrap branch.
+- **Feed ownership.** `feeds.json` lives in the runtime app repository. Its named feeds are the app's update channels. Core stores `FeedsUrl`, `FollowedFeedId`, and resolved `ManifestUrl` independently of catalog provenance, so a stopped Marketplace disables discovery but not installed-app updates.
+- **UI ownership.** Marketplace declares ordinary system-app UI pages. Shell provides the frame and admin-only navigation but contains no Marketplace implementation.
+
+Migration can be staged without granting Marketplace access to Core: first move catalog schemas, sources, fetching, federation, and the read-only API into the app while existing Shell/CLI clients use compatibility `GET` proxies; then move the storefront into generic system-app pages; finally move the current feeds unchanged into runtime-app-owned `feeds.json` and move resolution into Core. The detailed boundaries are tracked in [Marketplace As A System App](marketplace-system-app.md), [Runtime App Repository Feeds](runtime-app-repository-feeds.md), and [System App Pages](system-app-pages.md).
 
 ## Worked Example: External Auth Provider (Auth0)
 
@@ -156,7 +159,7 @@ Sequence the work so each step is independently useful:
 1. Add `role: system` to the manifest and replace well-known-id checks in bootstrap and Shell; surface the role in the UI.
 2. Retrofit the telemetry backend integration as the first provider contract (`hosty.telemetry.store@1`) with scoped tokens on both data planes — no behavior change, mechanism proven, ingest auth closed.
 3. Introduce the domain event log and pull subscriptions; ship a notification-channel plugin (e.g. Telegram delivery) as the first external consumer.
-4. Extract the marketplace UI as the first `requires`-scoped app with a UI contribution, keeping catalog logic in Core initially.
+4. Extract Marketplace as the first read-only service extension with administrator system-app pages and no Core scopes; keep all feed resolution and lifecycle in Core.
 5. Design `hosty.auth.provider@1` after the mechanism has survived steps 2–4; ship the authenticating-proxy pattern in the meantime for users who need external IdPs now.
 
 ## Links
@@ -165,6 +168,9 @@ Sequence the work so each step is independently useful:
 - [Observability Phase 2 — telemetry backend](../features/observability-phase-2-backend.md) — the de-facto first plugin; source of the retrofit contract.
 - [Notifications](../features/notifications.md) — the hub the first event-subscriber plugin would deliver for.
 - [Runtime app marketplace](../features/runtime-app-marketplace.md) — the Shell-embedded MVP the marketplace example would extract.
+- [Marketplace As A System App](marketplace-system-app.md) — the read-only catalog ownership boundary and migration design.
+- [System App Pages](system-app-pages.md) — the shared admin-only page model for UI-capable system apps.
+- [Runtime App Repository Feeds](runtime-app-repository-feeds.md) — current feed behavior with repository ownership and Core resolution.
 - [AI Agent Bridge](../features/ai-agent-bridge.md) — shares the Core-issued scoped-token direction for data planes.
 - [Auth provider extensions](auth-provider-extensions.md) — auth directions this idea gives a delivery mechanism for.
 - [On-Demand System App Updates](system-app-updates.md) — the reviewed update path plugins rely on, since plugins update like any system app.
