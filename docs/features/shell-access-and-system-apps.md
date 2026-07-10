@@ -18,7 +18,7 @@ Hosty Shell should clearly separate administrator-only Host management from ordi
 
 Core bootstraps Hosty Shell as a system runtime app with app id `hosty.shell`.
 
-`GET /api/apps` already returns all apps to `host.admin` accounts and filters system apps out for `host.user` accounts. Shell groups non-system runtime apps and system apps separately for administrator views. The sidebar shows Dashboard, Installed Apps, and User Management only to administrators, and app navigation entries are limited to non-system runtime apps with UI metadata.
+`GET /api/apps` already returns all apps to `host.admin` accounts and filters system apps out for `host.user` accounts. Shell groups non-system runtime apps and system apps separately for administrator views. The sidebar shows Dashboard, Installed Apps, and User Management only to administrators. The Apps navigation group is limited to non-system runtime apps with UI metadata; UI-capable system apps appear in a separate administrator-only System group that opens them through the canonical `/system-apps/<app-id>` route (Shell 0.26.0, see [System App Pages](../ideas/system-app-pages.md)).
 
 The Installed Apps row-level action restrictions are currently based on the active Shell app id for some controls rather than the generic `system` flag.
 

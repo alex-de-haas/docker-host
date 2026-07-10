@@ -445,6 +445,9 @@ export type HostyThemePreference = "light" | "dark" | "system";
 export type WorkspaceRoute = {
   appId: string;
   path: string;
+  // True when the route came from the canonical /system-apps/<id> deep link: the launch flow then
+  // requires host.admin and a system-flagged app before creating a launch link.
+  system?: boolean;
 };
 export type ShellRouteState = {
   view: ShellView;

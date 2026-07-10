@@ -17,6 +17,7 @@ import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
   getAuthorizedShellView,
   getShellViewHref,
+  getSystemAppHref,
   getWorkspaceHref,
   getWorkspaceRouteKey,
   normalizeAppPath,
@@ -286,7 +287,12 @@ export function ShellClient({
       }
 
       if (app.runtimeState !== "running") {
-        setState((current) => ({ ...current, error: "App must be running before it can be opened." }));
+        setState((current) => ({
+          ...current,
+          error: app.system
+            ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Installed Apps.`
+            : "App must be running before it can be opened.",
+        }));
         return;
       }
 
@@ -297,8 +303,12 @@ export function ShellClient({
 
       const routePath = normalizeAppPath(page.path);
       const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
-      const workspaceHref = getWorkspaceHref(app.id, routePath);
-      const nextWorkspaceRoute = { appId: app.id, path: routePath };
+      // System apps use the canonical admin-only deep link; both routes share the workspace engine.
+      const isSystemApp = Boolean(app.system);
+      const workspaceHref = isSystemApp ? getSystemAppHref(app.id, routePath) : getWorkspaceHref(app.id, routePath);
+      const nextWorkspaceRoute: WorkspaceRoute = isSystemApp
+        ? { appId: app.id, path: routePath, system: true }
+        : { appId: app.id, path: routePath };
       setState((current) => ({ ...current, error: null }));
       setOptimisticWorkspaceRoute(nextWorkspaceRoute);
       if (workspace?.appId === app.id) {
@@ -324,9 +334,10 @@ export function ShellClient({
         const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: themedRedirectUri });
         const launch = (await response.json()) as AppLaunchResponse;
         const currentUrl = new URL(window.location.href);
+        const expectedPathname = isSystemApp ? `/system-apps/${encodeURIComponent(app.id)}` : "/workspace";
         if (
-          normalizeShellPath(currentUrl.pathname) !== "/workspace" ||
-          currentUrl.searchParams.get("app") !== app.id ||
+          normalizeShellPath(currentUrl.pathname) !== expectedPathname ||
+          (!isSystemApp && currentUrl.searchParams.get("app") !== app.id) ||
           normalizeAppPath(currentUrl.searchParams.get("path")) !== routePath
         ) {
           return;
@@ -1031,6 +1042,12 @@ export function ShellClient({
     [state.apps],
   );
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
+  // UI-capable system apps for the sidebar System group. Core already filters system apps out of
+  // non-admin listings; the extra canManageApps gate keeps the group provably admin-only client-side.
+  const uiSystemApps = useMemo(
+    () => (canManageApps ? systemApps.filter((app) => getAppPageLinks(app).length > 0) : []),
+    [canManageApps, systemApps],
+  );
   const effectiveView = getAuthorizedShellView(shellRoute.view, Boolean(canManageApps));
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
@@ -1067,7 +1084,7 @@ export function ShellClient({
     const routeWorkspace = activeWorkspaceRoute;
     if (!routeWorkspace) {
       const browserPath = typeof window === "undefined" ? normalizedRoutePath : normalizeShellPath(window.location.pathname);
-      if (browserPath === "/workspace" || pendingWorkspaceRoute.current) {
+      if (browserPath === "/workspace" || browserPath.startsWith("/system-apps/") || pendingWorkspaceRoute.current) {
         return;
       }
 
@@ -1079,9 +1096,22 @@ export function ShellClient({
       return;
     }
 
+    // Navigation hiding is not the boundary (Core enforces host.admin server-side), but a non-admin
+    // landing on a /system-apps deep link gets a clean redirect instead of a launch-code failure.
+    if (routeWorkspace.system && !canManageApps) {
+      resetWorkspaceLaunch();
+      router.replace(getShellViewHref("available-apps"));
+      return;
+    }
+
     const app = state.apps.find((candidate) => candidate.id === routeWorkspace.appId);
     if (!app) {
       resetWorkspaceLaunch({ error: `App '${routeWorkspace.appId}' is not installed or not visible to this user.` });
+      return;
+    }
+
+    if (routeWorkspace.system && !app.system) {
+      resetWorkspaceLaunch({ error: `App '${app.displayName}' is not a system app. Open it from the Apps section.` });
       return;
     }
 
@@ -1092,7 +1122,11 @@ export function ShellClient({
     }
 
     if (app.runtimeState !== "running") {
-      resetWorkspaceLaunch({ error: "App must be running before it can be opened." });
+      resetWorkspaceLaunch({
+        error: app.system
+          ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Installed Apps.`
+          : "App must be running before it can be opened.",
+      });
       return;
     }
 
@@ -1223,6 +1257,7 @@ export function ShellClient({
       runtimeApps,
       systemApps,
       uiRuntimeApps,
+      uiSystemApps,
       activeUser,
       canManageApps: Boolean(canManageApps),
       observabilityAvailable,
@@ -1238,6 +1273,7 @@ export function ShellClient({
       runtimeApps,
       systemApps,
       uiRuntimeApps,
+      uiSystemApps,
       updateStatusInvalidations,
     ],
   );
@@ -1299,6 +1335,7 @@ export function ShellClient({
             canManageApps={Boolean(canManageApps)}
             observabilityAvailable={observabilityAvailable}
             runtimeApps={uiRuntimeApps}
+            systemApps={uiSystemApps}
             busyAction={busyAction}
             onCompactChange={setCompact}
             onNavigate={(view) => {

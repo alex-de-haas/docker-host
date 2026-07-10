@@ -56,6 +56,7 @@ export function ShellSidebar({
   canManageApps,
   observabilityAvailable,
   runtimeApps,
+  systemApps,
   busyAction,
   onCompactChange,
   onNavigate,
@@ -75,6 +76,9 @@ export function ShellSidebar({
   // section (Metrics / Structured logs / Traces) has data to show. Hidden otherwise.
   observabilityAvailable: boolean;
   runtimeApps: CoreApp[];
+  // UI-capable system apps for the admin-only System group; empty for non-admins and when no
+  // installed system app declares UI, in which case the group is hidden entirely.
+  systemApps: CoreApp[];
   busyAction: string | null;
   onCompactChange: (compact: boolean) => void;
   onNavigate: (view: ShellView) => void;
@@ -127,12 +131,29 @@ export function ShellSidebar({
             </NavigationSection>
           )}
 
+          {canManageApps && systemApps.length > 0 && (
+            <NavigationSection title="System" compact={compact}>
+              {systemApps.map((app) => (
+                <AppNavigationItem
+                  key={app.id}
+                  app={app}
+                  coreOrigin={coreOrigin}
+                  compact={compact}
+                  busyAction={busyAction}
+                  workspace={workspace}
+                  onLaunch={onLaunchApp}
+                  getStandaloneHref={getStandaloneHref}
+                />
+              ))}
+            </NavigationSection>
+          )}
+
           <NavigationSection title="Apps" compact={compact}>
             {runtimeApps.length === 0 ? (
               <NavigationPlaceholder compact={compact} icon={LayoutGrid} label="No apps registered" />
             ) : (
               runtimeApps.map((app) => (
-                <RuntimeAppNavigationItem
+                <AppNavigationItem
                   key={app.id}
                   app={app}
                   coreOrigin={coreOrigin}
@@ -267,7 +288,9 @@ function NavigationPlaceholder({ compact, icon: Icon, label }: { compact: boolea
   );
 }
 
-function RuntimeAppNavigationItem({
+// Shared by the Apps and System sidebar groups: the page-link, launch, and disabled-state behavior
+// is identical for both app kinds — only which list an app appears in differs.
+function AppNavigationItem({
   app,
   coreOrigin,
   compact,
