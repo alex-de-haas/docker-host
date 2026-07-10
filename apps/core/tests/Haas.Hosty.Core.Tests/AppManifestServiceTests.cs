@@ -30,6 +30,31 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsSystemRole()
+    {
+        var manifestPath = await WriteManifestAsync("hosty.sysapp", role: """, "role": "system" """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("system", selection.Manifest.Role);
+    }
+
+    [Theory]
+    [InlineData("runtime")]
+    [InlineData("System")]
+    [InlineData(" system")]
+    [InlineData("")]
+    public async Task LoadAsync_RejectsUnsupportedRoles(string role)
+    {
+        // Fail closed: an unknown role must never install as an ordinary runtime app.
+        var manifestPath = await WriteManifestAsync("com.example.notes", role: $$""", "role": "{{role}}" """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_role_unsupported");
+    }
+
+    [Fact]
     public async Task LoadAsync_WithoutCatalogMetadata_LeavesBlockNull()
     {
         var manifestPath = await WriteManifestAsync("com.example.notes");
@@ -851,7 +876,7 @@ public sealed class AppManifestServiceTests
         throw new FileNotFoundException($"Could not locate '{relativePath}' walking up from {AppContext.BaseDirectory}.");
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null, string? catalogMetadata = null)
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null, string? catalogMetadata = null, string? role = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -871,7 +896,7 @@ public sealed class AppManifestServiceTests
                     "image": "ghcr.io/example/notes:1.0.0"{{runtimeArtifact ?? ""}}{{runtimeNetwork ?? ""}}{{ports ?? ""}}{{healthcheck ?? ""}}
                   }
                 }
-              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}{{telemetry ?? ""}}{{catalogMetadata ?? ""}}
+              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}{{telemetry ?? ""}}{{catalogMetadata ?? ""}}{{role ?? ""}}
             }
             """);
         return path;

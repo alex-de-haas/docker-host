@@ -28,7 +28,7 @@ These decisions make Marketplace a read-only catalog service plus a system-app U
 - `CoreLifecycleService` depends on `CatalogService` for feed rebinding. `AppRecord` stores `FollowedFeedId`, while `ManifestUrl` stores the concrete moving manifest reference.
 - Shell owns the hardcoded `/marketplace` route and hands a selected manifest reference to its Core install flow.
 - `hosty catalog` reads Core catalog endpoints and then calls the generic Core lifecycle endpoint itself.
-- A system app is currently an `AppRecord.System` flag, not a manifest role. Shell filters all system apps out of runtime-app navigation even when they declare UI.
+- The manifest declares a fail-closed `role: system` (platform 0.38.0) that install/update store as `AppRecord.System`. Shell still filters all system apps out of runtime-app navigation even when they declare UI.
 - App SSO exists, and Core enforces `host.admin` in every identity flow when the target is a system app (`system_app_admin_required`, platform 0.37.1).
 - Catalog sources may be absolute host paths. A Docker-backed marketplace app cannot see those paths without an explicit import or mount design.
 
@@ -170,8 +170,8 @@ This is not recommended.
 
 ### Phase 0: Generic System-App Foundations
 
-- First-class, fail-closed system role.
-- Admin-only system-app SSO authorization.
+- First-class, fail-closed system role (shipped in platform 0.38.0 as manifest `role: system`).
+- Admin-only system-app SSO authorization (shipped in platform 0.37.1).
 - Generic system-app pages using `ui.entrypoint` and `ui.navigation`.
 - Generic optional-system-app bootstrap and reviewed update/recovery.
 - Bounded read-only extension proxy for CLI compatibility.

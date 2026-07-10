@@ -347,6 +347,11 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             errors.Add(new("unsupported_app_manifest_schema_version", "Only app.0.1 runtime app manifests are supported by Hosty Core.", "$.schemaVersion"));
         }
 
+        if (manifest.Role is not null && !string.Equals(manifest.Role, "system", StringComparison.Ordinal))
+        {
+            errors.Add(new("app_manifest_role_unsupported", "role must be omitted or the string 'system'.", "$.role"));
+        }
+
         if (!string.IsNullOrWhiteSpace(manifest.Id) && !IsSafeIdentifier(manifest.Id))
         {
             errors.Add(new("app_manifest_id_invalid", "App id must match ^[a-z0-9][a-z0-9._-]{0,62}$ and must not be a path segment such as '.' or '..'.", "$.id"));
@@ -2359,6 +2364,11 @@ internal sealed class RuntimeAppManifest
     public string? Name { get; init; }
     public string? Description { get; init; }
     public string? Version { get; init; }
+    // Optional first-class app role. "system" marks a platform system app: install (and a reviewed
+    // update) stores it as AppRecord.System, which gates app identity flows to host.admin and drives
+    // client System grouping and lifecycle policy. Any other value fails validation, so a manifest
+    // written for a newer role vocabulary cannot install as an ordinary runtime app by accident.
+    public string? Role { get; init; }
     public RuntimeAppSource? Source { get; init; }
     public IReadOnlyList<RuntimeProfileManifest> RuntimeProfiles { get => field ?? []; init; } = [];
     public string? DefaultRuntime { get; init; }

@@ -125,6 +125,7 @@ internal sealed class CoreLifecycleService(
             CurrentManifestDigest: currentManifestDigest,
             TargetManifestDigest: selection.ManifestDigest,
             DefaultAutostart: request.Autostart ?? true,
+            System: request.System || IsSystemManifest(selection.Manifest),
             RuntimeProfiles: BuildRuntimeProfileSummaries(selection.Manifest),
             Settings: selection.Manifest.Settings
                 .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
@@ -154,7 +155,7 @@ internal sealed class CoreLifecycleService(
             selection,
             manifestCopyPath,
             manifestUrl: selection.ManifestUrl,
-            system: request.System,
+            system: request.System || IsSystemManifest(selection.Manifest),
             existing: null) with
         {
             OperationStatus = "installed",
@@ -846,7 +847,9 @@ internal sealed class CoreLifecycleService(
             selection,
             manifestCopyPath,
             manifestUrl: selection.ManifestUrl,
-            system: app.System,
+            // Sticky true: a reviewed update can escalate to system (the plan surfaced it as a
+            // "role" change) but never silently downgrades a system app back to a runtime app.
+            system: app.System || IsSystemManifest(selection.Manifest),
             existing: app) with
         {
             OperationStatus = "updated",
@@ -1500,6 +1503,11 @@ internal sealed class CoreLifecycleService(
 
         return reclaimed;
     }
+
+    // The manifest role vocabulary is validated fail-closed by AppManifestService.Select, so by the
+    // time a selection reaches lifecycle code the role is either absent or exactly "system".
+    private static bool IsSystemManifest(RuntimeAppManifest manifest)
+        => string.Equals(manifest.Role, "system", StringComparison.Ordinal);
 
     private AppRecord BuildAppRecord(
         RuntimeAppManifestSelection selection,
@@ -2972,6 +2980,14 @@ internal sealed class CoreLifecycleService(
             changes.Add($"runtime:{app.SelectedRuntime}->{targetSelection.RuntimeProfile.Key}");
         }
 
+        // A manifest that newly declares role: system escalates the app to a system app. Listing it
+        // here is what makes the escalation operator-approved: the entry folds into the reviewed plan
+        // digest. The reverse direction never appears because System is sticky across updates.
+        if (!app.System && IsSystemManifest(targetSelection.Manifest))
+        {
+            changes.Add("role:runtime->system");
+        }
+
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
         AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
@@ -4038,6 +4054,9 @@ internal sealed record AppInstallPlan(
     string? CurrentManifestDigest,
     string TargetManifestDigest,
     bool DefaultAutostart,
+    // True when this install produces a system app (manifest role: system or an internal bootstrap
+    // request), so review UIs can surface the escalation before the operator confirms.
+    bool System,
     IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
 

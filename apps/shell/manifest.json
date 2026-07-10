@@ -3,7 +3,8 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.25.0",
+  "version": "0.25.1",
+  "role": "system",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
