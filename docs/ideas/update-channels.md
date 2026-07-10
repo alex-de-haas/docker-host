@@ -1,6 +1,8 @@
 # Update Channels
 
-Status: Idea.
+Status: Idea
+Created: 2026-06-12
+Updated: 2026-07-10
 
 ## Description
 
@@ -39,3 +41,7 @@ The committed `channels/product-channels.json` file is a local placeholder, not 
 
 - Runtime profile switching and channel switching should happen together only when a reviewed plan explicitly combines them.
   Recommendation: keep them separate by default.
+
+## Links
+
+- [On-Demand System App Updates](system-app-updates.md) — uses configured manifest sources for the first manual Shell update flow and leaves generated product channels as the later atomic release source.
