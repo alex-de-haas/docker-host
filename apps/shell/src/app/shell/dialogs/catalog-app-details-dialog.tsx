@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Download, LoaderCircle, Package } from "lucide-react";
+import { CheckCircle2, ChevronDown, Download, LoaderCircle, Package } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getCatalogApp } from "../catalog-api";
 import { MarkdownDescription } from "../markdown-description";
 import type { CatalogAppFeed, CatalogDetailState } from "../types";
@@ -24,10 +25,12 @@ function httpUrl(value: string | null | undefined): string | null {
 }
 
 // Marketplace detail for one catalog app. Loads the full entry (display + declared feeds). For an app
-// that is not installed, a feed's Install button hands its manifestRef (and the feed id, recorded as
-// the followed feed) to the existing reviewed install flow (the catalog installs nothing itself).
-// Already-installed apps are managed from Installed Apps — installing there would just return
-// "already installed", so it is not offered here.
+// that is not installed, the footer Install button hands the chosen feed's manifestRef (and the feed
+// id, recorded as the followed feed) to the existing reviewed install flow (the catalog installs
+// nothing itself); with several feeds it is a split button whose menu lists them, defaulting to the
+// feed marked default. The footer stays visible while the body scrolls, so a long description never
+// hides the install action. Already-installed apps are managed from Installed Apps — installing there
+// would just return "already installed", so it is not offered here.
 export function CatalogAppDetailsDialog({
   coreOrigin,
   appId,
@@ -71,6 +74,9 @@ export function CatalogAppDetailsDialog({
 
   const app = state.app;
   const feeds = app?.feeds ?? [];
+  // Core normalizes a sole feed to default: true; several feeds without one means no unambiguous
+  // choice, so the footer offers only the feed menu (A4: feed order carries no meaning).
+  const defaultFeed = feeds.find((feed) => feed.default) ?? null;
   const publisherUrl = httpUrl(app?.publisher?.url);
   const installFeed = (feed: CatalogAppFeed) => {
     onInstall(feed.manifestRef, feed.id);
@@ -134,39 +140,18 @@ export function CatalogAppDetailsDialog({
 
               {app.descriptionUrl && <MarkdownDescription src={app.descriptionUrl} />}
 
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">Feeds</h3>
-                {feeds.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">This app declares no feeds; install it from its source directly.</p>
-                ) : (
-                  <div className="divide-y rounded-md border">
-                    {feeds.map((feed) => (
-                      <div key={feed.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="font-medium">{feed.id}</span>
-                          {feed.default && feeds.length > 1 && <Badge variant="secondary">Default</Badge>}
-                          {app.installed && feed.id === app.followedFeedId && <Badge variant="outline">Followed</Badge>}
-                        </div>
-                        {!app.installed && (
-                          <Button type="button" size="sm" variant="outline" onClick={() => installFeed(feed)}>
-                            <Download className="h-4 w-4" />
-                            Install
-                          </Button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {app.installed && (
-                  <p className="text-sm text-muted-foreground">
-                    {app.updateAvailable
-                      ? `Update available from the '${app.followedFeedId}' feed. Manage updates from Installed Apps.`
-                      : app.followedFeedId
-                        ? `Installed${app.installedVersion ? ` (${app.installedVersion})` : ""}, following '${app.followedFeedId}'. Manage updates from Installed Apps.`
-                        : `Installed${app.installedVersion ? ` (${app.installedVersion})` : ""}. No feed set — choose one in the app's settings to receive updates.`}
-                  </p>
-                )}
-              </div>
+              {!app.installed && feeds.length === 0 && (
+                <p className="text-sm text-muted-foreground">This app declares no feeds; install it from its source directly.</p>
+              )}
+              {app.installed && (
+                <p className="text-sm text-muted-foreground">
+                  {app.updateAvailable
+                    ? `Update available from the '${app.followedFeedId}' feed. Manage updates from Installed Apps.`
+                    : app.followedFeedId
+                      ? `Installed${app.installedVersion ? ` (${app.installedVersion})` : ""}, following '${app.followedFeedId}'. Manage updates from Installed Apps.`
+                      : `Installed${app.installedVersion ? ` (${app.installedVersion})` : ""}. No feed set — choose one in the app's settings to receive updates.`}
+                </p>
+              )}
 
               {publisherUrl && (
                 <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -180,10 +165,55 @@ export function CatalogAppDetailsDialog({
           )}
         </DialogBody>
 
-        <DialogFooter>
+        <DialogFooter className="sm:justify-between">
           <Button type="button" variant="outline" onClick={onClose}>
             Close
           </Button>
+          {app && !app.installed && feeds.length > 0 && (
+            feeds.length === 1 ? (
+              <Button type="button" onClick={() => installFeed(feeds[0])}>
+                <Download className="h-4 w-4" />
+                Install
+              </Button>
+            ) : (
+              <div className="flex">
+                {defaultFeed && (
+                  <Button type="button" className="relative flex-1 rounded-r-none focus-visible:z-10" onClick={() => installFeed(defaultFeed)}>
+                    <Download className="h-4 w-4" />
+                    {`Install '${defaultFeed.id}'`}
+                  </Button>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    {defaultFeed ? (
+                      <Button type="button" size="icon" className="relative rounded-l-none border-l border-primary-foreground/20 focus-visible:z-10">
+                        <ChevronDown className="h-4 w-4" />
+                        <span className="sr-only">Install from another feed</span>
+                      </Button>
+                    ) : (
+                      <Button type="button" className="flex-1">
+                        <Download className="h-4 w-4" />
+                        Install
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {feeds.map((feed) => (
+                      <DropdownMenuItem key={feed.id} onSelect={() => installFeed(feed)}>
+                        {feed.id}
+                        {feed.default && (
+                          <Badge variant="secondary" className="ml-auto">
+                            Default
+                          </Badge>
+                        )}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
