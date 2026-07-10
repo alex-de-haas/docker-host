@@ -41,7 +41,15 @@ hosty apps start com.haas.demo-app
 - `endpoints` - externally visible or internal service endpoints.
 - `ui` - Shell entrypoint and navigation metadata when the app has UI.
 
-## Runtime Profiles
+## App Role
+
+The optional top-level `role` field marks a platform system app:
+
+- `role` - omitted for ordinary runtime apps, or exactly `"system"`. Any other value fails manifest validation (`app_manifest_role_unsupported`), so a manifest written for a newer role vocabulary can never install as an ordinary runtime app by accident.
+
+Install stores the role as the app record's `System` flag and reports it on the install plan (`system: true`) so review UIs can surface the escalation. On a reviewed update, a manifest that newly declares `role: system` adds a `role:runtime->system` entry to the plan changes; confirming the plan applies the escalation. The flag is sticky: dropping `role` from a later manifest never downgrades an installed system app, and no lifecycle path flips `System` outside install and reviewed update.
+
+System apps are administrator surfaces: Core requires an enabled `host.admin` in every app identity flow for them (`system_app_admin_required`), they are hidden from ordinary users' app listings, and they are excluded from user assignments.
 
 Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), an optional `default: true` (at most one), and an optional `development: true`.
 

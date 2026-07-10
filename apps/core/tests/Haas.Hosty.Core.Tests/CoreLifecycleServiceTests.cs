@@ -797,6 +797,73 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_ManifestSystemRole_MarksRecordAndPlanSystem()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.0.0", system: true));
+
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifestPath));
+        Assert.True(plan.System);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        var app = await fixture.Apps.GetAppAsync("com.example.roleapp");
+        Assert.True(app!.System);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ManifestAddingSystemRole_SurfacesRoleChangeAndEscalates()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.0.0", system: false));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        Assert.False((await fixture.Apps.GetAppAsync("com.example.roleapp"))!.System);
+
+        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.1.0", system: true));
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.roleapp", new AppUpdatePlanRequest());
+        Assert.Contains("role:runtime->system", plan.Changes);
+
+        await fixture.Service.ApplyUpdateAsync("com.example.roleapp", new AppUpdateApplyRequest(plan.PlanDigest));
+        Assert.True((await fixture.Apps.GetAppAsync("com.example.roleapp"))!.System);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SystemAppManifestWithoutRole_KeepsSystemWithoutRoleChange()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.0.0", system: true));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // System is sticky: dropping the role from a later manifest must not silently expose an
+        // installed system app to ordinary users, and no misleading "role" change is reported.
+        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.1.0", system: false));
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.roleapp", new AppUpdatePlanRequest());
+        Assert.DoesNotContain("role:runtime->system", plan.Changes);
+
+        await fixture.Service.ApplyUpdateAsync("com.example.roleapp", new AppUpdateApplyRequest(plan.PlanDigest));
+        Assert.True((await fixture.Apps.GetAppAsync("com.example.roleapp"))!.System);
+    }
+
+    private static string CreateRoleManifestJson(string version, bool system)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.roleapp",
+              "name": "Role App",
+              "version": "{{version}}",{{(system ? "\n  \"role\": \"system\"," : "")}}
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/example/roleapp:1.0.0" }
+                }
+              }]
+            }
+            """;
+
+    [Fact]
     public async Task SummarySupportsSource_ReflectsLocalCommandProfile_AndSurfacesOverridePath()
     {
         var fixture = await LifecycleFixture.CreateAsync();

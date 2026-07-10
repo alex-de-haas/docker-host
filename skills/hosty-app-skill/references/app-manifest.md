@@ -19,6 +19,7 @@ Use this reference when authoring or reviewing Hosty runtime app manifests, stor
 - Define one or more services.
 - Define endpoints for service access.
 - Define `ui.entrypoint` when the app has a Shell UI.
+- Do not set the top-level `role` field: it accepts only `"system"` (anything else fails validation), and `role: "system"` is reserved for first-party platform system apps. A system app is administrator-only and hidden from ordinary users, which is wrong for a domain app.
 
 ## Versioning
 
