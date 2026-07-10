@@ -3388,6 +3388,105 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task RestartAsync_LiveSourceApp_AdoptsFolderManifestAndRevendorsAssets()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(Path.Combine(folder, "assets"));
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(Path.Combine(folder, "assets", "home.svg"), "<svg>v1</svg>");
+        await File.WriteAllTextAsync(manifestPath, CreateNavIconFolderManifestJson("1.0.0", "Home"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        try
+        {
+            _ = await fixture.Service.StartAsync("com.example.notes");
+
+            // The operator edits the manifest and an icon, then restarts — the dev-mode iteration step.
+            // Restart must adopt the folder contract and re-vendor display assets exactly like a cold
+            // start, so the sidebar tracks the edit without a stop/start ceremony.
+            await File.WriteAllTextAsync(Path.Combine(folder, "assets", "home.svg"), "<svg>v2</svg>");
+            await File.WriteAllTextAsync(manifestPath, CreateNavIconFolderManifestJson("2.0.0", "Start"));
+
+            var restarted = await fixture.Service.RestartAsync("com.example.notes");
+
+            Assert.Equal("2.0.0", restarted.App!.Version);
+            var nav = Assert.Single(restarted.App.Navigation);
+            Assert.Equal("Start", nav.Label);
+            // Live asset URLs carry no version buster, so the refreshed icon is not pinned to a stale
+            // immutable browser-cache entry.
+            Assert.Equal("/api/apps/com.example.notes/assets/assets/home.svg", nav.IconUrl);
+            var vendored = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "assets", "home.svg");
+            Assert.Equal("<svg>v2</svg>", await File.ReadAllTextAsync(vendored));
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.notes");
+        }
+    }
+
+    [Fact]
+    public async Task RestartAsync_LiveSourceApp_StopsRenamedServiceFromBaselineContract()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(Path.Combine(folder, "assets"));
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(Path.Combine(folder, "assets", "home.svg"), "<svg>v1</svg>");
+        await File.WriteAllTextAsync(manifestPath, CreateNavIconFolderManifestJson("1.0.0", "Home", serviceKey: "app"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        try
+        {
+            _ = await fixture.Service.StartAsync("com.example.notes");
+            Assert.NotNull(fixture.LocalProcesses.Get("com.example.notes", "app"));
+
+            // The operator renames the service mid-edit. Restart must stop against the baseline
+            // contract (what the running process was started with) — stopping from the adopted
+            // contract would look for 'web' only and orphan the old 'app' process.
+            await File.WriteAllTextAsync(manifestPath, CreateNavIconFolderManifestJson("2.0.0", "Home", serviceKey: "web"));
+
+            _ = await fixture.Service.RestartAsync("com.example.notes");
+
+            Assert.Null(fixture.LocalProcesses.Get("com.example.notes", "app"));
+            Assert.NotNull(fixture.LocalProcesses.Get("com.example.notes", "web"));
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.notes");
+        }
+    }
+
+    [Fact]
+    public async Task RestartAsync_LiveSourceApp_InvalidEditKeepsLastGoodAndRecordsError()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateNavIconFolderManifestJson("1.0.0", "Home"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        try
+        {
+            _ = await fixture.Service.StartAsync("com.example.notes");
+
+            // A mid-edit-invalid folder manifest must not break the restart: Core keeps running the
+            // last-good contract and surfaces the error on the record (2b/R13/R14).
+            await File.WriteAllTextAsync(manifestPath, "{ not valid json");
+
+            var restarted = await fixture.Service.RestartAsync("com.example.notes");
+
+            Assert.Equal("1.0.0", restarted.App!.Version);
+            Assert.NotNull(restarted.App.ManifestError);
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.notes");
+        }
+    }
+
+    [Fact]
     public async Task LoadSelection_DockerFolderInstall_DoesNotLiveReadInternalCopy()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -3471,6 +3570,31 @@ public sealed class CoreLifecycleServiceTests
                   }
                 }
               }]{{externalMounts ?? ""}}
+            }
+            """;
+
+    private static string CreateNavIconFolderManifestJson(string version, string navLabel, string serviceKey = "app")
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "{{version}}",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true, "development": true }],
+              "defaultRuntime": "dev",
+              "services": [{
+                "key": "{{serviceKey}}",
+                "runtimes": {
+                  "dev": {
+                    "type": "localCommand",
+                    "command": "sleep 5"
+                  }
+                }
+              }],
+              "ui": {
+                "path": "/",
+                "navigation": [{ "label": "{{navLabel}}", "path": "/", "iconAsset": "assets/home.svg" }]
+              }
             }
             """;
 

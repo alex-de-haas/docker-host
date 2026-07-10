@@ -653,13 +653,18 @@ internal sealed record AppSummary(
         var entryUrl = ui is null
             ? null
             : BuildUiUrl(ResolveEndpointUrl(endpoints, ui.EndpointKey), ui.EntryPath);
+        // A live source app re-vendors display assets on every adopted start/restart without a version
+        // bump, so its asset URLs carry no version buster: an un-busted URL is served no-cache and
+        // revalidated against the ETag, so an edited icon reaches the browser after a restart. A locked
+        // app keeps the immutable version-busted URL.
+        var assetVersion = live ? null : app.Version;
         var navigation = ui?.Navigation
             .Select(item => new AppNavigationSummary(
                 Label: item.Label,
                 Path: item.Path,
                 EntryPath: item.Path,
                 EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path),
-                IconUrl: ResolveAssetUrl(item.IconAsset, app.Id, app.Version)))
+                IconUrl: ResolveAssetUrl(item.IconAsset, app.Id, assetVersion)))
             .ToArray() ?? [];
 
         // Source-capable when it declares any source (localCommand) runtime, regardless of install
@@ -700,24 +705,26 @@ internal sealed record AppSummary(
             app.SourceState?.ManagedCheckoutPath,
             liveSourcePath,
             app.CatalogMetadata,
-            ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, app.Version),
-            ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, app.Version),
+            ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, assetVersion),
+            ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, assetVersion),
             app.FollowedFeedId);
     }
 
     // A manifest-declared icon is either an absolute https URL (passed through) or a manifest-relative
     // path served from the app's folder by the asset endpoint. Returns null when no icon is declared.
-    private static string? ResolveIconUrl(string? icon, string appId, string version)
+    private static string? ResolveIconUrl(string? icon, string appId, string? version)
         => string.IsNullOrWhiteSpace(icon) || IsAbsoluteHttpUrl(icon)
             ? AppCatalogMetadataContract.NullIfBlank(icon)
             : ResolveAssetUrl(icon, appId, version);
 
     // Build the Core asset-endpoint URL for a manifest-relative asset path, per-segment escaped and
-    // cache-busted by the app version (which bumps whenever the vendored assets change). Returns null
-    // for a blank, absolute, or otherwise unclean ref (empty/./.././':'/'%' segment) so AppSummary only
-    // ever emits a URL the endpoint can actually serve — the same normalization the vendor uses, so the
-    // emitted URL matches the path the asset was written to.
-    private static string? ResolveAssetUrl(string? relativePath, string appId, string version)
+    // cache-busted by the app version (which bumps whenever the vendored assets change). A null version
+    // omits the buster — the endpoint serves un-busted URLs no-cache with an ETag, which a live source
+    // app needs so re-vendored edits reach the browser without a version bump. Returns null for a blank,
+    // absolute, or otherwise unclean ref (empty/./.././':'/'%' segment) so AppSummary only ever emits a
+    // URL the endpoint can actually serve — the same normalization the vendor uses, so the emitted URL
+    // matches the path the asset was written to.
+    private static string? ResolveAssetUrl(string? relativePath, string appId, string? version)
     {
         var path = CoreDataPaths.NormalizeRelativeAssetPath("", relativePath);
         if (path is null)
@@ -726,7 +733,8 @@ internal sealed record AppSummary(
         }
 
         var escaped = string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
-        return $"/api/apps/{Uri.EscapeDataString(appId)}/assets/{escaped}?v={Uri.EscapeDataString(version)}";
+        var url = $"/api/apps/{Uri.EscapeDataString(appId)}/assets/{escaped}";
+        return version is null ? url : $"{url}?v={Uri.EscapeDataString(version)}";
     }
 
     private static bool IsAbsoluteHttpUrl(string value)

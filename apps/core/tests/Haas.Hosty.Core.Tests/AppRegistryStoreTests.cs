@@ -260,6 +260,34 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public void From_LiveSourceApp_EmitsUnbustedAssetUrls()
+    {
+        var app = CreateApp("com.example.notes") with
+        {
+            Version = "0.4.3",
+            CatalogMetadata = AppCatalogMetadataContract.FromManifest(new RuntimeAppCatalogMetadataManifest
+            {
+                Icon = "assets/icon.svg",
+                DescriptionFile = "docs/store.md",
+            }),
+            Ui = AppUiContract.FromManifest(new RuntimeAppUiManifest
+            {
+                Path = "/",
+                Navigation = [new RuntimeAppUiNavigationItemManifest { Label = "People", Path = "/people", IconAsset = "assets/people.svg" }],
+            }),
+        };
+
+        var summary = AppSummary.From(app, live: true);
+
+        // A live source app re-vendors assets on adopted starts/restarts without a version bump, so its
+        // asset URLs carry no ?v= buster — the endpoint serves them no-cache and revalidates by ETag,
+        // letting an edited icon reach the browser after a restart.
+        Assert.Equal("/api/apps/com.example.notes/assets/assets/icon.svg", summary.IconUrl);
+        Assert.Equal("/api/apps/com.example.notes/assets/docs/store.md", summary.DescriptionUrl);
+        Assert.Equal("/api/apps/com.example.notes/assets/assets/people.svg", summary.Navigation[0].IconUrl);
+    }
+
+    [Fact]
     public void From_WithoutCatalogMetadata_HasNoAssetUrls()
     {
         var summary = AppSummary.From(CreateApp("com.example.notes"));
