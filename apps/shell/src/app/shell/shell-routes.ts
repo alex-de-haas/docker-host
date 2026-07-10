@@ -71,6 +71,29 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
     return { view: "available-apps", workspace: null };
   }
 
+  // Canonical admin-only deep link for a UI-capable system app's pages. Reuses the same workspace
+  // launch/iframe engine as /workspace; the separate route keeps admin guards and links explicit
+  // (docs/ideas/system-app-pages.md).
+  const systemAppMatch = /^\/system-apps\/([^/]+)$/.exec(path);
+  if (systemAppMatch) {
+    let appId = systemAppMatch[1];
+    try {
+      appId = decodeURIComponent(appId);
+    } catch {
+      // Malformed percent-encoding in a hand-typed link must not crash route parsing during render;
+      // the raw segment falls through to the launch flow's ordinary not-installed error.
+    }
+
+    return {
+      view: "installed-apps",
+      workspace: {
+        appId,
+        path: normalizeAppPath(searchParams.get("path")),
+        system: true,
+      },
+    };
+  }
+
   if (path === "/apps") {
     return { view: "available-apps", workspace: null };
   }
@@ -111,6 +134,12 @@ export function getWorkspaceHref(appId: string, appPath: string) {
   params.set("app", appId);
   params.set("path", normalizeAppPath(appPath));
   return `/workspace?${params.toString()}`;
+}
+
+export function getSystemAppHref(appId: string, appPath: string) {
+  const params = new URLSearchParams();
+  params.set("path", normalizeAppPath(appPath));
+  return `/system-apps/${encodeURIComponent(appId)}?${params.toString()}`;
 }
 
 export function getWorkspaceRouteKey(route: WorkspaceRoute | null) {

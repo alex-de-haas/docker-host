@@ -16,6 +16,9 @@ export type ShellContextValue = {
   runtimeApps: CoreApp[];
   systemApps: CoreApp[];
   uiRuntimeApps: CoreApp[];
+  // UI-capable system apps (admin-only by Core filtering): rendered in the sidebar System group and
+  // opened through the canonical /system-apps/<id> route.
+  uiSystemApps: CoreApp[];
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   // The telemetry backend system app is installed + running, so the backend-backed Observability views

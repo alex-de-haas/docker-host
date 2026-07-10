@@ -178,3 +178,10 @@ export function ShellWorkspaceRoute() {
   // A bare /workspace route falls back here while the client-side route normalization runs.
   return <ShellAvailableAppsRoute />;
 }
+
+export function ShellSystemAppsRoute() {
+  // Active /system-apps/<id> URLs are rendered by the persistent Shell layout (same workspace
+  // engine as /workspace). The Installed Apps fallback shows beneath while the launch resolves and
+  // when the route is invalid; it is already admin-gated, so non-admins land on the Apps view.
+  return <ShellInstalledAppsRoute />;
+}
