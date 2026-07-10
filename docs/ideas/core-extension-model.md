@@ -19,7 +19,7 @@ The pattern already exists informally: the telemetry app is a de-facto plugin th
 - The idiomatic in-process seam is `IAppRuntimeAdapter` (multiple registrations, string-keyed `ResolveAdapter`). Catalog document fetching is pluggable via `ICatalogDocumentFetcher`, and catalog sources are already runtime-mutable.
 - A notification hub exists (Core-owned store, per-user SSE stream via `NotificationBroadcaster`), but there is no generic domain event bus. Lifecycle transitions (install/start/crash) are observable only as user notifications produced inline in `CoreLifecycleService`.
 - Two Core-minted token systems exist: `AppIdentityService` (HMAC-signed user-identity tokens for app SSO) and `AppServiceTokenService` (opaque per-app service token injected as `HOSTY_APP_SERVICE_TOKEN`, used for app→Core callbacks). Neither carries scopes; there is no data-plane token yet.
-- Cross-app `dependencies` already wire sibling endpoint URLs into env; trusted-proxy SSO (`X-Hosty-Trusted-User-Id` + `HOSTY_TRUSTED_PROXY_SECRET` exchanged for a session) already provides an external-identity entry point.
+- Cross-app `dependencies` already wire sibling endpoint URLs into env; trusted-proxy SSO (the `X-Hosty-Trusted-User-Id` and `X-Hosty-Trusted-Proxy-Secret` headers, validated against the Core-configured `HOSTY_TRUSTED_PROXY_SECRET`, exchanged for a session) already provides an external-identity entry point.
 
 ## Extension Model
 
@@ -92,7 +92,7 @@ This example probes the model's main limitation: authentication is deeply built 
 
 Two paths, in increasing order of integration:
 
-1. **Available near-term with no new contract:** an authenticating-proxy system app (the oauth2-proxy pattern). It fronts Shell as ingress, drives the OIDC flow against Auth0, and on success presents the existing trusted-proxy assertion (`X-Hosty-Trusted-User-Id` + shared secret) to mint a Core session. Core never learns about Auth0. Limits: sign-in only — no user provisioning, role mapping, or coordinated logout.
+1. **Available near-term with no new contract:** an authenticating-proxy system app (the oauth2-proxy pattern). It fronts Shell as ingress, drives the OIDC flow against Auth0, and on success presents the existing trusted-proxy assertion (the `X-Hosty-Trusted-User-Id` and `X-Hosty-Trusted-Proxy-Secret` headers) to mint a Core session. Core never learns about Auth0. Limits: sign-in only — no user provisioning, role mapping, or coordinated logout.
 2. **The proper long-term seam:** a `hosty.auth.provider@1` contract. Core delegates only the question "who is this?": the plugin initiates the OIDC flow, handles the callback, and returns a verified external identity (subject, email, groups). Core then makes every decision that must not be delegated: user provisioning/mapping, role assignment, session issuance (`hosty_session`), CSRF, and request authorization. The degradation policy is "fail closed, keep break-glass local login for administrators". The same contract covers Keycloak, Authentik, or Google; Auth0 is just the first implementation.
 
 ```mermaid
