@@ -24,7 +24,7 @@ export function InstallReviewDialog({
 }: {
   opened: boolean;
   // Seeds the manifest field (e.g. a catalog version's manifestRef). The parent remounts the dialog via
-  // a `key` when this changes, so the field starts pre-filled without an effect.
+  // a nonce-carrying `key` on every open, so the field starts pre-filled without an effect.
   initialManifestPath?: string;
   detail: InstallPanelState;
   busyAction: string | null;
@@ -58,8 +58,10 @@ export function InstallReviewDialog({
     }
   }
 
-  // The parent remounts this dialog via `key` per manifest, so a mount-only auto-review fires once for
-  // each catalog install. Manual installs (empty seed) keep the input + Review button instead.
+  // The parent remounts this dialog via a nonce-carrying `key` on every open, so a mount-only
+  // auto-review fires once per catalog install — including reopening the same manifestRef, where a
+  // manifest-only key used to skip the remount and leave the dialog empty. Manual installs (empty
+  // seed) keep the input + Review button instead.
   useEffect(() => {
     if (!preseeded) {
       return;

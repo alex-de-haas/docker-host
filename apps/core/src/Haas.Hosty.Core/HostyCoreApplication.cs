@@ -44,7 +44,9 @@ internal static class HostyCoreApplication
         // Marketplace catalog read side (WS2): fetch/cache/merge configured catalog sources and serve the
         // storefront. A discovery/trust index over existing transport — it installs nothing.
         builder.Services.AddSingleton<ICatalogDocumentFetcher>(sp =>
-            new HttpCatalogDocumentFetcher(sp.GetRequiredService<IClock>()));
+            new HttpCatalogDocumentFetcher(
+                sp.GetRequiredService<IClock>(),
+                sp.GetRequiredService<ILogger<HttpCatalogDocumentFetcher>>()));
         // WS7 federation: operator-managed catalog sources, seeded from HOSTY_CATALOG_SOURCES and mutable
         // at runtime. CatalogService reads the effective list from here on every storefront fetch.
         builder.Services.AddSingleton<CatalogSourceStore>();

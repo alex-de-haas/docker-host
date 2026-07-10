@@ -16,6 +16,8 @@ internal interface ICatalogDocumentFetcher
 // Real fetcher: http/https GET or local-file read, size-capped, with a small per-URL TTL cache so a
 // storefront list does not re-fetch the index (and every feed) on each request. Best-effort — any
 // transport/format failure yields null so an unreachable source degrades to "no data", never an error.
+// Every failure is logged (the null cache bounds that to once per TTL per URL): an empty marketplace
+// must stay diagnosable, since the storefront itself surfaces nothing.
 internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDisposable
 {
     private const int MaxBytes = 4 * 1024 * 1024;
@@ -23,11 +25,13 @@ internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDis
     private readonly HttpClient client = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly ConcurrentDictionary<string, CacheEntry> cache = new(StringComparer.Ordinal);
     private readonly IClock clock;
+    private readonly ILogger<HttpCatalogDocumentFetcher> logger;
     private readonly TimeSpan ttl;
 
-    public HttpCatalogDocumentFetcher(IClock clock, TimeSpan? ttl = null)
+    public HttpCatalogDocumentFetcher(IClock clock, ILogger<HttpCatalogDocumentFetcher> logger, TimeSpan? ttl = null)
     {
         this.clock = clock;
+        this.logger = logger;
         this.ttl = ttl ?? TimeSpan.FromSeconds(60);
     }
 
@@ -60,30 +64,54 @@ internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDis
                 (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
             {
                 using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > MaxBytes)
+                if (!response.IsSuccessStatusCode)
                 {
+                    logger.LogWarning("Catalog document fetch for '{Source}' returned HTTP {StatusCode}.", source, (int)response.StatusCode);
+                    return null;
+                }
+
+                if (response.Content.Headers.ContentLength > MaxBytes)
+                {
+                    logger.LogWarning("Catalog document at '{Source}' exceeds the {MaxBytes}-byte cap.", source, MaxBytes);
                     return null;
                 }
 
                 // Stream and enforce the cap while reading: a source that omits Content-Length (or uses
                 // chunked encoding) would otherwise let ReadAsStringAsync buffer an unbounded body (DoS).
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                return await ReadCappedTextAsync(stream, cancellationToken);
+                var text = await ReadCappedTextAsync(stream, cancellationToken);
+                if (text is null)
+                {
+                    logger.LogWarning("Catalog document at '{Source}' exceeds the {MaxBytes}-byte cap.", source, MaxBytes);
+                }
+
+                return text;
             }
 
             var path = uri is { IsFile: true } ? uri.LocalPath : source;
             if (!File.Exists(path))
             {
+                logger.LogWarning("Catalog document was not found at '{Source}'.", source);
                 return null;
             }
 
             var info = new FileInfo(path);
-            return info.Length > MaxBytes ? null : await File.ReadAllTextAsync(path, cancellationToken);
+            if (info.Length > MaxBytes)
+            {
+                logger.LogWarning("Catalog document at '{Source}' exceeds the {MaxBytes}-byte cap.", source, MaxBytes);
+                return null;
+            }
+
+            return await File.ReadAllTextAsync(path, cancellationToken);
         }
         catch (Exception ex) when (
             ex is HttpRequestException or IOException or UnauthorizedAccessException or UriFormatException or InvalidOperationException ||
             (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
+            // The message matters here: transport failures include host-level causes an operator can't
+            // otherwise see (DNS, TLS, EMFILE fd exhaustion — the latter observed live rendering the
+            // marketplace silently empty).
+            logger.LogWarning(ex, "Catalog document fetch for '{Source}' failed: {Message}", source, ex.Message);
             return null;
         }
     }
