@@ -97,6 +97,10 @@ export function ShellClient({
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
   const [installInitialManifest, setInstallInitialManifest] = useState<string | null>(null);
+  // Bumped on every openInstallDialog and folded into the dialog's key, so each open remounts a fresh
+  // instance. The manifest alone is not enough: reopening the same manifestRef would keep the key,
+  // skip the mount-only auto-review, and (with the panel state wiped on open) render an empty dialog.
+  const [installNonce, setInstallNonce] = useState(0);
   // The catalog feed a marketplace-initiated install follows (catalog-hosted-app-feeds.md A3). Sent
   // with the install request only while the reviewed manifest is still the feed's manifestRef — a
   // manually edited path in the dialog means the install no longer comes from that feed.
@@ -1203,6 +1207,7 @@ export function ShellClient({
     setInstallInitialManifest(typeof manifestPath === "string" ? manifestPath : null);
     // The feed id rides along only for a marketplace-initiated install; a manual open has none.
     setInstallCatalogFeedId(typeof catalogFeedId === "string" ? catalogFeedId : null);
+    setInstallNonce((nonce) => nonce + 1);
     setInstallOpen(true);
     setInstallPanel(emptyInstallPanelState());
   }, []);
@@ -1345,7 +1350,7 @@ export function ShellClient({
         </div>
 
         <InstallReviewDialog
-          key={installInitialManifest ?? "manual"}
+          key={`${installNonce}:${installInitialManifest ?? "manual"}`}
           opened={installOpen}
           initialManifestPath={installInitialManifest ?? ""}
           detail={installPanel}

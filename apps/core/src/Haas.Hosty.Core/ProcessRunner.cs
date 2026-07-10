@@ -11,7 +11,10 @@ internal readonly record struct ProcessRunResult(int ExitCode, string StandardOu
 //   2. Cancellation previously abandoned the awaits but left the child — and a wedged docker daemon —
 //      running. The whole process tree is now killed on cancellation/timeout.
 //   3. An optional overall deadline bounds a genuinely stuck child.
-//   4. The Process is always disposed.
+//   4. The Process AND its stdout/stderr readers are always disposed. Process.Dispose() deliberately
+//      leaves caller-referenced stdio readers open, so without explicit disposal each run parks two
+//      pipe FDs on the finalizer queue — at the docker scrape cadence that exhausts the process FD
+//      limit within the hour (observed live: catalog fetches then fail EMFILE, silently).
 internal static class ProcessRunner
 {
     public static async Task<ProcessRunResult> RunAsync(
@@ -35,33 +38,47 @@ internal static class ProcessRunner
             deadlineCts.CancelAfter(limit);
         }
 
-        // Drain both pipes to EOF on an uncancellable token so that after a kill (below) they complete
-        // naturally with whatever was captured; only WaitForExit observes the deadline/cancellation.
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
-        var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
-
+        // Accessing StandardOutput/StandardError puts the streams in sync-read mode, which makes their
+        // disposal the caller's job (see header point 4) — hold them so the finally below can do it.
+        var stdoutReader = process.StandardOutput;
+        var stderrReader = process.StandardError;
         try
         {
-            await process.WaitForExitAsync(deadlineCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            KillProcessTree(process);
-            var stdoutPartial = await ReadSafelyAsync(stdoutTask);
-            var stderrPartial = await ReadSafelyAsync(stderrTask);
+            // Drain both pipes to EOF on an uncancellable token so that after a kill (below) they complete
+            // naturally with whatever was captured; only WaitForExit observes the deadline/cancellation.
+            var stdoutTask = stdoutReader.ReadToEndAsync(CancellationToken.None);
+            var stderrTask = stderrReader.ReadToEndAsync(CancellationToken.None);
 
-            // A genuine host/operator cancellation propagates; our own deadline firing is reported instead.
-            if (cancellationToken.IsCancellationRequested)
+            try
             {
-                throw;
+                await process.WaitForExitAsync(deadlineCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                KillProcessTree(process);
+                var stdoutPartial = await ReadSafelyAsync(stdoutTask);
+                var stderrPartial = await ReadSafelyAsync(stderrTask);
+
+                // A genuine host/operator cancellation propagates; our own deadline firing is reported instead.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+
+                return new ProcessRunResult(-1, stdoutPartial, stderrPartial, TimedOut: true);
             }
 
-            return new ProcessRunResult(-1, stdoutPartial, stderrPartial, TimedOut: true);
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            return new ProcessRunResult(process.ExitCode, stdout, stderr, TimedOut: false);
         }
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-        return new ProcessRunResult(process.ExitCode, stdout, stderr, TimedOut: false);
+        finally
+        {
+            // Both read tasks have been awaited on every path that reaches here, so disposing cannot
+            // race an in-flight read.
+            stdoutReader.Dispose();
+            stderrReader.Dispose();
+        }
     }
 
     private static void KillProcessTree(Process process)
