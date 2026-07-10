@@ -469,15 +469,17 @@ publisher source a *contract* change still surfaces for review.
 
 ## Channels: Decision
 
-The per-app channel feature (`channelsUrl`, `AppChannelIndex`, `switch-channel/plan`,
-`switch-channel`) is **fully implemented**, but **confirmed unused** - there is no
-Shell UI and no installed app relies on it in practice. It was motivated by pre-merge
-testing, which is now covered by local install (folder install from a worktree plus
-`source-override` tests any runtime, including `localCommand`, before merge).
+At the time of this decision (2026-06-25) the per-app channel feature (`channelsUrl`,
+`AppChannelIndex`, `switch-channel/plan`, `switch-channel`) was **fully implemented**
+but **confirmed unused** - there was no Shell UI and no installed app relied on it in
+practice. It was motivated by pre-merge testing, which is covered by local install
+(folder install from a worktree plus `source-override` tests any runtime, including
+`localCommand`, before merge).
 
-**Decision: remove the channel code outright.** Because it is unused, no migration is
-needed. Removal surface (implemented in PR #67; referenced by symbol/file, not line
-number, so it does not drift):
+**Decision: remove the channel code outright.** Because it was unused, no migration was
+needed. The removal shipped in PR #67; none of the symbols below remain in the code or
+the lifecycle API. Removed surface (referenced by symbol/file, not line number, so it
+does not drift):
 
 - Manifest: `channelsUrl`, `AppChannelIndex`, `AppChannelEntry`.
 - Core (`CoreLifecycleService`): `ListChannelsAsync`, `CreateChannelSwitchPlanAsync`,
@@ -631,9 +633,9 @@ action beyond `git tag` / `docker push :0.3.1`.
 
 Checked against the code to ground the design. Key facts:
 
-- **Channels are fully implemented**, not a skeleton (see Channels: Decision).
-  Retiring is a migration, not a delete. Shell has no channel UI; CLI exposes
-  `--channel` on install/update only (no `hosty apps channels` command).
+- **Channels were fully implemented**, not a skeleton (see Channels: Decision), with
+  no Shell channel UI and only a `--channel` flag on CLI install/update. The removal
+  has since shipped in PR #67.
 - **The reviewed-update digest is manifest-only.** `AppUpdatePlanDigestSeed` hashes
   current/target *manifest* digests (`CoreLifecycleService.cs:1154-1163`,
   `HashPlanSeed` at `:945`). It does **not** observe the artifact. A force-pushed tag
