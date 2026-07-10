@@ -352,6 +352,15 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             errors.Add(new("app_manifest_role_unsupported", "role must be omitted or the string 'system'.", "$.role"));
         }
 
+        // System-app UI is validated strictly and fail-closed (docs/ideas/system-app-pages.md):
+        // its pages are rendered as administrator Shell surfaces, so a system app must not rely on
+        // the permissive runtime fallbacks (endpoint guessing, path prefixing) ordinary app.0.1
+        // manifests keep for compatibility. Headless system apps (no ui block) are unaffected.
+        if (string.Equals(manifest.Role, "system", StringComparison.Ordinal) && manifest.Ui is { } systemUi)
+        {
+            ValidateSystemUi(manifest, systemUi, errors);
+        }
+
         if (!string.IsNullOrWhiteSpace(manifest.Id) && !IsSafeIdentifier(manifest.Id))
         {
             errors.Add(new("app_manifest_id_invalid", "App id must match ^[a-z0-9][a-z0-9._-]{0,62}$ and must not be a path segment such as '.' or '..'.", "$.id"));
@@ -914,6 +923,93 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         if (string.IsNullOrWhiteSpace(value))
         {
             errors.Add(new("app_manifest_required_field_missing", $"{path} is required.", path));
+        }
+    }
+
+    // Strict, fail-closed UI validation for role: system manifests. Ordinary manifests keep the
+    // permissive runtime behavior (endpoint fallback, path prefixing); a system app's pages are
+    // administrator Shell surfaces, so every reference must be explicit and resolvable.
+    private static void ValidateSystemUi(RuntimeAppManifest manifest, RuntimeAppUiManifest ui, List<AppManifestValidationError> errors)
+    {
+        var (entryEndpointKey, entryPath) = AppUiContract.ReadDeclaredEntrypoint(ui);
+        if (entryEndpointKey is null)
+        {
+            errors.Add(new(
+                "app_manifest_system_ui_endpoint_required",
+                "A system app UI must declare an explicit entrypoint endpoint; the runtime fallback to another endpoint is not allowed for system apps.",
+                "$.ui.entrypoint.endpoint"));
+        }
+        else
+        {
+            ValidateSystemUiEndpointReference(manifest, entryEndpointKey, "$.ui.entrypoint.endpoint", errors);
+        }
+
+        if (entryPath is not null)
+        {
+            ValidateSystemUiPath(entryPath, "$.ui.entrypoint.path", errors);
+        }
+
+        var seenPaths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in ui.Navigation)
+        {
+            if (!string.IsNullOrWhiteSpace(item.Path))
+            {
+                ValidateSystemUiPath(item.Path.Trim(), "$.ui.navigation[].path", errors);
+            }
+
+            var itemEndpointKey = item.Endpoint ?? item.PortKey;
+            if (!string.IsNullOrWhiteSpace(itemEndpointKey))
+            {
+                ValidateSystemUiEndpointReference(manifest, itemEndpointKey.Trim(), "$.ui.navigation[].endpoint", errors);
+            }
+
+            // Blank paths fall back to the entrypoint path at runtime, so they participate in
+            // duplicate detection under that effective value.
+            var effectivePath = string.IsNullOrWhiteSpace(item.Path) ? (entryPath ?? "/") : item.Path.Trim();
+            if (!seenPaths.Add(effectivePath))
+            {
+                errors.Add(new(
+                    "app_manifest_system_ui_path_duplicate",
+                    $"System app UI declares page path '{effectivePath}' more than once.",
+                    "$.ui.navigation[].path"));
+            }
+        }
+    }
+
+    private static void ValidateSystemUiEndpointReference(RuntimeAppManifest manifest, string endpointKey, string path, List<AppManifestValidationError> errors)
+    {
+        var declared = manifest.Endpoints.FirstOrDefault(endpoint => string.Equals(endpoint.Key, endpointKey, StringComparison.Ordinal));
+        if (declared is null)
+        {
+            errors.Add(new(
+                "app_manifest_system_ui_endpoint_unknown",
+                $"System app UI references endpoint '{endpointKey}', which is not a declared endpoint.",
+                path));
+            return;
+        }
+
+        if (declared.Protocol is not (null or "http" or "https"))
+        {
+            errors.Add(new(
+                "app_manifest_system_ui_endpoint_not_http",
+                $"System app UI endpoint '{endpointKey}' must use http or https, not '{declared.Protocol}'.",
+                path));
+        }
+    }
+
+    private static void ValidateSystemUiPath(string value, string path, List<AppManifestValidationError> errors)
+    {
+        var valid = value.StartsWith("/", StringComparison.Ordinal) &&
+            !value.StartsWith("//", StringComparison.Ordinal) &&
+            !value.Contains("://", StringComparison.Ordinal) &&
+            !value.Contains('?', StringComparison.Ordinal) &&
+            !value.Contains('#', StringComparison.Ordinal);
+        if (!valid)
+        {
+            errors.Add(new(
+                "app_manifest_system_ui_path_invalid",
+                $"System app UI page path '{value}' must be root-relative and contain no scheme, host, query, or fragment.",
+                path));
         }
     }
 

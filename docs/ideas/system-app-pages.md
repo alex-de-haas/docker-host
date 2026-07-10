@@ -168,7 +168,7 @@ System pages and system lifecycle actions are independent:
 - Generalize runtime-app-named navigation components so both app kinds can use them (shipped in Shell 0.26.0).
 - Add the System sidebar group and canonical system-app route (shipped in Shell 0.26.0: `/system-apps/<app-id>?path=...` over the shared workspace engine; the group hides when empty, stopped apps stay listed but disabled, non-admins are redirected).
 - Enforce admin authorization in Core launch, exchange, and revalidation paths (shipped in platform 0.37.1).
-- Add strict system UI validation.
+- Add strict system UI validation (shipped in platform 0.39.1: `role: system` manifests with a `ui` block require an explicit entrypoint endpoint resolving to a declared http(s) endpoint, root-relative page paths without scheme/host/query/fragment, and unique page paths; ordinary manifests keep the permissive behavior).
 - Move hardcoded Marketplace UI to `hosty.marketplace` and retain `/marketplace` as a temporary alias.
 - Leave headless Shell and telemetry behavior unchanged (still true: neither declares `ui`, so the System group stays hidden until the first UI-capable system app installs).
 
