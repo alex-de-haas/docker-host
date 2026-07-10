@@ -111,6 +111,8 @@ The change tightens ordinary user access to Shell management views. Any workflow
 
 - System Apps includes all apps with `system: true`, not only Hosty Shell.
 
+- Core enforces the system-app boundary in identity flows, not only in Shell navigation: authorization codes, launch tokens, code exchange, and session revalidation are refused with `system_app_admin_required` when the target app record is `System` and the acting user is not an enabled `host.admin`. A role downgrade therefore revokes system-app access no later than the next revalidation.
+
 - System app logs are available from the Installed Apps System Apps section when the app exposes the `logs` capability.
 
 - System app runtime switching is available to administrators when Core reports multiple runtime profiles, while other system app lifecycle actions remain hidden.

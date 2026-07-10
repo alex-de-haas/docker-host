@@ -29,7 +29,7 @@ These decisions make Marketplace a read-only catalog service plus a system-app U
 - Shell owns the hardcoded `/marketplace` route and hands a selected manifest reference to its Core install flow.
 - `hosty catalog` reads Core catalog endpoints and then calls the generic Core lifecycle endpoint itself.
 - A system app is currently an `AppRecord.System` flag, not a manifest role. Shell filters all system apps out of runtime-app navigation even when they declare UI.
-- App SSO exists, but Core does not yet enforce `host.admin` solely because the target is a system app.
+- App SSO exists, and Core enforces `host.admin` in every identity flow when the target is a system app (`system_app_admin_required`, platform 0.37.1).
 - Catalog sources may be absolute host paths. A Docker-backed marketplace app cannot see those paths without an explicit import or mount design.
 
 ## Target Boundary

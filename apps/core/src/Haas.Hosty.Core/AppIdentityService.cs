@@ -296,12 +296,20 @@ internal sealed class AppIdentityService(
         CancellationToken cancellationToken)
     {
         var state = await users.ReadAsync(cancellationToken);
-        _ = await RequireInstalledAppAsync(appId, cancellationToken);
+        var app = await RequireInstalledAppAsync(appId, cancellationToken);
         var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal)) ??
             throw new AppIdentityException("user_not_found", "Host user was not found.");
         if (user.Disabled)
         {
             throw new AppIdentityException("user_disabled", "Host user is disabled.");
+        }
+
+        // System apps are administrator surfaces. This is the enforcement point for every
+        // identity flow (authorize, launch, exchange, revalidate), so a role downgrade
+        // revokes access no later than the next revalidation.
+        if (app.System && !string.Equals(user.Role, "host.admin", StringComparison.Ordinal))
+        {
+            throw new AppIdentityException("system_app_admin_required", "System app access requires a Host administrator.");
         }
 
         var hasAssignmentsForApp = state.Assignments.Any(assignment => string.Equals(assignment.AppId, appId, StringComparison.Ordinal));
