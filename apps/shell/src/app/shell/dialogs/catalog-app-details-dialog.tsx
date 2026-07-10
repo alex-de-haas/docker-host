@@ -178,7 +178,7 @@ export function CatalogAppDetailsDialog({
             ) : (
               <div className="flex">
                 {defaultFeed && (
-                  <Button type="button" className="flex-1 rounded-r-none" onClick={() => installFeed(defaultFeed)}>
+                  <Button type="button" className="relative flex-1 rounded-r-none focus-visible:z-10" onClick={() => installFeed(defaultFeed)}>
                     <Download className="h-4 w-4" />
                     {`Install '${defaultFeed.id}'`}
                   </Button>
@@ -186,7 +186,7 @@ export function CatalogAppDetailsDialog({
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     {defaultFeed ? (
-                      <Button type="button" size="icon" className="rounded-l-none border-l border-primary-foreground/20">
+                      <Button type="button" size="icon" className="relative rounded-l-none border-l border-primary-foreground/20 focus-visible:z-10">
                         <ChevronDown className="h-4 w-4" />
                         <span className="sr-only">Install from another feed</span>
                       </Button>
