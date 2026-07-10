@@ -981,7 +981,6 @@ internal sealed class RuntimeAppSupervisorService(
     ILogger<RuntimeAppSupervisorService> logger,
     NotificationService? notifications = null) : BackgroundService
 {
-    private const string ShellAppId = "hosty.shell";
     private static readonly TimeSpan RuntimeAppShutdownTimeout = TimeSpan.FromSeconds(15);
     // How often to observe runtime-app health, reconcile RuntimeState, and surface transitions.
     private static readonly TimeSpan SuperviseInterval = TimeSpan.FromSeconds(15);
@@ -998,8 +997,11 @@ internal sealed class RuntimeAppSupervisorService(
         await Task.Yield();
 
         await ReclaimOrphanedRuntimeProcessesAsync(stoppingToken);
-        await EnsureShellInstalledAsync(stoppingToken);
-        await EnsureCollectorInstalledAsync(stoppingToken);
+        foreach (var descriptor in SystemAppBootstraps.FromConfig(config))
+        {
+            await EnsureSystemAppInstalledAsync(descriptor, stoppingToken);
+        }
+
         await StopAutostartDisabledAppsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
         await lifecycle.ReconcileIngressAsync(stoppingToken);
@@ -1218,235 +1220,126 @@ internal sealed class RuntimeAppSupervisorService(
         await StopRuntimeAppsAsync(cancellationToken);
     }
 
-    private async Task EnsureShellInstalledAsync(CancellationToken cancellationToken)
+    // Generic install-or-reconcile for every Core-bundled system app descriptor. Best-effort by
+    // design: a failure here must never crash the supervisor — Core stays fully usable through CLI
+    // and control APIs, just without the optional system app.
+    private async Task EnsureSystemAppInstalledAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
     {
-        if (!config.ShellBootstrapEnabled)
+        if (!descriptor.Enabled)
         {
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(config.ShellManifestPath))
+        if (string.IsNullOrWhiteSpace(descriptor.ManifestPath))
         {
-            logger.LogWarning("Hosty Shell bootstrap skipped because no Shell manifest path or URL was configured.");
+            logger.LogWarning("{DisplayName} bootstrap skipped because no manifest path or URL was configured.", descriptor.DisplayName);
             return;
         }
 
         try
         {
-            var shell = await apps.GetAppAsync(ShellAppId, cancellationToken);
-            if (shell is null)
+            var app = await apps.GetAppAsync(descriptor.AppId, cancellationToken);
+            if (app is null)
             {
                 await lifecycle.InstallAsync(new AppInstallRequest(
-                    ManifestPath: config.ShellManifestPath,
-                    SelectedRuntime: config.ShellBootstrapRuntime,
+                    ManifestPath: descriptor.ManifestPath,
+                    SelectedRuntime: descriptor.Runtime,
                     System: true,
-                    Settings: BuildShellBootstrapSettings(config),
-                    Autostart: config.ShellAutostart,
-                    // Started by the boot reconciliation below (StartAutostartAppsAsync), in collector-first
-                    // order — not inline here, which would double-start and race the collector bootstrap.
+                    Settings: descriptor.Settings,
+                    Autostart: descriptor.Autostart,
+                    // Started by the boot reconciliation (StartAutostartAppsAsync) in priority order —
+                    // not inline here, which would double-start and race other system-app bootstraps.
                     StartOnInstall: false), cancellationToken);
-                shell = await apps.GetAppAsync(ShellAppId, cancellationToken);
+                app = await apps.GetAppAsync(descriptor.AppId, cancellationToken);
             }
             else
             {
-                shell = await ReconcileShellManifestAsync(shell, cancellationToken);
+                app = await ReconcileSystemAppManifestAsync(descriptor, app, cancellationToken);
             }
 
-            var bootstrapSettings = BuildShellBootstrapSettings(config);
-            if (shell is not null && bootstrapSettings.Count > 0)
+            if (app is not null && descriptor.Settings is { Count: > 0 })
             {
-                await lifecycle.ConfigureAsync(ShellAppId, new AppConfigureRequest(bootstrapSettings), cancellationToken);
+                await lifecycle.ConfigureAsync(descriptor.AppId, new AppConfigureRequest(descriptor.Settings), cancellationToken);
             }
 
-            if (shell is not null && shell.Autostart != config.ShellAutostart)
+            if (app is not null && app.Autostart != descriptor.Autostart)
             {
-                await lifecycle.ConfigureAutostartAsync(ShellAppId, new AppAutostartRequest(config.ShellAutostart), cancellationToken);
+                await lifecycle.ConfigureAutostartAsync(descriptor.AppId, new AppAutostartRequest(descriptor.Autostart), cancellationToken);
             }
 
-            if (shell is not null && !string.IsNullOrWhiteSpace(config.ShellSourceOverridePath))
+            if (app is not null && !string.IsNullOrWhiteSpace(descriptor.SourceOverridePath))
             {
                 await sources.SetLocalOverrideAsync(
-                    ShellAppId,
-                    new AppSourceOverrideRequest(config.ShellSourceOverridePath),
+                    descriptor.AppId,
+                    new AppSourceOverrideRequest(descriptor.SourceOverridePath),
                     cancellationToken);
             }
+
+            if (app is not null && descriptor.ProvisionAsync is not null)
+            {
+                await descriptor.ProvisionAsync(lifecycle, cancellationToken);
+            }
         }
-        catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
-            ex is AppLifecycleException or AppManifestException or HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Hosty Shell bootstrap did not complete; Core remains available through CLI and control APIs.");
+            logger.LogWarning(ex, "{DisplayName} bootstrap did not complete; Core remains available through CLI and control APIs.", descriptor.DisplayName);
         }
     }
 
-    private async Task<AppRecord?> ReconcileShellManifestAsync(AppRecord shell, CancellationToken cancellationToken)
+    private async Task<AppRecord?> ReconcileSystemAppManifestAsync(
+        SystemAppBootstrapDescriptor descriptor,
+        AppRecord app,
+        CancellationToken cancellationToken)
     {
-        if (!string.Equals(shell.SelectedRuntime ?? config.ShellBootstrapRuntime, config.ShellBootstrapRuntime, StringComparison.Ordinal))
+        if (!string.Equals(app.SelectedRuntime ?? descriptor.Runtime, descriptor.Runtime, StringComparison.Ordinal))
         {
             logger.LogInformation(
-                "Hosty Shell bootstrap reconciliation skipped because installed runtime {InstalledRuntime} differs from configured runtime {ConfiguredRuntime}.",
-                shell.SelectedRuntime,
-                config.ShellBootstrapRuntime);
-            return shell;
+                "{DisplayName} bootstrap reconciliation skipped because installed runtime {InstalledRuntime} differs from configured runtime {ConfiguredRuntime}.",
+                descriptor.DisplayName,
+                app.SelectedRuntime,
+                descriptor.Runtime);
+            return app;
         }
 
         var plan = await lifecycle.CreateUpdatePlanAsync(
-            ShellAppId,
-            new AppUpdatePlanRequest(config.ShellManifestPath, config.ShellBootstrapRuntime),
+            descriptor.AppId,
+            new AppUpdatePlanRequest(descriptor.ManifestPath, descriptor.Runtime),
             cancellationToken);
 
-        var configuredManifestReferenceChanged = HasShellManifestReferenceChanged(shell);
-        if (plan.Changes.Count == 0 && !configuredManifestReferenceChanged)
+        // Reconcile also when the configured manifest reference itself moved (e.g. a renamed raw URL
+        // or a switch between remote and local), even with zero content changes — otherwise the
+        // record keeps updating from a stale source forever.
+        if (plan.Changes.Count == 0 && !HasManifestReferenceChanged(descriptor, app))
         {
-            return shell;
+            return app;
         }
 
         logger.LogInformation(
-            "Hosty Shell bootstrap applying manifest reconciliation with {ChangeCount} reported changes.",
+            "{DisplayName} bootstrap applying manifest reconciliation with {ChangeCount} reported changes.",
+            descriptor.DisplayName,
             plan.Changes.Count);
         await lifecycle.ApplyUpdateAsync(
-            ShellAppId,
+            descriptor.AppId,
             new AppUpdateApplyRequest(
                 PlanDigest: plan.PlanDigest,
-                ManifestPath: config.ShellManifestPath,
-                SelectedRuntime: config.ShellBootstrapRuntime),
+                ManifestPath: descriptor.ManifestPath,
+                SelectedRuntime: descriptor.Runtime),
             cancellationToken);
-        return await apps.GetAppAsync(ShellAppId, cancellationToken);
+        return await apps.GetAppAsync(descriptor.AppId, cancellationToken);
     }
 
     private static bool IsHttpManifestReference(string? manifestPath)
         => Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
-    private bool HasShellManifestReferenceChanged(AppRecord shell)
+    private static bool HasManifestReferenceChanged(SystemAppBootstrapDescriptor descriptor, AppRecord app)
     {
-        if (IsHttpManifestReference(config.ShellManifestPath))
+        if (IsHttpManifestReference(descriptor.ManifestPath))
         {
-            return !string.Equals(shell.ManifestUrl, config.ShellManifestPath, StringComparison.Ordinal);
+            return !string.Equals(app.ManifestUrl, descriptor.ManifestPath, StringComparison.Ordinal);
         }
 
-        return !string.IsNullOrWhiteSpace(shell.ManifestUrl);
-    }
-
-    private static IReadOnlyDictionary<string, string?> BuildShellBootstrapSettings(HostyCoreRuntimeConfig config)
-    {
-        var shellPort = config.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var settings = new Dictionary<string, string?>(StringComparer.Ordinal)
-        {
-            ["HOSTY_PORT_HTTP"] = shellPort,
-        };
-
-        if (Uri.TryCreate(config.EffectiveShellPublicOrigin, UriKind.Absolute, out var shellOrigin))
-        {
-            if (!string.IsNullOrWhiteSpace(shellOrigin.Host))
-            {
-                settings["HOSTNAME"] = shellOrigin.Host;
-            }
-        }
-
-        return settings;
-    }
-
-    // Installs the telemetry collector as a hidden system app and writes Core's authoritative
-    // otelcol config into its app-data dir before the container starts (P2). Gated behind
-    // ObservabilityEnabled (default off) so an install with no telemetry consumer never pulls the
-    // collector image. The collector is started first by StartAutostartAppsAsync so its OTLP endpoint
-    // resolves before other apps come up. Best-effort, mirroring the Shell bootstrap: a failure here
-    // leaves Core fully usable, just without telemetry collection.
-    private async Task EnsureCollectorInstalledAsync(CancellationToken cancellationToken)
-    {
-        if (!config.ObservabilityEnabled)
-        {
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(config.CollectorManifestPath))
-        {
-            logger.LogWarning("Hosty telemetry collector bootstrap skipped because no collector manifest path was configured.");
-            return;
-        }
-
-        try
-        {
-            var collector = await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
-            if (collector is null)
-            {
-                await lifecycle.InstallAsync(new AppInstallRequest(
-                    ManifestPath: config.CollectorManifestPath,
-                    SelectedRuntime: config.CollectorBootstrapRuntime,
-                    System: true,
-                    Settings: null,
-                    Autostart: config.CollectorAutostart,
-                    // Started by the boot reconciliation below (StartAutostartAppsAsync); not inline here.
-                    StartOnInstall: false), cancellationToken);
-                collector = await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
-            }
-            else
-            {
-                collector = await ReconcileCollectorManifestAsync(collector, cancellationToken);
-            }
-
-            if (collector is not null && collector.Autostart != config.CollectorAutostart)
-            {
-                await lifecycle.ConfigureAutostartAsync(CollectorBootstrap.AppId, new AppAutostartRequest(config.CollectorAutostart), cancellationToken);
-            }
-
-            // Core owns the config: (re)write it on every start so a template change ships forward.
-            // Written before the container starts (StartAutostartAppsAsync runs after this), and the
-            // manifest mounts the app-data dir over the image's default config directory.
-            if (collector is not null)
-            {
-                await lifecycle.WriteSystemAppDataFileAsync(
-                    CollectorBootstrap.AppId,
-                    CollectorBootstrap.ConfigFileName,
-                    CollectorBootstrap.ConfigYaml,
-                    cancellationToken);
-
-                // Provision the OTLP-logs/-traces sink dirs world-writable before the container
-                // starts, so the non-root collector can write/rotate its sink files into the mounted
-                // app-data dir that Core tails from the host side (P4 + traces phase). See
-                // CollectorBootstrap.ContainerLogsFile / ContainerTracesFile.
-                lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.LogsRelativeDir);
-                lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.TracesRelativeDir);
-                // The telemetry backend (sibling service) writes its SQLite store into the same shared
-                // mount; provision the dir so it can create the database file (Phase 2).
-                lifecycle.EnsureSystemAppDataSubdirectory(CollectorBootstrap.AppId, CollectorBootstrap.StoreRelativeDir);
-            }
-        }
-        // Best-effort bootstrap: catch everything except cancellation so an unexpected failure here
-        // can never crash the supervisor background service — Core stays up, just without telemetry.
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "Hosty telemetry collector bootstrap did not complete; Core remains available without telemetry collection.");
-        }
-    }
-
-    private async Task<AppRecord?> ReconcileCollectorManifestAsync(AppRecord collector, CancellationToken cancellationToken)
-    {
-        if (!string.Equals(collector.SelectedRuntime ?? config.CollectorBootstrapRuntime, config.CollectorBootstrapRuntime, StringComparison.Ordinal))
-        {
-            return collector;
-        }
-
-        var plan = await lifecycle.CreateUpdatePlanAsync(
-            CollectorBootstrap.AppId,
-            new AppUpdatePlanRequest(config.CollectorManifestPath, config.CollectorBootstrapRuntime),
-            cancellationToken);
-        if (plan.Changes.Count == 0)
-        {
-            return collector;
-        }
-
-        logger.LogInformation(
-            "Hosty telemetry collector bootstrap applying manifest reconciliation with {ChangeCount} reported changes.",
-            plan.Changes.Count);
-        await lifecycle.ApplyUpdateAsync(
-            CollectorBootstrap.AppId,
-            new AppUpdateApplyRequest(
-                PlanDigest: plan.PlanDigest,
-                ManifestPath: config.CollectorManifestPath,
-                SelectedRuntime: config.CollectorBootstrapRuntime),
-            cancellationToken);
-        return await apps.GetAppAsync(CollectorBootstrap.AppId, cancellationToken);
+        return !string.IsNullOrWhiteSpace(app.ManifestUrl);
     }
 
     private async Task StartAutostartAppsAsync(CancellationToken cancellationToken)

@@ -113,6 +113,8 @@ The change tightens ordinary user access to Shell management views. Any workflow
 
 - Core enforces the system-app boundary in identity flows, not only in Shell navigation: authorization codes, launch tokens, code exchange, and session revalidation are refused with `system_app_admin_required` when the target app record is `System` and the acting user is not an enabled `host.admin`. A role downgrade therefore revokes system-app access no later than the next revalidation.
 
+- Core also enforces system-app removal server-side: the browser `POST /api/apps/{appId}/remove` endpoint refuses system apps with `system_app_remove_requires_control`, and browser installs cannot mint a system app from a request flag (system-ness comes from the reviewed manifest role). The local control plane (`hosty` CLI) keeps full removal for operator recovery.
+
 - System app logs are available from the Installed Apps System Apps section when the app exposes the `logs` capability.
 
 - System app runtime switching is available to administrators when Core reports multiple runtime profiles, while other system app lifecycle actions remain hidden.
