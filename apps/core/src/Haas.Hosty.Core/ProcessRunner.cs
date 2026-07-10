@@ -68,6 +68,9 @@ internal static class ProcessRunner
                 return new ProcessRunResult(-1, stdoutPartial, stderrPartial, TimedOut: true);
             }
 
+            // WhenAll first so both reads are awaited (and observed) even if one faults — awaiting them in
+            // sequence would leave the second unawaited on the first's exception, racing its disposal below.
+            await Task.WhenAll(stdoutTask, stderrTask);
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
             return new ProcessRunResult(process.ExitCode, stdout, stderr, TimedOut: false);

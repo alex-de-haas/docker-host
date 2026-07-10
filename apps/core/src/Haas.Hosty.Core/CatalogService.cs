@@ -111,7 +111,7 @@ internal sealed class HttpCatalogDocumentFetcher : ICatalogDocumentFetcher, IDis
             // The message matters here: transport failures include host-level causes an operator can't
             // otherwise see (DNS, TLS, EMFILE fd exhaustion — the latter observed live rendering the
             // marketplace silently empty).
-            logger.LogWarning("Catalog document fetch for '{Source}' failed: {Message}", source, ex.Message);
+            logger.LogWarning(ex, "Catalog document fetch for '{Source}' failed: {Message}", source, ex.Message);
             return null;
         }
     }
