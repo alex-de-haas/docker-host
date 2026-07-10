@@ -3426,6 +3426,38 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task RestartAsync_LiveSourceApp_StopsRenamedServiceFromBaselineContract()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(Path.Combine(folder, "assets"));
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(Path.Combine(folder, "assets", "home.svg"), "<svg>v1</svg>");
+        await File.WriteAllTextAsync(manifestPath, CreateNavIconFolderManifestJson("1.0.0", "Home", serviceKey: "app"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        try
+        {
+            _ = await fixture.Service.StartAsync("com.example.notes");
+            Assert.NotNull(fixture.LocalProcesses.Get("com.example.notes", "app"));
+
+            // The operator renames the service mid-edit. Restart must stop against the baseline
+            // contract (what the running process was started with) — stopping from the adopted
+            // contract would look for 'web' only and orphan the old 'app' process.
+            await File.WriteAllTextAsync(manifestPath, CreateNavIconFolderManifestJson("2.0.0", "Home", serviceKey: "web"));
+
+            _ = await fixture.Service.RestartAsync("com.example.notes");
+
+            Assert.Null(fixture.LocalProcesses.Get("com.example.notes", "app"));
+            Assert.NotNull(fixture.LocalProcesses.Get("com.example.notes", "web"));
+        }
+        finally
+        {
+            _ = await fixture.Service.StopAsync("com.example.notes");
+        }
+    }
+
+    [Fact]
     public async Task RestartAsync_LiveSourceApp_InvalidEditKeepsLastGoodAndRecordsError()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -3541,7 +3573,7 @@ public sealed class CoreLifecycleServiceTests
             }
             """;
 
-    private static string CreateNavIconFolderManifestJson(string version, string navLabel)
+    private static string CreateNavIconFolderManifestJson(string version, string navLabel, string serviceKey = "app")
         => $$"""
             {
               "schemaVersion": "app.0.1",
@@ -3551,7 +3583,7 @@ public sealed class CoreLifecycleServiceTests
               "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true, "development": true }],
               "defaultRuntime": "dev",
               "services": [{
-                "key": "app",
+                "key": "{{serviceKey}}",
                 "runtimes": {
                   "dev": {
                     "type": "localCommand",

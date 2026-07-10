@@ -687,6 +687,16 @@ internal sealed class CoreLifecycleService(
         {
             var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
             var selection = load.Selection;
+            // Stop must target the contract the running process was started with — the last-good
+            // baseline when a live edit is being adopted — so a mid-edit service rename/removal (or
+            // runtime-type change) still stops the old process instead of orphaning it; the adopted
+            // contract only governs the start below. Built from the pre-reconcile record for the same
+            // reason. Without a baseline (non-live app, or invalid edit already falling back to
+            // last-good) the stop selection is the start selection, as before.
+            var stopSelection = load.Baseline ?? selection;
+            var stopAdapter = ResolveAdapter(stopSelection.RuntimeProfile.Type);
+            var stopContext = await CreateRuntimeContextAsync(app, stopSelection, cancellationToken);
+
             // Restart is the natural dev-mode iteration step, so a live source app adopts the folder
             // manifest here exactly like a cold start: the persisted contract (ui/navigation) and the
             // vendored display assets track the folder, not just the process command line. Non-live
@@ -699,7 +709,7 @@ internal sealed class CoreLifecycleService(
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             EnsureMountsReadyForStart(context);
-            _ = await adapter.StopAsync(context, cancellationToken);
+            _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
             if (load.ManifestError is not null)
             {
                 await NotifyManifestInvalidAsync(app, load.ManifestError, cancellationToken);
@@ -720,6 +730,9 @@ internal sealed class CoreLifecycleService(
                 ManifestError = load.ManifestError,
             }, cancellationToken);
 
+            // Same best-effort ingress reconciliation as start/stop: an adopted live edit can change
+            // the endpoint/public-origin shape, so ingress must not stay pinned to the old contract.
+            await ReconcileIngressAsync(cancellationToken);
             return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "restarted");
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
