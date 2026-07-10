@@ -43,6 +43,7 @@ flowchart LR
 - [Notifications](features/notifications.md) - Core-owned user-targeted notification stream (v1 backend): opt-in app producers, client-agnostic consumer, SSE live delivery, and retention.
 - [Observability (telemetry collection)](features/observability.md) - OpenTelemetry from runtime apps → OTel collector → Core read boundary → Shell Observability section (metrics, structured logs, traces). Phases P2–P6 shipped.
 - [Observability Phase 2 — telemetry backend](features/observability-phase-2-backend.md) - moves the telemetry store and query API out of Core into a dedicated telemetry-backend system app; Core stays a producer (`docker stats`/`docker logs`) and read-proxy. 2a–2c shipped; only SSE realtime (2d) remains.
+- [Runtime App Marketplace](features/runtime-app-marketplace.md) - optional catalog storefront: `catalogMetadata`, `/api/catalog`, Shell `/marketplace`, `hosty catalog` CLI, and operator-managed catalog sources; signing (WS5) deferred.
 - [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command setup and Core control discovery.
 - [CLI app commands](features/cli-app-commands.md) - runtime app CLI commands.
 - [Core API](features/core-api.md) - current Core browser and control APIs.
@@ -62,6 +63,7 @@ Draft, exploratory, or backlog items that are not current implementation commitm
 
 - [Update Channels](ideas/update-channels.md) - concept for generated channel indexes, product/runtime channel selection, pull request channels, and channel cleanup.
 - [On-Demand System App Updates](ideas/system-app-updates.md) - concept for explicit Shell/system-app update discovery, reviewed apply, self-reload, and rollback without restarting Core.
+- [Core Extension Model](ideas/core-extension-model.md) - concept for system apps as out-of-process Core plugins: provider contracts, pull-based event subscriptions, service extensions, and Shell UI contribution points.
 - [Agent Bridge Workflow](ideas/agent-bridge-workflow.md) - concept for Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and PR channel validation.
 - [Browser account switching](ideas/account-switching.md) - retired behavior and future restoration boundary.
 - [Gateway and app wrapping ideas](ideas/gateway-and-app-wrapping.md) - future gateway, ingress, and third-party app wrapping boundaries.
