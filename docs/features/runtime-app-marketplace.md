@@ -81,7 +81,7 @@ and changing at a different cadence:
 | --- | --- | --- | --- | --- |
 | **Manifest** (`app.0.1`, in the app repo) | Author, by hand | before build | No - tag/branch only | Declarative intent |
 | **Catalog index** (`catalog.json`) | Catalog CI | on membership change | Optional (generated) | Storefront / membership |
-| **Per-app version feed** (`releasesUrl` or registry tags) | Author CI | on each release | Yes (post-publish) | Author-driven |
+| **Feeds** (`entry.json feeds[]` — moving manifest refs; supersedes the per-release `releasesUrl` feed, see [catalog-hosted-app-feeds.md](catalog-hosted-app-feeds.md)) | Author (catalog entry, PR-gated) | on feed-topology change | No — branch ref only | Release pointer |
 | **Lock** (Core app state) | Core | at install/update | Yes (resolved) | The thing that runs |
 
 The manifest is **declared intent** (like `package.json` with `^1.2.0` or a tag).
@@ -525,8 +525,8 @@ publisher: { name: "...", url: "...", email: "..." }
 category: "..."
 tags: ["..."]
 display: { summary: "...", icon: assets/icon.png, screenshots: [...] }
-releasesUrl: https://<author>/releases.json   # or: registry/git tag source
-signerIdentity: github.com/<author>/<repo>     # trust anchor for the feed
+feeds: [{ id: main, manifestRef: https://raw.../<repo>/main/manifest.json }]  # moving refs; was releasesUrl
+signerIdentity: github.com/<author>/<repo>     # trust anchor for the entry
 ```
 
 Per-app version feed (`releasesUrl`, author-hosted, signed by author).
