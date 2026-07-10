@@ -1121,6 +1121,15 @@ export function ShellClient({
       return;
     }
 
+    // Canonicalize a legacy /workspace?app=<system-app-id> link onto /system-apps/<id>. After the
+    // replace the route re-parses with the system flag set, so this cannot loop. Placed after the
+    // Shell self-open special case so hosty.shell keeps its direct dashboard redirect.
+    if (!routeWorkspace.system && app.system) {
+      resetWorkspaceLaunch();
+      router.replace(getSystemAppHref(app.id, routeWorkspace.path));
+      return;
+    }
+
     if (app.runtimeState !== "running") {
       resetWorkspaceLaunch({
         error: app.system
