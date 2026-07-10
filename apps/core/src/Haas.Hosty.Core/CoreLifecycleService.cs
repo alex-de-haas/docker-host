@@ -980,12 +980,21 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(document is null ? null : await BuildAppSummaryAsync(document, cancellationToken), backup, "runtime-switched");
     }
 
-    public Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RemoveCoreAsync(appId, request, cancellationToken), cancellationToken);
+    // allowSystemRemoval distinguishes the calling surface: the local control plane (CLI) keeps full
+    // removal for operator recovery, while the browser surface refuses to remove a system app — the
+    // Shell only hides the button, so the API must be the actual boundary.
+    public Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, bool allowSystemRemoval = false, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => RemoveCoreAsync(appId, request, allowSystemRemoval, cancellationToken), cancellationToken);
 
-    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, bool allowSystemRemoval, CancellationToken cancellationToken)
     {
         var app = await apps.GetAppAsync(appId, cancellationToken);
+        if (app is { System: true } && !allowSystemRemoval)
+        {
+            throw new AppLifecycleException(
+                "system_app_remove_requires_control",
+                "System apps can only be removed through the local control plane (hosty CLI).");
+        }
         if (app is not null && !string.IsNullOrWhiteSpace(app.ManifestPath))
         {
             try
@@ -1410,13 +1419,13 @@ internal sealed class CoreLifecycleService(
     {
         var results = new List<AppBackgroundLifecycleResult>();
         var records = await apps.ListAppRecordsAsync(cancellationToken);
-        // The telemetry collector starts before every other app: it is the OTLP sink they point at,
-        // so its endpoint URL must be resolved and persisted before their start-time env injection
-        // reads it (see ResolveTelemetryEndpointAsync). Otherwise alphabetical id order applies.
+        // System apps with a start priority go first — the telemetry collector is the OTLP sink other
+        // apps point at, so its endpoint URL must be resolved and persisted before their start-time
+        // env injection reads it (see ResolveTelemetryEndpointAsync). Otherwise alphabetical id order.
         foreach (var app in records.Where(app =>
             string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
             (app.Autostart ?? true))
-            .OrderByDescending(app => string.Equals(app.Id, CollectorBootstrap.AppId, StringComparison.Ordinal))
+            .OrderByDescending(app => SystemAppBootstraps.StartPriority(app.Id))
             .ThenBy(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();

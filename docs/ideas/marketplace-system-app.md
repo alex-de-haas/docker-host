@@ -173,7 +173,7 @@ This is not recommended.
 - First-class, fail-closed system role (shipped in platform 0.38.0 as manifest `role: system`).
 - Admin-only system-app SSO authorization (shipped in platform 0.37.1).
 - Generic system-app pages using `ui.entrypoint` and `ui.navigation`.
-- Generic optional-system-app bootstrap and reviewed update/recovery.
+- Generic optional-system-app bootstrap (shipped in platform 0.39.0: descriptor-driven install/reconcile replaces the per-app Shell/collector branches; on-demand reviewed system-app updates remain tracked in [On-Demand System App Updates](system-app-updates.md)).
 - Bounded read-only extension proxy for CLI compatibility.
 
 ### Phase 1: Extract Catalog Data And API

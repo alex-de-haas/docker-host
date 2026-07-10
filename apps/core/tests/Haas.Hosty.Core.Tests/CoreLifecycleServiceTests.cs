@@ -846,6 +846,34 @@ public sealed class CoreLifecycleServiceTests
         Assert.True((await fixture.Apps.GetAppAsync("com.example.roleapp"))!.System);
     }
 
+    [Fact]
+    public async Task RemoveAsync_SystemApp_RefusedWithoutControlSurface()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.0.0", system: true));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.RemoveAsync("com.example.roleapp", new AppRemoveRequest()));
+
+        Assert.Equal("system_app_remove_requires_control", error.Code);
+        Assert.NotNull(await fixture.Apps.GetAppAsync("com.example.roleapp"));
+    }
+
+    [Fact]
+    public async Task RemoveAsync_SystemApp_AllowedForControlSurface()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.0.0", system: true));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        await fixture.Service.RemoveAsync("com.example.roleapp", new AppRemoveRequest(), allowSystemRemoval: true);
+
+        Assert.Null(await fixture.Apps.GetAppAsync("com.example.roleapp"));
+    }
+
     private static string CreateRoleManifestJson(string version, bool system)
         => $$"""
             {

@@ -55,6 +55,32 @@ internal static class CollectorBootstrap
     public static string ResolveHostTracesFilePath(string appsRoot)
         => Path.Combine(CoreDataPaths.ResolveContainedPath(appsRoot, AppId), "data", TracesRelativeDir, TracesFileName);
 
+    // Gated behind ObservabilityEnabled (default off) so an install with no telemetry consumer never
+    // pulls the collector image. The collector starts before OTLP-consuming apps via
+    // SystemAppBootstraps.StartPriority so its endpoint resolves when they come up.
+    public static SystemAppBootstrapDescriptor CreateDescriptor(HostyCoreRuntimeConfig config)
+        => new(
+            AppId,
+            DisplayName: "Hosty telemetry collector",
+            Enabled: config.ObservabilityEnabled,
+            ManifestPath: config.CollectorManifestPath,
+            Runtime: config.CollectorBootstrapRuntime,
+            Autostart: config.CollectorAutostart,
+            ProvisionAsync: ProvisionAsync);
+
+    // Core owns the collector config: (re)write it on every boot so a template change ships forward.
+    // Runs after install/reconcile and before the container starts; the manifest mounts the app-data
+    // dir over the image's default config directory. The sink dirs are provisioned world-writable so
+    // the non-root collector can write/rotate the files Core tails from the host side, and the store
+    // dir lets the telemetry backend sibling create its SQLite database on the same shared mount.
+    private static async Task ProvisionAsync(CoreLifecycleService lifecycle, CancellationToken cancellationToken)
+    {
+        await lifecycle.WriteSystemAppDataFileAsync(AppId, ConfigFileName, ConfigYaml, cancellationToken);
+        lifecycle.EnsureSystemAppDataSubdirectory(AppId, LogsRelativeDir);
+        lifecycle.EnsureSystemAppDataSubdirectory(AppId, TracesRelativeDir);
+        lifecycle.EnsureSystemAppDataSubdirectory(AppId, StoreRelativeDir);
+    }
+
     // Authoritative collector config. OTLP/HTTP in (4318) → Prometheus out (9464) for metrics, and a
     // rotated newline-delimited JSON file for logs (Core tails it). Infra metrics (docker stats) and
     // console log tail (docker logs) are deliberately NOT here — Core collects those itself via its

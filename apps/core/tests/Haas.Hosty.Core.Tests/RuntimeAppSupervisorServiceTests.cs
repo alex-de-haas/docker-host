@@ -110,6 +110,73 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task StartAsync_ObservabilityEnabled_BootstrapsCollectorAndProvisionsConfig()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var shellManifest = Path.Combine(root, "shell-manifest.json");
+        await File.WriteAllTextAsync(shellManifest, CreateShellManifest("0.1.0", "hosty-shell", "local", "never"));
+        var collectorManifest = Path.Combine(root, "collector-manifest.json");
+        await File.WriteAllTextAsync(collectorManifest, CreateCollectorManifest("0.1.0"));
+        var config = CreateConfig(fixture.Paths, shellManifest, shellAutostart: false) with
+        {
+            ObservabilityEnabled = true,
+            CollectorManifestPath = collectorManifest,
+            CollectorAutostart = false,
+        };
+        var supervisor = new RuntimeAppSupervisorService(
+            config,
+            fixture.Apps,
+            fixture.Lifecycle,
+            fixture.Sources,
+            NullLogger<RuntimeAppSupervisorService>.Instance);
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            var collector = await WaitForAppAsync(fixture.Apps, "hosty.telemetry");
+            Assert.True(collector.System);
+            Assert.False(collector.Autostart);
+
+            // The descriptor's provision hook delivered the Core-owned config and sink/store dirs.
+            var dataDir = Path.Combine(fixture.Paths.AppsRoot, "hosty.telemetry", "data");
+            await WaitForFileAsync(Path.Combine(dataDir, "config.yaml"));
+            Assert.True(Directory.Exists(Path.Combine(dataDir, "otlp-logs")));
+            Assert.True(Directory.Exists(Path.Combine(dataDir, "otlp-traces")));
+            Assert.True(Directory.Exists(Path.Combine(dataDir, "store")));
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_ObservabilityDisabled_SkipsCollectorBootstrap()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var shellManifest = Path.Combine(root, "shell-manifest.json");
+        await File.WriteAllTextAsync(shellManifest, CreateShellManifest("0.1.0", "hosty-shell", "local", "never"));
+        var config = CreateConfig(fixture.Paths, shellManifest, shellAutostart: false);
+        var supervisor = new RuntimeAppSupervisorService(
+            config,
+            fixture.Apps,
+            fixture.Lifecycle,
+            fixture.Sources,
+            NullLogger<RuntimeAppSupervisorService>.Instance);
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForAppAsync(fixture.Apps, "hosty.shell");
+            Assert.Null(await fixture.Apps.GetAppAsync("hosty.telemetry"));
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))
@@ -236,6 +303,39 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         Assert.False(RuntimeRestartPolicy.FromManifest(new RuntimeAppRestartPolicyManifest { Mode = "whenever" }).Enabled);
     }
 
+    private static async Task<AppRecord> WaitForAppAsync(AppRegistryStore apps, string appId)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var app = await apps.GetAppAsync(appId);
+            if (app is not null)
+            {
+                return app;
+            }
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException($"{appId} was not installed by the supervisor bootstrap.");
+    }
+
+    private static async Task WaitForFileAsync(string path)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (File.Exists(path))
+            {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException($"File '{path}' was not provisioned.");
+    }
+
     private static async Task<AppRecord> WaitForShellVersionAsync(AppRegistryStore apps, string version)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -306,6 +406,27 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             ShellSourceOverridePath: null,
             ShellBootstrapEnabled: true,
             ShellAutostart: shellAutostart);
+
+    private static string CreateCollectorManifest(string version)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "hosty.telemetry",
+              "name": "Hosty Telemetry",
+              "version": "{{version}}",
+              "role": "system",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "collector",
+                "runtimes": {
+                  "docker": {
+                    "type": "docker",
+                    "image": "otel/opentelemetry-collector-contrib:0.155.0"
+                  }
+                }
+              }]
+            }
+            """;
 
     private static string CreateShellManifest(string version, string repository, string tag, string pullPolicy)
         => $$"""

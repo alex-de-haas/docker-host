@@ -15,7 +15,9 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.CreateInstallPlanAsync(input, cancellationToken)),
+                // Browser installs never mint system apps from a request flag: system-ness comes from
+                // the reviewed manifest role, and the flag stays for internal bootstraps and the CLI.
+                async () => await HandleLifecycleError(() => lifecycle.CreateInstallPlanAsync(input with { System = false }, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -32,7 +34,8 @@ internal static class LifecycleEndpoints
                 clock,
                 // Interactive installs start the app immediately unless the client opts out (StartOnInstall
                 // false); an absent value defaults to true so autostart apps run without a Core restart.
-                async () => await HandleLifecycleError(() => lifecycle.InstallAsync(input with { StartOnInstall = input.StartOnInstall ?? true }, cancellationToken)),
+                // System is coerced off for the same reason as the plan endpoint above.
+                async () => await HandleLifecycleError(() => lifecycle.InstallAsync(input with { StartOnInstall = input.StartOnInstall ?? true, System = false }, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -287,7 +290,9 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, cancellationToken)),
+                // Browser surface: system apps stay non-removable here (the CLI control plane keeps
+                // removal for operator recovery) — Shell hiding the button is not the boundary.
+                async () => await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, cancellationToken: cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -661,7 +666,7 @@ internal static class LifecycleEndpoints
             AppRemoveRequest input,
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, cancellationToken))));
+                await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, allowSystemRemoval: true, cancellationToken))));
 
         app.MapGet("/control/v1/apps/{appId}/backups", async (
             string appId,
