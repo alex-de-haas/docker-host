@@ -1,6 +1,8 @@
 # Feature: AI Agent Bridge
 
 Status: Draft.
+Created: 2026-06-09
+Updated: 2026-07-10
 
 ## Goal
 
@@ -8,7 +10,7 @@ Hosty should provide an AI agent integration model that lets an authenticated us
 
 The feature has two related but separate product surfaces:
 
-- Development Agent Bridge: create, inspect, and modify runtime app source through repository-backed branches, pull requests, generated channels, and validation flows.
+- Development Agent Bridge: create, inspect, and modify runtime app source through repository-backed branches, pull requests, and a separately designed isolated-validation flow.
 - Runtime App Action Bridge: execute or schedule approved domain actions in already installed runtime apps, such as tracking work time, querying task history, queuing a media item, checking long-running status, or creating a backup. Runtime apps should own this action surface, usually through an app-owned MCP endpoint and optional app-owned skills/instructions, while Core remains the default identity and token authority for Hosty-aware apps.
 
 Both surfaces should feel like one Hosty assistant to the user, but they must remain separate in architecture because they mutate different resources and carry different risks.
@@ -35,7 +37,7 @@ Hosty currently has these relevant foundations:
 - Runtime apps authenticate browser users through Core-issued app authorization codes and app-local sessions.
 - Runtime apps can read a scoped app user directory with `HOSTY_APP_SERVICE_TOKEN`.
 - Runtime app manifests expose lifecycle `capabilities`, but they do not yet expose domain-level AI actions.
-- The deferred Agent Bridge planning document describes a future source-editing flow based on Shell annotations, source checkouts, branches, pull requests, PR channels, and validation.
+- The deferred Agent Bridge idea describes a future source-editing flow based on Shell annotations, source checkouts, branches, pull requests, and isolated validation. The isolation mechanism is not implemented or selected.
 
 ## Proposed Behavior
 
@@ -94,7 +96,7 @@ flowchart LR
 - A Project Manager app needs a task checklist. It discovers the installed AI Gateway interface through Core registry/config, calls the AI Gateway API directly, and disables the checklist feature when no AI Gateway interface is available.
 - A user asks, "What did I work on last Friday?" The selected agent client calls read-only project app MCP tools and returns a summarized answer with source references.
 - A user asks, "Queue this item and tell me when it is ready." The selected agent client confirms the side effect, invokes the app MCP tool, and either tracks status itself or delegates durable monitoring to an installed system component when such a component exists.
-- A user annotates a runtime app UI and asks for a code change. The selected development agent client uses Core discovery/source workflows to create or use a source checkout, produce a branch or pull request, and validate a PR channel before promotion.
+- A user annotates a runtime app UI and asks for a code change. The selected development agent client uses Core discovery/source workflows to create or use a source checkout and produce a branch or pull request. Validation requires a future isolated environment and is not modeled as a runtime app feed.
 - An administrator asks, "Create a new runtime app for this service." The selected agent client treats this as Development Agent Bridge work, not Runtime App Action Bridge work.
 
 ## Technical Design
@@ -105,15 +107,15 @@ Development Agent Bridge is the source-changing layer. It should build on the ex
 
 Primary flow:
 
-1. Shell or another UI client captures app id, route, selected runtime profile, selected channel, optional DOM target, optional screenshot reference, and user note.
+1. Shell or another UI client captures app id, route, selected runtime profile, followed feed, optional DOM target, optional screenshot reference, and user note.
 2. The selected development agent client creates an agent request with authorization and audit records.
 3. The agent client uses Core discovery/source APIs or Core MCP to resolve source metadata and a safe checkout.
 4. The agent client creates changes in an isolated branch or pull request.
-5. Hosty publishes or consumes a PR-specific channel.
-6. The user validates the generated runtime channel against normal Hosty app data and lifecycle controls.
+5. A separately designed validation service prepares a disposable environment without changing the installed app's feed or lifecycle state.
+6. The user reviews validation results produced with synthetic, copied, or otherwise isolated data.
 7. Promotion or merge remains a separate explicit step.
 
-Development actions should not mutate production app data. Validation should use normal runtime update/channel plans, backups, copied data, or controlled mounts.
+Development actions should not mutate production app data or repoint the installed app's feed. The exact disposable-runtime and data-isolation contract remains an open question and must be resolved before this surface is implemented.
 
 ### Runtime App Action Bridge
 
@@ -216,7 +218,7 @@ Initial Core MCP tools could include:
 - `get_system_interfaces`
 - `request_delegated_token`
 
-Administrative or development tools can be added later behind stronger authorization, such as source checkout discovery, branch/PR workflow creation, channel validation, lifecycle planning, or update review. Those tools should remain explicit and approval-gated.
+Administrative or development tools can be added later behind stronger authorization, such as source checkout discovery, branch/PR workflow creation, isolated-validation coordination, lifecycle planning, or update review. Those tools should remain explicit and approval-gated.
 
 ### Agent Clients And AI Gateway
 
@@ -392,7 +394,7 @@ This draft does not choose whether these records live in the current JSON stores
 Future implementation should test the old features and the new agent surface together:
 
 - Existing Shell auth, app assignment, and app launch flows still work.
-- Existing runtime app lifecycle, update, backup, restore, source, and channel plan behavior still works.
+- Existing runtime app lifecycle, update, backup, restore, source, and feed-selection behavior still works.
 - AI Gateway and app MCP endpoints reject unauthenticated, disabled-user, expired-token, and unassigned-app requests.
 - Core MCP exposes only apps and interfaces visible to the actor.
 - Read-only actions cannot mutate app state.
@@ -422,7 +424,7 @@ This is a large multi-stage feature and should be rolled out incrementally:
 8. Add approval-gated writes through AI Gateway and app-owned MCP.
 9. Add external Core-issued MCP agent token documentation and validation.
 10. Add durable delegation/job runner design and notifications.
-11. Expand Development Agent Bridge through source checkout, PR, channel, and validation workflows.
+11. Expand Development Agent Bridge through source checkout, PR, and an approved isolated-validation workflow.
 
 Backward compatibility should be preserved. Apps without an `mcp` interface remain normal runtime apps and should not show app-action agent controls.
 
@@ -473,8 +475,12 @@ Backward compatibility should be preserved. Apps without an `mcp` interface rema
   Recommendation: Agent clients should prefer apps with declared `mcp` interfaces and ask the user when more than one visible app is plausible.
 
 - Question: How much platform control should Core MCP expose?
-  Answer: Read-only discovery is low risk; lifecycle, source, PR, channel, and user-management tools are high risk.
+  Answer: Read-only discovery is low risk; lifecycle, source, PR, validation, and user-management tools are high risk.
   Recommendation: Start with read-only discovery tools and add mutation tools only behind explicit scopes, approvals, and admin authorization.
+
+- Question: How should Development Agent Bridge validate unmerged changes?
+  Answer: Current feeds and source overrides are installed-app mechanisms, not disposable validation environments, and may affect production lifecycle state or data.
+  Recommendation: Keep validation out of scope until a disposable runtime and copied/synthetic data contract is designed and approved.
 
 - Question: Should low-risk writes always require confirmation?
   Answer: For the first version, yes, because the trust and audit model will still be new.

@@ -1,8 +1,8 @@
 # Catalog-Hosted App Feeds
 
-Status: **Design confirmed 2026-07-09** (A1–A4 below, from a design discussion
-after a real delivery failure — see Motivation). Implementation not started.
+Status: Implemented.
 Created: 2026-07-09
+Updated: 2026-07-10
 
 ## Motivation
 
@@ -230,3 +230,4 @@ Instead the feed reference becomes explicit operator-visible state:
   release/versioning context.
 - [`hosty-catalog`](https://github.com/alex-de-haas/hosty-catalog) — entry
   schema, validation, publish pipeline.
+- [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md) — replacement ownership model: current feeds in app-owned `feeds.json`, with Core-owned resolution and unchanged behavior.

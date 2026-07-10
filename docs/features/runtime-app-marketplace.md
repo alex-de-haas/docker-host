@@ -10,7 +10,7 @@ and **WS7** (operator-managed catalog sources — runtime-mutable, no restart) s
 2026-07-07 (platform 0.34.0 / Shell 0.21.0). Remaining, deferred: **WS5** (signing). See
 "Implementation Readiness" for the plan and "Delivery status" for what shipped.
 Created: 2026-06-25
-Updated: 2026-07-07
+Updated: 2026-07-10
 
 ## Motivation
 
@@ -496,10 +496,12 @@ number, so it does not drift):
 - **Product channels stay separate.** `channels/product-channels.json` (delivery of
   Core / Shell / CLI themselves) is a different axis - a stability track for the
   *platform*, analogous to APT suites for the OS. Local app testing does not replace
-  it; keep and evolve it independently of the app catalog.
+  it. Keep it independent of the app catalog; no product-channel expansion is part
+  of runtime-app feed work.
 
-This refines `update-channels.md`: app-level channels collapse into catalog
-versions plus an author-owned version feed; product channels are retained.
+This retires the earlier app-channel proposal: app-level release tracks use the
+feed model described here, while the existing product-channel mechanism remains
+a separate platform concern.
 
 ## Manifest Metadata Extensions
 
@@ -657,8 +659,8 @@ Checked against the code to ground the design. Key facts:
 - **Catalog metadata gaps confirmed**: no publisher/tags/screenshots/license/links;
   `ui.icon` exists; `ui.category` exists but is **not surfaced to `AppSummary`**
   (`AppRegistryStore.cs:343-365`), so clients cannot even read the category today.
-- **`channels/product-channels.json` is unconsumed** by Core/CLI/Shell - a build/
-  pipeline placeholder, nothing reads it at runtime.
+- **`channels/product-channels.json` is a local CLI input**, not a generated catalog
+  service. The CLI can list/select entries from it, while Core and Shell do not use it.
 
 ## Improvement Opportunities (grounded)
 
@@ -752,8 +754,8 @@ Marketplace (B):
 
 Cross-cutting (C):
 
-- **C1** Product channels stay a separate axis; define the `product-channels.json`
-  consumer before building platform delivery on it.
+- **C1** Product channels stay a separate axis. The CLI reads the local
+  `product-channels.json`; no generated publishing workflow is part of this feature.
 - **C2** Each phase = platform minor bump (0.x breaking-ish surface); Shell patch/minor.
 
 ### B3 spike result (2026-06-26)
@@ -877,9 +879,6 @@ runtime switch (R17) can land as a second increment.
 
 ## Open Questions
 
-- **`product-channels.json` ownership.** Nothing consumes it yet - define its consumer
-  (installer/build pipeline) before building platform delivery on it; separate from the
-  app catalog.
 - ~~**Phase 2b reconcile granularity.**~~ Resolved in *Phase 2b + A1 Resolutions* (R5–R9):
   reconcile re-evaluates the full run profile every start (no in-place patching); ports/ingress
   re-register on the same start path; orphaned slots and stale settings are non-destructive.
@@ -978,10 +977,11 @@ net-new**.
 
 ## Links
 
-- [Update channels](../ideas/update-channels.md) - refined by this document (app channels folded in; product channels retained).
+- [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md) - future ownership moves the current feeds unchanged into repository-owned `feeds.json`; the inline catalog behavior above remains current until migration ships.
 - [Runtime app repository install](../ideas/runtime-app-repository-install.md)
 - [Runtime source extensions](../ideas/runtime-source-extensions.md)
 - [Runtime app manifest](runtime-app-manifest.md)
 - [Final Hosty architecture](final-hosty-architecture.md)
 - [Runtime artifact & storage model](runtime-artifact-model.md) - the artifact-kind foundation this builds on.
 - [Manifest-level app assets](manifest-level-app-assets.md) - planned follow-up: app repos become the source of truth for icons/screenshots/description; catalog vendors them at publish (revises Q9's hand-hosted assets).
+- [Marketplace as a system app](../ideas/marketplace-system-app.md) - exploratory extraction of the shipped Core/Shell marketplace into an optional first-party system app.

@@ -116,3 +116,7 @@ The change tightens ordinary user access to Shell management views. Any workflow
 - System app runtime switching is available to administrators when Core reports multiple runtime profiles, while other system app lifecycle actions remain hidden.
 
 - `host.user` uses Apps as the effective default view. The Shell also provides a `/apps` route that renders the same non-management app overview and is the fallback for unauthorized management routes.
+
+## Related Ideas
+
+- [System App Pages](../ideas/system-app-pages.md) - future separate administrator navigation for UI-capable system apps without adding them to the ordinary Apps group.

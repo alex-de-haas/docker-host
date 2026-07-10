@@ -68,7 +68,7 @@ Pros:
 - Keeps Core as the single source of lifecycle truth.
 - Applies equally to runtime apps and capability-enabled system apps.
 - Removes remote version movement from ordinary Core startup.
-- Can be delivered for Shell first without waiting for a complete product-channel service.
+- Can be delivered for Shell first using its configured manifest source.
 
 Cons:
 
@@ -77,22 +77,6 @@ Cons:
 - The current moving `main` manifest and `latest` image publication are not atomic.
 
 This is the recommended first implementation direction.
-
-### Approach C: Build Product Channels Before Any System-App UI
-
-Pros:
-
-- Provides an atomic, CI-published source of compatible Core, Shell, and other system-app releases.
-- Can carry immutable manifest snapshots, artifact digests, and compatibility metadata.
-- Is the strongest eventual production distribution model.
-
-Cons:
-
-- Expands the first increment into platform release coordination.
-- Duplicates no lifecycle work but delays a useful Shell-only flow.
-- Product channels are currently an idea and the committed index is only a local placeholder.
-
-Product channels should become a later candidate-source implementation, not a prerequisite for the first on-demand Shell update.
 
 ## Recommended Architecture
 
@@ -207,13 +191,13 @@ The configured remote manifest URL is sufficient as the first candidate source, 
 - Treat unresolved target artifacts as `unknown` or `not ready`, not installable.
 - Keep the installed digest as the runtime lock and rollback identity.
 
-There is still a short race because the moving raw `main` manifest can become visible before the image workflow finishes. A later CI-published product-channel index should move only after all referenced artifacts exist and should carry compatible, immutable system-app release references.
+There is still a short race because the moving raw `main` manifest can become visible before the image workflow finishes. The app publishing workflow should move that manifest only after every referenced artifact is available. Core must continue treating unresolved artifacts as `unknown`/not ready.
 
 ### Compatibility Boundary
 
 `schemaVersion: app.0.1` proves only that Core understands the manifest contract. It does not prove that a candidate Shell uses only browser APIs supported by the running Core.
 
-The development-channel MVP can retain the current compatibility assumption and rely on rollback, but a stable product channel should publish an explicit minimum/maximum Core compatibility range or otherwise guarantee that the offered Shell/system-app versions are compatible with the running platform version.
+The rolling development source can retain the current compatibility assumption and rely on rollback. Before stable system-app releases are offered, the candidate manifest contract should declare an explicit minimum/maximum Core compatibility range or the publisher must otherwise guarantee compatibility with the running platform version.
 
 ## Conflicts With Existing Features
 
@@ -230,7 +214,7 @@ The feature does not conflict with the deeper Core/Shell ownership boundary. It 
 
 - **Shell becomes unavailable after a failed self-update.** Mitigation: prepare first, readiness gate, automatic rollback, and CLI recovery.
 - **A moving manifest or tag changes after review.** Mitigation: one retained candidate context and exact digest-based apply.
-- **The manifest is visible before its image is published.** Mitigation: unresolved artifacts are not installable; later use a post-publish product index.
+- **The manifest is visible before its image is published.** Mitigation: publish artifacts before moving the manifest and treat unresolved artifacts as not installable.
 - **New Shell is incompatible with the running Core.** Mitigation: compatibility metadata/guarantee plus readiness and rollback.
 - **Core startup no longer repairs a stale system app automatically.** Mitigation: preserve missing-install and explicit provisioning behavior, surface pending updates clearly, and keep CLI update/recovery commands.
 - **A generic system-app update skips app-specific provisioning.** Mitigation: enable each system app only after its Core-owned pre/post-update hook is defined.
@@ -242,10 +226,6 @@ The feature does not conflict with the deeper Core/Shell ownership boundary. It 
   - Current answer: This is explicit operator configuration, unlike a new commit appearing behind the same URL. Automatic migration preserves custom-Shell and development workflows, but still changes executable code during startup.
   - Recommendation: Keep automatic handling only when the reference string itself changes, log it as an explicit bootstrap-source migration, and never auto-apply ordinary content movement behind an unchanged reference. Revisit a staged confirmation flow before stable releases.
 
-- Question: Should the first implementation depend on product channels?
-  - Current answer: No. The configured external manifest source and existing manifest/artifact resolvers are enough for an on-demand Shell MVP.
-  - Recommendation: Introduce a candidate-source abstraction now and add the generated product-channel index as a later implementation after release artifacts are published atomically.
-
 - Question: Is rollback required only for Shell or for all updates?
   - Current answer: Shell makes the missing rollback user-visible and potentially removes the primary UI, but the same failure mode exists for every runtime app.
   - Recommendation: Implement rollback in the generic apply lifecycle and require it before exposing Shell self-update. Start with readiness rules suitable for Shell, then extend health contracts per app.
@@ -256,7 +236,7 @@ The feature does not conflict with the deeper Core/Shell ownership boundary. It 
 
 - Question: How should Core/Shell compatibility be enforced?
   - Current answer: The manifest schema check does not cover browser API compatibility, and the current rolling `main` source has no compatibility range.
-  - Recommendation: Accept the existing rolling-channel assumption for the development MVP with rollback, but require compatibility metadata or a coordinated product-channel guarantee before exposing stable system-app releases.
+  - Recommendation: Accept the existing rolling-source assumption for the development MVP with rollback, but add manifest-level compatibility metadata before exposing stable system-app releases.
 
 ## Current Recommendation
 
@@ -292,10 +272,6 @@ Added 2026-07-10 after verifying the findings above against the current Core and
 7. **Candidate-resolution failures must be first-class, not best-effort.** Startup bootstrap currently swallows install/update failures into a log warning, and the marketplace has already demonstrated how best-effort silence turns into an empty UI with no diagnostic. The `unknown` status should carry a structured reason surfaced in the row and dialog, and repeated resolution failures for a system app should raise a host-admin notification.
 
 8. **Prefer a persisted update-operation record over a synchronous apply response.** Preparing the exact artifact before stopping moves the image pull inside the apply request, which can run for minutes. The browser fetch does survive the Shell restart because requests go directly to Core, but a long synchronous request is fragile through ingress and timeouts, and after the post-update page reload the new Shell has no in-memory context to know whether a rollback happened — step 6 of the self-update UX silently assumes it does. A persisted per-app update operation (id returned immediately, status queryable afterwards) gives the reloaded Shell, the CLI, and step 7's recovery path a durable outcome, and makes "keep this tab open" advisory instead of load-bearing.
-
-## Links
-
-- [Update Channels](update-channels.md) — future generated product-channel indexes can become the atomic candidate source for system-app releases.
 
 ## Notes
 

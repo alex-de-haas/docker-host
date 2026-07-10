@@ -21,7 +21,7 @@ The intended installed flow is:
 - Do not move Shell lifecycle ownership into the CLI.
 - Do not embed a fixed Shell manifest in the Core executable.
 - Do not introduce desktop Shell packaging in this change.
-- Do not introduce generated product channel indexes or digest-pinned channels yet.
+- Do not introduce generated product channel indexes or digest-pinned channels.
 - Do not publish Docker images from pull request CI.
 - Do not expose Shell lifecycle controls in Shell UI; system apps remain inspect-only.
 
@@ -141,7 +141,7 @@ The default manifest URL intentionally targets `main` because early Hosty develo
 
 Runtime app UI and Demo App image workflows are not changed by this feature except for shared package dependency cache behavior.
 
-Product channel ideas in [Update Channels](../ideas/update-channels.md) can replace the rolling `latest` reference with digest-pinned Shell manifests if approved.
+No generated product-channel migration is planned by this feature; the configured rolling manifest reference remains the current release source.
 
 ## Decisions
 

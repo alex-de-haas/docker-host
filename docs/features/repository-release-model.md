@@ -38,7 +38,7 @@ Builds are independent:
 - `shell-image.yml` - build and push the Hosty Shell Docker image on `main`;
 - `demo-app-image.yml` - build and push the first-party Demo App Docker image;
 - `cli-release.yml` - build and publish standalone CLI and Core executable artifacts;
-- optional future workflows - desktop Shell packages or generated product channel indexes.
+- optional future workflows - desktop Shell packages.
 
 Recommended path filters:
 
@@ -187,4 +187,4 @@ While the project is in `0.x` (current), breaking changes go in `minor` per semv
 
 Bump the relevant component's version in the same change that ships the work.
 
-During early development, `cli-dev` is the main platform distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions. Product channel metadata can coordinate platform/app updates later. Generated product channels are tracked as an idea in [Update Channels](../ideas/update-channels.md). Until then, the placeholder product channel records the Core artifact family instead of a source project path.
+During early development, `cli-dev` is the main platform distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions. The repository contains a local placeholder product-channel index that the CLI can read explicitly, but no generated publishing workflow is part of the current release model. The placeholder records the Core artifact family instead of a source project path.
