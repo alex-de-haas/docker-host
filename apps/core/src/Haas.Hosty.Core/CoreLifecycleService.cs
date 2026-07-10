@@ -685,11 +685,26 @@ internal sealed class CoreLifecycleService(
         var runtimeStarted = false;
         try
         {
-            var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+            var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
+            var selection = load.Selection;
+            // Restart is the natural dev-mode iteration step, so a live source app adopts the folder
+            // manifest here exactly like a cold start: the persisted contract (ui/navigation) and the
+            // vendored display assets track the folder, not just the process command line. Non-live
+            // apps never reconcile (LiveReconciled is false).
+            if (load.LiveReconciled)
+            {
+                app = await ReconcileLiveContractAsync(app, load, cancellationToken);
+            }
+
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             EnsureMountsReadyForStart(context);
             _ = await adapter.StopAsync(context, cancellationToken);
+            if (load.ManifestError is not null)
+            {
+                await NotifyManifestInvalidAsync(app, load.ManifestError, cancellationToken);
+            }
+
             var start = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
             var updated = await apps.UpdateAppAsync(appId, current => current with
@@ -700,6 +715,9 @@ internal sealed class CoreLifecycleService(
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, start.Endpoints, selection),
                 ArtifactLocks = start.ArtifactLocks ?? current.ArtifactLocks,
+                // A live source app records the last invalid-folder error (null clears it once the
+                // operator's edit validates again); non-source apps always clear it (2b/R14).
+                ManifestError = load.ManifestError,
             }, cancellationToken);
 
             return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "restarted");
