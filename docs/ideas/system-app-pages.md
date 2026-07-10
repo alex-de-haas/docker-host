@@ -26,7 +26,7 @@ UI-capable system apps such as Marketplace need their own pages without hardcodi
 - `getAppPageLinks` already normalizes `ui.navigation` and falls back to the declared UI entrypoint.
 - `/workspace?app=<id>&path=<path>` and the embedded workspace renderer are technically app-kind agnostic.
 - Shell documentation explicitly says system apps never appear in Apps navigation.
-- Core launch/open authorization checks app assignments but does not currently require admin access for `AppRecord.System`.
+- Core requires an enabled `host.admin` in every app identity flow (code issuance, exchange, revalidation) when the target is a system app, refusing with `system_app_admin_required`.
 - `ui` metadata is permissive: an invalid entrypoint endpoint may fall back to another endpoint rather than fail manifest validation.
 
 ## Possible Approaches
@@ -167,7 +167,7 @@ System pages and system lifecycle actions are independent:
 - Add `uiSystemApps` grouping in Shell using the existing page-link helper.
 - Generalize runtime-app-named navigation components so both app kinds can use them.
 - Add the System sidebar group and canonical system-app route.
-- Enforce admin authorization in Core launch, exchange, and revalidation paths.
+- Enforce admin authorization in Core launch, exchange, and revalidation paths (shipped in platform 0.37.1).
 - Add strict system UI validation.
 - Move hardcoded Marketplace UI to `hosty.marketplace` and retain `/marketplace` as a temporary alias.
 - Leave headless Shell and telemetry behavior unchanged.

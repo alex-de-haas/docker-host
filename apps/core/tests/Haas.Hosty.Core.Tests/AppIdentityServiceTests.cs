@@ -135,6 +135,65 @@ public sealed class AppIdentityServiceTests
     }
 
     [Fact]
+    public async Task CreateAuthorizationCodeAsync_RejectsSystemAppsForNonAdminUsers()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.UpsertSystemAppAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], []);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fixture.Service.CreateAuthorizationCodeAsync("hosty.sysapp", "user_1", "https://sysapp.example/callback"));
+
+        Assert.Equal("system_app_admin_required", error.Code);
+    }
+
+    [Fact]
+    public async Task CreateAuthorizationCodeAsync_AllowsSystemAppsForAdmins()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.UpsertSystemAppAsync();
+        await fixture.WriteUsersAsync([CreateUser("admin_1", role: "host.admin")], []);
+
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
+            "hosty.sysapp",
+            "admin_1",
+            "https://sysapp.example/callback");
+
+        Assert.StartsWith("https://sysapp.example/callback?code=", authorization.RedirectUri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExchangeCodeAsync_RejectsSystemAppCodeAfterRoleDowngrade()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.UpsertSystemAppAsync();
+        await fixture.WriteUsersAsync([CreateUser("admin_1", role: "host.admin")], []);
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
+            "hosty.sysapp",
+            "admin_1",
+            "https://sysapp.example/callback");
+        await fixture.WriteUsersAsync([CreateUser("admin_1")], []);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(authorization.Code));
+
+        Assert.Equal("system_app_admin_required", error.Code);
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_RejectsSystemAppTokenAfterRoleDowngrade()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.UpsertSystemAppAsync();
+        await fixture.WriteUsersAsync([CreateUser("admin_1", role: "host.admin")], []);
+        var token = await fixture.Service.CreateLaunchTokenAsync("hosty.sysapp", "admin_1");
+        await fixture.WriteUsersAsync([CreateUser("admin_1")], []);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateAsync(token.AccessToken, "hosty.sysapp"));
+
+        Assert.Equal("system_app_admin_required", error.Code);
+    }
+
+    [Fact]
     public async Task RevalidateAsync_RejectsTokenAfterAssignmentChanges()
     {
         var fixture = await IdentityFixture.CreateAsync();
@@ -201,27 +260,30 @@ public sealed class AppIdentityServiceTests
         Assert.Equal(32, Convert.FromBase64String((await File.ReadAllTextAsync(keyPath)).Trim()).Length);
     }
 
-    private static HostUserRecord CreateUser(string id, bool disabled = false)
+    private static HostUserRecord CreateUser(string id, bool disabled = false, string role = "host.user")
         => new(
             Id: id,
             Email: $"{id}@example.test",
             DisplayName: id,
-            Role: "host.user",
+            Role: role,
             Disabled: disabled,
             CreatedAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow);
 
     private sealed class IdentityFixture
     {
-        private IdentityFixture(UserDirectoryStore users, AppIdentityService service, CoreDataPaths paths, FakeClock clock)
+        private IdentityFixture(UserDirectoryStore users, AppRegistryStore apps, AppIdentityService service, CoreDataPaths paths, FakeClock clock)
         {
             Users = users;
+            Apps = apps;
             Service = service;
             Paths = paths;
             Clock = clock;
         }
 
         public UserDirectoryStore Users { get; }
+
+        public AppRegistryStore Apps { get; }
 
         public AppIdentityService Service { get; }
 
@@ -248,20 +310,26 @@ public sealed class AppIdentityServiceTests
             var service = new AppIdentityService(users, codes, apps, paths, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             await apps.UpsertAppAsync(CreateApp());
-            return new IdentityFixture(users, service, paths, clock);
+            return new IdentityFixture(users, apps, service, paths, clock);
         }
 
         public async Task WriteUsersAsync(IReadOnlyList<HostUserRecord> users, IReadOnlyList<AppAssignmentRecord> assignments)
             => await Users.WriteAsync(new UserDirectoryState(1, users, [], assignments, []));
 
-        private static AppRecord CreateApp()
+        public async Task UpsertSystemAppAsync()
+            => await Apps.UpsertAppAsync(CreateApp(id: "hosty.sysapp", system: true, origin: "https://sysapp.example"));
+
+        private static AppRecord CreateApp(
+            string id = "com.example.notes",
+            bool system = false,
+            string origin = "https://notes.example")
             => new(
-                Id: "com.example.notes",
+                Id: id,
                 DisplayName: "Notes",
                 Description: null,
                 Version: "1.0.0",
                 Kind: "runtime",
-                System: false,
+                System: system,
                 Source: "manifest",
                 ManifestPath: "/tmp/notes/manifest.json",
                 ManifestUrl: null,
@@ -277,7 +345,7 @@ public sealed class AppIdentityServiceTests
                 },
                 StorageMappings: [],
                 Dependencies: [],
-                Endpoints: [new AppEndpointContract("app.http", "https", "https://notes.example", Public: true)],
+                Endpoints: [new AppEndpointContract("app.http", "https", origin, Public: true)],
                 InstalledAt: DateTimeOffset.UtcNow,
                 UpdatedAt: DateTimeOffset.UtcNow);
     }
