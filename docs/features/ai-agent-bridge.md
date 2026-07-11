@@ -268,9 +268,9 @@ Everything else is automatic. Session flow:
 3. Parallel `tools/list` fan-out to each app `/mcp` with a per-app timeout; an unreachable app is omitted, not fatal.
 4. Re-export each tool namespaced as `<appKey>__<tool>`, passing schemas and MCP tool annotations (`readOnlyHint`, `destructiveHint`) through unchanged — client-side permission policy keys off them.
 5. Poll the registry (~30–60 s, a cheap control-plane call) and emit `notifications/tools/list_changed` when the app set changes; clients that ignore the notification see the new set next session.
-6. On call: refresh the app's short-TTL Core-issued delegated token if needed, invoke the app `/mcp` directly, and return the result. A stopped app yields a structured `app_stopped` error, not a failure.
+6. On call: refresh the app's short-TTL Core-issued delegated token if needed, invoke the app `/mcp` directly, and return the result. A stopped app yields a structured `app_stopped` error for that call only; the connector session and the remaining apps keep working.
 
-If apps × tools exceeds a threshold (roughly 60–80 exported tools), the connector degrades to a generic surface (`list_app_tools` / `call_app_tool`) to avoid flooding client context; the threshold and a per-app allowlist live in connector config. Build order: generic mode → namespaced re-export → `list_changed` → remote login flow.
+If apps × tools exceeds a threshold (roughly 60–80 exported tools), the connector degrades to a generic surface (`list_app_tools` / `call_app_tool`) to avoid flooding client context; the threshold and a per-app allowlist live in connector config. Build order: generic mode → namespaced re-export → `notifications/tools/list_changed` → remote login flow.
 
 The connector's login credential authenticates to Core only (audience Core); per-app delegated tokens are fetched per session. Neither ever appears in model context. The connector's token needs only `discovery` and `request_delegated_token` scopes — never operator rights.
 
@@ -502,7 +502,7 @@ This is a large multi-stage feature and should be rolled out incrementally:
 4. Add one demo app MCP interface, preferably a project/task/time-tracking domain.
 5. Add embedded Core MCP: discovery, delegated token issuance, read-only observability tools.
 6. Validate with stock external agent clients (Claude Code / Codex + a Hosty skill, static endpoint entries) — no gateway code.
-7. Add the `hosty mcp` connector (generic mode → namespaced re-export → `list_changed` → remote login flow) and the Claude Code plugin packaging.
+7. Add the `hosty mcp` connector (generic mode → namespaced re-export → `notifications/tools/list_changed` → remote login flow) and the Claude Code plugin packaging.
 8. Add `hosty.ai-gateway` as an optional system app that declares `ai-gateway`, with the agent loop on the Claude Agent SDK adapter.
 9. Replace one app-local model integration, such as an LM Studio checklist generator, with discovered AI Gateway usage.
 10. Build Shell-to-AI-Gateway chat flow and approval-gated writes through app-owned MCP.
