@@ -180,8 +180,9 @@ internal-only docker network** (a `cross-app-dependencies.md` hardening): move i
 query port off the host/LAN so "no auth on a trusted internal network" actually holds. Telemetry rides
 that hardening; it does not need its own.
 
-**Generalized into a platform rule (2026-07-11,** [ai-agent-bridge.md](ai-agent-bridge.md)
-**"Authorization And Delegation"):** the thin Core proxy twin is the right call only for admin-only,
+**Generalized into a platform rule (2026-07-11,
+[ai-agent-bridge.md#authorization-and-delegation](ai-agent-bridge.md#authorization-and-delegation)):**
+the thin Core proxy twin is the right call only for admin-only,
 low-volume, request/response reads whose surface already lives in Core — exactly this case. Anything
 per-user, streaming, high-volume, or externally reachable (agent MCP traffic, the AI gateway) instead
 gets a direct endpoint with a short-lived Core-issued token validated by the receiver, Core injecting
