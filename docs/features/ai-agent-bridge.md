@@ -1,8 +1,8 @@
 # Feature: AI Agent Bridge
 
-Status: Draft.
+Status: Draft; key decisions recorded 2026-07-11 (marked "Decided" below).
 Created: 2026-06-09
-Updated: 2026-07-10
+Updated: 2026-07-11
 
 ## Goal
 
@@ -206,7 +206,9 @@ The app may expose different capabilities depending on the token:
 
 ### Core MCP
 
-Core should expose an agent-readable MCP surface or equivalent discovery API. This surface should be narrow and platform-oriented. It should help agent clients discover apps, interfaces, and user context, but it should not perform app-domain work that belongs to runtime apps.
+Decided (2026-07-11): Core MCP is embedded in Core — an additional HTTP route (for example `/mcp`, Streamable HTTP) over the registry and identity data Core already owns, not a separate system app or process. A separate MCP service would only add runtime cost and a second source of truth. The same placement applies to apps: an app MCP endpoint is a route on the app's own origin.
+
+Core MCP stays control-plane only. It should help agent clients discover apps, interfaces, and user context, but it must not perform or proxy app-domain work that belongs to runtime apps.
 
 Initial Core MCP tools could include:
 
@@ -218,7 +220,13 @@ Initial Core MCP tools could include:
 - `get_system_interfaces`
 - `request_delegated_token`
 
+Discovery responses must resolve app MCP origins from the caller's vantage point: external ingress/host-published origins for remote clients, internal origins for on-host clients — the same resolution browser login already performs. If an app is browser-reachable from a client machine, its `/mcp` must be reachable too.
+
+Read-only observability tools (`query_logs`, `get_trace`, health surfaced in `list_apps`) are a good early addition behind admin-scoped tokens: they enable the diagnostic-agent scenario (investigate an unhealthy host from chat, zero approvals) before any write surface exists. Once the telemetry backend system app ships ([observability-phase-2-backend.md](observability-phase-2-backend.md)), it can declare its own `mcp` interface and own those query tools like any other app — the connector aggregates it automatically.
+
 Administrative or development tools can be added later behind stronger authorization, such as source checkout discovery, branch/PR workflow creation, isolated-validation coordination, lifecycle planning, or update review. Those tools should remain explicit and approval-gated.
+
+Implementation note: Core is Native AOT. Verify the MCP C# SDK (`ModelContextProtocol`) is AOT/trimming-clean before adopting it; if it is not, the required surface (`initialize`, `tools/list`, `tools/call`, a handful of read-only tools) is small enough to hand-roll as JSON-RPC on the existing source-generated System.Text.Json setup with no new dependency.
 
 ### Agent Clients And AI Gateway
 
@@ -232,6 +240,50 @@ An agent client is any authorized component that can use Core discovery/Core MCP
 `hosty.ai-gateway` is optional and replaceable. It can use Vercel AI SDK, OpenAI Agents SDK, direct Responses API calls, local providers, or another provider stack internally. Core should treat it like any other system runtime app: install, start, stop, update, inspect health/logs, and expose its declared interfaces. Core should not need to know its prompt logic, model routing, provider configuration, or app-domain orchestration logic.
 
 Shell can discover an installed `ai-gateway` interface and send user chat/voice input directly to that system app. If no `ai-gateway` interface is installed and available, Shell should hide or disable the agent/chat mode. A different UI client could use the same discovery mechanism.
+
+Decided (2026-07-11): `hosty.ai-gateway` is a separate system app and is deferred — none of the first milestones need it. The platform contract (manifest interfaces, app-owned MCP, embedded Core MCP, Core-issued tokens) is validated first with stock external agent clients (Claude Code / Codex plus a Hosty skill), and the external-client path stays a first-class scenario permanently, not just a bootstrap phase.
+
+The gateway has two independent capabilities behind one interface, and only the first needs an agent harness:
+
+- Agent loop (Shell chat and actions): built on a replaceable headless harness behind an internal adapter (start/stream/approve/resume/cancel), with pinned harness versions. The Claude Agent SDK is the preferred first adapter for the action surface because its permission callback (`canUseTool`) can pause a proposed tool call for a Shell-side approval; `codex exec` is headless-first and cannot pause per call, which fits the development surface (draft-only PR output inside a sandbox) but not approval-gated actions. The action-surface agent gets no shell or file tools — MCP only — which removes most prompt-injection reach by construction.
+- `/api/ai/generate` (app-to-model broker): a plain capability-routed provider call — no harness involved.
+
+Development Agent Bridge runs are one-shot headless jobs (`codex exec` or `claude -p`) in an isolated checkout/worktree; the safety boundary is the sandbox plus the fact that output is a branch/PR, never a merge or live app data.
+
+### Hosty MCP Connector
+
+Decided (2026-07-11). MCP clients (Claude Code, Claude Desktop, Codex) fix their MCP server list at session start; they cannot attach a newly discovered server mid-session, so static per-app client configuration cannot follow a dynamic app fleet. The answer is a client-side aggregator: `hosty mcp`, a stdio MCP server embedded in the existing `hosty` CLI and spawned by the agent client on the user's machine. It is not a hosted service and adds nothing to the host runtime. While only one or two apps expose MCP, static endpoint entries in the client config are enough and the connector is not required yet.
+
+The user configures two things once — the connector entry and a login:
+
+```jsonc
+// Claude Code / Claude Desktop; Codex uses the same command in config.toml
+{ "mcpServers": { "hosty": { "command": "hosty", "args": ["mcp"] } } }
+```
+
+Everything else is automatic. Session flow:
+
+1. Spawn (stdio); read the host URL and credential from CLI context config/keychain.
+2. Discovery: Core registry `list_apps`, filtered to `mcp` interfaces visible to the actor and running/healthy.
+3. Parallel `tools/list` fan-out to each app `/mcp` with a per-app timeout; an unreachable app is omitted, not fatal.
+4. Re-export each tool namespaced as `<appKey>__<tool>`, passing schemas and MCP tool annotations (`readOnlyHint`, `destructiveHint`) through unchanged — client-side permission policy keys off them.
+5. Poll the registry (~30–60 s, a cheap control-plane call) and emit `notifications/tools/list_changed` when the app set changes; clients that ignore the notification see the new set next session.
+6. On call: refresh the app's short-TTL Core-issued delegated token if needed, invoke the app `/mcp` directly, and return the result. A stopped app yields a structured `app_stopped` error, not a failure.
+
+If apps × tools exceeds a threshold (roughly 60–80 exported tools), the connector degrades to a generic surface (`list_app_tools` / `call_app_tool`) to avoid flooding client context; the threshold and a per-app allowlist live in connector config. Build order: generic mode → namespaced re-export → `list_changed` → remote login flow.
+
+The connector's login credential authenticates to Core only (audience Core); per-app delegated tokens are fetched per session. Neither ever appears in model context. The connector's token needs only `discovery` and `request_delegated_token` scopes — never operator rights.
+
+Topologies — the connector runs where the agent client runs:
+
+1. Everything on one machine: stdio plus the trusted local control channel; no login needed.
+2. Agent client and CLI on a user machine, Core on a server (the primary remote scenario): `hosty login --host` once; requires discovery to return external app origins and TLS on token-carrying endpoints.
+3. CLI only on the server: `"command": "ssh", "args": ["user@server", "hosty", "mcp"]` — MCP stdio over SSH, zero new code, internal origins, owner identity via the local channel.
+4. No CLI at all (claude.ai web or mobile): needs a remote HTTP MCP endpoint with OAuth — a future `mcp-hub` system app hosting the same aggregator logic. Explicitly deferred; Core never hosts it.
+
+Multi-environment: CLI contexts (`local`, `prod`, ...) map to one MCP server entry per context (`hosty-local`, `hosty-prod` via `hosty mcp --context X`) rather than one connector with an environment argument. The environment is then explicit in every tool name, client permission policy can differ per server (for example prod read-only auto-allowed, prod writes always ask), token strength can differ per context, and failures stay isolated.
+
+Packaging: a Claude Code plugin (marketplace repo) bundles the connector `.mcp.json`, a Hosty skill (how to discover apps, which tools need confirmation), and PreToolUse hooks implementing allow-read-only / ask-writes / deny-destructive from tool annotations. Codex gets the same connector via `config.toml` plus the skill; it has no hooks, so its guardrail is token scopes — which is the real enforcement boundary for every client anyway: client-side layers are UX, while app-side domain permissions and Core-issued token scopes are the hard limit.
 
 ### Runtime App AI Gateway
 
@@ -261,6 +313,20 @@ The request should be provider-neutral and capability-oriented rather than a dir
 
 Shell session authorization establishes who the actor is when Shell calls an AI Gateway system app. It should not become the credential used by the agent or the app.
 
+Decided (2026-07-11) — when Core proxies and when tokens are used. The platform-wide rule, shared with [observability-phase-2-backend.md](observability-phase-2-backend.md):
+
+- Admin-only + low-volume + request/response + a surface that already lives in Core → a thin Core proxy twin is acceptable (telemetry reads).
+- Per-user, or streaming, or high-volume, or externally reachable → direct endpoint + short-lived Core-issued token validated by the receiver. All agent-bridge traffic (Shell → ai-gateway chat, app → gateway generate, agent clients → app MCP) is in this class. Core stays the sole identity and registry authority but is out of the request path; it injects the token verification key into system apps the same way it injects `OTEL_EXPORTER_OTLP_ENDPOINT`, so the control plane remains fully Core-owned while only data-plane bytes go direct.
+
+Two token mechanics, one management UI (a Shell "Access tokens" page with label, scopes, expiry, last-used, revoke):
+
+| Token | Validator | Mechanics |
+| --- | --- | --- |
+| CLI login and external agent tokens presented to Core | Core itself | opaque value + server-side record; instant revocation; no signing needed |
+| Delegated tokens presented to apps and system apps | the receiving app, locally | signed, short TTL, verification key injected by Core; optional Core introspection for high-risk calls |
+
+Shell's Core session cookie never leaves the browser↔Core pair. When Shell (or any UI client) needs a system app, it exchanges its session for a short-lived delegated token (audience = that app) and calls the app directly — the service-call analogue of the existing app authorization code flow. Core's existing signing infrastructure (AppIdentityService) can issue these.
+
 Core should issue signed delegated identity tokens for agent-client-to-app calls. A token should include at least:
 
 - actor user id
@@ -284,6 +350,21 @@ For background work, Core should store durable delegation grants instead of reus
 - expiry or revoke condition
 - maximum run budget
 - audit reference
+
+### Remote CLI Access And Contexts
+
+Decided (2026-07-11). The CLI's trusted local control channel (`control/v1`, discovered via `control.json`, no authentication — possession of the local discovery file plus loopback access is the authorization) stays unchanged, with two permanent roles: bootstrap (managing Core before any user or token exists) and recovery (SSH to the host keeps working when all tokens are lost or auth is misconfigured). The control channel is never exposed to the network.
+
+Remote use gets kubectl-style contexts:
+
+```text
+hosty login --host https://hosty.example    # device-code flow approved in a Shell session; token stored in the OS keychain
+hosty --context prod apps list
+```
+
+Remote calls go to Core's normal web API (the existing web twins of control routes) with `Authorization: Bearer`, added alongside session-cookie auth. The token is bound to a Host user, role, and scopes — unlike the local channel's unconditional host-operator power — so a monitoring script can hold a read-only token and the MCP connector holds discovery-only scopes. Headless fallback: create a token on the Shell Access-tokens page and pass it to `hosty login --token`.
+
+Remote CLI auth is the first consumer of the agent-bridge token infrastructure (token store, management UI, login flow) and is a good first implementation step: the infrastructure gets exercised before the first MCP endpoint exists.
 
 ### Permission Model
 
@@ -351,6 +432,7 @@ Likely new or changed contracts:
 - Core durable delegation grant records.
 - Core approval records.
 - Core-issued external agent token records for app MCP access.
+- CLI login token records, web-API bearer authentication, and CLI context configuration for remote CLI use.
 - AI Gateway provider and model profile configuration.
 - AI Gateway request policy, per-app access rules, and audit metadata.
 - Audit/reporting contracts for agent messages, tool calls, approvals, delegated app invocations, job transitions, and denied actions.
@@ -415,16 +497,17 @@ Future implementation should test the old features and the new agent surface tog
 This is a large multi-stage feature and should be rolled out incrementally:
 
 1. Document the shared concept and boundaries.
-2. Add manifest interface discovery metadata design without model execution.
-3. Add one demo app MCP interface, preferably a project/task/time-tracking domain.
-4. Add Core MCP or equivalent discovery API for interface-aware agent clients.
-5. Add `hosty.ai-gateway` as an optional system app that declares `ai-gateway`.
-6. Replace one app-local model integration, such as an LM Studio checklist generator, with discovered AI Gateway usage.
-7. Build Shell-to-AI-Gateway chat flow and AI-Gateway-to-Core-MCP discovery.
-8. Add approval-gated writes through AI Gateway and app-owned MCP.
-9. Add external Core-issued MCP agent token documentation and validation.
-10. Add durable delegation/job runner design and notifications.
-11. Expand Development Agent Bridge through source checkout, PR, and an approved isolated-validation workflow.
+2. Build the token infrastructure: Core token store, Shell Access-tokens page, `hosty login` device flow — with remote CLI contexts as its first consumer.
+3. Add manifest interface discovery metadata design without model execution.
+4. Add one demo app MCP interface, preferably a project/task/time-tracking domain.
+5. Add embedded Core MCP: discovery, delegated token issuance, read-only observability tools.
+6. Validate with stock external agent clients (Claude Code / Codex + a Hosty skill, static endpoint entries) — no gateway code.
+7. Add the `hosty mcp` connector (generic mode → namespaced re-export → `list_changed` → remote login flow) and the Claude Code plugin packaging.
+8. Add `hosty.ai-gateway` as an optional system app that declares `ai-gateway`, with the agent loop on the Claude Agent SDK adapter.
+9. Replace one app-local model integration, such as an LM Studio checklist generator, with discovered AI Gateway usage.
+10. Build Shell-to-AI-Gateway chat flow and approval-gated writes through app-owned MCP.
+11. Add durable delegation/job runner design and notifications.
+12. Expand Development Agent Bridge through source checkout, PR, and an approved isolated-validation workflow (one-shot sandboxed `codex exec` / `claude -p` jobs producing PRs).
 
 Backward compatibility should be preserved. Apps without an `mcp` interface remain normal runtime apps and should not show app-action agent controls.
 
@@ -453,6 +536,7 @@ Backward compatibility should be preserved. Apps without an `mcp` interface rema
 - Question: Should runtime apps call model providers directly or through an AI Gateway system app?
   Answer: Hosty-aware apps should call a discovered AI Gateway interface by default. Direct provider calls duplicate configuration, expose provider details to every app, and make policy/audit harder.
   Recommendation: Add an optional `hosty.ai-gateway` system app for app-to-model features and do not require app-local direct provider configuration in the first design.
+  Decision (2026-07-11): Confirmed; the gateway system app itself is deferred until the Shell chat milestone — earlier milestones run on stock external agent clients.
 
 - Question: Should the AI Gateway expose a provider-native API or a Hosty API?
   Answer: A provider-native passthrough is useful for compatibility, but it leaks provider differences into apps.
@@ -461,6 +545,7 @@ Backward compatibility should be preserved. Apps without an `mcp` interface rema
 - Question: Should Core expose discovery through normal HTTP APIs, MCP, or both?
   Answer: HTTP APIs are already natural for Shell and runtime apps, while MCP is more agent-legible for AI Gateway, Codex, and other agent clients.
   Recommendation: Keep the registry source of truth in Core and expose both a normal API and a narrow Core MCP facade over the same data.
+  Decision (2026-07-11): Both; the Core MCP facade is embedded in Core as a route over the same registry data, not a separate service.
 
 - Question: Should Core know about `hosty.ai-gateway` specifically?
   Answer: Only as an installed system app and declared interface provider, not as a hardcoded module with special runtime calls.
@@ -477,6 +562,7 @@ Backward compatibility should be preserved. Apps without an `mcp` interface rema
 - Question: How much platform control should Core MCP expose?
   Answer: Read-only discovery is low risk; lifecycle, source, PR, validation, and user-management tools are high risk.
   Recommendation: Start with read-only discovery tools and add mutation tools only behind explicit scopes, approvals, and admin authorization.
+  Decision (2026-07-11): First batch = read-only discovery plus admin-scoped read-only observability tools (`query_logs`, `get_trace`); no mutation tools initially.
 
 - Question: How should Development Agent Bridge validate unmerged changes?
   Answer: Current feeds and source overrides are installed-app mechanisms, not disposable validation environments, and may affect production lifecycle state or data.
