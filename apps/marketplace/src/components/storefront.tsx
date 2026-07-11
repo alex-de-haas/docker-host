@@ -396,9 +396,16 @@ function AppDetailDialog({ app, installed, onClose, onInstall }: {
   const defaultFeed = app.feeds.find(feed => feed.default) ?? app.feeds[0] ?? null;
   const canInstall = Boolean(defaultFeed && app.feedsUrl);
   // For an installed app, ask Core whether the feed has a newer manifest than what's installed, so
-  // the footer offers "Update" only when there's actually something to update. The dialog is keyed by
-  // app id in the parent, so the initial state below is correct per app without a synchronous reset.
+  // the footer offers "Update" only when there's actually something to update.
   const [updateState, setUpdateState] = useState<"checking" | "available" | "current">(installed ? "checking" : "current");
+  // installed can flip while the dialog is open (installed-app ids resolve after it renders). Reset
+  // during render — not in an effect — so the footer immediately shows the spinner on false->true and
+  // never keeps a stale "available" on true->false. https://react.dev/learn/you-might-not-need-an-effect
+  const [prevInstalled, setPrevInstalled] = useState(installed);
+  if (prevInstalled !== installed) {
+    setPrevInstalled(installed);
+    setUpdateState(installed ? "checking" : "current");
+  }
   useEffect(() => {
     if (!installed) {
       return;
