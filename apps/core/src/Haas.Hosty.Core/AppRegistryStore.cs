@@ -266,13 +266,11 @@ internal sealed record AppRecord(
     // Display-only; never gates anything. Additive/nullable, so no AppStateDocument schema bump. See
     // runtime-app-marketplace.md ("Manifest Metadata Extensions", B5).
     AppCatalogMetadataContract? CatalogMetadata = null,
-    // The catalog feed this install follows (catalog-hosted-app-feeds.md A3): recorded at
-    // install-from-catalog, changeable via the set-feed operation. Setting a feed also re-points
-    // ManifestUrl at the feed's moving manifestRef, so the existing reviewed-update flow reads the
-    // feed head with no special casing. Null = no feed set (pre-feeds install, non-catalog install,
-    // or cleared) — clients surface choose-a-feed guidance instead of pretending "up to date".
-    // Resolution is by feed id against the merged catalog entry for this app id; a feed that no
-    // longer exists folds into the same guidance. Additive/nullable, so no schema bump.
+    // App-owned feeds.json used by generic feed lifecycle operations. Null for direct manifest/folder
+    // installs. Stored independently of any discovery provider so updates keep working without it.
+    string? FeedsUrl = null,
+    // Selected feed id within FeedsUrl. ManifestUrl stores that feed's last resolved manifestRef.
+    // Null means no feed is selected (including every direct install). Additive/nullable state.
     string? FollowedFeedId = null);
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
@@ -620,8 +618,8 @@ internal sealed record AppSummary(
     // `ui.icon`) and fetch the markdown description from descriptionUrl. Additive/nullable.
     string? IconUrl = null,
     string? DescriptionUrl = null,
-    // The catalog feed this install follows (AppRecord.FollowedFeedId), for the Shell's feed selector
-    // and choose-a-feed guidance. Null = no feed set. Additive/nullable.
+    // Generic app-owned feed source and selected feed. Null for direct installs.
+    string? FeedsUrl = null,
     string? FollowedFeedId = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
@@ -715,6 +713,7 @@ internal sealed record AppSummary(
             app.CatalogMetadata,
             ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, assetVersion),
             ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, assetVersion),
+            app.FeedsUrl,
             app.FollowedFeedId);
     }
 

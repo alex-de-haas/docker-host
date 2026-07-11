@@ -20,9 +20,9 @@ internal sealed class CoreLifecycleService(
     TelemetryBackendClient? backendClient = null,
     GlobalMountStore? globalMounts = null,
     MountPathPolicy? mountPathPolicy = null,
-    // Set-feed validation only (catalog-hosted-app-feeds.md A3): resolving a requested feed id against
-    // the app's catalog entry. Optional so tests without a catalog construct the service unchanged.
-    CatalogService? catalog = null)
+    // Generic app-owned feed loader. Optional only for legacy unit fixtures that do not exercise feeds;
+    // production DI always supplies it.
+    AppFeedService? feedService = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -97,6 +97,14 @@ internal sealed class CoreLifecycleService(
     public async Task<AppInstallPlan> CreateInstallPlanAsync(AppInstallPlanRequest request, CancellationToken cancellationToken = default)
     {
         var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
+        return await BuildInstallPlanAsync(request, selection, cancellationToken);
+    }
+
+    private async Task<AppInstallPlan> BuildInstallPlanAsync(
+        AppInstallPlanRequest request,
+        RuntimeAppManifestSelection selection,
+        CancellationToken cancellationToken)
+    {
         var existing = await apps.GetAppAsync(selection.Manifest.Id!, cancellationToken);
         string? currentManifestDigest = null;
         if (!string.IsNullOrWhiteSpace(existing?.ManifestPath) && File.Exists(existing.ManifestPath))
@@ -133,6 +141,89 @@ internal sealed class CoreLifecycleService(
                 .ToArray());
     }
 
+    public async Task<AppFeedInstallPlan> CreateFeedInstallPlanAsync(
+        AppFeedInstallPlanRequest request,
+        CancellationToken cancellationToken = default)
+        => (await CreateFeedInstallPlanCoreAsync(request, cancellationToken)).Plan;
+
+    private async Task<(AppFeedInstallPlan Plan, RuntimeAppManifestSelection Selection)> CreateFeedInstallPlanCoreAsync(
+        AppFeedInstallPlanRequest request,
+        CancellationToken cancellationToken)
+    {
+        var resolution = await RequireFeedService().ResolveAsync(request.FeedsUrl, request.FeedId, cancellationToken);
+        var selection = await manifests.LoadAsync(resolution.Feed.ManifestRef, request.SelectedRuntime, cancellationToken);
+        if (!string.Equals(selection.Manifest.Id, resolution.AppId, StringComparison.Ordinal))
+        {
+            throw new AppLifecycleException(
+                "app_feed_manifest_app_mismatch",
+                $"Feed document appId '{resolution.AppId}' does not match selected manifest app id '{selection.Manifest.Id}'.");
+        }
+
+        var install = await BuildInstallPlanAsync(
+            new AppInstallPlanRequest(resolution.Feed.ManifestRef, request.SelectedRuntime, System: false, Autostart: request.Autostart),
+            selection,
+            cancellationToken);
+        var seed = new AppFeedInstallPlanDigestSeed(
+            resolution.FeedsUrl,
+            resolution.DocumentDigest,
+            resolution.Feed.Id,
+            resolution.Feed.ManifestRef,
+            install.AppId,
+            install.CurrentVersion,
+            install.CurrentRuntime,
+            install.CurrentManifestDigest,
+            install.TargetManifestDigest,
+            install.TargetRuntime,
+            install.DefaultAutostart);
+        var plan = new AppFeedInstallPlan(
+            install,
+            resolution.FeedsUrl,
+            resolution.Feed.Id,
+            resolution.Feed.ManifestRef,
+            resolution.DocumentDigest,
+            HashPlanSeed(seed));
+        return (plan, selection);
+    }
+
+    public async Task<AppLifecycleResponse> ApplyFeedInstallAsync(
+        AppFeedInstallApplyRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var planRequest = new AppFeedInstallPlanRequest(
+            request.FeedsUrl,
+            request.FeedId,
+            request.SelectedRuntime,
+            request.Autostart);
+        // Resolve once to discover the app-id lock, then repeat the authoritative review while holding
+        // it. Otherwise another install/update could change the current-state portion of the digest
+        // between validation and persistence.
+        var candidate = await CreateFeedInstallPlanCoreAsync(planRequest, cancellationToken);
+        return await WithAppLockAsync(
+            candidate.Plan.Install.AppId,
+            async () =>
+            {
+                var reviewed = await CreateFeedInstallPlanCoreAsync(planRequest, cancellationToken);
+                if (!string.Equals(reviewed.Plan.PlanDigest, request.PlanDigest, StringComparison.Ordinal))
+                {
+                    throw new AppLifecycleException(
+                        "feed_install_plan_digest_mismatch",
+                        "Feed install plan digest does not match the current feed and manifest inputs.");
+                }
+
+                var install = new AppInstallRequest(
+                    ManifestPath: reviewed.Plan.ManifestUrl,
+                    SelectedRuntime: reviewed.Plan.Install.TargetRuntime,
+                    System: false,
+                    Settings: request.Settings,
+                    Autostart: request.Autostart,
+                    StartOnInstall: request.StartOnInstall,
+                    FeedsUrl: reviewed.Plan.FeedsUrl,
+                    FeedId: reviewed.Plan.FeedId);
+                return await InstallCoreAsync(install, reviewed.Selection, cancellationToken);
+            },
+            cancellationToken);
+    }
+
     public async Task<AppLifecycleResponse> InstallAsync(AppInstallRequest request, CancellationToken cancellationToken = default)
     {
         var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
@@ -162,10 +253,8 @@ internal sealed class CoreLifecycleService(
             RuntimeState = "stopped",
             LastOperation = "install",
             Autostart = request.Autostart ?? true,
-            // Record the catalog feed this install follows (catalog-hosted-app-feeds.md A3) — the
-            // installer passed the feed's moving manifestRef as ManifestPath, so ManifestUrl already
-            // points at the feed head; this id is the bookkeeping the Shell's feed selector shows.
-            FollowedFeedId = string.IsNullOrWhiteSpace(request.CatalogFeedId) ? null : request.CatalogFeedId.Trim(),
+            FeedsUrl = string.IsNullOrWhiteSpace(request.FeedsUrl) ? null : request.FeedsUrl.Trim(),
+            FollowedFeedId = string.IsNullOrWhiteSpace(request.FeedId) ? null : request.FeedId.Trim(),
         };
 
         // Restore operator config retained from a prior uninstall-that-kept-data, before applying
@@ -288,10 +377,21 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
-    // Points an installed app at one of its catalog entry's feeds (catalog-hosted-app-feeds.md A3).
-    // Setting a feed re-points ManifestUrl at the feed's moving manifestRef, so the existing reviewed
-    // update flow (plan → confirm digest → apply) reads the feed head with no special casing. Clearing
-    // (null/blank id) only drops the bookkeeping — ManifestUrl keeps its current value.
+    public async Task<AppFeedsResponse> GetFeedsAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        if (string.IsNullOrWhiteSpace(app.FeedsUrl))
+        {
+            throw new AppLifecycleException("app_feeds_not_configured", $"Runtime app '{appId}' is not bound to a feeds document.");
+        }
+
+        var snapshot = await RequireFeedService().LoadAsync(app.FeedsUrl, cancellationToken);
+        RequireFeedAppMatch(app, snapshot.AppId);
+        return new AppFeedsResponse(snapshot.FeedsUrl, app.FollowedFeedId, snapshot.Feeds);
+    }
+
+    // Changes the selected feed inside the app-owned feeds document. This only changes the future
+    // manifest source; the running app changes through the ordinary reviewed update flow.
     public Task<AppLifecycleResponse> SetFeedAsync(
         string appId,
         AppFeedRequest request,
@@ -308,22 +408,14 @@ internal sealed class CoreLifecycleService(
         string? manifestUrl = null;
         if (feedId is not null)
         {
-            if (catalog is null)
+            if (string.IsNullOrWhiteSpace(app.FeedsUrl))
             {
-                throw new AppLifecycleException("catalog_unavailable", "The catalog service is not available.");
+                throw new AppLifecycleException("app_feeds_not_configured", $"Runtime app '{appId}' is not bound to a feeds document.");
             }
 
-            var detail = await catalog.GetAppAsync(app.Id, cancellationToken)
-                ?? throw new AppLifecycleException(
-                    "catalog_app_not_found",
-                    $"No catalog app '{app.Id}' was found in any configured source.");
-            var feed = detail.Feeds.FirstOrDefault(candidate => string.Equals(candidate.Id, feedId, StringComparison.Ordinal))
-                ?? throw new AppLifecycleException(
-                    "catalog_feed_not_found",
-                    detail.Feeds.Count == 0
-                        ? $"Catalog app '{app.Id}' declares no feeds."
-                        : $"Catalog app '{app.Id}' has no feed '{feedId}'. Declared feeds: {string.Join(", ", detail.Feeds.Select(candidate => candidate.Id))}.");
-            manifestUrl = feed.ManifestRef;
+            var resolution = await RequireFeedService().ResolveAsync(app.FeedsUrl, feedId, cancellationToken);
+            RequireFeedAppMatch(app, resolution.AppId);
+            manifestUrl = resolution.Feed.ManifestRef;
         }
 
         var document = await apps.UpdateAppAsync(appId, current => current with
@@ -768,7 +860,26 @@ internal sealed class CoreLifecycleService(
                 "This runtime runs live from your source folder; its manifest is adopted on restart, not through a reviewed update. Switch to a compiled runtime to use reviewed updates.");
         }
 
-        var manifestPath = request.ManifestPath ?? app.ManifestUrl ?? ResolveLocalUpdateManifestPath(app);
+        AppFeedResolution? feedResolution = null;
+        string? manifestPath;
+        if (string.IsNullOrWhiteSpace(request.ManifestPath) && !string.IsNullOrWhiteSpace(app.FeedsUrl))
+        {
+            if (string.IsNullOrWhiteSpace(app.FollowedFeedId))
+            {
+                throw new AppLifecycleException(
+                    "app_feed_selection_required",
+                    $"Runtime app '{appId}' is bound to a feeds document but has no selected feed.");
+            }
+
+            feedResolution = await RequireFeedService().ResolveAsync(app.FeedsUrl, app.FollowedFeedId, cancellationToken);
+            RequireFeedAppMatch(app, feedResolution.AppId);
+            manifestPath = feedResolution.Feed.ManifestRef;
+        }
+        else
+        {
+            manifestPath = request.ManifestPath ?? app.ManifestUrl ?? ResolveLocalUpdateManifestPath(app);
+        }
+
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
             throw new AppLifecycleException("manifest_path_required", "Installed app has no manifest path and update request did not provide one.");
@@ -797,6 +908,10 @@ internal sealed class CoreLifecycleService(
             selection.RuntimeProfile.Key,
             currentSelection.ManifestDigest,
             selection.ManifestDigest,
+            manifestPath,
+            feedResolution?.FeedsUrl,
+            feedResolution?.Feed.Id,
+            feedResolution?.DocumentDigest,
             willCreateBackup,
             changes);
         var digest = HashPlanSeed(seed);
@@ -827,6 +942,13 @@ internal sealed class CoreLifecycleService(
 
         var app = await RequireAppAsync(appId, cancellationToken);
         var selection = await manifests.LoadAsync(plan.ManifestPath, plan.TargetRuntime, cancellationToken);
+        if (!string.Equals(selection.ManifestDigest, plan.ManifestDigest, StringComparison.Ordinal))
+        {
+            throw new AppLifecycleException(
+                "update_plan_digest_mismatch",
+                "Update manifest changed after the current update plan was calculated.");
+        }
+
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
         var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
@@ -1360,11 +1482,40 @@ internal sealed class CoreLifecycleService(
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+        var candidateSelection = selection;
+        var manifestUpdateAvailable = false;
+        var manifestUnknown = false;
+        if (!string.IsNullOrWhiteSpace(app.FeedsUrl) && !string.IsNullOrWhiteSpace(app.FollowedFeedId))
+        {
+            try
+            {
+                var feed = await RequireFeedService().ResolveAsync(app.FeedsUrl, app.FollowedFeedId, cancellationToken);
+                RequireFeedAppMatch(app, feed.AppId);
+                candidateSelection = await manifests.LoadAsync(feed.Feed.ManifestRef, app.SelectedRuntime, cancellationToken);
+                if (!string.Equals(candidateSelection.Manifest.Id, app.Id, StringComparison.Ordinal))
+                {
+                    throw new AppLifecycleException(
+                        "app_feed_manifest_app_mismatch",
+                        $"Feed document appId '{feed.AppId}' does not match selected manifest app id '{candidateSelection.Manifest.Id}'.");
+                }
+
+                manifestUpdateAvailable = !string.Equals(
+                    selection.ManifestDigest,
+                    candidateSelection.ManifestDigest,
+                    StringComparison.Ordinal);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                manifestUnknown = true;
+                logger.LogWarning(ex, "Failed to resolve feed update status for app {AppId}.", appId);
+            }
+        }
+
         var policy = DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy);
         var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
 
         var services = new List<AppServiceUpdateStatus>();
-        foreach (var service in selection.Services
+        foreach (var service in candidateSelection.Services
             .Where(service => service.Image is not null)
             .OrderBy(service => service.Key, StringComparer.Ordinal))
         {
@@ -1411,8 +1562,10 @@ internal sealed class CoreLifecycleService(
             Runtime: selection.RuntimeProfile.Key,
             RuntimeType: selection.RuntimeProfile.Type,
             UpdatePolicy: policy,
-            UpdateAvailable: services.Any(service => service.UpdateAvailable),
-            Services: services);
+            UpdateAvailable: manifestUpdateAvailable || services.Any(service => service.UpdateAvailable),
+            Services: services,
+            ManifestUpdateAvailable: manifestUpdateAvailable,
+            ManifestUnknown: manifestUnknown);
     }
 
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
@@ -1624,8 +1777,9 @@ internal sealed class CoreLifecycleService(
             // and update/runtime-switch must drop the old lock so the next start re-resolves the new
             // target (a re-pushed tag advances the digest). The policy is operator config, preserved.
             UpdatePolicy: existing?.UpdatePolicy,
-            // The followed catalog feed is operator/install bookkeeping, not manifest contract —
-            // preserved across update/switch/reconcile like UpdatePolicy.
+            // App-owned feed state is lifecycle bookkeeping, not manifest contract — preserve it
+            // across update/switch/reconcile like UpdatePolicy.
+            FeedsUrl: existing?.FeedsUrl,
             FollowedFeedId: existing?.FollowedFeedId);
     }
 
@@ -2967,6 +3121,19 @@ internal sealed class CoreLifecycleService(
             StringComparer.Ordinal);
     }
 
+    private AppFeedService RequireFeedService()
+        => feedService ?? throw new AppLifecycleException("app_feeds_unavailable", "The runtime-app feed service is not available.");
+
+    private static void RequireFeedAppMatch(AppRecord app, string feedAppId)
+    {
+        if (!string.Equals(app.Id, feedAppId, StringComparison.Ordinal))
+        {
+            throw new AppLifecycleException(
+                "app_feeds_app_mismatch",
+                $"Feed document appId '{feedAppId}' does not match installed app '{app.Id}'.");
+        }
+    }
+
     private static string HashPlanSeed<T>(T seed)
     {
         var json = JsonSerializer.Serialize(seed, CoreJson.TypeInfo<T>());
@@ -3946,6 +4113,10 @@ internal sealed record AppUpdatePlanDigestSeed(
     string TargetRuntime,
     string? CurrentManifestDigest,
     string TargetManifestDigest,
+    string TargetManifestPath,
+    string? FeedsUrl,
+    string? FeedId,
+    string? FeedDocumentDigest,
     bool WillCreateBackup,
     IReadOnlyList<string> Changes);
 
@@ -3975,13 +4146,28 @@ internal sealed record AppInstallRequest(
     // a client's absent value to true, while internal boot bootstraps (shell/collector) pass false so the
     // boot reconciliation starts them once, in the right order (StartAutostartAppsAsync). See InstallCoreAsync.
     bool? StartOnInstall = null,
-    // The catalog feed id this install follows, when the installer resolved ManifestPath from a catalog
-    // feed's manifestRef (catalog-hosted-app-feeds.md A3). Recorded on the app for the Shell's feed
-    // selector; null for non-catalog installs.
-    string? CatalogFeedId = null);
+    // Generic app-owned feed state. Only the digest-bound feed install path populates these; direct
+    // browser/control installs clear them.
+    string? FeedsUrl = null,
+    string? FeedId = null);
 
-// Set-feed request (catalog-hosted-app-feeds.md A3): points an installed app at one of its catalog
-// entry's feeds. Null/blank FeedId clears the followed feed (the app keeps its current ManifestUrl).
+internal sealed record AppFeedInstallPlanRequest(
+    string FeedsUrl,
+    string? FeedId = null,
+    string? SelectedRuntime = null,
+    bool? Autostart = null);
+
+internal sealed record AppFeedInstallApplyRequest(
+    string FeedsUrl,
+    string? FeedId,
+    string? SelectedRuntime,
+    IReadOnlyDictionary<string, string?>? Settings,
+    bool? Autostart,
+    string PlanDigest,
+    bool? StartOnInstall = null);
+
+// Selects an entry from the installed app's stored app-owned feeds document. Null/blank FeedId clears
+// the followed feed while preserving the last resolved ManifestUrl.
 internal sealed record AppFeedRequest(string? FeedId = null);
 
 internal sealed record AppConfigureRequest(
@@ -4068,6 +4254,27 @@ internal sealed record AppInstallPlan(
     bool System,
     IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
     IReadOnlyList<AppInstallSetting> Settings);
+
+internal sealed record AppFeedInstallPlan(
+    AppInstallPlan Install,
+    string FeedsUrl,
+    string FeedId,
+    string ManifestUrl,
+    string FeedDocumentDigest,
+    string PlanDigest);
+
+internal sealed record AppFeedInstallPlanDigestSeed(
+    string FeedsUrl,
+    string FeedDocumentDigest,
+    string FeedId,
+    string ManifestUrl,
+    string AppId,
+    string? CurrentVersion,
+    string? CurrentRuntime,
+    string? CurrentManifestDigest,
+    string TargetManifestDigest,
+    string TargetRuntime,
+    bool Autostart);
 
 internal sealed record AppInstallSetting(string Key, string Type, string? DefaultValue, bool Secret, bool Required = false, string? Label = null, string? Description = null);
 
@@ -4229,14 +4436,16 @@ internal sealed record TraceDetailResponse(
 internal sealed record AppHealthObservation(string AppId, string Status, RuntimeRestartPolicy RestartPolicy);
 
 // Read-only update-available report for a runtime app (see GetUpdateStatusAsync). `UpdateAvailable`
-// is the aggregate over compiled services; `UpdatePolicy` is "pinned"/"rolling" for legibility.
+// aggregates feed-manifest and compiled-service movement; `UpdatePolicy` is "pinned"/"rolling".
 internal sealed record AppUpdateStatusResponse(
     string AppId,
     string Runtime,
     string RuntimeType,
     string UpdatePolicy,
     bool UpdateAvailable,
-    IReadOnlyList<AppServiceUpdateStatus> Services);
+    IReadOnlyList<AppServiceUpdateStatus> Services,
+    bool ManifestUpdateAvailable = false,
+    bool ManifestUnknown = false);
 
 // Per-service update status: the currently-locked digest, the remotely-resolved candidate digest, and
 // whether the candidate is a new build (lock present and differs). `Unknown` = the registry could not

@@ -36,22 +36,16 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
         builder.Services.AddSingleton(sp => new AppManifestService());
+        // The feed document is untrusted lifecycle input fetched over http(s). Refuse auto-redirects
+        // so a feed URL cannot bounce Core onto an internal host (SSRF); a 3xx surfaces as a non-success
+        // status and fails the load. AppFeedService also rejects non-http(s)/credentialed URLs.
+        builder.Services.AddHttpClient<AppFeedService>(client => client.Timeout = TimeSpan.FromSeconds(20))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         builder.Services.AddSingleton<AppBackupService>();
         builder.Services.AddSingleton<NotificationStore>();
         builder.Services.AddSingleton<NotificationBroadcaster>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
-        // Marketplace catalog read side (WS2): fetch/cache/merge configured catalog sources and serve the
-        // storefront. A discovery/trust index over existing transport — it installs nothing.
-        builder.Services.AddSingleton<ICatalogDocumentFetcher>(sp =>
-            new HttpCatalogDocumentFetcher(
-                sp.GetRequiredService<IClock>(),
-                sp.GetRequiredService<ILogger<HttpCatalogDocumentFetcher>>()));
-        // WS7 federation: operator-managed catalog sources, seeded from HOSTY_CATALOG_SOURCES and mutable
-        // at runtime. CatalogService reads the effective list from here on every storefront fetch.
-        builder.Services.AddSingleton<CatalogSourceStore>();
-        builder.Services.AddSingleton<CatalogSourceService>();
-        builder.Services.AddSingleton<CatalogService>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         // Resolve the setsid shim path once so the localCommand adapter spawns reclaimable process-group
@@ -257,7 +251,6 @@ internal static class HostyCoreApplication
         AppAssetEndpoints.Map(app);
         AppBackupEndpoints.Map(app);
         NotificationEndpoints.Map(app);
-        CatalogEndpoints.Map(app);
     }
 
     internal static IResult RequireControlSecret(HttpRequest request, ControlSecret secret, Func<IResult> action)
@@ -698,14 +691,9 @@ internal sealed record HostyCoreRuntimeConfig(
     string? CollectorManifestPath = null,
     string CollectorBootstrapRuntime = "docker",
     bool CollectorAutostart = true,
-    // Ordered marketplace catalog source URLs (http/https or local paths), highest priority first. Empty
-    // by default — the marketplace is opt-in and non-intrusive, so no source means an empty storefront and
-    // nothing changes for existing installs. Set HOSTY_CATALOG_SOURCES to a comma-separated list.
-    IReadOnlyList<string>? CatalogSources = null)
+    string? MarketplaceManifestPath = null)
 {
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
-
-    public IReadOnlyList<string> EffectiveCatalogSources => CatalogSources ?? [];
 
     public string EffectiveShellPublicOrigin => ShellPublicOrigin ?? $"http://localhost:{ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
 
@@ -770,29 +758,7 @@ internal sealed record HostyCoreRuntimeConfig(
             collectorManifestPath,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME")) ?? "docker",
             ReadBoolean("HOSTY_COLLECTOR_AUTOSTART", defaultValue: true),
-            ReadList("HOSTY_CATALOG_SOURCES"));
-    }
-
-    // Parses a comma-separated env var into a trimmed, de-duplicated, order-preserving list; null when unset.
-    private static IReadOnlyList<string>? ReadList(string name)
-    {
-        var value = NormalizeOptional(Environment.GetEnvironmentVariable(name));
-        if (value is null)
-        {
-            return null;
-        }
-
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var result = new List<string>();
-        foreach (var part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (seen.Add(part))
-            {
-                result.Add(part);
-            }
-        }
-
-        return result.Count > 0 ? result : null;
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_MARKETPLACE_MANIFEST_PATH")));
     }
 
     private static string? ReadFirst(params string[] names)
@@ -1262,9 +1228,9 @@ internal sealed class RuntimeAppSupervisorService(
                 await lifecycle.ConfigureAsync(descriptor.AppId, new AppConfigureRequest(descriptor.Settings), cancellationToken);
             }
 
-            if (app is not null && app.Autostart != descriptor.Autostart)
+            if (app is not null && descriptor.Autostart is bool configuredAutostart && app.Autostart != configuredAutostart)
             {
-                await lifecycle.ConfigureAutostartAsync(descriptor.AppId, new AppAutostartRequest(descriptor.Autostart), cancellationToken);
+                await lifecycle.ConfigureAutostartAsync(descriptor.AppId, new AppAutostartRequest(configuredAutostart), cancellationToken);
             }
 
             if (app is not null && !string.IsNullOrWhiteSpace(descriptor.SourceOverridePath))
@@ -1291,7 +1257,8 @@ internal sealed class RuntimeAppSupervisorService(
         AppRecord app,
         CancellationToken cancellationToken)
     {
-        if (!string.Equals(app.SelectedRuntime ?? descriptor.Runtime, descriptor.Runtime, StringComparison.Ordinal))
+        if (descriptor.Runtime is not null &&
+            !string.Equals(app.SelectedRuntime ?? descriptor.Runtime, descriptor.Runtime, StringComparison.Ordinal))
         {
             logger.LogInformation(
                 "{DisplayName} bootstrap reconciliation skipped because installed runtime {InstalledRuntime} differs from configured runtime {ConfiguredRuntime}.",
@@ -1303,7 +1270,7 @@ internal sealed class RuntimeAppSupervisorService(
 
         var plan = await lifecycle.CreateUpdatePlanAsync(
             descriptor.AppId,
-            new AppUpdatePlanRequest(descriptor.ManifestPath, descriptor.Runtime),
+            new AppUpdatePlanRequest(descriptor.ManifestPath, descriptor.Runtime ?? app.SelectedRuntime),
             cancellationToken);
 
         // Reconcile also when the configured manifest reference itself moved (e.g. a renamed raw URL
@@ -1323,7 +1290,7 @@ internal sealed class RuntimeAppSupervisorService(
             new AppUpdateApplyRequest(
                 PlanDigest: plan.PlanDigest,
                 ManifestPath: descriptor.ManifestPath,
-                SelectedRuntime: descriptor.Runtime),
+                SelectedRuntime: descriptor.Runtime ?? app.SelectedRuntime),
             cancellationToken);
         return await apps.GetAppAsync(descriptor.AppId, cancellationToken);
     }

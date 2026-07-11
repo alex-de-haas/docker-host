@@ -12,4 +12,5 @@ export const emptyInstallPanelState = (): InstallPanelState => ({
   loading: false,
   error: null,
   plan: null,
+  feedPlan: null,
 });

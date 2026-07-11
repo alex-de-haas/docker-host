@@ -1,30 +1,14 @@
-import path from "node:path";
-
-// Runtime configuration resolved from the environment Core injects. Kept as a plain object built by
-// a pure function so tests construct options directly and route handlers resolve them once per
-// process (see runtime.ts).
 export type MarketplaceOptions = {
-  dataDirectory: string;
-  // Initial catalog sources used only while no stored source list has been materialized in app
-  // data. Core's bootstrap import (Phase 1 proxy work) writes the one-time handoff seed; this env
-  // fallback keeps standalone/dev runs configurable the same way Core was (HOSTY_CATALOG_SOURCES).
-  seedSources: string[];
-  // The Core-minted app service token (HOSTY_APP_SERVICE_TOKEN). Every non-health request must
-  // present it; when Core did not inject one (standalone run) the API fails closed.
-  serviceToken: string | null;
+  sourceUrl: string | null;
 };
 
+// Runtime configuration is resolved lazily by getRuntime(). Keeping this function free of module-level
+// reads is important for `next build`, where Hosty-injected settings do not exist yet. The identity
+// flow (host-auth.ts) reads HOSTY_APP_ID / HOSTY_CORE_ORIGIN / HOSTY_APP_SERVICE_TOKEN from the
+// environment directly, so the only configuration this app owns is its single catalog source URL.
 export function optionsFromEnvironment(env: NodeJS.ProcessEnv = process.env): MarketplaceOptions {
-  const dataDirectory =
-    readString(env.HOSTY_MARKETPLACE_DATA_DIR) ??
-    readString(env.HOSTY_APP_DATA_DIR) ??
-    readString(env.HOSTY_APP_DATA) ??
-    path.join(process.cwd(), "data");
-
   return {
-    dataDirectory,
-    seedSources: readList(env.HOSTY_CATALOG_SOURCES),
-    serviceToken: readString(env.HOSTY_APP_SERVICE_TOKEN),
+    sourceUrl: readHttpUrl(env.HOSTY_MARKETPLACE_SOURCE_URL),
   };
 }
 
@@ -33,22 +17,20 @@ function readString(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-// Comma-separated, trimmed, de-duplicated, order-preserving (same parsing Core used for the env seed).
-function readList(value: string | undefined): string[] {
-  const raw = readString(value);
-  if (raw === null) {
-    return [];
+function readHttpUrl(value: string | undefined): string | null {
+  const candidate = readString(value);
+  if (!candidate) {
+    return null;
   }
 
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const part of raw.split(",")) {
-    const trimmed = part.trim();
-    if (trimmed && !seen.has(trimmed)) {
-      seen.add(trimmed);
-      result.push(trimmed);
+  try {
+    const url = new URL(candidate);
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
+      return null;
     }
-  }
 
-  return result;
+    return url.href;
+  } catch {
+    return null;
+  }
 }

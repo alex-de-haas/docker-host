@@ -1,8 +1,8 @@
 # Runtime App Repository Feeds
 
-Status: Idea
+Status: Promoted
 Created: 2026-07-10
-Updated: 2026-07-10
+Updated: 2026-07-11
 
 ## Motivation
 
@@ -20,7 +20,7 @@ The only architectural change needed is ownership: feeds should live with the ru
 - Changing the followed feed changes only the future manifest source. The running app changes only through the existing reviewed update flow.
 - Direct manifest installs remain valid and feed-less.
 
-## Current Behavior
+## Behavior Before Promotion
 
 - Catalog entries contain inline `feeds[]`.
 - A sole valid feed is treated as the default. Multiple feeds without an explicit default require operator selection.
@@ -52,7 +52,7 @@ Each runtime app repository contains a versioned `feeds.json`:
 
 The standalone envelope adds only document versioning and app identity. Feed behavior stays the same:
 
-- feed ids are non-empty and unique;
+- feed ids are non-empty, unique, and bounded to 128 characters;
 - at most one feed declares `default: true`;
 - a sole feed is the effective default;
 - several feeds without a default require explicit selection;
@@ -102,25 +102,26 @@ Once installed from feeds, an app continues updating when Marketplace is stopped
 
 ## Conflicts With Existing Features
 
-- [Catalog-Hosted App Feeds](../features/catalog-hosted-app-feeds.md) documents the current inline catalog ownership. This idea preserves the behavior but moves the document to the runtime app repository.
-- [Runtime App Marketplace](../features/runtime-app-marketplace.md) documents catalog-owned feeds and installed-state enrichment. That remains current behavior until migration ships.
-- [Marketplace As A System App](marketplace-system-app.md) depends on catalog entries exposing only `feedsUrl` while Core owns resolution.
+- [Runtime App Repository Feeds](../features/catalog-hosted-app-feeds.md) now documents the promoted ownership model implemented by the vertical slice.
+- [Marketplace System App](../features/runtime-app-marketplace.md) documents catalog `feedsUrl` handoff without installed-state enrichment.
+- [Marketplace As A System App](marketplace-system-app.md) supplied the surrounding ownership boundary.
 
 ## Open Questions
 
-None at this scope. Implementation planning still needs exact API/DTO names and migration tests, but those details must not expand the accepted feed behavior.
+None. The vertical-slice plan fixed the API, state, digest, and no-migration behavior.
 
 ## Current Recommendation
 
-Retire the separate channel roadmap. Keep the current feed behavior unchanged and implement only the ownership migration from inline catalog `feeds[]` to runtime-app-owned `feeds.json` resolved by Core.
+The recommendation was accepted and promoted into the Marketplace vertical-slice implementation plan: keep feed semantics, move ownership to runtime-app repositories, and keep Core as the only resolver and lifecycle authority.
 
 ## Links
 
 - [Marketplace As A System App](marketplace-system-app.md) - read-only catalog ownership and `feedsUrl` handoff.
-- [Catalog-Hosted App Feeds](../features/catalog-hosted-app-feeds.md) - current feed behavior being retained.
-- [Runtime App Marketplace](../features/runtime-app-marketplace.md) - current catalog and feed implementation.
+- [Marketplace vertical-slice plan](../planning/marketplace-system-app.md) - approved implementation scope.
+- [Runtime App Repository Feeds](../features/catalog-hosted-app-feeds.md) - implemented feed contract and Core behavior.
+- [Marketplace System App](../features/runtime-app-marketplace.md) - implemented catalog and handoff boundary.
 - [Runtime App Update](../features/runtime-app-update.md) - existing reviewed update behavior reused unchanged.
 
 ## Notes
 
-This document records the accepted direction but does not authorize implementation.
+The user authorized implementation on 2026-07-11. Current behavior belongs in the linked feature documents; this file preserves the originating design.

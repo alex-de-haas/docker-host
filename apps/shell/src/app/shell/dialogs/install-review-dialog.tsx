@@ -12,40 +12,49 @@ import { formatRuntimeProfileLabel } from "../app-helpers";
 import { SettingInput } from "../settings";
 import type { CoreInstallPlan, InstallPanelState } from "../types";
 import { CheckboxRow, EmptyState, FactCard, InlineError } from "../ui";
+import type { InstallFeedIntent } from "../workspace/install-intent";
 
 export function InstallReviewDialog({
   opened,
   initialManifestPath = "",
+  initialFeedIntent = null,
   detail,
   busyAction,
   onClose,
   onReview,
+  onReviewFeed,
   onApply,
 }: {
   opened: boolean;
-  // Seeds the manifest field (e.g. a catalog version's manifestRef). The parent remounts the dialog via
-  // a nonce-carrying `key` on every open, so the field starts pre-filled without an effect.
+  // Seeds the direct-manifest field. The parent remounts the dialog via a nonce-carrying `key` on
+  // every open, so the field starts pre-filled without an effect.
   initialManifestPath?: string;
+  // A feed intent comes from the active app iframe. Shell never resolves it itself: Core returns a
+  // digest-bound feed plan whose nested install plan is rendered by this same review surface.
+  initialFeedIntent?: InstallFeedIntent | null;
   detail: InstallPanelState;
   busyAction: string | null;
   onClose: () => void;
   onReview: (manifestPath: string, selectedRuntime?: string | null) => void;
+  onReviewFeed: (intent: InstallFeedIntent, selectedRuntime?: string | null, autostart?: boolean | null) => void;
   onApply: (plan: CoreInstallPlan, settings: Record<string, string | null>, autostart: boolean) => void;
 }) {
   const [manifestPath, setManifestPath] = useState(initialManifestPath);
   const [selectedRuntime, setSelectedRuntime] = useState("");
-  const [reviewedManifestPath, setReviewedManifestPath] = useState<string | null>(null);
+  const [reviewedSourceKey, setReviewedSourceKey] = useState<string | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Record<string, string>>({});
   const [autostartDraft, setAutostartDraft] = useState(true);
 
-  // A pre-seeded manifest means the install was launched from the marketplace (a catalog version's
-  // manifestRef), where the manifest is already chosen. There we skip the manual manifest input and
-  // review the plan immediately, instead of asking the operator to paste a path they can't know.
-  const preseeded = initialManifestPath.trim().length > 0;
+  // Feed intents and legacy pre-seeded manifests skip the manual source input and review immediately.
+  // Both still require the operator to confirm the plan in this Shell-owned dialog.
+  const preseeded = initialFeedIntent !== null || initialManifestPath.trim().length > 0;
+  const sourceKey = initialFeedIntent
+    ? `feed:${initialFeedIntent.feedsUrl}\n${initialFeedIntent.feedId ?? ""}`
+    : `manifest:${manifestPath.trim()}`;
 
   // Reset the settings draft while rendering when the reviewed plan changes, instead
   // of in an effect. https://react.dev/learn/you-might-not-need-an-effect
-  const reviewedPlan = detail.plan && manifestPath.trim() === reviewedManifestPath ? detail.plan : null;
+  const reviewedPlan = detail.plan && sourceKey === reviewedSourceKey ? detail.plan : null;
   const [prevReviewedPlan, setPrevReviewedPlan] = useState<CoreInstallPlan | null>(null);
   if (prevReviewedPlan !== reviewedPlan) {
     setPrevReviewedPlan(reviewedPlan);
@@ -59,16 +68,19 @@ export function InstallReviewDialog({
   }
 
   // The parent remounts this dialog via a nonce-carrying `key` on every open, so a mount-only
-  // auto-review fires once per catalog install — including reopening the same manifestRef, where a
+  // auto-review fires once per pre-seeded install — including reopening the same manifestRef, where a
   // manifest-only key used to skip the remount and leave the dialog empty. Manual installs (empty
   // seed) keep the input + Review button instead.
   useEffect(() => {
     if (!preseeded) {
       return;
     }
-    const seed = initialManifestPath.trim();
-    setReviewedManifestPath(seed);
-    onReview(seed);
+    setReviewedSourceKey(sourceKey);
+    if (initialFeedIntent) {
+      onReviewFeed(initialFeedIntent);
+    } else {
+      onReview(initialManifestPath.trim());
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const runtimeProfiles =
@@ -84,14 +96,29 @@ export function InstallReviewDialog({
   const submitReview = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedManifestPath = manifestPath.trim();
-    setReviewedManifestPath(normalizedManifestPath);
+    setReviewedSourceKey(`manifest:${normalizedManifestPath}`);
     setSelectedRuntime("");
     onReview(normalizedManifestPath);
   };
 
   const changeRuntime = (runtime: string) => {
     setSelectedRuntime(runtime);
-    onReview(manifestPath.trim(), runtime);
+    setReviewedSourceKey(sourceKey);
+    if (initialFeedIntent) {
+      onReviewFeed(initialFeedIntent, runtime, autostartDraft);
+    } else {
+      onReview(manifestPath.trim(), runtime);
+    }
+  };
+
+  const changeAutostart = (autostart: boolean) => {
+    setAutostartDraft(autostart);
+    if (initialFeedIntent && reviewedPlan) {
+      // Core binds autostart into the feed plan digest. Re-plan before apply so the reviewed choice
+      // and the digest-bound apply request stay identical.
+      setReviewedSourceKey(sourceKey);
+      onReviewFeed(initialFeedIntent, selectedRuntimeValue || null, autostart);
+    }
   };
 
   const apply = () => {
@@ -145,7 +172,18 @@ export function InstallReviewDialog({
               <InlineError message={detail.error} />
               {preseeded && (
                 <div className="flex justify-end">
-                  <Button type="button" variant="outline" onClick={() => onReview(initialManifestPath.trim())} disabled={detail.loading}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (initialFeedIntent) {
+                        onReviewFeed(initialFeedIntent, selectedRuntime || null, autostartDraft);
+                      } else {
+                        onReview(initialManifestPath.trim(), selectedRuntime || null);
+                      }
+                    }}
+                    disabled={detail.loading}
+                  >
                     {detail.loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     Retry
                   </Button>
@@ -213,7 +251,7 @@ export function InstallReviewDialog({
                 </div>
               )}
               <div className="rounded-md border bg-muted/30 p-3">
-                <CheckboxRow label="Start automatically (now and on Core startup)" checked={autostartDraft} onChange={setAutostartDraft} />
+                <CheckboxRow label="Start automatically (now and on Core startup)" checked={autostartDraft} onChange={changeAutostart} />
               </div>
             </div>
           )}

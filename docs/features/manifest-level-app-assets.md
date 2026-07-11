@@ -7,14 +7,15 @@ resolved `iconUrl`/`descriptionUrl`; platform 0.35.0). **A2** (Shell) is this
 change: app icons in the sidebar and Installed Apps, per-page sidebar icons via
 `ui.navigation[].iconAsset` (added to the Core contract + vendored here), with a
 Lucide fallback (Shell 0.22.0, demo-app 0.4.4). **A2c** ships the markdown
-long-description: Core surfaces the catalog `display.descriptionUrl` on the
-catalog detail API, and the marketplace detail dialog renders it with
+long-description: the catalog surfaces `display.descriptionUrl`, and the Marketplace
+system app's detail dialog renders it with
 react-markdown + remark-gfm (no raw HTML; relative refs resolve against the
 doc's folder; cross-origin images render as links). Platform 0.36.0 / Shell
 0.23.0. Only follow-up left: the same markdown description on the *installed*
 app-details dialog (needs a new "About" view), plus the deferred hosty-catalog
 seed-entry cleanup.
 Created: 2026-07-07
+Updated: 2026-07-11
 
 ## Motivation
 
@@ -237,8 +238,8 @@ Shell never computes asset paths itself.
 `generate-catalog.mjs` extends per entry, staying zero-dependency (plain Node
 plus global `fetch`):
 
-1. Resolve the feed's `stable` tag (highest version when the feed has no
-   tags) and fetch the manifest behind it.
+1. Resolve the entry's `feedsUrl`, load `app-feeds.0.1`, select its explicit/default
+   or sole feed, and fetch the manifest behind it.
 2. Read `catalogMetadata.icon` / `screenshots` / `descriptionFile`; resolve
    each against the manifest URL base; download.
 3. **Discover — never rewrite** — the description's relative image refs via
@@ -264,8 +265,9 @@ the build proceeds; a *failed fetch* of a declared asset fails the build — and
 an image referenced by the description is declared-by-reference, so its failed
 fetch fails the build too. Absolute http(s) refs are left untouched (Shell
 renders them as links per Q12). Hand-hosted `apps/*/assets/` keeps validating
-but is documented as deprecated (Q10); schema stays `marketplace.0.1` — purely
-additive.
+but is documented as deprecated. The catalog is `marketplace.0.2` because the
+separate feed-ownership cutover replaced inline feeds with `feedsUrl`; the asset
+fields themselves remain additive.
 
 ## Data Model / API Changes
 
@@ -280,7 +282,7 @@ additive.
   fetch with D7 budgets) on install and update; live-serve for Development
   Mode.
 - **Catalog (`hosty-catalog`):** publish-time vendoring; generated
-  `display.descriptionUrl`; no schema version bump.
+  `display.descriptionUrl`; catalog entries use `marketplace.0.2` and `feedsUrl`.
 
 ## Confirmed Decisions
 
@@ -294,8 +296,8 @@ additive.
 | **Q6** | `nosniff` + `CSP: default-src 'none'; sandbox` on every asset response; no SVG sanitization. |
 | **Q7** | `AppSummary` exposes resolved `iconUrl` (and `descriptionUrl`); absolute `https` manifest values pass through. |
 | **Q8** | New `ui.pages[].iconAsset`; fallback `iconAsset` → Lucide `icon` → app icon. |
-| **Q9** | Catalog vendoring fetches at the feed's `stable` ref; `entry.display.icon` stays as override; failed fetch of a declared asset fails the publish build. |
-| **Q10** | Purely additive; `marketplace.0.1` unchanged; hand-hosted catalog assets deprecated, demo-app converts first. |
+| **Q9** | Catalog vendoring fetches the manifest from the app-owned default/sole feed; `entry.display.icon` stays as override; failed fetch of a declared asset fails the publish build. |
+| **Q10** | Asset fields are additive; the independent feed-ownership cutover moves the catalog to `marketplace.0.2`; hand-hosted catalog assets are deprecated. |
 | **Q11** | Explicit `descriptionFile` only — no automatic README pickup. |
 | **Q12** | `react-markdown` + `remark-gfm`, inline HTML structurally inert (no `rehype-raw`, no sanitizer); render-time resolution against the `descriptionFile`'s folder as base, one resolver for installed + storefront; external absolute images render as links; ≤ 256 KB. |
 | **Q13** | Publish vendoring **discovers** (regex) and downloads description images preserving relative layout — the md is never rewritten, stays byte-identical; budgets mirror D7; a referenced image's failed fetch fails the build (declared-by-reference). |
@@ -305,7 +307,7 @@ additive.
 | WS | Scope | Side | Version |
 | --- | --- | --- | --- |
 | **A1** | Manifest contract (`descriptionFile`, `ui.pages[].iconAsset`) + asset-root resolution + install/update vendoring (budgets, treated-as-absent) + `GET /api/apps/{id}/assets/{path}` with D2–D6 guards + resolved URLs on `AppSummary` + AOT registration | Core | platform → 0.35.0 |
-| **A2** | Shell rendering: sidebar app/page icons + Installed Apps icons (`<img>` + Lucide fallback), markdown description in app details and marketplace detail (`react-markdown` + `remark-gfm`, render-time base resolution) | Shell | Shell → 0.22.0 |
+| **A2** | Shell rendering: sidebar app/page icons + Installed Apps icons (`<img>` + Lucide fallback); Marketplace renders catalog markdown details with the same safe markdown rules | Shell + Marketplace | independent runtime-app versions |
 | **A3** | demo-app as reference: `assets/icon.svg` moved from the catalog repo, `catalogMetadata` block + `descriptionFile` in its manifest | demo-app | manifest bump |
 | **A4** | Catalog publish-time vendoring (fetch at stable ref, regex image discovery, layout-preserving vendoring, `display.descriptionUrl`), deprecate hand-hosted assets, README update | hosty-catalog | — |
 
@@ -357,8 +359,7 @@ to verify the catalog-independent path.
 
 ## Links
 
-- [Runtime app marketplace](runtime-app-marketplace.md) — catalog model this
-  extends (WS1 `catalogMetadata`, WS6/WS7 catalog + federation).
+- [Marketplace System App](runtime-app-marketplace.md) — current catalog and storefront ownership.
 - [Runtime app manifest](runtime-app-manifest.md) — `catalogMetadata` section
   to update when A1 ships.
 - [`hosty-catalog`](https://github.com/alex-de-haas/hosty-catalog) — publish

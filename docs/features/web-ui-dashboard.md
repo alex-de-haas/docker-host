@@ -1,5 +1,8 @@
 # Web UI Dashboard
 
+Created: 2026-05-14
+Updated: 2026-07-11
+
 The Hosty Web UI is the Core-managed Shell runtime app. The dashboard is an administrator-only overview surface; app lifecycle, updates, backups, configuration, and removal live in the Shell Installed Apps view.
 
 ## Scope
@@ -18,6 +21,8 @@ The Installed Apps view is the implemented administrator management surface for 
 
 - `POST /api/apps/install/plan`
 - `POST /api/apps/install`
+- `POST /api/apps/install/feed/plan`
+- `POST /api/apps/install/feed`
 - `POST /api/apps/{appId}/start`
 - `POST /api/apps/{appId}/stop`
 - `POST /api/apps/{appId}/restart`
@@ -34,7 +39,7 @@ The Installed Apps view is the implemented administrator management surface for 
 - `POST /api/apps/{appId}/backups/cleanup`
 - `POST /api/apps/{appId}/remove`
 
-Shell renders install review, configuration, update, logs, backups, backup cleanup, restore, and removal flows with Core-generated plans and capability checks for non-system Runtime Apps. System Apps are inspect-only in Shell: logs can be opened when the app has the `logs` capability, while lifecycle, update, configuration, backup, restore, and removal controls stay hidden. Core remains the authority for app state and mutation validity.
+Shell renders install review, configuration, update, logs, backups, backup cleanup, restore, and removal flows with Core-generated plans and capability checks for non-system Runtime Apps. Administrators may inspect, configure, and switch runtimes for System Apps; logs are available when declared. Start/stop/restart, update, backup, restore, autostart, and removal controls stay hidden for System Apps. Core remains the authority for app state and mutation validity.
 
 ```mermaid
 flowchart TD

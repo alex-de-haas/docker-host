@@ -21,7 +21,6 @@ internal static class CliJson
         RespectNullableAnnotations = true,
         TypeInfoResolver = JsonTypeInfoResolver.Combine(
             AppsCommand.AppsJsonContext.Default,
-            CatalogCommand.CatalogJsonContext.Default,
             StorageCommand.StorageJsonContext.Default,
             AuthCommand.AuthJsonContext.Default,
             CoreCommand.CoreJsonContext.Default,

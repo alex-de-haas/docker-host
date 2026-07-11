@@ -3,15 +3,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { EmbeddedWorkspace, HostyResolvedTheme, HostyThemePreference } from "../types";
+import { parseActiveFrameInstallFeedIntent, type InstallFeedIntent } from "./install-intent";
 
 export function EmbeddedWorkspacePanel({
   workspace,
   theme,
   themePreference,
+  onInstallFeedIntent,
 }: {
   workspace: EmbeddedWorkspace;
   theme: HostyResolvedTheme;
   themePreference: HostyThemePreference;
+  // Undefined for apps that may not request installs (every app except Marketplace); when absent no
+  // message listener is attached, so a non-Marketplace frame cannot initiate an install intent.
+  onInstallFeedIntent?: (intent: InstallFeedIntent) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -49,6 +54,25 @@ export function EmbeddedWorkspacePanel({
       postTheme();
     }
   }, [loaded, postTheme]);
+
+  useEffect(() => {
+    if (!onInstallFeedIntent) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const frameWindow = iframeRef.current?.contentWindow;
+      const intent = parseActiveFrameInstallFeedIntent(event, frameWindow, workspace.src);
+      if (intent) {
+        onInstallFeedIntent(intent);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [onInstallFeedIntent, workspace.src]);
 
   const handleLoad = useCallback(() => {
     setLoaded(true);

@@ -1,5 +1,8 @@
 # Repository And Release Model
 
+Created: 2026-05-12
+Updated: 2026-07-11
+
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
 ## Decision
@@ -8,6 +11,7 @@ Hosty uses one repository for:
 
 - `apps/core` - Hosty Core, the local-first ASP.NET Core API and runtime orchestrator;
 - `apps/shell` - Hosty Shell, the browser client and Core-managed runtime app;
+- `apps/marketplace` - Hosty Marketplace, the optional catalog storefront system app;
 - `apps/demo-app` - the first-party example runtime app;
 - `apps/cli` - the standalone `hosty` CLI;
 - `skills/hosty-app-skill` - the repository-shipped Codex skill for wrapping apps as Hosty runtime apps;
@@ -21,14 +25,16 @@ The retired `apps/host` package and `host-image.yml` workflow are no longer part
 flowchart LR
   CLI["apps/cli hosty"] --> Core["apps/core Hosty Core"]
   Shell["apps/shell Hosty Shell"] --> Core
+  Shell --> Marketplace["apps/marketplace Hosty Marketplace"]
   Core --> Runtime["Runtime app lifecycle"]
   Runtime --> Demo["apps/demo-app"]
   CLI --> Artifacts["CLI/Core release assets"]
   Shell --> ShellImage["Shell image"]
+  Marketplace --> MarketplaceImage["Marketplace image"]
   Demo --> DemoImage["Demo App image"]
 ```
 
-Core owns API, auth, app lifecycle, source state, backup state, local control discovery, and runtime adapters. Shell owns only browser UI. The CLI bootstraps local Core and calls Core APIs for ordinary operations.
+Core owns API, auth, app lifecycle, source/feed state, backup state, local control discovery, and runtime adapters. Shell owns the host browser UI. Marketplace owns its catalog source and storefront UI. The CLI bootstraps local Core and calls Core APIs for ordinary operations.
 
 ## GitHub Actions Model
 
@@ -36,6 +42,7 @@ Builds are independent:
 
 - `ci.yml` - shared checks on pull requests and pushes;
 - `shell-image.yml` - build and push the Hosty Shell Docker image on `main`;
+- `marketplace-image.yml` - test, build, attest, and push the Hosty Marketplace Docker image on `main`;
 - `demo-app-image.yml` - build and push the first-party Demo App Docker image;
 - `cli-release.yml` - build and publish standalone CLI and Core executable artifacts;
 - optional future workflows - desktop Shell packages.
@@ -53,6 +60,17 @@ Shell image build:
   package.json
   package-lock.json
   .github/workflows/shell-image.yml
+
+Marketplace build:
+  apps/marketplace/**
+  package.json
+  package-lock.json
+
+Marketplace image build:
+  apps/marketplace/**
+  package.json
+  package-lock.json
+  .github/workflows/marketplace-image.yml
 
 Demo App build:
   apps/demo-app/**
@@ -82,7 +100,7 @@ Docs-only changes:
   README.md
 ```
 
-Full CI runs Shell build, Demo App lint/build, Core build/tests, installer syntax validation for shell and PowerShell installers, CLI build, and CLI xUnit tests. The root `npm run ci` script mirrors the primary Shell, Demo App, Core, and CLI validation sequence for local validation.
+Full CI runs Shell build, Marketplace lint/test/build, Demo App lint/build, Core build/tests, installer syntax validation for shell and PowerShell installers, CLI build, and CLI xUnit tests. The root `npm run ci` script mirrors the primary Shell, Marketplace, Demo App, Core, and CLI validation sequence for local validation.
 
 Pull request CI is intentionally lighter than default-branch CI. Pull requests run build-only checks for Shell, Demo App, Core, and CLI so reviewers get a fast compile signal without publishing artifacts. Pushes to `main` run the fuller validation path, including lint and tests where configured.
 
@@ -105,6 +123,16 @@ ghcr.io/alex-de-haas/demo-app:sha-<commit>
 ```
 
 The Demo App image is the first-party example runtime app artifact for app manifest workflows. Its source of truth is `apps/demo-app/manifest.json` and `apps/demo-app/Dockerfile`. The `demo-app-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry.
+
+Marketplace image artifact:
+
+```text
+ghcr.io/alex-de-haas/hosty-marketplace:<manifest-version>
+ghcr.io/alex-de-haas/hosty-marketplace:latest
+ghcr.io/alex-de-haas/hosty-marketplace:sha-<commit>
+```
+
+Marketplace is versioned and shipped independently as a runtime app. Its manifest pins the versioned image tag; `marketplace-image.yml` also publishes `latest` and the commit tag and attaches build provenance.
 
 CLI release artifacts:
 
@@ -145,7 +173,7 @@ Stable CLI/Core versions can use immutable GitHub releases such as `cli-v0.2.1` 
 
 `install.sh` detects OS/architecture, downloads the right CLI artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. `install.ps1` downloads `hosty-windows-x64.exe`, verifies checksums when available, installs it to `%USERPROFILE%\.hosty\bin\hosty.exe`, and adds the install directory to the current user's PATH. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
 
-The installer does not install Core directly. `hosty start` downloads Core only when `~/.hosty/core/bin/hosty-core` is missing. `hosty update` updates the managed CLI executable first, then installs or replaces the managed Core executable. It does not pull a Host image or recreate a Host container. Shell remains a Core-managed system runtime app. Core bootstraps it from `HOSTY_SHELL_MANIFEST_PATH` and `HOSTY_SHELL_BOOTSTRAP_RUNTIME`, then Docker pulls the image according to the Shell manifest.
+The installer does not install Core directly. `hosty start` downloads Core only when `~/.hosty/core/bin/hosty-core` is missing. `hosty update` updates the managed CLI executable first, then installs or replaces the managed Core executable. It does not pull a Host image or recreate a Host container. Shell remains a Core-managed system runtime app. Core bootstraps it from `HOSTY_SHELL_MANIFEST_PATH` and `HOSTY_SHELL_BOOTSTRAP_RUNTIME`, then Docker pulls the image according to the Shell manifest. A non-empty `HOSTY_MARKETPLACE_MANIFEST_PATH` independently bootstraps Marketplace using that manifest's default runtime on first install and the installed runtime thereafter.
 
 ## Release-Ready Validation
 
@@ -157,6 +185,7 @@ Manual validation for the current artifact model:
 - start source Core explicitly with `hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj` when validating repository Core changes;
 - run Shell locally with `npm run shell:dev` or through the Core-managed `hosty.shell` runtime app;
 - verify `docker pull ghcr.io/alex-de-haas/hosty-shell:latest` succeeds after `shell-image.yml` runs on `main`;
+- run Marketplace through Core-managed `dev` and `docker` runtimes and verify its app-origin storefront and Shell install handoff;
 - install the Demo App through `hosty apps install apps/demo-app`;
 - start, stop, restart, log, update-plan, update, backup, restore, and remove the Demo App through `hosty apps`;
 - run `hosty update` and confirm the CLI channel works.
@@ -169,9 +198,9 @@ Every component uses semantic versioning `major.minor.patch`, applied per releas
 
 Core and CLI are tightly coupled and ship together as one bundle (`cli-dev` / `cli-v*`), so they share a single version. The shared version lives in the root `Directory.Build.props` (`<Version>`). Individual `.csproj` files do not set their own `<Version>`; they inherit it.
 
-### Tier 2 - Runtime apps (`apps/shell`, `apps/demo-app`, and external apps such as project-manager, media-server, torrent-engine)
+### Tier 2 - Runtime apps (`apps/shell`, `apps/marketplace`, `apps/demo-app`, and external apps such as project-manager, media-server, torrent-engine)
 
-Each runtime app is its own release artifact (its own image / repository) and versions independently through the `version` field in its `manifest.json`. Shell is versioned exactly like any other runtime app, not as part of the platform.
+Each runtime app is its own release artifact (its own image / repository) and versions independently through the `version` field in its `manifest.json`. Shell and Marketplace are versioned exactly like other runtime apps, not as part of the platform.
 
 `version` is a separate axis from `schemaVersion` (`app.0.1`), which is the manifest *contract* version owned by Core (`RuntimeAppManifest.cs`). Bump `schemaVersion` only when the manifest format changes; it is unrelated to any single app's `version`. An app declares the `schemaVersion` it targets, and that declaration is the compatibility handshake, so no cross-repository version matrix is required.
 

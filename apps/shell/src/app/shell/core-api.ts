@@ -1,4 +1,4 @@
-import type { CoreError } from "./types";
+import type { CoreAppFeedsResponse, CoreError } from "./types";
 
 export class AuthRequiredRedirectError extends Error {
   constructor() {
@@ -33,4 +33,17 @@ export async function readCoreError(response: Response) {
   } catch {
     return `Core returned ${response.status}.`;
   }
+}
+
+export async function getAppFeeds(coreOrigin: string, appId: string, signal?: AbortSignal): Promise<CoreAppFeedsResponse> {
+  const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/feeds`, {
+    credentials: "include",
+    signal,
+  });
+  redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+  if (!response.ok) {
+    throw new Error(await readCoreError(response));
+  }
+
+  return (await response.json()) as CoreAppFeedsResponse;
 }

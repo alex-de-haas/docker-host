@@ -4,6 +4,38 @@ internal static class LifecycleEndpoints
 {
     public static void Map(WebApplication app)
     {
+        app.MapPost("/api/apps/install/feed/plan", async (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppFeedInstallPlanRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.CreateFeedInstallPlanAsync(input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/install/feed", async (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppFeedInstallApplyRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.ApplyFeedInstallAsync(
+                    input with { StartOnInstall = input.StartOnInstall ?? true },
+                    cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapPost("/api/apps/install/plan", async (
             HttpRequest request,
             UserDirectoryStore users,
@@ -35,7 +67,13 @@ internal static class LifecycleEndpoints
                 // Interactive installs start the app immediately unless the client opts out (StartOnInstall
                 // false); an absent value defaults to true so autostart apps run without a Core restart.
                 // System is coerced off for the same reason as the plan endpoint above.
-                async () => await HandleLifecycleError(() => lifecycle.InstallAsync(input with { StartOnInstall = input.StartOnInstall ?? true, System = false }, cancellationToken)),
+                async () => await HandleLifecycleError(() => lifecycle.InstallAsync(input with
+                {
+                    StartOnInstall = input.StartOnInstall ?? true,
+                    System = false,
+                    FeedsUrl = null,
+                    FeedId = null,
+                }, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -180,8 +218,22 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        // Points an installed app at one of its catalog entry's feeds (catalog-hosted-app-feeds.md A3);
-        // a null/blank feedId clears the followed feed.
+        app.MapGet("/api/apps/{appId}/feeds", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetFeedsAsync(appId, cancellationToken)),
+                cancellationToken: cancellationToken));
+
+        // Selects a feed from the installed app's generic app-owned feeds document; a blank id clears
+        // the selection without changing the currently resolved manifest URL.
         app.MapPost("/api/apps/{appId}/feed", async (
             string appId,
             HttpRequest request,
@@ -539,7 +591,12 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 // Interactive installs start the app immediately unless the client opts out; an absent
                 // value defaults to true so autostart apps run without a Core restart.
-                await HandleLifecycleError(() => lifecycle.InstallAsync(input with { StartOnInstall = input.StartOnInstall ?? true }, cancellationToken))));
+                await HandleLifecycleError(() => lifecycle.InstallAsync(input with
+                {
+                    StartOnInstall = input.StartOnInstall ?? true,
+                    FeedsUrl = null,
+                    FeedId = null,
+                }, cancellationToken))));
 
         app.MapPost("/control/v1/apps/{appId}/configure", async (
             string appId,

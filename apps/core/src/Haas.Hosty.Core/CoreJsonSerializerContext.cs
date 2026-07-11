@@ -48,6 +48,7 @@ internal static class CoreJson
 // find and kill process trees the in-memory registry lost across a non-graceful Core exit.
 [JsonSerializable(typeof(LocalCommandPidFile))]
 [JsonSerializable(typeof(RuntimeAppManifest))]
+[JsonSerializable(typeof(AppFeedsDocument))]
 [JsonSerializable(typeof(AuditRecord))]
 [JsonSerializable(typeof(AppIdentityClaims))]
 [JsonSerializable(typeof(JwtHeader))]
@@ -59,10 +60,6 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppUpdatePlanDigestSeed))]
 [JsonSerializable(typeof(AppRuntimeSwitchDigestSeed))]
 [JsonSerializable(typeof(NotificationState))]
-// Marketplace catalog wire schema Core fetches and deserializes (index; entries carry feeds inline).
-[JsonSerializable(typeof(CatalogIndex))]
-// WS7 federation: operator-managed catalog sources persisted at core/catalog-sources.json.
-[JsonSerializable(typeof(CatalogSourceState))]
 
 // HTTP request bodies.
 [JsonSerializable(typeof(AuthSessionCreateRequest))]
@@ -76,13 +73,14 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppSourceOverrideRequest))]
 [JsonSerializable(typeof(AppInstallPlanRequest))]
 [JsonSerializable(typeof(AppInstallRequest))]
+[JsonSerializable(typeof(AppFeedInstallPlanRequest))]
+[JsonSerializable(typeof(AppFeedInstallApplyRequest))]
 [JsonSerializable(typeof(AppConfigureRequest))]
 [JsonSerializable(typeof(AppAutostartRequest))]
 [JsonSerializable(typeof(AppFeedRequest))]
 [JsonSerializable(typeof(AppDevelopmentModeRequest))]
 [JsonSerializable(typeof(AppMountsRequest))]
 [JsonSerializable(typeof(GlobalMountUpsertRequest))]
-[JsonSerializable(typeof(CatalogSourceUpsertRequest))]
 [JsonSerializable(typeof(AppUpdatePlanRequest))]
 [JsonSerializable(typeof(AppUpdateApplyRequest))]
 [JsonSerializable(typeof(AppRuntimeSwitchPlanRequest))]
@@ -127,6 +125,9 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppIdentityTokenResult))]
 [JsonSerializable(typeof(AppSessionValidationResult))]
 [JsonSerializable(typeof(AppInstallPlan))]
+[JsonSerializable(typeof(AppFeedInstallPlan))]
+[JsonSerializable(typeof(AppFeedInstallPlanDigestSeed))]
+[JsonSerializable(typeof(AppFeedsResponse))]
 [JsonSerializable(typeof(AppLifecycleResponse))]
 // Reachable via AppLifecycleResponse, but rooted explicitly for parity with the other nested DTOs:
 // the Development-Mode disable rollback recommendation.
@@ -166,9 +167,4 @@ internal static class CoreJson
 [JsonSerializable(typeof(HostUserUpdateResponse))]
 [JsonSerializable(typeof(HostUserDisableResponse))]
 [JsonSerializable(typeof(HostUserAssignmentsResponse))]
-// Marketplace catalog read API responses (WS2).
-[JsonSerializable(typeof(CatalogAppsResponse))]
-[JsonSerializable(typeof(CatalogAppDetailResponse))]
-// WS7 federation: catalog source management API responses.
-[JsonSerializable(typeof(CatalogSourcesResponse))]
 internal sealed partial class CoreJsonSerializerContext : JsonSerializerContext;

@@ -41,15 +41,23 @@ function capture(text, pattern) {
 const platformVersion = capture(read("Directory.Build.props"), /<Version>([^<]+)<\/Version>/);
 
 // demo-app: manifest ↔ package ↔ the two baked copies (Dockerfile ENV + the config default). The
-// per-release feed file is gone (catalog-hosted-app-feeds.md): the catalog entry points its `main`
-// feed at the manifest on the main branch, so the version is informational and ships with the push —
-// there is no separate feed advertisement left to drift.
+// feeds.json points its `main` feed at the manifest on the main branch. The version remains
+// informational and ships with the manifest, so there is no per-release feed advertisement to drift.
+const demoManifest = json("apps/demo-app/manifest.json");
+const demoFeeds = json("apps/demo-app/feeds.json");
 expectEqual("demo-app version", {
-  manifest: json("apps/demo-app/manifest.json").version,
+  manifest: demoManifest.version,
   packageJson: json("apps/demo-app/package.json").version,
   dockerfile: capture(read("apps/demo-app/Dockerfile"), /HOSTY_APP_VERSION=([^\s]+)/),
   demoConfig: capture(read("apps/demo-app/src/lib/demo-config.ts"), /defaultAppVersion\s*=\s*"([^"]+)"/),
 });
+expectEqual("demo-app feed identity", {
+  manifest: demoManifest.id,
+  feeds: demoFeeds.appId,
+});
+if (demoFeeds.schemaVersion !== "app-feeds.0.1") {
+  problems.push(`demo-app feeds schema: expected app-feeds.0.1, got ${demoFeeds.schemaVersion ?? "(missing)"}`);
+}
 
 // shell: manifest ↔ package.
 expectEqual("shell version", {

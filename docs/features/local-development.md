@@ -1,5 +1,8 @@
 # Local Development And Testing
 
+Created: 2026-05-13
+Updated: 2026-07-11
+
 This document describes the current local feedback loops after the Core/Shell/runtime app split.
 
 ## Development Loops
@@ -8,7 +11,7 @@ Hosty local development uses normal component boundaries:
 
 - Hosty Core runs as the local ASP.NET Core process.
 - Hosty Shell runs as a runtime app and browser client for Core.
-- User apps run through Core-managed runtime lifecycle, including local command runtime profiles.
+- Marketplace and user apps run through Core-managed runtime lifecycle, including local command runtime profiles.
 - The CLI bootstraps the installed Core executable by default and then calls Core APIs for app operations.
 
 ```mermaid
@@ -54,7 +57,7 @@ Use `HOSTY_CORE_PUBLIC_ORIGIN` when Core is reached through a public origin that
 
 Use `HOSTY_SHELL_AUTOSTART=false npm run core:dev` when Shell is running as a separate Next.js dev process and Core should keep the installed `hosty.shell` app autostart setting disabled. Use `HOSTY_SHELL_MANIFEST_PATH=<manifest-path-or-url>`, `HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev`, and `HOSTY_SHELL_SOURCE_OVERRIDE_PATH=<repo-root>` when that Core process should register and run Shell with the manifest's local command runtime profile. Use Core-managed Shell when validating Shell runtime lifecycle behavior.
 
-For installed CLI runs, `launch.env` defaults `HOSTY_CORE_PORT` to `7070`, `HOSTY_SHELL_PORT` to `7171`, `HOSTY_SHELL_MANIFEST_PATH` to the repository Shell manifest on GitHub, `HOSTY_SHELL_BOOTSTRAP_RUNTIME` to `docker`, and `HOSTY_CATALOG_SOURCES` to the public Hosty catalog. Override those settings with `hosty config set` when validating custom local ports, a custom Shell manifest, or a local/private catalog.
+For installed CLI runs, `launch.env` defaults `HOSTY_CORE_PORT` to `7070`, `HOSTY_SHELL_PORT` to `7171`, `HOSTY_SHELL_MANIFEST_PATH` to the repository Shell manifest on GitHub, `HOSTY_SHELL_BOOTSTRAP_RUNTIME` to `docker`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` to the repository Marketplace manifest on GitHub. Override those settings with `hosty config set` when validating custom local ports or first-party manifest references. The catalog URL is not a Core launch setting; configure `HOSTY_MARKETPLACE_SOURCE_URL` through the installed Marketplace app's settings.
 
 When validating runtime lifecycle behavior, prefer installing Shell through Core like any other runtime app.
 
@@ -112,6 +115,16 @@ hosty apps switch-runtime com.haas.demo-app --runtime docker --plan-digest <dige
 Use `hosty apps source-resolve <app-id> --branch <name> --fetch` when the app should run from a Core-managed checkout. Use `source-override` when a specific local worktree should be used instead. Local override state is stored in the Hosty installation record and is not written back to the public app manifest.
 
 When an app manifest is installed from a local manifest file or app directory with `--runtime dev`, Core records the containing Git worktree as the local source root and starts `localCommand` services from that root. When the same runtime is selected from an HTTP(S) manifest URL, Core clones the manifest's absolute `source.repository` into `sources/<app-id>` before start.
+
+Marketplace follows the same workflow. Install its local manifest with the `dev` runtime, then open it through Shell's System Apps navigation so app-origin identity and the iframe install handoff are exercised:
+
+```bash
+hosty apps install apps/marketplace/manifest.json --runtime dev
+hosty apps start hosty.marketplace
+hosty apps open hosty.marketplace
+```
+
+For production-runtime validation, build the local image tag declared by the manifest before installing or switching Marketplace to `docker`.
 
 ## Local Command Constraints
 

@@ -1,5 +1,8 @@
 # Core App Shell
 
+Created: 2026-05-19
+Updated: 2026-07-11
+
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
 ## Scope
@@ -96,7 +99,7 @@ Runtime Apps expose actions according to Core state and app capabilities:
 - create, restore, delete, and prune backups;
 - remove an app, with optional backup deletion.
 
-System Apps are inspect-only in Shell. Hosty Shell and future system apps can expose logs when the `logs` capability is present, but Shell hides lifecycle, configuration, update, backup, restore, autostart, and removal controls for all `system` apps. Core remains the source of truth for what operations are allowed.
+System Apps are inspectable and configurable in Shell. Administrators can open their ordinary settings dialog and switch runtime profiles; logs remain available when the `logs` capability is present. Shell hides start, stop, restart, update, backup, restore, autostart, and removal controls for all `system` apps. This lets Marketplace own its catalog URL as a manifest setting without adding Marketplace logic to Core. Core remains the source of truth for what operations are allowed.
 
 ## Embedded Apps
 
@@ -108,6 +111,8 @@ Shell opens app UIs through the app-owned origin returned by Core. Local runtime
 
 The app receives a short-lived code and exchanges it with Core for app-scoped identity. Shell does not proxy app HTML, rewrite assets, or forward Hosty session cookies to the app origin.
 
+An active embedded app may send the versioned `hosty:install-feed` intent with an HTTP(S) `feedsUrl` and optional `feedId`. Shell accepts it only when the message source is the active iframe, the origin exactly matches the resolved app origin, the payload is bounded and well formed, and the URL uses HTTP(S). A valid intent opens Core's generic reviewed feed-install dialog; it never installs directly. This is how the Marketplace system app hands discovery data back to Shell without receiving Core lifecycle credentials.
+
 Embedded workspace iframes are hosted in a Shell-owned `bg-background` surface. Shell keeps the iframe transparent until its document fires `load`, then reveals it and posts the current Shell theme. Theme posting is best-effort because local app restarts can leave the iframe on `about:blank` or a browser error document with a different origin. This masks the browser's default white iframe canvas during dark-theme app navigation and initial app loads without surfacing transient `postMessage` origin errors.
 
 While an embedded workspace route is launching before the iframe exists, Shell shows a plain theme-background workspace surface without a spinner or opening label. Launch errors remain visible on that surface.
@@ -118,6 +123,7 @@ The removed Legacy Host included `/ingress` and gateway exposure UI. That route 
 
 Gateway and external ingress readiness remain target architecture topics for service/API exposure publishing. Future work is tracked in [Gateway And App Wrapping Ideas](../ideas/gateway-and-app-wrapping.md). Until then, Shell documentation and UI should not present `/ingress`, `/api/gateway/*`, or `/api/ingress/*` as current implemented surfaces.
 
-## Related Ideas
+## Links
 
-- [System App Pages](../ideas/system-app-pages.md) - future administrator-only pages for UI-capable system apps using the existing app-origin UI contract.
+- [System App Pages](../ideas/system-app-pages.md) - originating design for administrator-only pages.
+- [Marketplace System App](runtime-app-marketplace.md) - the first storefront using the generic system-app and install-intent paths.

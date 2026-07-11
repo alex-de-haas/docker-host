@@ -68,8 +68,8 @@ export type CoreApp = {
   // relative value with coreOrigin to load. Optional for backwards compatibility with older Core builds.
   iconUrl?: string | null;
   descriptionUrl?: string | null;
-  // The catalog feed this install follows (catalog-hosted-app-feeds.md A3), for the feed selector and
-  // choose-a-feed guidance. Null/absent = no feed set. Optional for older Core builds.
+  // The app-owned feed this install follows, for the feed selector and choose-a-feed guidance.
+  // Null/absent = no feed set. Optional for older Core builds.
   followedFeedId?: string | null;
   mounts?: CoreMountSlot[];
   // Compiled-artifact pull/lock policy ("pinned"/"rolling") and per-service run-locks (the locked
@@ -418,6 +418,30 @@ export type CoreInstallPlan = {
   settings: CoreInstallSetting[];
 };
 
+// Reviewed feed install envelope from POST /api/apps/install/feed/plan. Core owns feed resolution and
+// binds apply to planDigest; Shell renders the nested ordinary install plan and returns the envelope's
+// source selection + digest on apply.
+export type CoreFeedInstallPlan = {
+  install: CoreInstallPlan;
+  feedsUrl: string;
+  feedId: string;
+  manifestUrl: string;
+  feedDocumentDigest: string;
+  planDigest: string;
+};
+
+export type CoreAppFeed = {
+  id: string;
+  manifestRef: string;
+  default: boolean;
+};
+
+export type CoreAppFeedsResponse = {
+  feedsUrl?: string | null;
+  followedFeedId?: string | null;
+  feeds: CoreAppFeed[];
+};
+
 export type CoreError = {
   code?: string;
   message?: string;
@@ -434,7 +458,6 @@ export type ShellView =
   | "available-apps"
   | "dashboard"
   | "installed-apps"
-  | "marketplace"
   | "users"
   | "obs-metrics"
   | "obs-logs"
@@ -542,6 +565,7 @@ export type InstallPanelState = {
   loading: boolean;
   error: string | null;
   plan: CoreInstallPlan | null;
+  feedPlan: CoreFeedInstallPlan | null;
 };
 
 export type ActivePanel = {
@@ -622,88 +646,4 @@ export type NotificationsResponse = {
 export type NotificationMarkReadResponse = {
   updated: number;
   unreadCount: number;
-};
-
-// ---- Marketplace catalog (GET /api/catalog/*) ----------------------------------------------------
-
-export type CatalogPublisher = {
-  name?: string | null;
-  url?: string | null;
-  email?: string | null;
-};
-
-export type CatalogAppSummary = {
-  id: string;
-  name: string;
-  summary?: string | null;
-  category?: string | null;
-  tags: string[];
-  icon?: string | null;
-  publisher?: CatalogPublisher | null;
-  sourceName: string;
-  installed: boolean;
-  installedVersion?: string | null;
-};
-
-// A feed: an author-named pointer at the app's manifest at a moving ref (catalog-hosted-app-feeds.md).
-// `default` is normalized by Core (a sole feed reports true), so A4 quick-install just picks the
-// default-flagged feed and defers to Details when none is.
-export type CatalogAppFeed = {
-  id: string;
-  // A manifest URL passed straight to the existing install/update flow.
-  manifestRef: string;
-  default: boolean;
-};
-
-export type CatalogAppDetail = {
-  id: string;
-  name: string;
-  summary?: string | null;
-  category?: string | null;
-  tags: string[];
-  icon?: string | null;
-  screenshots: string[];
-  // Absolute URL to a vendored markdown long-description (manifest-level app assets), or null. Rendered
-  // on the detail dialog; relative images inside it resolve against this URL's folder.
-  descriptionUrl?: string | null;
-  publisher?: CatalogPublisher | null;
-  sourceName: string;
-  signerIdentity?: string | null;
-  // Optional to reflect the wire: an older Core's detail response carries no feeds field, and the raw
-  // JSON is cast to this type with no normalization — callers must guard (see selectInstallFeed).
-  feeds?: CatalogAppFeed[];
-  installed: boolean;
-  installedVersion?: string | null;
-  // The installed app's recorded feed; null means "no feed set" (pre-feeds install or cleared) and the
-  // UI surfaces choose-a-feed guidance instead of an update state.
-  followedFeedId?: string | null;
-  // Digest-aware: the followed feed head's manifest content differs from the installed copy.
-  updateAvailable: boolean;
-};
-
-export type CatalogAppsResponse = { apps: CatalogAppSummary[] };
-
-// One operator-configured catalog source (WS7 federation). `name` is derived by Core from the URL host.
-export type CatalogSource = {
-  url: string;
-  name: string;
-};
-
-// `managed` is false while the list is still the untouched HOSTY_CATALOG_SOURCES default and true once an
-// operator has added/removed a source (the list is then persisted; env changes no longer apply).
-export type CatalogSourcesResponse = {
-  sources: CatalogSource[];
-  managed: boolean;
-};
-
-export type CatalogListState = {
-  loading: boolean;
-  error: string | null;
-  apps: CatalogAppSummary[];
-};
-
-export type CatalogDetailState = {
-  loading: boolean;
-  error: string | null;
-  app: CatalogAppDetail | null;
 };

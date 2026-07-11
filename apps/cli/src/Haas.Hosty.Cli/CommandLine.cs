@@ -48,7 +48,6 @@ public static class CommandLine
                 "core" => await new CoreCommand(commandContext).ExecuteAsync(args[1..]),
                 "config" => await new ConfigCommand(commandContext).ExecuteAsync(args[1..]),
                 "apps" => await new AppsCommand(commandContext).ExecuteAsync(args[1..]),
-                "catalog" => await new CatalogCommand(commandContext).ExecuteAsync(args[1..]),
                 "storage" => await new StorageCommand(commandContext).ExecuteAsync(args[1..]),
                 "users" => await new UsersCommand(commandContext).ExecuteAsync(args[1..]),
                 "auth" => await new AuthCommand(commandContext).ExecuteAsync(args[1..]),
@@ -163,7 +162,6 @@ public static class CommandLine
         WriteCommandGroup(console, "Apps & users",
         [
             ("apps", "Install, update, back up, and inspect apps"),
-            ("catalog", "Browse the marketplace and manage catalog sources"),
             ("storage", "Manage shared host-path mounts"),
             ("users", "List app users"),
             ("auth", "Create setup and recovery tokens"),

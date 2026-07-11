@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "app-feeds.0.1",
+  "appId": "com.haas.demo-app",
+  "feeds": [
+    {
+      "id": "main",
+      "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/demo-app/manifest.json",
+      "default": true
+    }
+  ]
+}

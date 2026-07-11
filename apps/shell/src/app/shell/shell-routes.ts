@@ -11,7 +11,6 @@ const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   dashboard: "/dashboard",
   "available-apps": "/apps",
   "installed-apps": "/installed-apps",
-  marketplace: "/marketplace",
   users: "/users",
   "obs-metrics": "/observability/metrics",
   "obs-logs": "/observability/logs",
@@ -21,7 +20,6 @@ const SHELL_VIEW_HREFS: Record<ShellView, string> = {
 const ADMIN_SHELL_VIEWS = new Set<ShellView>([
   "dashboard",
   "installed-apps",
-  "marketplace",
   "users",
   "obs-metrics",
   "obs-logs",
@@ -100,10 +98,6 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
 
   if (path === "/installed-apps") {
     return { view: "installed-apps", workspace: null };
-  }
-
-  if (path === "/marketplace") {
-    return { view: "marketplace", workspace: null };
   }
 
   if (path === "/users") {

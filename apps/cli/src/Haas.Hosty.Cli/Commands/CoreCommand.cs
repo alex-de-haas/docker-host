@@ -217,7 +217,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         return startInfo;
     }
 
-    private IReadOnlyDictionary<string, string> BuildCoreEnvironment(string url, LaunchSettings settings)
+    internal IReadOnlyDictionary<string, string> BuildCoreEnvironment(string url, LaunchSettings settings)
     {
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -241,9 +241,9 @@ internal sealed partial class CoreCommand(CommandContext context)
         // no repo layout to discover apps/telemetry/manifest.json on disk, so without this the collector
         // bootstrap is skipped. Injected unconditionally; Core only consults it when observability is on.
         AddOptional(environment, LaunchSettingDefinitions.HostyCollectorManifestPath, settings.ResolveHostyCollectorManifestPath(context.Environment));
-        // Catalog sources are a managed setting with an empty value meaning "disable all sources", so
-        // inject even an empty string to avoid inheriting an ambient HOSTY_CATALOG_SOURCES export.
-        environment[LaunchSettingDefinitions.HostyCatalogSources] = settings.ResolveHostyCatalogSources(context.Environment);
+        // Empty explicitly disables Marketplace bootstrap. Always write the managed value so an ambient
+        // HOSTY_MARKETPLACE_MANIFEST_PATH cannot silently override `hosty config set ...=`.
+        environment[LaunchSettingDefinitions.HostyMarketplaceManifestPath] = settings.ResolveHostyMarketplaceManifestPath(context.Environment);
         return environment;
     }
 

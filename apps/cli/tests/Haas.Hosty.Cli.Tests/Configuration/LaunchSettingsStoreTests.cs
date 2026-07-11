@@ -41,9 +41,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         // A launch.env that predates the collector-manifest setting still resolves its default, so an
         // existing install self-heals (Core gets the collector manifest URL; bootstrap proceeds).
         Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json", settings.HostyCollectorManifestPath);
-        // Existing installs also self-heal with the default public catalog source, so Marketplace is
-        // populated after the next Core restart without hand-editing launch.env.
-        Assert.Equal(LaunchSettingDefinitions.DefaultCatalogSources, settings.HostyCatalogSources);
+        Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json", settings.HostyMarketplaceManifestPath);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }
@@ -99,9 +97,9 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     [InlineData("HOSTY_SHELL_MANIFEST_PATH", "https://raw.githubusercontent.com/example/shell/main/manifest.json")]
     [InlineData("HOSTY_SHELL_MANIFEST_PATH", "~/shell/manifest.json")]
     [InlineData("HOSTY_SHELL_BOOTSTRAP_RUNTIME", "dev")]
-    [InlineData("HOSTY_CATALOG_SOURCES", "https://example.com/catalog.json")]
-    [InlineData("HOSTY_CATALOG_SOURCES", "~/catalog/catalog.json")]
-    [InlineData("HOSTY_CATALOG_SOURCES", "")]
+    [InlineData("HOSTY_MARKETPLACE_MANIFEST_PATH", "https://raw.githubusercontent.com/example/marketplace/main/manifest.json")]
+    [InlineData("HOSTY_MARKETPLACE_MANIFEST_PATH", "~/marketplace/manifest.json")]
+    [InlineData("HOSTY_MARKETPLACE_MANIFEST_PATH", "")]
     public void Set_EditableLaunchSetting_AcceptsValidValues(string key, string value)
     {
         var environment = HostyEnvironment.Current();
@@ -111,35 +109,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         store.Set(key, value);
 
         Assert.Equal(value, store.Load()[key]);
-    }
-
-    [Fact]
-    public void Set_CatalogSources_NormalizesCommaSeparatedList()
-    {
-        var environment = HostyEnvironment.Current();
-        var store = new LaunchSettingsStore(environment);
-        store.EnsureInstalled();
-
-        store.Set(
-            LaunchSettingDefinitions.HostyCatalogSources,
-            " https://example.com/catalog.json, ~/catalog.json, https://example.com/catalog.json ");
-
-        Assert.Equal("https://example.com/catalog.json,~/catalog.json", store.Load().HostyCatalogSources);
-    }
-
-    [Theory]
-    [InlineData("ftp://example.com/catalog.json", "must use http or https")]
-    [InlineData("https://user@example.com/catalog.json", "must not include credentials")]
-    public void Set_CatalogSources_RejectsInvalidSources(string value, string expectedMessage)
-    {
-        var environment = HostyEnvironment.Current();
-        var store = new LaunchSettingsStore(environment);
-        store.EnsureInstalled();
-
-        var exception = Assert.Throws<ConfigurationException>(() =>
-            store.Set(LaunchSettingDefinitions.HostyCatalogSources, value));
-
-        Assert.Contains(expectedMessage, exception.Message);
     }
 
     [Fact]
@@ -211,18 +180,42 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void ResolveHostyCatalogSources_LocalPaths_ExpandForCoreEnvironment()
+    public void ResolveHostyMarketplaceManifestPath_LocalPath_ExpandsForCoreEnvironment()
     {
         var environment = HostyEnvironment.Current();
         var settings = new LaunchSettingsStore(environment)
             .Load()
-            .WithValue(
-                LaunchSettingDefinitions.HostyCatalogSources,
-                "https://example.com/catalog.json,~/catalog/catalog.json");
+            .WithValue(LaunchSettingDefinitions.HostyMarketplaceManifestPath, "~/custom-marketplace/manifest.json");
 
-        var resolved = settings.ResolveHostyCatalogSources(environment);
+        var resolved = settings.ResolveHostyMarketplaceManifestPath(environment);
 
-        Assert.Equal($"https://example.com/catalog.json,{Path.Combine(environment.HomeDirectory, "catalog", "catalog.json")}", resolved);
+        Assert.Equal(Path.Combine(environment.HomeDirectory, "custom-marketplace", "manifest.json"), resolved);
+    }
+
+    [Fact]
+    public void ResolveHostyMarketplaceManifestPath_EmptyValue_RemainsEmptyForCoreEnvironment()
+    {
+        var environment = HostyEnvironment.Current();
+        var settings = new LaunchSettingsStore(environment)
+            .Load()
+            .WithValue(LaunchSettingDefinitions.HostyMarketplaceManifestPath, "");
+
+        Assert.Equal(string.Empty, settings.ResolveHostyMarketplaceManifestPath(environment));
+    }
+
+    [Theory]
+    [InlineData("ftp://example.com/marketplace/manifest.json", "must use http or https")]
+    [InlineData("https://user@example.com/marketplace/manifest.json", "must not include credentials")]
+    public void Set_MarketplaceManifestPath_RejectsInvalidReferences(string value, string expectedMessage)
+    {
+        var environment = HostyEnvironment.Current();
+        var store = new LaunchSettingsStore(environment);
+        store.EnsureInstalled();
+
+        var exception = Assert.Throws<ConfigurationException>(() =>
+            store.Set(LaunchSettingDefinitions.HostyMarketplaceManifestPath, value));
+
+        Assert.Contains(expectedMessage, exception.Message);
     }
 
     [Fact]

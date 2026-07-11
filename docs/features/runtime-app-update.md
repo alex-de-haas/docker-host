@@ -1,5 +1,8 @@
 # Runtime App Update
 
+Created: 2026-06-04
+Updated: 2026-07-11
+
 ## Description
 
 Runtime app updates are reviewed changes from the currently installed `app.0.1` manifest to a new manifest or source snapshot, including a manifest resolved from the app's followed feed. Core owns the update plan, digest, backup, apply, and failure state.
@@ -7,7 +10,7 @@ Runtime app updates are reviewed changes from the currently installed `app.0.1` 
 ## Update Flow
 
 1. Core loads the installed app record and current manifest.
-2. Core resolves the target manifest or source snapshot.
+2. Core resolves the target manifest from the installed app's stored feed, explicit manifest, or source snapshot.
 3. Core creates an update plan with changed version, runtime, services, images, commands, ports, environment keys, settings, endpoints, storage, dependencies, and capabilities.
 4. The caller applies the reviewed plan by passing the plan digest.
 5. Core creates a `pre-update` backup when the app has a primary data directory.
@@ -15,9 +18,11 @@ Runtime app updates are reviewed changes from the currently installed `app.0.1` 
 
 ## Digest Semantics
 
-`manifestDigest` is the SHA-256 of the exact manifest JSON text loaded from a local manifest file, local app directory, `file://` URL, or HTTP(S) URL. For a locally installed `dev` runtime app, Core hashes the manifest JSON, not the app source folder or local command working directory. If an update request does not provide a manifest reference, Core resolves the source in this order: the stored manifest URL for remote installs; otherwise the original local manifest path or directory captured at install (so edits to the source folder are picked up on recheck); and finally the installed manifest copy under the app's Core state directory when that original source is no longer present.
+`manifestDigest` is the SHA-256 of the exact manifest JSON text loaded from a local manifest file, local app directory, `file://` URL, or HTTP(S) URL. For a locally installed `dev` runtime app, Core hashes the manifest JSON, not the app source folder or local command working directory.
 
-`planDigest` is the SHA-256 of the reviewed update plan seed: app id, current and target versions, current and target runtimes, current and target manifest digests, whether a pre-update backup will be created, and the reported changes. Update apply recomputes the current plan and rejects stale input when the supplied plan digest no longer matches.
+If an update request does not provide a manifest reference and the app has both `FeedsUrl` and `FollowedFeedId`, Core re-fetches `feeds.json`, validates `app-feeds.0.1`, resolves the followed feed, and loads its current `manifestRef`. Otherwise Core resolves the source in this order: the stored manifest URL for remote direct installs; the original local manifest path or directory captured at install (so edits to the source folder are picked up on recheck); and finally the installed manifest copy under the app's Core state directory when that original source is no longer present.
+
+`planDigest` is the SHA-256 of the reviewed update plan seed: app id, current and target versions, current and target runtimes, current and target manifest digests, whether a pre-update backup will be created, and the reported changes. Update apply re-resolves any followed feed, recomputes the current plan, and rejects stale input when the supplied plan digest no longer matches.
 
 ## Changes
 

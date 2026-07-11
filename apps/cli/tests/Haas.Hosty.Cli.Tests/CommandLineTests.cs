@@ -76,6 +76,14 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public async Task RunAsync_CatalogCommand_IsNotRouted()
+    {
+        var exitCode = await CommandLine.RunAsync(["catalog", "list"]);
+
+        Assert.Equal(2, exitCode);
+    }
+
+    [Fact]
     public async Task RunAsync_VersionFlag_PrintsResolvedVersion()
     {
         var output = new StringWriter();

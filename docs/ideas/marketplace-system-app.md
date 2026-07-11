@@ -2,7 +2,7 @@
 
 Status: Promoted
 Created: 2026-07-10
-Updated: 2026-07-10
+Updated: 2026-07-11
 
 ## Motivation
 
@@ -20,7 +20,7 @@ Catalog discovery is a good system-app boundary: it may fail, restart, and updat
 
 These decisions make Marketplace a read-only catalog service plus a system-app UI, not a privileged Core client.
 
-## Current Architecture Findings
+## Architecture Before Promotion
 
 - `CatalogService`, `CatalogSourceService`, `CatalogSourceStore`, catalog wire models, and `/api/catalog/*` plus `/control/v1/catalog/*` are compiled into Core.
 - Catalog sources are host state at `core/catalog-sources.json`, initially seeded from `HOSTY_CATALOG_SOURCES`.
@@ -36,8 +36,8 @@ These decisions make Marketplace a read-only catalog service plus a system-app U
 
 | Concern | `hosty.marketplace` | Runtime app repository | Core |
 | --- | --- | --- | --- |
-| Catalog source configuration | Owns in app data | None | Bootstraps/migrates only |
-| Catalog fetch/cache/federation/diagnostics | Owns | None | None |
+| Catalog source configuration | Owns as one manifest setting | None | Persists/injects the ordinary app setting only |
+| Catalog fetch/schema/diagnostics | Owns | None | None |
 | Catalog app metadata | Serves read-only | Supplies referenced app/feed artifacts | Treats as untrusted input |
 | Runtime app feeds (channels) | Returns only `feedsUrl` | Owns `feeds.json` | Fetches, validates, resolves, and stores followed-feed state |
 | Installed/version/update state | Does not return | None | Owns; Shell/CLI may join separately |
@@ -49,13 +49,7 @@ The governing rule is: Marketplace describes where an app-owned install source i
 
 ## Read-Only Catalog Contract
 
-The versioned Marketplace API should contain only catalog-owned information:
-
-```text
-GET /v1/catalogs
-GET /v1/catalogs/{catalogId}/apps
-GET /v1/catalogs/{catalogId}/apps/{appId}
-```
+The versioned Marketplace API should contain only catalog-owned information and remain on the Marketplace app origin.
 
 An app detail contains:
 
@@ -93,7 +87,7 @@ The handoff is data/navigation, not a privileged Marketplace call. Shell may use
 
 The Core plan request should accept `feedsUrl` plus an optional requested feed id. Core validates `app-feeds.0.1` and app id, selects the requested/default/sole feed, resolves the manifest, and displays the runtime, settings, permissions, and artifact changes. Install apply must be bound to the reviewed plan digest; that is a generic lifecycle correctness requirement, not Marketplace authority.
 
-For CLI, `hosty catalog install` remains an orchestration command: read Marketplace data through a read-only proxy, pass the returned `feedsUrl` to Core, review/confirm the Core plan, and apply through Core's control plane.
+The direct cutover removes the catalog CLI. A future CLI discovery client would need an independently designed Marketplace access boundary; Core does not proxy the app.
 
 ## Runtime App Feeds As Channels
 
@@ -107,15 +101,15 @@ An installed app stores `FeedsUrl`, `FollowedFeedId`, and the last resolved `Man
 
 `hosty.marketplace` should expose its UI through the same `ui.entrypoint` and `ui.navigation` contract used by runtime apps. Shell displays UI-capable system apps in a separate administrator-only System group and renders their pages through the existing app-origin iframe/SSO machinery.
 
-No marketplace-specific Shell route or native page contract is required. The current `/marketplace` route can be a temporary alias while the generic system-app page model is introduced. Details are tracked in [System App Pages](system-app-pages.md).
+No marketplace-specific Shell route or native page contract is required. The hardcoded `/marketplace` route is removed when the app UI ships. Details are tracked in [System App Pages](system-app-pages.md).
 
 ## Runtime Shape And Configuration
 
-The Marketplace app should use ordinary Core-managed lifecycle, a pinned production artifact, a development runtime, a health endpoint, and app data. Catalog sources, cache metadata, source health, and migration markers live under its app data directory.
+The Marketplace app should use ordinary Core-managed lifecycle, a pinned production artifact, a development runtime, a health endpoint, and app data. Its single HTTP(S) catalog source is a normal manifest setting with an official default.
 
 The app does not need Core registry-read or lifecycle scopes. Its only Core interaction is ordinary app SSO/revalidation for its admin UI. Shell and CLI obtain Core-owned app state from Core directly when they need to combine catalog information with installed state.
 
-The Marketplace read API can be reached by CLI through a narrow Core compatibility proxy that accepts only authenticated `GET` requests and forwards them to the declared Marketplace endpoint. Source configuration should use the app's own authenticated admin UI first; a future CLI configuration proxy is separate from the read-only catalog API.
+The Marketplace API is consumed by its own app-origin UI. Core has no Marketplace client, compatibility proxy, or catalog DTO. Source configuration uses the ordinary system-app settings surface.
 
 ## Possible Approaches
 
@@ -224,14 +218,14 @@ This is not recommended.
 ## Open Questions
 
 - Question: How does a Marketplace iframe hand an install-source reference back to Shell?
-  - Current answer: this is a user-navigation handoff, not a privileged API call.
-  - Recommendation: prefer a Shell-owned install URL opened by user activation; use a narrowly validated message only if same-tab UX requires it.
+  - Current answer: a versioned `hosty:install-feed` message sends `feedsUrl` and optional `feedId` after explicit user activation.
+  - Recommendation: Shell must validate exact iframe source/origin, schema, bounds, and HTTP(S) URL before opening Core's review.
 - Question: How are catalog sources configured from CLI?
-  - Current answer: source mutation belongs to Marketplace configuration, not the read-only catalog API.
-  - Recommendation: ship the system-app settings page first; add a separate authenticated configuration proxy only if CLI demand remains.
+  - Current answer: the catalog CLI is removed; one source is the Marketplace app's `HOSTY_MARKETPLACE_SOURCE_URL` setting.
+  - Recommendation: design a separate app configuration/discovery client only if future CLI demand justifies it; do not add a Core proxy.
 - Question: How are absolute local catalog paths preserved?
-  - Current answer: a Docker app cannot see them, and automatic arbitrary mounts are unsafe.
-  - Recommendation: use an explicit Core-owned import into Marketplace app data; confirm whether live-following local files is a real requirement before adding a broker.
+  - Current answer: they are not preserved in this direct cutover; the source setting accepts HTTP(S) only.
+  - Recommendation: treat explicit imports or mounts as a later Marketplace feature if a concrete need appears.
 - Question: Who verifies catalog signatures?
   - Current answer: Marketplace may verify for display, but only Core can make an install-blocking trust decision.
   - Recommendation: keep catalog verification informational initially; define a portable Core-verifiable trust proof before claiming enforced publisher trust.
@@ -241,13 +235,13 @@ This is not recommended.
 
 ## Current Recommendation
 
-Build `hosty.marketplace` as a read-only catalog provider with ordinary admin-only system-app pages. Extract the backend first, keep temporary read proxies for Shell/CLI, then move the UI. The app receives no lifecycle or registry grants.
+Build `hosty.marketplace` as a catalog-only app with ordinary administrator system-app pages. Move the backend and UI together, remove Core/Shell/CLI catalog implementations without a compatibility period, and give the app no lifecycle or registry grants.
 
 Catalog entries point to runtime-app-owned `feeds.json`. Shell/CLI pass `feedsUrl` to Core, and Core alone resolves feeds, validates manifests, presents review, applies lifecycle changes, and stores followed-feed state independently of Marketplace.
 
 ## Links
 
-- [Phase 1 implementation plan](../planning/marketplace-system-app.md) - approved extraction scope and remaining deliverables.
+- [Marketplace vertical-slice plan](../planning/marketplace-system-app.md) - approved replacement scope and remaining deliverables.
 - [Core Extension Model](core-extension-model.md) - the general system-app extension mechanism.
 - [System App Pages](system-app-pages.md) - generic Shell pages for UI-capable system apps.
 - [Runtime App Repository Feeds](runtime-app-repository-feeds.md) - current feed behavior moved unchanged to app-owned `feeds.json` with Core-owned resolution.
@@ -258,4 +252,4 @@ Catalog entries point to runtime-app-owned `feeds.json`. Shell/CLI pass `feedsUr
 
 ## Notes
 
-This document is exploratory. It records confirmed ownership decisions but does not authorize implementation.
+The user authorized the promoted vertical slice on 2026-07-11. Current behavior belongs in the linked feature documents; this file preserves the originating design and rejected alternatives.
