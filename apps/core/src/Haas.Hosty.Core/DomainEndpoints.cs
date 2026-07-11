@@ -99,10 +99,11 @@ internal static class DomainEndpoints
                 var status = await lifecycle.GetUpdateStatusAsync(targetAppId, cancellationToken);
                 return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, status.UpdateAvailable));
             }
-            catch (AppLifecycleException)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Availability can't be determined (e.g. no followed feed / source) — report no update
-                // rather than failing; the reviewed update flow stays the source of truth.
+                // Availability can't be determined (no followed feed/source, unreadable manifest, etc.)
+                // — report no update rather than failing; the reviewed update flow stays the source of
+                // truth. Client cancellation still propagates.
                 return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, UpdateAvailable: false));
             }
         });

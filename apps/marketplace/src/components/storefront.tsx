@@ -480,7 +480,7 @@ function AppDetailDialog({ app, installed, onClose, onInstall }: {
           </section>
         </DialogBody>
 
-        <DialogFooter className="flex-row items-center justify-between gap-2 sm:justify-between">
+        <DialogFooter className="flex-row items-center justify-between sm:justify-between">
           <Button type="button" variant="outline" size="sm" onClick={onClose}>Close</Button>
           {installed && updateState !== "available" ? (
             // Already installed and up to date (or still checking) — no install action to offer.
