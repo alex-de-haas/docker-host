@@ -18,6 +18,14 @@ describe("isPrivateAddress", () => {
     "fe80::1", // link-local
     "::ffff:127.0.0.1", // IPv4-mapped loopback
     "::ffff:10.0.0.1",
+    "224.0.0.1", // IPv4 multicast
+    "239.255.255.250", // IPv4 multicast (SSDP)
+    "240.0.0.1", // IPv4 reserved/experimental
+    "255.255.255.255", // broadcast
+    "ff02::1", // IPv6 multicast
+    "ff00::", // IPv6 multicast base
+    "::abcd", // reserved ::/8, not a public host
+    "64:ff9b::1.2.3.4", // NAT64 (::/8 reserved high byte)
   ])("treats %s as private", address => {
     expect(isPrivateAddress(address)).toBe(true);
   });

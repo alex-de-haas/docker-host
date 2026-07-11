@@ -29,6 +29,39 @@ public sealed class AppFeedServiceTests
         Assert.NotEmpty(snapshot.DocumentDigest);
     }
 
+    [Theory]
+    [InlineData("http://127.0.0.1/feeds.json")]
+    [InlineData("http://169.254.169.254/latest/meta-data/")]
+    [InlineData("http://10.0.0.5/feeds.json")]
+    [InlineData("http://[::1]/feeds.json")]
+    [InlineData("http://[fd00::1]/feeds.json")]
+    public async Task LoadAsync_RejectsLiteralPrivateFeedHost(string feedsUrl)
+    {
+        var service = CreateService("{}");
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => service.LoadAsync(feedsUrl));
+
+        Assert.Equal("app_feeds_url_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsFeedWhoseManifestRefTargetsAPrivateHost()
+    {
+        var service = CreateService("""
+            {
+              "schemaVersion": "app-feeds.0.1",
+              "appId": "com.example.notes",
+              "feeds": [
+                { "id": "main", "manifestRef": "http://127.0.0.1/manifest.json" }
+              ]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => service.LoadAsync(FeedsUrl));
+
+        Assert.Equal("app_feed_manifest_ref_invalid", error.Code);
+    }
+
     [Fact]
     public async Task ResolveAsync_MultipleFeedsWithoutDefault_RequiresExplicitSelection()
     {

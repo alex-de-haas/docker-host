@@ -14,7 +14,7 @@ describe("Marketplace app-code exchange", () => {
     }));
 
     expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: "app_auth_code_required" } });
+    await expect(response.json()).resolves.toMatchObject({ code: "app_auth_code_required" });
   });
 
   it("exchanges through Core and establishes an app-origin HttpOnly cookie", async () => {

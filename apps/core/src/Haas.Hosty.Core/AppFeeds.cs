@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -57,6 +58,7 @@ internal sealed class AppFeedService(HttpClient client)
     {
         var uri = ParseRemoteUrl(feedsUrl, "app_feeds_url_invalid", "Feed URL");
         string json;
+        string digest;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
@@ -75,7 +77,9 @@ internal sealed class AppFeedService(HttpClient client)
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            json = await ReadCappedAsync(stream, cancellationToken) ?? throw TooLarge();
+            var payload = await ReadCappedAndHashAsync(stream, cancellationToken) ?? throw TooLarge();
+            json = payload.Json;
+            digest = payload.Digest;
         }
         catch (AppLifecycleException)
         {
@@ -162,7 +166,6 @@ internal sealed class AppFeedService(HttpClient client)
             normalized[0] = normalized[0] with { Default = true };
         }
 
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
         return new AppFeedsSnapshot(uri.AbsoluteUri, appId, normalized, digest);
     }
 
@@ -213,7 +216,55 @@ internal sealed class AppFeedService(HttpClient client)
             throw new AppLifecycleException(code, $"{label} must be an absolute HTTP(S) URL without credentials.");
         }
 
+        // SSRF guard: the feed document and its manifestRef are untrusted (catalog-sourced). Reject a
+        // literal loopback/private/link-local/multicast IP host so a feed cannot point Core at an
+        // internal address. Hostname-based resolution is deliberately not done here: the same manifest
+        // fetch primitive already serves operator-chosen local URLs for direct installs, and the
+        // in-memory feed test suite uses stub hosts — a full DNS-resolving policy is a broader,
+        // separate decision. Combined with AllowAutoRedirect=false on the feed HttpClient, this closes
+        // the direct literal-IP vector.
+        if (IPAddress.TryParse(uri.Host, out var address) && IsPrivateAddress(address))
+        {
+            throw new AppLifecycleException(code, $"{label} must not resolve to a private, loopback, or link-local address.");
+        }
+
         return uri;
+    }
+
+    // Loopback, private, link-local (incl. 169.254.169.254 metadata), CGNAT, unspecified, multicast,
+    // and reserved ranges — plus the IPv4-mapped IPv6 forms of those. Mirrors the Marketplace app's
+    // literal checks so both fetch layers reject the same hosts.
+    private static bool IsPrivateAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var b = address.GetAddressBytes();
+            return b[0] is 0 or 10 or 127 ||
+                (b[0] == 169 && b[1] == 254) ||
+                (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+                (b[0] == 192 && b[1] == 168) ||
+                (b[0] == 100 && b[1] >= 64 && b[1] <= 127) ||
+                b[0] >= 224; // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved
+        }
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            if (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || address.IsIPv6Multicast ||
+                IPAddress.IsLoopback(address) || address.Equals(IPAddress.IPv6Any))
+            {
+                return true;
+            }
+
+            // fc00::/7 unique local.
+            return (address.GetAddressBytes()[0] & 0xfe) == 0xfc;
+        }
+
+        return true;
     }
 
     private static AppLifecycleException TooLarge()
@@ -222,7 +273,10 @@ internal sealed class AppFeedService(HttpClient client)
     private static AppLifecycleException FeedIdTooLong()
         => new("app_feed_id_too_long", $"Feed id cannot exceed {AppFeedsSchema.MaxFeedIdLength} characters.");
 
-    private static async Task<string?> ReadCappedAsync(Stream stream, CancellationToken cancellationToken)
+    // Reads the response under the byte cap and hashes the raw bytes in one pass — the digest is over
+    // exactly what was received, and the JSON string is decoded from the same buffer without a second
+    // UTF-8 round-trip. Returns null when the cap is exceeded.
+    private static async Task<(string Json, string Digest)?> ReadCappedAndHashAsync(Stream stream, CancellationToken cancellationToken)
     {
         using var buffer = new MemoryStream();
         var chunk = new byte[8192];
@@ -237,6 +291,8 @@ internal sealed class AppFeedService(HttpClient client)
             buffer.Write(chunk, 0, read);
         }
 
-        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+        var bytes = buffer.GetBuffer().AsSpan(0, (int)buffer.Length);
+        var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        return (Encoding.UTF8.GetString(bytes), digest);
     }
 }

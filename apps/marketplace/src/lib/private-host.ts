@@ -57,7 +57,8 @@ function isPrivateIpv4(address: string): boolean {
     (a === 169 && b === 254) || // 169.254.0.0/16 link-local (includes cloud metadata)
     (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
     (a === 192 && b === 168) || // 192.168.0.0/16 private
-    (a === 100 && b >= 64 && b <= 127) // 100.64.0.0/10 CGNAT
+    (a === 100 && b >= 64 && b <= 127) || // 100.64.0.0/10 CGNAT
+    a >= 224 // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved/experimental (never a public host)
   );
 }
 
@@ -73,14 +74,19 @@ function isPrivateIpv6(address: string): boolean {
     return isPrivateIpv4(mapped[1]);
   }
 
+  // First 16-bit group value. A leading "::" makes the first segment empty (value 0); a short group
+  // like "64" is 0x0064, so parse the group directly rather than right-padding it (which would read
+  // "64" as 0x6400 and miss the reserved ::/8 range).
   const head = normalized.split(":")[0] ?? "";
-  const prefix = Number.parseInt(head.padEnd(4, "0").slice(0, 4), 16);
+  const prefix = head === "" ? 0 : Number.parseInt(head, 16);
   if (Number.isNaN(prefix)) {
     return true;
   }
 
   return (
+    (prefix & 0xff00) === 0x0000 || // ::/8 reserved (unspecified, IPv4-mapped/compat, NAT64) — no public host
     (prefix & 0xfe00) === 0xfc00 || // fc00::/7 unique local
-    (prefix & 0xffc0) === 0xfe80 // fe80::/10 link-local
+    (prefix & 0xffc0) === 0xfe80 || // fe80::/10 link-local
+    (prefix & 0xff00) === 0xff00 // ff00::/8 multicast
   );
 }

@@ -85,7 +85,9 @@ function isSecureRequest(request: Request): boolean {
 }
 
 function authError(code: string, message: string, status: number) {
-  return NextResponse.json({ error: { code, message } }, {
+  // Flat { code, message } to match the shared ErrorResponse shape used by the other Marketplace
+  // routes (route-auth), so clients handle every app error the same way.
+  return NextResponse.json({ code, message }, {
     status,
     headers: { "Cache-Control": "no-store" },
   });
