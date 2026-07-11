@@ -4,7 +4,7 @@ internal static class LaunchSettingDefinitions
 {
     private const string DefaultShellManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
     private const string DefaultCollectorManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json";
-    public const string DefaultCatalogSources = "https://alex-de-haas.github.io/hosty-catalog/catalog.json";
+    private const string DefaultMarketplaceManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json";
     public const string HostyDataRoot = "HOSTY_DATA_ROOT";
     public const string HostyCorePort = "HOSTY_CORE_PORT";
     public const string HostyShellPort = "HOSTY_SHELL_PORT";
@@ -15,7 +15,7 @@ internal static class LaunchSettingDefinitions
     public const string HostyObservabilityEnabled = "HOSTY_OBSERVABILITY_ENABLED";
     public const string HostyCollectorAutostart = "HOSTY_COLLECTOR_AUTOSTART";
     public const string HostyCollectorManifestPath = "HOSTY_COLLECTOR_MANIFEST_PATH";
-    public const string HostyCatalogSources = "HOSTY_CATALOG_SOURCES";
+    public const string HostyMarketplaceManifestPath = "HOSTY_MARKETPLACE_MANIFEST_PATH";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
@@ -34,7 +34,10 @@ internal static class LaunchSettingDefinitions
         new(HostyObservabilityEnabled, _ => "false", true, ValidateBoolean),
         new(HostyCollectorAutostart, _ => "true", true, ValidateBoolean),
         new(HostyCollectorManifestPath, _ => DefaultCollectorManifestPath, true, ValidateManifestReference),
-        new(HostyCatalogSources, _ => DefaultCatalogSources, true, ValidateCatalogSources),
+        // Temporary bootstrap reference while Marketplace is a first-party optional system app. Unlike
+        // Shell/collector, an explicit empty value is meaningful: pass it through so Core disables the
+        // Marketplace bootstrap instead of inheriting an ambient reference.
+        new(HostyMarketplaceManifestPath, _ => DefaultMarketplaceManifestPath, true, ValidateOptionalManifestReference),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);
@@ -139,6 +142,9 @@ internal static class LaunchSettingDefinitions
         return Path.IsPathFullyQualified(resolved) ? null : "Manifest path must resolve to an absolute path or be an http(s) URL.";
     }
 
+    private static string? ValidateOptionalManifestReference(string value, HostyEnvironment environment)
+        => string.IsNullOrWhiteSpace(value) ? null : ValidateManifestReference(value, environment);
+
     private static string? ValidateRuntimeKey(string value, HostyEnvironment _)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -157,40 +163,4 @@ internal static class LaunchSettingDefinitions
             : "Shell bootstrap runtime must match ^[a-z][a-z0-9-]{0,62}$.";
     }
 
-    private static string? ValidateCatalogSources(string value, HostyEnvironment environment)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        var sources = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (var source in sources)
-        {
-            var error = ValidateCatalogSource(source, environment);
-            if (error is not null)
-            {
-                return error;
-            }
-        }
-
-        return null;
-    }
-
-    private static string? ValidateCatalogSource(string source, HostyEnvironment environment)
-    {
-        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) &&
-            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
-        {
-            return string.IsNullOrWhiteSpace(uri.UserInfo) ? null : "Catalog source URL must not include credentials.";
-        }
-
-        if (source.Contains("://", StringComparison.Ordinal))
-        {
-            return "Catalog source URL must use http or https.";
-        }
-
-        var resolved = environment.ResolvePath(source);
-        return Path.IsPathFullyQualified(resolved) ? null : "Catalog source path must resolve to an absolute path or be an http(s) URL.";
-    }
 }

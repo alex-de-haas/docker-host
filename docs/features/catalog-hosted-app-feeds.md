@@ -1,233 +1,97 @@
-# Catalog-Hosted App Feeds
+# Runtime App Repository Feeds
 
-Status: Implemented.
 Created: 2026-07-09
-Updated: 2026-07-10
+Updated: 2026-07-11
 
-## Motivation
+## Description
 
-The author-hosted version feed (`releases.json`, defined in
-[runtime-app-marketplace.md](runtime-app-marketplace.md) — "Schemas (Sketch)",
-shipped as WS1) pins every version's `manifestRef` to a **commit**. Delivering any change
-to installed apps therefore requires a per-release, hand-maintained dance:
-bump `version` in `manifest.json`, push, take the new commit hash, append a
-`versions[]` entry, move `tags.stable`, push again. Forgetting any step — most
-commonly the version bump, which agents and humans alike skip — silently
-breaks delivery: the author believes they shipped, the operator sees no
-update, and re-applying the same version faithfully re-reads the same frozen
-commit.
+A runtime app can publish named update sources in an app-owned `feeds.json`. Core loads and validates that document without using a catalog or Marketplace service, resolves the selected manifest, and stores enough state for later feed changes and reviewed updates.
 
-Real incident (2026-07-09): project-manager PR #21 (sidebar nav icons via
-`ui.navigation[].iconAsset`) landed on `main`, but the install stayed pinned
-to commit `6e70930` / version `0.5.0` — the feed still declared
-`stable = 0.5.0`, so no update was ever offered and the icons never arrived.
+Feeds are optional. Direct manifest and local folder installs remain valid and do not acquire feed state.
 
-Three design-level problems compound this:
+## Document Contract
 
-- **Badge and apply disagree.** `CatalogService` computes `UpdateAvailable` by
-  version-**string** compare (`stable != installedVersion`), while the
-  reviewed update plan compares manifest/artifact **digests**. The marketplace
-  doc's "Update-available detection (read-only)" section already specifies
-  digest compare against the lock — the string compare is an implementation
-  gap, and it makes content changes under an unchanged version string
-  undetectable from the catalog surface.
-- **The pin contradicts the repo model.** A git repo carries exactly one
-  `manifest.json` per app; there is no per-version manifest other than by
-  commit archaeology. Git-branch installs and live-source dev installs are
-  already content-driven (fetch → digest compare) and cause none of these
-  problems; the pinned feed is the odd one out.
-- **The feed file is misplaced.** `releases.json` was moved into the app repo
-  because versions changed on every release. Once per-release churn is gone
-  (below), the feed is pure marketplace data with no reason to live beside the
-  app's code — it belongs back in `hosty-catalog`, next to the entry it
-  serves.
-
-## Current Behavior
-
-- Feed schema (`hosty-catalog/schema/feed.schema.json`): `versions[]` (each
-  `version` + commit-pinned `manifestRef` + optional `artifact`) and
-  `tags{stable, beta}`.
-- Catalog entry (`apps/<id>/entry.json`): `releasesUrl` points at the
-  app-repo-hosted `releases.json`.
-- `CatalogService.GetAppAsync`: `updateAvailable = stable != installedVersion`
-  (ordinal string compare). No digest input.
-- Install-from-catalog stamps `app.ManifestUrl` with the resolved version's
-  `manifestRef` — a frozen commit URL. Every later recheck re-reads that
-  frozen manifest, so "Check for updates" against an unmoved feed is a
-  permanent no-op.
-
-## Design
-
-### A1 — Feeds move into the catalog entry; a feed is a moving ref
-
-`entry.json` gains a `feeds` section and drops `releasesUrl`; the standalone
-feed file and `feed.schema.json` are removed:
+The supported schema is `app-feeds.0.1`:
 
 ```json
 {
-  "id": "com.haas.project-manager",
-  "publisher": { "name": "Haas", "url": "https://github.com/alex-de-haas" },
+  "schemaVersion": "app-feeds.0.1",
+  "appId": "com.example.notes",
   "feeds": [
-    { "id": "main", "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/project-manager/main/manifest.json" }
-  ],
-  "signerIdentity": "github.com/alex-de-haas/project-manager"
+    {
+      "id": "main",
+      "manifestRef": "https://example.invalid/notes/main/manifest.json",
+      "default": true
+    }
+  ]
 }
 ```
 
-- A **feed** is a named pointer at a **moving manifest ref** — a branch raw
-  URL for git-backed apps; for repo-less OCI apps a hosted manifest whose
-  image tag rolls (the artifact-digest compare covers that axis). Feed ids are
-  author-defined (`main`, `beta`, …); a single-feed app declares exactly one.
-- The entry — and therefore the catalog PR — changes **only when feed
-  topology changes**, effectively never. Releasing = pushing to the branch.
-  Zero per-release author action: the goal the marketplace doc already names
-  (deferred Q8) reached without tag enumeration.
-- **Feed quality is the author's responsibility.** A broken `main` cannot ship
-  a docker-runtime update anyway (the image build fails; only the last
-  successfully published image is pullable), and source runtimes are gated by
-  the author's CI at PR time. Rollback is the natural git answer: the author
-  reverts the branch, the head digest changes, and the "rollback" surfaces as
-  a normal update offer. No operator-side pinning machinery.
+Core requires:
 
-### A2 — Version is informational; detection is digest-aware
+- an exact supported `schemaVersion`;
+- a non-empty `appId`;
+- at least one feed;
+- non-empty, unique feed ids no longer than 128 characters;
+- no more than one explicit default;
+- an HTTP(S) `manifestRef` for every feed;
+- a selected manifest whose app id equals the feed document `appId`.
 
-- `manifest.json`'s `version` is display metadata: the update plan shows a
-  delta when the author bumped it ("0.5.0 → 0.5.1") and falls back to the
-  existing `manifest` / `image` change categories (runtime-app-update.md,
-  "Changes") when content moved under an unchanged version. A forgotten bump
-  degrades a changelog line, never delivery.
-- Update-available implements the detection the marketplace doc already
-  specifies: fetch the followed feed's manifest head (one small file), light
-  artifact lookup (`docker manifest inspect` / `git ls-remote`) where a lock
-  exists, then `UpdateAvailable` = manifest digest differs OR artifact digest
-  moved. No version-string input anywhere.
-- Apply is unchanged: the one reviewed-update path (plan → operator confirms
-  plan digest → backup → apply). Feeds never auto-apply — the operator decides
-  *when*; the feed head decides *what*. Manifest-by-URL asset vendoring
-  (manifest-level-app-assets.md D1) composes unchanged: the branch URL base is
-  the asset root, re-vendored on each applied update.
+A sole feed is the effective default even when it omits `default`. With several feeds, Core uses the one explicit default or requires the caller to provide a feed id. Array order never selects a feed.
 
-### A3 — Explicit feed selection; no compatibility layer, no migration
+The feed document itself is loaded from an HTTP(S) URL through Core's bounded remote-document loader. Local feed paths are not supported.
 
-No legacy dual-format support and no automatic migration of existing installs.
-Instead the feed reference becomes explicit operator-visible state:
+## Reviewed Install
 
-- **Install** records which feed the app came from (catalog source + entry id
-  + feed id). With one declared feed it is preselected; with several the
-  installer chooses.
-- **Runtime app settings** gain a feed selector: the operator can re-point an
-  installed app at any feed the entry declares.
-- **Check-updates without a usable feed** — an install that predates feeds, or
-  whose recorded feed no longer exists in the catalog (entry removed or feed
-  id renamed) — surfaces "no feed set — choose one in this app's settings"
-  instead of pretending the app is up to date. That prompt *is* the migration
-  path for existing installs: one explicit selection, no compat code.
-- Non-catalog installs (folder, git URL, live source) keep their existing
-  content-driven behaviors; feeds are a catalog concept only.
+Shell starts a feed install through two Core browser endpoints:
 
-### A4 — Install UX: one-click when unambiguous, never guess
+```text
+POST /api/apps/install/feed/plan
+POST /api/apps/install/feed
+```
 
-- The **marketplace detail dialog** lists every feed the entry declares
-  (feed id + where its `manifestRef` points), each directly installable;
-  installing records that feed as the followed one (A3). This replaces
-  today's version list.
-- The **list-card Install button** transplants the existing "don't guess"
-  rule (`selectInstallVersion`, marketplace-page.tsx) unchanged:
-  - exactly one feed → install it directly (the overwhelming common case —
-    one-click parity with today's stable-tag behavior);
-  - several feeds, one marked `"default": true` → install the default;
-  - several feeds, no default → the button opens Details for an explicit
-    choice.
-- `default` is an **optional flag** on a feed — the `runtimeProfiles[].default`
-  idiom, playing the role the `stable` dist-tag played. At most one per entry
-  (validated). Array order stays meaningless, per the codebase's stated rule —
-  no order-based conventions.
+The plan request supplies `feedsUrl`, an optional `feedId`, and the normal runtime/autostart choices. Core fetches the feed and selected manifest, builds the ordinary install review, and returns the resolved feed id, manifest URL, feed-document digest, and plan digest.
 
-## Data Model / API Changes
+Apply supplies the confirmed plan digest together with the selected runtime, settings, and startup choice. Core re-fetches the feed and manifest and recomputes the plan. If either document or another reviewed input changed, apply rejects the stale digest rather than installing content different from the review.
 
-- **hosty-catalog**: `entry.schema.json` + `feeds[]` (id, manifestRef,
-  optional `default`), − `releasesUrl`; delete `feed.schema.json`;
-  `validate.mjs` validates feeds inline (unique ids, https manifestRef, at
-  most one `default`) and **fails loudly** — a missing or unparseable
-  entry/feed section is a CI failure, never silently skipped (same
-  reject-don't-skip rule as the publish pipeline's asset discovery);
-  convert existing entries; delete
-  `releases.json` from app repos (project-manager, demo-app).
-- **Core**: `CatalogService` resolves feeds from the entry (drop
-  `LoadFeedAsync` versions/tags handling); digest-aware `UpdateAvailable`;
-  `CatalogAppDetailResponse` carries feeds + followed feed; app record gains
-  the followed-feed reference; a set-feed operation (settings surface);
-  check-updates surfaces the no-feed state as actionable guidance, not
-  "up to date". AOT DTO registration for changed shapes.
-- **Shell**: feed selector in the installed app's settings; update badge and
-  update-source display; "no feed set" prompt on check-updates; marketplace
-  detail lists feeds instead of versions; list-card quick install per A4.
-- **Docs**: runtime-app-marketplace.md (WS1 feed schema, update-available,
-  Q8 note) updated to reference this doc.
+The Marketplace app is not part of this validation path. A Marketplace-provided URL is treated exactly like any other untrusted operator input.
 
-## Confirmed Decisions
+## Installed State
 
-| # | Decision |
-| --- | --- |
-| **A1** | Feeds live in the catalog entry (`entry.json` `feeds[]`); a feed is a named moving manifest ref; the entry changes per-topology, never per-release. `releasesUrl` and the standalone feed file are removed. |
-| **A2** | `version` is informational only; update detection is digest compare (manifest + artifact) per the marketplace doc's read-only detection spec; one reviewed-update apply path; feeds never auto-apply. |
-| **A3** | No legacy feed format, no auto-migration. Installs record the followed feed; the feed is changeable in app settings; installs without a usable feed get an explicit "choose a feed" prompt on check-updates (also covers feeds deleted from the catalog). |
-| **A4** | Quick install never guesses: one feed → install it; several with an explicit `"default": true` → install the default; several without → defer to Details. The optional `default` flag (at most one, `runtimeProfiles[].default` idiom) replaces the `stable` dist-tag; array order carries no meaning. |
+A successful feed install stores:
 
-## Testing
+```text
+FeedsUrl        URL of the app-owned feeds.json
+FollowedFeedId  selected feed id
+ManifestUrl     last resolved manifestRef
+```
 
-- Entry parsing: feeds present/absent, duplicate feed ids, non-https
-  manifestRef rejected; more than one `default: true` rejected;
-  `releasesUrl` rejected by schema.
-- Badge: feed head advanced → available; head digest equal → not available;
-  content changed under same version string → available (the regression
-  case); artifact-only change (re-pushed tag) → available.
-- Feed state: install records feed; settings re-point changes the followed
-  ref; recorded feed missing from catalog → no-feed guidance; pre-feeds
-  install → no-feed guidance; non-catalog installs unaffected.
-- Quick install (A4): single feed installs directly; multi-feed with default
-  installs the default; multi-feed without default defers to Details; detail
-  dialog installs from any listed feed and records it.
-- Plan/apply: version delta shown when bumped; `manifest` fallback when not;
-  applied update re-vendors manifest-URL assets from the new head.
+Core exposes the current feed choices through:
 
-## Boundaries
+```text
+GET  /api/apps/{appId}/feeds
+POST /api/apps/{appId}/feed
+```
 
-- **Not a revival of per-app channels.** The removed `channelsUrl` /
-  `AppChannelIndex` / switch-channel machinery (marketplace doc, "Channels:
-  Decision", PR #67) stays removed. Feeds are catalog-entry data resolved
-  through the single reviewed-update path; there is no switch-channel flow —
-  re-pointing the feed is an app setting.
-- **Pinned-version publishing is removed from the model.** The "operator sits
-  on a specific version" scenario is explicitly out of scope; reproducibility
-  concerns are the author's (immutable image tags, git history), and WS5
-  signing anchors trust to the catalog entry + `signerIdentity`, not to a
-  commit pin.
-- **Product channels are a different axis.** `channels/product-channels.json`
-  (platform delivery of Core/Shell/CLI) is untouched.
+Changing the followed feed resolves it from the installed app's stored `FeedsUrl` and updates the future manifest source. It does not mutate or restart the running app. Any app change still goes through the normal update plan and apply flow.
 
-## Open Questions
+When update planning is requested without an explicit manifest, a feed-bound app re-fetches its stored feed and resolves the followed feed before loading the candidate manifest. The feed may therefore move its `manifestRef` without any catalog change. If an app has no stored feed URL, the existing direct-manifest/local-source resolution remains in effect.
 
-- Feedless git-backed entries: should an entry with no `feeds` and a known
-  repo default to "follow the default branch" (the deferred Q8 idea, with
-  branches instead of tags)? Deferred — `feeds` with one element is cheap
-  enough.
-- Multi-source catalogs: the followed-feed reference includes the catalog
-  source; first-source-wins entry merging already exists — confirm the feed
-  reference survives a source rename gracefully (likely folds into the
-  no-feed guidance).
+## Independence From Marketplace
+
+Catalog entries contain a `feedsUrl`; they do not embed or own feed entries. Marketplace may load the document to display feed choices, but that result is informational only. Core independently loads it for every lifecycle operation.
+
+Stopping or removing Marketplace does not affect updates for an installed feed-bound app because the app record retains `FeedsUrl` and `FollowedFeedId`.
+
+There is no compatibility reader for catalog-inline `feeds[]` and no state migration. Existing direct installs remain feed-less until they are reinstalled through a feed source.
+
+## Repository Example
+
+The first-party Demo App publishes [its feed document](../../apps/demo-app/feeds.json). It points the `main` feed at the app manifest on the repository's `main` branch.
 
 ## Links
 
-- [Runtime app marketplace](runtime-app-marketplace.md) — feed schema
-  ("Schemas (Sketch)", WS1), update-available detection spec,
-  "Channels: Decision" (PR #67 removal).
-- [Runtime app update](runtime-app-update.md) — plan digest, `changes`
-  categories the version-delta display rides on.
-- [Manifest-level app assets](manifest-level-app-assets.md) — the incident
-  that surfaced this gap; asset-root semantics feed installs compose with.
-- [Repository release model](repository-release-model.md) — platform-side
-  release/versioning context.
-- [`hosty-catalog`](https://github.com/alex-de-haas/hosty-catalog) — entry
-  schema, validation, publish pipeline.
-- [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md) — replacement ownership model: current feeds in app-owned `feeds.json`, with Core-owned resolution and unchanged behavior.
+- [Marketplace System App](runtime-app-marketplace.md)
+- [Runtime App Update](runtime-app-update.md)
+- [Runtime App Manifest](runtime-app-manifest.md)
+- [Runtime App Repository Feeds idea](../ideas/runtime-app-repository-feeds.md)

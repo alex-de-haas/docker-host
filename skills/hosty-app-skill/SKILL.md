@@ -1,6 +1,6 @@
 ---
 name: hosty-app-skill
-description: Build, wrap, or update Hosty runtime apps. Use when creating app manifests under schemaVersion app.0.1, configuring Docker or localCommand runtime profiles, app data directories and backups, external host-path mounts (externalMounts / catalog roots), Shell UI metadata, Hosty Core identity, scoped app directory access, runtime-app roles, dependencies, channels, OpenTelemetry/telemetry export (telemetry block + OTEL_* env), or validating apps with Core-managed local runtime profiles.
+description: Build, wrap, or update Hosty runtime apps. Use when creating app manifests under schemaVersion app.0.1, publishing app-feeds.0.1 feeds, configuring Docker or localCommand runtime profiles, app data directories and backups, external host-path mounts (externalMounts / catalog roots), Shell UI metadata, Hosty Core identity, scoped app directory access, runtime-app roles, dependencies, OpenTelemetry/telemetry export (telemetry block + OTEL_* env), or validating apps with Core-managed local runtime profiles.
 ---
 
 # Hosty App Skill
@@ -17,6 +17,7 @@ Use this skill to implement Hosty runtime apps in the shape expected by this rep
 
 - Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, runtime profiles, service implementations, settings, storage, dependencies, endpoints, install/update behavior, or backups.
 - Read `references/app-auth-and-users.md` when adding app identity, app-owned roles, or scoped app directory access.
+- Read `references/app-feeds.md` when publishing or reviewing repository-owned `feeds.json` for Marketplace discovery and Core-managed updates.
 - Read `references/demo-app-patterns.md` when validating against the repository Demo App.
 - Read `references/app-implementation-checklist.md` before final verification.
 

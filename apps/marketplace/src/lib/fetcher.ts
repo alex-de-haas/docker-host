@@ -1,10 +1,9 @@
-import { promises as fs } from "node:fs";
+import { resolvesToPrivateHost } from "@/lib/private-host";
 
-// Fetches a catalog document (index or feed) by URL or local path, returning its raw JSON or null on
-// any failure. Abstracted so the catalog service's parse/merge logic is unit-tested without network
-// or disk.
 export type CatalogDocumentFetcher = {
-  fetch(source: string): Promise<string | null>;
+  // `blockPrivateHosts` is set for untrusted catalog-entry URLs (feedsUrl/descriptionUrl): the host
+  // is rejected when it resolves to a non-public address, and redirects are not followed.
+  fetch(source: string, options?: { refresh?: boolean; blockPrivateHosts?: boolean }): Promise<string | null>;
 };
 
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -18,15 +17,8 @@ type CacheEntry = {
 
 type Logger = (message: string) => void;
 
-// Real fetcher: http/https GET or local-file read, size-capped, with a small per-URL TTL cache so a
-// storefront list does not re-fetch the index on each request. Best-effort — any transport/format
-// failure yields null so an unreachable source degrades to "no data", never an error. Every failure
-// is logged (the null cache bounds that to once per TTL per URL): an empty marketplace must stay
-// diagnosable, since the storefront itself surfaces nothing.
-//
-// Local absolute paths resolve inside THIS app's filesystem. Under docker that is the container, so
-// host-path sources configured before the extraction only keep working via an explicit Core-owned
-// import into app data (docs/ideas/marketplace-system-app.md, "Host filesystem exposure").
+// All Marketplace inputs are remote documents. Fetches are bounded, cached briefly, and best-effort:
+// CatalogService converts null into a user-visible diagnostic rather than an opaque server error.
 export class HttpCatalogDocumentFetcher implements CatalogDocumentFetcher {
   private readonly cache = new Map<string, CacheEntry>();
 
@@ -36,76 +28,74 @@ export class HttpCatalogDocumentFetcher implements CatalogDocumentFetcher {
     private readonly ttlMs: number = DEFAULT_TTL_MS,
   ) {}
 
-  async fetch(source: string): Promise<string | null> {
-    // Normalize once so the cache lookup, the fetch, and the cache store all key on the same string
-    // (otherwise the same URL with stray whitespace produces duplicate entries / spurious misses).
-    const key = source.trim();
+  async fetch(source: string, options: { refresh?: boolean; blockPrivateHosts?: boolean } = {}): Promise<string | null> {
+    const key = normalizeHttpUrl(source);
     if (!key) {
+      this.log(`Marketplace document source '${source}' is not an HTTP(S) URL.`);
       return null;
     }
 
-    const cached = this.cache.get(key);
     const now = this.now();
-    if (cached && cached.expiry > now) {
+    const cached = this.cache.get(key);
+    if (!options.refresh && cached && cached.expiry > now) {
       return cached.document;
     }
 
-    const document = await this.fetchRaw(key);
+    const document = await this.fetchRaw(key, options.blockPrivateHosts === true);
     this.cache.set(key, { document, expiry: now + this.ttlMs });
     return document;
   }
 
-  private async fetchRaw(source: string): Promise<string | null> {
+  private async fetchRaw(source: string, blockPrivateHosts: boolean): Promise<string | null> {
     try {
-      if (/^https?:\/\//i.test(source)) {
-        const response = await fetch(source, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-        if (!response.ok) {
-          this.log(`Catalog document fetch for '${source}' returned HTTP ${response.status}.`);
-          return null;
-        }
-
-        const declaredLength = Number(response.headers.get("content-length") ?? "0");
-        if (declaredLength > MAX_BYTES) {
-          this.log(`Catalog document at '${source}' exceeds the ${MAX_BYTES}-byte cap.`);
-          return null;
-        }
-
-        // Stream and enforce the cap while reading: a source that omits Content-Length (or uses
-        // chunked encoding) would otherwise let text() buffer an unbounded body (DoS).
-        const text = await readCappedText(response);
-        if (text === null) {
-          this.log(`Catalog document at '${source}' exceeds the ${MAX_BYTES}-byte cap.`);
-        }
-
-        return text;
-      }
-
-      const path = source.startsWith("file://") ? new URL(source) : source;
-      const info = await fs.stat(path).catch(() => null);
-      if (info === null || !info.isFile()) {
-        this.log(`Catalog document was not found at '${source}'.`);
+      if (blockPrivateHosts && (await resolvesToPrivateHost(new URL(source).hostname))) {
+        this.log(`Marketplace document fetch for '${source}' was blocked: host resolves to a non-public address.`);
         return null;
       }
 
-      if (info.size > MAX_BYTES) {
-        this.log(`Catalog document at '${source}' exceeds the ${MAX_BYTES}-byte cap.`);
+      const response = await fetch(source, {
+        headers: { Accept: "application/json, text/plain;q=0.9" },
+        // Untrusted entry URLs must not be redirected to an internal host; a redirect becomes a
+        // non-ok/opaque response and is treated as a fetch failure below.
+        redirect: blockPrivateHosts ? "manual" : "follow",
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        this.log(`Marketplace document fetch for '${source}' returned HTTP ${response.status}.`);
         return null;
       }
 
-      return await fs.readFile(path, "utf8");
+      const declaredLength = Number(response.headers.get("content-length") ?? "0");
+      if (declaredLength > MAX_BYTES) {
+        this.log(`Marketplace document at '${source}' exceeds the ${MAX_BYTES}-byte cap.`);
+        return null;
+      }
+
+      const text = await readCappedText(response);
+      if (text === null) {
+        this.log(`Marketplace document at '${source}' exceeds the ${MAX_BYTES}-byte cap.`);
+      }
+
+      return text;
     } catch (error) {
-      // The message matters here: transport failures include host-level causes an operator can't
-      // otherwise see (DNS, TLS, fd exhaustion — the latter observed live rendering the marketplace
-      // silently empty).
       const message = error instanceof Error ? error.message : String(error);
-      this.log(`Catalog document fetch for '${source}' failed: ${message}`);
+      this.log(`Marketplace document fetch for '${source}' failed: ${message}`);
       return null;
     }
   }
 }
 
-// Reads a response body into text, returning null as soon as it would exceed MAX_BYTES so an
-// unbounded or Content-Length-less response cannot exhaust memory.
+function normalizeHttpUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function readCappedText(response: Response): Promise<string | null> {
   if (response.body === null) {
     return "";

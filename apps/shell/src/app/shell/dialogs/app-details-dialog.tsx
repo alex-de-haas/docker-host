@@ -9,8 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, formatUpdateChange, isAppAutostartEnabled } from "../app-helpers";
-import { getCatalogApp } from "../catalog-api";
-import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
+import { getAppFeeds, isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import {
   buildPublicOriginGroups,
   isPublicOriginSettingKey,
@@ -18,8 +17,8 @@ import {
   SettingInput,
 } from "../settings";
 import type {
-  CatalogAppFeed,
   CoreApp,
+  CoreAppFeedsResponse,
   CoreBackup,
   CoreBackupCleanupPlan,
   CoreGlobalMount,
@@ -935,7 +934,7 @@ function UpdatePanel({
 
   // A live source runtime adopts its manifest on restart and has no reviewed-update path; the Update
   // affordance is normally hidden, but a deep link can still open this view, so explain rather than
-  // running a plan that Core would refuse (see CoreApp.live, runtime-app-marketplace.md "Live source").
+  // running a plan that Core would refuse (see CoreApp.live and runtime-app-update.md).
   if (app.live) {
     return (
       <DialogBody>
@@ -1006,10 +1005,8 @@ function UpdatePanel({
   );
 }
 
-// The followed-feed selector for a catalog-listed app (catalog-hosted-app-feeds.md A3). Renders
-// nothing when the app is not in any configured catalog (or the catalog is unreachable) — feeds are a
-// catalog concept only. Surfaces the explicit choose-a-feed guidance for a pre-feeds install (no feed
-// recorded) and for a recorded feed the entry no longer declares, instead of pretending "up to date".
+// The followed-feed selector reads the app-owned feed document through Core. Marketplace is not part
+// of this lifecycle path: Core resolves the installed app's FeedsUrl and owns validation/selection.
 function FeedSection({
   app,
   coreOrigin,
@@ -1023,30 +1020,30 @@ function FeedSection({
   busyAction: string | null;
   onSetFeed: (app: CoreApp, feedId: string) => void;
 }) {
-  const [feeds, setFeeds] = useState<CatalogAppFeed[] | null>(null);
-  const followed = app.followedFeedId ?? null;
+  const [feedState, setFeedState] = useState<CoreAppFeedsResponse | null>(null);
+  const feeds = feedState?.feeds ?? null;
+  const followed = feedState ? (feedState.followedFeedId ?? null) : (app.followedFeedId ?? null);
   const [selected, setSelected] = useState<string>(followed ?? "");
 
   useEffect(() => {
     // Abort the in-flight fetch on unmount or app change so a stale response can't overwrite newer
-    // state (the same pattern the marketplace pages use).
+    // state while the installed app summary refreshes.
     const controller = new AbortController();
     (async () => {
       try {
-        const detail = await getCatalogApp(coreOrigin, app.id, controller.signal);
-        setFeeds(detail.feeds ?? []);
+        setFeedState(await getAppFeeds(coreOrigin, app.id, controller.signal));
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
           return;
         }
-        // Not catalog-listed (404) or catalog unreachable — no feed UI, same as before feeds existed.
-        setFeeds(null);
+        // A direct-manifest install has no FeedsUrl; Core reports no feed surface for it.
+        setFeedState(null);
       }
     })();
     return () => {
       controller.abort();
     };
-  }, [coreOrigin, app.id]);
+  }, [coreOrigin, app.followedFeedId, app.id]);
 
   // Track the record when a save lands (the app prop refreshes with the new followed feed) — the
   // render-time reset pattern SettingsDialog uses, which the set-state-in-effect lint rule prefers.
@@ -1072,13 +1069,13 @@ function FeedSection({
       {followed === null && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>No feed set — catalog updates are not detected for this app. Choose a feed to follow.</span>
+          <span>No feed set — feed updates are not detected for this app. Choose a feed to follow.</span>
         </div>
       )}
       {followedMissing && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>The followed feed &lsquo;{followed}&rsquo; is no longer declared in the catalog. Choose another feed.</span>
+          <span>The followed feed &lsquo;{followed}&rsquo; is no longer declared by the app. Choose another feed.</span>
         </div>
       )}
       <div className="flex items-center gap-2">

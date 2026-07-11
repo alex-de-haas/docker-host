@@ -33,7 +33,7 @@ internal sealed class LaunchSettings
 
     public string HostyCollectorManifestPath => this[LaunchSettingDefinitions.HostyCollectorManifestPath];
 
-    public string HostyCatalogSources => this[LaunchSettingDefinitions.HostyCatalogSources];
+    public string HostyMarketplaceManifestPath => this[LaunchSettingDefinitions.HostyMarketplaceManifestPath];
 
     public string ResolveHostDataRoot(HostyEnvironment environment)
         => environment.ResolvePath(HostyDataRootRaw);
@@ -44,14 +44,13 @@ internal sealed class LaunchSettings
     public string ResolveHostyCollectorManifestPath(HostyEnvironment environment)
         => ResolveManifestReference(HostyCollectorManifestPath, environment);
 
-    public string ResolveHostyCatalogSources(HostyEnvironment environment)
-        => string.Join(',', HostyCatalogSources
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(source => ResolveManifestReference(source, environment))
-            .Distinct(StringComparer.Ordinal));
+    public string ResolveHostyMarketplaceManifestPath(HostyEnvironment environment)
+        => string.IsNullOrWhiteSpace(HostyMarketplaceManifestPath)
+            ? string.Empty
+            : ResolveManifestReference(HostyMarketplaceManifestPath, environment);
 
     // A manifest reference is either an http(s) URL (used verbatim) or a local path (resolved against
-    // the host environment). Shared by the Shell and the telemetry collector bootstrap references.
+    // the host environment). Shared by the Shell, telemetry collector, and Marketplace bootstrap references.
     private static string ResolveManifestReference(string reference, HostyEnvironment environment)
     {
         var manifestPath = reference.Trim();

@@ -3,6 +3,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Haas.Hosty.Cli;
+using Haas.Hosty.Cli.Commands;
+using Haas.Hosty.Cli.Configuration;
 using Spectre.Console;
 
 namespace Haas.Hosty.Cli.Tests.Commands;
@@ -67,6 +69,23 @@ public sealed class CoreCommandTests : IDisposable
         Assert.Equal("GET", server.Method);
         Assert.Equal("/healthz", server.PathAndQuery);
         Assert.Contains("already running", output.ToString());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("https://raw.githubusercontent.com/example/marketplace/main/manifest.json")]
+    public void BuildCoreEnvironment_MarketplaceManifestPath_PassesManagedValueIncludingEmpty(string manifestPath)
+    {
+        var environment = HostyEnvironment.Current();
+        var settings = new LaunchSettingsStore(environment)
+            .Load()
+            .WithValue(LaunchSettingDefinitions.HostyMarketplaceManifestPath, manifestPath);
+        var (console, _) = CreateConsole();
+        var command = new CoreCommand(new CommandContext(console, environment, new LaunchSettingsStore(environment)));
+
+        var coreEnvironment = command.BuildCoreEnvironment("http://localhost:7070", settings);
+
+        Assert.Equal(manifestPath, coreEnvironment[LaunchSettingDefinitions.HostyMarketplaceManifestPath]);
     }
 
     public void Dispose()

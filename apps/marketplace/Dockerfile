@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
-# Hosty marketplace image: Next.js standalone build, one service for the catalog API today and the
-# storefront pages in Phase 2. Built from the repo root so the npm workspace lockfile applies. See
-# docs/planning/marketplace-system-app.md (Phase 1).
+# Hosty Marketplace standalone Next.js image. Built from the repository root so the workspace
+# lockfile and pinned framework override are applied consistently.
 FROM node:24-bookworm-slim AS base
 WORKDIR /repo
 
@@ -21,7 +20,6 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-ENV HOSTY_MARKETPLACE_DATA_DIR=/var/lib/hosty-marketplace
 
 COPY --from=builder /repo/apps/marketplace/.next/standalone ./
 COPY --from=builder /repo/apps/marketplace/.next/static ./apps/marketplace/.next/static

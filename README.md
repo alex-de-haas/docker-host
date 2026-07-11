@@ -1,6 +1,6 @@
 # Hosty
 
-Monorepo for Hosty: the local-first Core API, the Shell browser client, the first-party Demo App, and the standalone `hosty` CLI.
+Monorepo for Hosty: the local-first Core API, the Shell browser client, the optional Marketplace system app, the first-party Demo App, and the standalone `hosty` CLI.
 
 See the [project documentation](docs/root.md) for the runtime app model, feature notes, and backlog.
 
@@ -32,6 +32,8 @@ Open the printed Setup URL, set the admin email and password, then open Shell:
 ```bash
 hosty open
 ```
+
+Installed CLI launches bootstrap Shell and, when `HOSTY_MARKETPLACE_MANIFEST_PATH` is configured, the Marketplace system app. Marketplace owns its catalog URL as a normal app setting; Core does not expose catalog APIs.
 
 Install the repository Demo App from a local checkout:
 
@@ -133,6 +135,16 @@ npm run core:dev
 hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 ```
+
+Marketplace uses the same Core-managed development flow:
+
+```bash
+hosty apps install apps/marketplace/manifest.json --runtime dev
+hosty apps start hosty.marketplace
+hosty apps open hosty.marketplace
+```
+
+Runtime apps published through Marketplace keep `app-feeds.0.1` in their own repository. See the Demo App's `apps/demo-app/feeds.json` for the canonical single-feed example.
 
 The installed CLI runs Core from this checkout only when a project is passed explicitly:
 

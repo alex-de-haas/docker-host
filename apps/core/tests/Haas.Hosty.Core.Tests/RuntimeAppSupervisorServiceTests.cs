@@ -177,6 +177,80 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task StartAsync_MarketplaceManifestPathAlone_UsesManifestRuntimeAndAutostartDefaults()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        var config = CreateConfig(fixture.Paths, shellManifestPath: string.Empty, shellAutostart: false) with
+        {
+            ShellBootstrapEnabled = false,
+            MarketplaceManifestPath = marketplaceManifest,
+        };
+        var supervisor = new RuntimeAppSupervisorService(
+            config,
+            fixture.Apps,
+            fixture.Lifecycle,
+            fixture.Sources,
+            NullLogger<RuntimeAppSupervisorService>.Instance);
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            var marketplace = await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId);
+
+            Assert.True(marketplace.System);
+            Assert.Equal("dev", marketplace.SelectedRuntime);
+            Assert.True(marketplace.Autostart);
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_MarketplaceReconciliation_PreservesInstalledRuntimeAndAutostart()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var originalManifest = Path.Combine(root, "marketplace-original.json");
+        await File.WriteAllTextAsync(originalManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            originalManifest,
+            SelectedRuntime: "docker",
+            System: true,
+            Autostart: false,
+            StartOnInstall: false));
+
+        var updatedManifest = Path.Combine(root, "marketplace-updated.json");
+        await File.WriteAllTextAsync(updatedManifest, CreateMarketplaceManifest("0.2.0", defaultRuntime: "dev"));
+        var config = CreateConfig(fixture.Paths, shellManifestPath: string.Empty, shellAutostart: false) with
+        {
+            ShellBootstrapEnabled = false,
+            MarketplaceManifestPath = updatedManifest,
+        };
+        var supervisor = new RuntimeAppSupervisorService(
+            config,
+            fixture.Apps,
+            fixture.Lifecycle,
+            fixture.Sources,
+            NullLogger<RuntimeAppSupervisorService>.Instance);
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            var marketplace = await WaitForAppVersionAsync(fixture.Apps, MarketplaceBootstrap.AppId, "0.2.0");
+
+            Assert.Equal("docker", marketplace.SelectedRuntime);
+            Assert.False(marketplace.Autostart);
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))
@@ -320,6 +394,23 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         throw new TimeoutException($"{appId} was not installed by the supervisor bootstrap.");
     }
 
+    private static async Task<AppRecord> WaitForAppVersionAsync(AppRegistryStore apps, string appId, string version)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var app = await apps.GetAppAsync(appId);
+            if (app?.Version == version)
+            {
+                return app;
+            }
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException($"{appId} did not reach version {version}.");
+    }
+
     private static async Task WaitForFileAsync(string path)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -386,7 +477,15 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(manifestHandler)));
         var backups = new AppBackupService(paths, clock);
         var sources = new AppSourceService(paths, apps, clock);
-        var lifecycle = new CoreLifecycleService(paths, apps, manifests, backups, sources, [new NoopDockerRuntimeAdapter()], new NoneIngressController(), Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance);
+        var lifecycle = new CoreLifecycleService(
+            paths,
+            apps,
+            manifests,
+            backups,
+            sources,
+            [new NoopDockerRuntimeAdapter(), new NoopLocalCommandRuntimeAdapter()],
+            new NoneIngressController(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance);
         return new TestFixture(paths, apps, sources, lifecycle);
     }
 
@@ -423,6 +522,29 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
                     "type": "docker",
                     "image": "otel/opentelemetry-collector-contrib:0.155.0"
                   }
+                }
+              }]
+            }
+            """;
+
+    private static string CreateMarketplaceManifest(string version, string defaultRuntime)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "hosty.marketplace",
+              "name": "Hosty Marketplace",
+              "version": "{{version}}",
+              "role": "system",
+              "runtimeProfiles": [
+                { "key": "docker", "type": "docker", "default": {{(defaultRuntime == "docker" ? "true" : "false")}} },
+                { "key": "dev", "type": "localCommand", "default": {{(defaultRuntime == "dev" ? "true" : "false")}} }
+              ],
+              "defaultRuntime": "{{defaultRuntime}}",
+              "services": [{
+                "key": "web",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/example/marketplace:{{version}}" },
+                  "dev": { "type": "localCommand", "workingDirectory": ".", "command": "true" }
                 }
               }]
             }
@@ -514,6 +636,26 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
 
         public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeLogsResult(""));
+
+        public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AppRuntimeHealthResult("unknown", []));
+    }
+
+    private sealed class NoopLocalCommandRuntimeAdapter : IAppRuntimeAdapter
+    {
+        public string Type => "localCommand";
+
+        public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AppRuntimeStartResult("running", []));
+
+        public Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AppRuntimeOperationResult("stopped"));
+
+        public Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AppRuntimeOperationResult("removed"));
+
+        public Task<AppRuntimeLogsResult> GetLogsAsync(RuntimeLifecycleContext context, int tail, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AppRuntimeLogsResult(string.Empty));
 
         public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeHealthResult("unknown", []));

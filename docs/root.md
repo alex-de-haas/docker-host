@@ -2,7 +2,7 @@
 
 ## Overview
 
-Hosty is a local application orchestrator with a headless Core API, a Core-managed Shell runtime app, and user runtime apps. New local development and testing use runtime apps installed from `app.0.1` manifests.
+Hosty is a local application orchestrator with a headless Core API, Core-managed Shell and Marketplace system apps, and user runtime apps. New local development and testing use runtime apps installed from `app.0.1` manifests.
 
 ```mermaid
 flowchart LR
@@ -43,8 +43,8 @@ flowchart LR
 - [Notifications](features/notifications.md) - Core-owned user-targeted notification stream (v1 backend): opt-in app producers, client-agnostic consumer, SSE live delivery, and retention.
 - [Observability (telemetry collection)](features/observability.md) - OpenTelemetry from runtime apps → OTel collector → Core read boundary → Shell Observability section (metrics, structured logs, traces). Phases P2–P6 shipped.
 - [Observability Phase 2 — telemetry backend](features/observability-phase-2-backend.md) - moves the telemetry store and query API out of Core into a dedicated telemetry-backend system app; Core stays a producer (`docker stats`/`docker logs`) and read-proxy. 2a–2c shipped; only SSE realtime (2d) remains.
-- [Runtime App Marketplace](features/runtime-app-marketplace.md) - optional catalog storefront: `catalogMetadata`, `/api/catalog`, Shell `/marketplace`, `hosty catalog` CLI, and operator-managed catalog sources; signing (WS5) deferred.
-- [Catalog-Hosted App Feeds](features/catalog-hosted-app-feeds.md) - transitional inline catalog-feed behavior; future ownership moves the same feeds into runtime app repositories.
+- [Marketplace System App](features/runtime-app-marketplace.md) - optional first-party storefront that owns one catalog source and hands app-owned feed URLs to Shell without lifecycle authority.
+- [Runtime App Repository Feeds](features/catalog-hosted-app-feeds.md) - `app-feeds.0.1`, digest-bound feed installs, stored followed-feed state, and Core-owned update resolution.
 - [CLI bootstrap](features/cli-bootstrap.md) - `hosty` command setup and Core control discovery.
 - [CLI app commands](features/cli-app-commands.md) - runtime app CLI commands.
 - [Core API](features/core-api.md) - current Core browser and control APIs.
@@ -60,13 +60,13 @@ flowchart LR
 
 ## Planning
 
-- [Marketplace System App - Phase 1](planning/marketplace-system-app.md) - approved extraction of catalog data, sources, and compatibility APIs into `hosty.marketplace`.
+- [Marketplace System App - Vertical Slice](planning/marketplace-system-app.md) - approved replacement of the Core-owned catalog with a Marketplace system app and generic Core feed lifecycle.
 
 ## Ideas
 
 Draft, exploratory, or backlog items that are not current implementation commitments:
 
-- [Runtime App Repository Feeds](ideas/runtime-app-repository-feeds.md) - moves the existing feed contract unchanged from inline catalog data to app-owned `feeds.json` resolved by Core.
+- [Runtime App Repository Feeds](ideas/runtime-app-repository-feeds.md) - promoted design that moved the feed contract from inline catalog data to app-owned `feeds.json` resolved by Core.
 - [On-Demand System App Updates](ideas/system-app-updates.md) - concept for explicit Shell/system-app update discovery, reviewed apply, self-reload, and rollback without restarting Core.
 - [Core Extension Model](ideas/core-extension-model.md) - concept for system apps as out-of-process Core plugins: provider contracts, pull-based event subscriptions, service extensions, and system app pages.
 - [Marketplace As A System App](ideas/marketplace-system-app.md) - read-only catalog data, API, and UI in an optional first-party system app while Core retains all feed and lifecycle decisions.

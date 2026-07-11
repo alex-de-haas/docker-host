@@ -1,198 +1,215 @@
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { CatalogService, deriveSourceName } from "@/lib/catalog-service";
 import type { CatalogDocumentFetcher } from "@/lib/fetcher";
-import type { MarketplaceOptions } from "@/lib/options";
-import { CatalogSourceService } from "@/lib/source-service";
-import { CatalogSourceStore } from "@/lib/source-store";
 
-let root: string;
+const sourceUrl = "https://catalog.example/store/catalog.json";
 
-beforeEach(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), "hosty-marketplace-tests-"));
-});
-
-afterEach(async () => {
-  await fs.rm(root, { recursive: true, force: true });
-});
-
-function createOptions(seedSources: string[]): MarketplaceOptions {
-  return { dataDirectory: root, seedSources, serviceToken: "token" };
-}
-
-function createService(seedSources: string[], documents: Record<string, string>): CatalogService {
-  const options = createOptions(seedSources);
+function createService(documents: Record<string, string | null>, calls: Array<{ source: string; refresh: boolean }> = []) {
   const fetcher: CatalogDocumentFetcher = {
-    fetch: async source => documents[source] ?? null,
+    fetch: async (source, options) => {
+      calls.push({ source, refresh: options?.refresh === true });
+      return documents[source] ?? null;
+    },
   };
-  return new CatalogService(new CatalogSourceService(new CatalogSourceStore(options), options), fetcher, () => undefined);
+  return new CatalogService(sourceUrl, fetcher, () => undefined);
 }
 
-function index(...entries: string[]): string {
-  return `{"schemaVersion":"marketplace.0.1","apps":[${entries.join(",")}]}`;
+function catalog(...apps: Record<string, unknown>[]): string {
+  return JSON.stringify({
+    schemaVersion: "marketplace.0.2",
+    source: { name: "Example Catalog", description: "Curated apps" },
+    apps,
+  });
 }
 
-function entry(id: string, name?: string, feeds = "[]"): string {
-  return `{"id":"${id}","name":"${name ?? id}","feeds":${feeds}}`;
+function app(id: string, extras: Record<string, unknown> = {}): Record<string, unknown> {
+  return { id, name: id, ...extras };
+}
+
+function feeds(appId: string, entries: Record<string, unknown>[]): string {
+  return JSON.stringify({ schemaVersion: "app-feeds.0.1", appId, feeds: entries });
 }
 
 describe("CatalogService", () => {
-  it("returns an empty catalog without sources", async () => {
-    const service = createService([], {});
+  it("reports an unconfigured source without throwing", async () => {
+    const service = new CatalogService(null, { fetch: async () => null }, () => undefined);
 
     const response = await service.getApps();
 
     expect(response.apps).toEqual([]);
+    expect(response.diagnostic).toMatchObject({ status: "not-configured", code: "catalog_source_not_configured" });
   });
 
-  it("sorts summaries by name", async () => {
-    const service = createService(["https://catalog.example/catalog.json"], {
-      "https://catalog.example/catalog.json": index(
-        entry("com.example.zeta", "Zeta"),
-        entry("com.example.alpha", "Alpha"),
+  it("normalizes and sorts catalog cards without installed-state projections", async () => {
+    const service = createService({
+      [sourceUrl]: catalog(
+        app("com.example.zeta", { display: { summary: "Zeta summary", icon: "assets/zeta.svg" } }),
+        app("com.example.alpha", { category: "Tools", tags: ["dev", "dev", "  "], publisher: { name: "Example" } }),
       ),
     });
 
     const response = await service.getApps();
 
-    expect(response.apps.map(app => app.name)).toEqual(["Alpha", "Zeta"]);
+    expect(response.apps.map(entry => entry.id)).toEqual(["com.example.alpha", "com.example.zeta"]);
+    expect(response.apps[0]).not.toHaveProperty("installed");
+    expect(response.apps[0].tags).toEqual(["dev"]);
+    expect(response.apps[1].icon).toBe("https://catalog.example/store/assets/zeta.svg");
+    expect(response.source).toEqual({ url: sourceUrl, name: "Example Catalog", description: "Curated apps" });
+    expect(response.diagnostic.status).toBe("ready");
   });
 
-  it("lets the first source win an id conflict, case-insensitively", async () => {
-    const service = createService(
-      ["https://first.example/catalog.json", "https://second.example/catalog.json"],
-      {
-        "https://first.example/catalog.json": index(entry("com.example.app", "First Copy")),
-        "https://second.example/catalog.json": index(entry("COM.EXAMPLE.APP", "Second Copy")),
-      },
-    );
+  it("keeps the first duplicate app id case-insensitively", async () => {
+    const service = createService({
+      [sourceUrl]: catalog(app("com.example.app", { name: "First" }), app("COM.EXAMPLE.APP", { name: "Second" })),
+    });
 
     const response = await service.getApps();
 
     expect(response.apps).toHaveLength(1);
-    expect(response.apps[0].name).toBe("First Copy");
-    expect(response.apps[0].sourceName).toBe("first.example");
+    expect(response.apps[0].name).toBe("First");
   });
 
-  it("skips unreachable, malformed, and unsupported-schema sources", async () => {
-    const service = createService(
-      [
-        "https://unreachable.example/catalog.json",
-        "https://malformed.example/catalog.json",
-        "https://unsupported.example/catalog.json",
-        "https://valid.example/catalog.json",
-      ],
-      {
-        "https://malformed.example/catalog.json": "{ not json",
-        "https://unsupported.example/catalog.json": '{"schemaVersion":"marketplace.9.9","apps":[{"id":"com.example.ghost"}]}',
-        "https://valid.example/catalog.json": index(entry("com.example.real", "Real")),
-      },
-    );
+  it.each([
+    ["{not json", "catalog_schema_unsupported"],
+    [JSON.stringify({ schemaVersion: "marketplace.0.1", apps: [] }), "catalog_schema_unsupported"],
+  ])("reports invalid catalog input", async (document, code) => {
+    const response = await createService({ [sourceUrl]: document }).getApps();
 
-    const response = await service.getApps();
-
-    expect(response.apps.map(app => app.id)).toEqual(["com.example.real"]);
+    expect(response.apps).toEqual([]);
+    expect(response.diagnostic).toMatchObject({ status: "invalid", code });
   });
 
-  it("degrades malformed nested shapes instead of crashing", async () => {
-    // A schema-valid envelope with wrong nested types: apps as an object is skipped entirely; a
-    // string tags/feeds/name inside an entry normalizes away rather than throwing mid-aggregation.
-    const service = createService(
-      ["https://object-apps.example/catalog.json", "https://mangled-entry.example/catalog.json"],
-      {
-        "https://object-apps.example/catalog.json": '{"schemaVersion":"marketplace.0.1","apps":{"id":"com.example.trap"}}',
-        "https://mangled-entry.example/catalog.json":
-          '{"schemaVersion":"marketplace.0.1","apps":[{"id":"com.example.mangled","name":123,"tags":"not-a-list","feeds":"not-a-list","display":"not-an-object"},null]}',
-      },
-    );
+  it("reports an unavailable catalog", async () => {
+    const response = await createService({}).getApps();
 
-    const response = await service.getApps();
-    const detail = await service.getApp("com.example.mangled");
-
-    expect(response.apps.map(app => app.id)).toEqual(["com.example.mangled"]);
-    expect(response.apps[0].name).toBe("com.example.mangled");
-    expect(response.apps[0].tags).toEqual([]);
-    expect(detail?.feeds).toEqual([]);
+    expect(response.diagnostic).toMatchObject({ status: "unavailable", code: "catalog_source_unavailable" });
   });
 
-  it("returns null for unknown or blank detail ids", async () => {
-    const service = createService(["https://catalog.example/catalog.json"], {
-      "https://catalog.example/catalog.json": index(entry("com.example.known")),
+  it("loads detail, description, and a repository-owned feed document", async () => {
+    const feedsUrl = "https://apps.example/notes/feeds.json";
+    const descriptionUrl = "https://catalog.example/store/notes/store.md";
+    const service = createService({
+      [sourceUrl]: catalog(app("com.example.notes", {
+        name: "Notes",
+        feedsUrl,
+        signerIdentity: "example-signing-key",
+        display: {
+          summary: "Take notes",
+          screenshots: ["images/one.png"],
+          descriptionUrl: "notes/store.md",
+        },
+      })),
+      [feedsUrl]: feeds("com.example.notes", [
+        { id: "stable", manifestRef: "https://apps.example/notes/manifest.json" },
+      ]),
+      [descriptionUrl]: "# Notes\n\nA focused note app.",
     });
 
-    expect(await service.getApp("com.example.unknown")).toBeNull();
-    expect(await service.getApp("  ")).toBeNull();
-  });
+    const detail = await service.getApp("com.example.notes");
 
-  it("normalizes a sole feed as the default", async () => {
-    const service = createService(["https://catalog.example/catalog.json"], {
-      "https://catalog.example/catalog.json": index(
-        entry("com.example.app", undefined, '[{"id":"main","manifestRef":"https://example.invalid/manifest.json"}]'),
-      ),
+    expect(detail).toMatchObject({
+      id: "com.example.notes",
+      feedsUrl,
+      signerIdentity: "example-signing-key",
+      descriptionUrl,
+      description: "# Notes\n\nA focused note app.",
+      feedDiagnostic: { status: "ready" },
+      descriptionDiagnostic: { status: "ready" },
     });
-
-    const detail = await service.getApp("com.example.app");
-
+    expect(detail?.screenshots).toEqual(["https://catalog.example/store/images/one.png"]);
     expect(detail?.feeds).toEqual([
-      { id: "main", manifestRef: "https://example.invalid/manifest.json", default: true },
+      { id: "stable", manifestRef: "https://apps.example/notes/manifest.json", default: true },
     ]);
   });
 
-  it("keeps the first of several default feeds and drops blank ones", async () => {
-    const feeds = JSON.stringify([
-      { id: "main", manifestRef: "https://example.invalid/main.json", default: true },
-      { id: "stable", manifestRef: "https://example.invalid/stable.json", default: true },
-      { id: "broken", manifestRef: "   " },
-    ]);
-    const service = createService(["https://catalog.example/catalog.json"], {
-      "https://catalog.example/catalog.json": index(entry("com.example.app", undefined, feeds)),
-    });
+  it("does not resolve an app feed to a manifest or call Core", async () => {
+    const feedsUrl = "https://apps.example/tool/feeds.json";
+    const calls: Array<{ source: string; refresh: boolean }> = [];
+    const service = createService({
+      [sourceUrl]: catalog(app("com.example.tool", { feedsUrl })),
+      [feedsUrl]: feeds("com.example.tool", [
+        { id: "main", manifestRef: "https://apps.example/tool/manifest.json", default: true },
+      ]),
+    }, calls);
 
-    const detail = await service.getApp("com.example.app");
+    const detail = await service.getApp("com.example.tool");
 
-    expect(detail?.feeds).toHaveLength(2);
-    expect(detail?.feeds[0].default).toBe(true);
-    expect(detail?.feeds[1].default).toBe(false);
+    expect(detail?.feeds[0].manifestRef).toBe("https://apps.example/tool/manifest.json");
+    expect(calls.map(call => call.source)).toEqual([sourceUrl, feedsUrl]);
   });
 
-  it("fetches an imported source from app data while naming the operator-facing identity", async () => {
-    await fs.mkdir(path.join(root, "imports"), { recursive: true });
-    const importedPath = path.join(root, "imports", "catalog.json");
-    await fs.writeFile(importedPath, index(entry("com.example.imported", "Imported")));
+  it.each([
+    [feeds("com.example.other", [{ id: "main", manifestRef: "https://apps.example/manifest.json" }]), "match"],
+    [feeds("com.example.app", [{ id: "", manifestRef: "https://apps.example/manifest.json" }]), "non-empty"],
+    [feeds("com.example.app", [{ id: "x".repeat(129), manifestRef: "https://apps.example/manifest.json" }]), "128"],
+    [feeds("com.example.app", [
+      { id: "main", manifestRef: "https://apps.example/main.json" },
+      { id: "main", manifestRef: "https://apps.example/next.json" },
+    ]), "duplicated"],
+    [feeds("com.example.app", [
+      { id: "main", manifestRef: "https://apps.example/main.json", default: true },
+      { id: "next", manifestRef: "https://apps.example/next.json", default: true },
+    ]), "At most one"],
+    [feeds("com.example.app", [{ id: "main", manifestRef: "file:///tmp/manifest.json" }]), "HTTP(S)"],
+  ])("surfaces feed validation diagnostics: %s", async (feedDocument, message) => {
+    const feedsUrl = "https://apps.example/feeds.json";
+    const detail = await createService({
+      [sourceUrl]: catalog(app("com.example.app", { feedsUrl })),
+      [feedsUrl]: feedDocument,
+    }).getApp("com.example.app");
 
-    const options = createOptions([]);
-    const store = new CatalogSourceStore(options);
-    await store.write({
-      schemaVersion: 1,
-      sources: [{ url: "/host/original/catalog.json", importPath: path.join("imports", "catalog.json") }],
-    });
+    expect(detail?.feeds).toEqual([]);
+    expect(detail?.feedDiagnostic.status).toBe("invalid");
+    expect(detail?.feedDiagnostic.message).toContain(message);
+  });
 
-    const fetcher: CatalogDocumentFetcher = {
-      fetch: async source => {
-        try {
-          return await fs.readFile(source, "utf8");
-        } catch {
-          return null;
-        }
-      },
-    };
-    const service = new CatalogService(new CatalogSourceService(store, options), fetcher, () => undefined);
+  it("preserves several valid feeds without inventing a default", async () => {
+    const feedsUrl = "https://apps.example/feeds.json";
+    const detail = await createService({
+      [sourceUrl]: catalog(app("com.example.app", { feedsUrl })),
+      [feedsUrl]: feeds("com.example.app", [
+        { id: "main", manifestRef: "https://apps.example/main.json" },
+        { id: "preview channel", manifestRef: "https://apps.example/preview.json" },
+      ]),
+    }).getApp("com.example.app");
 
-    const response = await service.getApps();
+    expect(detail?.feeds.map(feed => feed.default)).toEqual([false, false]);
+  });
 
-    expect(response.apps.map(app => app.id)).toEqual(["com.example.imported"]);
-    // The card names the operator-facing source identity, not the internal snapshot path.
-    expect(response.apps[0].sourceName).toBe("catalog.json");
+  it("passes refresh through to catalog, feed, and description fetches", async () => {
+    const calls: Array<{ source: string; refresh: boolean }> = [];
+    const feedsUrl = "https://apps.example/feeds.json";
+    const descriptionUrl = "https://catalog.example/store/store.md";
+    const service = createService({
+      [sourceUrl]: catalog(app("com.example.app", { feedsUrl, display: { descriptionUrl } })),
+      [feedsUrl]: feeds("com.example.app", [{ id: "main", manifestRef: "https://apps.example/main.json" }]),
+      [descriptionUrl]: "Description",
+    }, calls);
+
+    await service.getApp("com.example.app", { refresh: true });
+
+    expect(calls).toEqual([
+      { source: sourceUrl, refresh: true },
+      { source: feedsUrl, refresh: true },
+      { source: descriptionUrl, refresh: true },
+    ]);
+  });
+
+  it("returns null for blank and unknown app ids", async () => {
+    const service = createService({ [sourceUrl]: catalog(app("com.example.known")) });
+
+    await expect(service.getApp(" ")).resolves.toBeNull();
+    await expect(service.getApp("com.example.unknown")).resolves.toBeNull();
   });
 });
 
 describe("deriveSourceName", () => {
-  it.each([
-    ["https://raw.githubusercontent.com/org/hosty-catalog/main/catalog.json", "raw.githubusercontent.com"],
-    ["/srv/catalogs/private/catalog.json", "catalog.json"],
-  ])("derives %s -> %s", (source, expected) => {
-    expect(deriveSourceName(source)).toBe(expected);
+  it("derives a readable hostname", () => {
+    expect(deriveSourceName("https://raw.githubusercontent.com/org/catalog/main/catalog.json"))
+      .toBe("raw.githubusercontent.com");
+  });
+
+  it("reports a configured but invalid source", () => {
+    expect(deriveSourceName("not a URL")).toBe("Configured catalog");
   });
 });

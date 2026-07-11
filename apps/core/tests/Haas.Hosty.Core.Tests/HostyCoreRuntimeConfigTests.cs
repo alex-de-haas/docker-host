@@ -214,6 +214,37 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
+    public void FromEnvironment_MarketplaceBootstrapIsDisabledWithoutManifestPath()
+    {
+        using var env = TemporaryEnvironment.With("HOSTY_MARKETPLACE_MANIFEST_PATH", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+        var descriptor = MarketplaceBootstrap.CreateDescriptor(config);
+
+        Assert.Null(config.MarketplaceManifestPath);
+        Assert.False(descriptor.Enabled);
+        Assert.Null(descriptor.Runtime);
+        Assert.Null(descriptor.Autostart);
+    }
+
+    [Fact]
+    public void FromEnvironment_MarketplaceManifestPathAloneEnablesBootstrap()
+    {
+        using var env = TemporaryEnvironment.With(
+            "HOSTY_MARKETPLACE_MANIFEST_PATH",
+            " https://apps.example.test/marketplace/manifest.json ");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+        var descriptor = MarketplaceBootstrap.CreateDescriptor(config);
+
+        Assert.Equal("https://apps.example.test/marketplace/manifest.json", config.MarketplaceManifestPath);
+        Assert.True(descriptor.Enabled);
+        Assert.Equal(config.MarketplaceManifestPath, descriptor.ManifestPath);
+        Assert.Null(descriptor.Runtime);
+        Assert.Null(descriptor.Autostart);
+    }
+
+    [Fact]
     public void FromEnvironment_DefaultsTrustedProxySecretToDisabled()
     {
         using var env = TemporaryEnvironment.With("HOSTY_TRUSTED_PROXY_SECRET", null);

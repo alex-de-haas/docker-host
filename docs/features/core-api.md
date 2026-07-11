@@ -1,5 +1,8 @@
 # Core API
 
+Created: 2026-05-13
+Updated: 2026-07-11
+
 ## Description
 
 Hosty Core exposes browser APIs for Shell and app auth, plus a local control API for the CLI. The current lifecycle surface is runtime-app oriented.
@@ -19,11 +22,13 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 - `POST /api/auth/trusted-proxy/session` - create a session for a reverse-proxy-asserted user; disabled unless `HOSTY_TRUSTED_PROXY_SECRET` is configured and the proxy presents it via `X-Hosty-Trusted-Proxy-Secret`.
 - `POST /api/apps/{appId}/switch-runtime/plan` - admin runtime switch review for browser Shell clients.
 - `POST /api/apps/{appId}/switch-runtime` - admin runtime switch apply for browser Shell clients; CSRF-protected and requires the reviewed plan digest.
+- `POST /api/apps/install/feed/plan` - admin install review from an untrusted HTTP(S) `app-feeds.0.1` URL and optional feed id.
+- `POST /api/apps/install/feed` - CSRF-protected feed install apply; Core re-resolves the feed and manifest and requires the reviewed plan digest.
+- `GET /api/apps/{appId}/feeds` - list the feeds resolved from an installed app's stored `FeedsUrl` and return its followed feed id.
+- `POST /api/apps/{appId}/feed` - select a future update feed from the installed app's stored feed document without changing the running app.
 - `GET /api/internal/apps/{appId}/directory/users` - scoped app directory for runtime apps with `HOSTY_APP_SERVICE_TOKEN`.
-- `GET /api/catalog/apps` - marketplace storefront across the configured catalog sources, each entry joined with install state; admin-only, read-only. Empty when no sources are configured or no configured source returns entries.
-- `GET /api/catalog/apps/{id}` - one catalog app's detail (display metadata, resolved feed versions + `stable`/`beta`, install/update state); `404` when no source lists the id. Clients install/update by passing a version's `manifestRef` to the existing `/api/apps/install*` and `/api/apps/{appId}/update*` endpoints — the catalog installs nothing itself.
 
-Catalog sources are configured via `HOSTY_CATALOG_SOURCES` (comma-separated `http(s)` URLs or local paths, highest priority first; an id declared by more than one source resolves to the highest-priority one). Installed CLI launches persist this setting in `launch.env` and default it to `https://alex-de-haas.github.io/hosty-catalog/catalog.json`; use `hosty config set HOSTY_CATALOG_SOURCES <sources>` to override it, `hosty config reset HOSTY_CATALOG_SOURCES` to restore the official source, or an empty value to run with no catalog sources after the next Core restart. A direct Core process with no `HOSTY_CATALOG_SOURCES` environment variable still serves an empty catalog. See [Runtime app marketplace](runtime-app-marketplace.md).
+Core exposes no catalog or Marketplace proxy endpoints. The optional `hosty.marketplace` system app owns its source and storefront. Shell accepts its bounded install intent and calls the generic feed endpoints above; Core independently validates the feed and manifest.
 
 `/api/core/status` reports effective public origins. If `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is unset, Core falls back to `http://localhost:<core-port>` and `http://localhost:<shell-port>`.
 
@@ -40,6 +45,7 @@ The CLI discovers Core control information from the local run directory and send
 - `POST /control/v1/apps/{appId}/update`
 - `POST /control/v1/apps/{appId}/switch-runtime/plan`
 - `POST /control/v1/apps/{appId}/switch-runtime`
+- `POST /control/v1/apps/{appId}/feed`
 - `POST /control/v1/apps/{appId}/remove`
 - `GET /control/v1/apps/{appId}/health`
 - `GET /control/v1/apps/{appId}/logs`

@@ -13,8 +13,11 @@ internal sealed record SystemAppBootstrapDescriptor(
     bool Enabled,
     // Env-resolved or bundled manifest path/URL; a blank value skips the bootstrap with a warning.
     string? ManifestPath,
-    string Runtime,
-    bool Autostart,
+    // Null lets the manifest default choose on first install and preserves the installed selection
+    // during reconciliation (used by Marketplace).
+    string? Runtime,
+    // Null uses the normal install default and preserves the operator's installed value later.
+    bool? Autostart,
     // Core-owned bootstrap settings passed at install and re-applied on every boot so operator
     // configuration (e.g. the Shell port) follows the current Core config.
     IReadOnlyDictionary<string, string?>? Settings = null,
@@ -32,6 +35,7 @@ internal static class SystemAppBootstraps
     [
         ShellBootstrap.CreateDescriptor(config),
         CollectorBootstrap.CreateDescriptor(config),
+        MarketplaceBootstrap.CreateDescriptor(config),
     ];
 
     // Autostart ordering across apps: higher starts earlier. Static (not descriptor-driven) because
@@ -43,6 +47,23 @@ internal static class SystemAppBootstraps
         CollectorBootstrap.AppId => 100,
         _ => 0,
     };
+}
+
+// Marketplace is enabled only by an explicit manifest path. Unlike Shell/collector, Core owns no
+// runtime or autostart policy for it: first install follows the manifest defaults and later boots
+// preserve the operator's installed choices.
+internal static class MarketplaceBootstrap
+{
+    public const string AppId = "hosty.marketplace";
+
+    public static SystemAppBootstrapDescriptor CreateDescriptor(HostyCoreRuntimeConfig config)
+        => new(
+            AppId,
+            DisplayName: "Hosty Marketplace",
+            Enabled: !string.IsNullOrWhiteSpace(config.MarketplaceManifestPath),
+            ManifestPath: config.MarketplaceManifestPath,
+            Runtime: null,
+            Autostart: null);
 }
 
 // Bootstrap identity and Core-owned install settings for the Hosty Shell system app.

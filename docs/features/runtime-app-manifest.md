@@ -1,5 +1,8 @@
 # Runtime App Manifest
 
+Created: 2026-06-04
+Updated: 2026-07-11
+
 ## Description
 
 Hosty installs user workloads from an app manifest with `schemaVersion: "app.0.1"`. The manifest is the only supported install contract for new local development, tests, and runtime app lifecycle work. Legacy Docker metadata files are not part of the current workflow.
@@ -216,7 +219,7 @@ The response includes enabled Host users explicitly assigned to that app.
 
 ## Catalog Metadata
 
-Optional marketplace/catalog display metadata for an app. It is **entirely optional** and its content lives **outside runtime validation** — a manifest without it is fully valid, and its values never fail runtime validation (Core normalizes them best-effort *after* parsing and surfaces them for display only). It must still be well-formed, deserializable JSON of the shape below: a type mismatch (e.g. `tags` as a string instead of an array) fails the whole manifest parse like any other field. Strict content checks (SPDX license, category enum) are enforced by the catalog CI, not by Core. See [Runtime app marketplace](runtime-app-marketplace.md) for the full model.
+Optional catalog-style display metadata for an installed app. It is **entirely optional** and its content lives **outside runtime validation** — a manifest without it is fully valid, and its values never fail runtime validation (Core normalizes them best-effort *after* parsing and surfaces them for display only). It must still be well-formed, deserializable JSON of the shape below: a type mismatch (e.g. `tags` as a string instead of an array) fails the whole manifest parse like any other field. Strict content checks (SPDX license, category enum) belong to catalog publishing, not Core. The Marketplace app reads display-ready metadata from its catalog entry and does not query Core for installed manifest metadata. See [Marketplace System App](runtime-app-marketplace.md) for the catalog boundary.
 
 ```json
 "catalogMetadata": {
@@ -233,4 +236,4 @@ Optional marketplace/catalog display metadata for an app. It is **entirely optio
 }
 ```
 
-All fields are optional; blanks are dropped and an all-empty block is ignored. `category` here is the marketplace category, distinct from the simpler `ui.category` used by the app directory. `icon` is an asset path or URL (richer than `ui.icon`, which is a Lucide name). Core exposes the normalized block on each app summary as `catalogMetadata` for storefront cards and the app-detail view.
+All fields are optional; blanks are dropped and an all-empty block is ignored. `category` is catalog-style metadata, distinct from the simpler `ui.category` used by the app directory. `icon` is an asset path or URL (richer than `ui.icon`, which is a Lucide name). Core exposes the normalized block on each installed app summary as `catalogMetadata` for Shell's installed-app surfaces.

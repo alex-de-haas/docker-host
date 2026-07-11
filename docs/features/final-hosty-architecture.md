@@ -1,16 +1,17 @@
 # Final Hosty architecture boundaries
 
 Created: 2026-06-02
-Updated: 2026-07-10
+Updated: 2026-07-11
 
-This document records the implemented Hosty final architecture boundaries. It replaces the completed planning document as the source of truth for Core, Shell, CLI, runtime apps, backups, source state, and local command runtimes. Repository-owned feeds and Agent Bridge concepts are ideas until they are approved for implementation.
+This document records the implemented Hosty architecture boundaries. It is the source of truth for Core, Shell, CLI, Marketplace, runtime apps, backups, source state, feeds, and local command runtimes. Agent Bridge concepts remain exploratory.
 
 ## Components
 
-Hosty has three primary first-party components:
+Hosty has four primary first-party components:
 
 - `apps/core` - Hosty Core, a local-first ASP.NET Core Minimal API process. Core owns auth pages, public and local APIs, app state, runtime lifecycle, source state, followed-feed state, backups, logs, diagnostics, and policy.
 - `apps/shell` - Hosty Shell, a Core-managed runtime app. Shell owns only the browser UI client and is installed, started, stopped, restarted, updated, logged, and health-checked through the same Core runtime lifecycle used by user apps.
+- `apps/marketplace` - Hosty Marketplace, an optional Core-managed system runtime app. It owns its catalog source, catalog parsing, diagnostics, and storefront UI. It has no install or update authority.
 - `apps/cli` - `hosty`, the bootstrap executable and local Core API client. The CLI installs or repairs Core, starts and stops Core, locates Core, updates bootstrap components, and delegates ordinary domain commands to Core APIs.
 
 Runtime app fixtures and first-party example apps live in app-owned packages. The current first-party example is `apps/demo-app`.
@@ -19,6 +20,8 @@ Runtime app fixtures and first-party example apps live in app-owned packages. Th
 flowchart LR
   CLI["apps/cli hosty"] --> Core["apps/core Hosty Core"]
   Shell["apps/shell Hosty Shell"] --> Core
+  Shell --> Marketplace["apps/marketplace Hosty Marketplace"]
+  Marketplace --> Catalog["Catalog source"]
   Core --> Runtime["Runtime app lifecycle"]
   Runtime --> Shell
   Runtime --> UserApps["User runtime apps"]
@@ -38,8 +41,9 @@ Core owns the public and local API surface. API groups are organized around app-
 - app settings, secrets references, storage mappings, dependency contracts, endpoint contracts, and app data directory resolution;
 - source repository state, managed checkouts, and local source overrides;
 - runtime profile switching plans and apply;
-- runtime app catalog-feed selection and followed-feed state;
-- possible repository-owned runtime feed discovery.
+- runtime-app repository feed loading, selection, digest-bound install, and followed-feed state.
+
+Core does not own catalog source configuration, catalog parsing, catalog federation, Marketplace UI, or Marketplace compatibility routes. It treats a feed URL handed over by Shell as untrusted lifecycle input and validates the feed and selected manifest independently.
 
 Shell calls Core APIs through the browser-facing Core public origin. Shell must not contain Core-owned backend, auth, app lifecycle, or state mutation routes. Runtime process-to-Core access uses `HOSTY_CORE_ORIGIN`; browser Shell access uses `HOSTY_CORE_PUBLIC_ORIGIN` or Core's localhost fallback, so Docker-only origins such as `host.docker.internal` never appear in Shell browser fetches or login links.
 
@@ -54,7 +58,7 @@ Core exposes local control APIs under `/control/v1` and public browser/app APIs 
 - Lifecycle: install, configure, start, stop, restart, update-plan, update, remove, logs. Browser Shell can call public start, stop, restart, logs, and backup endpoints; local control endpoints keep the complete lifecycle surface.
 - Backups: list, manual backup, restore, delete, cleanup preview, and cleanup apply; update apply creates automatic pre-update backups. Browser Shell can use backup restore, delete, and cleanup routes with Core session, CSRF, and confirmation UX.
 - Runtime switching: `switch-runtime/plan` and `switch-runtime` with plan digest review.
-- Runtime app feeds: `POST /api/apps/{appId}/feed` and its control counterpart set or clear the followed catalog feed. Selecting a feed re-points the stored manifest URL; any app change still uses the ordinary reviewed update plan/apply flow. Moving the same behavior to repository-owned `feeds.json` is tracked in [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md).
+- Runtime app feeds: `POST /api/apps/install/feed/plan` and `POST /api/apps/install/feed` provide reviewed, digest-bound feed installation; `GET /api/apps/{appId}/feeds` and `POST /api/apps/{appId}/feed` read or change an installed app's repository-owned feed selection. Selecting a feed re-points future update resolution; any app change still uses the ordinary reviewed update plan/apply flow.
 - Source state: managed checkout resolution, immutable commit storage, local source override set/clear.
 - Identity helpers: sanitized user summaries, app-scoped identity token issuance, Shell/standalone open links.
 - Auth: Core-owned session, CSRF, trusted proxy session, logout, app auth code, token exchange, and app session revalidation.
@@ -77,12 +81,18 @@ Shell has the same lifecycle shape as other runtime apps:
 - update;
 - status;
 - logs;
-- selected catalog feed;
+- selected repository-owned feed;
 - selected runtime profile.
 
 The active Shell UI should hide its own self-stop action because stopping the UI from itself is confusing. Core APIs and CLI commands may still stop or restart Shell.
 
 Core must remain manageable through CLI and local APIs when Shell is stopped, failed, or unavailable.
+
+## Marketplace System App Contract
+
+Marketplace is optional discovery functionality. A non-empty `HOSTY_MARKETPLACE_MANIFEST_PATH` enables first-party bootstrap. First installation uses the manifest's default runtime; later reconciliation keeps the installed runtime and autostart choices. Core contains this explicit bootstrap descriptor but no Marketplace API client or catalog logic.
+
+The app owns one HTTP(S) catalog source through its `HOSTY_MARKETPLACE_SOURCE_URL` manifest setting and exposes its storefront through the generic administrator system-app UI. An install action sends a bounded feed intent to Shell. Shell opens Core's generic feed review, and Core independently fetches and validates `feeds.json` and the selected manifest. Marketplace never receives lifecycle authority or installed-app state.
 
 ## CLI contract
 
@@ -99,6 +109,8 @@ The `hosty` CLI is a bootstrap and Core API client:
 - `hosty update --list-channels` and `hosty update --channel <channel-id>` can read the local product channel index. No generated product-channel publishing workflow is part of the current release model.
 
 The legacy developer harness route is no longer exposed. Existing users are used for app identity helpers; deterministic development-user seeding is not part of the final workflow.
+
+The CLI has no catalog or Marketplace command. Catalog configuration is the Marketplace app's setting, while generic app lifecycle commands remain Core API clients.
 
 ## Runtime adapters
 
@@ -117,7 +129,7 @@ Core includes two runtime adapters:
 
 Runtime switching uses reviewed plan digests. When the app has a primary data directory, switch apply creates a `pre-runtime-switch` backup before mutation. If a running app fails to start after switching, Core restores the previous selected runtime in app state, leaves the app stopped, records the error, and keeps the backup available for normal restore workflows.
 
-## Source and channels
+## Source And Feeds
 
 Runtime apps can declare one app-level source repository. Core stores source state as installation state:
 
@@ -131,7 +143,7 @@ Local source overrides are never written back to public app manifests.
 
 For `localCommand` runtimes, Core resolves the source root before runtime start. Local manifest file and app directory installs record a local worktree and do not clone source; remote manifest URL installs require an absolute clonable source repository and prepare the managed checkout under `sources/<app-id>/`.
 
-Runtime apps currently follow feeds declared inline by catalog entries. Core stores the followed feed id and concrete manifest URL; the Shell exposes feed selection, and actual app changes reuse reviewed update planning/apply. The removed `switch-channel` contract is not part of the current system. Moving the same feed model unchanged into runtime-app-owned `feeds.json` is tracked in [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md).
+Runtime apps may publish `app-feeds.0.1` in their own repository. Core stores the feed document URL, followed feed id, and last resolved manifest URL independently of Marketplace. Update planning re-resolves a followed feed before loading the candidate manifest. The Shell exposes feed selection, and actual app changes reuse reviewed update planning/apply. Direct manifest and folder installs remain feed-less. The removed `switch-channel` contract is not part of the system.
 
 Product channels are described by `channels/product-channels.json` as a local placeholder that the CLI can read explicitly. There is no generated publishing workflow; the current Core entry identifies the release artifact family, not a source project path.
 

@@ -2,9 +2,14 @@
   "schemaVersion": "app.0.1",
   "id": "hosty.marketplace",
   "name": "Hosty Marketplace",
-  "description": "Read-only catalog service: aggregates configured catalog sources and serves the storefront data Shell and CLI read through Core's compatibility proxy. Holds no Core scopes; install/update authority stays in Core.",
+  "description": "Catalog discovery and storefront UI for Hosty runtime apps. Marketplace has no lifecycle authority; install review and apply remain in Core.",
   "version": "0.1.0",
   "role": "system",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main"
+  },
   "runtimeProfiles": [
     {
       "key": "docker",
@@ -30,16 +35,24 @@
           },
           "environment": {
             "PORT": "3000",
-            "HOSTNAME": "0.0.0.0",
-            "HOSTY_MARKETPLACE_DATA_DIR": "/var/lib/hosty-marketplace"
+            "HOSTNAME": "0.0.0.0"
           },
           "ports": [
             {
               "key": "http",
               "containerPort": 3000,
-              "protocol": "http"
+              "protocol": "http",
+              "public": true
             }
-          ]
+          ],
+          "healthcheck": {
+            "type": "exec",
+            "command": "node -e \"fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+            "intervalSeconds": 30,
+            "timeoutSeconds": 5,
+            "retries": 3,
+            "gracePeriodSeconds": 10
+          }
         },
         "dev": {
           "type": "localCommand",
@@ -50,9 +63,16 @@
             {
               "key": "http",
               "containerPort": 3200,
-              "protocol": "http"
+              "protocol": "http",
+              "public": true
             }
-          ]
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3200,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
         }
       }
     }
@@ -72,11 +92,35 @@
   },
   "endpoints": [
     {
-      "key": "catalog",
+      "key": "http",
       "service": "api",
       "port": "http",
-      "protocol": "http"
+      "protocol": "http",
+      "public": true
     }
   ],
-  "capabilities": ["restart", "stop", "logs"]
+  "ui": {
+    "entrypoint": {
+      "endpoint": "http",
+      "path": "/"
+    },
+    "navigation": [
+      {
+        "label": "Marketplace",
+        "endpoint": "http",
+        "path": "/"
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "HOSTY_MARKETPLACE_SOURCE_URL",
+      "type": "url",
+      "default": "https://alex-de-haas.github.io/hosty-catalog/catalog.json",
+      "required": true,
+      "label": "Catalog source",
+      "description": "HTTP(S) URL of the marketplace.0.2 catalog displayed by this Marketplace app."
+    }
+  ],
+  "capabilities": ["open", "update", "restart", "stop", "logs"]
 }
