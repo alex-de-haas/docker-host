@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Hosty Marketplace">
+  <rect width="100" height="100" rx="20" fill="#0d9488"/>
+  <g fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 46 V74 H72 V46"/>
+    <path d="M24 46 L31 28 H69 L76 46 Z"/>
+    <path d="M44 74 V58 H56 V74"/>
+  </g>
+</svg>

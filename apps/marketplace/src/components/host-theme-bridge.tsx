@@ -16,9 +16,11 @@ export function HostThemeBridge() {
     let explicit = stored === "light" || stored === "dark";
     apply(explicit ? stored as ResolvedTheme : system.matches ? "dark" : "light");
 
-    const parentOrigin = readParentOrigin(document.referrer);
+    // event.source === window.parent is set by the browser and is the trustworthy gate — the
+    // embedding origin (from the shared parent-origin listener) is learned from this same message,
+    // so it can't be used to pre-filter it. Theme is non-sensitive; the source check is sufficient.
     const handleMessage = (event: MessageEvent) => {
-      if (window.parent === window || event.source !== window.parent || !parentOrigin || event.origin !== parentOrigin) {
+      if (window.parent === window || event.source !== window.parent) {
         return;
       }
       const data = event.data as { type?: unknown; theme?: unknown } | null;
@@ -45,13 +47,4 @@ export function HostThemeBridge() {
   }, []);
 
   return null;
-}
-
-function readParentOrigin(referrer: string): string | null {
-  try {
-    const url = new URL(referrer);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null;
-  } catch {
-    return null;
-  }
 }

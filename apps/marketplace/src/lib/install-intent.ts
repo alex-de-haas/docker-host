@@ -1,3 +1,7 @@
+import { getEmbeddingOrigin, resolveEmbeddingOrigin } from "@/lib/embedding-origin";
+
+export { resolveEmbeddingOrigin };
+
 export const INSTALL_FEED_INTENT_TYPE = "hosty:install-feed";
 export const INSTALL_FEED_INTENT_VERSION = 1;
 
@@ -24,23 +28,12 @@ export function createInstallFeedIntent(feedsUrl: string, feedId?: string | null
     : { type: INSTALL_FEED_INTENT_TYPE, version: INSTALL_FEED_INTENT_VERSION, feedsUrl: normalizedUrl };
 }
 
-export function resolveEmbeddingOrigin(referrer: string): string | null {
-  try {
-    const url = new URL(referrer);
-    return (url.protocol === "http:" || url.protocol === "https:") && url.origin !== "null"
-      ? url.origin
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export function postInstallFeedIntent(feedsUrl: string, feedId?: string | null): InstallIntentResult {
   if (window.parent === window) {
     return { ok: false, message: "Install review is available only when Marketplace is opened inside Hosty Shell." };
   }
 
-  const targetOrigin = resolveEmbeddingOrigin(document.referrer);
+  const targetOrigin = getEmbeddingOrigin();
   if (!targetOrigin) {
     return { ok: false, message: "Hosty Shell could not be verified from the embedding referrer." };
   }

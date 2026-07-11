@@ -96,5 +96,8 @@
       "protocol": "http"
     }
   ],
-  "capabilities": ["restart", "stop", "logs"]
+  "capabilities": ["restart", "stop", "logs"],
+  "catalogMetadata": {
+    "icon": "assets/icon.svg"
+  }
 }

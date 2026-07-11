@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
-import { ChevronDown, LoaderCircle, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { ChevronDown, Download, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -261,7 +261,7 @@ export function InstallReviewDialog({
           <DialogFooter>
             {reviewedPlan.action !== "install" && <p className="text-sm text-muted-foreground">Already installed</p>}
             <Button onClick={apply} disabled={reviewedPlan.action !== "install" || detail.loading || busyAction === "install"}>
-              {busyAction === "install" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              {busyAction === "install" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               Install App
             </Button>
           </DialogFooter>
