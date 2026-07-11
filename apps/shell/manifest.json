@@ -77,5 +77,8 @@
       "public": true
     }
   ],
-  "capabilities": ["open", "update", "restart", "stop", "logs"]
+  "capabilities": ["open", "update", "restart", "stop", "logs"],
+  "catalogMetadata": {
+    "icon": "assets/icon.svg"
+  }
 }

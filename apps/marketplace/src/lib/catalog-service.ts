@@ -42,6 +42,8 @@ export class CatalogService {
 
   async getApps(options: { refresh?: boolean } = {}): Promise<CatalogAppsResponse> {
     const catalog = await this.loadCatalog(options.refresh === true);
+    // Summaries stay lightweight: feeds are resolved lazily per app when details open, since fetching
+    // every entry's feeds document up front would be far too costly for a large catalog.
     const apps: CatalogAppSummary[] = [...catalog.entries.values()].map(entry => ({
       id: entry.id,
       name: resolveName(entry),

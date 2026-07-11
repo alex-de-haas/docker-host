@@ -29,6 +29,37 @@ internal static class DomainEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 CoreJson.Json(new AppsResponse(await lifecycle.ListAppsAsync(cancellationToken)))));
 
+        // App-authenticated read of installed app ids. An app (e.g. Marketplace) calls this with its
+        // own service token to learn which apps are already installed — enough to flag catalog entries
+        // as installed — without holding a Core session. Returns ids only; the richer per-app state
+        // stays session-gated on GET /api/apps. Any valid app service token is accepted.
+        app.MapGet("/api/internal/apps/{appId}/installed-apps", async (
+            string appId,
+            HttpRequest request,
+            AppServiceTokenService serviceTokens,
+            AppRegistryStore apps,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var token = CoreSessionAuthorization.ReadBearerToken(request);
+            if (string.IsNullOrWhiteSpace(token) || !serviceTokens.ValidateToken(appId, token))
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("installed_apps_unauthorized", "App service token is missing or invalid."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            if (await apps.GetAppAsync(appId, cancellationToken) is null)
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("app_not_found", "Runtime app was not found."),
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            var installed = await lifecycle.ListAppsAsync(cancellationToken);
+            return CoreJson.Json(new InstalledAppsResponse(installed.Select(summary => summary.Id).ToArray()));
+        });
+
         app.MapGet("/api/users", async (
             HttpRequest request,
             UserDirectoryStore store,
@@ -102,6 +133,8 @@ internal static class DomainEndpoints
 }
 
 internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
+
+internal sealed record InstalledAppsResponse(IReadOnlyList<string> AppIds);
 
 internal sealed record UsersResponse(
     IReadOnlyList<HostUserRecord> Users,

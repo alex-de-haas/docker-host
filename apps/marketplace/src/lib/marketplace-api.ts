@@ -22,6 +22,11 @@ export async function fetchIdentity(signal?: AbortSignal): Promise<MarketplaceId
   return fetchJson<MarketplaceIdentity>("/api/auth/identity", signal);
 }
 
+export async function fetchInstalledAppIds(signal?: AbortSignal): Promise<string[]> {
+  const result = await fetchJson<{ appIds?: string[] }>("/api/installed-apps", signal);
+  return Array.isArray(result.appIds) ? result.appIds : [];
+}
+
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) {

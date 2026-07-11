@@ -109,6 +109,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(CsrfResponse))]
 [JsonSerializable(typeof(LogoutResponse))]
 [JsonSerializable(typeof(AppsResponse))]
+[JsonSerializable(typeof(InstalledAppsResponse))]
 [JsonSerializable(typeof(UsersResponse))]
 [JsonSerializable(typeof(AuditResponse))]
 [JsonSerializable(typeof(AppDirectoryUsersResponse))]
