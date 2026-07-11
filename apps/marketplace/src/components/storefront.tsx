@@ -125,7 +125,7 @@ export function Storefront() {
         // Nothing installable — open details so the user sees the feed diagnostic.
         setSelected(detail);
         if (!feed) {
-          setNotice(detail.feedDiagnostic.message);
+          setNotice(detail.feedDiagnostic?.message ?? "No installable feed found.");
         }
       }
     } catch (installError) {
@@ -312,7 +312,7 @@ function FeedInstallButton({ feeds, disabled = false, onInstallDefault, onInstal
     if (!open) {
       return;
     }
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: PointerEvent) => {
       if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
         setOpen(false);
       }
@@ -322,10 +322,10 @@ function FeedInstallButton({ feeds, disabled = false, onInstallDefault, onInstal
         setOpen(false);
       }
     };
-    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [open]);
@@ -342,7 +342,7 @@ function FeedInstallButton({ feeds, disabled = false, onInstallDefault, onInstal
           size="sm"
           className="rounded-l-none border-l border-primary-foreground/25 px-2"
           disabled={disabled}
-          aria-haspopup="menu"
+          aria-haspopup="true"
           aria-expanded={open}
           aria-label="Choose install feed"
           onClick={() => setOpen(current => !current)}
@@ -351,8 +351,9 @@ function FeedInstallButton({ feeds, disabled = false, onInstallDefault, onInstal
         </Button>
       ) : null}
       {open && multiple ? (
+        // A plain disclosure popover, not a WAI-ARIA menu: the choices are focusable buttons reached
+        // by Tab and dismissed with Escape, so we don't claim menu roles we don't fully implement.
         <div
-          role="menu"
           className={cn(
             "absolute right-0 z-50 min-w-52 rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
             placement === "top" ? "bottom-full mb-1" : "top-full mt-1",
@@ -362,7 +363,6 @@ function FeedInstallButton({ feeds, disabled = false, onInstallDefault, onInstal
             <button
               key={feed.id}
               type="button"
-              role="menuitem"
               className="flex w-full items-center justify-between gap-3 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
               onClick={() => { setOpen(false); onInstallFeed(feed); }}
             >
@@ -556,5 +556,9 @@ function EmptyState({ icon: Icon, title, description, iconClassName }: {
 }
 
 function humanizeCode(code: string): string {
-  return code.split("_").map(word => word[0]?.toUpperCase() + word.slice(1)).join(" ");
+  return code
+    .split("_")
+    .filter(Boolean)
+    .map(word => `${word[0]?.toUpperCase() ?? ""}${word.slice(1)}`)
+    .join(" ");
 }

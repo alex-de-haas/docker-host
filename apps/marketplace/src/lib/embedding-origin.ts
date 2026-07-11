@@ -24,6 +24,9 @@ export function resolveEmbeddingOrigin(referrer: string): string | null {
 }
 
 function readStored(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
   try {
     const stored = window.sessionStorage.getItem(STORAGE_KEY);
     return stored && resolveEmbeddingOrigin(stored) ? stored : null;
@@ -47,15 +50,24 @@ export function rememberParentOrigin(origin: string): void {
 }
 
 export function getEmbeddingOrigin(): string | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
   return readStored() ?? resolveEmbeddingOrigin(document.referrer);
 }
 
 // Attach at module evaluation — before React mounts and before the iframe's load event — so we
 // never miss the Shell's initial theme message, whose origin is exactly what we need to capture.
+// Guarded so HMR re-evaluation (or a duplicate import) can't stack multiple listeners.
 function listenForParentOrigin(): void {
   if (typeof window === "undefined" || window.parent === window) {
     return;
   }
+  const host = window as Window & { __hostyEmbeddingOriginListener?: boolean };
+  if (host.__hostyEmbeddingOriginListener) {
+    return;
+  }
+  host.__hostyEmbeddingOriginListener = true;
   window.addEventListener("message", (event) => {
     if (event.source === window.parent) {
       rememberParentOrigin(event.origin);

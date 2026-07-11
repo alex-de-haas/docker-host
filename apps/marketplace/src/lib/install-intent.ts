@@ -35,7 +35,7 @@ export function postInstallFeedIntent(feedsUrl: string, feedId?: string | null):
 
   const targetOrigin = getEmbeddingOrigin();
   if (!targetOrigin) {
-    return { ok: false, message: "Hosty Shell could not be verified from the embedding referrer." };
+    return { ok: false, message: "The embedding Hosty Shell origin could not be determined." };
   }
 
   try {
