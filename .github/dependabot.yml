@@ -57,6 +57,7 @@ updates:
       - /apps/shell
       - /apps/demo-app
       - /apps/telemetry-backend
+      - /apps/marketplace
     schedule:
       interval: weekly
     ignore:

@@ -67,6 +67,17 @@ expectEqual("telemetry backend image tag", {
   backendImageTag,
 });
 
+// marketplace: manifest ↔ package ↔ the api image tag it pins (shell + telemetry couplings combined).
+const marketplaceManifest = json("apps/marketplace/manifest.json");
+const marketplaceImageTag = marketplaceManifest.services
+  ?.find((service) => service.key === "api")
+  ?.runtimes?.docker?.image?.tag;
+expectEqual("marketplace version", {
+  manifest: marketplaceManifest.version,
+  packageJson: json("apps/marketplace/package.json").version,
+  marketplaceImageTag,
+});
+
 // channels: the rolling channel (releaseTag cli-dev tracks main HEAD) must advertise the platform version.
 const channels = json("channels/product-channels.json").channels ?? [];
 for (const channel of channels) {

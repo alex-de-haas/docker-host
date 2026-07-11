@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.marketplace",
+  "name": "Hosty Marketplace",
+  "description": "Read-only catalog service: aggregates configured catalog sources and serves the storefront data Shell and CLI read through Core's compatibility proxy. Holds no Core scopes; install/update authority stays in Core.",
+  "version": "0.1.0",
+  "role": "system",
+  "runtimeProfiles": [
+    {
+      "key": "docker",
+      "type": "docker",
+      "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand",
+      "development": true
+    }
+  ],
+  "defaultRuntime": "docker",
+  "services": [
+    {
+      "key": "api",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": {
+            "repository": "ghcr.io/alex-de-haas/hosty-marketplace",
+            "tag": "0.1.0"
+          },
+          "environment": {
+            "PORT": "3000",
+            "HOSTNAME": "0.0.0.0",
+            "HOSTY_MARKETPLACE_DATA_DIR": "/var/lib/hosty-marketplace"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http"
+            }
+          ]
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/marketplace",
+          "setup": "npm install",
+          "command": "npm run dev",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3200,
+              "protocol": "http"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "data": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "docker",
+        "containerPath": "/var/lib/hosty-marketplace"
+      },
+      {
+        "runtime": "dev",
+        "environment": "HOSTY_APP_DATA_DIR"
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "key": "catalog",
+      "service": "api",
+      "port": "http",
+      "protocol": "http"
+    }
+  ],
+  "capabilities": ["restart", "stop", "logs"]
+}

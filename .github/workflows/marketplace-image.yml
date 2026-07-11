@@ -1,0 +1,121 @@
+name: Marketplace Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/marketplace/**"
+      - "global.json"
+      - "Directory.Build.props"
+      - ".github/workflows/marketplace-image.yml"
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # Gate the image push on the marketplace tests: the Docker build only catches compile errors, so
+  # without this a commit whose tests fail still pushes a :latest image referenced by the manifest.
+  test:
+    name: Gate on tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Lint Marketplace
+        run: npm run marketplace:lint
+
+      - name: Test Marketplace
+        run: npm run marketplace:test
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Signed build-provenance attestation for the pushed image (I-M2).
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Compute image name
+        id: image
+        shell: bash
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/hosty-marketplace" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve app version
+        id: version
+        shell: bash
+        # Tag the image with the marketplace app's manifest version so the manifest can pin a real
+        # release tag instead of :latest (which the docker adapter TOFU-freezes at install time,
+        # leaving no update path — R-M1). Bump apps/marketplace/manifest.json version + the manifest
+        # tag together on release.
+        run: |
+          version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' apps/marketplace/manifest.json | head -n1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+          if [[ -z "$version" ]]; then
+            echo "Could not resolve version from apps/marketplace/manifest.json" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish Marketplace image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: ./apps/marketplace/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=marketplace-image
+          # mode=max caches the expensive restore/publish stages too, not just the thin final layer, so
+          # QEMU arm64 builds don't rebuild from scratch each run (I-M4).
+          cache-to: type=gha,scope=marketplace-image,mode=max
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

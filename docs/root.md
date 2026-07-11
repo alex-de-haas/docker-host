@@ -58,6 +58,10 @@ flowchart LR
 - [Web UI dashboard](features/web-ui-dashboard.md) - Shell dashboard and app management surface.
 - [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - Core/Shell/CLI ownership boundaries.
 
+## Planning
+
+- [Marketplace System App - Phase 1](planning/marketplace-system-app.md) - approved extraction of catalog data, sources, and compatibility APIs into `hosty.marketplace`.
+
 ## Ideas
 
 Draft, exploratory, or backlog items that are not current implementation commitments:

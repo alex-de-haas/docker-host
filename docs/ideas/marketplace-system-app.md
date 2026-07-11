@@ -1,6 +1,6 @@
 # Marketplace As A System App
 
-Status: Idea
+Status: Promoted
 Created: 2026-07-10
 Updated: 2026-07-10
 
@@ -247,6 +247,7 @@ Catalog entries point to runtime-app-owned `feeds.json`. Shell/CLI pass `feedsUr
 
 ## Links
 
+- [Phase 1 implementation plan](../planning/marketplace-system-app.md) - approved extraction scope and remaining deliverables.
 - [Core Extension Model](core-extension-model.md) - the general system-app extension mechanism.
 - [System App Pages](system-app-pages.md) - generic Shell pages for UI-capable system apps.
 - [Runtime App Repository Feeds](runtime-app-repository-feeds.md) - current feed behavior moved unchanged to app-owned `feeds.json` with Core-owned resolution.
