@@ -27,6 +27,14 @@ export async function fetchInstalledAppIds(signal?: AbortSignal): Promise<string
   return Array.isArray(result.appIds) ? result.appIds : [];
 }
 
+export async function fetchAppUpdateAvailable(appId: string, signal?: AbortSignal): Promise<boolean> {
+  const result = await fetchJson<{ updateAvailable?: boolean }>(
+    `/api/installed-apps/${encodeURIComponent(appId)}/update-status`,
+    signal,
+  );
+  return result.updateAvailable === true;
+}
+
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) {

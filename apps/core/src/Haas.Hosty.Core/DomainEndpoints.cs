@@ -60,6 +60,53 @@ internal static class DomainEndpoints
             return CoreJson.Json(new InstalledAppsResponse(installed.Select(summary => summary.Id).ToArray()));
         });
 
+        // App-authenticated per-app update check. Marketplace calls this (with its own service token)
+        // to show an "Update" affordance for an already-installed catalog app. Returns only whether an
+        // update is available; the richer per-service status stays admin-session-gated on
+        // GET /api/apps/{appId}/update-status. Any valid app service token is accepted.
+        app.MapGet("/api/internal/apps/{appId}/installed-apps/{targetAppId}/update-status", async (
+            string appId,
+            string targetAppId,
+            HttpRequest request,
+            AppServiceTokenService serviceTokens,
+            AppRegistryStore apps,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var token = CoreSessionAuthorization.ReadBearerToken(request);
+            if (string.IsNullOrWhiteSpace(token) || !serviceTokens.ValidateToken(appId, token))
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("update_status_unauthorized", "App service token is missing or invalid."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            if (await apps.GetAppAsync(appId, cancellationToken) is null)
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("app_not_found", "Runtime app was not found."),
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            // The target isn't installed → nothing to update.
+            if (await apps.GetAppAsync(targetAppId, cancellationToken) is null)
+            {
+                return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: false, UpdateAvailable: false));
+            }
+
+            try
+            {
+                var status = await lifecycle.GetUpdateStatusAsync(targetAppId, cancellationToken);
+                return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, status.UpdateAvailable));
+            }
+            catch (AppLifecycleException)
+            {
+                // Availability can't be determined (e.g. no followed feed / source) — report no update
+                // rather than failing; the reviewed update flow stays the source of truth.
+                return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, UpdateAvailable: false));
+            }
+        });
+
         app.MapGet("/api/users", async (
             HttpRequest request,
             UserDirectoryStore store,
@@ -135,6 +182,8 @@ internal static class DomainEndpoints
 internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
 
 internal sealed record InstalledAppsResponse(IReadOnlyList<string> AppIds);
+
+internal sealed record AppUpdateAvailabilityResponse(string AppId, bool Installed, bool UpdateAvailable);
 
 internal sealed record UsersResponse(
     IReadOnlyList<HostUserRecord> Users,

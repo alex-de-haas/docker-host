@@ -10,7 +10,7 @@ import type {
   CatalogDiagnostic,
 } from "@/lib/catalog-types";
 import { postInstallFeedIntent } from "@/lib/install-intent";
-import { fetchCatalogApp, fetchCatalogApps, fetchIdentity, fetchInstalledAppIds } from "@/lib/marketplace-api";
+import { fetchAppUpdateAvailable, fetchCatalogApp, fetchCatalogApps, fetchIdentity, fetchInstalledAppIds } from "@/lib/marketplace-api";
 import type { MarketplaceIdentity } from "@/lib/host-auth";
 import { MarkdownDescription } from "@/components/markdown-description";
 import { Badge } from "@/components/ui/badge";
@@ -236,7 +236,9 @@ export function Storefront() {
 
       {selected ? (
         <AppDetailDialog
+          key={selected.id}
           app={selected}
+          installed={installedAppIds.has(selected.id)}
           onClose={() => setSelected(null)}
           onInstall={feed => selected.feedsUrl && requestInstall(selected.feedsUrl, feed)}
         />
@@ -258,10 +260,7 @@ function AppCard({ app, detailsBusy, installBusy, installed, onDetails, onInstal
       <div className="flex min-w-0 items-start gap-3">
         <AppIcon app={app} />
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <h2 className="truncate text-base font-semibold">{app.name}</h2>
-            {installed ? <Badge variant="secondary" className="shrink-0 gap-1"><Check className="h-3 w-3" />Installed</Badge> : null}
-          </div>
+          <h2 className="truncate text-base font-semibold">{app.name}</h2>
           <p className="truncate text-xs text-muted-foreground">{app.publisher?.name || app.id}</p>
         </div>
       </div>
@@ -297,8 +296,9 @@ function AppCard({ app, detailsBusy, installBusy, installed, onDetails, onInstal
 // Split button: the main action installs the default feed; the caret opens a menu to pick another
 // feed. Used in the details dialog, where the feed list is already loaded. The caret is hidden when
 // there is only one feed to choose from.
-function FeedInstallButton({ feeds, disabled = false, onInstallDefault, onInstallFeed, placement = "bottom" }: {
+function FeedInstallButton({ feeds, label = "Install", disabled = false, onInstallDefault, onInstallFeed, placement = "bottom" }: {
   feeds: CatalogAppFeed[];
+  label?: string;
   disabled?: boolean;
   onInstallDefault: () => void;
   onInstallFeed: (feed: CatalogAppFeed) => void;
@@ -334,7 +334,7 @@ function FeedInstallButton({ feeds, disabled = false, onInstallDefault, onInstal
     <div ref={rootRef} className="relative inline-flex">
       <Button type="button" size="sm" className={cn(multiple && "rounded-r-none")} disabled={disabled} onClick={onInstallDefault}>
         <Download className="h-4 w-4" />
-        Install
+        {label}
       </Button>
       {multiple ? (
         <Button
@@ -344,7 +344,7 @@ function FeedInstallButton({ feeds, disabled = false, onInstallDefault, onInstal
           disabled={disabled}
           aria-haspopup="true"
           aria-expanded={open}
-          aria-label="Choose install feed"
+          aria-label={`Choose ${label.toLowerCase()} feed`}
           onClick={() => setOpen(current => !current)}
         >
           <ChevronDown className="h-4 w-4" />
@@ -387,13 +387,29 @@ function AppIcon({ app }: { app: CatalogAppSummary | CatalogAppDetailResponse })
   );
 }
 
-function AppDetailDialog({ app, onClose, onInstall }: {
+function AppDetailDialog({ app, installed, onClose, onInstall }: {
   app: CatalogAppDetailResponse;
+  installed: boolean;
   onClose: () => void;
   onInstall: (feed: CatalogAppFeed) => void;
 }) {
   const defaultFeed = app.feeds.find(feed => feed.default) ?? app.feeds[0] ?? null;
   const canInstall = Boolean(defaultFeed && app.feedsUrl);
+  // For an installed app, ask Core whether the feed has a newer manifest than what's installed, so
+  // the footer offers "Update" only when there's actually something to update. The dialog is keyed by
+  // app id in the parent, so the initial state below is correct per app without a synchronous reset.
+  const [updateState, setUpdateState] = useState<"checking" | "available" | "current">(installed ? "checking" : "current");
+  useEffect(() => {
+    if (!installed) {
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    fetchAppUpdateAvailable(app.id, controller.signal)
+      .then(available => { if (!cancelled) setUpdateState(available ? "available" : "current"); })
+      .catch(() => { if (!cancelled) setUpdateState("current"); });
+    return () => { cancelled = true; controller.abort(); };
+  }, [app.id, installed]);
   return (
     <Dialog open onOpenChange={open => !open && onClose()}>
       <DialogContent className="sm:max-w-3xl">
@@ -466,13 +482,22 @@ function AppDetailDialog({ app, onClose, onInstall }: {
 
         <DialogFooter className="flex-row items-center justify-between gap-2 sm:justify-between">
           <Button type="button" variant="outline" size="sm" onClick={onClose}>Close</Button>
-          <FeedInstallButton
-            feeds={app.feeds}
-            disabled={!canInstall}
-            placement="top"
-            onInstallDefault={() => defaultFeed && onInstall(defaultFeed)}
-            onInstallFeed={onInstall}
-          />
+          {installed && updateState !== "available" ? (
+            // Already installed and up to date (or still checking) — no install action to offer.
+            <Button type="button" size="sm" variant="secondary" disabled>
+              {updateState === "checking" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              Installed
+            </Button>
+          ) : (
+            <FeedInstallButton
+              feeds={app.feeds}
+              label={updateState === "available" ? "Update" : "Install"}
+              disabled={!canInstall}
+              placement="top"
+              onInstallDefault={() => defaultFeed && onInstall(defaultFeed)}
+              onInstallFeed={onInstall}
+            />
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
