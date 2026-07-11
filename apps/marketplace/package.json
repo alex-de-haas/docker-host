@@ -1,0 +1,28 @@
+{
+  "name": "@haas/hosty-marketplace",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/run-next.mjs dev 3200",
+    "build": "next build",
+    "start": "node scripts/run-next.mjs start 3200",
+    "lint": "eslint",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "next": "16.2.10",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  }
+}
