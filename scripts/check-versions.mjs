@@ -65,14 +65,17 @@ expectEqual("shell version", {
   packageJson: json("apps/shell/package.json").version,
 });
 
-// telemetry: the manifest version ↔ the backend image tag it pins (see R-M1).
+// telemetry: the manifest version ↔ the first-party image tags it pins (see R-M1). The app ships as a
+// unit, so the backend and the UI images (+ the UI package.json) all track the manifest version. The
+// collector is a third-party image (own upstream version) and is exempt.
 const telemetryManifest = json("apps/telemetry/manifest.json");
-const backendImageTag = telemetryManifest.services
-  ?.find((service) => service.key === "backend")
-  ?.runtimes?.docker?.image?.tag;
-expectEqual("telemetry backend image tag", {
+const telemetryService = (key) =>
+  telemetryManifest.services?.find((service) => service.key === key)?.runtimes?.docker?.image?.tag;
+expectEqual("telemetry image tags", {
   manifest: telemetryManifest.version,
-  backendImageTag,
+  backendImageTag: telemetryService("backend"),
+  uiImageTag: telemetryService("ui"),
+  uiPackageJson: json("apps/telemetry-ui/package.json").version,
 });
 
 // marketplace: manifest ↔ package ↔ the api image tag it pins (shell + telemetry couplings combined).

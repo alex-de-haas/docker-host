@@ -2,8 +2,8 @@
   "schemaVersion": "app.0.1",
   "id": "hosty.telemetry",
   "name": "Hosty Telemetry",
-  "description": "OpenTelemetry collector + telemetry backend: receives OTLP from Hosty runtime apps, stores metrics/logs/traces in an embedded SQLite store, and serves the query API Core's read proxy reads.",
-  "version": "0.2.1",
+  "description": "OpenTelemetry collector + telemetry backend + UI: receives OTLP from Hosty runtime apps, stores metrics/logs/traces in an embedded SQLite store, and serves the Metrics/Structured logs/Traces pages that read the backend directly.",
+  "version": "0.3.0",
   "role": "system",
   "runtimeProfiles": [
     {
@@ -48,7 +48,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-backend",
-            "tag": "0.2.1"
+            "tag": "0.3.0"
           },
           "environment": {
             "HOSTY_TELEMETRY_LOGS_FILE": "/etc/otelcol-contrib/otlp-logs/logs.jsonl",
@@ -63,6 +63,39 @@
               "protocol": "http"
             }
           ]
+        }
+      }
+    },
+    {
+      "key": "ui",
+      "dependsOn": ["backend"],
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": {
+            "repository": "ghcr.io/alex-de-haas/hosty-telemetry-ui",
+            "tag": "0.3.0"
+          },
+          "environment": {
+            "PORT": "3000",
+            "HOSTNAME": "0.0.0.0"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "exec",
+            "command": "node -e \"fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+            "intervalSeconds": 30,
+            "timeoutSeconds": 5,
+            "retries": 3,
+            "gracePeriodSeconds": 10
+          }
         }
       }
     }
@@ -94,9 +127,27 @@
       "service": "backend",
       "port": "query",
       "protocol": "http"
+    },
+    {
+      "key": "http",
+      "service": "ui",
+      "port": "http",
+      "protocol": "http",
+      "public": true
     }
   ],
-  "capabilities": ["restart", "stop", "logs"],
+  "ui": {
+    "entrypoint": {
+      "endpoint": "http",
+      "path": "/metrics"
+    },
+    "navigation": [
+      { "label": "Metrics", "endpoint": "http", "path": "/metrics" },
+      { "label": "Structured logs", "endpoint": "http", "path": "/logs" },
+      { "label": "Traces", "endpoint": "http", "path": "/traces" }
+    ]
+  },
+  "capabilities": ["restart", "stop", "logs", "open"],
   "catalogMetadata": {
     "icon": "assets/icon.svg"
   }

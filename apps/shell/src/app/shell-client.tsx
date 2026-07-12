@@ -63,10 +63,6 @@ import type {
   WorkspaceRoute,
 } from "./shell/types";
 
-// The system app that backs the Observability section. A bare string literal here already survived one
-// app rename silently; keeping it in one named place makes the next rename a single-line change (S-H2).
-export const TELEMETRY_BACKEND_APP_ID = "hosty.telemetry";
-
 export function ShellClient({
   coreOrigin,
   shellAppId,
@@ -1080,12 +1076,6 @@ export function ShellClient({
 
   const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
   const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
-  // The Observability section reads from the telemetry backend system app; show it only when that app
-  // is installed and running (its Metrics/Structured logs/Traces have nothing to show otherwise).
-  const observabilityAvailable = useMemo(
-    () => state.apps.some((app) => app.id === TELEMETRY_BACKEND_APP_ID && app.runtimeState === "running"),
-    [state.apps],
-  );
   const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
   // UI-capable system apps for the sidebar System group. Core already filters system apps out of
   // non-admin listings; the extra canManageApps gate keeps the group provably admin-only client-side.
@@ -1336,7 +1326,6 @@ export function ShellClient({
       uiSystemApps,
       activeUser,
       canManageApps: Boolean(canManageApps),
-      observabilityAvailable,
       busyAction,
       updateStatusInvalidations,
     }),
@@ -1344,7 +1333,6 @@ export function ShellClient({
       activeUser,
       busyAction,
       canManageApps,
-      observabilityAvailable,
       state,
       runtimeApps,
       systemApps,
@@ -1409,7 +1397,6 @@ export function ShellClient({
             shellVersion={shellVersion}
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
-            observabilityAvailable={observabilityAvailable}
             runtimeApps={uiRuntimeApps}
             systemApps={uiSystemApps}
             busyAction={busyAction}

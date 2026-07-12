@@ -21,9 +21,6 @@ export type ShellContextValue = {
   uiSystemApps: CoreApp[];
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
-  // The telemetry backend system app is installed + running, so the backend-backed Observability views
-  // have data. Gates both the sidebar section and direct navigation to /observability/*.
-  observabilityAvailable: boolean;
   busyAction: string | null;
   // Per-app counter bumped whenever a mutation resets an app's artifact locks (apply update, switch
   // runtime), which makes any cached "update available" verdict stale. The Installed Apps page watches

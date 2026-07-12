@@ -1,6 +1,6 @@
 # Observability Phase 2 — telemetry backend as a system app
 
-Status: **2a + 2b + 2c + manifest + 2c-shell implemented (E2E live-verified); only 2d (SSE) remains.**
+Status: **2a–2c + manifest + 2c-shell + UI-as-system-app implemented; Core telemetry read proxy removed; only 2d (SSE) remains.**
 Successor to the shipped observability v1 (P3–P6 in [observability.md](observability.md)). This doc
 records the decision to **move the telemetry store and query API out of Core** into a dedicated
 telemetry-backend system app, and the boundary that keeps Core from exiting entirely.
@@ -20,7 +20,18 @@ telemetry-backend system app, and the boundary that keeps Core from exiting enti
   **Console logs** action + dialog (Installed Apps actions menu, gated on the `logs` capability, reusing
   `GET /api/apps/{id}/logs`); the Observability section becomes backend-backed only (Metrics / Structured
   logs / Traces) and is hidden when the telemetry backend app is not installed/running.
-- **Remaining** — 2d (SSE realtime).
+- **PR#4 (UI as system app, 2026-07-12)** — the observability UI (Metrics / Structured logs / Traces)
+  moves out of Shell into a new Next.js `ui` service on the telemetry app (`apps/telemetry-ui/`, cloned
+  from the marketplace system-app pattern), so `hosty.telemetry` is now collector + backend + **ui**. The
+  UI reads its **own backend directly** — its server routes proxy to `HOSTY_SERVICE_BACKEND_URL` (injected
+  by the ui service's `dependsOn: [backend]`) and inject appId→display-name labels from a new generic
+  Core app-token endpoint `GET /api/internal/apps/{appId}/app-directory`. **Core's telemetry read proxy is
+  removed**: the 5 `/api/apps|observability/*` reads + their `control/v1` twins + `TelemetryBackendClient`
+  + the wire records are deleted (only Shell consumed them; no CLI consumer existed). Core keeps only the
+  `docker stats` producer (`/internal/telemetry/metrics`, unchanged). Shell's hard-coded Observability
+  section is deleted; the telemetry app now appears under the admin **System** nav group, driven entirely
+  by its manifest `ui` block (`entrypoint` + `navigation`), exactly like Marketplace.
+- **Remaining** — 2d (SSE realtime), now a direct UI↔backend concern (no Core proxy to pipe through).
 
 ## Motivation
 
@@ -237,14 +248,14 @@ light request/response polling from Shell is near-real-time. Add SSE as a later 
 | OTLP receive | collector (funnel) | telemetry backend (receiver + store) |
 | Metric/log/trace store | Core in-memory | backend, embedded persistent |
 | Query API — where data lives | Core (owns store) | backend (owns store) |
-| Query API — what Shell/CLI call | Core (owns + serves) | Core (thin admin-gated **proxy** → backend) |
-| `docker stats` infra metrics | Core collects → Core store | Core collects → **push** (OTLP) to backend |
+| Query API — what the UI calls | Core (owns + serves) | **telemetry UI → its own backend directly** (Core off the read path; proxy removed 2026-07-12) |
+| `docker stats` infra metrics | Core collects → Core store | Core re-exposes `/internal/telemetry/metrics` (Prometheus); backend **scrapes** it (pull) |
 | `docker logs` console tail | Core `docker logs` on-demand (not stored) | **unchanged** — stays Core on-demand; **not** in the backend |
 | `container → app` attribution | Core | Core (stamped at run; pushed with the signal) |
 | Freshness | 10 s poll | push / near-real-time |
 | Persistence | none (lost on restart) | survives restart |
-| Shell Observability section | Metrics / Console logs / Structured logs / Traces | Metrics / Structured logs / Traces (**backend-backed only**) |
-| Console logs UI | page inside the Observability section | **per-app dropdown action + dialog** (works without the backend) |
+| Metrics / Structured logs / Traces UI | Shell "Observability" section | **telemetry system app** (`apps/telemetry-ui`, admin System nav); Shell section removed 2026-07-12 |
+| Console logs UI | page inside the Observability section | **per-app dropdown action + dialog** in Shell (works without the backend) |
 
 ## Resolved decisions
 
