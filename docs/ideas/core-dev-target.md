@@ -6,7 +6,7 @@ Updated: 2026-07-12
 
 ## Motivation
 
-Iterating on Core itself is the worst dev loop on the platform. `hosty core restart --project <csproj>` already runs Core from a source tree with the real data root and settings, but the choice is one-shot: it is not persisted, `core status` does not show it, and the next plain `restart` silently reverts to the installed binary. There is also no way to see or drive any of this from Shell, even though every ordinary app gets runtime switching, a source-override tab, and update affordances.
+Iterating on Core itself is the worst dev loop on the platform. `hosty core restart --project <csproj>` already runs Core from a source tree with the real data root and settings, but the choice is one-shot: it is not persisted, `hosty core status` does not show it, and the next plain `restart` silently reverts to the installed binary. There is also no way to see or drive any of this from Shell, even though every ordinary app gets runtime switching, a source-override tab, and update affordances.
 
 The fix is deliberately small. Core stays a **mandatory root workload launched by the CLI acting as a thin agent layer** — not an `app.0.1` app installed through its own pipeline (that is a bootstrap cycle: Core would be required to start Core). What users actually need is UX parity, not model parity:
 
@@ -45,7 +45,9 @@ This document records the design agreed on 2026-07-12 and the implementation pla
 Two new `LaunchSettingDefinitions` keys, persisted in `launch.env`:
 
 - `HOSTY_CORE_TARGET` — `release` (default) or `dev`.
-- `HOSTY_CORE_DEV_PROJECT` — absolute path to the Core `.csproj` (or a source root from which the csproj is discovered). Required and validated (path exists, file is a csproj) when target is `dev`; ignored otherwise.
+- `HOSTY_CORE_DEV_PROJECT` — always stores the discovered absolute path to the Core `.csproj`. `--source` is an input convenience: it accepts either a csproj path or a source root and performs the discovery before the setting is written. Ignored when the target is `release` (kept for pre-filling).
+
+Validation is layered to fit the existing machinery: `LaunchSettingDefinitions` validators only see the value and the `HostyEnvironment`, never other keys, so definition-level validation stays lenient — `HOSTY_CORE_DEV_PROJECT` may be empty, and a non-empty value merely has to be an absolute path. The strict rule "dev requires an existing csproj" is enforced where cross-key context exists: `hosty core target dev` refuses to persist a bad path, and `ResolveStartTargetAsync` re-checks it at start time, failing with an explicit error rather than silently falling back to release (a hand-edited `launch.env` must not change the effective target unnoticed).
 
 Sugar commands:
 
@@ -91,7 +93,7 @@ Update-available detection for the panel: Core compares its own version against 
 A dev Core running against live state can apply a store migration the release binary cannot read, stranding rollback. On the **first** switch to `dev` (and any switch where the last snapshot is older than the installed release version), `hosty core target dev` snapshots Core-owned state before completing:
 
 - scope: Core's private metadata directories under the data root (auth, app records, settings stores) — **not** app data payloads, which can be arbitrarily large;
-- location: `~/.hosty/core/state-snapshots/<version>-<timestamp>/`;
+- location: `~/.hosty/core/state-snapshots/<version>-<timestamp>/`, written to a temporary directory and renamed into place on success, so an interrupted copy can never be mistaken for a valid restore point;
 - `--no-snapshot` opts out explicitly.
 
 The exact directory list is an implementation-time decision (see Open Questions).
@@ -100,10 +102,12 @@ The exact directory list is an implementation-time decision (see Open Questions)
 
 New host-admin-gated endpoints on Core. Core is a *reporter and requester*, never an actuator:
 
-- `GET /api/core/runtime` → `{ version, targetMode, devProjectPath, updateAvailable, latestVersion, startedAt }`.
+- `GET /api/core/runtime` → `{ version, targetMode, devProjectPath, updateAvailable, latestVersion, startedAt, manageable }`.
 - `POST /api/core/runtime/target` `{ mode, sourcePath? }` → runs `hosty core target …` synchronously (it only rewrites settings), relays the CLI's success/error output.
 - `POST /api/core/runtime/restart` → spawns **detached** `hosty core restart` and returns `202`. The old Core then dies mid-flight by design; Shell rides the existing core-offline handling until the new Core is up.
 - `POST /api/core/runtime/update` → spawns detached `hosty core update`.
+
+When Core was started without the CLI launcher (IDE run, bare `dotnet run`), `HOSTY_CLI_PATH` is absent: `GET` reports `manageable: false`, and the mutating endpoints return a structured `503` ("Core was not launched by the Hosty CLI") instead of attempting a spawn. Shell hides the action buttons in that state.
 
 Detachment matters: the spawned CLI must survive Core's own shutdown (new process group / `DETACHED_PROCESS` on Windows), otherwise the restart kills its own executor. The CLI logs these runs to its normal log locations, so a failed unattended restart is diagnosable afterwards.
 
@@ -138,7 +142,7 @@ Non-admin users see what they see today: the version, nothing clickable. All act
 
 - **`app.0.1` manifest for Core** — rejected for this scope (Decision 4). Revisit only if Core ever genuinely needs more runtime shapes than release/dev; the strict-subset dialect and the manifest-model extraction to a shared library are the known costs.
 - **Resident Hosty Agent (supervisor process)** — deferred. The persisted target is deliberately shaped as the future `CoreLaunchSpec`: an Agent would become a second reader of the same settings and add autostart, crash-loop restart with backoff, and versioned binary slots with rollback. Nothing in this design blocks it.
-- **Cheap autostart interim** — a launchd LaunchAgent / `systemd --user` unit with `KeepAlive` running the existing `hosty core start --foreground` (`CoreCommand.cs:74`) would make the OS the supervisor without writing an Agent. Requires teaching `core restart` to cooperate with `launchctl kickstart`. Separate small feature.
+- **Cheap autostart interim** — a launchd LaunchAgent / `systemd --user` unit with `KeepAlive` running the existing `hosty core start --foreground` (`CoreCommand.cs:74`) would make the OS the supervisor without writing an Agent. Requires teaching `hosty core restart` to cooperate with `launchctl kickstart`. Separate small feature.
 - **`dotnet watch` dev loop** — deferred. Watch survives app exit and waits for a file change, so after `hosty core stop` a live watcher would resurrect Core on the next save; stop must learn to kill the watcher's whole process tree first. Plain `dotnet run` (compile on every start) ships first.
 - **Fleet survives Core restart (handover/adopt)** — deferred, separate idea. Requires a durable `ControlSecret` (the persistence pattern already exists in `app-identity-signing.key`), skipping `StopRuntimeAppsAsync` under a handover flag, and adopt-if-healthy reconciliation (docker by labels, localCommand by pidfile/pgid). Even then a Core restart stays user-visible (auth, notifications, directory), which is why this is not on the main path.
 - **Shared CLI/Core library** — not needed by this feature. Its first honest contents, when it happens, are the control-discovery contract and PID-liveness rules currently maintained twice (`apps/cli/.../ControlDiscovery.cs` + `ProcessLiveness.cs` vs. Core's writer side). Both binaries are Native AOT: the library must be reflection-free with source-generated serialization owned per consumer.
@@ -147,17 +151,17 @@ Non-admin users see what they see today: the version, nothing clickable. All act
 
 ### Phase 1 — CLI target (self-contained, useful from the terminal alone)
 
-1. Add `HOSTY_CORE_TARGET` / `HOSTY_CORE_DEV_PROJECT` to `LaunchSettingDefinitions` with validation (dev requires an existing csproj; `release` clears nothing — the dev path is kept for pre-filling).
+1. Add `HOSTY_CORE_TARGET` / `HOSTY_CORE_DEV_PROJECT` to `LaunchSettingDefinitions` (lenient definition-level validation; the strict dev-csproj checks live in the target command and the start resolve — see Design). `release` clears nothing — the dev path is kept for pre-filling.
 2. `hosty core target` subcommand (show / `dev --source` / `release`), including csproj discovery from a source-root path.
 3. Wire the resolve order into `ResolveStartTargetAsync`; keep `--project` as a non-persisted one-shot override.
 4. Inject `HOSTY_CLI_PATH` + target variables in `BuildCoreEnvironment`.
-5. Dev-failure reporting: watch the child process during the readiness wait; distinct error + log tail on early exit. Add the target line to `core status`.
-6. `core update` warning when parked on dev.
+5. Dev-failure reporting: watch the child process during the readiness wait; distinct error + log tail on early exit. Add the target line to `hosty core status`.
+6. `hosty core update` warning when parked on dev.
 7. State snapshot on first dev switch + `--no-snapshot`.
 
 Touched: `apps/cli/src/Haas.Hosty.Cli/Configuration/LaunchSettingDefinitions.cs`, `LaunchSettings.cs`, `Commands/CoreCommand.cs`, new `Commands/CoreTargetCommand.cs` (or a `CoreCommand` branch), CLI usage/docs.
 
-Acceptance: `hosty core target dev --source <repo> && hosty core restart` starts Core from source; a plain `hosty core restart` afterwards *stays* on dev; a broken tree reports `dev target failed` with the compiler error; `core target release && core restart` returns to the installed binary.
+Acceptance: `hosty core target dev --source <repo> && hosty core restart` starts Core from source; a plain `hosty core restart` afterwards *stays* on dev; a broken tree reports `dev target failed` with the compiler error; `hosty core target release && hosty core restart` returns to the installed binary.
 
 ### Phase 2 — Core runtime endpoints
 
@@ -167,7 +171,7 @@ Acceptance: `hosty core target dev --source <repo> && hosty core restart` starts
 
 Touched: new `CoreRuntimeEndpoints.cs` in `apps/core/src/Haas.Hosty.Core/`, `CoreJsonSerializerContext.cs` additions, `docs/features/core-api.md`.
 
-Acceptance: with dev target parked, `GET /api/core/runtime` reports it; `POST restart` from an HTTP client restarts Core through the CLI and the fleet comes back per autostart rules.
+Acceptance: with dev target parked, `GET /api/core/runtime` reports it; `POST restart` from an HTTP client restarts Core through the CLI, and the fleet comes back via Core's own boot reconciliation of autostart-enabled apps (`StartAutostartAppsAsync`) — no OS-level autostart is involved.
 
 ### Phase 3 — Shell platform panel
 
