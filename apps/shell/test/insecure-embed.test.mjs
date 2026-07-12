@@ -31,8 +31,11 @@ test("getEmbedOrigin extracts the origin and falls back to the raw value", () =>
 
 test("isLoopbackEmbedHost matches loopback hosts only", () => {
   assert.equal(isLoopbackEmbedHost("http://127.0.0.1:60944/"), true);
+  assert.equal(isLoopbackEmbedHost("http://127.0.0.2:60944/"), true);
+  assert.equal(isLoopbackEmbedHost("http://127.255.255.254/"), true);
   assert.equal(isLoopbackEmbedHost("http://localhost:3000/"), true);
   assert.equal(isLoopbackEmbedHost("http://[::1]:3000/"), true);
   assert.equal(isLoopbackEmbedHost("http://apps.example.com/"), false);
+  assert.equal(isLoopbackEmbedHost("http://127x0.example.com/"), false);
   assert.equal(isLoopbackEmbedHost("not a url"), false);
 });

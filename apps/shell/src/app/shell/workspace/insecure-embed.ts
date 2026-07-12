@@ -32,7 +32,8 @@ export function getEmbedOrigin(src: string): string {
 export function isLoopbackEmbedHost(src: string): boolean {
   try {
     const host = new URL(src).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+    // The whole 127.0.0.0/8 range is loopback, not just 127.0.0.1.
+    return host === "localhost" || host === "::1" || host === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
   } catch {
     return false;
   }

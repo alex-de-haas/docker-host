@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLink, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -83,9 +83,14 @@ export function EmbeddedWorkspacePanel({
 
   const currentFrameLoaded = loaded && loadedSrc === workspace.src;
 
-  // Checked after the hooks so the hook order stays stable when the src flips between blocked
-  // and embeddable (e.g. the operator sets a public origin and the app restarts).
-  if (typeof window !== "undefined" && isInsecureEmbedBlocked(window.location.protocol, workspace.src)) {
+  // The page protocol is read through useSyncExternalStore so a server render stays
+  // hydration-safe: the server snapshot reports "http:" (never blocked), and a normal client
+  // mount reads the real protocol on its first render — no mounted-flag frame where the iframe
+  // would briefly attempt the blocked load. The protocol is immutable for the page lifetime,
+  // so the store never notifies.
+  const pageProtocol = useSyncExternalStore(noopSubscribe, readPageProtocol, readServerPageProtocol);
+
+  if (isInsecureEmbedBlocked(pageProtocol, workspace.src)) {
     return <BlockedInsecureEmbedPanel workspace={workspace} />;
   }
 
@@ -105,6 +110,12 @@ export function EmbeddedWorkspacePanel({
     </div>
   );
 }
+
+// Stable getters for useSyncExternalStore: the page protocol never changes within a page
+// lifetime, so subscribe is a no-op and the snapshots are constants per environment.
+const noopSubscribe = () => () => {};
+const readPageProtocol = () => window.location.protocol;
+const readServerPageProtocol = () => "http:";
 
 // Rendered instead of the iframe when embedding is impossible (https Shell, http app URL). The
 // browser would block the frame as mixed content without firing load or error, leaving a blank
