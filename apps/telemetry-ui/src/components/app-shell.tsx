@@ -31,25 +31,26 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppsState>({ apps: [], loaded: false, error: null });
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch("/api/apps");
+        const response = await fetch("/api/apps", { signal: controller.signal });
         if (!response.ok) {
           throw new Error(`Roster request failed (${response.status}).`);
         }
         const payload = (await response.json()) as { apps?: TelemetryApp[] };
-        if (!cancelled) {
-          setState({ apps: Array.isArray(payload.apps) ? payload.apps : [], loaded: true, error: null });
-        }
+        setState({ apps: Array.isArray(payload.apps) ? payload.apps : [], loaded: true, error: null });
       } catch (error) {
-        if (!cancelled) {
-          setState({ apps: [], loaded: true, error: error instanceof Error ? error.message : "Roster unavailable." });
+        // Aborted on unmount — the fetch was cancelled, so don't touch state on a gone component.
+        // fetch aborts throw a DOMException (not an Error subclass), so guard on that.
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
         }
+        setState({ apps: [], loaded: true, error: error instanceof Error ? error.message : "Roster unavailable." });
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, []);
 
