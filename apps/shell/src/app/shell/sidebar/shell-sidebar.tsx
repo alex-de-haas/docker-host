@@ -187,12 +187,12 @@ function SidebarVersionInfo({
   const shellLabel = shellVersion ? `Shell v${shellVersion}` : null;
   const title = shellLabel ? `${platformLabel} · ${shellLabel}` : platformLabel;
 
+  // The tooltip lives on the outermost element only, so the button variant's richer title is
+  // never shadowed by an inner one.
   const body = compact ? (
-    <p className="text-center text-[10px] leading-tight" title={title}>
-      {coreVersion ? `v${coreVersion}` : "—"}
-    </p>
+    <p className="text-center text-[10px] leading-tight">{coreVersion ? `v${coreVersion}` : "—"}</p>
   ) : (
-    <div className="text-[11px] leading-tight" title={title}>
+    <div className="text-[11px] leading-tight">
       <p className="truncate">{platformLabel}</p>
       {shellLabel && <p className="truncate">{shellLabel}</p>}
     </div>
@@ -201,7 +201,11 @@ function SidebarVersionInfo({
   // Admins get the platform panel behind the version block (generic-bootstrap Phase 3); everyone
   // else keeps the plain read-only text.
   if (!onOpenPlatform) {
-    return <div className={cn("text-muted-foreground", compact ? "" : "px-2")}>{body}</div>;
+    return (
+      <div className={cn("text-muted-foreground", compact ? "" : "px-2")} title={title}>
+        {body}
+      </div>
+    );
   }
 
   return (
@@ -213,6 +217,7 @@ function SidebarVersionInfo({
       )}
       onClick={onOpenPlatform}
       title={`${title} — open platform settings`}
+      aria-label="Open platform settings"
     >
       {body}
     </button>

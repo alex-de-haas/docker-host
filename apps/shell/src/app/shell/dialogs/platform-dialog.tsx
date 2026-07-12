@@ -63,7 +63,7 @@ export function PlatformDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && close()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Platform</DialogTitle>
           <DialogDescription>{versionLine}</DialogDescription>

@@ -79,9 +79,11 @@ internal sealed class SystemAppBootstrapService(
         var statuses = new List<SystemAppBootstrapStatus>(list.Apps.Count);
         foreach (var entry in list.Apps)
         {
+            // One descriptor per entry is guaranteed by FromDistribution's construction; the guard
+            // only keeps a future planner change from turning into a 500 here.
             statuses.Add(new SystemAppBootstrapStatus(
                 entry,
-                descriptors[entry.Id].Enabled,
+                descriptors.TryGetValue(entry.Id, out var descriptor) && descriptor.Enabled,
                 choices?.EnabledFor(entry.Id),
                 await apps.GetAppAsync(entry.Id, cancellationToken)));
         }
@@ -108,7 +110,10 @@ internal sealed class SystemAppBootstrapService(
         }
 
         var descriptor = (await PlanAsync(list, cancellationToken))
-            .First(candidate => string.Equals(candidate.AppId, entry.Id, StringComparison.Ordinal));
+                .FirstOrDefault(candidate => string.Equals(candidate.AppId, entry.Id, StringComparison.Ordinal))
+            ?? throw new AppLifecycleException(
+                "bootstrap_plan_failed",
+                $"'{entry.Id}' could not be planned from the distribution list.");
         try
         {
             await EnsureInstalledCoreAsync(descriptor, cancellationToken);

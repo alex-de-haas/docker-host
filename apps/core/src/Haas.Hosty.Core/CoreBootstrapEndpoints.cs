@@ -26,7 +26,7 @@ internal static class CoreBootstrapEndpoints
             UserDirectoryStore users,
             IClock clock,
             SystemAppBootstrapService bootstrap,
-            CoreBootstrapChoiceRequest input,
+            CoreBootstrapChoiceRequest? input,
             CancellationToken cancellationToken) =>
             await CoreSessionAuthorization.RequireAdminSessionAsync(
                 request,
@@ -34,7 +34,7 @@ internal static class CoreBootstrapEndpoints
                 clock,
                 async () =>
                 {
-                    if (string.IsNullOrWhiteSpace(input.AppId) || input.Enabled is not bool enabled)
+                    if (input is null || string.IsNullOrWhiteSpace(input.AppId) || input.Enabled is not bool enabled)
                     {
                         return CoreJson.Json(
                             new ErrorResponse("bootstrap_choice_invalid", "appId and enabled are required."),
