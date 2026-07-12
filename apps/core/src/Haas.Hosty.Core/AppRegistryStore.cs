@@ -271,7 +271,20 @@ internal sealed record AppRecord(
     string? FeedsUrl = null,
     // Selected feed id within FeedsUrl. ManifestUrl stores that feed's last resolved manifestRef.
     // Null means no feed is selected (including every direct install). Additive/nullable state.
-    string? FollowedFeedId = null);
+    string? FollowedFeedId = null,
+    // Install provenance: how this record came to exist. "distribution" marks apps installed (or
+    // adopted) by the boot bootstrap from the release's distribution list — uninstalling such an app
+    // records enabled=false in bootstrap choices so the next boot does not resurrect it. Null means a
+    // user/operator install. Ownership bookkeeping, not privilege (see docs/ideas/generic-bootstrap.md);
+    // additive/nullable, so no AppStateDocument schema bump.
+    string? InstallOrigin = null);
+
+// Well-known InstallOrigin values. Null on the record means a user/operator install; only the
+// distribution bootstrap stamps an explicit origin today.
+internal static class AppInstallOrigins
+{
+    public const string Distribution = "distribution";
+}
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
 // update for a pinned app. `Kind` is "image" (registry image) in v1; the bundle/source fields are

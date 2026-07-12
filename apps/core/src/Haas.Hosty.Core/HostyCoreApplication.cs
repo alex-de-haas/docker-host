@@ -72,6 +72,10 @@ internal static class HostyCoreApplication
                 ? new CloudflaredIngressController(ingressConfig, sp.GetRequiredService<ILogger<CloudflaredIngressController>>())
                 : new NoneIngressController();
         });
+        // Generic bootstrap (Phase 1): the release-owned distribution list and the operator's
+        // bootstrap choices drive which first-party apps the supervisor preinstalls at boot.
+        builder.Services.AddSingleton<DistributionAppsProvider>();
+        builder.Services.AddSingleton<BootstrapChoicesStore>();
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
@@ -675,10 +679,8 @@ internal sealed record HostyCoreRuntimeConfig(
     string? CorePublicOrigin,
     string? ShellPublicOrigin,
     string RuntimePublicHost,
-    string? ShellManifestPath,
     string ShellBootstrapRuntime,
     string? ShellSourceOverridePath,
-    bool ShellBootstrapEnabled,
     bool ShellAutostart,
     string? TrustedProxySecret = null,
     string IngressProvider = "none",
@@ -687,10 +689,12 @@ internal sealed record HostyCoreRuntimeConfig(
     string? IngressTunnelId = null,
     string? IngressCredentialsFile = null,
     bool ObservabilityEnabled = false,
-    string? CollectorManifestPath = null,
     string CollectorBootstrapRuntime = "docker",
     bool CollectorAutostart = true,
-    string? MarketplaceManifestPath = null)
+    // Raw legacy bootstrap env (per-app manifest paths and enable flags), captured verbatim for the
+    // distribution merge's deprecation layer. Which apps bootstrap — and from where — is otherwise
+    // decided by the distribution list + operator choices, not by this config.
+    LegacyBootstrapEnv? Legacy = null)
 {
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
 
@@ -719,10 +723,18 @@ internal sealed record HostyCoreRuntimeConfig(
         // ::1 (nothing listens there) until the request times out, and every telemetry/health read to a
         // runtime app silently degrades to empty. Overridable for hosts that publish on another address.
         var runtimePublicHost = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_RUNTIME_PUBLIC_HOST")) ?? "127.0.0.1";
-        var shellManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")) ??
-            ResolveDefaultShellManifestPath();
-        var collectorManifestPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_MANIFEST_PATH")) ??
-            ResolveDefaultCollectorManifestPath();
+        // Legacy per-app bootstrap env, captured verbatim (no default substitution): the distribution
+        // list owns the defaults now, and the merge only honors these as deprecated explicit
+        // overrides. The marketplace variable tracks raw presence because present-but-empty is a
+        // meaningful explicit disable (NormalizeOptional would erase that distinction).
+        var rawMarketplaceManifestPath = Environment.GetEnvironmentVariable("HOSTY_MARKETPLACE_MANIFEST_PATH");
+        var legacy = new LegacyBootstrapEnv(
+            ShellManifestPath: NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_MANIFEST_PATH")),
+            ShellBootstrapEnabled: ReadOptionalBoolean("HOSTY_SHELL_BOOTSTRAP_ENABLED"),
+            CollectorManifestPath: NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_MANIFEST_PATH")),
+            ObservabilityEnabled: ReadOptionalBoolean("HOSTY_OBSERVABILITY_ENABLED"),
+            MarketplaceManifestPath: NormalizeOptional(rawMarketplaceManifestPath),
+            MarketplaceManifestPathConfigured: rawMarketplaceManifestPath is not null);
         // Resolve to absolute paths: the credentials path is written verbatim into config.yml and
         // cloudflared (run from another cwd / as a service) cannot resolve relative or ~ paths.
         var ingressConfigPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CONFIG_PATH")) is { } configPath
@@ -742,10 +754,8 @@ internal sealed record HostyCoreRuntimeConfig(
             corePublicOrigin,
             shellPublicOrigin,
             runtimePublicHost,
-            shellManifestPath,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_BOOTSTRAP_RUNTIME")) ?? "docker",
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_SOURCE_OVERRIDE_PATH")),
-            ReadBoolean("HOSTY_SHELL_BOOTSTRAP_ENABLED", defaultValue: true),
             ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_TRUSTED_PROXY_SECRET")),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_PROVIDER")) ?? "none",
@@ -754,10 +764,9 @@ internal sealed record HostyCoreRuntimeConfig(
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_TUNNEL_ID")),
             ingressCredentialsFile,
             ReadBoolean("HOSTY_OBSERVABILITY_ENABLED", defaultValue: false),
-            collectorManifestPath,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME")) ?? "docker",
             ReadBoolean("HOSTY_COLLECTOR_AUTOSTART", defaultValue: true),
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_MARKETPLACE_MANIFEST_PATH")));
+            legacy);
     }
 
     private static string? ReadFirst(params string[] names)
@@ -818,6 +827,13 @@ internal sealed record HostyCoreRuntimeConfig(
             value.Equals("enabled", StringComparison.OrdinalIgnoreCase) ||
             value.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
+
+    // Like ReadBoolean but keeps "unset" distinct from any default — the legacy bootstrap layer only
+    // acts on values the operator (or the current CLI) explicitly provided.
+    private static bool? ReadOptionalBoolean(string name)
+        => NormalizeOptional(Environment.GetEnvironmentVariable(name)) is null
+            ? null
+            : ReadBoolean(name, defaultValue: false);
 
     public IReadOnlyList<string> BuildPublicOriginWarnings()
     {
@@ -887,41 +903,6 @@ internal sealed record HostyCoreRuntimeConfig(
 
         return IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
     }
-
-    private static string? ResolveDefaultShellManifestPath()
-        => ResolveDefaultBundledManifestPath("shell");
-
-    private static string? ResolveDefaultCollectorManifestPath()
-        => ResolveDefaultBundledManifestPath("telemetry");
-
-    // Walks up from the working dir and the binary's base dir looking for a manifest bundled next to
-    // Core under apps/<name>/manifest.json (or <name>/manifest.json). Shared by the Shell and the
-    // telemetry collector, both of which ship their manifest in this repo layout.
-    private static string? ResolveDefaultBundledManifestPath(string name)
-    {
-        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
-        {
-            var directory = new DirectoryInfo(start);
-            while (directory is not null)
-            {
-                var candidate = Path.Combine(directory.FullName, "apps", name, "manifest.json");
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-
-                candidate = Path.Combine(directory.FullName, name, "manifest.json");
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-
-                directory = directory.Parent;
-            }
-        }
-
-        return null;
-    }
 }
 
 internal enum RestartDecision
@@ -943,6 +924,8 @@ internal sealed class RuntimeAppSupervisorService(
     AppRegistryStore apps,
     CoreLifecycleService lifecycle,
     AppSourceService sources,
+    DistributionAppsProvider distribution,
+    BootstrapChoicesStore bootstrapChoices,
     ILogger<RuntimeAppSupervisorService> logger,
     NotificationService? notifications = null) : BackgroundService
 {
@@ -962,7 +945,7 @@ internal sealed class RuntimeAppSupervisorService(
         await Task.Yield();
 
         await ReclaimOrphanedRuntimeProcessesAsync(stoppingToken);
-        foreach (var descriptor in SystemAppBootstraps.FromConfig(config))
+        foreach (var descriptor in await PlanSystemAppBootstrapsAsync(stoppingToken))
         {
             await EnsureSystemAppInstalledAsync(descriptor, stoppingToken);
         }
@@ -1185,9 +1168,97 @@ internal sealed class RuntimeAppSupervisorService(
         await StopRuntimeAppsAsync(cancellationToken);
     }
 
-    // Generic install-or-reconcile for every Core-bundled system app descriptor. Best-effort by
-    // design: a failure here must never crash the supervisor — Core stays fully usable through CLI
-    // and control APIs, just without the optional system app.
+    // Resolves the boot bootstrap set: the release-owned distribution list merged with the
+    // operator's bootstrap choices (and, transitionally, the deprecated legacy env overrides).
+    // Loud but non-fatal throughout — a broken list or choices file boots Core on the embedded
+    // defaults rather than taking the host down.
+    private async Task<IReadOnlyList<SystemAppBootstrapDescriptor>> PlanSystemAppBootstrapsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var list = await distribution.LoadAsync(cancellationToken);
+            distribution.LogProblems(list);
+            logger.LogInformation(
+                "Distribution list ({Source}) declares {Count} app(s): {Ids}.",
+                list.Source,
+                list.Apps.Count,
+                string.Join(", ", list.Apps.Select(entry => entry.Id)));
+
+            await MigrateBootstrapChoicesAsync(list, cancellationToken);
+
+            var plan = SystemAppBootstraps.FromDistribution(list.Apps, await bootstrapChoices.LoadAsync(cancellationToken), config);
+            foreach (var warning in plan.Warnings)
+            {
+                logger.LogWarning("Bootstrap: {Warning}", warning);
+            }
+
+            return plan.Descriptors;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "System app bootstrap planning failed; no system apps will be reconciled this boot. Core remains available through CLI and control APIs.");
+            return [];
+        }
+    }
+
+    // One-time upgrade migration: a host that already has apps installed but no choices file gets its
+    // current effective state pinned as explicit choices. Without this, a distribution default that
+    // differs from the legacy behavior (e.g. marketplace defaultEnabled) would silently change an
+    // existing install on the first boot after the upgrade. Fresh installs (empty registry) write
+    // nothing and follow the release defaults. A failed install attempt on a fresh host is safe: the
+    // registry only gains records on successful installs, so the entry retries next boot.
+    private async Task MigrateBootstrapChoicesAsync(DistributionAppsResult list, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (bootstrapChoices.Exists)
+            {
+                return;
+            }
+
+            var installed = await apps.ListAppRecordsAsync(cancellationToken);
+            if (installed.Count == 0)
+            {
+                return;
+            }
+
+            var legacy = config.Legacy ?? LegacyBootstrapEnv.Empty;
+            var installedIds = installed.Select(app => app.Id).ToHashSet(StringComparer.Ordinal);
+            var pins = new Dictionary<string, BootstrapChoiceEntry>(StringComparer.Ordinal);
+            foreach (var entry in list.Apps)
+            {
+                var legacyEnabled = entry.Id switch
+                {
+                    ShellBootstrap.AppId => legacy.ShellBootstrapEnabled,
+                    CollectorBootstrap.AppId => legacy.ObservabilityEnabled,
+                    MarketplaceBootstrap.AppId when legacy.MarketplaceManifestPathConfigured =>
+                        !string.IsNullOrWhiteSpace(legacy.MarketplaceManifestPath),
+                    _ => null,
+                };
+                pins[entry.Id] = new BootstrapChoiceEntry
+                {
+                    Enabled = installedIds.Contains(entry.Id) || legacyEnabled == true,
+                };
+            }
+
+            if (await bootstrapChoices.SeedIfAbsentAsync(new BootstrapChoicesDocument { Apps = pins }, cancellationToken))
+            {
+                logger.LogInformation(
+                    "Migrated bootstrap choices from the installed state: {Choices}.",
+                    string.Join(", ", pins.Select(pair => $"{pair.Key}={(pair.Value.Enabled == true ? "enabled" : "disabled")}")));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Non-fatal: this boot runs on the synthesized-in-memory equivalent of the defaults; the
+            // migration retries on the next boot.
+            logger.LogWarning(ex, "Bootstrap choices migration did not complete; continuing with release defaults for this boot.");
+        }
+    }
+
+    // Generic install-or-reconcile for every distribution-list descriptor. Best-effort by design: a
+    // failure here must never crash the supervisor — Core stays fully usable through CLI and control
+    // APIs, just without the optional system app.
     private async Task EnsureSystemAppInstalledAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
     {
         if (!descriptor.Enabled)
@@ -1206,20 +1277,27 @@ internal sealed class RuntimeAppSupervisorService(
             var app = await apps.GetAppAsync(descriptor.AppId, cancellationToken);
             if (app is null)
             {
-                await lifecycle.InstallAsync(new AppInstallRequest(
-                    ManifestPath: descriptor.ManifestPath,
-                    SelectedRuntime: descriptor.Runtime,
-                    System: true,
-                    Settings: descriptor.Settings,
-                    Autostart: descriptor.Autostart,
-                    // Started by the boot reconciliation (StartAutostartAppsAsync) in priority order —
-                    // not inline here, which would double-start and race other system-app bootstraps.
-                    StartOnInstall: false), cancellationToken);
+                await InstallSystemAppAsync(descriptor, cancellationToken);
                 app = await apps.GetAppAsync(descriptor.AppId, cancellationToken);
             }
             else
             {
                 app = await ReconcileSystemAppManifestAsync(descriptor, app, cancellationToken);
+            }
+
+            // Provenance + system flag: the app is installed (or adopted) by the distribution
+            // bootstrap. Stamped after install/reconcile so it covers pre-existing records from
+            // earlier Core versions too; uninstalling a distribution-origin app then records
+            // enabled=false in choices so the next boot does not resurrect it. The system flag is
+            // normalized alongside because the feed install path passes System=false and relies on
+            // the manifest role — which a distribution app is not required to declare.
+            if (app is not null &&
+                (!string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal) || !app.System))
+            {
+                await apps.UpdateAppAsync(
+                    descriptor.AppId,
+                    record => record with { InstallOrigin = AppInstallOrigins.Distribution, System = true },
+                    cancellationToken);
             }
 
             if (app is not null && descriptor.Settings is { Count: > 0 })
@@ -1251,11 +1329,54 @@ internal sealed class RuntimeAppSupervisorService(
         }
     }
 
+    // First install of a distribution entry. Entries carrying a feedsUrl go through the digest-bound
+    // feed path (plan + immediate apply) so the record follows the feed and gets the standard update
+    // affordance; entries without one install directly from the resolved manifest ref, as before.
+    private async Task InstallSystemAppAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(descriptor.FeedsUrl))
+        {
+            var plan = await lifecycle.CreateFeedInstallPlanAsync(
+                new AppFeedInstallPlanRequest(descriptor.FeedsUrl, FeedId: null, descriptor.Runtime, descriptor.Autostart),
+                cancellationToken);
+            await lifecycle.ApplyFeedInstallAsync(
+                new AppFeedInstallApplyRequest(
+                    descriptor.FeedsUrl,
+                    plan.FeedId,
+                    descriptor.Runtime,
+                    descriptor.Settings,
+                    descriptor.Autostart,
+                    plan.PlanDigest,
+                    // Started by the boot reconciliation (StartAutostartAppsAsync) in priority order.
+                    StartOnInstall: false),
+                cancellationToken);
+            return;
+        }
+
+        await lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: descriptor.ManifestPath!,
+            SelectedRuntime: descriptor.Runtime,
+            System: true,
+            Settings: descriptor.Settings,
+            Autostart: descriptor.Autostart,
+            // Started by the boot reconciliation (StartAutostartAppsAsync) in priority order —
+            // not inline here, which would double-start and race other system-app bootstraps.
+            StartOnInstall: false), cancellationToken);
+    }
+
     private async Task<AppRecord?> ReconcileSystemAppManifestAsync(
         SystemAppBootstrapDescriptor descriptor,
         AppRecord app,
         CancellationToken cancellationToken)
     {
+        // A feed-bound record updates through the normal digest-bound feed update flow (update-status,
+        // reviewed apply); a boot-time manifest reconcile would bypass that review and strip the feed
+        // state, so it is deliberately skipped.
+        if (!string.IsNullOrWhiteSpace(app.FeedsUrl))
+        {
+            return app;
+        }
+
         if (descriptor.Runtime is not null &&
             !string.Equals(app.SelectedRuntime ?? descriptor.Runtime, descriptor.Runtime, StringComparison.Ordinal))
         {
@@ -1685,7 +1806,9 @@ internal sealed record CoreStatusResponse(
             config.EffectiveCorePublicOrigin,
             config.EffectiveShellPublicOrigin,
             config.RuntimePublicHost,
-            config.ShellManifestPath,
+            // The Shell manifest now resolves from the distribution list at boot; only a deprecated
+            // explicit legacy override still surfaces here. Null means "distribution default".
+            config.Legacy?.ShellManifestPath,
             config.ShellAutostart,
             config.IngressProvider,
             string.Equals(config.IngressProvider, "cloudflared", StringComparison.OrdinalIgnoreCase)

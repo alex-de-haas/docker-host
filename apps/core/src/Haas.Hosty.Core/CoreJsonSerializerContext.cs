@@ -49,6 +49,9 @@ internal static class CoreJson
 [JsonSerializable(typeof(LocalCommandPidFile))]
 [JsonSerializable(typeof(RuntimeAppManifest))]
 [JsonSerializable(typeof(AppFeedsDocument))]
+// Generic bootstrap (Phase 1): the release-owned distribution list and the operator's choices file.
+[JsonSerializable(typeof(DistributionAppsDocument))]
+[JsonSerializable(typeof(BootstrapChoicesDocument))]
 [JsonSerializable(typeof(AuditRecord))]
 [JsonSerializable(typeof(AppIdentityClaims))]
 [JsonSerializable(typeof(JwtHeader))]
