@@ -40,6 +40,13 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # Keep @types/node on the Active LTS line (24), matching the Node 24 runtime used
+      # in CI and the `node:24-*` base images pinned below. Node 26 is still "Current"
+      # (non-LTS until ~Nov 2026), so its type defs would describe a runtime we don't
+      # ship. Bumping the types ahead of the runtime only invites type/runtime skew.
+      # Raise this bound in lockstep with the Node base-image pin once 26 is LTS.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: nuget
     directories:
