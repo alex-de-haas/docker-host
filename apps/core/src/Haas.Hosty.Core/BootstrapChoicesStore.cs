@@ -86,7 +86,7 @@ internal sealed class BootstrapChoicesStore(CoreDataPaths paths, ILogger<Bootstr
                 SchemaVersion = BootstrapChoicesSchema.Version,
                 Apps = apps,
             };
-            await JsonStorage.WriteAsync(FilePath, document, cancellationToken);
+            await JsonStorage.WriteAsync(FilePath, document, restrictToOwner: true, cancellationToken);
             cached = document;
             loaded = true;
         }
@@ -113,7 +113,7 @@ internal sealed class BootstrapChoicesStore(CoreDataPaths paths, ILogger<Bootstr
                 SchemaVersion = BootstrapChoicesSchema.Version,
                 Apps = document.Apps,
             };
-            await JsonStorage.WriteAsync(FilePath, seeded, cancellationToken);
+            await JsonStorage.WriteAsync(FilePath, seeded, restrictToOwner: true, cancellationToken);
             cached = seeded;
             loaded = true;
             return true;

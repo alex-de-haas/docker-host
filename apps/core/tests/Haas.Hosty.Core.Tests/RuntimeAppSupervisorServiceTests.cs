@@ -221,6 +221,53 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_FeedsUrlEntry_InstallsThroughFeedPathAndNormalizesMarkers()
+    {
+        const string feedsUrl = "https://example.test/demo/feeds.json";
+        const string manifestUrl = "https://example.test/demo/manifest.json";
+        // Deliberately no role:system — the feed path installs with System=false, and the bootstrap
+        // must normalize the flag together with the provenance stamp.
+        const string manifest = """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "hosty.demo",
+              "name": "Demo",
+              "version": "0.1.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{ "key": "web", "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/demo:0.1.0" } } }]
+            }
+            """;
+        var feeds = $$"""
+            { "schemaVersion": "app-feeds.0.1", "appId": "hosty.demo", "feeds": [ { "id": "stable", "manifestRef": "{{manifestUrl}}", "default": true } ] }
+            """;
+        var fixture = CreateFixture(request => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                string.Equals(request.RequestUri!.AbsoluteUri, feedsUrl, StringComparison.Ordinal) ? feeds : manifest,
+                Encoding.UTF8,
+                "application/json"),
+        });
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var supervisor = CreateSupervisor(fixture, config, CreateDistributionRaw(
+            $"{{ \"id\": \"hosty.demo\", \"title\": \"Demo\", \"manifestRef\": \"{manifestUrl}\", \"feedsUrl\": \"{feedsUrl}\", \"defaultEnabled\": true }}"));
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            var demo = await WaitForAppAsync(fixture.Apps, "hosty.demo");
+
+            Assert.Equal(feedsUrl, demo.FeedsUrl);
+            Assert.Equal("stable", demo.FollowedFeedId);
+            Assert.True(demo.System);
+            Assert.Equal(AppInstallOrigins.Distribution, demo.InstallOrigin);
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task StartAsync_ChoicesDisableOutranksDefaultEnabled()
     {
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
@@ -565,6 +612,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             [new NoopDockerRuntimeAdapter(), new NoopLocalCommandRuntimeAdapter()],
             new NoneIngressController(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance,
+            feedService: new AppFeedService(new HttpClient(new StubHttpMessageHandler(manifestHandler))),
             bootstrapChoices: choices);
         return new TestFixture(paths, apps, sources, lifecycle, choices);
     }
@@ -596,6 +644,14 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             distribution,
             fixture.Choices,
             NullLogger<RuntimeAppSupervisorService>.Instance);
+
+    private DistributionAppsProvider CreateDistributionRaw(string appsJson)
+    {
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, $"distribution-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, $"{{ \"schemaVersion\": \"distribution-apps.0.1\", \"apps\": [{appsJson}] }}");
+        return new DistributionAppsProvider(NullLogger<DistributionAppsProvider>.Instance, explicitPathOverride: path);
+    }
 
     // Writes a one-off distribution list into the test root and returns a provider pinned to it (the
     // explicit path keeps the walk from ever finding the repo's own distribution-apps.json).

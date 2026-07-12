@@ -1285,15 +1285,18 @@ internal sealed class RuntimeAppSupervisorService(
                 app = await ReconcileSystemAppManifestAsync(descriptor, app, cancellationToken);
             }
 
-            // Provenance: the app is installed (or adopted) by the distribution bootstrap. Stamped
-            // after install/reconcile so it covers pre-existing records from earlier Core versions
-            // too; uninstalling a distribution-origin app then records enabled=false in choices so
-            // the next boot does not resurrect it.
-            if (app is not null && !string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal))
+            // Provenance + system flag: the app is installed (or adopted) by the distribution
+            // bootstrap. Stamped after install/reconcile so it covers pre-existing records from
+            // earlier Core versions too; uninstalling a distribution-origin app then records
+            // enabled=false in choices so the next boot does not resurrect it. The system flag is
+            // normalized alongside because the feed install path passes System=false and relies on
+            // the manifest role — which a distribution app is not required to declare.
+            if (app is not null &&
+                (!string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal) || !app.System))
             {
                 await apps.UpdateAppAsync(
                     descriptor.AppId,
-                    record => record with { InstallOrigin = AppInstallOrigins.Distribution },
+                    record => record with { InstallOrigin = AppInstallOrigins.Distribution, System = true },
                     cancellationToken);
             }
 
