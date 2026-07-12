@@ -1169,7 +1169,7 @@ internal sealed class CoreLifecycleService(
                 await bootstrapChoices.SetEnabledAsync(appId, enabled: false, cancellationToken);
                 logger.LogInformation("Recorded bootstrap choice enabled=false for uninstalled distribution app {AppId}.", appId);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Failed to record bootstrap choice for uninstalled distribution app {AppId}; the boot reconcile may reinstall it.", appId);
             }

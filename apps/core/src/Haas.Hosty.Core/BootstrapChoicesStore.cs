@@ -131,11 +131,11 @@ internal sealed class BootstrapChoicesStore(CoreDataPaths paths, ILogger<Bootstr
         {
             document = await JsonStorage.ReadAsync<BootstrapChoicesDocument>(FilePath, cancellationToken);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
             // Loud but non-fatal: the host boots on release defaults; the operator's file is left in
             // place untouched so it can be inspected and repaired.
-            logger.LogError(ex, "Bootstrap choices file at {Path} could not be parsed; booting with release defaults.", FilePath);
+            logger.LogError(ex, "Bootstrap choices file at {Path} could not be read or parsed; booting with release defaults.", FilePath);
             return null;
         }
 
