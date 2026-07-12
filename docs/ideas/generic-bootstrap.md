@@ -8,7 +8,7 @@ Updated: 2026-07-12
 
 Core and the CLI still know every first-party app by name. Each bootstrapped app is a set of dedicated launch settings (`HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, `HOSTY_MARKETPLACE_MANIFEST_PATH`, plus runtime/autostart/enabled flags), a field group on `HostyCoreRuntimeConfig`, and a static descriptor class in Core. Adding the next first-party app means touching the CLI's setting definitions, the CLI→Core environment handoff, Core's config parsing, and the descriptor list — four code sites for what is really one row of data.
 
-Worse, the persisted value is a **location** (a manifest path/URL), and we have already been bitten by that: when the telemetry app was renamed, the persisted `HOSTY_COLLECTOR_MANIFEST_PATH` kept pointing at the old URL and bootstrap swallowed the 404 silently. Persisted locations go stale; releases move things.
+Worse, the persisted value is a **location** (a manifest path/URL), and we have already been bitten by that: when the telemetry app was renamed, the persisted `HOSTY_COLLECTOR_MANIFEST_PATH` kept pointing at the old URL; bootstrap is deliberately non-fatal, so the 404 degraded to a single log warning and the host quietly kept running the stale app. Persisted locations go stale; releases move things.
 
 Finally, there is no setup choice. Everything the build knows about is installed (or gated behind ad-hoc flags like `HOSTY_OBSERVABILITY_ENABLED`). What operators actually want is: Core always; then *pick* the optional extensions — telemetry if you need observability, marketplace if you want a storefront — at install time from the CLI, or later from Shell.
 
@@ -65,14 +65,14 @@ Bundled in the release artifact next to the Core binary (dev target: resolved fr
       "id": "hosty.shell",
       "title": "Hosty Shell",
       "description": "Web UI client for this host.",
-      "manifestRef": "bundled/shell.manifest.json",
+      "manifestRef": "apps/shell/manifest.json",
       "defaultEnabled": true
     },
     {
       "id": "hosty.telemetry",
       "title": "Telemetry",
       "description": "OpenTelemetry collector and observability backend.",
-      "manifestRef": "bundled/telemetry.manifest.json",
+      "manifestRef": "apps/telemetry/manifest.json",
       "defaultEnabled": false
     },
     {
@@ -170,7 +170,7 @@ Capability/role-based start ordering from the manifest; provisioning hooks keyed
 
 ## Open Questions
 
-- Final names and locations: `distribution-apps.json` next to the binary vs a `bundled/` subdir; exact env var name.
+- Final names and locations: where the artifact carries `distribution-apps.json` (next to the binary, alongside the `apps/<name>/manifest.json` layout the bundled-manifest resolver already walks); exact env var name.
 - Whether `hosty core install` should run `hosty setup` implicitly on first install, or print a hint.
 - `HOSTY_OBSERVABILITY_ENABLED` consumers beyond descriptor gating (OTLP env injection into apps, metrics scrape/tail loops) — what "telemetry enabled" means once the flag folds into choices.
 - Which first-party entries get remote `feedsUrl` vs bundled manifests, and how the dev-Shell source-override workflow (`HOSTY_SHELL_SOURCE_OVERRIDE_PATH`) maps onto choices-era overrides.
