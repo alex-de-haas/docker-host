@@ -160,7 +160,7 @@ internal sealed class DistributionAppsProvider(
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            problems.Add($"Distribution list at '{path}' ({sourceDescription}) could not be read: {ex.Message}. Falling back to the embedded default list.");
+            problems.Add($"Distribution list at '{path}' ({sourceDescription}) could not be read: {ex.Message}. The next available list is used instead.");
             return null;
         }
 
@@ -172,7 +172,7 @@ internal sealed class DistributionAppsProvider(
             // an empty preinstall set would look like data loss, while the embedded default is this
             // release's own official truth.
             problems.AddRange(localProblems);
-            problems.Add($"Distribution list at '{path}' produced no usable entries. Falling back to the embedded default list.");
+            problems.Add($"Distribution list at '{path}' produced no usable entries. The next available list is used instead.");
             return null;
         }
 
@@ -291,6 +291,12 @@ internal sealed class DistributionAppsProvider(
     {
         foreach (var start in walkRoots ?? [Directory.GetCurrentDirectory(), AppContext.BaseDirectory])
         {
+            // AppContext.BaseDirectory can be empty under custom hosts; DirectoryInfo would throw.
+            if (string.IsNullOrWhiteSpace(start))
+            {
+                continue;
+            }
+
             var directory = new DirectoryInfo(start);
             while (directory is not null)
             {

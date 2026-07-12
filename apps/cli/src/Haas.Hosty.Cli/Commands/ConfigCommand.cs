@@ -40,7 +40,9 @@ internal sealed class ConfigCommand(CommandContext context)
         foreach (var definition in LaunchSettingDefinitions.All)
         {
             table.AddRow(
-                Markup.Escape(definition.Key),
+                definition.IsDeprecated
+                    ? $"{Markup.Escape(definition.Key)} [grey](deprecated)[/]"
+                    : Markup.Escape(definition.Key),
                 Markup.Escape(settings[definition.Key]),
                 ConsoleUi.YesNo(definition.IsEditable));
         }
@@ -73,6 +75,7 @@ internal sealed class ConfigCommand(CommandContext context)
             }
 
             context.SettingsStore.Set(args[0][..separator], args[0][(separator + 1)..]);
+            WarnWhenDeprecated(args[0][..separator]);
             return 0;
         }
 
@@ -82,6 +85,7 @@ internal sealed class ConfigCommand(CommandContext context)
         }
 
         context.SettingsStore.Set(args[0], args[1]);
+        WarnWhenDeprecated(args[0]);
         return 0;
     }
 
@@ -94,5 +98,16 @@ internal sealed class ConfigCommand(CommandContext context)
 
         context.SettingsStore.Reset(args[0]);
         return 0;
+    }
+
+    // Deprecated bootstrap overrides keep working for one release, but the operator should hear
+    // about the replacement at the moment they reach for the old knob.
+    private void WarnWhenDeprecated(string key)
+    {
+        if (LaunchSettingDefinitions.Contains(key) && LaunchSettingDefinitions.Get(key).IsDeprecated)
+        {
+            context.Error.MarkupLine(
+                $"[yellow]{Markup.Escape(key)} is deprecated:[/] manifest locations come from the release's distribution list, and which apps bootstrap is chosen with [grey]hosty setup[/]. This override will stop working in a future release.");
+        }
     }
 }

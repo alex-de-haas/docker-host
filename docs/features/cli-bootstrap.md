@@ -58,12 +58,12 @@ HOSTY_CORE_PORT=7070
 HOSTY_SHELL_PORT=7171
 HOSTY_CORE_PUBLIC_ORIGIN=
 HOSTY_SHELL_PUBLIC_ORIGIN=
-HOSTY_SHELL_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json
+HOSTY_SHELL_MANIFEST_PATH=
 HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 HOSTY_OBSERVABILITY_ENABLED=false
 HOSTY_COLLECTOR_AUTOSTART=true
-HOSTY_COLLECTOR_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json
-HOSTY_MARKETPLACE_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json
+HOSTY_COLLECTOR_MANIFEST_PATH=
+HOSTY_MARKETPLACE_MANIFEST_PATH=
 ```
 
 `hosty core start` reads these defaults directly when `launch.env` has not been written yet.
@@ -72,9 +72,9 @@ HOSTY_MARKETPLACE_MANIFEST_PATH=https://raw.githubusercontent.com/alex-de-haas/d
 
 `HOSTY_DATA_ROOT` defines the Hosty state root used by Core. `HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
 
-`HOSTY_SHELL_MANIFEST_PATH` can be a local manifest file path, local app directory, or an HTTP(S) manifest URL. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` selects the runtime profile Core should use when installing or reconciling `hosty.shell`.
+Which first-party apps Core preinstalls — and where their manifests live — is decided by the release-owned distribution list (`distribution-apps.0.1`, embedded in the Core binary; a source tree's repo-root `distribution-apps.json` wins) merged with the operator's `hosty setup` choices. See `docs/ideas/generic-bootstrap.md`.
 
-`HOSTY_MARKETPLACE_MANIFEST_PATH` can be a local manifest file path, local app directory, or an HTTP(S) manifest URL. A non-empty value lets Core bootstrap `hosty.marketplace`; an empty value disables new Marketplace bootstrap. The Marketplace runtime is selected through normal app lifecycle, and its catalog source is the `HOSTY_MARKETPLACE_SOURCE_URL` setting declared by its manifest.
+`HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` are **deprecated** explicit overrides: empty (the default) means the distribution list decides; a non-empty value is injected into Core's environment and honored with a deprecation warning when it differs from the list. Values equal to the old pre-distribution default URLs that an earlier CLI materialized into `launch.env` are scrubbed on load — they were never operator intent. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` still selects the runtime profile Core uses when installing or reconciling `hosty.shell`.
 
 `HOSTY_RUNTIME_PUBLIC_HOST` (optional, default `127.0.0.1`) is the host Core advertises and dials for a runtime app's published loopback port. It defaults to the IPv4 loopback literal on purpose: docker publishes these ports on `127.0.0.1` only, and on hosts where `localhost` resolves to `::1` first (Windows, dual-stack Linux) .NET's `HttpClient` stalls on the unbound `::1` until the request times out, so telemetry and health reads silently return empty. Override it only for a deployment that publishes runtime-app ports on a different address.
 
@@ -86,9 +86,18 @@ Legacy `HOST_DATA_ROOT_HOST`, `HOSTY_CORE_DATA_ROOT`, `HOST_CORE_PUBLIC_ORIGIN`,
 
 Start does not check for newer Core builds when Core is already installed. Freshness checks and replacement are owned by `hosty update`.
 
-After Core starts, Core bootstraps Hosty Shell as the system runtime app `hosty.shell` from the configured Shell manifest reference and runtime. The default installed configuration downloads `apps/shell/manifest.json` from GitHub and starts `ghcr.io/alex-de-haas/hosty-shell:latest` through Docker.
+After Core starts, Core reconciles the distribution list against the operator's bootstrap choices and preinstalls the enabled entries (Shell and Marketplace by default; Telemetry opt-in). First installation of an entry uses the manifest's default runtime unless the entry carries Core-owned policy (the Shell); later startup reconciliation preserves the installed runtime and autostart choices. Marketplace catalog configuration remains an ordinary app setting; Core has no catalog-source setting or Marketplace proxy.
 
-When `HOSTY_MARKETPLACE_MANIFEST_PATH` is non-empty, Core also bootstraps the optional `hosty.marketplace` system app. Its first installation uses the manifest's default runtime. Later startup reconciliation preserves the installed runtime and autostart choices. Marketplace catalog configuration remains an ordinary app setting; Core has no catalog-source setting or Marketplace proxy.
+## Choosing preinstalled apps
+
+```bash
+hosty setup                          # interactive checklist
+hosty setup --list                   # show the distribution list and current selection
+hosty setup --with hosty.telemetry   # enable an app without prompting
+hosty setup --without hosty.marketplace --yes
+```
+
+`hosty setup` writes only the operator's intent into `{data root}/core/bootstrap-choices.json` (`bootstrap-choices.0.1`); manifest locations are never persisted and always resolve from the current release's distribution list. An explicit setup run pins every presented entry, so a later release flipping a default does not override a confirmed selection. Toggling `hosty.telemetry` also keeps `HOSTY_OBSERVABILITY_ENABLED` in step, because that flag still gates Core's own telemetry producers. Choices apply on the next Core start; setup warns when Core is currently running. Uninstalling a distribution-installed app records `enabled=false` automatically, so the next boot does not reinstall it.
 
 `hosty open` opens `HOSTY_SHELL_PUBLIC_ORIGIN` when it is configured. Otherwise it opens the local Shell URL derived from `HOSTY_SHELL_PORT`.
 

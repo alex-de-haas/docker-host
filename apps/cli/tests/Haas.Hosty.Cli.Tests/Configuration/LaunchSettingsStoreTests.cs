@@ -36,12 +36,12 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal("7171", settings.HostyShellPort);
         Assert.Equal("", settings.HostyCorePublicOrigin);
         Assert.Equal("", settings.HostyShellPublicOrigin);
-        Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json", settings.HostyShellManifestPath);
+        Assert.Equal("", settings.HostyShellManifestPath);
         Assert.Equal("docker", settings.HostyShellBootstrapRuntime);
         // A launch.env that predates the collector-manifest setting still resolves its default, so an
         // existing install self-heals (Core gets the collector manifest URL; bootstrap proceeds).
-        Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json", settings.HostyCollectorManifestPath);
-        Assert.Equal("https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json", settings.HostyMarketplaceManifestPath);
+        Assert.Equal("", settings.HostyCollectorManifestPath);
+        Assert.Equal("", settings.HostyMarketplaceManifestPath);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }
@@ -86,6 +86,46 @@ public sealed class LaunchSettingsStoreTests : IDisposable
 
         Assert.Equal(rootDirectory, settings[LaunchSettingDefinitions.HostyDataRoot]);
         Assert.False(settings.Values.ContainsKey("HOST_DATA_ROOT_HOST"));
+    }
+
+    [Fact]
+    public void Load_ScrubsLegacyDefaultManifestUrlsMaterializedByOlderClis()
+    {
+        // Older CLIs wrote the pre-generic-bootstrap default URLs into launch.env; those were never
+        // operator intent and must read as unset so they cannot re-pin a stale location.
+        var environment = HostyEnvironment.Current();
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        File.WriteAllText(
+            environment.LaunchConfigPath,
+            $"""
+            # hosty launch settings
+            HOSTY_SHELL_MANIFEST_PATH={LaunchSettingDefinitions.LegacyDefaultShellManifestPath}
+            HOSTY_COLLECTOR_MANIFEST_PATH={LaunchSettingDefinitions.LegacyDefaultCollectorManifestPath}
+            HOSTY_MARKETPLACE_MANIFEST_PATH={LaunchSettingDefinitions.LegacyDefaultMarketplaceManifestPath}
+            """);
+
+        var settings = new LaunchSettingsStore(environment).Load();
+
+        Assert.Equal("", settings.HostyShellManifestPath);
+        Assert.Equal("", settings.HostyCollectorManifestPath);
+        Assert.Equal("", settings.HostyMarketplaceManifestPath);
+    }
+
+    [Fact]
+    public void Load_KeepsExplicitNonDefaultManifestOverrides()
+    {
+        var environment = HostyEnvironment.Current();
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        File.WriteAllText(
+            environment.LaunchConfigPath,
+            """
+            # hosty launch settings
+            HOSTY_SHELL_MANIFEST_PATH=https://example.test/custom/shell/manifest.json
+            """);
+
+        var settings = new LaunchSettingsStore(environment).Load();
+
+        Assert.Equal("https://example.test/custom/shell/manifest.json", settings.HostyShellManifestPath);
     }
 
     [Theory]

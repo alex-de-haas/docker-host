@@ -14,10 +14,22 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
         {
             foreach (var (key, value) in Parse(File.ReadAllLines(environment.LaunchConfigPath)))
             {
-                if (LaunchSettingDefinitions.Contains(key))
+                if (!LaunchSettingDefinitions.Contains(key))
                 {
-                    values[key] = value;
+                    continue;
                 }
+
+                // Older CLIs materialized the pre-generic-bootstrap default manifest URLs into
+                // launch.env. Those were never operator intent, so a value still equal to the old
+                // default reads as unset — otherwise every upgraded host would carry a pinned
+                // location that goes stale the next time a release moves a manifest.
+                if (LaunchSettingDefinitions.ScrubbedLegacyDefaults.TryGetValue(key, out var legacyDefault) &&
+                    string.Equals(value, legacyDefault, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                values[key] = value;
             }
         }
 
