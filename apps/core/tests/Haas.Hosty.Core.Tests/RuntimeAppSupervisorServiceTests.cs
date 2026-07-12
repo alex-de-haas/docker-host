@@ -107,8 +107,6 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await File.WriteAllTextAsync(collectorManifest, CreateCollectorManifest("0.1.0"));
         var config = CreateConfig(fixture.Paths, shellAutostart: false) with
         {
-            ObservabilityEnabled = true,
-            CollectorAutostart = false,
             // The legacy explicit enable outranks the entry's defaultEnabled=false.
             Legacy = new LegacyBootstrapEnv(ObservabilityEnabled: true),
         };
@@ -121,7 +119,9 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         {
             var collector = await WaitForAppAsync(fixture.Apps, "hosty.telemetry");
             Assert.True(collector.System);
-            Assert.False(collector.Autostart);
+            // Autostart is a normal per-app setting now: first install takes the default (true) and
+            // later boots preserve whatever the operator configures.
+            Assert.True(collector.Autostart);
 
             // The descriptor's provision hook delivered the Core-owned config and sink/store dirs.
             var dataDir = Path.Combine(fixture.Paths.AppsRoot, "hosty.telemetry", "data");

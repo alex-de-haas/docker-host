@@ -311,7 +311,7 @@ export function ObservabilityMetricsPage({ apps }: { apps: TelemetryApp[] }) {
                 <EmptyState
                   icon={Activity}
                   title="No metrics"
-                  description="Metrics appear once an app is running and observability is enabled on the host (HOSTY_OBSERVABILITY_ENABLED)."
+                  description="Metrics appear once an app is running and the Telemetry app is enabled on the host (Shell platform panel or hosty setup --with hosty.telemetry)."
                 />
               )
             ) : sections.length === 0 ? (

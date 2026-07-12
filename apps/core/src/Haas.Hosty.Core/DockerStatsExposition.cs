@@ -8,11 +8,13 @@ namespace Haas.Hosty.Core;
 // Prometheus text snapshot the backend scrapes as a second target (alongside the collector). Each
 // series is attributed to its app via the `hosty_app_id` label the backend already keys on, so the
 // backend stores docker stats uniformly with app OTLP metrics. This replaces the docker-stats half of
-// the old TelemetryScrapeService; Core no longer keeps a metric store of its own. Gated on
-// ObservabilityEnabled and best-effort: a docker-less host simply exposes nothing.
+// the old TelemetryScrapeService; Core no longer keeps a metric store of its own. Gated on the
+// telemetry app being installed — the flag that used to control this folded into the bootstrap
+// choice (generic-bootstrap.md), so a live enable starts stats flowing without a Core restart —
+// and best-effort: a docker-less host simply exposes nothing.
 // See docs/features/observability-phase-2-backend.md.
 internal sealed class DockerStatsExposition(
-    HostyCoreRuntimeConfig config,
+    AppRegistryStore apps,
     IDockerCommandRunner dockerRunner,
     ILogger<DockerStatsExposition> logger) : BackgroundService
 {
@@ -36,18 +38,21 @@ internal sealed class DockerStatsExposition(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!config.ObservabilityEnabled)
-        {
-            return;
-        }
-
         await Task.Yield();
         using var timer = new PeriodicTimer(Interval);
         do
         {
             try
             {
-                current = await BuildSnapshotAsync(stoppingToken);
+                // Observability follows the telemetry app: unless it is installed AND running,
+                // nothing scrapes this producer (the scraping backend is one of its services), so
+                // the tick idles with an empty snapshot instead of running docker commands nobody
+                // consumes. Checked per tick so a live enable through the bootstrap endpoints or a
+                // plain app start takes effect without a Core restart.
+                var collector = await apps.GetAppAsync(CollectorBootstrap.AppId, stoppingToken);
+                current = string.Equals(collector?.RuntimeState, "running", StringComparison.Ordinal)
+                    ? await BuildSnapshotAsync(stoppingToken)
+                    : string.Empty;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

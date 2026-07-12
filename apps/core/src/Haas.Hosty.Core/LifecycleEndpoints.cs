@@ -380,14 +380,12 @@ internal static class LifecycleEndpoints
         // Phase 2 producer endpoint: host-collected `docker stats` infra metrics as Prometheus text for
         // the telemetry backend to scrape (its second metrics target). Deliberately unauthenticated —
         // it exposes only container cpu/mem on the trusted internal network, mirroring the collector's
-        // own unauthenticated scrape surface. Only mapped when observability is enabled (the only mode
-        // the backend scrapes it in), so a non-observability install exposes nothing here.
+        // own unauthenticated scrape surface. Always mapped: the exposition itself idles (empty text)
+        // unless the telemetry app is installed, so a non-observability install exposes nothing here
+        // and a live enable needs no Core restart.
         // See docs/features/observability-phase-2-backend.md.
-        if (app.Services.GetRequiredService<HostyCoreRuntimeConfig>().ObservabilityEnabled)
-        {
-            app.MapGet("/internal/telemetry/metrics", (DockerStatsExposition exposition)
-                => Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4"));
-        }
+        app.MapGet("/internal/telemetry/metrics", (DockerStatsExposition exposition)
+            => Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4"));
 
         app.MapGet("/api/apps/{appId}/update-status", async (
             string appId,

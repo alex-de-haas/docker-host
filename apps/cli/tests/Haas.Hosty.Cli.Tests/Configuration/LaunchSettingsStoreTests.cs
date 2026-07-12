@@ -258,47 +258,27 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Contains(expectedMessage, exception.Message);
     }
 
+    // HOSTY_OBSERVABILITY_ENABLED and HOSTY_COLLECTOR_AUTOSTART are gone (Core derives its
+    // telemetry producers from the telemetry app being installed; autostart is a normal per-app
+    // setting), so the boolean-canonicalization machinery went with them. Unknown keys left in an
+    // older launch.env are ignored on load and dropped on the next save.
     [Fact]
-    public void Load_ObservabilitySettings_HaveCoreMatchingDefaults()
+    public void Load_IgnoresRemovedBooleanSettings()
     {
         var environment = HostyEnvironment.Current();
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        File.WriteAllText(
+            environment.LaunchConfigPath,
+            """
+            # hosty launch settings
+            HOSTY_OBSERVABILITY_ENABLED=true
+            HOSTY_COLLECTOR_AUTOSTART=false
+            """);
 
         var settings = new LaunchSettingsStore(environment).Load();
 
-        Assert.Equal("false", settings.HostyObservabilityEnabled);
-        Assert.Equal("true", settings.HostyCollectorAutostart);
-    }
-
-    [Theory]
-    [InlineData("HOSTY_OBSERVABILITY_ENABLED", "1", "true")]
-    [InlineData("HOSTY_OBSERVABILITY_ENABLED", "yes", "true")]
-    [InlineData("HOSTY_OBSERVABILITY_ENABLED", "ENABLED", "true")]
-    [InlineData("HOSTY_OBSERVABILITY_ENABLED", "off", "false")]
-    [InlineData("HOSTY_COLLECTOR_AUTOSTART", "false", "false")]
-    [InlineData("HOSTY_COLLECTOR_AUTOSTART", " No ", "false")]
-    public void Set_BooleanSetting_CanonicalizesToTrueFalse(string key, string value, string expected)
-    {
-        var environment = HostyEnvironment.Current();
-        var store = new LaunchSettingsStore(environment);
-        store.EnsureInstalled();
-
-        store.Set(key, value);
-
-        Assert.Equal(expected, store.Load()[key]);
-    }
-
-    [Theory]
-    [InlineData("HOSTY_OBSERVABILITY_ENABLED", "maybe")]
-    [InlineData("HOSTY_COLLECTOR_AUTOSTART", "2")]
-    public void Set_BooleanSetting_RejectsNonBooleanValues(string key, string value)
-    {
-        var environment = HostyEnvironment.Current();
-        var store = new LaunchSettingsStore(environment);
-        store.EnsureInstalled();
-
-        var exception = Assert.Throws<ConfigurationException>(() => store.Set(key, value));
-
-        Assert.Contains("must be a boolean", exception.Message);
+        Assert.False(settings.Values.ContainsKey("HOSTY_OBSERVABILITY_ENABLED"));
+        Assert.False(settings.Values.ContainsKey("HOSTY_COLLECTOR_AUTOSTART"));
     }
 
     public void Dispose()

@@ -691,9 +691,7 @@ internal sealed record HostyCoreRuntimeConfig(
     string? IngressConfigPath = null,
     string? IngressTunnelId = null,
     string? IngressCredentialsFile = null,
-    bool ObservabilityEnabled = false,
     string CollectorBootstrapRuntime = "docker",
-    bool CollectorAutostart = true,
     // Raw legacy bootstrap env (per-app manifest paths and enable flags), captured verbatim for the
     // distribution merge's deprecation layer. Which apps bootstrap — and from where — is otherwise
     // decided by the distribution list + operator choices, not by this config.
@@ -766,9 +764,7 @@ internal sealed record HostyCoreRuntimeConfig(
             ingressConfigPath,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_TUNNEL_ID")),
             ingressCredentialsFile,
-            ReadBoolean("HOSTY_OBSERVABILITY_ENABLED", defaultValue: false),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME")) ?? "docker",
-            ReadBoolean("HOSTY_COLLECTOR_AUTOSTART", defaultValue: true),
             legacy);
     }
 

@@ -103,19 +103,6 @@ public sealed class SetupCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Setup_TelemetryToggle_SyncsObservabilityLaunchSetting()
-    {
-        var (console, _) = CreateConsole();
-
-        Assert.Equal(0, await CommandLine.RunAsync(["setup", "--with", "hosty.telemetry"], console));
-        var environment = HostyEnvironment.Current();
-        Assert.Equal("true", new LaunchSettingsStore(environment).Load().HostyObservabilityEnabled);
-
-        Assert.Equal(0, await CommandLine.RunAsync(["setup", "--without", "hosty.telemetry"], console));
-        Assert.Equal("false", new LaunchSettingsStore(environment).Load().HostyObservabilityEnabled);
-    }
-
-    [Fact]
     public async Task Setup_PreservesInertChoicesForUnknownIds()
     {
         var choicesPath = ChoicesPath();
@@ -177,12 +164,12 @@ public sealed class SetupCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Setup_LegacyObservabilitySetting_EnablesTelemetryInEffectiveBase()
+    public async Task Setup_InstalledAppWithoutChoices_CountsAsEnabledInEffectiveBase()
     {
-        var environment = HostyEnvironment.Current();
-        var store = new LaunchSettingsStore(environment);
-        store.EnsureInstalled();
-        store.Set(LaunchSettingDefinitions.HostyObservabilityEnabled, "true");
+        // Mirrors Core's upgrade migration: an installed app is the operator's implicit intent.
+        var statePath = Path.Combine(rootDirectory, "apps", "hosty.telemetry", "state.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+        await File.WriteAllTextAsync(statePath, "{}");
         var (console, _) = CreateConsole();
 
         Assert.Equal(0, await CommandLine.RunAsync(["setup", "--yes"], console));
