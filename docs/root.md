@@ -68,7 +68,7 @@ Draft, exploratory, or backlog items that are not current implementation commitm
 
 - [Runtime App Repository Feeds](ideas/runtime-app-repository-feeds.md) - promoted design that moved the feed contract from inline catalog data to app-owned `feeds.json` resolved by Core.
 - [On-Demand System App Updates](ideas/system-app-updates.md) - concept for explicit Shell/system-app update discovery, reviewed apply, self-reload, and rollback without restarting Core.
-- [Core Extension Model](ideas/core-extension-model.md) - concept for system apps as out-of-process Core plugins: provider contracts, pull-based event subscriptions, service extensions, and system app pages.
+- [Core Extension Model](ideas/core-extension-model.md) - concept for extending Core through out-of-process apps: contract-free API clients, driver/sink provider contracts with declared cardinality, pull-based event subscriptions, system app pages, "system" as an ownership label rather than a privilege tier, and additional login methods instead of replaceable auth providers.
 - [Marketplace As A System App](ideas/marketplace-system-app.md) - read-only catalog data, API, and UI in an optional first-party system app while Core retains all feed and lifecycle decisions.
 - [System App Pages](ideas/system-app-pages.md) - separate administrator-only Shell pages for UI-capable system apps using the existing app UI contract.
 - [Agent Bridge Workflow](ideas/agent-bridge-workflow.md) - concept for Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and an unresolved isolated-validation boundary.
