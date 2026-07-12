@@ -113,6 +113,7 @@ Bundled in the release artifact next to the Core binary (dev target: resolved fr
 ### Reconcile semantics
 
 - Boot reconcile enforces **presence for enabled entries only; it never removes**. Disabling an entry stops future installs/reconciles; an already-installed app stays until explicitly uninstalled.
+- Reconcile is a background sweep: it acquires each app's normal lifecycle operation lock with a zero timeout and **skips any app with an operation in flight** rather than contending with or overwriting an interactive lifecycle action.
 - **Uninstalling a distribution-provenance app writes `enabled: false`** into choices as part of the uninstall. This is the fix for the uninstall-vs-reconcile conflict: the app does not resurrect on next boot, and re-enabling later is one toggle.
 - Legacy migration: on first boot with no choices file, Core synthesizes one from the legacy env (`HOSTY_SHELL_BOOTSTRAP_ENABLED`, `HOSTY_OBSERVABILITY_ENABLED` → telemetry, `HOSTY_MARKETPLACE_MANIFEST_PATH` presence → marketplace). The per-app path variables are honored with a deprecation warning for one release, then removed from `LaunchSettingDefinitions` and `BuildCoreEnvironment`.
 
@@ -137,7 +138,7 @@ Bundled in the release artifact next to the Core binary (dev target: resolved fr
 
 ### Phase 1 — data-driven descriptor list (Core)
 
-1. `DistributionApps` loader: schema validation, relative-ref resolution against the file location, default location next to the binary, `HOSTY_DISTRIBUTION_APPS_PATH` ambient override. STJ source-generated context entries (Native AOT).
+1. `DistributionApps` loader: schema validation — a missing or unparseable list is a loudly-reported problem (error-level log, surfaced through the Phase 3 endpoint) while Core itself still boots; relative-ref resolution against the file location with `Ordinal` path semantics; default location next to the binary; `HOSTY_DISTRIBUTION_APPS_PATH` ambient override. STJ source-generated context entries (Native AOT; a failed `JsonTypeInfo<T>` resolution throws a `NotSupportedException` naming the unregistered type).
 2. `BootstrapChoicesStore`: atomic temp+rename writes, memoized load, uninstall hook that records `enabled: false` for distribution-provenance apps.
 3. `SystemAppBootstraps.FromConfig` → `FromDistribution(list, choices, config)`; the Shell settings map and collector provisioning hook attach by app id for now (Phase 4 removes that).
 4. Install-origin field on `AppRecord`; feed-path installs for entries with `feedsUrl`.
