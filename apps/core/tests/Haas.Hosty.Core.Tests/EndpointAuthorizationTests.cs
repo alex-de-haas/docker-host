@@ -16,6 +16,7 @@ public sealed class EndpointAuthorizationTests
         "AppBackupEndpoints.cs",
         "NotificationEndpoints.cs",
         "GlobalMountEndpoints.cs",
+        "CoreBootstrapEndpoints.cs",
         "UserManagementEndpoints.cs",
         "AuthBootstrapEndpoints.cs",
         "LifecycleEndpoints.cs",

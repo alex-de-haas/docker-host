@@ -57,6 +57,7 @@ export function ShellSidebar({
   onNavigate,
   onLaunchApp,
   getStandaloneHref,
+  onOpenPlatform,
 }: {
   compact: boolean;
   activeView: ShellView;
@@ -76,6 +77,9 @@ export function ShellSidebar({
   onNavigate: (view: ShellView) => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
+  // Opens the platform panel (Extensions, docs/ideas/generic-bootstrap.md Phase 3). Undefined for
+  // non-admins, which leaves the version block as plain text.
+  onOpenPlatform?: () => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -154,7 +158,7 @@ export function ShellSidebar({
 
       <div className={cn("shrink-0 border-t", compact ? "space-y-2 px-2 py-3" : "space-y-3 p-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
-        <SidebarVersionInfo compact={compact} coreOnline={coreOnline} coreVersion={coreVersion} shellVersion={shellVersion} />
+        <SidebarVersionInfo compact={compact} coreOnline={coreOnline} coreVersion={coreVersion} shellVersion={shellVersion} onOpenPlatform={onOpenPlatform} />
       </div>
     </div>
   );
@@ -165,11 +169,13 @@ function SidebarVersionInfo({
   coreOnline,
   coreVersion,
   shellVersion,
+  onOpenPlatform,
 }: {
   compact: boolean;
   coreOnline: boolean;
   coreVersion: string | null;
   shellVersion: string;
+  onOpenPlatform?: () => void;
 }) {
   // A reachable Core that predates the version field reports no version, so only call it
   // "offline" when Core is genuinely unreachable; otherwise the version is just unknown.
@@ -181,19 +187,35 @@ function SidebarVersionInfo({
   const shellLabel = shellVersion ? `Shell v${shellVersion}` : null;
   const title = shellLabel ? `${platformLabel} · ${shellLabel}` : platformLabel;
 
-  if (compact) {
-    return (
-      <p className="text-center text-[10px] leading-tight text-muted-foreground" title={title}>
-        {coreVersion ? `v${coreVersion}` : "—"}
-      </p>
-    );
-  }
-
-  return (
-    <div className="px-2 text-[11px] leading-tight text-muted-foreground" title={title}>
+  const body = compact ? (
+    <p className="text-center text-[10px] leading-tight" title={title}>
+      {coreVersion ? `v${coreVersion}` : "—"}
+    </p>
+  ) : (
+    <div className="text-[11px] leading-tight" title={title}>
       <p className="truncate">{platformLabel}</p>
       {shellLabel && <p className="truncate">{shellLabel}</p>}
     </div>
+  );
+
+  // Admins get the platform panel behind the version block (generic-bootstrap Phase 3); everyone
+  // else keeps the plain read-only text.
+  if (!onOpenPlatform) {
+    return <div className={cn("text-muted-foreground", compact ? "" : "px-2")}>{body}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "block w-full rounded-md text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+        compact ? "px-0 py-1 text-center" : "px-2 py-1",
+      )}
+      onClick={onOpenPlatform}
+      title={`${title} — open platform settings`}
+    >
+      {body}
+    </button>
   );
 }
 

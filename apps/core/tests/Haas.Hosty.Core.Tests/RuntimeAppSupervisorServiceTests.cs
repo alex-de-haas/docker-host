@@ -376,6 +376,105 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         Assert.False(choices?.EnabledFor(MarketplaceBootstrap.AppId));
     }
 
+    [Fact]
+    public async Task SetChoiceAsync_EnableInstallsAndStartsLive()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var service = CreateBootstrapService(
+            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, false)));
+
+        var actionError = await service.SetChoiceAsync(MarketplaceBootstrap.AppId, enabled: true, CancellationToken.None);
+
+        Assert.Null(actionError);
+        var marketplace = await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId);
+        Assert.NotNull(marketplace);
+        Assert.Equal("running", marketplace!.RuntimeState);
+        Assert.Equal(AppInstallOrigins.Distribution, marketplace.InstallOrigin);
+        Assert.True((await fixture.Choices.LoadAsync())!.EnabledFor(MarketplaceBootstrap.AppId));
+    }
+
+    [Fact]
+    public async Task SetChoiceAsync_DisableRecordsChoiceWithoutUninstalling()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var distribution = CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true));
+        var service = CreateBootstrapService(fixture, config, distribution);
+        Assert.Null(await service.SetChoiceAsync(MarketplaceBootstrap.AppId, enabled: true, CancellationToken.None));
+
+        Assert.Null(await service.SetChoiceAsync(MarketplaceBootstrap.AppId, enabled: false, CancellationToken.None));
+
+        // Disable only stops future reconciles; the installed app stays until explicitly uninstalled.
+        Assert.NotNull(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
+        Assert.False((await fixture.Choices.LoadAsync())!.EnabledFor(MarketplaceBootstrap.AppId));
+    }
+
+    [Fact]
+    public async Task SetChoiceAsync_UnknownAppId_Throws()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var service = CreateBootstrapService(
+            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true)));
+
+        var exception = await Assert.ThrowsAsync<AppLifecycleException>(
+            () => service.SetChoiceAsync("hosty.unknown", enabled: true, CancellationToken.None));
+
+        Assert.Equal("bootstrap_app_unknown", exception.Code);
+    }
+
+    [Fact]
+    public async Task SetChoiceAsync_EnableFailure_SavesChoiceAndReturnsActionError()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var service = CreateBootstrapService(
+            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, Path.Combine(root, "missing-manifest.json"), false)));
+
+        var actionError = await service.SetChoiceAsync(MarketplaceBootstrap.AppId, enabled: true, CancellationToken.None);
+
+        Assert.NotNull(actionError);
+        Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
+        // Intent survives the failed live install; the boot reconcile retries it.
+        Assert.True((await fixture.Choices.LoadAsync())!.EnabledFor(MarketplaceBootstrap.AppId));
+    }
+
+    [Fact]
+    public async Task GetStateAsync_ReportsEntriesChoicesAndInstallState()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        var shellManifest = Path.Combine(root, "shell-manifest.json");
+        await File.WriteAllTextAsync(shellManifest, CreateShellManifest("0.1.0", "hosty-shell", "local", "never"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var distribution = CreateDistribution(
+            ("hosty.shell", shellManifest, true),
+            (MarketplaceBootstrap.AppId, marketplaceManifest, true));
+        var service = CreateBootstrapService(fixture, config, distribution);
+        await fixture.Choices.SetEnabledAsync(MarketplaceBootstrap.AppId, enabled: false);
+        Assert.Null(await service.SetChoiceAsync("hosty.shell", enabled: true, CancellationToken.None));
+
+        var state = await service.GetStateAsync(CancellationToken.None);
+
+        Assert.Equal(2, state.Apps.Count);
+        var shell = state.Apps.Single(status => status.Entry.Id == "hosty.shell");
+        Assert.True(shell.Enabled);
+        Assert.True(shell.Choice);
+        Assert.NotNull(shell.Installed);
+        var marketplace = state.Apps.Single(status => status.Entry.Id == MarketplaceBootstrap.AppId);
+        Assert.False(marketplace.Enabled);
+        Assert.False(marketplace.Choice);
+        Assert.Null(marketplace.Installed);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))
@@ -640,10 +739,21 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             config,
             fixture.Apps,
             fixture.Lifecycle,
+            CreateBootstrapService(fixture, config, distribution),
+            NullLogger<RuntimeAppSupervisorService>.Instance);
+
+    private static SystemAppBootstrapService CreateBootstrapService(
+        TestFixture fixture,
+        HostyCoreRuntimeConfig config,
+        DistributionAppsProvider distribution)
+        => new(
+            config,
+            fixture.Apps,
+            fixture.Lifecycle,
             fixture.Sources,
             distribution,
             fixture.Choices,
-            NullLogger<RuntimeAppSupervisorService>.Instance);
+            NullLogger<SystemAppBootstrapService>.Instance);
 
     private DistributionAppsProvider CreateDistributionRaw(string appsJson)
     {

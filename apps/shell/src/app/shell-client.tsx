@@ -11,6 +11,7 @@ import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
+import { PlatformDialog } from "./shell/dialogs/platform-dialog";
 import { SharedMountsDialog } from "./shell/dialogs/shared-mounts-dialog";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
@@ -45,6 +46,7 @@ import type {
   CoreBackup,
   CoreBackupCleanupApplyResponse,
   CoreBackupCleanupPlan,
+  CoreBootstrapState,
   CoreGlobalMount,
   CoreFeedInstallPlan,
   CoreInstallPlan,
@@ -104,6 +106,10 @@ export function ShellClient({
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
   const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
   const [sharedMountsOpen, setSharedMountsOpen] = useState(false);
+  const [platformOpen, setPlatformOpen] = useState(false);
+  const [platformState, setPlatformState] = useState<CoreBootstrapState | null>(null);
+  const [platformLoading, setPlatformLoading] = useState(false);
+  const [platformError, setPlatformError] = useState<string | null>(null);
   // Applying an update / switching runtime resets Core's artifact locks, so the cached update-status
   // owned by the Installed Apps page goes stale (it would keep showing "Update available"). We can't
   // reach into that page's state from here, so we bump a per-app counter it watches to re-probe.
@@ -894,6 +900,40 @@ export function ShellClient({
 
   const openSharedMounts = useCallback(() => setSharedMountsOpen(true), []);
 
+  // Platform panel (Extensions): the state loads on open and every toggle returns the full updated
+  // snapshot, so the dialog always renders Core's authoritative view.
+  const openPlatform = useCallback(async () => {
+    setPlatformOpen(true);
+    setPlatformError(null);
+    setPlatformLoading(true);
+    try {
+      const response = await fetch(`${coreOrigin}/api/core/bootstrap`, { credentials: "include" });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+      if (!response.ok) {
+        throw new Error(await readCoreError(response));
+      }
+
+      setPlatformState((await response.json()) as CoreBootstrapState);
+    } catch (error) {
+      if (isAuthRequiredRedirectError(error)) {
+        return;
+      }
+
+      setPlatformState(null);
+      setPlatformError(error instanceof Error ? error.message : "Unable to load the distribution list.");
+    } finally {
+      setPlatformLoading(false);
+    }
+  }, [coreOrigin]);
+
+  const togglePlatformApp = useCallback(
+    async (appId: string, enabled: boolean) => {
+      const response = await sendCsrfJson(`${coreOrigin}/api/core/bootstrap/choices`, { appId, enabled });
+      setPlatformState((await response.json()) as CoreBootstrapState);
+    },
+    [coreOrigin, sendCsrfJson],
+  );
+
   const applyUpdate = useCallback(
     async (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => {
       const actionKey = `${app.id}:update`;
@@ -1408,6 +1448,7 @@ export function ShellClient({
             }}
             onLaunchApp={launchAppPage}
             getStandaloneHref={getStandaloneAppHref}
+            onOpenPlatform={canManageApps ? openPlatform : undefined}
           />
         </aside>
 
@@ -1492,6 +1533,17 @@ export function ShellClient({
             onRemove={removeApp}
           />
         )}
+
+        <PlatformDialog
+          open={platformOpen}
+          coreVersion={state.status?.version ?? null}
+          shellVersion={shellVersion}
+          state={platformState}
+          loading={platformLoading}
+          error={platformError}
+          onToggle={togglePlatformApp}
+          onClose={() => setPlatformOpen(false)}
+        />
 
         <SharedMountsDialog
           open={sharedMountsOpen}

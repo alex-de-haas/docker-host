@@ -149,6 +149,27 @@ export type AppsResponse = {
   apps: CoreApp[];
 };
 
+// Generic bootstrap (docs/ideas/generic-bootstrap.md): one distribution-list entry as reported by
+// Core's host-admin bootstrap endpoint, with the operator's choice and the installed state.
+export type CoreBootstrapApp = {
+  id: string;
+  title: string;
+  description?: string | null;
+  defaultEnabled: boolean;
+  enabled: boolean;
+  choice: boolean | null;
+  installed: boolean;
+  runtimeState?: string | null;
+  installOrigin?: string | null;
+};
+
+export type CoreBootstrapState = {
+  source: string;
+  problems: string[];
+  apps: CoreBootstrapApp[];
+  actionError?: string | null;
+};
+
 export type CoreBackup = {
   appId: string;
   backupId: string;
