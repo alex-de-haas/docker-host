@@ -230,6 +230,10 @@ internal sealed partial class CoreCommand(CommandContext context)
 
         AddOptional(environment, LaunchSettingDefinitions.HostyCorePublicOrigin, settings.HostyCorePublicOrigin);
         AddOptional(environment, LaunchSettingDefinitions.HostyShellPublicOrigin, settings.HostyShellPublicOrigin);
+        // Manifest locations resolve from Core's release-owned distribution list; these deprecated
+        // settings are injected only when the operator explicitly set them (Core honors such a value
+        // as a legacy override and warns when it differs from the list). Which apps bootstrap is the
+        // bootstrap-choices file's job (`hosty setup`), not the environment's.
         AddOptional(environment, LaunchSettingDefinitions.HostyShellManifestPath, settings.ResolveHostyShellManifestPath(context.Environment));
         AddOptional(environment, LaunchSettingDefinitions.HostyShellBootstrapRuntime, settings.HostyShellBootstrapRuntime);
         // Observability toggles: inject only when they override Core's own default, so a default config
@@ -237,13 +241,8 @@ internal sealed partial class CoreCommand(CommandContext context)
         // export. Core defaults: observability off, collector autostart on.
         AddBooleanOverride(environment, LaunchSettingDefinitions.HostyObservabilityEnabled, settings.HostyObservabilityEnabled, coreDefault: false);
         AddBooleanOverride(environment, LaunchSettingDefinitions.HostyCollectorAutostart, settings.HostyCollectorAutostart, coreDefault: true);
-        // The collector manifest reference is carried like the Shell's: an installed standalone Core has
-        // no repo layout to discover apps/telemetry/manifest.json on disk, so without this the collector
-        // bootstrap is skipped. Injected unconditionally; Core only consults it when observability is on.
         AddOptional(environment, LaunchSettingDefinitions.HostyCollectorManifestPath, settings.ResolveHostyCollectorManifestPath(context.Environment));
-        // Empty explicitly disables Marketplace bootstrap. Always write the managed value so an ambient
-        // HOSTY_MARKETPLACE_MANIFEST_PATH cannot silently override `hosty config set ...=`.
-        environment[LaunchSettingDefinitions.HostyMarketplaceManifestPath] = settings.ResolveHostyMarketplaceManifestPath(context.Environment);
+        AddOptional(environment, LaunchSettingDefinitions.HostyMarketplaceManifestPath, settings.ResolveHostyMarketplaceManifestPath(context.Environment));
         return environment;
     }
 

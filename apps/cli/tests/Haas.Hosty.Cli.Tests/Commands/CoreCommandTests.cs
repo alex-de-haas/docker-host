@@ -71,11 +71,27 @@ public sealed class CoreCommandTests : IDisposable
         Assert.Contains("already running", output.ToString());
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("https://raw.githubusercontent.com/example/marketplace/main/manifest.json")]
-    public void BuildCoreEnvironment_MarketplaceManifestPath_PassesManagedValueIncludingEmpty(string manifestPath)
+    [Fact]
+    public void BuildCoreEnvironment_OmitsUnsetDeprecatedBootstrapReferences()
     {
+        // Manifest locations come from Core's distribution list now: a default (empty) setting must
+        // not surface in Core's environment at all.
+        var environment = HostyEnvironment.Current();
+        var settings = new LaunchSettingsStore(environment).Load();
+        var (console, _) = CreateConsole();
+        var command = new CoreCommand(new CommandContext(console, environment, new LaunchSettingsStore(environment)));
+
+        var coreEnvironment = command.BuildCoreEnvironment("http://localhost:7070", settings);
+
+        Assert.DoesNotContain(LaunchSettingDefinitions.HostyShellManifestPath, coreEnvironment.Keys);
+        Assert.DoesNotContain(LaunchSettingDefinitions.HostyCollectorManifestPath, coreEnvironment.Keys);
+        Assert.DoesNotContain(LaunchSettingDefinitions.HostyMarketplaceManifestPath, coreEnvironment.Keys);
+    }
+
+    [Fact]
+    public void BuildCoreEnvironment_InjectsExplicitLegacyBootstrapOverrides()
+    {
+        const string manifestPath = "https://raw.githubusercontent.com/example/marketplace/main/manifest.json";
         var environment = HostyEnvironment.Current();
         var settings = new LaunchSettingsStore(environment)
             .Load()

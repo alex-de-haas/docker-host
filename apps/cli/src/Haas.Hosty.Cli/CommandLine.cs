@@ -37,6 +37,7 @@ public static class CommandLine
             return args[0] switch
             {
                 "install" => await new InstallCommand(commandContext).ExecuteAsync(args[1..]),
+                "setup" => await new SetupCommand(commandContext).ExecuteAsync(args[1..]),
                 "uninstall" => await new UninstallCommand(commandContext).ExecuteAsync(args[1..]),
                 "start" => await new CoreCommand(commandContext).ExecuteAsync(["start", .. args[1..]]),
                 "stop" => await new CoreCommand(commandContext).ExecuteAsync(["stop", .. args[1..]]),
@@ -150,6 +151,7 @@ public static class CommandLine
         WriteCommandGroup(console, "Lifecycle",
         [
             ("install", "Install Hosty Core and Shell"),
+            ("setup", "Choose which optional apps Core preinstalls"),
             ("uninstall", "Uninstall Hosty (optionally delete data)"),
             ("start", "Start the local Hosty Core process"),
             ("stop", "Stop the local Hosty Core process"),

@@ -43,6 +43,26 @@ public sealed class BootstrapChoicesStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SetEnabledAsync_PreservesExternalFileEdits()
+    {
+        // The CLI's `hosty setup` writes this file out-of-process; a Core-side write (the uninstall
+        // hook) must merge into the on-disk state, not into a memoized boot-time snapshot.
+        var store = CreateStore();
+        await store.SetEnabledAsync("hosty.shell", enabled: true);
+        var path = Path.Combine(root, "core", BootstrapChoicesSchema.FileName);
+        await File.WriteAllTextAsync(path, """
+            { "schemaVersion": "bootstrap-choices.0.1", "apps": { "hosty.shell": { "enabled": true }, "hosty.telemetry": { "enabled": true } } }
+            """);
+
+        await store.SetEnabledAsync("hosty.marketplace", enabled: false);
+
+        var reread = await CreateStore().LoadAsync();
+        Assert.True(reread!.EnabledFor("hosty.telemetry"));
+        Assert.True(reread.EnabledFor("hosty.shell"));
+        Assert.False(reread.EnabledFor("hosty.marketplace"));
+    }
+
+    [Fact]
     public async Task SeedIfAbsentAsync_WritesOnlyWhenNoFileExists()
     {
         var store = CreateStore();

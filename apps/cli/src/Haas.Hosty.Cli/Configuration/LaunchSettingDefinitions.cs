@@ -2,9 +2,21 @@ namespace Haas.Hosty.Cli.Configuration;
 
 internal static class LaunchSettingDefinitions
 {
-    private const string DefaultShellManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
-    private const string DefaultCollectorManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json";
-    private const string DefaultMarketplaceManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json";
+    // Pre-generic-bootstrap default manifest URLs. No longer defaults: the distribution list owns
+    // manifest locations now (docs/ideas/generic-bootstrap.md), and these settings are deprecated
+    // explicit overrides. Kept so LaunchSettingsStore can scrub values an older CLI materialized
+    // into launch.env — a value equal to the old default was never operator intent, and leaving it
+    // would re-pin a location that goes stale the next time a release moves a manifest.
+    internal const string LegacyDefaultShellManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
+    internal const string LegacyDefaultCollectorManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json";
+    internal const string LegacyDefaultMarketplaceManifestPath = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json";
+
+    internal static readonly IReadOnlyDictionary<string, string> ScrubbedLegacyDefaults = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [HostyShellManifestPath] = LegacyDefaultShellManifestPath,
+        [HostyCollectorManifestPath] = LegacyDefaultCollectorManifestPath,
+        [HostyMarketplaceManifestPath] = LegacyDefaultMarketplaceManifestPath,
+    };
     public const string HostyDataRoot = "HOSTY_DATA_ROOT";
     public const string HostyCorePort = "HOSTY_CORE_PORT";
     public const string HostyShellPort = "HOSTY_SHELL_PORT";
@@ -24,20 +36,18 @@ internal static class LaunchSettingDefinitions
         new(HostyShellPort, _ => "7171", true, ValidatePort),
         new(HostyCorePublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
         new(HostyShellPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
-        new(HostyShellManifestPath, _ => DefaultShellManifestPath, true, ValidateManifestReference),
+        // Deprecated (generic bootstrap): manifest locations resolve from the release-owned
+        // distribution list at every Core boot; these settings remain only as explicit legacy
+        // overrides that Core honors with a deprecation warning. Empty means "not set".
+        new(HostyShellManifestPath, _ => "", true, ValidateOptionalManifestReference, IsDeprecated: true),
         new(HostyShellBootstrapRuntime, _ => "docker", true, ValidateRuntimeKey),
-        // Observability (P4): the collector is installed/started only when enabled. Mirrors Core's
-        // HOSTY_OBSERVABILITY_ENABLED / HOSTY_COLLECTOR_AUTOSTART env vars. The collector manifest path
-        // carries a remote default (like the Shell) so an installed standalone Core — which has no repo
-        // layout on disk to discover apps/telemetry/manifest.json — can still bootstrap the collector;
-        // only HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME stays an advanced ambient-env-only knob.
+        // HOSTY_OBSERVABILITY_ENABLED still gates Core's own telemetry producers (docker-stats
+        // exposition, the internal metrics endpoint); `hosty setup` keeps it in step with the
+        // telemetry bootstrap choice. Which apps bootstrap is decided by `hosty setup`, not here.
         new(HostyObservabilityEnabled, _ => "false", true, ValidateBoolean),
         new(HostyCollectorAutostart, _ => "true", true, ValidateBoolean),
-        new(HostyCollectorManifestPath, _ => DefaultCollectorManifestPath, true, ValidateManifestReference),
-        // Temporary bootstrap reference while Marketplace is a first-party optional system app. Unlike
-        // Shell/collector, an explicit empty value is meaningful: pass it through so Core disables the
-        // Marketplace bootstrap instead of inheriting an ambient reference.
-        new(HostyMarketplaceManifestPath, _ => DefaultMarketplaceManifestPath, true, ValidateOptionalManifestReference),
+        new(HostyCollectorManifestPath, _ => "", true, ValidateOptionalManifestReference, IsDeprecated: true),
+        new(HostyMarketplaceManifestPath, _ => "", true, ValidateOptionalManifestReference, IsDeprecated: true),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);

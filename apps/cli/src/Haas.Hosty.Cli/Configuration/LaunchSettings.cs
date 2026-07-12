@@ -39,10 +39,14 @@ internal sealed class LaunchSettings
         => environment.ResolvePath(HostyDataRootRaw);
 
     public string ResolveHostyShellManifestPath(HostyEnvironment environment)
-        => ResolveManifestReference(HostyShellManifestPath, environment);
+        => string.IsNullOrWhiteSpace(HostyShellManifestPath)
+            ? string.Empty
+            : ResolveManifestReference(HostyShellManifestPath, environment);
 
     public string ResolveHostyCollectorManifestPath(HostyEnvironment environment)
-        => ResolveManifestReference(HostyCollectorManifestPath, environment);
+        => string.IsNullOrWhiteSpace(HostyCollectorManifestPath)
+            ? string.Empty
+            : ResolveManifestReference(HostyCollectorManifestPath, environment);
 
     public string ResolveHostyMarketplaceManifestPath(HostyEnvironment environment)
         => string.IsNullOrWhiteSpace(HostyMarketplaceManifestPath)

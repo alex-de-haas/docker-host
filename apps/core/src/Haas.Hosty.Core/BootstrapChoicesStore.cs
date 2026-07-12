@@ -73,7 +73,9 @@ internal sealed class BootstrapChoicesStore(CoreDataPaths paths, ILogger<Bootstr
         await gate.WaitAsync(cancellationToken);
         try
         {
-            var current = loaded ? cached : await ReadCoreAsync(cancellationToken);
+            // Always re-read from disk: the CLI's `hosty setup` writes this file out-of-process, and
+            // merging into a memoized boot-time snapshot would silently revert those edits.
+            var current = await ReadCoreAsync(cancellationToken);
             var apps = new Dictionary<string, BootstrapChoiceEntry>(StringComparer.Ordinal);
             foreach (var (id, choice) in current?.Apps ?? new Dictionary<string, BootstrapChoiceEntry>(StringComparer.Ordinal))
             {
