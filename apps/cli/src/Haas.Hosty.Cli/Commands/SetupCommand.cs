@@ -385,14 +385,14 @@ internal sealed partial class SetupCommand(CommandContext context)
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            warnings.Add($"Distribution list at '{path}' ({source}) could not be read: {ex.Message}. Using the embedded default list.");
+            warnings.Add($"Distribution list at '{path}' ({source}) could not be read: {ex.Message}. The next available list is used instead.");
             return null;
         }
 
         var entries = ParseEntries(json, source, warnings);
         if (entries.Count == 0)
         {
-            warnings.Add($"Distribution list at '{path}' produced no usable entries. Using the embedded default list.");
+            warnings.Add($"Distribution list at '{path}' produced no usable entries. The next available list is used instead.");
             return null;
         }
 
