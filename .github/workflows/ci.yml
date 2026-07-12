@@ -27,6 +27,8 @@ on:
       - ".github/workflows/telemetry-backend-image.yml"
       - "apps/marketplace/**"
       - ".github/workflows/marketplace-image.yml"
+      - "apps/telemetry-ui/**"
+      - ".github/workflows/telemetry-ui-image.yml"
   push:
     branches:
       - main
@@ -53,6 +55,8 @@ on:
       - ".github/workflows/telemetry-backend-image.yml"
       - "apps/marketplace/**"
       - ".github/workflows/marketplace-image.yml"
+      - "apps/telemetry-ui/**"
+      - ".github/workflows/telemetry-ui-image.yml"
 
 permissions:
   contents: read
@@ -197,3 +201,28 @@ jobs:
 
       - name: Build Marketplace
         run: npm run marketplace:build
+
+  telemetry-ui:
+    name: Telemetry UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Lint Telemetry UI
+        run: npm run telemetry-ui:lint
+
+      - name: Test Telemetry UI
+        run: npm run telemetry-ui:test
+
+      - name: Build Telemetry UI
+        run: npm run telemetry-ui:build
