@@ -44,13 +44,15 @@ internal sealed class DockerStatsExposition(
         {
             try
             {
-                // Observability follows the telemetry app: no installed collector means nothing
-                // scrapes this producer, so the tick idles (and serves an empty snapshot) instead
-                // of running docker commands nobody consumes. Checked per tick so a live enable
-                // through the bootstrap endpoints takes effect without a Core restart.
-                current = await apps.GetAppAsync(CollectorBootstrap.AppId, stoppingToken) is null
-                    ? string.Empty
-                    : await BuildSnapshotAsync(stoppingToken);
+                // Observability follows the telemetry app: unless it is installed AND running,
+                // nothing scrapes this producer (the scraping backend is one of its services), so
+                // the tick idles with an empty snapshot instead of running docker commands nobody
+                // consumes. Checked per tick so a live enable through the bootstrap endpoints or a
+                // plain app start takes effect without a Core restart.
+                var collector = await apps.GetAppAsync(CollectorBootstrap.AppId, stoppingToken);
+                current = string.Equals(collector?.RuntimeState, "running", StringComparison.Ordinal)
+                    ? await BuildSnapshotAsync(stoppingToken)
+                    : string.Empty;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
