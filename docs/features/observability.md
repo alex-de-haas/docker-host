@@ -63,36 +63,23 @@ in the bind mount; the contents are non-secret telemetry.
 ## Enabling it
 
 Observability is **off by default** — an install with no telemetry consumer never pulls the collector
-image. Enable it with `hosty config` (persisted in `launch.env`, injected into the Core process on
-`hosty core start`):
+image. The telemetry app is a distribution-list entry (`defaultEnabled: false`), so enabling it is a
+bootstrap choice (docs/ideas/generic-bootstrap.md):
 
 ```sh
-hosty config set HOSTY_OBSERVABILITY_ENABLED true
-hosty core start   # or restart if already running — the flag is read only at Core startup
+hosty setup --with hosty.telemetry   # or the Shell platform panel's Extensions section
 ```
 
-- `HOSTY_OBSERVABILITY_ENABLED` — install + run the collector (default `false`).
-- `HOSTY_COLLECTOR_AUTOSTART` — start the collector with the other autostart apps (default `true`).
-- `HOSTY_COLLECTOR_MANIFEST_PATH` — where Core reads the collector manifest (default: the
-  `apps/telemetry/manifest.json` published from this repo on GitHub `main`). A **standalone installed
-  Core has no repo layout on disk**, so this remote default is what lets it bootstrap the collector at
-  all — without it the bootstrap is skipped (`"no collector manifest path was configured"`). Override
-  with a local path or a different URL for a fork / air-gapped mirror.
+From the Shell, enabling installs and starts the collector immediately; via `hosty setup` the choice
+applies on the next `hosty core start`. Everything downstream follows the app itself: Core's own
+telemetry producers (the docker-stats exposition and `/internal/telemetry/metrics` endpoint) run
+whenever the telemetry app is installed and idle otherwise — the old `HOSTY_OBSERVABILITY_ENABLED`
+flag is gone. Autostart is the normal per-app setting (`HOSTY_COLLECTOR_AUTOSTART` is gone too): the
+first install defaults to autostart on, and the operator's later choice is preserved across boots.
 
-The two **boolean** toggles accept `true/false`, `1/0`, `yes/no`, `enabled/disabled`, `on/off` when set
-via `hosty config` and are stored canonicalized to `true`/`false`. Note this wider token set is a
-`hosty config` convenience: Core's own env-var parsing only treats `1`, `true`, `enabled`, `yes` as
-truthy, so if you export a boolean **directly** prefer one of those (e.g.
-`export HOSTY_OBSERVABILITY_ENABLED=1`). The manifest path is a string, not a boolean.
-
-All three are also plain Core env vars, so a direct `export … ` before `hosty core start` works too (the
-CLI passes its environment through to Core). Injection precedence differs by kind. The **boolean**
-toggles are injected into the Core process **only when they differ from Core's default**, so one left at
-its default does not touch an ambient export (a non-default value *is* injected and takes precedence).
-The **manifest path** (like `HOSTY_SHELL_MANIFEST_PATH`) is injected whenever non-empty — including its
-default — which is exactly what lets an installed Core find the collector manifest; consequently a
-configured or default path takes precedence over an ambient `export HOSTY_COLLECTOR_MANIFEST_PATH`. One
-advanced override stays ambient-env-only (not in `hosty config`): `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME`
+The manifest location resolves from the distribution list. The deprecated
+`HOSTY_COLLECTOR_MANIFEST_PATH` remains only as an explicit override for a fork / air-gapped mirror,
+and one advanced override stays ambient-env-only (not in `hosty config`): `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME`
 (default `docker`).
 
 The collector starts **before** other autostart apps so its OTLP endpoint is resolved and persisted
@@ -133,8 +120,9 @@ in-memory with no persistence**: a Core restart drops the window, which is accep
 metrics view. The interface is the seam for a later durable swap (e.g. `Microsoft.Data.Sqlite`); v1
 keeps Core framework-only.
 
-**Two collectors feed the store, on a ~10s `TelemetryScrapeService` loop** (gated behind
-`HOSTY_OBSERVABILITY_ENABLED`; it no-ops when off):
+**Two collectors feed the store, on a ~10s `TelemetryScrapeService` loop** (historical v1: the store
+and scrape have since moved into the telemetry backend — see observability-phase-2-backend.md — and
+Core's remaining docker-stats producer keys on the telemetry app being installed):
 
 1. **App metrics** — Core scrapes the collector's loopback Prometheus `/metrics` (a host process
    reaching the auto-allocated loopback port), parses the exposition text, and attributes each series

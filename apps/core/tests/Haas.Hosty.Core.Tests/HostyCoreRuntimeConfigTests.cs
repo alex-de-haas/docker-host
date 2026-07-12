@@ -301,30 +301,13 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
-    public void FromEnvironment_DefaultsObservabilityDisabled()
+    public void FromEnvironment_DefaultsCollectorBootstrapRuntimeToDocker()
     {
-        using var enabledEnv = TemporaryEnvironment.With("HOSTY_OBSERVABILITY_ENABLED", null);
         using var runtimeEnv = TemporaryEnvironment.With("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME", null);
-        using var autostartEnv = TemporaryEnvironment.With("HOSTY_COLLECTOR_AUTOSTART", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
-        Assert.False(config.ObservabilityEnabled);
         Assert.Equal("docker", config.CollectorBootstrapRuntime);
-        Assert.True(config.CollectorAutostart);
-    }
-
-    [Fact]
-    public void FromEnvironment_EnablesObservabilityWhenRequested()
-    {
-        using var enabledEnv = TemporaryEnvironment.With("HOSTY_OBSERVABILITY_ENABLED", "1");
-        using var autostartEnv = TemporaryEnvironment.With("HOSTY_COLLECTOR_AUTOSTART", "false");
-        using var runtimeEnv = TemporaryEnvironment.With("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME", null);
-
-        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
-
-        Assert.True(config.ObservabilityEnabled);
-        Assert.False(config.CollectorAutostart);
     }
 
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment

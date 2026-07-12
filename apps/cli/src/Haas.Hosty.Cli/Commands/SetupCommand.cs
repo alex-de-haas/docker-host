@@ -30,9 +30,6 @@ internal sealed partial class SetupCommand(CommandContext context)
     private const string ChoicesSchemaVersion = "bootstrap-choices.0.1";
     private const string ChoicesFileName = "bootstrap-choices.json";
 
-    // The telemetry entry's id, needed for the transitional HOSTY_OBSERVABILITY_ENABLED sync below.
-    private const string TelemetryAppId = "hosty.telemetry";
-
     // Official distribution for standalone binary installs — the same set Core embeds
     // (DistributionAppsProvider.EmbeddedDefaultJson); a source tree wins via the walked repo file.
     // Setup only consumes id/title/description/defaultEnabled; manifest refs are Core's concern.
@@ -89,7 +86,8 @@ internal sealed partial class SetupCommand(CommandContext context)
 
         ValidateRequestedIds(options, entries);
 
-        var choicesPath = Path.Combine(settings.ResolveHostDataRoot(context.Environment), "core", ChoicesFileName);
+        var dataRoot = settings.ResolveHostDataRoot(context.Environment);
+        var choicesPath = Path.Combine(dataRoot, "core", ChoicesFileName);
         var (existingChoices, existingUnreadable) = ReadChoices(choicesPath);
         if (existingUnreadable)
         {
@@ -99,7 +97,7 @@ internal sealed partial class SetupCommand(CommandContext context)
 
         var effective = entries.ToDictionary(
             entry => entry.Id,
-            entry => EffectiveEnabled(entry, existingChoices, settings),
+            entry => EffectiveEnabled(entry, existingChoices, settings, dataRoot),
             StringComparer.Ordinal);
 
         if (options.List)
@@ -137,7 +135,6 @@ internal sealed partial class SetupCommand(CommandContext context)
         }
 
         WriteChoices(choicesPath, entries, selection, existingChoices);
-        SyncObservabilitySetting(settings, selection);
         WriteSelectionTable(entries, selection, listSource);
         context.Console.MarkupLine($"[grey]Saved to {Markup.Escape(choicesPath)}[/]");
 
@@ -208,9 +205,10 @@ internal sealed partial class SetupCommand(CommandContext context)
         }
     }
 
-    // Choices win, then the explicit legacy launch settings, then the release default — the same
-    // layering Core applies at boot, so the checklist shows what the next boot would actually do.
-    private static bool EffectiveEnabled(DistributionEntry entry, ChoicesDocument? choices, LaunchSettings settings)
+    // Choices win, then the explicit legacy launch settings, then the installed state, then the
+    // release default — mirroring the layering Core applies at boot (whose migration also pins from
+    // the installed state), so the checklist shows what the next boot would actually do.
+    private static bool EffectiveEnabled(DistributionEntry entry, ChoicesDocument? choices, LaunchSettings settings, string dataRoot)
     {
         if (choices is not null &&
             choices.Apps.TryGetValue(entry.Id, out var choice) &&
@@ -221,12 +219,22 @@ internal sealed partial class SetupCommand(CommandContext context)
 
         var legacy = entry.Id switch
         {
-            TelemetryAppId when LaunchSettingDefinitions.IsTruthy(settings.HostyObservabilityEnabled) => true,
             "hosty.marketplace" when !string.IsNullOrWhiteSpace(settings.HostyMarketplaceManifestPath) => true,
             _ => (bool?)null,
         };
+        if (legacy is bool value)
+        {
+            return value;
+        }
 
-        return legacy ?? entry.DefaultEnabled;
+        // An app that is already installed counts as enabled in the base selection: without a
+        // choices file that is exactly what Core's upgrade migration would pin.
+        if (File.Exists(Path.Combine(dataRoot, "apps", entry.Id, "state.json")))
+        {
+            return true;
+        }
+
+        return entry.DefaultEnabled;
     }
 
     private IReadOnlyDictionary<string, bool> PromptSelection(
@@ -301,30 +309,6 @@ internal sealed partial class SetupCommand(CommandContext context)
 
             throw;
         }
-    }
-
-    // Transitional coupling: HOSTY_OBSERVABILITY_ENABLED still gates Core's own telemetry producers
-    // (docker-stats exposition, the internal metrics endpoint) independently of the collector
-    // bootstrap. Keeping the flag in step with the telemetry choice avoids a half-enabled
-    // observability stack until the flag folds into the choice (generic-bootstrap.md, Phase 4).
-    private void SyncObservabilitySetting(LaunchSettings settings, IReadOnlyDictionary<string, bool> selection)
-    {
-        if (!selection.TryGetValue(TelemetryAppId, out var telemetryEnabled))
-        {
-            return;
-        }
-
-        var current = LaunchSettingDefinitions.IsTruthy(settings.HostyObservabilityEnabled);
-        if (current == telemetryEnabled)
-        {
-            return;
-        }
-
-        context.SettingsStore.Save(settings.WithValue(
-            LaunchSettingDefinitions.HostyObservabilityEnabled,
-            telemetryEnabled ? "true" : "false"));
-        context.Console.MarkupLine(
-            $"[grey]{LaunchSettingDefinitions.HostyObservabilityEnabled} set to {(telemetryEnabled ? "true" : "false")} to match the telemetry selection.[/]");
     }
 
     private void WriteSelectionTable(

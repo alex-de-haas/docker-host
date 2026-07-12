@@ -8,11 +8,13 @@ namespace Haas.Hosty.Core;
 // Prometheus text snapshot the backend scrapes as a second target (alongside the collector). Each
 // series is attributed to its app via the `hosty_app_id` label the backend already keys on, so the
 // backend stores docker stats uniformly with app OTLP metrics. This replaces the docker-stats half of
-// the old TelemetryScrapeService; Core no longer keeps a metric store of its own. Gated on
-// ObservabilityEnabled and best-effort: a docker-less host simply exposes nothing.
+// the old TelemetryScrapeService; Core no longer keeps a metric store of its own. Gated on the
+// telemetry app being installed — the flag that used to control this folded into the bootstrap
+// choice (generic-bootstrap.md), so a live enable starts stats flowing without a Core restart —
+// and best-effort: a docker-less host simply exposes nothing.
 // See docs/features/observability-phase-2-backend.md.
 internal sealed class DockerStatsExposition(
-    HostyCoreRuntimeConfig config,
+    AppRegistryStore apps,
     IDockerCommandRunner dockerRunner,
     ILogger<DockerStatsExposition> logger) : BackgroundService
 {
@@ -36,18 +38,19 @@ internal sealed class DockerStatsExposition(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!config.ObservabilityEnabled)
-        {
-            return;
-        }
-
         await Task.Yield();
         using var timer = new PeriodicTimer(Interval);
         do
         {
             try
             {
-                current = await BuildSnapshotAsync(stoppingToken);
+                // Observability follows the telemetry app: no installed collector means nothing
+                // scrapes this producer, so the tick idles (and serves an empty snapshot) instead
+                // of running docker commands nobody consumes. Checked per tick so a live enable
+                // through the bootstrap endpoints takes effect without a Core restart.
+                current = await apps.GetAppAsync(CollectorBootstrap.AppId, stoppingToken) is null
+                    ? string.Empty
+                    : await BuildSnapshotAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

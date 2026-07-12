@@ -117,9 +117,6 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
         => key switch
         {
             LaunchSettingDefinitions.HostyCorePort or LaunchSettingDefinitions.HostyShellPort => value.Trim(),
-            // Canonicalize boolean settings so the persisted launch.env always reads true/false.
-            LaunchSettingDefinitions.HostyObservabilityEnabled or LaunchSettingDefinitions.HostyCollectorAutostart =>
-                LaunchSettingDefinitions.IsTruthy(value) ? "true" : "false",
             _ => value,
         };
 

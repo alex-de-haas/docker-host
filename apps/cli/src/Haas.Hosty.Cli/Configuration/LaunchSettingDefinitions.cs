@@ -24,8 +24,6 @@ internal static class LaunchSettingDefinitions
     public const string HostyShellPublicOrigin = "HOSTY_SHELL_PUBLIC_ORIGIN";
     public const string HostyShellManifestPath = "HOSTY_SHELL_MANIFEST_PATH";
     public const string HostyShellBootstrapRuntime = "HOSTY_SHELL_BOOTSTRAP_RUNTIME";
-    public const string HostyObservabilityEnabled = "HOSTY_OBSERVABILITY_ENABLED";
-    public const string HostyCollectorAutostart = "HOSTY_COLLECTOR_AUTOSTART";
     public const string HostyCollectorManifestPath = "HOSTY_COLLECTOR_MANIFEST_PATH";
     public const string HostyMarketplaceManifestPath = "HOSTY_MARKETPLACE_MANIFEST_PATH";
 
@@ -41,11 +39,9 @@ internal static class LaunchSettingDefinitions
         // overrides that Core honors with a deprecation warning. Empty means "not set".
         new(HostyShellManifestPath, _ => "", true, ValidateOptionalManifestReference, IsDeprecated: true),
         new(HostyShellBootstrapRuntime, _ => "docker", true, ValidateRuntimeKey),
-        // HOSTY_OBSERVABILITY_ENABLED still gates Core's own telemetry producers (docker-stats
-        // exposition, the internal metrics endpoint); `hosty setup` keeps it in step with the
-        // telemetry bootstrap choice. Which apps bootstrap is decided by `hosty setup`, not here.
-        new(HostyObservabilityEnabled, _ => "false", true, ValidateBoolean),
-        new(HostyCollectorAutostart, _ => "true", true, ValidateBoolean),
+        // HOSTY_OBSERVABILITY_ENABLED and HOSTY_COLLECTOR_AUTOSTART are gone: Core derives its
+        // telemetry producers from the telemetry app being installed, and autostart is a normal
+        // per-app setting. Which apps bootstrap is decided by `hosty setup`, not here.
         new(HostyCollectorManifestPath, _ => "", true, ValidateOptionalManifestReference, IsDeprecated: true),
         new(HostyMarketplaceManifestPath, _ => "", true, ValidateOptionalManifestReference, IsDeprecated: true),
     ];
@@ -97,25 +93,6 @@ internal static class LaunchSettingDefinitions
             string.IsNullOrEmpty(uri.PathAndQuery.Trim('/'))
             ? null
             : "Host public origin must be an absolute http(s) origin without a path.";
-    }
-
-    private const string BooleanError = "Value must be a boolean (true/false, 1/0, yes/no, enabled/disabled, on/off).";
-    private static readonly HashSet<string> TruthyBooleanTokens = new(StringComparer.OrdinalIgnoreCase) { "1", "true", "yes", "enabled", "on" };
-    private static readonly HashSet<string> FalsyBooleanTokens = new(StringComparer.OrdinalIgnoreCase) { "0", "false", "no", "disabled", "off" };
-
-    // True when a (validated) boolean setting value is one of the truthy tokens. Used to canonicalize
-    // the stored value and to decide whether to inject the override into the Core process environment.
-    public static bool IsTruthy(string? value) => value is not null && TruthyBooleanTokens.Contains(value.Trim());
-
-    private static string? ValidateBoolean(string value, HostyEnvironment _)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return BooleanError;
-        }
-
-        var token = value.Trim();
-        return TruthyBooleanTokens.Contains(token) || FalsyBooleanTokens.Contains(token) ? null : BooleanError;
     }
 
     private static string? ValidatePort(string value, HostyEnvironment _)

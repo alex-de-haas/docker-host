@@ -60,8 +60,6 @@ HOSTY_CORE_PUBLIC_ORIGIN=
 HOSTY_SHELL_PUBLIC_ORIGIN=
 HOSTY_SHELL_MANIFEST_PATH=
 HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
-HOSTY_OBSERVABILITY_ENABLED=false
-HOSTY_COLLECTOR_AUTOSTART=true
 HOSTY_COLLECTOR_MANIFEST_PATH=
 HOSTY_MARKETPLACE_MANIFEST_PATH=
 ```
@@ -97,7 +95,7 @@ hosty setup --with hosty.telemetry   # enable an app without prompting
 hosty setup --without hosty.marketplace --yes
 ```
 
-`hosty setup` writes only the operator's intent into `{data root}/core/bootstrap-choices.json` (`bootstrap-choices.0.1`); manifest locations are never persisted and always resolve from the current release's distribution list. An explicit setup run pins every presented entry, so a later release flipping a default does not override a confirmed selection. Toggling `hosty.telemetry` also keeps `HOSTY_OBSERVABILITY_ENABLED` in step, because that flag still gates Core's own telemetry producers. Choices apply on the next Core start; setup warns when Core is currently running. Uninstalling a distribution-installed app records `enabled=false` automatically, so the next boot does not reinstall it.
+`hosty setup` writes only the operator's intent into `{data root}/core/bootstrap-choices.json` (`bootstrap-choices.0.1`); manifest locations are never persisted and always resolve from the current release's distribution list. An explicit setup run pins every presented entry, so a later release flipping a default does not override a confirmed selection. Core's own telemetry producers follow the telemetry app itself (installed = active), so there is no observability flag to keep in step. Choices apply on the next Core start; setup warns when Core is currently running. Uninstalling a distribution-installed app records `enabled=false` automatically, so the next boot does not reinstall it.
 
 `hosty open` opens `HOSTY_SHELL_PUBLIC_ORIGIN` when it is configured. Otherwise it opens the local Shell URL derived from `HOSTY_SHELL_PORT`.
 

@@ -132,7 +132,7 @@ Bundled in the release artifact next to the Core binary (dev target: resolved fr
 - **Stamping `role: system` at bootstrap** — rejected; provenance annotation instead (Decision 2).
 - **Reusing the `marketplace.0.2` catalog format for the distribution list** — rejected. The storefront format carries display concerns (icons, publishers, description URLs) the boot path must not parse; the pivot deliberately removed catalog identity from Core and this would sneak it back in.
 - **Capability-based provisioning and ordering** — deferred to Phase 4: `StartPriority` becomes a manifest/role property ("provides OTLP → starts before consumers"), the collector's provisioning hook keys off a capability rather than the app id, so a third-party collector can fill the slot.
-- **Folding `HOSTY_OBSERVABILITY_ENABLED` away** — deferred until its non-bootstrap consumers (OTLP env injection, scrape loops) are inventoried; see Open Questions.
+- **Folding `HOSTY_OBSERVABILITY_ENABLED` away** — done (decided 2026-07-12): Core's docker-stats exposition and internal metrics endpoint key on the telemetry app being installed, checked per tick so a live enable needs no restart; the flag and `HOSTY_COLLECTOR_AUTOSTART` (autostart is a normal per-app setting) were removed from Core and the CLI.
 
 ## Implementation plan
 
@@ -167,12 +167,11 @@ Acceptance: an admin toggles telemetry on in Shell and the collector installs an
 
 ### Phase 4 — de-specialization
 
-Capability/role-based start ordering from the manifest; provisioning hooks keyed by capability (e.g. `otlp-collector`) instead of app id; retire the static `ShellBootstrap`/`CollectorBootstrap` descriptor classes; revisit `HOSTY_OBSERVABILITY_ENABLED`.
+Capability/role-based start ordering from the manifest; provisioning hooks keyed by capability (e.g. `otlp-collector`) instead of app id; retire the static `ShellBootstrap`/`CollectorBootstrap` descriptor classes. (`HOSTY_OBSERVABILITY_ENABLED` and `HOSTY_COLLECTOR_AUTOSTART` were already folded away on 2026-07-12: Core's telemetry producers key on the telemetry app being installed, and collector autostart is a normal per-app setting.)
 
 ## Open Questions
 
 - Final names and locations: where the artifact carries `distribution-apps.json` (next to the binary, alongside the `apps/<name>/manifest.json` layout the bundled-manifest resolver already walks); exact env var name.
 - Whether `hosty core install` should run `hosty setup` implicitly on first install, or print a hint.
-- `HOSTY_OBSERVABILITY_ENABLED` consumers beyond descriptor gating (OTLP env injection into apps, metrics scrape/tail loops) — what "telemetry enabled" means once the flag folds into choices.
 - Which first-party entries get remote `feedsUrl` vs bundled manifests, and how the dev-Shell source-override workflow (`HOSTY_SHELL_SOURCE_OVERRIDE_PATH`) maps onto choices-era overrides.
 - Whether disabling an entry should optionally stop the running app immediately (current leaning: no — reconcile-only, stopping stays an explicit lifecycle action).

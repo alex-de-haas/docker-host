@@ -90,7 +90,9 @@ internal static class SystemAppBootstraps
                     Enabled: enabled,
                     ManifestPath: manifestPath,
                     Runtime: config.CollectorBootstrapRuntime,
-                    Autostart: config.CollectorAutostart,
+                    // Autostart is a normal per-app setting: install default on first install, the
+                    // operator's later choice preserved (HOSTY_COLLECTOR_AUTOSTART is gone).
+                    Autostart: null,
                     ProvisionAsync: CollectorBootstrap.ProvisionAsync,
                     FeedsUrl: entry.FeedsUrl),
                 _ => new SystemAppBootstrapDescriptor(

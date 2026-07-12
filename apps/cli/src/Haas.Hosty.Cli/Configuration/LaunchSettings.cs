@@ -27,10 +27,6 @@ internal sealed class LaunchSettings
 
     public string HostyShellBootstrapRuntime => this[LaunchSettingDefinitions.HostyShellBootstrapRuntime];
 
-    public string HostyObservabilityEnabled => this[LaunchSettingDefinitions.HostyObservabilityEnabled];
-
-    public string HostyCollectorAutostart => this[LaunchSettingDefinitions.HostyCollectorAutostart];
-
     public string HostyCollectorManifestPath => this[LaunchSettingDefinitions.HostyCollectorManifestPath];
 
     public string HostyMarketplaceManifestPath => this[LaunchSettingDefinitions.HostyMarketplaceManifestPath];
