@@ -57,7 +57,8 @@ public sealed class SetupCommandTests : IDisposable
         Assert.True(choices.GetProperty("apps").GetProperty("hosty.shell").GetProperty("enabled").GetBoolean());
         Assert.False(choices.GetProperty("apps").GetProperty("hosty.telemetry").GetProperty("enabled").GetBoolean());
         Assert.True(choices.GetProperty("apps").GetProperty("hosty.marketplace").GetProperty("enabled").GetBoolean());
-        Assert.Contains("bootstrap-choices.json", output.ToString());
+        // The console wraps at its default width and can break mid-path, so flatten before matching.
+        Assert.Contains("bootstrap-choices.json", output.ToString().Replace("\n", "", StringComparison.Ordinal));
     }
 
     [Fact]
