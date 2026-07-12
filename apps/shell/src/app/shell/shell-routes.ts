@@ -2,28 +2,17 @@ import type { ShellRouteState, ShellSearchParams, ShellView, WorkspaceRoute } fr
 
 export const SIDEBAR_COMPACT_STORAGE_KEY = "hosty.shell.sidebar.compact";
 
-// Instrument names the user has ticked on the Metrics page (JSON string[]). Persisted so the chosen
-// set of charts survives reloads; empty by default (only pinned CPU/memory show until the user opts
-// metrics in).
-export const METRICS_SELECTED_STORAGE_KEY = "hosty.shell.metrics.selected";
-
 const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   dashboard: "/dashboard",
   "available-apps": "/apps",
   "installed-apps": "/installed-apps",
   users: "/users",
-  "obs-metrics": "/observability/metrics",
-  "obs-logs": "/observability/logs",
-  "obs-traces": "/observability/traces",
 };
 
 const ADMIN_SHELL_VIEWS = new Set<ShellView>([
   "dashboard",
   "installed-apps",
   "users",
-  "obs-metrics",
-  "obs-logs",
-  "obs-traces",
 ]);
 
 export function shellViewRequiresAdmin(view: ShellView) {
@@ -102,18 +91,6 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
 
   if (path === "/users") {
     return { view: "users", workspace: null };
-  }
-
-  if (path === "/observability/metrics") {
-    return { view: "obs-metrics", workspace: null };
-  }
-
-  if (path === "/observability/logs") {
-    return { view: "obs-logs", workspace: null };
-  }
-
-  if (path === "/observability/traces") {
-    return { view: "obs-traces", workspace: null };
   }
 
   return { view: "dashboard", workspace: null };

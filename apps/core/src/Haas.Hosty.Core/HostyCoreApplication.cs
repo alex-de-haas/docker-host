@@ -58,14 +58,13 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();
-        // Observability Phase 2: the telemetry store + query API live in the telemetry-backend system
-        // app. Core is a producer (docker stats) + a read proxy — it keeps no telemetry store.
-        // Phase 2 producer: re-expose host-collected `docker stats` as Prometheus for the backend to
-        // scrape. Registered as a singleton the exposition endpoint reads and run as a hosted service.
+        // Observability Phase 2: the telemetry store, query API, and observability UI all live in the
+        // telemetry system app. Core keeps only the producer role it cannot shed — re-exposing
+        // host-collected `docker stats` as Prometheus for the backend to scrape. The telemetry read path
+        // no longer runs through Core; the telemetry UI reads its backend directly. Registered as a
+        // singleton the exposition endpoint reads and run as a hosted service.
         builder.Services.AddSingleton<DockerStatsExposition>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DockerStatsExposition>());
-        // Phase 2 read proxy: HTTP client Core uses to query the telemetry backend.
-        builder.Services.AddSingleton<TelemetryBackendClient>();
         builder.Services.AddSingleton<IIngressController>(sp =>
         {
             var ingressConfig = sp.GetRequiredService<HostyCoreRuntimeConfig>();

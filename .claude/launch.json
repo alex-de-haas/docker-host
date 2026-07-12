@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "core:dev"],
       "port": 3001
+    },
+    {
+      "name": "Telemetry UI",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "telemetry-ui:dev"],
+      "port": 3300
     }
   ]
 }

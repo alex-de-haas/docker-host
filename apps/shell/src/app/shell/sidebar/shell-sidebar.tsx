@@ -10,7 +10,6 @@ import {
   Gauge,
   Home,
   LayoutGrid,
-  LineChart,
   LoaderCircle,
   LogIn,
   LogOut,
@@ -18,10 +17,8 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  ScrollText,
   Sun,
   Users,
-  Waypoints,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -53,7 +50,6 @@ export function ShellSidebar({
   shellVersion,
   activeUser,
   canManageApps,
-  observabilityAvailable,
   runtimeApps,
   systemApps,
   busyAction,
@@ -71,9 +67,6 @@ export function ShellSidebar({
   shellVersion: string;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
-  // The telemetry backend system app is installed + running, so the backend-backed Observability
-  // section (Metrics / Structured logs / Traces) has data to show. Hidden otherwise.
-  observabilityAvailable: boolean;
   runtimeApps: CoreApp[];
   // UI-capable system apps for the admin-only System group; empty for non-admins and when no
   // installed system app declares UI, in which case the group is hidden entirely.
@@ -118,14 +111,6 @@ export function ShellSidebar({
               <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
               <SidebarButton compact={compact} active={activeView === "installed-apps" && !workspace} icon={Boxes} label="Installed Apps" onClick={() => onNavigate("installed-apps")} />
               <SidebarButton compact={compact} active={activeView === "users"} icon={Users} label="User Management" onClick={() => onNavigate("users")} />
-            </NavigationSection>
-          )}
-
-          {canManageApps && observabilityAvailable && (
-            <NavigationSection title="Observability" compact={compact}>
-              <SidebarButton compact={compact} active={activeView === "obs-metrics" && !workspace} icon={LineChart} label="Metrics" onClick={() => onNavigate("obs-metrics")} />
-              <SidebarButton compact={compact} active={activeView === "obs-logs" && !workspace} icon={ScrollText} label="Structured logs" onClick={() => onNavigate("obs-logs")} />
-              <SidebarButton compact={compact} active={activeView === "obs-traces" && !workspace} icon={Waypoints} label="Traces" onClick={() => onNavigate("obs-traces")} />
             </NavigationSection>
           )}
 

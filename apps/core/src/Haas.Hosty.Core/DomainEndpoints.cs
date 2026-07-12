@@ -60,6 +60,39 @@ internal static class DomainEndpoints
             return CoreJson.Json(new InstalledAppsResponse(installed.Select(summary => summary.Id).ToArray()));
         });
 
+        // App-authenticated read of the installed app roster (id → display name). A system app (e.g. the
+        // Telemetry UI) calls this with its own service token to label its appId-keyed data (metrics /
+        // logs / traces) with human-readable names — the display-name enrichment the removed telemetry
+        // read proxy used to do. Any valid app service token is accepted; returns id + display name only,
+        // so the richer per-app state on GET /api/apps stays session-gated.
+        app.MapGet("/api/internal/apps/{appId}/app-directory", async (
+            string appId,
+            HttpRequest request,
+            AppServiceTokenService serviceTokens,
+            AppRegistryStore apps,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var token = CoreSessionAuthorization.ReadBearerToken(request);
+            if (string.IsNullOrWhiteSpace(token) || !serviceTokens.ValidateToken(appId, token))
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("app_directory_unauthorized", "App service token is missing or invalid."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            if (await apps.GetAppAsync(appId, cancellationToken) is null)
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("app_not_found", "Runtime app was not found."),
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            var installed = await lifecycle.ListAppsAsync(cancellationToken);
+            return CoreJson.Json(new AppDirectoryResponse(
+                installed.Select(summary => new AppDirectoryEntry(summary.Id, summary.DisplayName)).ToArray()));
+        });
+
         // App-authenticated per-app update check. Marketplace calls this (with its own service token)
         // to show an "Update" affordance for an already-installed catalog app. Returns only whether an
         // update is available; the richer per-service status stays admin-session-gated on
@@ -183,6 +216,12 @@ internal static class DomainEndpoints
 internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
 
 internal sealed record InstalledAppsResponse(IReadOnlyList<string> AppIds);
+
+// App-token roster: id → display name for every installed app. Consumed by system apps (e.g. the
+// Telemetry UI) to label their appId-keyed data. A generic capability, not telemetry-specific.
+internal sealed record AppDirectoryResponse(IReadOnlyList<AppDirectoryEntry> Apps);
+
+internal sealed record AppDirectoryEntry(string Id, string DisplayName);
 
 internal sealed record AppUpdateAvailabilityResponse(string AppId, bool Installed, bool UpdateAvailable);
 

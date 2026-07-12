@@ -6,7 +6,8 @@
   "workspaces": [
     "apps/demo-app",
     "apps/marketplace",
-    "apps/shell"
+    "apps/shell",
+    "apps/telemetry-ui"
   ],
   "overrides": {
     "next": {
@@ -17,9 +18,9 @@
   "scripts": {
     "dev": "node scripts/dev-local.mjs",
     "check-versions": "node scripts/check-versions.mjs",
-    "lint": "npm run shell:lint && npm run demo-app:lint && npm run marketplace:lint",
-    "build": "npm run core:build && npm run cli:build && npm run telemetry-backend:build && npm run marketplace:build && npm run shell:build && npm run demo-app:build",
-    "test": "npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run shell:test",
+    "lint": "npm run shell:lint && npm run demo-app:lint && npm run marketplace:lint && npm run telemetry-ui:lint",
+    "build": "npm run core:build && npm run cli:build && npm run telemetry-backend:build && npm run marketplace:build && npm run telemetry-ui:build && npm run shell:build && npm run demo-app:build",
+    "test": "npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test",
     "ci": "npm run lint && npm run build && npm run test",
     "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --launch-profile dev",
     "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
@@ -35,6 +36,12 @@
     "marketplace:lint": "npm run lint --workspace @haas/hosty-marketplace",
     "marketplace:test": "npm run test --workspace @haas/hosty-marketplace",
     "marketplace:docker:build": "docker build -f apps/marketplace/Dockerfile -t ghcr.io/alex-de-haas/hosty-marketplace:latest .",
+    "telemetry-ui:dev": "npm run dev --workspace @haas/hosty-telemetry-ui",
+    "telemetry-ui:build": "npm run build --workspace @haas/hosty-telemetry-ui",
+    "telemetry-ui:start": "npm run start --workspace @haas/hosty-telemetry-ui",
+    "telemetry-ui:lint": "npm run lint --workspace @haas/hosty-telemetry-ui",
+    "telemetry-ui:test": "npm run test --workspace @haas/hosty-telemetry-ui",
+    "telemetry-ui:docker:build": "docker build -f apps/telemetry-ui/Dockerfile -t ghcr.io/alex-de-haas/hosty-telemetry-ui:latest .",
     "shell:dev": "npm run dev --workspace @haas/hosty-shell",
     "shell:build": "npm run build --workspace @haas/hosty-shell",
     "shell:start": "npm run start --workspace @haas/hosty-shell",
