@@ -194,7 +194,7 @@ export function ObservabilityStructuredLogsPage({ apps }: { apps: TelemetryApp[]
         <EmptyState
           icon={ScrollText}
           title="No structured logs"
-          description="Records appear for apps that opt into telemetry and export the OpenTelemetry logs signal, with observability enabled on the host (HOSTY_OBSERVABILITY_ENABLED)."
+          description="Records appear for apps that opt into telemetry and export the OpenTelemetry logs signal, with the Telemetry app enabled on the host (Shell platform panel or hosty setup --with hosty.telemetry)."
         />
       ) : (
         <OtlpLogTable records={records} showSource={showSource} />

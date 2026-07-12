@@ -132,7 +132,7 @@ Bundled in the release artifact next to the Core binary (dev target: resolved fr
 - **Stamping `role: system` at bootstrap** — rejected; provenance annotation instead (Decision 2).
 - **Reusing the `marketplace.0.2` catalog format for the distribution list** — rejected. The storefront format carries display concerns (icons, publishers, description URLs) the boot path must not parse; the pivot deliberately removed catalog identity from Core and this would sneak it back in.
 - **Capability-based provisioning and ordering** — deferred to Phase 4: `StartPriority` becomes a manifest/role property ("provides OTLP → starts before consumers"), the collector's provisioning hook keys off a capability rather than the app id, so a third-party collector can fill the slot.
-- **Folding `HOSTY_OBSERVABILITY_ENABLED` away** — done (decided 2026-07-12): Core's docker-stats exposition and internal metrics endpoint key on the telemetry app being installed, checked per tick so a live enable needs no restart; the flag and `HOSTY_COLLECTOR_AUTOSTART` (autostart is a normal per-app setting) were removed from Core and the CLI.
+- **Folding `HOSTY_OBSERVABILITY_ENABLED` away** — done (decided 2026-07-12): Core's docker-stats exposition and internal metrics endpoint key on the telemetry app being installed and running, checked per tick so a live enable needs no restart; the flag and `HOSTY_COLLECTOR_AUTOSTART` (autostart is a normal per-app setting) are no longer supported settings in Core or the CLI. Like the manifest-path variables, an ambient `HOSTY_OBSERVABILITY_ENABLED` export is still honored as a deprecated legacy bootstrap input (migration/enablement only) until the deprecation window closes.
 
 ## Implementation plan
 

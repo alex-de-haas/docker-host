@@ -242,7 +242,7 @@ export function ObservabilityTracesPage({ apps }: { apps: TelemetryApp[] }) {
         <EmptyState
           icon={Waypoints}
           title="No traces"
-          description="Traces appear for apps that opt into telemetry and export the OpenTelemetry traces signal, with observability enabled on the host (HOSTY_OBSERVABILITY_ENABLED)."
+          description="Traces appear for apps that opt into telemetry and export the OpenTelemetry traces signal, with the Telemetry app enabled on the host (Shell platform panel or hosty setup --with hosty.telemetry)."
         />
       ) : (
         <TraceListTable traces={traces} onOpen={openTrace} />

@@ -73,8 +73,10 @@ hosty setup --with hosty.telemetry   # or the Shell platform panel's Extensions 
 From the Shell, enabling installs and starts the collector immediately; via `hosty setup` the choice
 applies on the next `hosty core start`. Everything downstream follows the app itself: Core's own
 telemetry producers (the docker-stats exposition and `/internal/telemetry/metrics` endpoint) run
-whenever the telemetry app is installed and idle otherwise — the old `HOSTY_OBSERVABILITY_ENABLED`
-flag is gone. Autostart is the normal per-app setting (`HOSTY_COLLECTOR_AUTOSTART` is gone too): the
+whenever the telemetry app is installed and running, and idle otherwise — `HOSTY_OBSERVABILITY_ENABLED`
+is no longer a supported setting. (During the deprecation window an ambient export of it is still
+honored as a legacy bootstrap override that enables the telemetry app, nothing more.) Autostart is
+the normal per-app setting (`HOSTY_COLLECTOR_AUTOSTART` is gone too): the
 first install defaults to autostart on, and the operator's later choice is preserved across boots.
 
 The manifest location resolves from the distribution list. The deprecated
