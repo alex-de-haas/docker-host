@@ -445,6 +445,12 @@ internal sealed partial class SetupCommand(CommandContext context)
     {
         foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
         {
+            // AppContext.BaseDirectory can be empty under custom hosts; DirectoryInfo would throw.
+            if (string.IsNullOrWhiteSpace(start))
+            {
+                continue;
+            }
+
             var directory = new DirectoryInfo(start);
             while (directory is not null)
             {

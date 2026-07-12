@@ -57,8 +57,10 @@ public sealed class SetupCommandTests : IDisposable
         Assert.True(choices.GetProperty("apps").GetProperty("hosty.shell").GetProperty("enabled").GetBoolean());
         Assert.False(choices.GetProperty("apps").GetProperty("hosty.telemetry").GetProperty("enabled").GetBoolean());
         Assert.True(choices.GetProperty("apps").GetProperty("hosty.marketplace").GetProperty("enabled").GetBoolean());
-        // The console wraps at its default width and can break mid-path, so flatten before matching.
-        Assert.Contains("bootstrap-choices.json", output.ToString().Replace("\n", "", StringComparison.Ordinal));
+        // No substring assert on the styled console output: line wrapping re-emits ANSI color codes
+        // mid-path at width-dependent positions. The saved file itself is the observable outcome.
+        Assert.True(File.Exists(ChoicesPath()));
+        Assert.Contains("Saved to", output.ToString());
     }
 
     [Fact]

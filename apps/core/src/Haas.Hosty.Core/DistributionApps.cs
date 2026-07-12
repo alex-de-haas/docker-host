@@ -291,6 +291,12 @@ internal sealed class DistributionAppsProvider(
     {
         foreach (var start in walkRoots ?? [Directory.GetCurrentDirectory(), AppContext.BaseDirectory])
         {
+            // AppContext.BaseDirectory can be empty under custom hosts; DirectoryInfo would throw.
+            if (string.IsNullOrWhiteSpace(start))
+            {
+                continue;
+            }
+
             var directory = new DirectoryInfo(start);
             while (directory is not null)
             {
