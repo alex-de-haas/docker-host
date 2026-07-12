@@ -194,13 +194,42 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
-    public void FromEnvironment_UsesHttpShellManifestPath()
+    public void FromEnvironment_CapturesLegacyShellManifestPathVerbatim()
     {
         using var env = TemporaryEnvironment.With("HOSTY_SHELL_MANIFEST_PATH", " https://raw.githubusercontent.com/example/shell/main/manifest.json ");
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
-        Assert.Equal("https://raw.githubusercontent.com/example/shell/main/manifest.json", config.ShellManifestPath);
+        Assert.Equal("https://raw.githubusercontent.com/example/shell/main/manifest.json", config.Legacy?.ShellManifestPath);
+    }
+
+    [Fact]
+    public void FromEnvironment_LeavesLegacyBootstrapFlagsNullWhenUnset()
+    {
+        using var shellEnabledEnv = TemporaryEnvironment.With("HOSTY_SHELL_BOOTSTRAP_ENABLED", null);
+        using var observabilityEnv = TemporaryEnvironment.With("HOSTY_OBSERVABILITY_ENABLED", null);
+        using var shellManifestEnv = TemporaryEnvironment.With("HOSTY_SHELL_MANIFEST_PATH", null);
+        using var collectorManifestEnv = TemporaryEnvironment.With("HOSTY_COLLECTOR_MANIFEST_PATH", null);
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.NotNull(config.Legacy);
+        Assert.Null(config.Legacy!.ShellBootstrapEnabled);
+        Assert.Null(config.Legacy.ObservabilityEnabled);
+        Assert.Null(config.Legacy.ShellManifestPath);
+        Assert.Null(config.Legacy.CollectorManifestPath);
+    }
+
+    [Fact]
+    public void FromEnvironment_CapturesExplicitLegacyBootstrapFlags()
+    {
+        using var shellEnabledEnv = TemporaryEnvironment.With("HOSTY_SHELL_BOOTSTRAP_ENABLED", "false");
+        using var observabilityEnv = TemporaryEnvironment.With("HOSTY_OBSERVABILITY_ENABLED", "1");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.False(config.Legacy?.ShellBootstrapEnabled);
+        Assert.True(config.Legacy?.ObservabilityEnabled);
     }
 
     [Fact]
@@ -214,34 +243,41 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
-    public void FromEnvironment_MarketplaceBootstrapIsDisabledWithoutManifestPath()
+    public void FromEnvironment_TracksAbsentMarketplaceManifestPathAsUnconfigured()
     {
         using var env = TemporaryEnvironment.With("HOSTY_MARKETPLACE_MANIFEST_PATH", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
-        var descriptor = MarketplaceBootstrap.CreateDescriptor(config);
 
-        Assert.Null(config.MarketplaceManifestPath);
-        Assert.False(descriptor.Enabled);
-        Assert.Null(descriptor.Runtime);
-        Assert.Null(descriptor.Autostart);
+        Assert.False(config.Legacy?.MarketplaceManifestPathConfigured);
+        Assert.Null(config.Legacy?.MarketplaceManifestPath);
     }
 
     [Fact]
-    public void FromEnvironment_MarketplaceManifestPathAloneEnablesBootstrap()
+    public void FromEnvironment_TracksEmptyMarketplaceManifestPathAsExplicitDisable()
+    {
+        // Present-but-empty is a meaningful explicit disable per the marketplace pivot's contract, so
+        // raw presence must survive normalization. (Whitespace stands in for empty here because
+        // Environment.SetEnvironmentVariable deletes a variable when handed "".)
+        using var env = TemporaryEnvironment.With("HOSTY_MARKETPLACE_MANIFEST_PATH", " ");
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+        Assert.True(config.Legacy?.MarketplaceManifestPathConfigured);
+        Assert.Null(config.Legacy?.MarketplaceManifestPath);
+    }
+
+    [Fact]
+    public void FromEnvironment_CapturesExplicitMarketplaceManifestPath()
     {
         using var env = TemporaryEnvironment.With(
             "HOSTY_MARKETPLACE_MANIFEST_PATH",
             " https://apps.example.test/marketplace/manifest.json ");
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
-        var descriptor = MarketplaceBootstrap.CreateDescriptor(config);
 
-        Assert.Equal("https://apps.example.test/marketplace/manifest.json", config.MarketplaceManifestPath);
-        Assert.True(descriptor.Enabled);
-        Assert.Equal(config.MarketplaceManifestPath, descriptor.ManifestPath);
-        Assert.Null(descriptor.Runtime);
-        Assert.Null(descriptor.Autostart);
+        Assert.True(config.Legacy?.MarketplaceManifestPathConfigured);
+        Assert.Equal("https://apps.example.test/marketplace/manifest.json", config.Legacy?.MarketplaceManifestPath);
     }
 
     [Fact]

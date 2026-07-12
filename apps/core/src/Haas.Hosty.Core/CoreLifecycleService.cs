@@ -21,7 +21,10 @@ internal sealed class CoreLifecycleService(
     MountPathPolicy? mountPathPolicy = null,
     // Generic app-owned feed loader. Optional only for legacy unit fixtures that do not exercise feeds;
     // production DI always supplies it.
-    AppFeedService? feedService = null)
+    AppFeedService? feedService = null,
+    // Bootstrap-choices writer for the uninstall hook on distribution-origin apps. Optional only for
+    // unit fixtures; production DI always supplies it.
+    BootstrapChoicesStore? bootstrapChoices = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -1155,6 +1158,23 @@ internal sealed class CoreLifecycleService(
         // Telemetry now lives in the backend, which ages out an uninstalled app's data via retention
         // (Core no longer holds a per-app store to purge here).
         await ReconcileIngressAsync(cancellationToken);
+
+        // Uninstalling a distribution-origin app records the operator's intent: without this pin the
+        // next boot's distribution reconcile would simply reinstall it. Best-effort — a choices write
+        // failure must not abort the uninstall the operator asked for.
+        if (app is { InstallOrigin: AppInstallOrigins.Distribution } && bootstrapChoices is not null)
+        {
+            try
+            {
+                await bootstrapChoices.SetEnabledAsync(appId, enabled: false, cancellationToken);
+                logger.LogInformation("Recorded bootstrap choice enabled=false for uninstalled distribution app {AppId}.", appId);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+                logger.LogWarning(ex, "Failed to record bootstrap choice for uninstalled distribution app {AppId}; the boot reconcile may reinstall it.", appId);
+            }
+        }
+
         return new AppLifecycleResponse(app is null ? null : await BuildAppSummaryAsync(app, cancellationToken), null, "removed");
     }
 

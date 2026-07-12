@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "distribution-apps.0.1",
+  "apps": [
+    {
+      "id": "hosty.shell",
+      "title": "Hosty Shell",
+      "description": "Web UI client for this host.",
+      "manifestRef": "apps/shell/manifest.json",
+      "defaultEnabled": true
+    },
+    {
+      "id": "hosty.telemetry",
+      "title": "Telemetry",
+      "description": "OpenTelemetry collector and observability backend.",
+      "manifestRef": "apps/telemetry/manifest.json",
+      "defaultEnabled": false
+    },
+    {
+      "id": "hosty.marketplace",
+      "title": "Marketplace",
+      "description": "App discovery storefront.",
+      "manifestRef": "apps/marketplace/manifest.json",
+      "defaultEnabled": true
+    }
+  ]
+}
