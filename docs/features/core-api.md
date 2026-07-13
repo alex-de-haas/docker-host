@@ -22,6 +22,9 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 - `POST /api/auth/trusted-proxy/session` - create a session for a reverse-proxy-asserted user; disabled unless `HOSTY_TRUSTED_PROXY_SECRET` is configured and the proxy presents it via `X-Hosty-Trusted-Proxy-Secret`.
 - `POST /api/apps/{appId}/switch-runtime/plan` - admin runtime switch review for browser Shell clients.
 - `POST /api/apps/{appId}/switch-runtime` - admin runtime switch apply for browser Shell clients; CSRF-protected and requires the reviewed plan digest.
+- `GET /api/apps/{appId}/update-status` - read-only update availability probe: refetches the followed feed or stored manifest URL as the candidate and resolves locked image tags against the registry. Applies to system apps too.
+- `POST /api/apps/{appId}/update/plan` - admin reviewed update plan for browser Shell clients (system apps included).
+- `POST /api/apps/{appId}/update` - admin update apply; CSRF-protected and requires the reviewed plan digest.
 - `POST /api/apps/install/feed/plan` - admin install review from an untrusted HTTP(S) `app-feeds.0.1` URL and optional feed id.
 - `POST /api/apps/install/feed` - CSRF-protected feed install apply; Core re-resolves the feed and manifest and requires the reviewed plan digest.
 - `GET /api/apps/{appId}/feeds` - list the feeds resolved from an installed app's stored `FeedsUrl` and return its followed feed id.

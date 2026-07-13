@@ -1,7 +1,7 @@
 # Feature: Shell Access And System Apps
 
 Created: 2026-06-04
-Updated: 2026-07-11
+Updated: 2026-07-13
 
 ## Goal
 
@@ -10,7 +10,7 @@ Hosty Shell should clearly separate administrator-only Host management from ordi
 ## Non-goals
 
 - Do not expose Host management pages to `host.user` accounts.
-- Do not expose start/stop/restart/update/remove/backup controls for system apps in Shell.
+- Do not expose start/stop/restart/remove/backup controls for system apps in Shell. (Reviewed updates are the exception since 2026-07-13: system apps update through the same plan/apply flow as runtime apps — see [On-Demand System App Updates](../ideas/system-app-updates.md).)
 - Do not show Hosty Shell as a normal app in the sidebar Apps navigation.
 - Do not change the app assignment model to include system apps.
 - Do not change CLI control behavior in this feature.
@@ -46,7 +46,8 @@ System app actions should stay limited in Shell:
 - logs are allowed when the app exposes the `logs` capability and the active user is `host.admin`;
 - runtime switching is allowed for administrators when the app exposes more than one runtime profile;
 - settings, public origins, external mounts, source override, and development-mode configuration are allowed for administrators through the ordinary app settings dialog;
-- lifecycle controls such as start, stop, restart, update, autostart, backup, restore, and remove are hidden for all system apps.
+- reviewed updates are allowed for administrators when the app declares the `update` capability and does not run a live source runtime — the same eligibility as runtime apps, served by the same update-status/plan/apply flow;
+- lifecycle controls such as start, stop, restart, autostart, backup, restore, and remove are hidden for all system apps.
 
 ## User/API Scenarios
 
@@ -55,7 +56,8 @@ System app actions should stay limited in Shell:
 - A `host.admin` can open logs for Hosty Shell when logs are available.
 - A `host.admin` can switch Hosty Shell between available runtime profiles from the System Apps runtime column.
 - A `host.admin` can configure a system app's manifest settings, including Marketplace's catalog source URL.
-- A `host.admin` cannot stop, restart, update, back up, or remove Hosty Shell from Shell UI.
+- A `host.admin` can check for and apply a reviewed update to a system app, including Hosty Shell itself (the page reloads after a successful Shell self-update).
+- A `host.admin` cannot stop, restart, back up, or remove Hosty Shell from Shell UI.
 - A `host.user` opens Shell and sees only the Apps navigation for assigned or unrestricted non-system runtime apps.
 - A `host.user` does not see Dashboard, Installed Apps, User Management, or any system app.
 
@@ -71,7 +73,7 @@ Shell sidebar rendering should show Host management navigation only when the act
 
 Shell main-content routing should guard management views with `canManageApps`. If the active user is not an administrator and reaches `/`, `/dashboard`, `/installed-apps`, or `/users`, Shell should route the user back to `/apps` and render the app-navigation experience rather than Dashboard or Installed Apps.
 
-Installed Apps accepts both runtime apps and system apps for administrator rendering. It renders separate sections and passes `app.system` into action eligibility. Settings use administrator permission for both groups; lifecycle, update, backup, and remove eligibility additionally require a non-system app.
+Installed Apps accepts both runtime apps and system apps for administrator rendering. It renders separate sections and passes `app.system` into action eligibility. Settings and reviewed updates use administrator permission for both groups; lifecycle, backup, and remove eligibility additionally require a non-system app. The fleet "Check updates" action probes system apps with the same filter as runtime apps.
 
 Dashboard should receive runtime app groups for summary metrics. System app rendering stays inside the Installed Apps System Apps section.
 
@@ -101,7 +103,7 @@ No change is required for User Management assignments because system apps are al
   - administrator sees management navigation, runtime apps, and system apps;
   - ordinary user sees only runtime app navigation;
   - Hosty Shell does not appear in the sidebar Apps section;
-  - system app lifecycle actions are hidden while settings and logs remain available for administrators;
+  - system app start/stop/backup/remove actions are hidden while settings, logs, and reviewed updates remain available for administrators;
   - Hosty Shell runtime switching is visible when multiple runtime profiles are available.
 
 ## Rollout / Migration Notes
@@ -121,6 +123,8 @@ The change tightens ordinary user access to Shell management views. Any workflow
 - System app logs are available from the Installed Apps System Apps section when the app exposes the `logs` capability.
 
 - System app runtime switching is available to administrators when Core reports multiple runtime profiles, while other system app lifecycle actions remain hidden.
+
+- Since 2026-07-13 system apps update through the ordinary reviewed update flow (update-status, plan, apply) instead of a boot-time reconcile; Core startup only installs missing distribution apps and migrates a moved http(s) manifest reference without applying content changes. See [On-Demand System App Updates](../ideas/system-app-updates.md).
 
 - System app settings use the generic Core configure endpoint. This lets Marketplace own `HOSTY_MARKETPLACE_SOURCE_URL` as an app setting while Core remains unaware of its meaning.
 

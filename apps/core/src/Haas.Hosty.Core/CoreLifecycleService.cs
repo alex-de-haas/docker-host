@@ -1343,6 +1343,35 @@ internal sealed class CoreLifecycleService(
                 logger.LogWarning(ex, "Failed to resolve feed update status for app {AppId}.", appId);
             }
         }
+        else if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
+        {
+            // URL-installed app without a feed (system apps installed from the distribution list, and
+            // ordinary URL installs): refetch the external manifest as the candidate, mirroring the
+            // feed branch. Without this, a candidate that moves to new *versioned* image tags is
+            // invisible — the artifact loop below would compare the registry against the installed
+            // copy's old tags and report "up to date" forever.
+            try
+            {
+                var candidate = await manifests.LoadAsync(app.ManifestUrl, app.SelectedRuntime, cancellationToken);
+                if (!string.Equals(candidate.Manifest.Id, app.Id, StringComparison.Ordinal))
+                {
+                    throw new AppLifecycleException(
+                        "manifest_app_mismatch",
+                        $"Update manifest app id '{candidate.Manifest.Id}' does not match installed app '{app.Id}'.");
+                }
+
+                candidateSelection = candidate;
+                manifestUpdateAvailable = !string.Equals(
+                    selection.ManifestDigest,
+                    candidateSelection.ManifestDigest,
+                    StringComparison.Ordinal);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                manifestUnknown = true;
+                logger.LogWarning(ex, "Failed to resolve manifest update status for app {AppId} from {ManifestUrl}.", appId, app.ManifestUrl);
+            }
+        }
 
         var policy = DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy);
         var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
