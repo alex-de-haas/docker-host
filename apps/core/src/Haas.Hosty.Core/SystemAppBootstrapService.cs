@@ -261,10 +261,9 @@ internal sealed class SystemAppBootstrapService(
                 cancellationToken);
         }
 
-        if (app is not null && descriptor.ProvisionAsync is not null)
-        {
-            await descriptor.ProvisionAsync(lifecycle, cancellationToken);
-        }
+        // Core-owned provisioning (e.g. the collector's config + sink dirs) is no longer a bootstrap
+        // step: it runs on the start path keyed by the manifest's `provides` (PlatformCapabilities),
+        // so it applies to any install path, not just this one.
     }
 
     // First install of a distribution entry. Entries carrying a feedsUrl go through the digest-bound

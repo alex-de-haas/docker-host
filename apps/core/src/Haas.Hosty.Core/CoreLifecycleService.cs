@@ -686,6 +686,11 @@ internal sealed class CoreLifecycleService(
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             EnsureMountsReadyForStart(context);
+            // Core-owned provisioning for the platform capability slots this app provides (e.g. the
+            // OTLP collector's config + sink dirs), run before the services launch. Keyed by the
+            // manifest's `provides`, not the app id or install path, so a marketplace/direct install
+            // is provisioned exactly like a bootstrap install. See PlatformCapabilities.
+            await PlatformCapabilities.ProvisionAsync(this, app.Id, app.Provides, cancellationToken);
             await NotifyMissingDependenciesAsync(app, cancellationToken);
             if (load.ManifestError is not null)
             {
@@ -780,6 +785,9 @@ internal sealed class CoreLifecycleService(
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             EnsureMountsReadyForStart(context);
+            // Re-run capability provisioning on restart too, so a config-template change ships forward
+            // and the app comes back with fresh Core-owned files (see PlatformCapabilities).
+            await PlatformCapabilities.ProvisionAsync(this, app.Id, app.Provides, cancellationToken);
             _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
             if (load.ManifestError is not null)
             {
@@ -1401,7 +1409,7 @@ internal sealed class CoreLifecycleService(
         foreach (var app in records.Where(app =>
             string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
             (app.Autostart ?? true))
-            .OrderByDescending(app => SystemAppBootstraps.StartPriority(app.Id))
+            .OrderByDescending(app => PlatformCapabilities.StartPriority(app.Provides))
             .ThenBy(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1570,6 +1578,7 @@ internal sealed class CoreLifecycleService(
             LastOperation: existing?.LastOperation,
             LastError: existing?.LastError,
             Capabilities: ResolveCapabilities(manifest),
+            Provides: manifest.Provides.Count == 0 ? null : manifest.Provides,
             Settings: settings,
             StorageMappings: storageMappings,
             Dependencies: dependencies,
@@ -2723,6 +2732,7 @@ internal sealed class CoreLifecycleService(
                 Description = reconciled.Description,
                 Source = reconciled.Source,
                 Capabilities = reconciled.Capabilities,
+                Provides = reconciled.Provides,
                 Settings = reconciled.Settings,
                 StorageMappings = reconciled.StorageMappings,
                 Dependencies = reconciled.Dependencies,

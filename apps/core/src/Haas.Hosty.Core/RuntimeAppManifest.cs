@@ -352,6 +352,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             errors.Add(new("app_manifest_role_unsupported", "role must be omitted or the string 'system'.", "$.role"));
         }
 
+        ValidateProvides(manifest.Provides, errors);
+
         // System-app UI is validated strictly and fail-closed (docs/ideas/system-app-pages.md):
         // its pages are rendered as administrator Shell surfaces, so a system app must not rely on
         // the permissive runtime fallbacks (endpoint guessing, path prefixing) ordinary app.0.1
@@ -1124,6 +1126,28 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             else if (!seen.Add(LinuxCapabilities.Normalize(capability)))
             {
                 errors.Add(new("app_manifest_service_capability_duplicate", $"Service '{serviceKey}' capability '{capability}' is declared more than once.", path));
+            }
+        }
+    }
+
+    // Validates the top-level `provides` list — platform capability slots the app fulfills. Each entry
+    // is a lowercase kebab token; no blanks, no duplicates. Unknown slot names are deliberately allowed
+    // (a manifest may declare a slot a newer Core understands), so validation is shape-only.
+    private static readonly Regex ProvidesSlotPattern = new("^[a-z][a-z0-9-]{0,62}$", RegexOptions.Compiled);
+
+    private static void ValidateProvides(IReadOnlyList<string> provides, List<AppManifestValidationError> errors)
+    {
+        const string path = "$.provides";
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var slot in provides)
+        {
+            if (string.IsNullOrWhiteSpace(slot) || !ProvidesSlotPattern.IsMatch(slot))
+            {
+                errors.Add(new("app_manifest_provides_invalid", $"provides entry '{slot}' must match ^[a-z][a-z0-9-]{{0,62}}$.", path));
+            }
+            else if (!seen.Add(slot))
+            {
+                errors.Add(new("app_manifest_provides_duplicate", $"provides entry '{slot}' is declared more than once.", path));
             }
         }
     }
@@ -2487,6 +2511,11 @@ internal sealed class RuntimeAppManifest
     public IReadOnlyList<RuntimeAppDependencyManifest> Dependencies { get => field ?? []; init; } = [];
     public IReadOnlyList<RuntimeAppEndpointManifest> Endpoints { get => field ?? []; init; } = [];
     public IReadOnlyList<string> Capabilities { get => field ?? []; init; } = [];
+    // Platform capability slots this app fulfills (e.g. "otlp-collector"). Distinct from Capabilities
+    // above (the client action list) and from per-service `runtimes[].capabilities` (Linux --cap-add).
+    // Core reacts only to slots it has a handler for (PlatformCapabilities); unknown slots are inert
+    // and forward-compatible. Additive under app.0.1.
+    public IReadOnlyList<string> Provides { get => field ?? []; init; } = [];
     public IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> ExternalMounts { get => field ??= new Dictionary<string, RuntimeAppExternalMountManifest>(); init; } = new Dictionary<string, RuntimeAppExternalMountManifest>();
     public RuntimeAppRestartPolicyManifest? RestartPolicy { get; init; }
     public RuntimeAppTelemetryManifest? Telemetry { get; init; }

@@ -277,7 +277,13 @@ internal sealed record AppRecord(
     // records enabled=false in bootstrap choices so the next boot does not resurrect it. Null means a
     // user/operator install. Ownership bookkeeping, not privilege (see docs/ideas/generic-bootstrap.md);
     // additive/nullable, so no AppStateDocument schema bump.
-    string? InstallOrigin = null);
+    string? InstallOrigin = null,
+    // Platform capability slots this app fulfills, from the manifest's top-level `provides` (distinct
+    // from Capabilities, which is the UI action list, and from per-service Linux `--cap-add`). Core
+    // keys start-time provisioning and start ordering off these — e.g. an "otlp-collector" provider is
+    // provisioned with its Core-owned config and started before OTLP consumers, regardless of app id
+    // or how it was installed (see PlatformCapabilities). Additive/nullable, no schema bump.
+    IReadOnlyList<string>? Provides = null);
 
 // Well-known InstallOrigin values. Null on the record means a user/operator install; only the
 // distribution bootstrap stamps an explicit origin today.
