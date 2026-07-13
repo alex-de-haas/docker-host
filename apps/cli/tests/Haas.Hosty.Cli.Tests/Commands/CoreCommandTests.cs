@@ -72,10 +72,10 @@ public sealed class CoreCommandTests : IDisposable
     }
 
     [Fact]
-    public void BuildCoreEnvironment_OmitsUnsetDeprecatedBootstrapReferences()
+    public void BuildCoreEnvironment_OmitsRemovedManifestPathReferences()
     {
-        // Manifest locations come from Core's distribution list now: a default (empty) setting must
-        // not surface in Core's environment at all.
+        // Manifest locations come from Core's distribution list now; the CLI no longer injects the
+        // removed per-app manifest-path overrides into Core's environment.
         var environment = HostyEnvironment.Current();
         var settings = new LaunchSettingsStore(environment).Load();
         var (console, _) = CreateConsole();
@@ -83,25 +83,9 @@ public sealed class CoreCommandTests : IDisposable
 
         var coreEnvironment = command.BuildCoreEnvironment("http://localhost:7070", settings);
 
-        Assert.DoesNotContain(LaunchSettingDefinitions.HostyShellManifestPath, coreEnvironment.Keys);
-        Assert.DoesNotContain(LaunchSettingDefinitions.HostyCollectorManifestPath, coreEnvironment.Keys);
-        Assert.DoesNotContain(LaunchSettingDefinitions.HostyMarketplaceManifestPath, coreEnvironment.Keys);
-    }
-
-    [Fact]
-    public void BuildCoreEnvironment_InjectsExplicitLegacyBootstrapOverrides()
-    {
-        const string manifestPath = "https://raw.githubusercontent.com/example/marketplace/main/manifest.json";
-        var environment = HostyEnvironment.Current();
-        var settings = new LaunchSettingsStore(environment)
-            .Load()
-            .WithValue(LaunchSettingDefinitions.HostyMarketplaceManifestPath, manifestPath);
-        var (console, _) = CreateConsole();
-        var command = new CoreCommand(new CommandContext(console, environment, new LaunchSettingsStore(environment)));
-
-        var coreEnvironment = command.BuildCoreEnvironment("http://localhost:7070", settings);
-
-        Assert.Equal(manifestPath, coreEnvironment[LaunchSettingDefinitions.HostyMarketplaceManifestPath]);
+        Assert.DoesNotContain("HOSTY_SHELL_MANIFEST_PATH", coreEnvironment.Keys);
+        Assert.DoesNotContain("HOSTY_COLLECTOR_MANIFEST_PATH", coreEnvironment.Keys);
+        Assert.DoesNotContain("HOSTY_MARKETPLACE_MANIFEST_PATH", coreEnvironment.Keys);
     }
 
     public void Dispose()

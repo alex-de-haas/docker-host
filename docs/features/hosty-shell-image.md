@@ -2,6 +2,15 @@
 
 Status: Implemented.
 
+> **Superseded in part (generic bootstrap).** This document describes the original design, in which
+> the Shell manifest location was the CLI launch setting `HOSTY_SHELL_MANIFEST_PATH` (with a GitHub
+> default) that `CoreCommand.BuildCoreEnvironment` passed to Core. That per-app manifest-path launch
+> setting has since been removed from the CLI: manifest locations now come from the release-owned
+> distribution list, and which apps bootstrap is chosen with `hosty setup`. Only
+> `HOSTY_SHELL_BOOTSTRAP_RUNTIME` remains as a launch setting. For current behavior see
+> `docs/ideas/generic-bootstrap.md` and `docs/features/cli-bootstrap.md`; treat the
+> `HOSTY_SHELL_MANIFEST_PATH` references below as historical.
+
 ## Goal
 
 Publish Hosty Shell as a Docker image and let Hosty Core install and start it as the normal Core-owned system runtime app `hosty.shell`.

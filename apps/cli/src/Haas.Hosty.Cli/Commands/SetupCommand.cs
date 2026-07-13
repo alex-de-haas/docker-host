@@ -97,7 +97,7 @@ internal sealed partial class SetupCommand(CommandContext context)
 
         var effective = entries.ToDictionary(
             entry => entry.Id,
-            entry => EffectiveEnabled(entry, existingChoices, settings, dataRoot),
+            entry => EffectiveEnabled(entry, existingChoices, dataRoot),
             StringComparer.Ordinal);
 
         if (options.List)
@@ -205,26 +205,16 @@ internal sealed partial class SetupCommand(CommandContext context)
         }
     }
 
-    // Choices win, then the explicit legacy launch settings, then the installed state, then the
-    // release default — mirroring the layering Core applies at boot (whose migration also pins from
-    // the installed state), so the checklist shows what the next boot would actually do.
-    private static bool EffectiveEnabled(DistributionEntry entry, ChoicesDocument? choices, LaunchSettings settings, string dataRoot)
+    // Choices win, then the installed state, then the release default — mirroring the layering Core
+    // applies at boot (whose migration also pins from the installed state), so the checklist shows
+    // what the next boot would actually do.
+    private static bool EffectiveEnabled(DistributionEntry entry, ChoicesDocument? choices, string dataRoot)
     {
         if (choices is not null &&
             choices.Apps.TryGetValue(entry.Id, out var choice) &&
             choice.Enabled is bool chosen)
         {
             return chosen;
-        }
-
-        var legacy = entry.Id switch
-        {
-            "hosty.marketplace" when !string.IsNullOrWhiteSpace(settings.HostyMarketplaceManifestPath) => true,
-            _ => (bool?)null,
-        };
-        if (legacy is bool value)
-        {
-            return value;
         }
 
         // An app that is already installed counts as enabled in the base selection: without a

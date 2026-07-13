@@ -23,42 +23,10 @@ internal sealed class LaunchSettings
 
     public string HostyShellPublicOrigin => this[LaunchSettingDefinitions.HostyShellPublicOrigin];
 
-    public string HostyShellManifestPath => this[LaunchSettingDefinitions.HostyShellManifestPath];
-
     public string HostyShellBootstrapRuntime => this[LaunchSettingDefinitions.HostyShellBootstrapRuntime];
-
-    public string HostyCollectorManifestPath => this[LaunchSettingDefinitions.HostyCollectorManifestPath];
-
-    public string HostyMarketplaceManifestPath => this[LaunchSettingDefinitions.HostyMarketplaceManifestPath];
 
     public string ResolveHostDataRoot(HostyEnvironment environment)
         => environment.ResolvePath(HostyDataRootRaw);
-
-    public string ResolveHostyShellManifestPath(HostyEnvironment environment)
-        => string.IsNullOrWhiteSpace(HostyShellManifestPath)
-            ? string.Empty
-            : ResolveManifestReference(HostyShellManifestPath, environment);
-
-    public string ResolveHostyCollectorManifestPath(HostyEnvironment environment)
-        => string.IsNullOrWhiteSpace(HostyCollectorManifestPath)
-            ? string.Empty
-            : ResolveManifestReference(HostyCollectorManifestPath, environment);
-
-    public string ResolveHostyMarketplaceManifestPath(HostyEnvironment environment)
-        => string.IsNullOrWhiteSpace(HostyMarketplaceManifestPath)
-            ? string.Empty
-            : ResolveManifestReference(HostyMarketplaceManifestPath, environment);
-
-    // A manifest reference is either an http(s) URL (used verbatim) or a local path (resolved against
-    // the host environment). Shared by the Shell, telemetry collector, and Marketplace bootstrap references.
-    private static string ResolveManifestReference(string reference, HostyEnvironment environment)
-    {
-        var manifestPath = reference.Trim();
-        return Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
-            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-            ? manifestPath
-            : environment.ResolvePath(manifestPath);
-    }
 
     public void Validate(HostyEnvironment environment)
     {

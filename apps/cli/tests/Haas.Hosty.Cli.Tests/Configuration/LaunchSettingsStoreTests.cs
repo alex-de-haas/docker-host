@@ -36,12 +36,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal("7171", settings.HostyShellPort);
         Assert.Equal("", settings.HostyCorePublicOrigin);
         Assert.Equal("", settings.HostyShellPublicOrigin);
-        Assert.Equal("", settings.HostyShellManifestPath);
         Assert.Equal("docker", settings.HostyShellBootstrapRuntime);
-        // A launch.env that predates the collector-manifest setting still resolves its default, so an
-        // existing install self-heals (Core gets the collector manifest URL; bootstrap proceeds).
-        Assert.Equal("", settings.HostyCollectorManifestPath);
-        Assert.Equal("", settings.HostyMarketplaceManifestPath);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }
@@ -89,31 +84,12 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void Load_ScrubsLegacyDefaultManifestUrlsMaterializedByOlderClis()
+    public void Load_IgnoresRemovedManifestPathSettings()
     {
-        // Older CLIs wrote the pre-generic-bootstrap default URLs into launch.env; those were never
-        // operator intent and must read as unset so they cannot re-pin a stale location.
-        var environment = HostyEnvironment.Current();
-        Directory.CreateDirectory(environment.ConfigDirectory);
-        File.WriteAllText(
-            environment.LaunchConfigPath,
-            $"""
-            # hosty launch settings
-            HOSTY_SHELL_MANIFEST_PATH={LaunchSettingDefinitions.LegacyDefaultShellManifestPath}
-            HOSTY_COLLECTOR_MANIFEST_PATH={LaunchSettingDefinitions.LegacyDefaultCollectorManifestPath}
-            HOSTY_MARKETPLACE_MANIFEST_PATH={LaunchSettingDefinitions.LegacyDefaultMarketplaceManifestPath}
-            """);
-
-        var settings = new LaunchSettingsStore(environment).Load();
-
-        Assert.Equal("", settings.HostyShellManifestPath);
-        Assert.Equal("", settings.HostyCollectorManifestPath);
-        Assert.Equal("", settings.HostyMarketplaceManifestPath);
-    }
-
-    [Fact]
-    public void Load_KeepsExplicitNonDefaultManifestOverrides()
-    {
+        // The deprecated per-app manifest-path overrides were removed from the CLI (manifest
+        // locations come from the release distribution list; `hosty setup` picks which apps
+        // bootstrap). A stale value in an older launch.env reads as an unknown key: ignored on
+        // load and dropped on the next save.
         var environment = HostyEnvironment.Current();
         Directory.CreateDirectory(environment.ConfigDirectory);
         File.WriteAllText(
@@ -121,11 +97,15 @@ public sealed class LaunchSettingsStoreTests : IDisposable
             """
             # hosty launch settings
             HOSTY_SHELL_MANIFEST_PATH=https://example.test/custom/shell/manifest.json
+            HOSTY_COLLECTOR_MANIFEST_PATH=https://example.test/custom/telemetry/manifest.json
+            HOSTY_MARKETPLACE_MANIFEST_PATH=https://example.test/custom/marketplace/manifest.json
             """);
 
         var settings = new LaunchSettingsStore(environment).Load();
 
-        Assert.Equal("https://example.test/custom/shell/manifest.json", settings.HostyShellManifestPath);
+        Assert.False(settings.Values.ContainsKey("HOSTY_SHELL_MANIFEST_PATH"));
+        Assert.False(settings.Values.ContainsKey("HOSTY_COLLECTOR_MANIFEST_PATH"));
+        Assert.False(settings.Values.ContainsKey("HOSTY_MARKETPLACE_MANIFEST_PATH"));
     }
 
     [Theory]
@@ -134,12 +114,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     [InlineData("HOSTY_SHELL_PORT", "8181")]
     [InlineData("HOSTY_CORE_PUBLIC_ORIGIN", "https://core.example")]
     [InlineData("HOSTY_SHELL_PUBLIC_ORIGIN", "https://shell.example")]
-    [InlineData("HOSTY_SHELL_MANIFEST_PATH", "https://raw.githubusercontent.com/example/shell/main/manifest.json")]
-    [InlineData("HOSTY_SHELL_MANIFEST_PATH", "~/shell/manifest.json")]
     [InlineData("HOSTY_SHELL_BOOTSTRAP_RUNTIME", "dev")]
-    [InlineData("HOSTY_MARKETPLACE_MANIFEST_PATH", "https://raw.githubusercontent.com/example/marketplace/main/manifest.json")]
-    [InlineData("HOSTY_MARKETPLACE_MANIFEST_PATH", "~/marketplace/manifest.json")]
-    [InlineData("HOSTY_MARKETPLACE_MANIFEST_PATH", "")]
     public void Set_EditableLaunchSetting_AcceptsValidValues(string key, string value)
     {
         var environment = HostyEnvironment.Current();
@@ -204,58 +179,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         var resolved = settings.ResolveHostDataRoot(environment);
 
         Assert.Equal(Path.Combine(environment.HomeDirectory, "custom-data"), resolved);
-    }
-
-    [Fact]
-    public void ResolveHostyShellManifestPath_LocalPath_ExpandsForCoreEnvironment()
-    {
-        var environment = HostyEnvironment.Current();
-        var settings = new LaunchSettingsStore(environment)
-            .Load()
-            .WithValue("HOSTY_SHELL_MANIFEST_PATH", "~/custom-shell/manifest.json");
-
-        var resolved = settings.ResolveHostyShellManifestPath(environment);
-
-        Assert.Equal(Path.Combine(environment.HomeDirectory, "custom-shell", "manifest.json"), resolved);
-    }
-
-    [Fact]
-    public void ResolveHostyMarketplaceManifestPath_LocalPath_ExpandsForCoreEnvironment()
-    {
-        var environment = HostyEnvironment.Current();
-        var settings = new LaunchSettingsStore(environment)
-            .Load()
-            .WithValue(LaunchSettingDefinitions.HostyMarketplaceManifestPath, "~/custom-marketplace/manifest.json");
-
-        var resolved = settings.ResolveHostyMarketplaceManifestPath(environment);
-
-        Assert.Equal(Path.Combine(environment.HomeDirectory, "custom-marketplace", "manifest.json"), resolved);
-    }
-
-    [Fact]
-    public void ResolveHostyMarketplaceManifestPath_EmptyValue_RemainsEmptyForCoreEnvironment()
-    {
-        var environment = HostyEnvironment.Current();
-        var settings = new LaunchSettingsStore(environment)
-            .Load()
-            .WithValue(LaunchSettingDefinitions.HostyMarketplaceManifestPath, "");
-
-        Assert.Equal(string.Empty, settings.ResolveHostyMarketplaceManifestPath(environment));
-    }
-
-    [Theory]
-    [InlineData("ftp://example.com/marketplace/manifest.json", "must use http or https")]
-    [InlineData("https://user@example.com/marketplace/manifest.json", "must not include credentials")]
-    public void Set_MarketplaceManifestPath_RejectsInvalidReferences(string value, string expectedMessage)
-    {
-        var environment = HostyEnvironment.Current();
-        var store = new LaunchSettingsStore(environment);
-        store.EnsureInstalled();
-
-        var exception = Assert.Throws<ConfigurationException>(() =>
-            store.Set(LaunchSettingDefinitions.HostyMarketplaceManifestPath, value));
-
-        Assert.Contains(expectedMessage, exception.Message);
     }
 
     // HOSTY_OBSERVABILITY_ENABLED and HOSTY_COLLECTOR_AUTOSTART are gone (Core derives its
