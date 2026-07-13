@@ -20,6 +20,7 @@ internal static class HostyCoreApplication
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, CoreJsonSerializerContext.Default));
         builder.Services.AddSingleton(config);
+        builder.Services.AddSingleton(AuthLifetimes.FromEnvironment());
         builder.Services.AddSingleton(sp => CoreDataPaths.FromConfig(sp.GetRequiredService<HostyCoreRuntimeConfig>()));
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
         builder.Services.AddSingleton<AppServiceTokenService>();
@@ -31,6 +32,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AuthBootstrapTokenStore>();
         builder.Services.AddSingleton<AuditStore>();
         builder.Services.AddSingleton<AppAuthCodeStore>();
+        builder.Services.AddSingleton<AppSessionGrantStore>();
         builder.Services.AddSingleton<AppIdentityService>();
         builder.Services.AddSingleton<LocalPasswordAuthService>();
         builder.Services.AddSingleton<AuthBootstrapService>();
@@ -143,6 +145,7 @@ internal static class HostyCoreApplication
                 HostyCoreRuntimeConfig config,
                 UserDirectoryStore users,
                 IClock clock,
+                AuthLifetimes lifetimes,
                 CancellationToken cancellationToken) =>
             {
                 var form = await request.ReadFormAsync(cancellationToken);
@@ -153,6 +156,7 @@ internal static class HostyCoreApplication
                     response,
                     users,
                     clock,
+                    lifetimes,
                     cancellationToken);
 
                 if (result.Succeeded)
@@ -180,6 +184,7 @@ internal static class HostyCoreApplication
                 LocalPasswordAuthService passwords,
                 UserDirectoryStore users,
                 IClock clock,
+                AuthLifetimes lifetimes,
                 CancellationToken cancellationToken) =>
             {
                 var form = await request.ReadFormAsync(cancellationToken);
@@ -198,6 +203,7 @@ internal static class HostyCoreApplication
                         response,
                         users,
                         clock,
+                        lifetimes,
                         cancellationToken);
 
                     return result.Succeeded
@@ -235,10 +241,11 @@ internal static class HostyCoreApplication
             HttpResponse response,
             HostyCoreRuntimeConfig config,
             UserDirectoryStore users,
+            AppSessionGrantStore grants,
             IClock clock,
             CancellationToken cancellationToken) =>
         {
-            await AuthEndpoints.LogoutAsync(request, response, users, clock, cancellationToken);
+            await AuthEndpoints.LogoutAsync(request, response, users, grants, clock, cancellationToken);
             return Results.Redirect(config.EffectiveShellPublicOrigin);
         });
         app.MapGet("/api/auth/callback/oidc", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(

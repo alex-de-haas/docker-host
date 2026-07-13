@@ -17,11 +17,30 @@ public sealed class AuthEndpointsTests
             context.Response,
             fixture.Users,
             fixture.Clock,
+            AuthLifetimes.Defaults,
             CancellationToken.None);
         var cookie = context.Response.Headers.SetCookie.ToString();
 
         Assert.True(result.Succeeded);
         Assert.Contains("secure", cookie, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_UsesConfiguredAbsoluteLifetimeAndSlidesIdle()
+    {
+        var fixture = await AuthEndpointFixture.CreateAsync();
+        var context = new DefaultHttpContext();
+        var lifetimes = AuthLifetimes.Defaults;
+
+        await AuthEndpoints.CreateSessionAsync("user_1", secureCookie: false, context.Response, fixture.Users, fixture.Clock, lifetimes, CancellationToken.None);
+
+        var state = await fixture.Users.ReadAsync();
+        var session = Assert.Single(state.Sessions);
+        Assert.Equal(fixture.Clock.UtcNow.Add(lifetimes.CoreSessionAbsolute), session.ExpiresAt);
+        Assert.Equal(fixture.Clock.UtcNow, session.LastSeenAt);
+        Assert.True(CoreSessionAuthorization.IsSessionLive(session, fixture.Clock.UtcNow, lifetimes.CoreSessionIdle));
+        // Idle window enforced independent of the absolute cap.
+        Assert.False(CoreSessionAuthorization.IsSessionLive(session, fixture.Clock.UtcNow.Add(lifetimes.CoreSessionIdle).AddSeconds(1), lifetimes.CoreSessionIdle));
     }
 
     [Theory]

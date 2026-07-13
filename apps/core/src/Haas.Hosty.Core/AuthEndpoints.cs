@@ -23,15 +23,14 @@ internal static class AuthEndpoints
             return CoreJson.Json(new CsrfResponse(token));
         });
 
-        app.MapGet("/api/auth/session", async (HttpRequest request, UserDirectoryStore users, CancellationToken cancellationToken) =>
+        app.MapGet("/api/auth/session", async (HttpRequest request, UserDirectoryStore users, AuthLifetimes lifetimes, CancellationToken cancellationToken) =>
         {
             var state = await users.ReadAsync(cancellationToken);
             var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
             var now = DateTimeOffset.UtcNow;
             var session = state.Sessions.FirstOrDefault(candidate =>
                 string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
-                candidate.RevokedAt is null &&
-                candidate.ExpiresAt > now);
+                CoreSessionAuthorization.IsSessionLive(candidate, now, lifetimes.CoreSessionIdle));
             var user = session is null
                 ? null
                 : state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, session.UserId, StringComparison.Ordinal));
@@ -45,6 +44,7 @@ internal static class AuthEndpoints
             IHostEnvironment environment,
             UserDirectoryStore users,
             IClock clock,
+            AuthLifetimes lifetimes,
             CancellationToken cancellationToken) =>
         {
             if (!environment.IsDevelopment())
@@ -52,7 +52,7 @@ internal static class AuthEndpoints
                 return CoreJson.Json(new ErrorResponse("session_create_unavailable", "Direct session creation is available only in development."), statusCode: StatusCodes.Status404NotFound);
             }
 
-            var result = await CreateSessionAsync(input.UserId, input.SecureCookie, response, users, clock, cancellationToken);
+            var result = await CreateSessionAsync(input.UserId, input.SecureCookie, response, users, clock, lifetimes, cancellationToken);
             return result.Succeeded
                 ? CoreJson.Json(new AuthSessionResponse(true, result.User))
                 : CoreJson.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
@@ -64,6 +64,7 @@ internal static class AuthEndpoints
             HostyCoreRuntimeConfig config,
             UserDirectoryStore users,
             IClock clock,
+            AuthLifetimes lifetimes,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(config.TrustedProxySecret))
@@ -83,15 +84,15 @@ internal static class AuthEndpoints
                 return CoreJson.Json(new ErrorResponse("trusted_proxy_user_missing", "Trusted proxy user id header is missing."), statusCode: StatusCodes.Status400BadRequest);
             }
 
-            var result = await CreateSessionAsync(userId, secureCookie: true, response, users, clock, cancellationToken);
+            var result = await CreateSessionAsync(userId, secureCookie: true, response, users, clock, lifetimes, cancellationToken);
             return result.Succeeded
                 ? CoreJson.Json(new AuthSessionResponse(true, result.User))
                 : CoreJson.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
         });
 
-        app.MapPost("/api/auth/logout", async (HttpRequest request, HttpResponse response, UserDirectoryStore users, IClock clock, CancellationToken cancellationToken) =>
+        app.MapPost("/api/auth/logout", async (HttpRequest request, HttpResponse response, UserDirectoryStore users, AppSessionGrantStore grants, IClock clock, CancellationToken cancellationToken) =>
         {
-            await LogoutAsync(request, response, users, clock, cancellationToken);
+            await LogoutAsync(request, response, users, grants, clock, cancellationToken);
             return CoreJson.Json(new LogoutResponse("logged_out"));
         });
 
@@ -107,7 +108,8 @@ internal static class AuthEndpoints
                 users,
                 clock,
                 async user => await HandleIdentityError(async () =>
-                    CoreJson.Json(await identity.CreateAuthorizationCodeAsync(input.AppId, user.Id, input.RedirectUri, cancellationToken))),
+                    CoreJson.Json(await identity.CreateAuthorizationCodeAsync(
+                        input.AppId, user.Id, input.RedirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken))),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -144,7 +146,8 @@ internal static class AuthEndpoints
                 users,
                 clock,
                 async user => await HandleIdentityError(async () =>
-                    CoreJson.Json(await identity.CreateAuthorizationCodeAsync(appId, user.Id, input.RedirectUri, cancellationToken))),
+                    CoreJson.Json(await identity.CreateAuthorizationCodeAsync(
+                        appId, user.Id, input.RedirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken))),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -180,7 +183,8 @@ internal static class AuthEndpoints
 
             return await HandleIdentityError(async () =>
             {
-                var authorization = await identity.CreateAuthorizationCodeAsync(appId, navigation.User.Id, redirectUri, cancellationToken);
+                var authorization = await identity.CreateAuthorizationCodeAsync(
+                    appId, navigation.User.Id, redirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken);
                 return Results.Redirect(authorization.RedirectUri);
             });
         });
@@ -253,12 +257,18 @@ internal static class AuthEndpoints
             Encoding.UTF8.GetBytes(expected),
             Encoding.UTF8.GetBytes(actual));
 
+    // Sessions carry an absolute cap (ExpiresAt) plus a sliding idle window (LastSeenAt + idle TTL). Dead
+    // records are pruned opportunistically on write so the list does not grow unbounded now that lifetimes
+    // are days, not hours; recently revoked ones linger briefly for diagnostics.
+    private static readonly TimeSpan SessionRevokedRetention = TimeSpan.FromDays(7);
+
     internal static async Task<AuthSessionCreateResult> CreateSessionAsync(
         string userId,
         bool secureCookie,
         HttpResponse response,
         UserDirectoryStore users,
         IClock clock,
+        AuthLifetimes lifetimes,
         CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -271,8 +281,15 @@ internal static class AuthEndpoints
                 return (state, new AuthSessionCreateResult(false, null));
             }
 
-            var newSession = new AuthSessionRecord(CreateSessionId(), user.Id, now, now.AddHours(12), null);
-            return (state with { Sessions = state.Sessions.Append(newSession).ToArray() }, new AuthSessionCreateResult(true, user, newSession));
+            var newSession = new AuthSessionRecord(
+                CreateSessionId(),
+                user.Id,
+                now,
+                now.Add(lifetimes.CoreSessionAbsolute),
+                null,
+                LastSeenAt: now);
+            var sessions = PruneSessions(state.Sessions, now).Append(newSession).ToArray();
+            return (state with { Sessions = sessions }, new AuthSessionCreateResult(true, user, newSession));
         }, cancellationToken);
 
         if (!result.Succeeded || result.Session is null)
@@ -296,24 +313,35 @@ internal static class AuthEndpoints
         HttpRequest request,
         HttpResponse response,
         UserDirectoryStore users,
+        AppSessionGrantStore grants,
         IClock clock,
         CancellationToken cancellationToken)
     {
         var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
+            var now = clock.UtcNow;
             await users.UpdateAsync(state => state with
             {
                 Sessions = state.Sessions
                     .Select(session => string.Equals(session.Id, sessionId, StringComparison.Ordinal)
-                        ? session with { RevokedAt = clock.UtcNow }
+                        ? session with { RevokedAt = now }
                         : session)
                     .ToArray(),
             }, cancellationToken);
+
+            // Explicit logout is an intent to leave: cascade-revoke the app session grants this Core
+            // session authorized. (Grants otherwise outlive an expired Core session.)
+            await grants.RevokeByAuthorizingSessionAsync(sessionId, now, cancellationToken);
         }
 
         response.Cookies.Delete(CoreSessionAuthorization.SessionCookieName);
     }
+
+    private static IEnumerable<AuthSessionRecord> PruneSessions(IEnumerable<AuthSessionRecord> sessions, DateTimeOffset now)
+        => sessions.Where(session =>
+            session.ExpiresAt > now &&
+            (session.RevokedAt is null || now - session.RevokedAt.Value < SessionRevokedRetention));
 }
 
 internal sealed record CsrfResponse(string Token);

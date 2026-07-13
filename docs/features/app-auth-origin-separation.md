@@ -22,14 +22,14 @@ sequenceDiagram
 
 - The app audience is the installed app id.
 - Authorization and launch codes expire after five minutes and can be consumed once.
-- App identity tokens expire after 24 hours. Runtime apps should set app-origin session cookies to no more than the returned `expiresInSeconds`.
+- App identity tokens are opaque, server-side **app session grants** (Core stores only their hash), not signed JWTs. Each has a sliding idle window and an absolute cap; `expiresInSeconds` in the token response is the time to the absolute cap. Runtime apps set their app-origin cookie `Max-Age` from `expiresInSeconds`. Defaults: 7-day idle / 30-day absolute for regular apps, 3-day / 14-day for system apps, a short fixed lifetime for CLI-diagnostic tokens — all configurable (`HOSTY_AUTH_*`).
 - Code exchange rechecks the current user, disabled-user state, installed app state, and app assignments.
 - Redirect URIs must be absolute `http` or `https` URLs without fragments and must match an installed app endpoint origin.
 - Browser Shell embedded launch-code issuance is bound to the active Core session user and requires `X-Hosty-CSRF`.
 - Standalone browser links use `GET /api/apps/{appId}/open?redirectUri=...`, which validates the active Core session and redirects to the app with a one-time code. When there is no active Core session, this top-level navigation redirects to `/login?returnTo=<the app-open request>` and resumes the app-open flow after login, so a standalone app can recover instead of dead-ending. `returnTo` is constrained to a Core-relative `/api/apps/{id}/open` continuation, so `/login` cannot be turned into an open redirect.
 - Shell issues an embedded launch code when opening an app workspace from outside that app. Page-to-page navigation inside the already-open app workspace uses the app's direct URL and relies on the existing app-origin session cookie, so runtime apps do not re-exchange a code and reload on every Shell menu click.
 - Trusted local CLI/control helpers can request identity or open links for a selected existing enabled Host user, but normal app access checks still apply.
-- App identity tokens are app-scoped bearer tokens with a 24-hour lifetime. Apps should store only an app-local HttpOnly session cookie on their own origin.
+- App identity tokens are app-scoped opaque bearer tokens (app session grants); Core revalidation resolves them by hash and can revoke them instantly (an explicit Core logout cascade-revokes the grants that session authorized). Apps should store only an app-local HttpOnly session cookie on their own origin.
 
 ## Runtime App Integration
 

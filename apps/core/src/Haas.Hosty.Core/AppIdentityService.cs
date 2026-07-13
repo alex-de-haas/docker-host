@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 
 namespace Haas.Hosty.Core;
 
@@ -8,27 +7,31 @@ internal sealed class AppIdentityService(
     UserDirectoryStore users,
     AppAuthCodeStore codes,
     AppRegistryStore apps,
-    CoreDataPaths paths,
+    AppSessionGrantStore grants,
+    AuthLifetimes lifetimes,
     IClock clock)
 {
     private static readonly TimeSpan AuthCodeLifetime = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan IdentityTokenLifetime = TimeSpan.FromHours(24);
+    // The idle window slides on use, but rewriting the grant store on every server render is wasteful, so
+    // LastSeenAt is only advanced once per this window. Idle TTLs are days, so minutes of imprecision are
+    // irrelevant.
+    private static readonly TimeSpan TouchThrottle = TimeSpan.FromMinutes(5);
 
-    private readonly SemaphoreSlim _signingKeyLock = new(1, 1);
-    private byte[]? _signingKey;
+    private const string GrantTokenPrefix = "hostyg_";
 
     public async Task<AppAuthorizeResult> CreateAuthorizationCodeAsync(
         string appId,
         string userId,
         string redirectUri,
+        string? authorizingSessionId = null,
         CancellationToken cancellationToken = default)
     {
         await RequireAllowedRedirectUriAsync(appId, redirectUri, cancellationToken);
-        var user = await RequireAccessibleUserAsync(appId, userId, cancellationToken);
+        var (user, _) = await RequireAccessibleUserAsync(appId, userId, cancellationToken);
         var now = clock.UtcNow;
         var code = CreateOpaqueToken();
         await codes.AppendCodeAsync(
-            new AppAuthCodeRecord(code, appId, user.Id, redirectUri, now, now.Add(AuthCodeLifetime), null),
+            new AppAuthCodeRecord(code, appId, user.Id, redirectUri, now, now.Add(AuthCodeLifetime), null, authorizingSessionId),
             now,
             cancellationToken);
 
@@ -46,8 +49,8 @@ internal sealed class AppIdentityService(
             _ => throw new AppIdentityException("invalid_code", "Authorization code is invalid."),
         };
 
-        var user = await RequireAccessibleUserAsync(match.AppId, match.UserId, cancellationToken);
-        return await CreateIdentityTokenAsync(match.AppId, user, cancellationToken);
+        var (user, app) = await RequireAccessibleUserAsync(match.AppId, match.UserId, cancellationToken);
+        return await CreateGrantAsync(app, user, AppGrantIssuedVia.Code, match.AuthorizingSessionId, cancellationToken);
     }
 
     public async Task<AppIdentityTokenResult> CreateLaunchTokenAsync(
@@ -55,8 +58,8 @@ internal sealed class AppIdentityService(
         string userId,
         CancellationToken cancellationToken = default)
     {
-        var user = await RequireAccessibleUserAsync(appId, userId, cancellationToken);
-        return await CreateIdentityTokenAsync(appId, user, cancellationToken);
+        var (user, app) = await RequireAccessibleUserAsync(appId, userId, cancellationToken);
+        return await CreateGrantAsync(app, user, AppGrantIssuedVia.CliDiagnostic, authorizingSessionId: null, cancellationToken);
     }
 
     public async Task<AppSessionValidationResult> RevalidateAsync(
@@ -64,233 +67,74 @@ internal sealed class AppIdentityService(
         string callingAppId,
         CancellationToken cancellationToken = default)
     {
-        var claims = await ValidateTokenAsync(token, cancellationToken);
-        if (!string.Equals(claims.Audience, callingAppId, StringComparison.Ordinal))
+        var now = clock.UtcNow;
+        var tokenHash = HashToken(token);
+        var grant = await grants.TryResolveAsync(tokenHash, cancellationToken) ??
+            throw new AppIdentityException("token_invalid", "App session token is not recognized.");
+
+        if (grant.RevokedAt is not null)
         {
-            throw new AppIdentityException("token_app_mismatch", "Identity token was issued for a different app.");
+            throw new AppIdentityException("token_revoked", "App session has been revoked.");
         }
 
-        var user = await RequireAccessibleUserAsync(claims.Audience, claims.Subject, cancellationToken);
+        if (grant.AbsoluteExpiresAt <= now)
+        {
+            throw new AppIdentityException("token_expired", "App session has reached its maximum lifetime.");
+        }
+
+        if (!string.Equals(grant.AppId, callingAppId, StringComparison.Ordinal))
+        {
+            throw new AppIdentityException("token_app_mismatch", "App session token was issued for a different app.");
+        }
+
+        // Policy (disabled / unassigned / system-app-admin / role downgrade) is re-checked online on every
+        // revalidation — the primary revocation guarantee — so grant TTLs can be long without weakening it.
+        var (user, app) = await RequireAccessibleUserAsync(grant.AppId, grant.UserId, cancellationToken);
+
+        var (idle, _) = lifetimes.ForGrant(app.System, grant.IssuedVia);
+        if (grant.LastSeenAt.Add(idle) <= now)
+        {
+            throw new AppIdentityException("token_expired", "App session has been idle too long.");
+        }
+
+        await grants.TouchAsync(tokenHash, now, TouchThrottle, cancellationToken);
         return new AppSessionValidationResult(
             true,
-            claims.Audience,
+            grant.AppId,
             user.Id,
             user.Email,
             user.DisplayName,
             user.Role,
-            claims.ExpiresAt);
+            grant.AbsoluteExpiresAt);
     }
 
-    private async Task<AppIdentityTokenResult> CreateIdentityTokenAsync(
-        string appId,
+    private async Task<AppIdentityTokenResult> CreateGrantAsync(
+        AppRecord app,
         HostUserRecord user,
+        string issuedVia,
+        string? authorizingSessionId,
         CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-        var expiresAt = now.Add(IdentityTokenLifetime);
-        var claims = new AppIdentityClaims(
-            Issuer: "hosty-core",
-            Audience: appId,
-            Subject: user.Id,
-            Email: user.Email,
-            DisplayName: user.DisplayName,
-            Role: user.Role,
-            IssuedAt: now.ToUnixTimeSeconds(),
-            ExpiresAtUnix: expiresAt.ToUnixTimeSeconds(),
-            JwtId: CreateOpaqueToken());
-        var token = await SignTokenAsync(claims, cancellationToken);
-        return new AppIdentityTokenResult(token, "Bearer", expiresAt, (int)IdentityTokenLifetime.TotalSeconds);
+        var (_, absolute) = lifetimes.ForGrant(app.System, issuedVia);
+        var absoluteExpiresAt = now.Add(absolute);
+        var token = CreateGrantToken();
+        var record = new AppSessionGrantRecord(
+            Id: CreateOpaqueToken(),
+            AppId: app.Id,
+            UserId: user.Id,
+            TokenHash: HashToken(token),
+            IssuedVia: issuedVia,
+            CreatedAt: now,
+            LastSeenAt: now,
+            AbsoluteExpiresAt: absoluteExpiresAt,
+            RevokedAt: null,
+            AuthorizingSessionId: authorizingSessionId);
+        await grants.AppendAsync(record, now, cancellationToken);
+        return new AppIdentityTokenResult(token, "Bearer", absoluteExpiresAt, (int)absolute.TotalSeconds);
     }
 
-    private async Task<AppIdentityClaims> ValidateTokenAsync(string token, CancellationToken cancellationToken)
-    {
-        var parts = token.Split('.');
-        if (parts.Length != 3)
-        {
-            throw new AppIdentityException("token_invalid", "Identity token is malformed.");
-        }
-
-        var signingKey = await GetSigningKeyAsync(cancellationToken);
-        var signedValue = $"{parts[0]}.{parts[1]}";
-        var expectedSignature = Base64UrlEncode(HMACSHA256.HashData(signingKey, Encoding.UTF8.GetBytes(signedValue)));
-        if (!FixedTimeEquals(expectedSignature, parts[2]))
-        {
-            throw new AppIdentityException("token_invalid", "Identity token signature is invalid.");
-        }
-
-        var claims = JsonSerializer.Deserialize(Base64UrlDecode(parts[1]), CoreJsonSerializerContext.Default.AppIdentityClaims) ??
-            throw new AppIdentityException("token_invalid", "Identity token claims are invalid.");
-        if (claims.ExpiresAt <= clock.UtcNow)
-        {
-            throw new AppIdentityException("token_expired", "Identity token has expired.");
-        }
-
-        return claims;
-    }
-
-    private async Task<string> SignTokenAsync(AppIdentityClaims claims, CancellationToken cancellationToken)
-    {
-        var header = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new JwtHeader("HS256", "JWT"), CoreJsonSerializerContext.Default.JwtHeader));
-        var payload = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJsonSerializerContext.Default.AppIdentityClaims));
-        var signingInput = $"{header}.{payload}";
-        var signingKey = await GetSigningKeyAsync(cancellationToken);
-        var signature = Base64UrlEncode(HMACSHA256.HashData(signingKey, Encoding.UTF8.GetBytes(signingInput)));
-        return $"{signingInput}.{signature}";
-    }
-
-    private async Task<byte[]> GetSigningKeyAsync(CancellationToken cancellationToken)
-    {
-        var cached = Volatile.Read(ref _signingKey);
-        if (cached is not null)
-        {
-            return cached;
-        }
-
-        await _signingKeyLock.WaitAsync(cancellationToken);
-        try
-        {
-            cached = _signingKey;
-            if (cached is not null)
-            {
-                return cached;
-            }
-
-            var key = await LoadOrCreateSigningKeyAsync(cancellationToken);
-            Volatile.Write(ref _signingKey, key);
-            return key;
-        }
-        finally
-        {
-            _signingKeyLock.Release();
-        }
-    }
-
-    private async Task<byte[]> LoadOrCreateSigningKeyAsync(CancellationToken cancellationToken)
-    {
-        var path = Path.Combine(paths.AuthRoot, "app-identity-signing.key");
-
-        var existing = await TryReadSigningKeyAsync(path, cancellationToken);
-        if (existing is not null)
-        {
-            SecureFileSystem.TryRestrictFile(path);
-            return existing;
-        }
-
-        SecureFileSystem.EnsurePrivateDirectory(paths.AuthRoot);
-        var key = RandomNumberGenerator.GetBytes(32);
-
-        // First use: publish the key via a unique temp file + atomic rename so the
-        // real path is never observed empty or partially written by a concurrent
-        // reader. overwrite:false means we lose cleanly if another writer wins.
-        if (await TryWriteSigningKeyAsync(path, key, overwrite: false, cancellationToken))
-        {
-            return key;
-        }
-
-        // Another writer created the file first; adopt its key.
-        var winner = await TryReadSigningKeyWithRetryAsync(path, cancellationToken);
-        if (winner is not null)
-        {
-            SecureFileSystem.TryRestrictFile(path);
-            return winner;
-        }
-
-        // The file exists but never received a valid key (e.g. an empty file left
-        // behind by an older crash). Replace it atomically with a fresh key.
-        if (await TryWriteSigningKeyAsync(path, key, overwrite: true, cancellationToken))
-        {
-            return key;
-        }
-
-        throw new AppIdentityException("signing_key_unavailable", "Identity signing key could not be initialized.");
-    }
-
-    private static async Task<bool> TryWriteSigningKeyAsync(string path, byte[] key, bool overwrite, CancellationToken cancellationToken)
-    {
-        var encodedKey = Encoding.UTF8.GetBytes(Convert.ToBase64String(key));
-        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
-        try
-        {
-            await using (var stream = SecureFileSystem.CreatePrivateFile(tempPath, FileMode.CreateNew))
-            {
-                await stream.WriteAsync(encodedKey, cancellationToken);
-            }
-
-            File.Move(tempPath, path, overwrite);
-            SecureFileSystem.TryRestrictFile(path);
-            return true;
-        }
-        catch (IOException)
-        {
-            return false;
-        }
-        finally
-        {
-            TryDeleteFile(tempPath);
-        }
-    }
-
-    private static bool FixedTimeEquals(string expected, string actual)
-    {
-        var expectedBytes = Encoding.UTF8.GetBytes(expected);
-        var actualBytes = Encoding.UTF8.GetBytes(actual);
-        return CryptographicOperations.FixedTimeEquals(expectedBytes, actualBytes);
-    }
-
-    private static async Task<byte[]?> TryReadSigningKeyAsync(string path, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var text = (await File.ReadAllTextAsync(path, cancellationToken)).Trim();
-            if (text.Length == 0)
-            {
-                return null;
-            }
-
-            var key = Convert.FromBase64String(text);
-            return key.Length == 0 ? null : key;
-        }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-        {
-            return null;
-        }
-        catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException)
-        {
-            // Concurrent writer holds the file, it is mid-rename, or permissions are
-            // restricted; treat as absent.
-            return null;
-        }
-    }
-
-    private static async Task<byte[]?> TryReadSigningKeyWithRetryAsync(string path, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; attempt < 50; attempt++)
-        {
-            var key = await TryReadSigningKeyAsync(path, cancellationToken);
-            if (key is not null)
-            {
-                return key;
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
-        }
-
-        return await TryReadSigningKeyAsync(path, cancellationToken);
-    }
-
-    private static void TryDeleteFile(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
-        {
-            // Best-effort cleanup of the temp file; the directory may already be gone.
-        }
-    }
-
-    private async Task<HostUserRecord> RequireAccessibleUserAsync(
+    private async Task<(HostUserRecord User, AppRecord App)> RequireAccessibleUserAsync(
         string appId,
         string userId,
         CancellationToken cancellationToken)
@@ -304,9 +148,9 @@ internal sealed class AppIdentityService(
             throw new AppIdentityException("user_disabled", "Host user is disabled.");
         }
 
-        // System apps are administrator surfaces. This is the enforcement point for every
-        // identity flow (authorize, launch, exchange, revalidate), so a role downgrade
-        // revokes access no later than the next revalidation.
+        // System apps are administrator surfaces. This is the enforcement point for every identity flow
+        // (authorize, launch, exchange, revalidate), so a role downgrade revokes access no later than the
+        // next revalidation.
         if (app.System && !string.Equals(user.Role, "host.admin", StringComparison.Ordinal))
         {
             throw new AppIdentityException("system_app_admin_required", "System app access requires a Host administrator.");
@@ -321,7 +165,7 @@ internal sealed class AppIdentityService(
             throw new AppIdentityException("app_access_denied", "Host user is not assigned to this app.");
         }
 
-        return user;
+        return (user, app);
     }
 
     private async Task<AppRecord> RequireInstalledAppAsync(string appId, CancellationToken cancellationToken)
@@ -390,31 +234,16 @@ internal sealed class AppIdentityService(
     private static string CreateOpaqueToken()
         => Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
 
+    // A prefixed opaque value: the prefix aids log/debug identification, the 256 random bits are the
+    // secret. Only its hash is ever stored, so the raw value is unrecoverable from Core state.
+    private static string CreateGrantToken()
+        => GrantTokenPrefix + Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+
+    private static string HashToken(string token)
+        => Base64UrlEncode(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
     private static string Base64UrlEncode(byte[] bytes)
         => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-    private static byte[] Base64UrlDecode(string value)
-    {
-        var padded = value.Replace('-', '+').Replace('_', '/');
-        padded = padded.PadRight(padded.Length + (4 - padded.Length % 4) % 4, '=');
-        return Convert.FromBase64String(padded);
-    }
-}
-
-internal sealed record JwtHeader(string Alg, string Typ);
-
-internal sealed record AppIdentityClaims(
-    string Issuer,
-    string Audience,
-    string Subject,
-    string? Email,
-    string? DisplayName,
-    string Role,
-    long IssuedAt,
-    long ExpiresAtUnix,
-    string JwtId)
-{
-    public DateTimeOffset ExpiresAt => DateTimeOffset.FromUnixTimeSeconds(ExpiresAtUnix);
 }
 
 internal sealed record AppAuthorizeResult(string Code, string RedirectUri, DateTimeOffset ExpiresAt);

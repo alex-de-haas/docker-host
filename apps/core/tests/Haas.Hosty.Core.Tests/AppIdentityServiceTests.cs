@@ -71,7 +71,7 @@ public sealed class AppIdentityServiceTests
     }
 
     [Fact]
-    public async Task ExchangeCodeAsync_IssuesTwentyFourHourIdentityToken()
+    public async Task ExchangeCodeAsync_IssuesGrantWithAbsoluteLifetime()
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
@@ -80,8 +80,92 @@ public sealed class AppIdentityServiceTests
 
         var token = await fixture.Service.ExchangeCodeAsync(authorization.Code);
 
-        Assert.Equal((int)TimeSpan.FromHours(24).TotalSeconds, token.ExpiresInSeconds);
-        Assert.Equal(issuedAt.AddHours(24), token.ExpiresAt);
+        // Regular (non-system) app: the default absolute grant lifetime, and an opaque hostyg_ value —
+        // never a signed JWT.
+        Assert.Equal((int)AuthLifetimes.Defaults.AppGrantAbsolute.TotalSeconds, token.ExpiresInSeconds);
+        Assert.Equal(issuedAt.Add(AuthLifetimes.Defaults.AppGrantAbsolute), token.ExpiresAt);
+        Assert.StartsWith("hostyg_", token.AccessToken, StringComparison.Ordinal);
+        Assert.DoesNotContain('.', token.AccessToken);
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_RejectsUnknownToken()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fixture.Service.RevalidateAsync("hostyg_not-a-real-token", "com.example.notes"));
+
+        Assert.Equal("token_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_RejectsGrantPastAbsoluteLifetime()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var token = await fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1");
+        fixture.Clock.UtcNow = token.ExpiresAt.AddSeconds(1);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes"));
+
+        Assert.Equal("token_expired", error.Code);
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_RejectsIdleExpiredGrant()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var token = await fixture.Service.ExchangeCodeAsync(
+            (await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback")).Code);
+
+        // Advance past the idle window but before the absolute cap.
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.Add(AuthLifetimes.Defaults.AppGrantIdle).AddSeconds(1);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes"));
+
+        Assert.Equal("token_expired", error.Code);
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_RejectsRevokedGrantAfterLogoutCascade()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        // Issue via a code stamped with an authorizing session, then cascade-revoke that session's grants.
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync(
+            "com.example.notes", "user_1", "https://notes.example/callback", authorizingSessionId: "session_1");
+        var token = await fixture.Service.ExchangeCodeAsync(authorization.Code);
+        Assert.True((await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes")).Active);
+
+        await fixture.Grants.RevokeByAuthorizingSessionAsync("session_1", fixture.Clock.UtcNow);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes"));
+
+        Assert.Equal("token_revoked", error.Code);
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_SlidesIdleWindowOnUse()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        // A code-issued grant gets the regular app idle/absolute windows (a CLI grant is short and fixed).
+        var token = await fixture.Service.ExchangeCodeAsync(
+            (await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback")).Code);
+
+        // Use it just before the idle deadline; the idle window should slide forward from the new use.
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.Add(AuthLifetimes.Defaults.AppGrantIdle).AddHours(-1);
+        Assert.True((await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes")).Active);
+
+        // Advance almost a full idle window past that use — still valid because it slid.
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.Add(AuthLifetimes.Defaults.AppGrantIdle).AddHours(-1);
+        Assert.True((await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes")).Active);
     }
 
     [Fact]
@@ -221,7 +305,7 @@ public sealed class AppIdentityServiceTests
     }
 
     [Fact]
-    public async Task CreateLaunchTokenAsync_ConcurrentFirstUseSharesSigningKey()
+    public async Task CreateLaunchTokenAsync_ConcurrentIssuanceEachRevalidateIndependently()
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
@@ -229,35 +313,26 @@ public sealed class AppIdentityServiceTests
         var tokens = await Task.WhenAll(Enumerable.Range(0, 16)
             .Select(_ => fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1")));
 
+        // Each concurrently-issued grant is a distinct opaque token that revalidates on its own.
+        Assert.Equal(16, tokens.Select(token => token.AccessToken).Distinct(StringComparer.Ordinal).Count());
         foreach (var token in tokens)
         {
             var session = await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes");
             Assert.True(session.Active);
             Assert.Equal("user_1", session.UserId);
         }
-
-        var keyPath = Path.Combine(fixture.Paths.AuthRoot, "app-identity-signing.key");
-        Assert.Equal(32, Convert.FromBase64String((await File.ReadAllTextAsync(keyPath)).Trim()).Length);
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("   \n")]
-    [InlineData("not-valid-base64!!")]
-    public async Task CreateLaunchTokenAsync_SelfHealsPoisonedSigningKeyFile(string poisonedContents)
+    [Fact]
+    public async Task GrantStore_PersistsOnlyTokenHashNeverRawToken()
     {
         var fixture = await IdentityFixture.CreateAsync();
         await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
-        var keyPath = Path.Combine(fixture.Paths.AuthRoot, "app-identity-signing.key");
-        Directory.CreateDirectory(fixture.Paths.AuthRoot);
-        await File.WriteAllTextAsync(keyPath, poisonedContents);
-
         var token = await fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1");
-        var session = await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes");
 
-        Assert.True(session.Active);
-        Assert.Equal("user_1", session.UserId);
-        Assert.Equal(32, Convert.FromBase64String((await File.ReadAllTextAsync(keyPath)).Trim()).Length);
+        var raw = await File.ReadAllTextAsync(Path.Combine(fixture.Paths.AuthRoot, "app-grants.json"));
+
+        Assert.DoesNotContain(token.AccessToken, raw, StringComparison.Ordinal);
     }
 
     private static HostUserRecord CreateUser(string id, bool disabled = false, string role = "host.user")
@@ -272,10 +347,11 @@ public sealed class AppIdentityServiceTests
 
     private sealed class IdentityFixture
     {
-        private IdentityFixture(UserDirectoryStore users, AppRegistryStore apps, AppIdentityService service, CoreDataPaths paths, FakeClock clock)
+        private IdentityFixture(UserDirectoryStore users, AppRegistryStore apps, AppSessionGrantStore grants, AppIdentityService service, CoreDataPaths paths, FakeClock clock)
         {
             Users = users;
             Apps = apps;
+            Grants = grants;
             Service = service;
             Paths = paths;
             Clock = clock;
@@ -284,6 +360,8 @@ public sealed class AppIdentityServiceTests
         public UserDirectoryStore Users { get; }
 
         public AppRegistryStore Apps { get; }
+
+        public AppSessionGrantStore Grants { get; }
 
         public AppIdentityService Service { get; }
 
@@ -306,11 +384,12 @@ public sealed class AppIdentityServiceTests
             var users = new UserDirectoryStore(paths);
             var apps = new AppRegistryStore(paths);
             var codes = new AppAuthCodeStore(paths);
+            var grants = new AppSessionGrantStore(paths);
             var clock = new FakeClock(DateTimeOffset.UtcNow);
-            var service = new AppIdentityService(users, codes, apps, paths, clock);
+            var service = new AppIdentityService(users, codes, apps, grants, AuthLifetimes.Defaults, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             await apps.UpsertAppAsync(CreateApp());
-            return new IdentityFixture(users, apps, service, paths, clock);
+            return new IdentityFixture(users, apps, grants, service, paths, clock);
         }
 
         public async Task WriteUsersAsync(IReadOnlyList<HostUserRecord> users, IReadOnlyList<AppAssignmentRecord> assignments)

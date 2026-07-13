@@ -10,7 +10,9 @@ type TokenExchangeResponse = {
   expiresInSeconds?: unknown;
 };
 
-const appIdentityCookieMaxAgeSeconds = 24 * 60 * 60;
+// Follow the grant's absolute lifetime (expiresInSeconds); this is only a sanity bound above the
+// 30-day default so a malformed response cannot set an absurd cookie age.
+const appIdentityCookieMaxAgeSeconds = 60 * 24 * 60 * 60;
 
 export async function POST(request: Request) {
   let body: unknown;
