@@ -235,7 +235,9 @@ public sealed class LocalCommandRuntimeAdapterTests
     [Fact]
     public async Task GetLogsAsync_ReadsTailWhileServiceHoldsLogOpenForAppend()
     {
-        // Intentionally runs on Windows: the sharing violation this guards against only surfaces there.
+        // Not Windows-gated on purpose: the sharing violation only reproduces on Windows (CI is
+        // Linux, which doesn't enforce share modes), so here this is a smoke test of the read/tail
+        // path. It is the read side's FileShare.ReadWrite that makes the Windows case pass.
         var workRoot = CreateTempDirectory();
         try
         {
