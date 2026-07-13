@@ -816,7 +816,7 @@ function InstalledAppRow({
   // backups, update, and remove stay gated on !app.system via canControl.
   const canConfigure = canManageApps;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
-  // Update affordance is hidden and the "Live" badge is shown instead. See CoreApp.live.
+  // Update affordance is hidden and the live-source status icon is shown instead. See CoreApp.live.
   const canUpdate = canControl && !app.live && app.capabilities.includes("update");
   // The Update button is promoted out of the actions menu into the row: it appears only once an
   // update-status probe (row expand or the header "Check updates") has confirmed one is available.
@@ -890,15 +890,15 @@ function InstalledAppRow({
           {app.live && (
             <Badge
               variant="outline"
-              className="gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+              className="size-6 gap-0 border-emerald-500/40 p-0 text-emerald-700 dark:text-emerald-300 [&>svg]:size-3.5"
+              aria-label="Live source runtime"
               title={
                 app.sourceLivePath
                   ? `Runs live from ${app.sourceLivePath}; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates.`
                   : "Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
               }
             >
-              <Radio className="h-3 w-3" />
-              Live
+              <Radio />
             </Badge>
           )}
         </div>

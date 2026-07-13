@@ -47,7 +47,6 @@ export function ShellSidebar({
   coreOrigin,
   coreOnline,
   coreVersion,
-  shellVersion,
   activeUser,
   canManageApps,
   runtimeApps,
@@ -65,7 +64,6 @@ export function ShellSidebar({
   coreOrigin: string;
   coreOnline: boolean;
   coreVersion: string | null;
-  shellVersion: string;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   runtimeApps: CoreApp[];
@@ -158,7 +156,7 @@ export function ShellSidebar({
 
       <div className={cn("shrink-0 border-t", compact ? "space-y-2 px-2 py-3" : "space-y-3 p-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
-        <SidebarVersionInfo compact={compact} coreOnline={coreOnline} coreVersion={coreVersion} shellVersion={shellVersion} onOpenPlatform={onOpenPlatform} />
+        <SidebarVersionInfo compact={compact} coreOnline={coreOnline} coreVersion={coreVersion} onOpenPlatform={onOpenPlatform} />
       </div>
     </div>
   );
@@ -168,13 +166,11 @@ function SidebarVersionInfo({
   compact,
   coreOnline,
   coreVersion,
-  shellVersion,
   onOpenPlatform,
 }: {
   compact: boolean;
   coreOnline: boolean;
   coreVersion: string | null;
-  shellVersion: string;
   onOpenPlatform?: () => void;
 }) {
   // A reachable Core that predates the version field reports no version, so only call it
@@ -184,8 +180,6 @@ function SidebarVersionInfo({
     : coreOnline
       ? "Core/CLI version unknown"
       : "Core/CLI offline";
-  const shellLabel = shellVersion ? `Shell v${shellVersion}` : null;
-  const title = shellLabel ? `${platformLabel} · ${shellLabel}` : platformLabel;
 
   // The tooltip lives on the outermost element only, so the button variant's richer title is
   // never shadowed by an inner one.
@@ -194,7 +188,6 @@ function SidebarVersionInfo({
   ) : (
     <div className="text-[11px] leading-tight">
       <p className="truncate">{platformLabel}</p>
-      {shellLabel && <p className="truncate">{shellLabel}</p>}
     </div>
   );
 
@@ -202,7 +195,7 @@ function SidebarVersionInfo({
   // else keeps the plain read-only text.
   if (!onOpenPlatform) {
     return (
-      <div className={cn("text-muted-foreground", compact ? "" : "px-2")} title={title}>
+      <div className={cn("text-muted-foreground", compact ? "" : "px-2")} title={platformLabel}>
         {body}
       </div>
     );
@@ -216,7 +209,7 @@ function SidebarVersionInfo({
         compact ? "px-0 py-1 text-center" : "px-2 py-1",
       )}
       onClick={onOpenPlatform}
-      title={`${title} — open platform settings`}
+      title={`${platformLabel} — open platform settings`}
       aria-label="Open platform settings"
     >
       {body}

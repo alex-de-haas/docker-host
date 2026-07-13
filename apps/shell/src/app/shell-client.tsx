@@ -1487,7 +1487,6 @@ export function ShellClient({
             coreOrigin={coreOrigin}
             coreOnline={state.status !== null}
             coreVersion={state.status?.version ?? null}
-            shellVersion={shellVersion}
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
             runtimeApps={uiRuntimeApps}
