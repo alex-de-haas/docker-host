@@ -19,7 +19,7 @@ Two origins are injected; use the right one for the caller:
 
 ## Handling Expired Or Invalid Sessions (Recovery)
 
-> Status: this is the target contract from [`docs/ideas/auth-session-lifecycle.md`](../../../docs/ideas/auth-session-lifecycle.md). The 401-vs-403 split requires Core Phase 1 and the embedded Shell responder requires Phase 2; until those ship, Core returns `403` for expired tokens and Shell does not answer `hosty:auth-required`. Build apps to this contract now — the standalone redirect already works whenever the Core session is alive, and the fallbacks below cover the rest.
+> Design reference: [`docs/ideas/auth-session-lifecycle.md`](../../../docs/ideas/auth-session-lifecycle.md). The 401/403 split and the Shell `hosty:auth-required` responder shipped in Phases 1+2 (Core, Shell 0.31.0). Phases 3+4 (opaque app session grants + sliding idle/absolute lifetimes) are not implemented yet, so tokens still have a fixed lifetime — build to this recovery contract regardless.
 
 An app session ends eventually (idle/absolute expiry, revoke, admin change). The app must **recover, not dead-end** — never render a bare "not authorized" page with no way forward. Classify the revalidation outcome into three cases and act differently:
 
@@ -33,7 +33,7 @@ Pick the recovery channel by embedding mode (`window.self === window.top` → st
 
 Top-level page, recoverable failure:
 
-1. Navigate the **top window** to `{HOSTY_CORE_PUBLIC_ORIGIN}/api/apps/{appId}/open?redirectUri=<current app URL>`. Core issues a fresh code and redirects back with `?code=`; if the Core session is also gone, Core routes through `/login` and returns the user to the same app URL afterward.
+1. Navigate the **top window** to `{HOSTY_CORE_PUBLIC_ORIGIN}/api/apps/{appId}/open?redirectUri=<current app URL>`. Build the redirect URI from `location.origin + location.pathname + location.search` — **exclude any `#` fragment**, which Core rejects (`redirect_uri_invalid`) and which would not survive the redirect anyway. Core issues a fresh code and redirects back with `?code=`; if the Core session is also gone, Core routes through `/login` and returns the user to the same app URL afterward.
 2. **Guard against loops:** auto-navigate at most once per tab (e.g. a `sessionStorage` flag cleared on a successful code exchange). If the flag is already set, render an explicit **"Sign in via Hosty"** button pointing at the same URL instead of redirecting again.
 3. On return, exchange the `?code=` as in the App Session Flow and reload.
 
