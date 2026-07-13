@@ -8,7 +8,7 @@ internal sealed class AppIdentityService(
     AppAuthCodeStore codes,
     AppRegistryStore apps,
     AppSessionGrantStore grants,
-    AuthLifetimes lifetimes,
+    CoreSettingsService settings,
     IClock clock)
 {
     private static readonly TimeSpan AuthCodeLifetime = TimeSpan.FromMinutes(5);
@@ -91,7 +91,7 @@ internal sealed class AppIdentityService(
         // revalidation — the primary revocation guarantee — so grant TTLs can be long without weakening it.
         var (user, app) = await RequireAccessibleUserAsync(grant.AppId, grant.UserId, cancellationToken);
 
-        var (idle, _) = lifetimes.ForGrant(app.System, grant.IssuedVia);
+        var (idle, _) = settings.AuthLifetimes.ForGrant(app.System, grant.IssuedVia);
         if (grant.LastSeenAt.Add(idle) <= now)
         {
             throw new AppIdentityException("token_expired", "App session has been idle too long.");
@@ -130,7 +130,7 @@ internal sealed class AppIdentityService(
         CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-        var (_, absolute) = lifetimes.ForGrant(app.System, issuedVia);
+        var (_, absolute) = settings.AuthLifetimes.ForGrant(app.System, issuedVia);
         var absoluteExpiresAt = now.Add(absolute);
         var token = CreateGrantToken();
         var record = new AppSessionGrantRecord(

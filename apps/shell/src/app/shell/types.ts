@@ -170,6 +170,21 @@ export type CoreBootstrapState = {
   actionError?: string | null;
 };
 
+// Core's own behavior settings (auth session/grant lifetimes for now), served in the same shape as
+// per-app settings so the platform panel renders them with the shared settings form. Reuses the shared
+// field types from CoreSetting; `value` is the current effective value; `default` is the built-in
+// fallback; `group` clusters related keys; `overridden` marks a persisted override (so the UI can reset).
+export type CoreSettingItem = Pick<CoreSetting, "key" | "type" | "label" | "description"> & {
+  value: string;
+  default: string;
+  group: string;
+  overridden: boolean;
+};
+
+export type CoreSettingsState = {
+  settings: CoreSettingItem[];
+};
+
 export type CoreBackup = {
   appId: string;
   backupId: string;

@@ -2,8 +2,11 @@ using System.Globalization;
 
 namespace Haas.Hosty.Core;
 
-// Configurable idle + absolute lifetimes for app session grants and Core browser sessions. Read once at
-// startup and treated as immutable for the process. Because every revalidation re-checks role /
+// Configurable idle + absolute lifetimes for app session grants and Core browser sessions. This record
+// is immutable, but the effective value is no longer a startup snapshot: CoreSettingsService owns it
+// and AuthLifetimes is DI-registered as a transient resolved from that service, so operator edits from
+// the platform panel apply live (idle immediately, absolute for sessions/grants issued afterward) — see
+// CoreSettings.cs and docs/ideas/core-settings.md. Because every revalidation re-checks role /
 // assignment / disabled online and grants are instantly revocable server-side, the defaults are days,
 // not hours — short TTLs would recreate the daily-login problem without adding real security. System
 // apps (all host.admin) get a tighter window than regular apps. See docs/ideas/auth-session-lifecycle.md.

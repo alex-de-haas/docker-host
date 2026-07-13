@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CircleCheck, CircleSlash, LoaderCircle, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import type { CoreBootstrapApp, CoreBootstrapState } from "../types";
+import { SettingInput } from "../settings";
+import type { CoreBootstrapApp, CoreBootstrapState, CoreSettingItem, CoreSettingsState } from "../types";
 import { InlineError } from "../ui";
 
 // The platform panel opened from the sidebar version block. Today it carries the Extensions
@@ -18,6 +19,9 @@ export function PlatformDialog({
   state,
   loading,
   error,
+  settings,
+  settingsError,
+  onSaveSettings,
   onToggle,
   onClose,
 }: {
@@ -27,6 +31,9 @@ export function PlatformDialog({
   state: CoreBootstrapState | null;
   loading: boolean;
   error: string | null;
+  settings: CoreSettingsState | null;
+  settingsError: string | null;
+  onSaveSettings: (values: Record<string, string>) => Promise<void>;
   onToggle: (appId: string, enabled: boolean) => Promise<void>;
   onClose: () => void;
 }) {
@@ -69,6 +76,10 @@ export function PlatformDialog({
           <DialogDescription>{versionLine}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
+          <CoreSettingsSection settings={settings} error={settingsError} onSave={onSaveSettings} />
+
+          <div className="border-t" />
+
           <div>
             <h3 className="text-sm font-medium">Extensions</h3>
             <p className="text-xs text-muted-foreground">
@@ -212,4 +223,148 @@ function ExtensionRow({
       )}
     </li>
   );
+}
+
+// Core's own behavior settings (auth session/grant lifetimes), rendered with the shared per-app
+// settings inputs. Live-apply: saving PUTs the changed keys and Core returns the fresh snapshot, so
+// there is no restart affordance here — the copy explains what applies immediately vs. on next issue.
+function CoreSettingsSection({
+  settings,
+  error,
+  onSave,
+}: {
+  settings: CoreSettingsState | null;
+  error: string | null;
+  onSave: (values: Record<string, string>) => Promise<void>;
+}) {
+  const items = useMemo(() => settings?.settings ?? [], [settings]);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Reseed the editable draft whenever Core returns a fresh snapshot (initial load and after a save).
+  useEffect(() => {
+    setDraft(Object.fromEntries(items.map((item) => [item.key, item.value])));
+    setSaveError(null);
+  }, [items]);
+
+  const groups = useMemo(() => groupCoreSettings(items), [items]);
+  const changed = items.filter((item) => (draft[item.key] ?? item.value) !== item.value).map((item) => item.key);
+
+  const save = async () => {
+    if (changed.length === 0) {
+      return;
+    }
+
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSave(Object.fromEntries(changed.map((key) => [key, draft[key] ?? ""])));
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "The settings could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Clears a persisted override so the key falls back to Core's env/default. A blank value is the
+  // "null to clear" contract on the endpoint; Core returns the fresh snapshot, which reseeds the draft.
+  const reset = async (key: string) => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSave({ [key]: "" });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "The setting could not be reset.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h3 className="text-sm font-medium">Core settings</h3>
+        <p className="text-xs text-muted-foreground">
+          Session and grant lifetimes for Core, in hours. Idle timeouts apply immediately, including to existing sessions;
+          maximum lifetimes apply to sessions issued after you save.
+        </p>
+      </div>
+
+      {error && <InlineError message={error} />}
+      {saveError && <InlineError message={saveError} />}
+
+      {!settings && !error && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <LoaderCircle className="size-4 animate-spin" aria-hidden /> Loading Core settings…
+        </p>
+      )}
+
+      {settings && groups.length > 0 && (
+        <div className="space-y-4">
+          {groups.map((group) => (
+            <div key={group.name} className="space-y-3 rounded-md border p-3">
+              <p className="text-xs font-medium text-muted-foreground">{group.name}</p>
+              {group.items.map((item) => (
+                <div key={item.key} className="space-y-1">
+                  <SettingInput
+                    setting={{
+                      key: item.key,
+                      type: item.type,
+                      label: item.label,
+                      description: item.description,
+                      required: false,
+                      secret: false,
+                    }}
+                    value={draft[item.key] ?? item.value}
+                    disabled={saving}
+                    onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
+                  />
+                  {item.overridden && (
+                    <div className="flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs text-muted-foreground"
+                        disabled={saving}
+                        onClick={() => reset(item.key)}
+                      >
+                        Reset to default ({item.default}h)
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+
+          <div className="flex items-center gap-3">
+            <Button size="sm" disabled={saving || changed.length === 0} onClick={save}>
+              {saving && <LoaderCircle className="size-3.5 animate-spin" aria-hidden />}
+              Save settings
+            </Button>
+            {changed.length > 0 && !saving && (
+              <span className="text-xs text-muted-foreground">
+                {changed.length} unsaved change{changed.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function groupCoreSettings(items: CoreSettingItem[]) {
+  const groups: Array<{ name: string; items: CoreSettingItem[] }> = [];
+  for (const item of items) {
+    const existing = groups.find((group) => group.name === item.group);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      groups.push({ name: item.group, items: [item] });
+    }
+  }
+
+  return groups;
 }

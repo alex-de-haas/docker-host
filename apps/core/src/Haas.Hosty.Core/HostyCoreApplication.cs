@@ -20,7 +20,13 @@ internal static class HostyCoreApplication
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, CoreJsonSerializerContext.Default));
         builder.Services.AddSingleton(config);
-        builder.Services.AddSingleton(AuthLifetimes.FromEnvironment());
+        builder.Services.AddSingleton<CoreSettingsStore>();
+        builder.Services.AddSingleton<CoreSettingsService>();
+        // AuthLifetimes resolves live from the settings service (edited from the Shell platform panel),
+        // so a TTL change applies without a restart: idle windows immediately, absolute windows for
+        // grants/sessions issued afterward. Transient so each per-request injection re-reads the current
+        // value rather than capturing a startup snapshot.
+        builder.Services.AddTransient(sp => sp.GetRequiredService<CoreSettingsService>().AuthLifetimes);
         builder.Services.AddSingleton(sp => CoreDataPaths.FromConfig(sp.GetRequiredService<HostyCoreRuntimeConfig>()));
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
         builder.Services.AddSingleton<AppServiceTokenService>();
@@ -260,6 +266,7 @@ internal static class HostyCoreApplication
         LifecycleEndpoints.Map(app);
         GlobalMountEndpoints.Map(app);
         CoreBootstrapEndpoints.Map(app);
+        CoreSettingsEndpoints.Map(app);
         SourceEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);

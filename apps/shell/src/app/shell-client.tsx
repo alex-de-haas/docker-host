@@ -47,6 +47,7 @@ import type {
   CoreBackupCleanupApplyResponse,
   CoreBackupCleanupPlan,
   CoreBootstrapState,
+  CoreSettingsState,
   CoreGlobalMount,
   CoreFeedInstallPlan,
   CoreInstallPlan,
@@ -114,6 +115,8 @@ export function ShellClient({
   const [platformState, setPlatformState] = useState<CoreBootstrapState | null>(null);
   const [platformLoading, setPlatformLoading] = useState(false);
   const [platformError, setPlatformError] = useState<string | null>(null);
+  const [coreSettings, setCoreSettings] = useState<CoreSettingsState | null>(null);
+  const [coreSettingsError, setCoreSettingsError] = useState<string | null>(null);
   // Applying an update / switching runtime resets Core's artifact locks, so the cached update-status
   // owned by the Installed Apps page goes stale (it would keep showing "Update available"). We can't
   // reach into that page's state from here, so we bump a per-app counter it watches to re-probe.
@@ -912,30 +915,66 @@ export function ShellClient({
     setPlatformOpen(true);
     setPlatformError(null);
     setPlatformLoading(true);
-    try {
-      const response = await fetch(`${coreOrigin}/api/core/bootstrap`, { credentials: "include" });
-      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-      if (!response.ok) {
-        throw new Error(await readCoreError(response));
-      }
+    setCoreSettingsError(null);
+    setCoreSettings(null);
 
-      setPlatformState((await response.json()) as CoreBootstrapState);
-    } catch (error) {
-      if (isAuthRequiredRedirectError(error)) {
-        return;
-      }
+    // The Extensions list and Core settings load independently — one failing must not blank the other.
+    const loadBootstrap = (async () => {
+      try {
+        const response = await fetch(`${coreOrigin}/api/core/bootstrap`, { credentials: "include" });
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+        if (!response.ok) {
+          throw new Error(await readCoreError(response));
+        }
 
-      setPlatformState(null);
-      setPlatformError(error instanceof Error ? error.message : "Unable to load the distribution list.");
-    } finally {
-      setPlatformLoading(false);
-    }
+        setPlatformState((await response.json()) as CoreBootstrapState);
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
+        setPlatformState(null);
+        setPlatformError(error instanceof Error ? error.message : "Unable to load the distribution list.");
+      }
+    })();
+
+    const loadSettings = (async () => {
+      try {
+        const response = await fetch(`${coreOrigin}/api/core/settings`, { credentials: "include" });
+        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+        if (!response.ok) {
+          throw new Error(await readCoreError(response));
+        }
+
+        setCoreSettings((await response.json()) as CoreSettingsState);
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
+        setCoreSettings(null);
+        setCoreSettingsError(error instanceof Error ? error.message : "Unable to load Core settings.");
+      }
+    })();
+
+    await Promise.allSettled([loadBootstrap, loadSettings]);
+    setPlatformLoading(false);
   }, [coreOrigin]);
 
   const togglePlatformApp = useCallback(
     async (appId: string, enabled: boolean) => {
       const response = await sendCsrfJson(`${coreOrigin}/api/core/bootstrap/choices`, { appId, enabled });
       setPlatformState((await response.json()) as CoreBootstrapState);
+    },
+    [coreOrigin, sendCsrfJson],
+  );
+
+  const saveCoreSettings = useCallback(
+    async (values: Record<string, string>) => {
+      const response = await sendCsrfJson(`${coreOrigin}/api/core/settings`, { settings: values }, "PUT");
+      setCoreSettings((await response.json()) as CoreSettingsState);
+      setCoreSettingsError(null);
+      toast.success("Core settings saved");
     },
     [coreOrigin, sendCsrfJson],
   );
@@ -1594,6 +1633,9 @@ export function ShellClient({
           state={platformState}
           loading={platformLoading}
           error={platformError}
+          settings={coreSettings}
+          settingsError={coreSettingsError}
+          onSaveSettings={saveCoreSettings}
           onToggle={togglePlatformApp}
           onClose={() => setPlatformOpen(false)}
         />
