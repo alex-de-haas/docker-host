@@ -48,17 +48,21 @@ Shell. Its manifest (`apps/telemetry/manifest.json`) runs the upstream
   pin keeps the advertised port stable across restarts.
 - `metrics` (9464) — loopback, auto-allocated. Core scrapes it as a host process in P3.
 
-**Core owns the collector config.** It is embedded in Core (`CollectorBootstrap.ConfigYaml`), written
-into the collector's app-data dir at bootstrap, and mounted over the image's default config directory
-(`/etc/otelcol-contrib`) so the stock `--config` entrypoint picks it up. The config is OTLP in →
+**Core owns the collector config.** It is embedded in Core (`CollectorBootstrap.ConfigYaml`) and
+mounted over the image's default config directory (`/etc/otelcol-contrib`) so the stock `--config`
+entrypoint picks it up. Core writes it (and the sink dirs) on the **start path**, keyed by the
+manifest's `provides: ["otlp-collector"]` platform capability rather than the app id or install path
+(see `PlatformCapabilities` and docs/ideas/generic-bootstrap.md Phase 4) — so the collector is
+provisioned identically whether it was installed by the boot bootstrap, the marketplace, or a direct
+`hosty apps install`, and the config is refreshed on every start. The config is OTLP in →
 Prometheus out for metrics (with `resource_to_telemetry_conversion` so `service.name` / `hosty.app.id`
 become metric labels for P3/P4 attribution) and OTLP in → a rotated newline-delimited JSON **file** out
 for logs (P4) and traces (P6, a separate file so the two signals rotate independently). The sink files
 are written to subdirs of the same mounted app-data dir (`otlp-logs/logs.jsonl`,
 `otlp-traces/traces.jsonl`), which Core tails from the host side. Because the upstream collector image
 is distroless and runs as a non-root UID (10001), Core provisions those sink dirs world-writable on
-Unix at bootstrap (`EnsureSystemAppDataSubdirectory`) so the container can create and rotate its files
-in the bind mount; the contents are non-secret telemetry.
+Unix at start (`EnsureSystemAppDataSubdirectory`, via the capability provisioner) so the container can
+create and rotate its files in the bind mount; the contents are non-secret telemetry.
 
 ## Enabling it
 

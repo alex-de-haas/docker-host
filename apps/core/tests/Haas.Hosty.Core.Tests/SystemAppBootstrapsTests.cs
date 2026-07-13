@@ -117,14 +117,12 @@ public sealed class SystemAppBootstrapsTests
         Assert.Equal("3000", shell.Settings!["HOSTY_PORT_HTTP"]);
 
         var telemetry = plan.Descriptors.Single(d => d.AppId == "hosty.telemetry");
-        Assert.NotNull(telemetry.ProvisionAsync);
         Assert.Equal("docker", telemetry.Runtime);
 
         // Policy-free entry: manifest defaults on first install, installed choices preserved later.
         var marketplace = plan.Descriptors.Single(d => d.AppId == "hosty.marketplace");
         Assert.Null(marketplace.Runtime);
         Assert.Null(marketplace.Autostart);
-        Assert.Null(marketplace.ProvisionAsync);
     }
 
     [Fact]

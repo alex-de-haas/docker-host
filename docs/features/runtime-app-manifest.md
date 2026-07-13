@@ -56,6 +56,12 @@ System apps are administrator surfaces: Core requires an enabled `host.admin` in
 
 A system app that declares `ui` is validated strictly and fail-closed: the entrypoint must name an explicit endpoint that resolves to a declared http(s) endpoint (`app_manifest_system_ui_endpoint_required` / `app_manifest_system_ui_endpoint_unknown` / `app_manifest_system_ui_endpoint_not_http`), page paths must be root-relative with no scheme, host, query, fragment, or backslash (`app_manifest_system_ui_path_invalid`), and duplicate page paths are rejected (`app_manifest_system_ui_path_duplicate`). Ordinary manifests keep the permissive runtime behavior (endpoint fallback, path prefixing).
 
+## Platform Capabilities (`provides`)
+
+The optional top-level `provides` field lists platform capability *slots* the app fulfills — a concept distinct from `capabilities` (the client action list, below) and from a service's `runtimes[].capabilities` (Linux `--cap-add`). Each entry is a lowercase kebab token (`^[a-z][a-z0-9-]{0,62}$`); blanks or duplicates fail validation (`app_manifest_provides_invalid` / `app_manifest_provides_duplicate`). Unknown slot names are accepted (forward-compatible: a manifest may declare a slot a newer Core understands).
+
+Core reacts to a provided slot it has a handler for by running Core-owned provisioning on the app's start path and by ordering the app's autostart relative to others — keyed by the capability, not the app id or how the app was installed. The one slot Core registers today is `otlp-collector`: a provider is given the Core-owned OpenTelemetry collector config and sink directories before its services start, and is started before OTLP-exporting apps so its endpoint resolves first. This is why the telemetry collector works whether it was installed by the boot bootstrap, the marketplace, or a direct `hosty apps install`. See [Generic bootstrap](../ideas/generic-bootstrap.md) (Phase 4).
+
 ## Runtime Profiles
 
 Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), an optional `default: true` (at most one), and an optional `development: true`.

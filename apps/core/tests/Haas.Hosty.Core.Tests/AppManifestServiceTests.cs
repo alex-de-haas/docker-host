@@ -55,6 +55,30 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsProvidesSlots()
+    {
+        var manifestPath = await WriteManifestAsync("com.example.collector", role: $$""", "provides": ["otlp-collector", "some-future-slot"] """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal(["otlp-collector", "some-future-slot"], selection.Manifest.Provides);
+    }
+
+    [Theory]
+    [InlineData("""["Otlp-Collector"]""", "app_manifest_provides_invalid")]
+    [InlineData("""["otlp collector"]""", "app_manifest_provides_invalid")]
+    [InlineData("""[""]""", "app_manifest_provides_invalid")]
+    [InlineData("""["otlp-collector", "otlp-collector"]""", "app_manifest_provides_duplicate")]
+    public async Task LoadAsync_RejectsInvalidProvides(string providesJson, string expectedCode)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.collector", role: $$""", "provides": {{providesJson}} """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    [Fact]
     public async Task LoadAsync_SystemUi_AcceptsExplicitResolvableDeclaration()
     {
         var manifestPath = await WriteSystemUiManifestAsync(

@@ -123,7 +123,8 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             // later boots preserve whatever the operator configures.
             Assert.True(collector.Autostart);
 
-            // The descriptor's provision hook delivered the Core-owned config and sink/store dirs.
+            // The otlp-collector capability provisioner (run on the start path) delivered the
+            // Core-owned config and sink/store dirs.
             var dataDir = Path.Combine(fixture.Paths.AppsRoot, "hosty.telemetry", "data");
             await WaitForFileAsync(Path.Combine(dataDir, "config.yaml"));
             Assert.True(Directory.Exists(Path.Combine(dataDir, "otlp-logs")));
@@ -134,6 +135,33 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         {
             await supervisor.StopAsync(CancellationToken.None);
         }
+    }
+
+    [Fact]
+    public async Task Start_DirectlyInstalledCapabilityApp_ProvisionsOnStartNotBootstrap()
+    {
+        // The whole point of capability-based provisioning: an app that declares provides:[otlp-collector]
+        // gets its Core-owned config + sink dirs on the start path even when it was installed directly
+        // (the marketplace/CLI path), never touching the bootstrap descriptor.
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var collectorManifest = Path.Combine(root, "collector-manifest.json");
+        await File.WriteAllTextAsync(collectorManifest, CreateCollectorManifest("0.1.0"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: collectorManifest,
+            SelectedRuntime: "docker",
+            System: true,
+            Autostart: false));
+
+        var dataDir = Path.Combine(fixture.Paths.AppsRoot, "hosty.telemetry", "data");
+        // Not provisioned by install alone — provisioning is a start-time step.
+        Assert.False(File.Exists(Path.Combine(dataDir, "config.yaml")));
+
+        await fixture.Lifecycle.StartAsync("hosty.telemetry");
+
+        await WaitForFileAsync(Path.Combine(dataDir, "config.yaml"));
+        Assert.True(Directory.Exists(Path.Combine(dataDir, "otlp-logs")));
+        Assert.True(Directory.Exists(Path.Combine(dataDir, "otlp-traces")));
+        Assert.True(Directory.Exists(Path.Combine(dataDir, "store")));
     }
 
     [Fact]
@@ -783,6 +811,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
               "name": "Hosty Telemetry",
               "version": "{{version}}",
               "role": "system",
+              "provides": ["otlp-collector"],
               "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
               "services": [{
                 "key": "collector",

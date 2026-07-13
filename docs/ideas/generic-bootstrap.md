@@ -167,7 +167,11 @@ Acceptance: an admin toggles telemetry on in Shell and the collector installs an
 
 ### Phase 4 — de-specialization
 
-Capability/role-based start ordering from the manifest; provisioning hooks keyed by capability (e.g. `otlp-collector`) instead of app id; retire the static `ShellBootstrap`/`CollectorBootstrap` descriptor classes. (`HOSTY_OBSERVABILITY_ENABLED` and `HOSTY_COLLECTOR_AUTOSTART` were already folded away on 2026-07-12: Core's telemetry producers key on the telemetry app being installed, and collector autostart is a normal per-app setting.)
+**Provisioning + ordering DONE** (2026-07-13): the manifest gains a top-level `provides: string[]` naming platform capability slots (distinct from `capabilities`, the client action list, and from per-service Linux `--cap-add`). A `PlatformCapabilities` registry maps a slot to its Core-owned provisioner and start priority; v1 registers `otlp-collector` → { the collector config.yaml + sink dirs, priority 100 }. Provisioning now runs on the **start path** keyed by `provides`, not on the bootstrap descriptor keyed by app id, so an app installed through the marketplace or directly is provisioned exactly like a bootstrap install (this is what lets the telemetry collector — and any third-party app declaring the slot — work outside the boot path). `StartPriority` derives from `provides`; the app-id switch and the descriptor `ProvisionAsync` hook are gone. The telemetry manifest declares `provides: ["otlp-collector"]`.
+
+Remaining Phase 4 cleanup (not blocking anything): fully dissolve the `CollectorBootstrap`/`ShellBootstrap` static classes (their constants — `ConfigYaml`, sink-dir names, the OTLP endpoint key, the Shell port/HOSTNAME settings — are still referenced by the tailers, `ResolveTelemetryEndpointAsync`, and the Shell descriptor); and de-app-id-ify `ResolveTelemetryEndpointAsync` + the log/trace tailers so they find "the app providing `otlp-collector`" rather than the literal `hosty.telemetry` id (needed before a *third-party* collector is fully first-class; the first-party collector works today because its id is unchanged).
+
+(`HOSTY_OBSERVABILITY_ENABLED` and `HOSTY_COLLECTOR_AUTOSTART` were folded away on 2026-07-12: Core's telemetry producers key on the telemetry app being installed, and collector autostart is a normal per-app setting.)
 
 ## Open Questions
 

@@ -55,19 +55,19 @@ internal static class CollectorBootstrap
     public static string ResolveHostTracesFilePath(string appsRoot)
         => Path.Combine(CoreDataPaths.ResolveContainedPath(appsRoot, AppId), "data", TracesRelativeDir, TracesFileName);
 
-    // Core owns the collector config: (re)write it on every boot so a template change ships forward.
-    // Runs after install/reconcile and before the container starts; the manifest mounts the app-data
-    // dir over the image's default config directory. The sink dirs are provisioned world-writable so
-    // the non-root collector can write/rotate the files Core tails from the host side, and the store
-    // dir lets the telemetry backend sibling create its SQLite database on the same shared mount.
-    // Attached to the collector's bootstrap descriptor by SystemAppBootstraps.FromDistribution; the
-    // collector starts before OTLP-consuming apps via StartPriority so its endpoint resolves first.
-    internal static async Task ProvisionAsync(CoreLifecycleService lifecycle, CancellationToken cancellationToken)
+    // Core owns the collector config: (re)write it before every start so a template change ships
+    // forward. Registered as the provisioner for the "otlp-collector" platform capability slot
+    // (PlatformCapabilities) and run from the start path for any app that provides it, regardless of
+    // app id or how it was installed — the manifest mounts the app-data dir over the image's default
+    // config directory. The sink dirs are provisioned world-writable so the non-root collector can
+    // write/rotate the files Core tails from the host side, and the store dir lets the telemetry
+    // backend sibling create its SQLite database on the same shared mount.
+    internal static async Task ProvisionAsync(CoreLifecycleService lifecycle, string appId, CancellationToken cancellationToken)
     {
-        await lifecycle.WriteSystemAppDataFileAsync(AppId, ConfigFileName, ConfigYaml, cancellationToken);
-        lifecycle.EnsureSystemAppDataSubdirectory(AppId, LogsRelativeDir);
-        lifecycle.EnsureSystemAppDataSubdirectory(AppId, TracesRelativeDir);
-        lifecycle.EnsureSystemAppDataSubdirectory(AppId, StoreRelativeDir);
+        await lifecycle.WriteSystemAppDataFileAsync(appId, ConfigFileName, ConfigYaml, cancellationToken);
+        lifecycle.EnsureSystemAppDataSubdirectory(appId, LogsRelativeDir);
+        lifecycle.EnsureSystemAppDataSubdirectory(appId, TracesRelativeDir);
+        lifecycle.EnsureSystemAppDataSubdirectory(appId, StoreRelativeDir);
     }
 
     // Authoritative collector config. OTLP/HTTP in (4318) → Prometheus out (9464) for metrics, and a

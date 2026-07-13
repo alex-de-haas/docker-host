@@ -25,9 +25,6 @@ internal sealed record SystemAppBootstrapDescriptor(
     IReadOnlyDictionary<string, string?>? Settings = null,
     // Optional local source override for development installs (development Shell workflow).
     string? SourceOverridePath = null,
-    // App-specific provisioning that must run after install/reconcile and before the app starts
-    // (e.g. the collector's Core-owned config.yaml and sink directories).
-    Func<CoreLifecycleService, CancellationToken, Task>? ProvisionAsync = null,
     // When set, the first install goes through the digest-bound feed path so the record follows the
     // feed for updates like any other app. Reconciliation of an already feed-bound app is left to the
     // normal update flow.
@@ -91,9 +88,10 @@ internal static class SystemAppBootstraps
                     ManifestPath: manifestPath,
                     Runtime: config.CollectorBootstrapRuntime,
                     // Autostart is a normal per-app setting: install default on first install, the
-                    // operator's later choice preserved (HOSTY_COLLECTOR_AUTOSTART is gone).
+                    // operator's later choice preserved (HOSTY_COLLECTOR_AUTOSTART is gone). Config +
+                    // sink-dir provisioning is no longer wired here — it runs on the start path keyed
+                    // by the manifest's `provides: [otlp-collector]` (see PlatformCapabilities).
                     Autostart: null,
-                    ProvisionAsync: CollectorBootstrap.ProvisionAsync,
                     FeedsUrl: entry.FeedsUrl),
                 _ => new SystemAppBootstrapDescriptor(
                     entry.Id,
@@ -156,17 +154,6 @@ internal static class SystemAppBootstraps
             $"('{legacyRef}' instead of '{entry.ManifestRef}'). This variable is deprecated; the override will stop working in a future release.");
         return legacyRef;
     }
-
-    // Autostart ordering across apps: higher starts earlier. Static (not descriptor-driven) because
-    // ordering must not depend on which descriptors are currently enabled — an installed collector
-    // still starts before OTLP-consuming apps even if telemetry was later disabled. Capability-based
-    // ordering from the manifest is Phase 4.
-    public static int StartPriority(string appId) => appId switch
-    {
-        // The collector starts first so its OTLP endpoint resolves before other apps come up.
-        CollectorBootstrap.AppId => 100,
-        _ => 0,
-    };
 }
 
 // Stable app id for the marketplace entry. Policy-free: Core owns no runtime or autostart choice for
