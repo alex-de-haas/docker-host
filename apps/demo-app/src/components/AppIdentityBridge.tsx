@@ -30,7 +30,10 @@ function readIdentityStatus(body: unknown): string | null {
 
 function buildOpenUrl(corePublicOrigin: string, appId: string): string {
   const target = new URL(`/api/apps/${encodeURIComponent(appId)}/open`, corePublicOrigin);
-  target.searchParams.set("redirectUri", window.location.href);
+  // Exclude any URL fragment: Core rejects redirect URIs with a fragment (redirect_uri_invalid), and
+  // the fragment (hash-routing state, user anchors) never survives a server redirect anyway.
+  const { origin, pathname, search } = window.location;
+  target.searchParams.set("redirectUri", `${origin}${pathname}${search}`);
   return target.toString();
 }
 

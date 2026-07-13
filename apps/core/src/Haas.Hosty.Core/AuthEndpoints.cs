@@ -162,11 +162,17 @@ internal static class AuthEndpoints
                 return CoreJson.Json(new ErrorResponse("redirect_uri_missing", "Redirect URI is required."), statusCode: StatusCodes.Status400BadRequest);
             }
 
-            // This is a top-level browser navigation (the standalone app recovery target), so a missing
-            // Core session must send the user through /login and resume this exact request afterward,
-            // not return a JSON 401 the browser cannot act on.
-            var user = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, cancellationToken);
-            if (user is null)
+            // This is a top-level browser navigation (the standalone app recovery target). A missing or
+            // expired Core session must send the user through /login and resume this exact request
+            // afterward, not return a JSON 401 the browser cannot act on. A valid-but-disabled account is
+            // terminal: return its 403 as-is rather than bouncing to a login that would reject it anyway.
+            var navigation = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, users, clock, cancellationToken);
+            if (navigation.Denied is not null)
+            {
+                return navigation.Denied;
+            }
+
+            if (navigation.User is null)
             {
                 var continuation = request.Path + request.QueryString;
                 return Results.Redirect($"/login?returnTo={Uri.EscapeDataString(continuation)}");
@@ -174,7 +180,7 @@ internal static class AuthEndpoints
 
             return await HandleIdentityError(async () =>
             {
-                var authorization = await identity.CreateAuthorizationCodeAsync(appId, user.Id, redirectUri, cancellationToken);
+                var authorization = await identity.CreateAuthorizationCodeAsync(appId, navigation.User.Id, redirectUri, cancellationToken);
                 return Results.Redirect(authorization.RedirectUri);
             });
         });
@@ -226,8 +232,8 @@ internal static class AuthEndpoints
         // protocol-relative (`//host`), backslash tricks browsers normalize to `//`, and control chars.
         if (returnTo[0] != '/' ||
             returnTo.StartsWith("//", StringComparison.Ordinal) ||
-            returnTo.Contains('\\', StringComparison.Ordinal) ||
-            returnTo.Any(ch => char.IsControl(ch)) ||
+            returnTo.Contains('\\') ||
+            returnTo.Any(char.IsControl) ||
             !Uri.TryCreate(returnTo, UriKind.Relative, out _))
         {
             return false;

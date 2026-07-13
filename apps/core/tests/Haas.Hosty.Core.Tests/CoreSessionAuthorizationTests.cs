@@ -79,6 +79,48 @@ public sealed class CoreSessionAuthorizationTests
         Assert.Contains("csrf_invalid", response.Body);
     }
 
+    [Fact]
+    public async Task ResolveNavigationSessionAsync_ReturnsUserForValidSession()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+        var request = CreateRequest(includeSession: true, includeCsrf: false).Request;
+
+        var result = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, fixture.Users, fixture.Clock);
+
+        Assert.NotNull(result.User);
+        Assert.Equal("user_1", result.User!.Id);
+        Assert.Null(result.Denied);
+    }
+
+    [Fact]
+    public async Task ResolveNavigationSessionAsync_SignalsMissingSessionForRecovery()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+        var request = CreateRequest(includeSession: false, includeCsrf: false).Request;
+
+        var result = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, fixture.Users, fixture.Clock);
+
+        // Both null → the caller redirects to /login rather than returning a terminal response.
+        Assert.Null(result.User);
+        Assert.Null(result.Denied);
+    }
+
+    [Fact]
+    public async Task ResolveNavigationSessionAsync_ReturnsTerminalDenialForDisabledUser()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user", disabled: true);
+        var request = CreateRequest(includeSession: true, includeCsrf: false).Request;
+
+        var result = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, fixture.Users, fixture.Clock);
+
+        // A signed-in but disabled account is terminal: return the 403 as-is, never bounce to /login.
+        Assert.Null(result.User);
+        Assert.NotNull(result.Denied);
+        var response = Inspect(result.Denied!);
+        Assert.Equal(StatusCodes.Status403Forbidden, response.StatusCode);
+        Assert.Contains("user_disabled", response.Body);
+    }
+
     private static DefaultHttpContext CreateRequest(bool includeSession, bool includeCsrf)
     {
         var context = new DefaultHttpContext();
@@ -119,7 +161,7 @@ public sealed class CoreSessionAuthorizationTests
 
         public FakeClock Clock { get; } = clock;
 
-        public static async Task<AuthorizationFixture> CreateAsync(string role)
+        public static async Task<AuthorizationFixture> CreateAsync(string role, bool disabled = false)
         {
             var root = Path.Combine(Path.GetTempPath(), $"hosty-core-authz-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -138,7 +180,7 @@ public sealed class CoreSessionAuthorizationTests
                 Email: "user@example.test",
                 DisplayName: "User",
                 Role: role,
-                Disabled: false,
+                Disabled: disabled,
                 CreatedAt: clock.UtcNow,
                 UpdatedAt: clock.UtcNow);
             var session = new AuthSessionRecord(
