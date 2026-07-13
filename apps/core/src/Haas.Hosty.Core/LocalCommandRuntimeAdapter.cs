@@ -290,7 +290,11 @@ internal sealed class LocalCommandRuntimeAdapter(
                 // A failing read for one service must not break log retrieval for the rest.
                 try
                 {
-                    serviceLines = File.ReadLines(logPath).TakeLast(Math.Clamp(tail, 1, 1000)).ToList();
+                    // Share ReadWrite so the read succeeds while the running service still holds the
+                    // log open for append (the writer at StartAsync uses FileShare.ReadWrite). Without
+                    // this, Windows raises a sharing violation ("used by another process"); other
+                    // platforms don't enforce share modes so the plain File.ReadLines masked it.
+                    serviceLines = ReadSharedLines(logPath).TakeLast(Math.Clamp(tail, 1, 1000)).ToList();
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -309,6 +313,19 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
 
         return Task.FromResult(new AppRuntimeLogsResult(string.Join(Environment.NewLine, lines), services));
+    }
+
+    // Lazily enumerate a log file that may be concurrently appended to by a running service.
+    // FileShare.ReadWrite lets the read coexist with the writer's open handle (required on Windows);
+    // enumeration keeps TakeLast's bounded-memory behavior over large logs.
+    private static IEnumerable<string> ReadSharedLines(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        while (reader.ReadLine() is { } line)
+        {
+            yield return line;
+        }
     }
 
     public async Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)

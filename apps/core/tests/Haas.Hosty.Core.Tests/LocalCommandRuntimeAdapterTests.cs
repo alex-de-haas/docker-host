@@ -232,6 +232,40 @@ public sealed class LocalCommandRuntimeAdapterTests
         }
     }
 
+    [Fact]
+    public async Task GetLogsAsync_ReadsTailWhileServiceHoldsLogOpenForAppend()
+    {
+        // Intentionally runs on Windows: the sharing violation this guards against only surfaces there.
+        var workRoot = CreateTempDirectory();
+        try
+        {
+            var (adapter, _, context) = CreateSetupScenario(workRoot, setup: null, command: "unused");
+
+            var logPath = Path.Combine(workRoot, "logs", "app.log");
+            Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+
+            // Mirror the running-service writer: an open append handle that shares ReadWrite.
+            using var writer = new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            {
+                AutoFlush = true,
+            };
+            writer.WriteLine("first");
+            writer.WriteLine("second");
+
+            var result = await adapter.GetLogsAsync(context, tail: 10);
+
+            Assert.NotNull(result.Services);
+            var appLogs = Assert.Single(result.Services!);
+            Assert.DoesNotContain("error reading log file", appLogs.Text, StringComparison.Ordinal);
+            Assert.Contains("first", appLogs.Text, StringComparison.Ordinal);
+            Assert.Contains("second", appLogs.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
     private static bool IsProcessAlive(int pid)
     {
         try
