@@ -132,10 +132,10 @@ internal static class HostyCoreApplication
 
         if (app.Environment.IsDevelopment())
         {
-            app.MapGet("/login", async (HostyCoreRuntimeConfig config, UserDirectoryStore users, CancellationToken cancellationToken) =>
+            app.MapGet("/login", async (string? returnTo, HostyCoreRuntimeConfig config, UserDirectoryStore users, CancellationToken cancellationToken) =>
             {
                 var state = await users.ReadAsync(cancellationToken);
-                return Results.Content(RenderDevelopmentLoginPage(config, state.Users), "text/html");
+                return Results.Content(RenderDevelopmentLoginPage(config, state.Users, returnTo: returnTo), "text/html");
             });
             app.MapPost("/login", async (
                 HttpRequest request,
@@ -146,6 +146,7 @@ internal static class HostyCoreApplication
                 CancellationToken cancellationToken) =>
             {
                 var form = await request.ReadFormAsync(cancellationToken);
+                var returnTo = form["returnTo"].ToString();
                 var result = await AuthEndpoints.CreateSessionAsync(
                     form["userId"].ToString(),
                     secureCookie: false,
@@ -156,12 +157,12 @@ internal static class HostyCoreApplication
 
                 if (result.Succeeded)
                 {
-                    return Results.Redirect(config.EffectiveShellPublicOrigin);
+                    return Results.Redirect(AuthEndpoints.ResolveLoginRedirect(returnTo, config));
                 }
 
                 var state = await users.ReadAsync(cancellationToken);
                 return Results.Content(
-                    RenderDevelopmentLoginPage(config, state.Users, "Select an enabled local Hosty user."),
+                    RenderDevelopmentLoginPage(config, state.Users, "Select an enabled local Hosty user.", returnTo),
                     "text/html",
                     Encoding.UTF8,
                     StatusCodes.Status403Forbidden);
@@ -169,8 +170,8 @@ internal static class HostyCoreApplication
         }
         else
         {
-            app.MapGet("/login", (HostyCoreRuntimeConfig config) => Results.Content(
-                RenderPasswordLoginPage(config),
+            app.MapGet("/login", (string? returnTo, HostyCoreRuntimeConfig config) => Results.Content(
+                RenderPasswordLoginPage(config, returnTo: returnTo),
                 "text/html"));
             app.MapPost("/login", async (
                 HttpRequest request,
@@ -182,6 +183,7 @@ internal static class HostyCoreApplication
                 CancellationToken cancellationToken) =>
             {
                 var form = await request.ReadFormAsync(cancellationToken);
+                var returnTo = form["returnTo"].ToString();
                 try
                 {
                     var user = await passwords.AuthenticateAsync(
@@ -199,9 +201,9 @@ internal static class HostyCoreApplication
                         cancellationToken);
 
                     return result.Succeeded
-                        ? Results.Redirect(config.EffectiveShellPublicOrigin)
+                        ? Results.Redirect(AuthEndpoints.ResolveLoginRedirect(returnTo, config))
                         : Results.Content(
-                            RenderPasswordLoginPage(config, "Email or password is invalid."),
+                            RenderPasswordLoginPage(config, "Email or password is invalid.", returnTo),
                             "text/html",
                             Encoding.UTF8,
                             StatusCodes.Status403Forbidden);
@@ -212,7 +214,7 @@ internal static class HostyCoreApplication
                         ? ex.Message
                         : "Email or password is invalid.";
                     return Results.Content(
-                        RenderPasswordLoginPage(config, message),
+                        RenderPasswordLoginPage(config, message, returnTo),
                         "text/html",
                         Encoding.UTF8,
                         ex.StatusCode);
@@ -319,13 +321,22 @@ internal static class HostyCoreApplication
           """;
     }
 
+    // Reflect the login continuation into the form only when it passes the same allow-list the
+    // post-login redirect enforces, so a rejected value is never echoed back into the page.
+    private static string RenderReturnToField(string? returnTo)
+        => AuthEndpoints.IsAllowedLoginReturnTo(returnTo)
+            ? $"""<input type="hidden" name="returnTo" value="{HtmlEncoder.Default.Encode(returnTo!)}">"""
+            : string.Empty;
+
     private static string RenderDevelopmentLoginPage(
         HostyCoreRuntimeConfig config,
         IReadOnlyList<HostUserRecord> users,
-        string? error = null)
+        string? error = null,
+        string? returnTo = null)
     {
         var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
         var encodedShellOrigin = HtmlEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
+        var returnToField = RenderReturnToField(returnTo);
         var enabledUsers = users.Where(user => !user.Disabled).ToArray();
         var options = string.Join(Environment.NewLine, enabledUsers.Select(user =>
         {
@@ -340,6 +351,7 @@ internal static class HostyCoreApplication
             ? """<p>No enabled local Hosty users are available.</p>"""
             : $$"""
               <form method="post" action="/login">
+                {{returnToField}}
                 <label for="userId">Development user</label>
                 <select id="userId" name="userId">{{options}}</select>
                 <button type="submit">Start development session</button>
@@ -383,10 +395,11 @@ internal static class HostyCoreApplication
           """;
     }
 
-    private static string RenderPasswordLoginPage(HostyCoreRuntimeConfig config, string? error = null)
+    private static string RenderPasswordLoginPage(HostyCoreRuntimeConfig config, string? error = null, string? returnTo = null)
     {
         var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
         var encodedShellOrigin = HtmlEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
+        var returnToField = RenderReturnToField(returnTo);
         var encodedError = error is null
             ? string.Empty
             : $"""<p class="error">{HtmlEncoder.Default.Encode(error)}</p>""";
@@ -418,6 +431,7 @@ internal static class HostyCoreApplication
               <h1>Hosty Core Login</h1>
               {{encodedError}}
               <form method="post" action="/login">
+                {{returnToField}}
                 <label for="email">Email</label>
                 <input id="email" name="email" type="email" autocomplete="email" required>
                 <label for="password">Password</label>

@@ -26,7 +26,7 @@ sequenceDiagram
 - Code exchange rechecks the current user, disabled-user state, installed app state, and app assignments.
 - Redirect URIs must be absolute `http` or `https` URLs without fragments and must match an installed app endpoint origin.
 - Browser Shell embedded launch-code issuance is bound to the active Core session user and requires `X-Hosty-CSRF`.
-- Standalone browser links use `GET /api/apps/{appId}/open?redirectUri=...`, which validates the active Core session and redirects to the app with a one-time code.
+- Standalone browser links use `GET /api/apps/{appId}/open?redirectUri=...`, which validates the active Core session and redirects to the app with a one-time code. When there is no active Core session, this top-level navigation redirects to `/login?returnTo=<the app-open request>` and resumes the app-open flow after login, so a standalone app can recover instead of dead-ending. `returnTo` is constrained to a Core-relative `/api/apps/{id}/open` continuation, so `/login` cannot be turned into an open redirect.
 - Shell issues an embedded launch code when opening an app workspace from outside that app. Page-to-page navigation inside the already-open app workspace uses the app's direct URL and relies on the existing app-origin session cookie, so runtime apps do not re-exchange a code and reload on every Shell menu click.
 - Trusted local CLI/control helpers can request identity or open links for a selected existing enabled Host user, but normal app access checks still apply.
 - App identity tokens are app-scoped bearer tokens with a 24-hour lifetime. Apps should store only an app-local HttpOnly session cookie on their own origin.
@@ -42,7 +42,8 @@ A Hosty-aware app should:
 - use app-specific cookie names because local Shell, Core, and runtime apps all use the `localhost` host on different ports;
 - remove the code from the browser URL after starting exchange;
 - call `POST {HOSTY_CORE_ORIGIN}/api/auth/apps/revalidate` with `Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>` before extending trust in an existing app session; Core rejects tokens issued for a different app than the caller;
-- treat Core `401` as missing or expired Host authentication and Core `403` as denied app access;
+- treat Core `401` as recoverable (token missing, expired, invalid, or revoked) and re-authorize; treat Core `403` as terminal denied access (disabled, unassigned, admin-only, or wrong app) and show an access-denied state without auto-redirecting; treat a `503`/timeout as a transient Core outage and keep the session cookie for retry. Core enforces this split — recoverable identity failures return `401`, terminal ones return `403`;
+- on a recoverable failure, recover by re-authorizing: a standalone (top-level) app navigates to `{HOSTY_CORE_PUBLIC_ORIGIN}/api/apps/{appId}/open?redirectUri=<current URL>` at most once per tab (then shows an explicit sign-in control); an embedded app posts `{ type: "hosty:auth-required", appId }` to `window.parent` (no secrets) and Shell reissues a launch code after verifying the sender, without the app navigating the top window;
 - keep third-party service credentials in app-owned settings or secrets, not in Hosty identity tokens.
 
 The repository Demo App is the first Next.js example. Its `/api/auth/app-code` route exchanges the code, stores an HttpOnly app cookie capped to the Core token lifetime, and `/api/auth/identity` reports app-session revalidation status. The previous iframe/gateway identity diagnostics remain available for compatibility validation.

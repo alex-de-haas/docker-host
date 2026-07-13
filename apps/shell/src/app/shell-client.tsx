@@ -65,6 +65,10 @@ import type {
   WorkspaceRoute,
 } from "./shell/types";
 
+// Minimum spacing between launch-code reissues for one app, a loop guard against a frame that keeps
+// re-posting hosty:auth-required.
+const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
+
 export function ShellClient({
   coreOrigin,
   shellAppId,
@@ -124,6 +128,8 @@ export function ShellClient({
   const refreshRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const installRequestRef = useRef(0);
+  // Last launch-code reissue per app id, so a chatty frame cannot storm Core with reissues.
+  const authReissueAtRef = useRef<Map<string, number>>(new Map());
   // Core CSRF is a cookie/header pair, so token refresh + mutation must stay ordered.
   const csrfOperationQueue = useRef<Promise<void>>(Promise.resolve());
   const shellThemePreference = normalizeThemePreference(theme);
@@ -1347,6 +1353,53 @@ export function ShellClient({
     [canManageApps],
   );
 
+  const handleAuthRequired = useCallback(
+    (appId: string) => {
+      const current = workspace;
+      if (!current || current.appId !== appId) {
+        return;
+      }
+
+      const app = state.apps.find((candidate) => candidate.id === appId);
+      if (!app || app.runtimeState !== "running") {
+        return;
+      }
+
+      // Loop guard: a frame that keeps re-posting (e.g. it never accepts the new code) must not
+      // drive an unbounded reissue storm. One reissue per app per interval is plenty for recovery.
+      const now = Date.now();
+      const last = authReissueAtRef.current.get(appId) ?? 0;
+      if (now - last < AUTH_REISSUE_MIN_INTERVAL_MS) {
+        return;
+      }
+      authReissueAtRef.current.set(appId, now);
+
+      void (async () => {
+        try {
+          // Reuse the current frame URL as the redirect target, minus the spent code, so theme and
+          // page params are preserved and Core appends a fresh code.
+          const base = new URL(current.src);
+          base.searchParams.delete("code");
+          const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: base.toString() });
+          const launch = (await response.json()) as AppLaunchResponse;
+          const stillCurrent = workspace;
+          if (!stillCurrent || stillCurrent.appId !== appId || stillCurrent.path !== current.path) {
+            return;
+          }
+
+          setWorkspace({ ...stillCurrent, src: launch.redirectUri, externalUrl: launch.redirectUri });
+        } catch (error) {
+          if (isAuthRequiredRedirectError(error)) {
+            return;
+          }
+          // A failed reissue leaves the app's own fallback UI in place; do not surface a toast for a
+          // background recovery attempt the user did not explicitly trigger.
+        }
+      })();
+    },
+    [workspace, state.apps, sendCsrfJson, appEndpoint],
+  );
+
   const closeInstallDialog = useCallback(() => {
     installRequestRef.current += 1;
     setInstallOpen(false);
@@ -1462,6 +1515,7 @@ export function ShellClient({
                 // Only the Marketplace frame may hand Shell an install intent; every other embedded
                 // app gets no handler, so its messages are never listened for.
                 onInstallFeedIntent={appMayRequestFeedInstall(workspace.appId) ? openFeedInstallDialog : undefined}
+                onAuthRequired={handleAuthRequired}
               />
             ) : activeWorkspaceRoute ? (
               <EmbeddedWorkspacePendingPanel
