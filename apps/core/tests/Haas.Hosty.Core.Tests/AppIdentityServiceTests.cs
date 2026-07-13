@@ -1,4 +1,5 @@
 using Haas.Hosty.Core;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Haas.Hosty.Core.Tests;
 
@@ -386,7 +387,8 @@ public sealed class AppIdentityServiceTests
             var codes = new AppAuthCodeStore(paths);
             var grants = new AppSessionGrantStore(paths);
             var clock = new FakeClock(DateTimeOffset.UtcNow);
-            var service = new AppIdentityService(users, codes, apps, grants, AuthLifetimes.Defaults, clock);
+            var settings = new CoreSettingsService(new CoreSettingsStore(paths, NullLogger<CoreSettingsStore>.Instance));
+            var service = new AppIdentityService(users, codes, apps, grants, settings, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             await apps.UpsertAppAsync(CreateApp());
             return new IdentityFixture(users, apps, grants, service, paths, clock);

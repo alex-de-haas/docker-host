@@ -170,6 +170,23 @@ export type CoreBootstrapState = {
   actionError?: string | null;
 };
 
+// Core's own behavior settings (auth session/grant lifetimes for now), served in the same shape as
+// per-app settings so the platform panel renders them with the shared settings form. `value` is the
+// current effective value; `default` is the built-in fallback; `group` clusters related keys.
+export type CoreSettingItem = {
+  key: string;
+  type: string;
+  value: string;
+  default: string;
+  group: string;
+  label?: string | null;
+  description?: string | null;
+};
+
+export type CoreSettingsState = {
+  settings: CoreSettingItem[];
+};
+
 export type CoreBackup = {
   appId: string;
   backupId: string;

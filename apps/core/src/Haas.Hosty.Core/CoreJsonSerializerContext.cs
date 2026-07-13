@@ -55,6 +55,10 @@ internal static class CoreJson
 [JsonSerializable(typeof(BootstrapChoicesDocument))]
 [JsonSerializable(typeof(CoreBootstrapChoiceRequest))]
 [JsonSerializable(typeof(CoreBootstrapStateResponse))]
+// Core-owned behavior settings (auth lifetimes) edited from the Shell platform panel.
+[JsonSerializable(typeof(CoreSettingsDocument))]
+[JsonSerializable(typeof(CoreSettingsResponse))]
+[JsonSerializable(typeof(CoreSettingsUpdateRequest))]
 [JsonSerializable(typeof(AuditRecord))]
 [JsonSerializable(typeof(AppAuthCodeState))]
 [JsonSerializable(typeof(AppSessionGrantState))]
