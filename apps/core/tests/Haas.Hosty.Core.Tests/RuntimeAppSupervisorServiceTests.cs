@@ -659,7 +659,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     private static bool IsDistributionStamped(AppRecord app)
-        => string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal);
+        => string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal) && app.System;
 
     private static async Task<AppRecord> WaitForAppVersionAsync(AppRegistryStore apps, string appId, string version)
     {
