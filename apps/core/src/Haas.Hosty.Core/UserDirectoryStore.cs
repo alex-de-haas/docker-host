@@ -82,7 +82,11 @@ internal sealed record AuthSessionRecord(
     string UserId,
     DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt,
-    DateTimeOffset? RevokedAt);
+    DateTimeOffset? RevokedAt,
+    // Last authenticated use, advanced (throttled) on session resolution to slide the idle window.
+    // ExpiresAt is the absolute cap; a session is valid only while both windows hold. Null on records
+    // written before sliding shipped — treated as CreatedAt.
+    DateTimeOffset? LastSeenAt = null);
 
 internal sealed record LocalPasswordCredentialRecord(
     string UserId,

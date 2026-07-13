@@ -27,12 +27,13 @@ internal static class AuthBootstrapEndpoints
             AuthBootstrapService bootstrap,
             UserDirectoryStore users,
             IClock clock,
+            AuthLifetimes lifetimes,
             HostyCoreRuntimeConfig config,
             CancellationToken cancellationToken) =>
             await HandleAuthBootstrapError(async () =>
             {
                 var user = await bootstrap.BootstrapAsync(input, cancellationToken);
-                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, cancellationToken);
+                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, lifetimes, cancellationToken);
                 return new AuthBootstrapCompleteResponse(user, config.EffectiveShellPublicOrigin);
             }));
 
@@ -43,12 +44,13 @@ internal static class AuthBootstrapEndpoints
             AuthBootstrapService bootstrap,
             UserDirectoryStore users,
             IClock clock,
+            AuthLifetimes lifetimes,
             HostyCoreRuntimeConfig config,
             CancellationToken cancellationToken) =>
             await HandleAuthBootstrapError(async () =>
             {
                 var user = await bootstrap.RecoverAsync(input, cancellationToken);
-                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, cancellationToken);
+                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, lifetimes, cancellationToken);
                 return new AuthRecoveryCompleteResponse(user, config.EffectiveShellPublicOrigin);
             }));
     }

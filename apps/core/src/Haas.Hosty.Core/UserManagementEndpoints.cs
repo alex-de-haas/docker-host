@@ -86,12 +86,13 @@ internal static class UserManagementEndpoints
             UserManagementService management,
             UserDirectoryStore users,
             IClock clock,
+            AuthLifetimes lifetimes,
             UserInvitationAcceptRequest input,
             CancellationToken cancellationToken) =>
             await HandleUserManagementError(async () =>
             {
                 var user = await management.AcceptInvitationAsync(input, cancellationToken);
-                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, cancellationToken);
+                _ = await AuthEndpoints.CreateSessionAsync(user.Id, secureCookie: request.IsHttps, response, users, clock, lifetimes, cancellationToken);
                 return new UserInvitationAcceptResponse(user, user.Role == "host.admin" ? "/" : "/apps");
             }));
 

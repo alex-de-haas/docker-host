@@ -17,11 +17,54 @@ public sealed class AuthEndpointsTests
             context.Response,
             fixture.Users,
             fixture.Clock,
+            AuthLifetimes.Defaults,
             CancellationToken.None);
         var cookie = context.Response.Headers.SetCookie.ToString();
 
         Assert.True(result.Succeeded);
         Assert.Contains("secure", cookie, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_PrunesIdleExpiredSessionsOnWrite()
+    {
+        var fixture = await AuthEndpointFixture.CreateAsync();
+        var lifetimes = AuthLifetimes.Defaults;
+        var now = fixture.Clock.UtcNow;
+        // An idle-expired session: within its absolute cap but long past the idle window.
+        var idleExpired = new AuthSessionRecord(
+            "old_session",
+            "user_1",
+            now.Add(-lifetimes.CoreSessionAbsolute).AddDays(1),
+            now.Add(lifetimes.CoreSessionAbsolute),
+            RevokedAt: null,
+            LastSeenAt: now.Subtract(lifetimes.CoreSessionIdle).AddDays(-1));
+        var state = await fixture.Users.ReadAsync();
+        await fixture.Users.WriteAsync(state with { Sessions = [idleExpired] });
+
+        await AuthEndpoints.CreateSessionAsync("user_1", secureCookie: false, new DefaultHttpContext().Response, fixture.Users, fixture.Clock, lifetimes, CancellationToken.None);
+
+        var sessions = (await fixture.Users.ReadAsync()).Sessions;
+        Assert.DoesNotContain(sessions, session => session.Id == "old_session");
+        Assert.Single(sessions);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_UsesConfiguredAbsoluteLifetimeAndSlidesIdle()
+    {
+        var fixture = await AuthEndpointFixture.CreateAsync();
+        var context = new DefaultHttpContext();
+        var lifetimes = AuthLifetimes.Defaults;
+
+        await AuthEndpoints.CreateSessionAsync("user_1", secureCookie: false, context.Response, fixture.Users, fixture.Clock, lifetimes, CancellationToken.None);
+
+        var state = await fixture.Users.ReadAsync();
+        var session = Assert.Single(state.Sessions);
+        Assert.Equal(fixture.Clock.UtcNow.Add(lifetimes.CoreSessionAbsolute), session.ExpiresAt);
+        Assert.Equal(fixture.Clock.UtcNow, session.LastSeenAt);
+        Assert.True(CoreSessionAuthorization.IsSessionLive(session, fixture.Clock.UtcNow, lifetimes.CoreSessionIdle));
+        // Idle window enforced independent of the absolute cap.
+        Assert.False(CoreSessionAuthorization.IsSessionLive(session, fixture.Clock.UtcNow.Add(lifetimes.CoreSessionIdle).AddSeconds(1), lifetimes.CoreSessionIdle));
     }
 
     [Theory]

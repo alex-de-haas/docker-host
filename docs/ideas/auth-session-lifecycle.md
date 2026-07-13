@@ -110,11 +110,13 @@ Core: per-code status mapping in `HandleIdentityError` (+ `token_revoked` reserv
 **Phase 2 — recovery.**
 Core: `returnTo` continuation on `/login` (constrained to Core-relative `/api/apps/{id}/open`), `/open` redirects to `/login` instead of JSON 401 for browser navigations. Apps: unauthorized page with once-per-tab auto-navigation + explicit sign-in button (standalone), `hosty:auth-required` postMessage (embedded), embedding detection and non-Shell fallback. Shell: verified message handler, launch-code reissue, iframe `src` swap, per-iframe rate limit; Shell version bump per release policy.
 
-**Phase 3 — app session grants.**
-Core: `app-grants` store (separate private file beside the auth state, temp+rename discipline), grant issuance in exchange/launch/CLI-diagnostic paths, revalidate against grants with throttled `lastSeenAt`, explicit-logout cascade, pruning, lifetime config knobs and defaults. Apps: cookie `Max-Age` follows `expiresInSeconds` (remove 24-hour caps). Update feature docs; platform version bump.
+**Phase 3 — app session grants. (Shipped — PR B.)**
+Core: `AppSessionGrantStore` (separate `app-grants.json` private file), opaque `hostyg_`-prefixed tokens with only the SHA-256 hash persisted, grant issuance in exchange (`code`) / CLI-diagnostic paths, revalidate against grants with throttled `LastSeenAt` (5 min), explicit-logout cascade by authorizing session id, pruning on write. The previous signed-JWT app token and its signing key were removed. Lifetime knobs in `AuthLifetimes` (`HOSTY_AUTH_APP_GRANT_*`, `HOSTY_AUTH_SYSTEM_GRANT_*`, `HOSTY_AUTH_CLI_GRANT_HOURS`); defaults 7d/30d regular, 3d/14d system, 12h CLI. Apps: cookie `Max-Age` follows `expiresInSeconds` (24-hour caps raised).
 
-**Phase 4 — sliding Core sessions.**
-Core: `lastSeenAt` on session records, throttled idle extension with cookie re-issue, absolute cap, pruning, config knobs. `/login` pages unchanged.
+**Phase 4 — sliding Core sessions. (Shipped — PR B.)**
+Core: `LastSeenAt` on `AuthSessionRecord`, `IsSessionLive` enforces absolute cap (`ExpiresAt`) + sliding idle window, throttled idle extension in `ResolveSessionAsync`, session pruning on write. Lifetimes from `AuthLifetimes` (`HOSTY_AUTH_CORE_SESSION_IDLE_HOURS` / `HOSTY_AUTH_CORE_SESSION_ABSOLUTE_HOURS`; default 7d/30d, up from a fixed 12h absolute). The cookie `Expires` is the absolute cap, so no per-request cookie re-issue is needed; `/login` pages unchanged.
+
+Deviation from the original sketch: the sliding Core session enforces the idle window server-side via `LastSeenAt` rather than re-issuing the cookie each extension — the cookie already lasts to the absolute cap, so a re-issue would add writes without changing behavior.
 
 ## Boundaries
 

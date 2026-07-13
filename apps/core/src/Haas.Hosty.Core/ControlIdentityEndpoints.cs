@@ -75,7 +75,8 @@ internal static class ControlIdentityEndpoints
                     }
 
                     var redirectUri = input.RedirectUri ?? await ResolveDefaultRedirectUriAsync(apps, appId, cancellationToken);
-                    var authorization = await identity.CreateAuthorizationCodeAsync(appId, user.Id, redirectUri, cancellationToken);
+                    // Control-channel open link: no browser Core session authorizes it, so no logout cascade.
+                    var authorization = await identity.CreateAuthorizationCodeAsync(appId, user.Id, redirectUri, cancellationToken: cancellationToken);
                     return CoreJson.Json(new AppOpenLinkResponse(
                         AppId: appId,
                         UserId: user.Id,

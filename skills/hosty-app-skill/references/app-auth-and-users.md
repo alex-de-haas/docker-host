@@ -19,7 +19,7 @@ Two origins are injected; use the right one for the caller:
 
 ## Handling Expired Or Invalid Sessions (Recovery)
 
-> Design reference: [`docs/ideas/auth-session-lifecycle.md`](../../../docs/ideas/auth-session-lifecycle.md). The 401/403 split and the Shell `hosty:auth-required` responder shipped in Phases 1+2 (Core, Shell 0.31.0). Phases 3+4 (opaque app session grants + sliding idle/absolute lifetimes) are not implemented yet, so tokens still have a fixed lifetime — build to this recovery contract regardless.
+> Design reference: [`docs/ideas/auth-session-lifecycle.md`](../../../docs/ideas/auth-session-lifecycle.md). Fully shipped: the 401/403 recovery contract, the Shell `hosty:auth-required` responder, opaque server-side app session grants (Core stores only the token hash), and sliding idle + absolute session lifetimes. The app identity token is an opaque `hostyg_` value — never assume a JWT — and its `expiresInSeconds` is the grant's absolute lifetime; set the app cookie `Max-Age` from it.
 
 An app session ends eventually (idle/absolute expiry, revoke, admin change). The app must **recover, not dead-end** — never render a bare "not authorized" page with no way forward. Classify the revalidation outcome into three cases and act differently:
 

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Haas.Hosty.Core;
 
 internal static class CoreSessionAuthorization
@@ -5,6 +7,18 @@ internal static class CoreSessionAuthorization
     public const string SessionCookieName = "hosty_session";
     public const string CsrfCookieName = "hosty_csrf";
     public const string CsrfHeaderName = "X-Hosty-CSRF";
+
+    // Slide the session idle window at most once per this interval; idle TTLs are days, so a few minutes
+    // of imprecision is irrelevant and this keeps per-request resolution from rewriting the store.
+    private static readonly TimeSpan TouchThrottle = TimeSpan.FromMinutes(5);
+
+    // A session is live only while it is unrevoked, within its absolute cap (ExpiresAt), and within the
+    // sliding idle window (last use + idle TTL). Records written before sliding shipped have no LastSeenAt
+    // and fall back to CreatedAt.
+    public static bool IsSessionLive(AuthSessionRecord session, DateTimeOffset now, TimeSpan idle)
+        => session.RevokedAt is null &&
+            session.ExpiresAt > now &&
+            (session.LastSeenAt ?? session.CreatedAt).Add(idle) > now;
 
     public static async Task<IResult> RequireAdminSessionAsync(
         HttpRequest request,
@@ -94,6 +108,11 @@ internal static class CoreSessionAuthorization
         return new NavigationSessionResult(null, authorization.Terminal ? authorization.Error : null);
     }
 
+    // The Core session id is the session cookie value. Exposed so identity flows can stamp the grant they
+    // issue with the authorizing session, enabling the explicit-logout cascade.
+    public static string? ReadSessionId(HttpRequest request)
+        => request.Cookies[SessionCookieName];
+
     public static string? ReadBearerToken(HttpRequest request)
     {
         if (!request.Headers.TryGetValue("Authorization", out var header))
@@ -128,11 +147,12 @@ internal static class CoreSessionAuthorization
             return Unauthorized("session_missing", "Core session cookie is missing.");
         }
 
+        var now = clock.UtcNow;
+        var idle = ResolveLifetimes(request).CoreSessionIdle;
         var state = await users.ReadAsync(cancellationToken);
         var session = state.Sessions.FirstOrDefault(candidate =>
             string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
-            candidate.RevokedAt is null &&
-            candidate.ExpiresAt > clock.UtcNow);
+            IsSessionLive(candidate, now, idle));
         if (session is null)
         {
             return Unauthorized("session_invalid", "Core session is missing, expired, or revoked.");
@@ -156,7 +176,43 @@ internal static class CoreSessionAuthorization
                 Terminal: true);
         }
 
+        await TouchSessionAsync(users, session, now, cancellationToken);
         return new CoreSessionAuthorizationResult(user, null);
+    }
+
+    private static AuthLifetimes ResolveLifetimes(HttpRequest request)
+        => request.HttpContext.RequestServices?.GetService<AuthLifetimes>() ?? AuthLifetimes.Defaults;
+
+    // Advance the idle window on authenticated use, throttled. Best-effort: a concurrent write that already
+    // removed or revoked the session simply leaves it unchanged (the FirstOrDefault guard inside the
+    // mutation), and a failure here must not fail the authenticated request, so it is fire-and-forget-safe.
+    private static async Task TouchSessionAsync(
+        UserDirectoryStore users,
+        AuthSessionRecord session,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (now - (session.LastSeenAt ?? session.CreatedAt) < TouchThrottle)
+        {
+            return;
+        }
+
+        try
+        {
+            await users.UpdateAsync(state => state with
+            {
+                Sessions = state.Sessions
+                    .Select(candidate => string.Equals(candidate.Id, session.Id, StringComparison.Ordinal) && candidate.RevokedAt is null
+                        ? candidate with { LastSeenAt = now }
+                        : candidate)
+                    .ToArray(),
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Sliding the idle window is advisory; a transient I/O or concurrency failure must not fail the
+            // authenticated request. Client cancellation still propagates. The window slides on the next use.
+        }
     }
 
     private static CoreSessionAuthorizationResult Unauthorized(string code, string message)
