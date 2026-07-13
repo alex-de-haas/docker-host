@@ -1,8 +1,27 @@
 # On-Demand System App Updates
 
-Status: Idea
+Status: Partially implemented (2026-07-13)
 Created: 2026-07-10
-Updated: 2026-07-10
+Updated: 2026-07-13
+
+> **Implementation note (2026-07-13).** The first increment shipped, scoped deliberately to "same
+> mechanics as runtime apps" rather than the full hardened design below:
+>
+> - Core startup no longer creates or applies update plans for installed system apps. Boot installs
+>   missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s)
+>   distribution `manifestRef` as a pointer-only record update (`SystemAppBootstrapService.MigrateManifestReferenceAsync`).
+> - `GET /api/apps/{appId}/update-status` refetches the stored manifest URL as the candidate for
+>   non-feed apps, so manifest movement (including new versioned image tags) is detected for system
+>   apps and ordinary URL installs alike.
+> - Shell enables the reviewed update flow (fleet Check updates, row badge, plan/apply dialog) for
+>   system apps; eligibility is `host.admin` + `update` capability + not a live source runtime.
+>   Telemetry's manifest now declares `update` (0.4.2).
+> - Shell self-update keeps the tab alive, then polls its own origin and reloads once the new Shell
+>   answers; the update dialog carries a self-update warning with CLI recovery.
+>
+> Still open from the design below: staged apply (prepare before stop), readiness gate + automatic
+> rollback, immutable versioned Shell image tags, compatibility metadata, and the update-pending
+> notification when Core's own version moves ahead (Review Remark 5).
 
 ## Motivation
 

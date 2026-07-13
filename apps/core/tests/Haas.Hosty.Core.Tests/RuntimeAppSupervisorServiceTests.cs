@@ -9,14 +9,12 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     private readonly string root = Path.Combine(Path.GetTempPath(), $"hosty-supervisor-tests-{Guid.NewGuid():N}");
 
     [Fact]
-    public async Task StartAsync_ReconcilesInstalledShellFromConfiguredManifestUrl()
+    public async Task StartAsync_DoesNotUpdateInstalledShell_MigratesManifestReferenceOnly()
     {
         const string manifestUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
-        var remoteManifest = CreateShellManifest("0.2.0", "ghcr.io/alex-de-haas/hosty-shell", "latest", "always");
-        var fixture = CreateFixture(_ => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(remoteManifest, Encoding.UTF8, "application/json"),
-        });
+        // Boot must not fetch the remote manifest at all: an installed system app updates through the
+        // operator's reviewed update flow, never at Core start (docs/ideas/system-app-updates.md).
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected at boot"));
         var oldManifest = Path.Combine(root, "old-shell-manifest.json");
         await File.WriteAllTextAsync(oldManifest, CreateShellManifest("0.1.0", "hosty-shell", "local", "never"));
         await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
@@ -33,9 +31,11 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             var shell = await WaitForAppAsync(
                 fixture.Apps,
                 "hosty.shell",
-                app => string.Equals(app.Version, "0.2.0", StringComparison.Ordinal) && IsDistributionStamped(app));
+                app => string.Equals(app.ManifestUrl, manifestUrl, StringComparison.Ordinal) && IsDistributionStamped(app));
 
-            Assert.Equal(manifestUrl, shell.ManifestUrl);
+            // The update-source pointer migrated to the configured reference, but the installed app
+            // itself did not move.
+            Assert.Equal("0.1.0", shell.Version);
             Assert.Equal("docker", shell.SelectedRuntime);
             Assert.False(shell.Autostart);
             // A pre-existing record is adopted by the distribution bootstrap.
@@ -68,7 +68,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_ReconcilesInstalledShellFromRemoteManifestToConfiguredLocalPath()
+    public async Task StartAsync_LocalDistributionReference_KeepsInstalledManifestUrl()
     {
         const string manifestUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
         var shellManifest = CreateShellManifest("0.2.0", "ghcr.io/alex-de-haas/hosty-shell", "latest", "always");
@@ -89,10 +89,54 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            var shell = await WaitForShellManifestUrlAsync(fixture.Apps, expectedManifestUrl: null);
+            // Reference migration only follows http(s) reference moves; a local distribution ref (dev
+            // host walking the repo) leaves the installed record and its remote update source alone.
+            var shell = await WaitForAppAsync(fixture.Apps, "hosty.shell", IsDistributionStamped);
 
             Assert.Equal("0.2.0", shell.Version);
-            Assert.Null(shell.ManifestUrl);
+            Assert.Equal(manifestUrl, shell.ManifestUrl);
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_MovedManifestUrl_MigratesReferenceWithoutFetch()
+    {
+        const string oldUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/collector/manifest.json";
+        const string newUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json";
+        var shellManifest = CreateShellManifest("0.2.0", "ghcr.io/alex-de-haas/hosty-shell", "latest", "always");
+        var fetches = 0;
+        var fixture = CreateFixture(request =>
+        {
+            // Only the initial URL install may fetch; the boot migration itself must not.
+            if (Interlocked.Increment(ref fetches) > 1)
+            {
+                throw new HttpRequestException("no remote fetches expected at boot");
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(shellManifest, Encoding.UTF8, "application/json"),
+            };
+        });
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: oldUrl,
+            SelectedRuntime: "docker",
+            System: true,
+            Autostart: false));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var supervisor = CreateSupervisor(fixture, config, CreateDistribution(("hosty.shell", newUrl, true)));
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            var shell = await WaitForShellManifestUrlAsync(fixture.Apps, expectedManifestUrl: newUrl);
+
+            // The pointer moved with the distribution list; the installed app did not change.
+            Assert.Equal("0.2.0", shell.Version);
         }
         finally
         {
@@ -219,7 +263,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_MarketplaceReconciliation_PreservesInstalledRuntimeAndAutostart()
+    public async Task StartAsync_NewerDistributionManifest_DoesNotUpdateInstalledApp()
     {
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var originalManifest = Path.Combine(root, "marketplace-original.json");
@@ -240,8 +284,11 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            var marketplace = await WaitForAppVersionAsync(fixture.Apps, MarketplaceBootstrap.AppId, "0.2.0");
+            // A newer manifest behind the distribution entry is an ordinary update: it waits for the
+            // operator's reviewed plan/apply and must not be applied by the boot reconcile.
+            var marketplace = await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId, IsDistributionStamped);
 
+            Assert.Equal("0.1.0", marketplace.Version);
             Assert.Equal("docker", marketplace.SelectedRuntime);
             Assert.False(marketplace.Autostart);
         }
@@ -660,23 +707,6 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
 
     private static bool IsDistributionStamped(AppRecord app)
         => string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal) && app.System;
-
-    private static async Task<AppRecord> WaitForAppVersionAsync(AppRegistryStore apps, string appId, string version)
-    {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            var app = await apps.GetAppAsync(appId);
-            if (app?.Version == version)
-            {
-                return app;
-            }
-
-            await Task.Delay(50);
-        }
-
-        throw new TimeoutException($"{appId} did not reach version {version}.");
-    }
 
     private static async Task WaitForFileAsync(string path)
     {

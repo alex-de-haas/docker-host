@@ -15,6 +15,14 @@ Status: Implemented.
 > `hosty.shell` reconciles like any other app. For current behavior see `docs/ideas/generic-bootstrap.md`
 > and `docs/features/cli-bootstrap.md`; treat the `HOSTY_SHELL_MANIFEST_PATH` and
 > `HOSTY_SHELL_BOOTSTRAP_RUNTIME` references below as historical.
+>
+> **Superseded in part (user-driven system-app updates, 2026-07-13).** The startup manifest
+> reconcile described below no longer applies content updates: Core boot installs a missing
+> `hosty.shell` and migrates a moved http(s) manifest reference, but an installed Shell only
+> advances through the operator's reviewed update flow (Shell UI or CLI), like every other runtime
+> app. "System apps remain inspect-only" below is also historical — reviewed updates are now
+> enabled for system apps. See `docs/features/runtime-app-update.md` (System Apps) and
+> `docs/ideas/system-app-updates.md`.
 
 ## Goal
 

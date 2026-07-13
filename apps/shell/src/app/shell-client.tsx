@@ -70,6 +70,29 @@ import type {
 // re-posting hosty:auth-required.
 const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
 
+// Polls this page's own origin until the restarted Shell answers again. Used after a Shell
+// self-update: the already-loaded bundle keeps working against Core while the Shell container
+// swaps, but the new build only reaches the browser via a reload — which must wait until the new
+// Shell is actually up. Resolves false on timeout so the caller keeps the old page alive instead
+// of reloading into a connection error.
+async function waitForOwnOrigin(timeoutMs = 90_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch("/", { method: "HEAD", cache: "no-store" });
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      // Shell still restarting; keep polling.
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+  }
+
+  return false;
+}
+
 export function ShellClient({
   coreOrigin,
   shellAppId,
@@ -993,6 +1016,22 @@ export function ShellClient({
         await refresh();
         invalidateUpdateStatus(app.id);
         setActivePanel(null);
+        // Shell self-update: the apply request survives the Shell restart because the browser talks
+        // to Core directly, but the bundle running this page is now the old build. Wait for the new
+        // Shell to answer on our own origin, then reload so the browser loads the new assets. On
+        // timeout keep the (still functional) old page alive instead of reloading into an error.
+        if (app.id === shellAppId) {
+          toast.success("Shell updated", { description: "Waiting for the new Shell, then reloading this page…" });
+          if (await waitForOwnOrigin()) {
+            window.location.reload();
+          } else {
+            toast.warning("Shell is not answering yet", {
+              description: "Keep this tab open and reload manually once the Shell is reachable again.",
+            });
+          }
+          return;
+        }
+
         toast.success("Update applied", { description: app.displayName });
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
@@ -1008,7 +1047,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, invalidateUpdateStatus, refresh, sendCsrfJson],
+    [appEndpoint, invalidateUpdateStatus, refresh, sendCsrfJson, shellAppId],
   );
 
   const removeApp = useCallback(
@@ -1606,6 +1645,7 @@ export function ShellClient({
             coreOrigin={coreOrigin}
             globalMounts={globalMounts}
             canManageApps={Boolean(canManageApps)}
+            isShell={selectedApp.id === shellAppId}
             busyAction={busyAction}
             detail={detailPanel}
             onClose={closeAppPanel}

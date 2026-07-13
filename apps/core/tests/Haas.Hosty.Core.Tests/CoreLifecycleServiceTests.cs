@@ -1705,6 +1705,71 @@ public sealed class CoreLifecycleServiceTests
         Assert.Null(service.CandidateDigest);
     }
 
+    // A URL-installed app without a feed compares against the *refetched* external manifest, not the
+    // installed internal copy. This is what makes a candidate that moves to new versioned image tags
+    // visible at all (system apps installed from the distribution list are the primary case).
+    [Fact]
+    public async Task GetUpdateStatusAsync_RefetchesManifestUrlCandidate_ReportsManifestMovement()
+    {
+        const string manifestUrl = "https://example.test/web/manifest.json";
+        var currentManifest = WebManifest("1.0.0");
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ =>
+            currentManifest is null
+                ? throw new HttpRequestException("remote unavailable")
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(currentManifest, Encoding.UTF8, "application/json"),
+                })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "docker"));
+
+        // The remote manifest moves to a new version with a new versioned image tag.
+        currentManifest = WebManifest("1.1.0");
+
+        var status = await fixture.Service.GetUpdateStatusAsync("com.example.web");
+
+        Assert.True(status.ManifestUpdateAvailable);
+        Assert.True(status.UpdateAvailable);
+        Assert.False(status.ManifestUnknown);
+    }
+
+    [Fact]
+    public async Task GetUpdateStatusAsync_ManifestUrlUnreachable_ReportsManifestUnknown()
+    {
+        const string manifestUrl = "https://example.test/web/manifest.json";
+        var currentManifest = WebManifest("1.0.0");
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ =>
+            currentManifest is null
+                ? throw new HttpRequestException("remote unavailable")
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(currentManifest, Encoding.UTF8, "application/json"),
+                })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "docker"));
+
+        // The remote goes dark: the read-only status check must degrade to "unknown", never fail.
+        currentManifest = null;
+
+        var status = await fixture.Service.GetUpdateStatusAsync("com.example.web");
+
+        Assert.True(status.ManifestUnknown);
+        Assert.False(status.ManifestUpdateAvailable);
+        Assert.False(status.UpdateAvailable);
+    }
+
+    private static string WebManifest(string version) => $$"""
+        {
+          "schemaVersion": "app.0.1",
+          "id": "com.example.web",
+          "name": "Web App",
+          "version": "{{version}}",
+          "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+          "defaultRuntime": "docker",
+          "services": [{ "key": "app", "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/acme/web:{{version}}" } } }]
+        }
+        """;
+
     [Fact]
     public async Task StartAsync_CloudflaredIngress_PersistsPublicOriginAndWritesTunnelConfig()
     {

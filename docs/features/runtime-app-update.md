@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-07-11
+Updated: 2026-07-13
 
 ## Description
 
@@ -27,6 +27,14 @@ If an update request does not provide a manifest reference and the app has both 
 ## Changes
 
 The `changes` list is a human-review summary of the update plan. Core reports specific contract changes when it can classify them, such as `version`, `runtime`, `service`, `image`, `command`, `port`, `environment`, `setting`, `endpoint`, `data`, `dependency`, and `capability` changes. When the target manifest digest differs but none of those contract categories changed, Core reports `manifest` as a fallback meaning "manifest content changed." A recheck against the same installed manifest returns an empty `changes` list.
+
+## Update Availability (`update-status`)
+
+`GET /api/apps/{appId}/update-status` is the read-only probe behind the Shell update badge and the fleet "Check updates" action. It resolves the candidate the reviewed plan would use — the followed feed's current `manifestRef` for feed-bound apps, or a refetch of the stored manifest URL for non-feed URL installs — and reports `updateAvailable` when the candidate manifest digest differs from the installed copy or a locked image tag resolves to a different registry digest. Refetching the external manifest matters for candidates that move to new *versioned* image tags: comparing the registry against the installed copy's old tags would report "up to date" forever. Resolution failures degrade to `unknown` fields, never an error, and the installed app is left untouched.
+
+## System Apps
+
+System apps (Shell, Telemetry, Marketplace) update through this same reviewed flow, gated on `host.admin` plus the app's `update` capability. Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the Shell UI warns, keeps the tab alive through the swap, and reloads once the new Shell answers. See [On-Demand System App Updates](../ideas/system-app-updates.md) for the design and its deferred hardening (readiness gate, automatic rollback).
 
 ## Live Source Runtimes
 

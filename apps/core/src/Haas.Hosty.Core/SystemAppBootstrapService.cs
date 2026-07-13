@@ -225,7 +225,7 @@ internal sealed class SystemAppBootstrapService(
         }
         else
         {
-            app = await ReconcileSystemAppManifestAsync(descriptor, app, cancellationToken);
+            app = await MigrateManifestReferenceAsync(descriptor, app, cancellationToken);
         }
 
         // Provenance + system flag: the app is installed (or adopted) by the distribution
@@ -301,68 +301,41 @@ internal sealed class SystemAppBootstrapService(
             StartOnInstall: false), cancellationToken);
     }
 
-    private async Task<AppRecord?> ReconcileSystemAppManifestAsync(
+    // Boot never advances an installed system app's code or manifest anymore: content movement behind
+    // the configured reference is picked up by the operator through the normal reviewed update flow
+    // (update-status, plan, apply), exactly like every other runtime app. The one thing boot still
+    // fixes is the *pointer*: when the distribution list's manifestRef itself moved (renamed raw URL,
+    // repository move), the stale URL would otherwise 404 in update-status forever. Rewriting the
+    // stored ManifestUrl is metadata-only — no plan, no artifact movement, no restart.
+    private async Task<AppRecord?> MigrateManifestReferenceAsync(
         SystemAppBootstrapDescriptor descriptor,
         AppRecord app,
         CancellationToken cancellationToken)
     {
-        // A feed-bound record updates through the normal digest-bound feed update flow (update-status,
-        // reviewed apply); a boot-time manifest reconcile would bypass that review and strip the feed
-        // state, so it is deliberately skipped.
+        // A feed-bound record follows its feed; the distribution manifestRef is not its update source.
         if (!string.IsNullOrWhiteSpace(app.FeedsUrl))
         {
             return app;
         }
 
-        if (descriptor.Runtime is not null &&
-            !string.Equals(app.SelectedRuntime ?? descriptor.Runtime, descriptor.Runtime, StringComparison.Ordinal))
-        {
-            logger.LogInformation(
-                "{DisplayName} bootstrap reconciliation skipped because installed runtime {InstalledRuntime} differs from configured runtime {ConfiguredRuntime}.",
-                descriptor.DisplayName,
-                app.SelectedRuntime,
-                descriptor.Runtime);
-            return app;
-        }
-
-        var plan = await lifecycle.CreateUpdatePlanAsync(
-            descriptor.AppId,
-            new AppUpdatePlanRequest(descriptor.ManifestPath, descriptor.Runtime ?? app.SelectedRuntime),
-            cancellationToken);
-
-        // Reconcile also when the configured manifest reference itself moved (e.g. a renamed raw URL
-        // or a switch between remote and local), even with zero content changes — otherwise the
-        // record keeps updating from a stale source forever.
-        if (plan.Changes.Count == 0 && !HasManifestReferenceChanged(descriptor, app))
+        if (!IsHttpManifestReference(descriptor.ManifestPath) ||
+            string.Equals(app.ManifestUrl, descriptor.ManifestPath, StringComparison.Ordinal))
         {
             return app;
         }
 
         logger.LogInformation(
-            "{DisplayName} bootstrap applying manifest reconciliation with {ChangeCount} reported changes.",
+            "{DisplayName} bootstrap migrating manifest reference from {OldReference} to {NewReference}; the app itself is not updated at boot.",
             descriptor.DisplayName,
-            plan.Changes.Count);
-        await lifecycle.ApplyUpdateAsync(
+            app.ManifestUrl ?? "(local path)",
+            descriptor.ManifestPath);
+        return (await apps.UpdateAppAsync(
             descriptor.AppId,
-            new AppUpdateApplyRequest(
-                PlanDigest: plan.PlanDigest,
-                ManifestPath: descriptor.ManifestPath,
-                SelectedRuntime: descriptor.Runtime ?? app.SelectedRuntime),
-            cancellationToken);
-        return await apps.GetAppAsync(descriptor.AppId, cancellationToken);
+            record => record with { ManifestUrl = descriptor.ManifestPath },
+            cancellationToken)).App;
     }
 
     private static bool IsHttpManifestReference(string? manifestPath)
         => Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
-
-    private static bool HasManifestReferenceChanged(SystemAppBootstrapDescriptor descriptor, AppRecord app)
-    {
-        if (IsHttpManifestReference(descriptor.ManifestPath))
-        {
-            return !string.Equals(app.ManifestUrl, descriptor.ManifestPath, StringComparison.Ordinal);
-        }
-
-        return !string.IsNullOrWhiteSpace(app.ManifestUrl);
-    }
 }

@@ -41,6 +41,7 @@ export function AppDetailsDialog({
   coreOrigin,
   globalMounts,
   canManageApps,
+  isShell,
   busyAction,
   detail,
   onClose,
@@ -65,6 +66,9 @@ export function AppDetailsDialog({
   coreOrigin: string;
   globalMounts: CoreGlobalMount[];
   canManageApps: boolean;
+  // True when this app is the Shell serving the current page — its update view carries a
+  // self-update warning (the Shell restarts under the operator, then the page reloads).
+  isShell: boolean;
   busyAction: string | null;
   detail: DetailPanelState;
   onClose: () => void;
@@ -83,10 +87,12 @@ export function AppDetailsDialog({
   onSetFeed: (app: CoreApp, feedId: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
 }) {
-  // Settings (env/public origins/mounts/source) are available for system apps too; only backups,
-  // update, and remove stay hidden for them.
+  // Settings (env/public origins/mounts/source) and reviewed updates are available for system apps
+  // too; only backups and remove stay hidden for them. System apps update through the exact same
+  // plan/apply flow as every other runtime app (docs/ideas/system-app-updates.md).
   const canMutateApp = canManageApps && !app.system;
   const canConfigureApp = canManageApps;
+  const canUpdateApp = canManageApps;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -126,10 +132,10 @@ export function AppDetailsDialog({
         ) : (
           <InlineError message="You do not have permission to manage app settings." />
         ))}
-        {view === "update" && (canMutateApp ? (
-          <UpdatePanel app={app} detail={detail} coreOrigin={coreOrigin} canManageApps={canMutateApp} busyAction={busyAction} onApplyUpdate={onApplyUpdate} onSetFeed={onSetFeed} />
+        {view === "update" && (canUpdateApp ? (
+          <UpdatePanel app={app} detail={detail} coreOrigin={coreOrigin} canManageApps={canUpdateApp} isShell={isShell} busyAction={busyAction} onApplyUpdate={onApplyUpdate} onSetFeed={onSetFeed} />
         ) : (
-          <InlineError message="System app update controls are not available in Shell." />
+          <InlineError message="You do not have permission to update apps." />
         ))}
         {view === "remove" && <RemovePanel app={app} busyAction={busyAction} canRemove={canMutateApp} onRemove={onRemove} />}
         {view === "logs" && <ConsoleLogsPanel app={app} coreOrigin={coreOrigin} />}
@@ -918,6 +924,7 @@ function UpdatePanel({
   detail,
   coreOrigin,
   canManageApps,
+  isShell,
   busyAction,
   onApplyUpdate,
   onSetFeed,
@@ -926,6 +933,7 @@ function UpdatePanel({
   detail: DetailPanelState;
   coreOrigin: string;
   canManageApps: boolean;
+  isShell: boolean;
   busyAction: string | null;
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
   onSetFeed: (app: CoreApp, feedId: string) => void;
@@ -961,6 +969,16 @@ function UpdatePanel({
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
         <FeedSection app={app} coreOrigin={coreOrigin} canManageApps={canManageApps} busyAction={busyAction} onSetFeed={onSetFeed} />
+        {isShell && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              This is the Shell serving this page. Applying the update briefly restarts it — keep this tab open; the page
+              reloads automatically once the new Shell is up. If the new build fails to start, recover from a terminal with{" "}
+              <code className="rounded bg-muted px-1">hosty apps start hosty.shell</code>.
+            </span>
+          </div>
+        )}
         {sourceMissing && (
           <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />

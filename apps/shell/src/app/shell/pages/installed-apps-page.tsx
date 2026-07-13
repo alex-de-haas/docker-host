@@ -174,12 +174,13 @@ export function InstalledAppsPage({
     }
   }, [updateStatusInvalidations, runtimeApps, systemApps, loadUpdateStatus]);
 
-  // Fleet "Check updates": probe every runtime app that has a reviewed-update path. Live source apps
-  // (manifest adopted on restart) and apps without the update capability are skipped — mirrors the
-  // per-row `canUpdate` gate. Runs a small concurrency pool so a large fleet does not fan out N
-  // registry lookups at once, then summarises the outcome in a toast.
+  // Fleet "Check updates": probe every app that has a reviewed-update path — system apps included,
+  // since they update through the same plan/apply flow. Live source apps (manifest adopted on
+  // restart) and apps without the update capability are skipped — mirrors the per-row `canUpdate`
+  // gate. Runs a small concurrency pool so a large fleet does not fan out N registry lookups at
+  // once, then summarises the outcome in a toast.
   const checkAllUpdates = useCallback(async () => {
-    const targets = runtimeApps.filter((app) => !app.live && app.capabilities.includes("update"));
+    const targets = [...runtimeApps, ...systemApps].filter((app) => !app.live && app.capabilities.includes("update"));
     if (targets.length === 0) {
       toast.info("No updatable apps", { description: "Runtime apps with a reviewed update path will appear here." });
       return;
@@ -214,7 +215,7 @@ export function InstalledAppsPage({
     } finally {
       setCheckingUpdates(false);
     }
-  }, [runtimeApps, loadUpdateStatus]);
+  }, [runtimeApps, systemApps, loadUpdateStatus]);
 
   return (
     <div className="space-y-6">
@@ -813,11 +814,14 @@ function InstalledAppRow({
   const canSwitchRuntime = canManageApps;
   const canBackup = canControl && app.capabilities.includes("backup");
   // Settings (env/public origins/mounts/source) are available for system apps too; only start/stop,
-  // backups, update, and remove stay gated on !app.system via canControl.
+  // backups, and remove stay gated on !app.system via canControl.
   const canConfigure = canManageApps;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
   // Update affordance is hidden and the live-source status icon is shown instead. See CoreApp.live.
-  const canUpdate = canControl && !app.live && app.capabilities.includes("update");
+  // Deliberately not gated on !app.system: system apps go through the same reviewed plan/apply flow
+  // as every other runtime app (docs/ideas/system-app-updates.md); only start/stop, backups, and
+  // remove stay system-gated via canControl.
+  const canUpdate = canManageApps && !app.live && app.capabilities.includes("update");
   // The Update button is promoted out of the actions menu into the row: it appears only once an
   // update-status probe (row expand or the header "Check updates") has confirmed one is available.
   const updateAvailable = canUpdate && (updateStatusState?.status?.updateAvailable ?? false);
