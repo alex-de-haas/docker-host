@@ -73,6 +73,7 @@ public sealed class CoreSettingsServiceTests : IDisposable
     [InlineData(-5)]
     [InlineData(double.NaN)]
     [InlineData(double.PositiveInfinity)]
+    [InlineData(double.MaxValue)] // finite but overflows TimeSpan — must be rejected, not persisted
     public async Task UpdateAsync_RejectsNonPositiveOrNonFinite(double hours)
     {
         var service = CreateService();
@@ -92,6 +93,21 @@ public sealed class CoreSettingsServiceTests : IDisposable
         var service = CreateService();
 
         Assert.Equal(AuthLifetimes.FromEnvironment(), service.AuthLifetimes);
+    }
+
+    [Fact]
+    public void Load_OutOfRangeHandEditedValue_IsSkippedNotCrash()
+    {
+        // A hand-edited settings.json with a finite but TimeSpan-overflowing magnitude must not crash
+        // startup: the bad entry is ignored and that key follows the baseline.
+        Directory.CreateDirectory(Path.Combine(root, "core"));
+        File.WriteAllText(
+            Path.Combine(root, "core", CoreSettingsSchema.FileName),
+            "{\"schemaVersion\":\"" + CoreSettingsSchema.Version + "\",\"auth\":{\"HOSTY_AUTH_CLI_GRANT_HOURS\":1e18}}");
+
+        var service = CreateService();
+
+        Assert.Equal(AuthLifetimes.FromEnvironment().CliGrantLifetime, service.AuthLifetimes.CliGrantLifetime);
     }
 
     [Fact]

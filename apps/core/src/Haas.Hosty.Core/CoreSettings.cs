@@ -171,9 +171,9 @@ internal sealed class CoreSettingsService
                 throw new AppLifecycleException("core_setting_unknown", $"Unknown Core setting '{key}'.");
             }
 
-            if (!double.IsFinite(hours) || hours <= 0)
+            if (!TryFromHours(hours, out _))
             {
-                throw new AppLifecycleException("core_setting_invalid", $"'{key}' must be a positive number of hours.");
+                throw new AppLifecycleException("core_setting_invalid", $"'{key}' must be a positive number of hours within range.");
             }
         }
 
@@ -203,9 +203,10 @@ internal sealed class CoreSettingsService
         var overrides = new Dictionary<string, double>(StringComparer.Ordinal);
         foreach (var (key, hours) in document.Auth)
         {
-            // A file hand-edited to an unknown key or a bad value is ignored per-entry rather than
-            // rejecting the whole file — the same tolerance the env parser applies.
-            if (CoreAuthSettings.IsKnown(key) && double.IsFinite(hours) && hours > 0)
+            // A file hand-edited to an unknown key or a bad value (non-positive, non-finite, or a
+            // magnitude that overflows TimeSpan) is ignored per-entry rather than rejecting the whole
+            // file or crashing startup — the same tolerance the env parser applies.
+            if (CoreAuthSettings.IsKnown(key) && TryFromHours(hours, out _))
             {
                 overrides[key] = hours;
             }
@@ -219,13 +220,39 @@ internal sealed class CoreSettingsService
         var lifetimes = AuthLifetimes.FromEnvironment();
         foreach (var definition in CoreAuthSettings.All)
         {
-            if (overrides.TryGetValue(definition.Key, out var hours))
+            // Both entry points (LoadOverrides, UpdateAsync) already filter to convertible values, so
+            // the guard here is belt-and-suspenders: Compute runs during service construction and must
+            // never throw and take down startup.
+            if (overrides.TryGetValue(definition.Key, out var hours) && TryFromHours(hours, out var span))
             {
-                lifetimes = definition.With(lifetimes, TimeSpan.FromHours(hours));
+                lifetimes = definition.With(lifetimes, span);
             }
         }
 
         return lifetimes;
+    }
+
+    // Converts an hours value to a TimeSpan, rejecting non-finite, non-positive, and out-of-range
+    // magnitudes — TimeSpan.FromHours throws OverflowException for the last. Mirrors
+    // AuthLifetimes.ReadHours so a hand-edited settings.json can never crash startup and an absurd PUT
+    // value is a 400 rather than a persisted time bomb.
+    private static bool TryFromHours(double hours, out TimeSpan span)
+    {
+        span = default;
+        if (!double.IsFinite(hours) || hours <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            span = TimeSpan.FromHours(hours);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
     }
 
     public static string FormatHours(double hours) => hours.ToString(CultureInfo.InvariantCulture);
