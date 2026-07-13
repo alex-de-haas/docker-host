@@ -58,7 +58,6 @@ HOSTY_CORE_PORT=7070
 HOSTY_SHELL_PORT=7171
 HOSTY_CORE_PUBLIC_ORIGIN=
 HOSTY_SHELL_PUBLIC_ORIGIN=
-HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 ```
 
 `hosty core start` reads these defaults directly when `launch.env` has not been written yet.
@@ -69,7 +68,9 @@ HOSTY_SHELL_BOOTSTRAP_RUNTIME=docker
 
 Which first-party apps Core preinstalls — and where their manifests live — is decided by the release-owned distribution list (`distribution-apps.0.1`, embedded in the Core binary; a source tree's repo-root `distribution-apps.json` wins) merged with the operator's `hosty setup` choices. See `docs/ideas/generic-bootstrap.md`.
 
-The per-app manifest-path overrides `HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` have been **removed** from the CLI: manifest locations come from the distribution list, and `hosty setup` decides which apps bootstrap. The keys are no longer valid for `hosty config set`, and a stale value left in an older `launch.env` is ignored on load and dropped on the next save. (Core still honors these as raw ambient environment variables during its own deprecation window, so an air-gapped fork can still export one directly for the Core process, but the CLI neither persists nor injects them.) `HOSTY_SHELL_BOOTSTRAP_RUNTIME` still selects the runtime profile Core uses when installing or reconciling `hosty.shell`.
+The per-app manifest-path overrides `HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` have been **removed** from the CLI: manifest locations come from the distribution list, and `hosty setup` decides which apps bootstrap. The keys are no longer valid for `hosty config set`, and a stale value left in an older `launch.env` is ignored on load and dropped on the next save. (Core still honors these as raw ambient environment variables during its own deprecation window, so an air-gapped fork can still export one directly for the Core process, but the CLI neither persists nor injects them.)
+
+`HOSTY_SHELL_BOOTSTRAP_RUNTIME` has also been **removed** from `hosty config`: a system app's runtime profile is a normal per-app choice — the manifest's `defaultRuntime` on first install (`docker` for Shell, Telemetry, and Marketplace), switchable afterwards with `hosty apps switch-runtime`, and preserved across reconciles and updates like any other app. A stale `HOSTY_SHELL_BOOTSTRAP_RUNTIME` line in an older `launch.env` is ignored on load and dropped on the next save. Core still honors `HOSTY_SHELL_BOOTSTRAP_RUNTIME` and `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` as **ambient dev/fork-only overrides** (the CLI never sets them): unset, the runtime is the manifest default; a source tree or air-gapped fork can export one to pin a non-default profile at first install. This is the mechanism the `npm run dev` orchestrator uses to run Shell from the working tree's `dev` localCommand profile.
 
 `HOSTY_RUNTIME_PUBLIC_HOST` (optional, default `127.0.0.1`) is the host Core advertises and dials for a runtime app's published loopback port. It defaults to the IPv4 loopback literal on purpose: docker publishes these ports on `127.0.0.1` only, and on hosts where `localhost` resolves to `::1` first (Windows, dual-stack Linux) .NET's `HttpClient` stalls on the unbound `::1` until the request times out, so telemetry and health reads silently return empty. Override it only for a deployment that publishes runtime-app ports on a different address.
 
@@ -120,7 +121,7 @@ The CLI ships as a single Native AOT executable, so the running process holds no
 
 On Windows, if the installed Core executable already exists, `hosty update` first makes a best-effort Core stop request before replacing the executable because a running `.exe` is normally locked by the process.
 
-Shell remains a Core-managed runtime app. Core startup reconciles `hosty.shell` against the configured Shell manifest when the installed runtime matches `HOSTY_SHELL_BOOTSTRAP_RUNTIME`. `hosty update` still asks the running Core for Shell update planning when Core is reachable so operators can inspect pending Shell changes explicitly.
+Shell remains a Core-managed runtime app. Core startup reconciles `hosty.shell` against the configured Shell manifest, preserving the installed runtime profile (the manifest default on first install, or whatever the operator later switched to with `hosty apps switch-runtime`). `hosty update` still asks the running Core for Shell update planning when Core is reachable so operators can inspect pending Shell changes explicitly.
 
 ## Control Discovery
 

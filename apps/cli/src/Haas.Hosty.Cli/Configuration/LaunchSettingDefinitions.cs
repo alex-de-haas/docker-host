@@ -7,7 +7,6 @@ internal static class LaunchSettingDefinitions
     public const string HostyShellPort = "HOSTY_SHELL_PORT";
     public const string HostyCorePublicOrigin = "HOSTY_CORE_PUBLIC_ORIGIN";
     public const string HostyShellPublicOrigin = "HOSTY_SHELL_PUBLIC_ORIGIN";
-    public const string HostyShellBootstrapRuntime = "HOSTY_SHELL_BOOTSTRAP_RUNTIME";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
@@ -16,7 +15,6 @@ internal static class LaunchSettingDefinitions
         new(HostyShellPort, _ => "7171", true, ValidatePort),
         new(HostyCorePublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
         new(HostyShellPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
-        new(HostyShellBootstrapRuntime, _ => "docker", true, ValidateRuntimeKey),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);
@@ -73,23 +71,4 @@ internal static class LaunchSettingDefinitions
             port is > 0 and <= 65535
             ? null
             : "Port must be an integer between 1 and 65535.";
-
-    private static string? ValidateRuntimeKey(string value, HostyEnvironment _)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return "Shell bootstrap runtime cannot be empty.";
-        }
-
-        var trimmed = value.Trim();
-        if (!char.IsAsciiLetterLower(trimmed[0]))
-        {
-            return "Shell bootstrap runtime must start with a lowercase letter.";
-        }
-
-        return trimmed.Length <= 63 && trimmed.All(character => char.IsAsciiLetterLower(character) || char.IsAsciiDigit(character) || character == '-')
-            ? null
-            : "Shell bootstrap runtime must match ^[a-z][a-z0-9-]{0,62}$.";
-    }
-
 }

@@ -196,7 +196,6 @@ public sealed class AuthBootstrapServiceTests
                 CorePublicOrigin: "http://127.0.0.1:3001",
                 ShellPublicOrigin: "http://127.0.0.1:3000",
                 RuntimePublicHost: "localhost",
-                ShellBootstrapRuntime: "docker",
                 ShellSourceOverridePath: null,
                 ShellAutostart: false);
             var passwords = new LocalPasswordAuthService(users, audit, clock);

@@ -174,22 +174,25 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
-    public void FromEnvironment_DefaultsShellBootstrapRuntimeToDocker()
+    public void FromEnvironment_ShellBootstrapRuntimeNullWhenUnset()
     {
         using var env = TemporaryEnvironment.With("HOSTY_SHELL_BOOTSTRAP_RUNTIME", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
 
-        Assert.Equal("docker", config.ShellBootstrapRuntime);
+        // Unset (the normal case): the manifest default chooses on first install and the operator's
+        // switch-runtime choice is preserved on later boots.
+        Assert.Null(config.ShellBootstrapRuntime);
     }
 
     [Fact]
-    public void FromEnvironment_UsesExplicitShellBootstrapRuntime()
+    public void FromEnvironment_ReadsExplicitShellBootstrapRuntimeAsAmbientOverride()
     {
         using var env = TemporaryEnvironment.With("HOSTY_SHELL_BOOTSTRAP_RUNTIME", " dev ");
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
 
+        // A source tree / air-gapped fork can still pin a non-default profile (e.g. the dev localCommand).
         Assert.Equal("dev", config.ShellBootstrapRuntime);
     }
 
@@ -301,13 +304,13 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
-    public void FromEnvironment_DefaultsCollectorBootstrapRuntimeToDocker()
+    public void FromEnvironment_CollectorBootstrapRuntimeNullWhenUnset()
     {
         using var runtimeEnv = TemporaryEnvironment.With("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
-        Assert.Equal("docker", config.CollectorBootstrapRuntime);
+        Assert.Null(config.CollectorBootstrapRuntime);
     }
 
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment

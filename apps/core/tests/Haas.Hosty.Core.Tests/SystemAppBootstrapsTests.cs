@@ -110,19 +110,36 @@ public sealed class SystemAppBootstrapsTests
         var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], choices: null, config);
 
         var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
-        Assert.Equal("docker", shell.Runtime);
+        // Runtime is a normal per-app choice now (manifest default on first install, switch-runtime
+        // afterwards): null for every entry, including Shell. Shell still carries the Core-owned
+        // autostart, source-override, and settings extras.
+        Assert.Null(shell.Runtime);
         Assert.False(shell.Autostart);
         Assert.Equal("/repo", shell.SourceOverridePath);
         Assert.NotNull(shell.Settings);
         Assert.Equal("3000", shell.Settings!["HOSTY_PORT_HTTP"]);
 
         var telemetry = plan.Descriptors.Single(d => d.AppId == "hosty.telemetry");
-        Assert.Equal("docker", telemetry.Runtime);
+        Assert.Null(telemetry.Runtime);
 
-        // Policy-free entry: manifest defaults on first install, installed choices preserved later.
         var marketplace = plan.Descriptors.Single(d => d.AppId == "hosty.marketplace");
         Assert.Null(marketplace.Runtime);
         Assert.Null(marketplace.Autostart);
+    }
+
+    [Fact]
+    public void FromDistribution_AmbientRuntimeOverridePinsShellAndCollectorDescriptors()
+    {
+        // The ambient dev/fork override (HOSTY_SHELL_BOOTSTRAP_RUNTIME / HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME)
+        // pins the descriptor runtime; unset (null) leaves the profile to the manifest default.
+        var config = CreateConfig() with { ShellBootstrapRuntime = "dev", CollectorBootstrapRuntime = "podman" };
+
+        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], choices: null, config);
+
+        Assert.Equal("dev", plan.Descriptors.Single(d => d.AppId == "hosty.shell").Runtime);
+        Assert.Equal("podman", plan.Descriptors.Single(d => d.AppId == "hosty.telemetry").Runtime);
+        // Marketplace carries no Core-owned runtime policy either way.
+        Assert.Null(plan.Descriptors.Single(d => d.AppId == "hosty.marketplace").Runtime);
     }
 
     [Fact]
@@ -166,7 +183,6 @@ public sealed class SystemAppBootstrapsTests
             CorePublicOrigin: "http://127.0.0.1:3001",
             ShellPublicOrigin: "http://127.0.0.1:3000",
             RuntimePublicHost: "localhost",
-            ShellBootstrapRuntime: "docker",
             ShellSourceOverridePath: null,
             ShellAutostart: false);
 }

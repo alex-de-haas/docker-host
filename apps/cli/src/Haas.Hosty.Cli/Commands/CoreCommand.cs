@@ -231,9 +231,9 @@ internal sealed partial class CoreCommand(CommandContext context)
         AddOptional(environment, LaunchSettingDefinitions.HostyCorePublicOrigin, settings.HostyCorePublicOrigin);
         AddOptional(environment, LaunchSettingDefinitions.HostyShellPublicOrigin, settings.HostyShellPublicOrigin);
         // Manifest locations resolve from Core's release-owned distribution list, and which apps
-        // bootstrap is the bootstrap-choices file's job (`hosty setup`). The runtime profile Core
-        // uses when installing or reconciling hosty.shell is still an operator knob.
-        AddOptional(environment, LaunchSettingDefinitions.HostyShellBootstrapRuntime, settings.HostyShellBootstrapRuntime);
+        // bootstrap is the bootstrap-choices file's job (`hosty setup`). The runtime profile of a
+        // system app (Shell, Telemetry, Marketplace) is a normal per-app choice: the manifest default
+        // on first install, switchable afterwards with `hosty apps switch-runtime` — not a launch setting.
         return environment;
     }
 

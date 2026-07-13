@@ -16,7 +16,9 @@ internal sealed record SystemAppBootstrapDescriptor(
     // override); a blank value skips the bootstrap with a warning.
     string? ManifestPath,
     // Null lets the manifest default choose on first install and preserves the installed selection
-    // during reconciliation (the default for policy-free entries such as Marketplace).
+    // during reconciliation — the normal case for every entry, since the runtime profile is a per-app
+    // choice (manifest default, then whatever the operator switched to). Only a source tree or
+    // air-gapped fork pins a non-null profile through the ambient dev/fork override env.
     string? Runtime,
     // Null uses the normal install default and preserves the operator's installed value later.
     bool? Autostart,
@@ -76,6 +78,8 @@ internal static class SystemAppBootstraps
                     DisplayName: entry.Title,
                     Enabled: enabled,
                     ManifestPath: manifestPath,
+                    // Null unless the ambient dev/fork override is set: manifest default on first
+                    // install (docker), operator's switch-runtime choice preserved on later boots.
                     Runtime: config.ShellBootstrapRuntime,
                     Autostart: config.ShellAutostart,
                     Settings: ShellBootstrap.BuildBootstrapSettings(config),
@@ -86,11 +90,13 @@ internal static class SystemAppBootstraps
                     DisplayName: entry.Title,
                     Enabled: enabled,
                     ManifestPath: manifestPath,
+                    // Runtime and autostart are both normal per-app settings: manifest default on first
+                    // install, the operator's later choice preserved. HOSTY_COLLECTOR_AUTOSTART is gone;
+                    // HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME survives only as an ambient dev/fork override
+                    // (null when unset). Config + sink-dir provisioning is no longer wired here — it
+                    // runs on the start path keyed by the manifest's `provides: [otlp-collector]`
+                    // (see PlatformCapabilities).
                     Runtime: config.CollectorBootstrapRuntime,
-                    // Autostart is a normal per-app setting: install default on first install, the
-                    // operator's later choice preserved (HOSTY_COLLECTOR_AUTOSTART is gone). Config +
-                    // sink-dir provisioning is no longer wired here — it runs on the start path keyed
-                    // by the manifest's `provides: [otlp-collector]` (see PlatformCapabilities).
                     Autostart: null,
                     FeedsUrl: entry.FeedsUrl),
                 _ => new SystemAppBootstrapDescriptor(
