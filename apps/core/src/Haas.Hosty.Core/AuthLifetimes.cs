@@ -59,9 +59,20 @@ internal sealed record AuthLifetimes(
 
         // A non-positive or unparseable value is ignored in favor of the safe default rather than
         // producing a zero/negative window that would expire every session immediately.
-        return double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var hours) && hours > 0
-            ? TimeSpan.FromHours(hours)
-            : fallback;
+        if (!double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var hours) || hours <= 0)
+        {
+            return fallback;
+        }
+
+        try
+        {
+            return TimeSpan.FromHours(hours);
+        }
+        catch (OverflowException)
+        {
+            // An absurd value (typo, or Infinity) must not crash startup — this runs during service config.
+            return fallback;
+        }
     }
 }
 

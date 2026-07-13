@@ -197,14 +197,22 @@ internal static class CoreSessionAuthorization
             return;
         }
 
-        await users.UpdateAsync(state => state with
+        try
         {
-            Sessions = state.Sessions
-                .Select(candidate => string.Equals(candidate.Id, session.Id, StringComparison.Ordinal) && candidate.RevokedAt is null
-                    ? candidate with { LastSeenAt = now }
-                    : candidate)
-                .ToArray(),
-        }, cancellationToken);
+            await users.UpdateAsync(state => state with
+            {
+                Sessions = state.Sessions
+                    .Select(candidate => string.Equals(candidate.Id, session.Id, StringComparison.Ordinal) && candidate.RevokedAt is null
+                        ? candidate with { LastSeenAt = now }
+                        : candidate)
+                    .ToArray(),
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Sliding the idle window is advisory; a transient I/O or concurrency failure must not fail the
+            // authenticated request. Client cancellation still propagates. The window slides on the next use.
+        }
     }
 
     private static CoreSessionAuthorizationResult Unauthorized(string code, string message)

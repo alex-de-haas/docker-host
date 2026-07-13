@@ -97,7 +97,13 @@ internal sealed class AppIdentityService(
             throw new AppIdentityException("token_expired", "App session has been idle too long.");
         }
 
-        await grants.TouchAsync(tokenHash, now, TouchThrottle, cancellationToken);
+        // Fast path: skip the store round-trip (read + mutex) on the common throttled case. TouchAsync
+        // re-checks the throttle under the lock, so a racing writer cannot cause a double advance.
+        if (now - grant.LastSeenAt >= TouchThrottle)
+        {
+            await grants.TouchAsync(tokenHash, now, TouchThrottle, cancellationToken);
+        }
+
         return new AppSessionValidationResult(
             true,
             grant.AppId,
