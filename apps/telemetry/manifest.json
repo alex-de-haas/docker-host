@@ -143,9 +143,9 @@
       "path": "/metrics"
     },
     "navigation": [
-      { "label": "Metrics", "endpoint": "http", "path": "/metrics" },
-      { "label": "Structured logs", "endpoint": "http", "path": "/logs" },
-      { "label": "Traces", "endpoint": "http", "path": "/traces" }
+      { "label": "Metrics", "endpoint": "http", "path": "/metrics", "iconAsset": "assets/nav/metrics.svg" },
+      { "label": "Structured logs", "endpoint": "http", "path": "/logs", "iconAsset": "assets/nav/logs.svg" },
+      { "label": "Traces", "endpoint": "http", "path": "/traces", "iconAsset": "assets/nav/traces.svg" }
     ]
   },
   "capabilities": ["restart", "stop", "logs", "open"],
