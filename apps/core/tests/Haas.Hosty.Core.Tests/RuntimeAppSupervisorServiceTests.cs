@@ -30,7 +30,10 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            var shell = await WaitForShellVersionAsync(fixture.Apps, "0.2.0");
+            var shell = await WaitForAppAsync(
+                fixture.Apps,
+                "hosty.shell",
+                app => string.Equals(app.Version, "0.2.0", StringComparison.Ordinal) && IsDistributionStamped(app));
 
             Assert.Equal(manifestUrl, shell.ManifestUrl);
             Assert.Equal("docker", shell.SelectedRuntime);
@@ -202,7 +205,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            var marketplace = await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId);
+            var marketplace = await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId, IsDistributionStamped);
 
             Assert.True(marketplace.System);
             Assert.Equal("dev", marketplace.SelectedRuntime);
@@ -282,10 +285,12 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            var demo = await WaitForAppAsync(fixture.Apps, "hosty.demo");
+            var demo = await WaitForAppAsync(fixture.Apps, "hosty.demo", IsDistributionStamped);
 
             Assert.Equal(feedsUrl, demo.FeedsUrl);
             Assert.Equal("stable", demo.FollowedFeedId);
+            // The feed path installs System=false; the bootstrap stamp normalizes it to true together
+            // with the provenance origin (waited for above).
             Assert.True(demo.System);
             Assert.Equal(AppInstallOrigins.Distribution, demo.InstallOrigin);
         }
@@ -629,13 +634,20 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         Assert.False(RuntimeRestartPolicy.FromManifest(new RuntimeAppRestartPolicyManifest { Mode = "whenever" }).Enabled);
     }
 
-    private static async Task<AppRecord> WaitForAppAsync(AppRegistryStore apps, string appId)
+    private static Task<AppRecord> WaitForAppAsync(AppRegistryStore apps, string appId)
+        => WaitForAppAsync(apps, appId, static _ => true);
+
+    // Bootstrap installs an app in two steps the supervisor runs back to back: the install/reconcile
+    // itself, then a provenance stamp (InstallOrigin=distribution, System=true) as a separate write.
+    // A test that polls for "the app exists" can observe the intermediate, pre-stamp record, so any
+    // assertion on the stamped markers must wait for the settled state, not just the record's presence.
+    private static async Task<AppRecord> WaitForAppAsync(AppRegistryStore apps, string appId, Func<AppRecord, bool> until)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (DateTimeOffset.UtcNow < deadline)
         {
             var app = await apps.GetAppAsync(appId);
-            if (app is not null)
+            if (app is not null && until(app))
             {
                 return app;
             }
@@ -643,8 +655,11 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             await Task.Delay(50);
         }
 
-        throw new TimeoutException($"{appId} was not installed by the supervisor bootstrap.");
+        throw new TimeoutException($"{appId} did not reach the expected state within the timeout.");
     }
+
+    private static bool IsDistributionStamped(AppRecord app)
+        => string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal);
 
     private static async Task<AppRecord> WaitForAppVersionAsync(AppRegistryStore apps, string appId, string version)
     {
@@ -677,23 +692,6 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
 
         throw new TimeoutException($"File '{path}' was not provisioned.");
-    }
-
-    private static async Task<AppRecord> WaitForShellVersionAsync(AppRegistryStore apps, string version)
-    {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            var shell = await apps.GetAppAsync("hosty.shell");
-            if (shell?.Version == version)
-            {
-                return shell;
-            }
-
-            await Task.Delay(50);
-        }
-
-        throw new TimeoutException($"hosty.shell did not reach version {version}.");
     }
 
     private static async Task<AppRecord> WaitForShellManifestUrlAsync(AppRegistryStore apps, string? expectedManifestUrl)
