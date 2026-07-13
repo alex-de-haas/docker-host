@@ -323,6 +323,7 @@ Two token mechanics, one management UI (a Shell "Access tokens" page with label,
 | Token | Validator | Mechanics |
 | --- | --- | --- |
 | CLI login and external agent tokens presented to Core | Core itself | opaque value + server-side record; instant revocation; no signing needed |
+| Browser app identity tokens presented to Core for revalidation | Core itself | opaque app session grant + server-side record (2026-07-13); design: [auth-session-lifecycle.md](../ideas/auth-session-lifecycle.md) |
 | Delegated tokens presented to apps and system apps | the receiving app, locally | signed, short TTL, verification key injected by Core; optional Core introspection for high-risk calls |
 
 Shell's Core session cookie never leaves the browser↔Core pair. When Shell (or any UI client) needs a system app, it exchanges its session for a short-lived delegated token (audience = that app) and calls the app directly — the service-call analogue of the existing app authorization code flow. Core's existing signing infrastructure (AppIdentityService) can issue these.
