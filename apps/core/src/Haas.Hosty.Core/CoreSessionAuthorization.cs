@@ -75,6 +75,25 @@ internal static class CoreSessionAuthorization
         return authorization.User;
     }
 
+    // Session resolution for top-level navigation endpoints (e.g. /api/apps/{id}/open). Distinguishes an
+    // authenticated user, a terminal denial (a signed-in but disabled user — return Denied as-is so the
+    // 403 contract holds), and a missing/expired session (both null — the caller recovers by sending the
+    // user to /login).
+    public static async Task<NavigationSessionResult> ResolveNavigationSessionAsync(
+        HttpRequest request,
+        UserDirectoryStore users,
+        IClock clock,
+        CancellationToken cancellationToken = default)
+    {
+        var authorization = await ResolveSessionAsync(request, users, clock, cancellationToken);
+        if (authorization.User is not null)
+        {
+            return new NavigationSessionResult(authorization.User, null);
+        }
+
+        return new NavigationSessionResult(null, authorization.Terminal ? authorization.Error : null);
+    }
+
     public static string? ReadBearerToken(HttpRequest request)
     {
         if (!request.Headers.TryGetValue("Authorization", out var header))
@@ -127,11 +146,14 @@ internal static class CoreSessionAuthorization
 
         if (user.Disabled)
         {
+            // Terminal: the session is valid but the account is disabled. A navigation caller must not
+            // treat this as a missing session and bounce to /login (login rejects disabled users anyway).
             return new CoreSessionAuthorizationResult(
                 null,
                 CoreJson.Json(
                     new ErrorResponse("user_disabled", "Core session user is disabled."),
-                    statusCode: StatusCodes.Status403Forbidden));
+                    statusCode: StatusCodes.Status403Forbidden),
+                Terminal: true);
         }
 
         return new CoreSessionAuthorizationResult(user, null);
@@ -145,4 +167,8 @@ internal static class CoreSessionAuthorization
                 statusCode: StatusCodes.Status401Unauthorized));
 }
 
-internal sealed record CoreSessionAuthorizationResult(HostUserRecord? User, IResult? Error);
+internal sealed record CoreSessionAuthorizationResult(HostUserRecord? User, IResult? Error, bool Terminal = false);
+
+// User is set on a valid session; otherwise Denied is the terminal result to return as-is (e.g. disabled
+// account), or both are null to signal a missing/expired session the caller should recover via /login.
+internal sealed record NavigationSessionResult(HostUserRecord? User, IResult? Denied);

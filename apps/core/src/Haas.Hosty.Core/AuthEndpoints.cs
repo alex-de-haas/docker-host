@@ -162,17 +162,27 @@ internal static class AuthEndpoints
                 return CoreJson.Json(new ErrorResponse("redirect_uri_missing", "Redirect URI is required."), statusCode: StatusCodes.Status400BadRequest);
             }
 
-            return await CoreSessionAuthorization.RequireSessionAsync(
-                request,
-                users,
-                clock,
-                async user => await HandleIdentityError(async () =>
-                {
-                    var authorization = await identity.CreateAuthorizationCodeAsync(appId, user.Id, redirectUri, cancellationToken);
-                    return Results.Redirect(authorization.RedirectUri);
-                }),
-                requireCsrf: false,
-                cancellationToken: cancellationToken);
+            // This is a top-level browser navigation (the standalone app recovery target). A missing or
+            // expired Core session must send the user through /login and resume this exact request
+            // afterward, not return a JSON 401 the browser cannot act on. A valid-but-disabled account is
+            // terminal: return its 403 as-is rather than bouncing to a login that would reject it anyway.
+            var navigation = await CoreSessionAuthorization.ResolveNavigationSessionAsync(request, users, clock, cancellationToken);
+            if (navigation.Denied is not null)
+            {
+                return navigation.Denied;
+            }
+
+            if (navigation.User is null)
+            {
+                var continuation = request.Path + request.QueryString;
+                return Results.Redirect($"/login?returnTo={Uri.EscapeDataString(continuation)}");
+            }
+
+            return await HandleIdentityError(async () =>
+            {
+                var authorization = await identity.CreateAuthorizationCodeAsync(appId, navigation.User.Id, redirectUri, cancellationToken);
+                return Results.Redirect(authorization.RedirectUri);
+            });
         });
     }
 
@@ -184,8 +194,55 @@ internal static class AuthEndpoints
         }
         catch (AppIdentityException ex)
         {
-            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: StatusCodes.Status403Forbidden);
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: MapIdentityErrorStatus(ex.Code));
         }
+    }
+
+    // Split the identity error contract by cause so apps can act correctly:
+    //   401 - recoverable: the token/code is missing, expired, invalid, or revoked; the app should
+    //         drop its cookie and re-authorize.
+    //   403 - terminal: the user is authenticated but not allowed (disabled, unassigned, admin-only,
+    //         wrong app); the app must show an access-denied state and never auto-redirect (loop guard).
+    //   400 - malformed redirect URI (bad caller input).
+    //   500 - server fault (signing key could not be initialized).
+    // Any unmapped code defaults to 403, the safe terminal choice.
+    internal static int MapIdentityErrorStatus(string code) => code switch
+    {
+        "invalid_code" or "code_expired" or "code_consumed"
+            or "token_invalid" or "token_expired" or "token_revoked"
+            => StatusCodes.Status401Unauthorized,
+        "redirect_uri_invalid" => StatusCodes.Status400BadRequest,
+        "signing_key_unavailable" => StatusCodes.Status500InternalServerError,
+        _ => StatusCodes.Status403Forbidden,
+    };
+
+    // Only a Core-relative app-open continuation may be used as a post-login redirect target, so
+    // /login can never be turned into an open redirect. Anything else falls back to the Shell origin.
+    internal static string ResolveLoginRedirect(string? returnTo, HostyCoreRuntimeConfig config)
+        => IsAllowedLoginReturnTo(returnTo) ? returnTo! : config.EffectiveShellPublicOrigin;
+
+    internal static bool IsAllowedLoginReturnTo(string? returnTo)
+    {
+        if (string.IsNullOrWhiteSpace(returnTo))
+        {
+            return false;
+        }
+
+        // Reject anything that could escape the Core origin or inject into the Location header:
+        // protocol-relative (`//host`), backslash tricks browsers normalize to `//`, and control chars.
+        if (returnTo[0] != '/' ||
+            returnTo.StartsWith("//", StringComparison.Ordinal) ||
+            returnTo.Contains('\\') ||
+            returnTo.Any(char.IsControl) ||
+            !Uri.TryCreate(returnTo, UriKind.Relative, out _))
+        {
+            return false;
+        }
+
+        var queryIndex = returnTo.IndexOf('?', StringComparison.Ordinal);
+        var path = queryIndex >= 0 ? returnTo.AsSpan(0, queryIndex) : returnTo.AsSpan();
+        return path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
+            path.EndsWith("/open", StringComparison.Ordinal);
     }
 
     private static string CreateSessionId()

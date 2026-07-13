@@ -195,7 +195,9 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
     if (!response.ok) {
       return {
         ...baseSnapshot,
-        status: response.status === 403 ? "forbidden" : "error",
+        // 401 is recoverable (token missing/expired/invalid/revoked) → the client re-authorizes;
+        // 403 is terminal (disabled/unassigned/admin-only) → access denied, no auto-redirect.
+        status: response.status === 401 ? "expired" : response.status === 403 ? "forbidden" : "error",
         userId: null,
         email: null,
         displayName: null,

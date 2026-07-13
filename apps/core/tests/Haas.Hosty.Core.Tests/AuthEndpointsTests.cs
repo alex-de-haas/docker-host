@@ -24,6 +24,47 @@ public sealed class AuthEndpointsTests
         Assert.Contains("secure", cookie, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("invalid_code", StatusCodes.Status401Unauthorized)]
+    [InlineData("code_expired", StatusCodes.Status401Unauthorized)]
+    [InlineData("code_consumed", StatusCodes.Status401Unauthorized)]
+    [InlineData("token_invalid", StatusCodes.Status401Unauthorized)]
+    [InlineData("token_expired", StatusCodes.Status401Unauthorized)]
+    [InlineData("token_revoked", StatusCodes.Status401Unauthorized)]
+    [InlineData("user_not_found", StatusCodes.Status403Forbidden)]
+    [InlineData("user_disabled", StatusCodes.Status403Forbidden)]
+    [InlineData("app_access_denied", StatusCodes.Status403Forbidden)]
+    [InlineData("system_app_admin_required", StatusCodes.Status403Forbidden)]
+    [InlineData("token_app_mismatch", StatusCodes.Status403Forbidden)]
+    [InlineData("redirect_uri_denied", StatusCodes.Status403Forbidden)]
+    [InlineData("app_not_found", StatusCodes.Status403Forbidden)]
+    [InlineData("redirect_uri_invalid", StatusCodes.Status400BadRequest)]
+    [InlineData("signing_key_unavailable", StatusCodes.Status500InternalServerError)]
+    [InlineData("something_unmapped", StatusCodes.Status403Forbidden)]
+    public void MapIdentityErrorStatus_MapsCodesByCause(string code, int expectedStatus)
+        => Assert.Equal(expectedStatus, AuthEndpoints.MapIdentityErrorStatus(code));
+
+    [Theory]
+    [InlineData("/api/apps/com.haas.demo-app/open")]
+    [InlineData("/api/apps/com.haas.demo-app/open?redirectUri=https%3A%2F%2Fapp.example%2F")]
+    [InlineData("/api/apps/hosty.telemetry/open?redirectUri=https%3A%2F%2Ft.example%2Fx%3Fa%3D1")]
+    public void IsAllowedLoginReturnTo_AcceptsAppOpenContinuations(string returnTo)
+        => Assert.True(AuthEndpoints.IsAllowedLoginReturnTo(returnTo));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("https://evil.example/api/apps/x/open")]
+    [InlineData("//evil.example/api/apps/x/open")]
+    [InlineData("/\\evil.example/api/apps/x/open")]
+    [InlineData("/api/apps/x/open\r\nSet-Cookie: a=b")]
+    [InlineData("/marketplace")]
+    [InlineData("/api/apps/x/launch-code")]
+    [InlineData("/api/core/status")]
+    public void IsAllowedLoginReturnTo_RejectsEverythingElse(string? returnTo)
+        => Assert.False(AuthEndpoints.IsAllowedLoginReturnTo(returnTo));
+
     private sealed class AuthEndpointFixture
     {
         private AuthEndpointFixture(UserDirectoryStore users, FakeClock clock)

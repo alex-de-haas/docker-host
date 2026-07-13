@@ -67,7 +67,9 @@ export async function getTelemetryIdentity(headersList: HeaderReader): Promise<T
     });
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
-      return emptyIdentity(base, response.status === 403 ? "forbidden" : "error", {
+      // 401 is recoverable (token missing/expired/invalid/revoked) → the client re-authorizes;
+      // 403 is terminal (disabled/unassigned/admin-only) → access denied, no auto-redirect.
+      return emptyIdentity(base, response.status === 401 ? "expired" : response.status === 403 ? "forbidden" : "error", {
         code: readErrorField(payload, "code") ?? "app_session_revalidation_failed",
         message: readErrorField(payload, "message") ?? `Core revalidation returned HTTP ${response.status}.`,
         status: response.status,

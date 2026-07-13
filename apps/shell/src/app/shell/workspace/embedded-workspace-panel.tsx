@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { EmbeddedWorkspace, HostyResolvedTheme, HostyThemePreference } from "../types";
 import { parseActiveFrameInstallFeedIntent, type InstallFeedIntent } from "./install-intent";
+import { parseActiveFrameAuthRequired } from "./auth-intent";
 import { getEmbedOrigin, isInsecureEmbedBlocked, isLoopbackEmbedHost } from "./insecure-embed";
 
 export function EmbeddedWorkspacePanel({
@@ -13,6 +14,7 @@ export function EmbeddedWorkspacePanel({
   theme,
   themePreference,
   onInstallFeedIntent,
+  onAuthRequired,
 }: {
   workspace: EmbeddedWorkspace;
   theme: HostyResolvedTheme;
@@ -20,6 +22,9 @@ export function EmbeddedWorkspacePanel({
   // Undefined for apps that may not request installs (every app except Marketplace); when absent no
   // message listener is attached, so a non-Marketplace frame cannot initiate an install intent.
   onInstallFeedIntent?: (intent: InstallFeedIntent) => void;
+  // Called when the embedded app reports its Hosty session expired and asks for a fresh launch code.
+  // Available to every app (recovery is universal); the panel verifies the sender before invoking it.
+  onAuthRequired?: (appId: string) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -76,6 +81,24 @@ export function EmbeddedWorkspacePanel({
       window.removeEventListener("message", handleMessage);
     };
   }, [onInstallFeedIntent, workspace.src]);
+
+  useEffect(() => {
+    if (!onAuthRequired) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const frameWindow = iframeRef.current?.contentWindow;
+      if (parseActiveFrameAuthRequired(event, frameWindow, workspace.src, workspace.appId)) {
+        onAuthRequired(workspace.appId);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [onAuthRequired, workspace.src, workspace.appId]);
 
   const handleLoad = useCallback(() => {
     setLoaded(true);

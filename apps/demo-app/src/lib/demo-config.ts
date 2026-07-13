@@ -13,6 +13,7 @@ export interface DemoConfig {
   publicUrl: string;
   host: {
     coreOrigin: string;
+    corePublicOrigin: string;
     appId: string;
     appServiceTokenConfigured: boolean;
   };
@@ -44,11 +45,14 @@ export interface StorageInspection {
 
 const defaultAppId = "com.haas.demo-app";
 // Keep in step with manifest.json + package.json (enforced by scripts/check-versions.mjs).
-const defaultAppVersion = "0.4.4";
+const defaultAppVersion = "0.5.0";
 
 export function getDemoConfig(): DemoConfig {
   const appId = process.env.HOSTY_APP_ID || defaultAppId;
   const coreOrigin = process.env.HOSTY_CORE_ORIGIN || "http://localhost:3001";
+  // Browser-reachable Core origin for client redirects (session recovery); falls back to the
+  // server-reachable origin only when the public one is not injected.
+  const corePublicOrigin = process.env.HOSTY_CORE_PUBLIC_ORIGIN || coreOrigin;
   const publicPort = process.env.HOSTY_PORT_HTTP || process.env.PORT;
 
   return {
@@ -61,6 +65,7 @@ export function getDemoConfig(): DemoConfig {
     publicUrl: process.env.HOSTY_PUBLIC_ORIGIN_HTTP || (publicPort ? `http://localhost:${publicPort}` : "http://localhost:3100"),
     host: {
       coreOrigin,
+      corePublicOrigin,
       appId,
       appServiceTokenConfigured: Boolean(process.env.HOSTY_APP_SERVICE_TOKEN),
     },
