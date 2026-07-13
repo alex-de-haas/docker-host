@@ -83,10 +83,9 @@ honored as a legacy bootstrap override that enables the telemetry app, nothing m
 the normal per-app setting (`HOSTY_COLLECTOR_AUTOSTART` is gone too): the
 first install defaults to autostart on, and the operator's later choice is preserved across boots.
 
-The manifest location resolves from the distribution list. The deprecated
-`HOSTY_COLLECTOR_MANIFEST_PATH` remains only as an explicit override for a fork / air-gapped mirror,
-and one advanced override stays ambient-env-only (not in `hosty config`): `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME`
-(default `docker`).
+The manifest location resolves from the distribution list. `HOSTY_COLLECTOR_MANIFEST_PATH` has been
+removed from `hosty config`; Core still honors it as an ambient-env-only override for a fork /
+air-gapped mirror, alongside the advanced `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` (default `docker`).
 
 The collector starts **before** other autostart apps so its OTLP endpoint is resolved and persisted
 before their start-time env injection reads it.
