@@ -98,6 +98,12 @@ Embedded variant: the app posts `hosty:auth-required` to the parent instead of n
 
 Each phase is independently shippable; 1 → 2 fix the observed dead-end, 3 → 4 make sessions long-lived.
 
+**Packaging.** One PR covering all four phases is feasible but large (~25–35 files): Core is compact (~6 files), but the app-side work triples across `demo-app`, `telemetry-ui`, and `marketplace` (no shared package — `host-auth.ts`, `app-code/route.ts`, and the identity bridge are independent copies), plus a Shell handler and tests. Recommended split at the natural seam:
+- **PR A — Phase 1 + 2** (error contract + recovery). Fully fixes the observed dead-end; token format untouched; low risk, readable review.
+- **PR B — Phase 3 + 4** (app session grants + sliding Core sessions). Changes the token value format and the session model; warrants its own test pass. Removes the daily password prompt.
+
+The app-facing recovery contract is documented for app authors in [`skills/hosty-app-skill/references/app-auth-and-users.md`](../../skills/hosty-app-skill/references/app-auth-and-users.md); the 401-vs-403 split (Phase 1) and the Shell `hosty:auth-required` responder (Phase 2) are its implementation prerequisites, so that skill guidance lands with PR A.
+
 **Phase 1 — error contract (Core + apps).**
 Core: per-code status mapping in `HandleIdentityError` (+ `token_revoked` reserved), tests for each class. Apps (demo-app, telemetry-ui, marketplace): classify 401/403/503 responses from their identity routes, drop the cookie on terminal 401, keep it on 503, access-denied state for 403. Update `app-auth-origin-separation.md` (contract now actually enforced).
 
