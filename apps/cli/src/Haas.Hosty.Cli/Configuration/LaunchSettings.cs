@@ -23,8 +23,6 @@ internal sealed class LaunchSettings
 
     public string HostyShellPublicOrigin => this[LaunchSettingDefinitions.HostyShellPublicOrigin];
 
-    public string HostyShellBootstrapRuntime => this[LaunchSettingDefinitions.HostyShellBootstrapRuntime];
-
     public string ResolveHostDataRoot(HostyEnvironment environment)
         => environment.ResolvePath(HostyDataRootRaw);
 

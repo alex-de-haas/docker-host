@@ -190,7 +190,6 @@ public sealed class UserManagementServiceTests
                 CorePublicOrigin: "http://127.0.0.1:3001",
                 ShellPublicOrigin: "http://127.0.0.1:3000",
                 RuntimePublicHost: "localhost",
-                ShellBootstrapRuntime: "docker",
                 ShellSourceOverridePath: null,
                 ShellAutostart: false);
             var service = new UserManagementService(users, apps, audit, passwords, config, clock);

@@ -85,7 +85,10 @@ first install defaults to autostart on, and the operator's later choice is prese
 
 The manifest location resolves from the distribution list. `HOSTY_COLLECTOR_MANIFEST_PATH` has been
 removed from `hosty config`; Core still honors it as an ambient-env-only override for a fork /
-air-gapped mirror, alongside the advanced `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` (default `docker`).
+air-gapped mirror, alongside the advanced `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` override. Neither is a
+`hosty config` launch setting. The collector's runtime profile is otherwise a normal per-app choice:
+the manifest default (`docker`) when the override is unset, switchable afterwards with
+`hosty apps switch-runtime`.
 
 The collector starts **before** other autostart apps so its OTLP endpoint is resolved and persisted
 before their start-time env injection reads it.

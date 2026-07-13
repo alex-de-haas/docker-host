@@ -2,14 +2,19 @@
 
 Status: Implemented.
 
-> **Superseded in part (generic bootstrap).** This document describes the original design, in which
-> the Shell manifest location was the CLI launch setting `HOSTY_SHELL_MANIFEST_PATH` (with a GitHub
-> default) that `CoreCommand.BuildCoreEnvironment` passed to Core. That per-app manifest-path launch
-> setting has since been removed from the CLI: manifest locations now come from the release-owned
-> distribution list, and which apps bootstrap is chosen with `hosty setup`. Only
-> `HOSTY_SHELL_BOOTSTRAP_RUNTIME` remains as a launch setting. For current behavior see
-> `docs/ideas/generic-bootstrap.md` and `docs/features/cli-bootstrap.md`; treat the
-> `HOSTY_SHELL_MANIFEST_PATH` references below as historical.
+> **Superseded in part (generic bootstrap + per-app runtime).** This document describes the original
+> design, in which the Shell manifest location was the CLI launch setting `HOSTY_SHELL_MANIFEST_PATH`
+> (with a GitHub default) that `CoreCommand.BuildCoreEnvironment` passed to Core, and the Shell runtime
+> profile was the launch setting `HOSTY_SHELL_BOOTSTRAP_RUNTIME`. **Both have since been removed from
+> `hosty config`.** Manifest locations now come from the release-owned distribution list, which apps
+> bootstrap is chosen with `hosty setup`, and a system app's runtime profile is a normal per-app
+> choice — the manifest's `defaultRuntime` on first install (`docker`), switchable afterwards with
+> `hosty apps switch-runtime` and preserved across reconciles. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` survives
+> only as an ambient dev/fork-only override that Core reads directly (the CLI never sets it); when it is
+> unset — the normal case — the installed-runtime reconciliation guard described below never fires and
+> `hosty.shell` reconciles like any other app. For current behavior see `docs/ideas/generic-bootstrap.md`
+> and `docs/features/cli-bootstrap.md`; treat the `HOSTY_SHELL_MANIFEST_PATH` and
+> `HOSTY_SHELL_BOOTSTRAP_RUNTIME` references below as historical.
 
 ## Goal
 

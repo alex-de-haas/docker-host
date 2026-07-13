@@ -843,7 +843,6 @@ public sealed class DockerRuntimeAdapterTests
             CorePublicOrigin: corePublicOrigin,
             ShellPublicOrigin: null,
             RuntimePublicHost: "localhost",
-            ShellBootstrapRuntime: "docker",
             ShellSourceOverridePath: null,
             ShellAutostart: false);
 }

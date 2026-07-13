@@ -36,7 +36,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.Equal("7171", settings.HostyShellPort);
         Assert.Equal("", settings.HostyCorePublicOrigin);
         Assert.Equal("", settings.HostyShellPublicOrigin);
-        Assert.Equal("docker", settings.HostyShellBootstrapRuntime);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
     }
@@ -108,13 +107,32 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         Assert.False(settings.Values.ContainsKey("HOSTY_MARKETPLACE_MANIFEST_PATH"));
     }
 
+    [Fact]
+    public void Load_IgnoresRemovedShellBootstrapRuntimeSetting()
+    {
+        // The Shell runtime profile is no longer a launch setting — it is a normal per-app choice
+        // (manifest default on first install, `hosty apps switch-runtime` afterwards). A stale value
+        // in an older launch.env reads as an unknown key: ignored on load and dropped on the next save.
+        var environment = HostyEnvironment.Current();
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        File.WriteAllText(
+            environment.LaunchConfigPath,
+            """
+            # hosty launch settings
+            HOSTY_SHELL_BOOTSTRAP_RUNTIME=dev
+            """);
+
+        var settings = new LaunchSettingsStore(environment).Load();
+
+        Assert.False(settings.Values.ContainsKey("HOSTY_SHELL_BOOTSTRAP_RUNTIME"));
+    }
+
     [Theory]
     [InlineData("HOSTY_DATA_ROOT", "$HOME/custom-hosty")]
     [InlineData("HOSTY_CORE_PORT", "8080")]
     [InlineData("HOSTY_SHELL_PORT", "8181")]
     [InlineData("HOSTY_CORE_PUBLIC_ORIGIN", "https://core.example")]
     [InlineData("HOSTY_SHELL_PUBLIC_ORIGIN", "https://shell.example")]
-    [InlineData("HOSTY_SHELL_BOOTSTRAP_RUNTIME", "dev")]
     public void Set_EditableLaunchSetting_AcceptsValidValues(string key, string value)
     {
         var environment = HostyEnvironment.Current();

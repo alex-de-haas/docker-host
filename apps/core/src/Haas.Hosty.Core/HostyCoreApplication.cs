@@ -703,7 +703,6 @@ internal sealed record HostyCoreRuntimeConfig(
     string? CorePublicOrigin,
     string? ShellPublicOrigin,
     string RuntimePublicHost,
-    string ShellBootstrapRuntime,
     string? ShellSourceOverridePath,
     bool ShellAutostart,
     string? TrustedProxySecret = null,
@@ -712,7 +711,13 @@ internal sealed record HostyCoreRuntimeConfig(
     string? IngressConfigPath = null,
     string? IngressTunnelId = null,
     string? IngressCredentialsFile = null,
-    string CollectorBootstrapRuntime = "docker",
+    // Shell/collector runtime profile as an ambient dev/fork-only override
+    // (HOSTY_SHELL_BOOTSTRAP_RUNTIME, HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME). Removed from `hosty config`:
+    // a system app's runtime profile is a normal per-app choice. Null when unset — the manifest
+    // default chooses on first install and the operator's `switch-runtime` choice is preserved on
+    // later boots. Only a source tree / air-gapped fork sets these to pin a non-default profile.
+    string? ShellBootstrapRuntime = null,
+    string? CollectorBootstrapRuntime = null,
     // Raw legacy bootstrap env (per-app manifest paths and enable flags), captured verbatim for the
     // distribution merge's deprecation layer. Which apps bootstrap — and from where — is otherwise
     // decided by the distribution list + operator choices, not by this config.
@@ -776,7 +781,6 @@ internal sealed record HostyCoreRuntimeConfig(
             corePublicOrigin,
             shellPublicOrigin,
             runtimePublicHost,
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_BOOTSTRAP_RUNTIME")) ?? "docker",
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_SOURCE_OVERRIDE_PATH")),
             ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_TRUSTED_PROXY_SECRET")),
@@ -785,7 +789,10 @@ internal sealed record HostyCoreRuntimeConfig(
             ingressConfigPath,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_TUNNEL_ID")),
             ingressCredentialsFile,
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME")) ?? "docker",
+            // Ambient dev/fork-only override, null when unset (no "docker" default): unset lets the
+            // manifest default choose and keeps reconciliation from fighting a switch-runtime choice.
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_BOOTSTRAP_RUNTIME")),
+            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME")),
             legacy);
     }
 

@@ -72,10 +72,12 @@ public sealed class CoreCommandTests : IDisposable
     }
 
     [Fact]
-    public void BuildCoreEnvironment_OmitsRemovedManifestPathReferences()
+    public void BuildCoreEnvironment_OmitsRemovedManifestPathAndRuntimeReferences()
     {
-        // Manifest locations come from Core's distribution list now; the CLI no longer injects the
-        // removed per-app manifest-path overrides into Core's environment.
+        // Manifest locations come from Core's distribution list now, and a system app's runtime
+        // profile is a normal per-app choice (manifest default, then `hosty apps switch-runtime`).
+        // The CLI no longer injects the removed per-app manifest-path overrides or the Shell bootstrap
+        // runtime into Core's environment.
         var environment = HostyEnvironment.Current();
         var settings = new LaunchSettingsStore(environment).Load();
         var (console, _) = CreateConsole();
@@ -86,6 +88,7 @@ public sealed class CoreCommandTests : IDisposable
         Assert.DoesNotContain("HOSTY_SHELL_MANIFEST_PATH", coreEnvironment.Keys);
         Assert.DoesNotContain("HOSTY_COLLECTOR_MANIFEST_PATH", coreEnvironment.Keys);
         Assert.DoesNotContain("HOSTY_MARKETPLACE_MANIFEST_PATH", coreEnvironment.Keys);
+        Assert.DoesNotContain("HOSTY_SHELL_BOOTSTRAP_RUNTIME", coreEnvironment.Keys);
     }
 
     public void Dispose()

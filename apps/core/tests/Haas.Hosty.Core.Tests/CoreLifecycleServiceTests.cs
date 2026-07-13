@@ -3842,7 +3842,6 @@ public sealed class CoreLifecycleServiceTests
                 CorePublicOrigin: "http://127.0.0.1:3001",
                 ShellPublicOrigin: null,
                 RuntimePublicHost: "localhost",
-                ShellBootstrapRuntime: "docker",
                 ShellSourceOverridePath: null,
                 ShellAutostart: false,
                 IngressProvider: ingressBaseDomain is null ? "none" : "cloudflared",
