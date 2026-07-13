@@ -70,7 +70,7 @@ import type {
 // re-posting hosty:auth-required.
 const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
 
-// Polls this page's own origin until the restarted Shell answers again. Used after a Shell
+// Polls this page's own document URL until the restarted Shell answers again. Used after a Shell
 // self-update: the already-loaded bundle keeps working against Core while the Shell container
 // swaps, but the new build only reaches the browser via a reload — which must wait until the new
 // Shell is actually up. Resolves false on timeout so the caller keeps the old page alive instead
@@ -78,13 +78,21 @@ const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
 async function waitForOwnOrigin(timeoutMs = 90_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    // Per-probe timeout so a single hung request (connection accepted but no response mid-restart)
+    // cannot stall past the overall deadline, which is only re-checked between probes.
+    const controller = new AbortController();
+    const probeTimeout = setTimeout(() => controller.abort(), 5_000);
     try {
-      const response = await fetch("/", { method: "HEAD", cache: "no-store" });
+      // Probe the exact document URL, not "/", so the check stays correct when the Shell is served
+      // under a subpath (reverse proxy / Next basePath).
+      const response = await fetch(window.location.href, { method: "HEAD", cache: "no-store", signal: controller.signal });
       if (response.ok) {
         return true;
       }
     } catch {
-      // Shell still restarting; keep polling.
+      // Shell still restarting (connection refused) or the probe timed out; keep polling.
+    } finally {
+      clearTimeout(probeTimeout);
     }
 
     await new Promise((resolve) => setTimeout(resolve, 1_500));
