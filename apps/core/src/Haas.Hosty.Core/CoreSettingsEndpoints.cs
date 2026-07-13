@@ -44,10 +44,17 @@ internal static class CoreSettingsEndpoints
                             statusCode: StatusCodes.Status400BadRequest);
                     }
 
-                    var parsed = new Dictionary<string, double>(StringComparer.Ordinal);
+                    var parsed = new Dictionary<string, double?>(StringComparer.Ordinal);
                     foreach (var (key, raw) in submitted)
                     {
-                        if (!double.TryParse((raw ?? string.Empty).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var hours))
+                        // Null or blank clears the override for that key so it falls back to env/default.
+                        if (string.IsNullOrWhiteSpace(raw))
+                        {
+                            parsed[key] = null;
+                            continue;
+                        }
+
+                        if (!double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var hours))
                         {
                             return CoreJson.Json(
                                 new ErrorResponse("core_setting_invalid", $"'{key}' must be a number of hours."),
@@ -81,7 +88,8 @@ internal static class CoreSettingsEndpoints
                 Default: CoreSettingsService.FormatHours(row.Definition.DefaultHours),
                 Group: row.Definition.Group,
                 Label: row.Definition.Label,
-                Description: row.Definition.Description))
+                Description: row.Definition.Description,
+                Overridden: row.Overridden))
             .ToArray());
 }
 
@@ -92,8 +100,11 @@ internal sealed record CoreSettingSummary(
     string Default,
     string Group,
     string? Label,
-    string? Description);
+    string? Description,
+    // True when a persisted override is driving Value (vs. env/default), so the UI can offer a reset.
+    bool Overridden);
 
 internal sealed record CoreSettingsResponse(IReadOnlyList<CoreSettingSummary> Settings);
 
-internal sealed record CoreSettingsUpdateRequest(IReadOnlyDictionary<string, string>? Settings);
+// A null or blank value for a key clears its override (falls back to env/default).
+internal sealed record CoreSettingsUpdateRequest(IReadOnlyDictionary<string, string?>? Settings);

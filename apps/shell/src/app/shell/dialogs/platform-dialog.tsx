@@ -267,6 +267,20 @@ function CoreSettingsSection({
     }
   };
 
+  // Clears a persisted override so the key falls back to Core's env/default. A blank value is the
+  // "null to clear" contract on the endpoint; Core returns the fresh snapshot, which reseeds the draft.
+  const reset = async (key: string) => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSave({ [key]: "" });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "The setting could not be reset.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div>
@@ -292,20 +306,34 @@ function CoreSettingsSection({
             <div key={group.name} className="space-y-3 rounded-md border p-3">
               <p className="text-xs font-medium text-muted-foreground">{group.name}</p>
               {group.items.map((item) => (
-                <SettingInput
-                  key={item.key}
-                  setting={{
-                    key: item.key,
-                    type: item.type,
-                    label: item.label,
-                    description: item.description,
-                    required: false,
-                    secret: false,
-                  }}
-                  value={draft[item.key] ?? item.value}
-                  disabled={saving}
-                  onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
-                />
+                <div key={item.key} className="space-y-1">
+                  <SettingInput
+                    setting={{
+                      key: item.key,
+                      type: item.type,
+                      label: item.label,
+                      description: item.description,
+                      required: false,
+                      secret: false,
+                    }}
+                    value={draft[item.key] ?? item.value}
+                    disabled={saving}
+                    onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
+                  />
+                  {item.overridden && (
+                    <div className="flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs text-muted-foreground"
+                        disabled={saving}
+                        onClick={() => reset(item.key)}
+                      >
+                        Reset to default ({item.default}h)
+                      </Button>
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           ))}

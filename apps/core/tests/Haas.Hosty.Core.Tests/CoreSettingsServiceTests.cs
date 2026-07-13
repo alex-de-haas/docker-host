@@ -30,6 +30,7 @@ public sealed class CoreSettingsServiceTests : IDisposable
 
         var rows = service.GetAuthRows();
         Assert.Equal(CoreAuthSettings.All.Count, rows.Count);
+        Assert.All(rows, row => Assert.False(row.Overridden));
         var idle = rows.Single(r => r.Definition.Key == "HOSTY_AUTH_CORE_SESSION_IDLE_HOURS");
         Assert.Equal(AuthLifetimes.Defaults.CoreSessionIdle.TotalHours, idle.Definition.DefaultHours);
     }
@@ -39,15 +40,16 @@ public sealed class CoreSettingsServiceTests : IDisposable
     {
         var service = CreateService();
 
-        await service.UpdateAsync(new Dictionary<string, double>
+        await service.UpdateAsync(new Dictionary<string, double?>
         {
             ["HOSTY_AUTH_CORE_SESSION_IDLE_HOURS"] = 1,
             ["HOSTY_AUTH_APP_GRANT_ABSOLUTE_HOURS"] = 240,
         });
 
-        // Live: the in-memory record reflects the change immediately.
+        // Live: the in-memory record reflects the change immediately, and the row is marked overridden.
         Assert.Equal(TimeSpan.FromHours(1), service.AuthLifetimes.CoreSessionIdle);
         Assert.Equal(TimeSpan.FromHours(240), service.AuthLifetimes.AppGrantAbsolute);
+        Assert.True(service.GetAuthRows().Single(r => r.Definition.Key == "HOSTY_AUTH_CORE_SESSION_IDLE_HOURS").Overridden);
 
         // Persisted: a fresh service over the same data root reads the override back.
         var reloaded = CreateService();
@@ -55,6 +57,22 @@ public sealed class CoreSettingsServiceTests : IDisposable
         Assert.Equal(TimeSpan.FromHours(240), reloaded.AuthLifetimes.AppGrantAbsolute);
         // An untouched setting still follows the default.
         Assert.Equal(AuthLifetimes.Defaults.SystemGrantIdle, reloaded.AuthLifetimes.SystemGrantIdle);
+        Assert.False(reloaded.GetAuthRows().Single(r => r.Definition.Key == "HOSTY_AUTH_SYSTEM_GRANT_IDLE_HOURS").Overridden);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_NullValueClearsOverride()
+    {
+        var service = CreateService();
+        await service.UpdateAsync(new Dictionary<string, double?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = 1 });
+        Assert.Equal(TimeSpan.FromHours(1), service.AuthLifetimes.CliGrantLifetime);
+        Assert.True(service.GetAuthRows().Single(r => r.Definition.Key == "HOSTY_AUTH_CLI_GRANT_HOURS").Overridden);
+
+        // Null clears the override -> the key falls back to env/default, persisted so a fresh service agrees.
+        await service.UpdateAsync(new Dictionary<string, double?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = null });
+        Assert.Equal(AuthLifetimes.FromEnvironment().CliGrantLifetime, service.AuthLifetimes.CliGrantLifetime);
+        Assert.False(service.GetAuthRows().Single(r => r.Definition.Key == "HOSTY_AUTH_CLI_GRANT_HOURS").Overridden);
+        Assert.False(CreateService().GetAuthRows().Single(r => r.Definition.Key == "HOSTY_AUTH_CLI_GRANT_HOURS").Overridden);
     }
 
     [Fact]
@@ -63,7 +81,7 @@ public sealed class CoreSettingsServiceTests : IDisposable
         var service = CreateService();
 
         var exception = await Assert.ThrowsAsync<AppLifecycleException>(
-            () => service.UpdateAsync(new Dictionary<string, double> { ["HOSTY_AUTH_MADE_UP"] = 5 }));
+            () => service.UpdateAsync(new Dictionary<string, double?> { ["HOSTY_AUTH_MADE_UP"] = 5 }));
 
         Assert.Equal("core_setting_unknown", exception.Code);
     }
@@ -79,7 +97,7 @@ public sealed class CoreSettingsServiceTests : IDisposable
         var service = CreateService();
 
         var exception = await Assert.ThrowsAsync<AppLifecycleException>(
-            () => service.UpdateAsync(new Dictionary<string, double> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = hours }));
+            () => service.UpdateAsync(new Dictionary<string, double?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = hours }));
 
         Assert.Equal("core_setting_invalid", exception.Code);
     }
@@ -117,7 +135,7 @@ public sealed class CoreSettingsServiceTests : IDisposable
         // a runtime 500, not a compile error, so assert the round-trip here.
         var response = new CoreSettingsResponse(
         [
-            new CoreSettingSummary("HOSTY_AUTH_CLI_GRANT_HOURS", "number", "12", "12", "CLI diagnostic grants", "Lifetime", "desc"),
+            new CoreSettingSummary("HOSTY_AUTH_CLI_GRANT_HOURS", "number", "12", "12", "CLI diagnostic grants", "Lifetime", "desc", Overridden: false),
         ]);
 
         var json = JsonSerializer.Serialize(response, CoreJsonSerializerContext.Default.CoreSettingsResponse);

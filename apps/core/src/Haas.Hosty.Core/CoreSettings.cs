@@ -128,8 +128,9 @@ internal sealed class CoreSettingsStore(CoreDataPaths paths, ILogger<CoreSetting
         => JsonStorage.WriteAsync(FilePath, document, restrictToOwner: true, cancellationToken);
 }
 
-// One row for the settings endpoint: the definition plus the current effective value.
-internal sealed record CoreSettingRow(CoreAuthSettingDefinition Definition, double EffectiveHours);
+// One row for the settings endpoint: the definition, the current effective value, and whether a
+// persisted override is what's driving it (so the UI can offer "reset to default").
+internal sealed record CoreSettingRow(CoreAuthSettingDefinition Definition, double EffectiveHours, bool Overridden);
 
 // Singleton source of truth for editable Core behavior settings. Holds the current effective
 // AuthLifetimes (env baseline overlaid with persisted overrides) so grant/session issuance reads the
@@ -154,15 +155,22 @@ internal sealed class CoreSettingsService
 
     public IReadOnlyList<CoreSettingRow> GetAuthRows()
     {
+        // Pair the effective lifetimes with the override set they were computed from.
         var lifetimes = current;
+        var active = overrides;
         return CoreAuthSettings.All
-            .Select(definition => new CoreSettingRow(definition, definition.Get(lifetimes).TotalHours))
+            .Select(definition => new CoreSettingRow(
+                definition,
+                definition.Get(lifetimes).TotalHours,
+                Overridden: active.ContainsKey(definition.Key)))
             .ToArray();
     }
 
-    // Merges the submitted key->hours overrides, persists, and recomputes the effective lifetimes.
-    // Unknown keys or non-positive/non-finite values throw AppLifecycleException (surfaced as 400).
-    public async Task UpdateAsync(IReadOnlyDictionary<string, double> input, CancellationToken cancellationToken = default)
+    // Applies the submitted overrides, persists them, and recomputes the effective lifetimes. A null
+    // value clears the override for that key so it falls back to the env var / built-in default — the
+    // per-app settings "null to clear" contract. Unknown keys or out-of-range values throw
+    // AppLifecycleException (surfaced as 400).
+    public async Task UpdateAsync(IReadOnlyDictionary<string, double?> input, CancellationToken cancellationToken = default)
     {
         foreach (var (key, hours) in input)
         {
@@ -171,7 +179,7 @@ internal sealed class CoreSettingsService
                 throw new AppLifecycleException("core_setting_unknown", $"Unknown Core setting '{key}'.");
             }
 
-            if (!TryFromHours(hours, out _))
+            if (hours is { } value && !TryFromHours(value, out _))
             {
                 throw new AppLifecycleException("core_setting_invalid", $"'{key}' must be a positive number of hours within range.");
             }
@@ -183,7 +191,14 @@ internal sealed class CoreSettingsService
             var merged = new Dictionary<string, double>(overrides, StringComparer.Ordinal);
             foreach (var (key, hours) in input)
             {
-                merged[key] = hours;
+                if (hours is { } value)
+                {
+                    merged[key] = value;
+                }
+                else
+                {
+                    merged.Remove(key);
+                }
             }
 
             await store.SaveAsync(
