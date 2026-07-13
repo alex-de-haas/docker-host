@@ -182,7 +182,7 @@ export function InstalledAppsPage({
   const checkAllUpdates = useCallback(async () => {
     const targets = [...runtimeApps, ...systemApps].filter((app) => !app.live && app.capabilities.includes("update"));
     if (targets.length === 0) {
-      toast.info("No updatable apps", { description: "Runtime apps with a reviewed update path will appear here." });
+      toast.info("No updatable apps", { description: "Apps with a reviewed update path will appear here." });
       return;
     }
 
