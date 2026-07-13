@@ -785,10 +785,12 @@ internal sealed class CoreLifecycleService(
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             EnsureMountsReadyForStart(context);
-            // Re-run capability provisioning on restart too, so a config-template change ships forward
-            // and the app comes back with fresh Core-owned files (see PlatformCapabilities).
-            await PlatformCapabilities.ProvisionAsync(this, app.Id, app.Provides, cancellationToken);
             _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
+            // Re-run capability provisioning on restart too, so a config-template change ships forward
+            // and the app comes back with fresh Core-owned files (see PlatformCapabilities). Ordered
+            // after the stop so it never races the old container still holding the provisioned files
+            // (config, OTLP sink files, SQLite store), and before the new one starts.
+            await PlatformCapabilities.ProvisionAsync(this, app.Id, app.Provides, cancellationToken);
             if (load.ManifestError is not null)
             {
                 await NotifyManifestInvalidAsync(app, load.ManifestError, cancellationToken);
