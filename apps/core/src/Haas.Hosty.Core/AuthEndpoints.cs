@@ -288,7 +288,7 @@ internal static class AuthEndpoints
                 now.Add(lifetimes.CoreSessionAbsolute),
                 null,
                 LastSeenAt: now);
-            var sessions = PruneSessions(state.Sessions, now).Append(newSession).ToArray();
+            var sessions = PruneSessions(state.Sessions, now, lifetimes.CoreSessionIdle).Append(newSession).ToArray();
             return (state with { Sessions = sessions }, new AuthSessionCreateResult(true, user, newSession));
         }, cancellationToken);
 
@@ -338,10 +338,14 @@ internal static class AuthEndpoints
         response.Cookies.Delete(CoreSessionAuthorization.SessionCookieName);
     }
 
-    private static IEnumerable<AuthSessionRecord> PruneSessions(IEnumerable<AuthSessionRecord> sessions, DateTimeOffset now)
+    // Keep a session only while it is still usable — live within both the absolute and sliding idle
+    // windows — or was revoked recently enough to remain visible for diagnostics. This drops idle-expired
+    // sessions too, so a large absolute cap does not let the list grow with long-idle records.
+    private static IEnumerable<AuthSessionRecord> PruneSessions(IEnumerable<AuthSessionRecord> sessions, DateTimeOffset now, TimeSpan idle)
         => sessions.Where(session =>
-            session.ExpiresAt > now &&
-            (session.RevokedAt is null || now - session.RevokedAt.Value < SessionRevokedRetention));
+            session.RevokedAt is not null
+                ? now - session.RevokedAt.Value < SessionRevokedRetention
+                : CoreSessionAuthorization.IsSessionLive(session, now, idle));
 }
 
 internal sealed record CsrfResponse(string Token);

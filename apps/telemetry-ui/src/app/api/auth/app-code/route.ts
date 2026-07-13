@@ -9,9 +9,10 @@ type TokenExchangeResponse = {
   expiresInSeconds?: unknown;
 };
 
-// Follow the grant's absolute lifetime (expiresInSeconds); this is only a sanity bound above the
-// 30-day default so a malformed response cannot set an absurd cookie age.
-const maximumCookieAgeSeconds = 60 * 24 * 60 * 60;
+// Follow the grant's absolute lifetime (expiresInSeconds). The bound is only a sanity ceiling against a
+// malformed response: 400 days is the maximum cookie Max-Age browsers honor (RFC 6265bis), so it never
+// truncates a configured absolute lifetime.
+const maximumCookieAgeSeconds = 400 * 24 * 60 * 60;
 
 export async function POST(request: Request) {
   const body: unknown = await request.json().catch(() => null);

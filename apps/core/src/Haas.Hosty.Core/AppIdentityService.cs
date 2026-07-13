@@ -101,7 +101,15 @@ internal sealed class AppIdentityService(
         // re-checks the throttle under the lock, so a racing writer cannot cause a double advance.
         if (now - grant.LastSeenAt >= TouchThrottle)
         {
-            await grants.TouchAsync(tokenHash, now, TouchThrottle, cancellationToken);
+            try
+            {
+                await grants.TouchAsync(tokenHash, now, TouchThrottle, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Sliding the idle window is advisory: the token and policy are already valid. A transient
+                // grant-store write failure must not turn a good revalidation into a 500; it slides next time.
+            }
         }
 
         return new AppSessionValidationResult(
