@@ -33,7 +33,7 @@ Open the printed Setup URL, set the admin email and password, then open Shell:
 hosty open
 ```
 
-Installed CLI launches bootstrap the first-party apps enabled by the release distribution list and your `hosty setup` choices (Shell and Marketplace by default; Telemetry opt-in). Marketplace owns its catalog URL as a normal app setting; Core does not expose catalog APIs.
+The installed CLI bootstraps the first-party apps enabled by the release distribution list and your `hosty setup` choices (Shell and Marketplace by default; Telemetry opt-in). Marketplace owns its catalog URL as a normal app setting; Core does not expose catalog APIs.
 
 Install the repository Demo App from a local checkout:
 
