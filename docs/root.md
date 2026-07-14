@@ -60,12 +60,16 @@ flowchart LR
 
 ## Planning
 
+- [Install-Time Runtime Port Reservations](planning/install-time-runtime-port-reservations.md) - Draft implementation plan for persistent service-scoped ports assigned during install, migration, collision handling, and explicit reassignment.
+- [One-Click Cloudflare Public Ingress](planning/one-click-cloudflare-public-ingress.md) - Draft implementation plan for API-token-based remote Tunnel adoption, per-app hostname publication, Dashboard-safe reconciliation, diagnostics, and cleanup.
 - [Marketplace System App - Vertical Slice](planning/marketplace-system-app.md) - approved replacement of the Core-owned catalog with a Marketplace system app and generic Core feed lifecycle.
 
 ## Ideas
 
 Draft, exploratory, or backlog items that are not current implementation commitments:
 
+- [One-Click Cloudflare Public Ingress](ideas/one-click-cloudflare-ingress.md) - promoted design for API-token-based adoption of an existing remotely-managed Cloudflare Tunnel with operator-chosen per-app origins and automatic DNS/route synchronization.
+- [Install-Time Runtime Port Reservations](ideas/install-time-runtime-port-reservations.md) - promoted design for persistent app/service port assignment during installation so stopped apps have stable endpoints before first start.
 - [Runtime App Repository Feeds](ideas/runtime-app-repository-feeds.md) - promoted design that moved the feed contract from inline catalog data to app-owned `feeds.json` resolved by Core.
 - [On-Demand System App Updates](ideas/system-app-updates.md) - concept for explicit Shell/system-app update discovery, reviewed apply, self-reload, and rollback without restarting Core.
 - [Core Extension Model](ideas/core-extension-model.md) - concept for extending Core through out-of-process apps: contract-free API clients, driver/sink provider contracts with declared cardinality, pull-based event subscriptions, system app pages, "system" as an ownership label rather than a privilege tier, and additional login methods instead of replaceable auth providers.
