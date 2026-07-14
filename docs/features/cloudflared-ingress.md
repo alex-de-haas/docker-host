@@ -1,5 +1,8 @@
 # Feature: Ingress (Cloudflare Tunnel provider)
 
+Created: 2026-06-17
+Updated: 2026-07-14
+
 ## Goal
 
 Give runtime apps externally reachable, TLS-terminated URLs without the operator hand-editing a
@@ -131,3 +134,8 @@ Using a placeholder domain `example.com`:
   manually if needed.
 - Core does not check whether `cloudflared` is installed or running (it does not own the process); it
   only writes the config and warns about missing configuration.
+
+## Links
+
+- [One-Click Cloudflare Public Ingress](../ideas/one-click-cloudflare-ingress.md) — exploratory
+  remotely-managed replacement for the current operator-driven setup.

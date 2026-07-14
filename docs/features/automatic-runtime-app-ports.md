@@ -1,5 +1,8 @@
 # Feature: Automatic Runtime App Ports
 
+Created: 2026-06-05
+Updated: 2026-07-14
+
 ## Goal
 
 Prevent runtime apps from colliding on hard-coded development ports. Core should assign available host ports by default, expose those ports through environment variables, keep Shell launch URLs aligned with the actual assigned endpoint, and reuse stored automatic ports across restarts.
@@ -87,3 +90,8 @@ Existing installed apps that already have copied manifests under Core data roots
 ## Decision
 
 Core does not inject endpoint URLs such as `HOSTY_ENDPOINT_HTTP_URL` in this feature. `HOSTY_PORT_{KEY}` and stored endpoint metadata solve the current local collision problem.
+
+## Links
+
+- [Install-Time Runtime Port Reservations](../ideas/install-time-runtime-port-reservations.md) — exploratory
+  replacement for first-start allocation that would reserve and expose ports during installation.
