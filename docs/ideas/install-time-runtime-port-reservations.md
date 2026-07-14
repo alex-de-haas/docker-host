@@ -162,6 +162,9 @@ dependent apps need restart.
 - **Host-network ports are fixed reservations.** They participate in collision diagnostics but cannot use the
   automatic reassignment path reserved for remappable declarations.
 - **The manifest contract remains unchanged.** Assignment state is Core-owned and service-scoped.
+- **Operators can override a shared port key per service.** The existing app-scoped `HOSTY_PORT_<KEY>` stays
+  supported for single-service apps; a new service-scoped `HOSTY_PORT_<SERVICE>_<KEY>` form disambiguates a
+  key such as `http` that two services share, so a manifest edit is not required to pin one of them.
 
 ## Open Questions
 

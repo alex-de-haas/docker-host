@@ -138,8 +138,10 @@ dashboard-managed applications.
 - [ ] Removing a manifest endpoint removes only its Hosty-owned DNS/route during reviewed update apply.
 - [ ] Uninstall review lists Hosty-owned publications; confirmed uninstall removes them before app ownership
   state is deleted, and cleanup failure leaves a retryable installed record.
-- [ ] Disconnect offers Keep or Remove Hosty resources, defaults to Keep, deletes the locally stored token,
-  directs the administrator to dashboard revocation, and never deletes dashboard-owned objects.
+- [ ] Disconnect offers Keep or Remove Hosty resources, defaults to Keep, and never deletes dashboard-owned
+  objects. Remove deletes the stored token only after every owned deletion succeeds; a failed deletion halts,
+  preserves the token and remaining ownership, and reports a retryable error. Completed disconnect directs the
+  administrator to dashboard revocation.
 - [ ] The existing local `cloudflared` provider continues to behave as documented until explicitly migrated.
 - [ ] Core, CLI, Shell, mixed-owner round-trip, lifecycle, and regression tests pass.
 
@@ -223,6 +225,11 @@ loopback services, so a connector on another machine would forward public traffi
 NAT can mask a real mismatch in either direction, so the warning is advisory; the end-to-end verification
 stage of the first publication is the definitive proof, and its external-probe failures are classified as
 likely connector-locality errors while the warning is active.
+
+Because the egress-IP lookup is an external network call feeding only an advisory warning, it must never
+block connection. The lookup is wrapped so any failure other than cancellation is logged and the check
+degrades to `locality_unknown` — connection proceeds and the definitive end-to-end probe still runs. Only a
+successful lookup that actually disagrees with the connector IP produces `connector_not_local`.
 
 ### Core And Shell Public Origins
 
@@ -333,9 +340,12 @@ removal of the endpoint contract resolves the warning.
 - Renaming a publication removes the old owned pair and creates the new pair in one durable operation.
 - Disconnect offers **Keep published routes** (default) or **Remove Hosty routes**. Keep deletes the stored
   token but retains non-secret ownership and local origins for later reconnect. Remove deletes only verified
-  owned objects before the token is deleted. Dashboard-owned objects are never removed. In both cases Shell
-  directs the administrator to revoke the token in the Cloudflare dashboard, because the scoped token cannot
-  revoke itself.
+  owned objects and deletes the token **only after** every owned deletion succeeds; if any remote deletion
+  fails, the operation halts, preserves the still-valid token and the remaining ownership records, and
+  surfaces a retryable cleanup error. Deleting the token while owned resources remain would orphan them,
+  because Hosty would have lost the authorization needed to remove them. Dashboard-owned objects are never
+  removed. In both outcomes Shell directs the administrator to revoke the token in the Cloudflare dashboard
+  once disconnect completes, because the scoped token cannot revoke itself.
 - Token revocation or permission reduction never performs cleanup automatically.
 
 ### Legacy Provider Migration

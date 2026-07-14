@@ -73,8 +73,9 @@ ports, and current OS listeners while preserving the existing runtime environmen
   service and port.
 - [ ] Docker and local-command runtimes consume persisted assignments and retain current `PORT` /
   `HOSTY_PORT_*` behavior.
-- [ ] App-scoped `HOSTY_PORT_<KEY>` overrides remain supported when unambiguous and fail with a clear validation
-  error when one key maps to multiple independently published services.
+- [ ] App-scoped `HOSTY_PORT_<KEY>` overrides remain supported when unambiguous; a service-scoped
+  `HOSTY_PORT_<SERVICE>_<KEY>` override pins one service when a key is shared, and only an ambiguous
+  app-scoped override with no service-scoped disambiguation fails with a clear validation error.
 - [ ] Update/runtime switch preserves compatible assignments and allocates added ports before committing the
   new contract.
 - [ ] Removed declarations stop reserving their ports only after the reviewed contract change commits.
@@ -122,9 +123,10 @@ Add an optional `PortAssignments` collection to `AppRecord`. Each `AppPortAssign
 - whether the declaration is remappable;
 - last assigned timestamp.
 
-The identity is `(service, port, transport, bindScope)`. `AppEndpointContract.Url` becomes a projection of
-the assignment plus endpoint protocol; it is not the reservation source. Missing `PortAssignments` remains
-valid serialized legacy state and is migrated before lifecycle use.
+The identity is `(service, portKey, transport, bindScope)`, where `portKey` is the service-local port key
+(not the numeric host port). `AppEndpointContract.Url` becomes a projection of the assignment plus endpoint
+protocol; it is not the reservation source. Missing `PortAssignments` remains valid serialized legacy state
+and is migrated before lifecycle use.
 
 Endpoint summaries add an availability value:
 
@@ -160,15 +162,20 @@ the same transport/port; compatible TCP and UDP assignments may share a number.
 
 For each declaration, resolution order is:
 
-1. valid app-level `HOSTY_PORT_<KEY>` operator override when the key is unambiguous;
-2. explicit manifest `localPort` / `hostPort` or fixed host-network container port;
-3. compatible persisted assignment for the same service-scoped identity;
-4. retained prior-port preference when reinstalling and still free;
-5. new automatic allocation.
+1. service-scoped `HOSTY_PORT_<SERVICE>_<KEY>` operator override for the exact service/port key;
+2. app-level `HOSTY_PORT_<KEY>` operator override when the key is unambiguous across services;
+3. explicit manifest `localPort` / `hostPort` or fixed host-network container port;
+4. compatible persisted assignment for the same service-scoped identity;
+5. retained prior-port preference when reinstalling and still free;
+6. new automatic allocation.
 
 The app-facing environment remains service-local. Each adapter receives its service's assignment and emits
-the same variable names it emits today. An app-scoped override reused by multiple services is rejected with
-`runtime_port_override_ambiguous` rather than assigning the same port twice.
+the same variable names it emits today. The service-scoped `HOSTY_PORT_<SERVICE>_<KEY>` form is added so an
+operator can pin a single service whose port key (such as `http`) is shared by another service in the same
+app. The legacy app-scoped `HOSTY_PORT_<KEY>` form stays supported for the common single-service case; it is
+rejected with `runtime_port_override_ambiguous` only when one key maps to multiple independently published
+services and no service-scoped override disambiguates them, rather than silently assigning the same port
+twice.
 
 ### Lifecycle Integration
 
