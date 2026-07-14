@@ -283,13 +283,76 @@ internal sealed record AppRecord(
     // keys start-time provisioning and start ordering off these — e.g. an "otlp-collector" provider is
     // provisioned with its Core-owned config and started before OTLP consumers, regardless of app id
     // or how it was installed (see PlatformCapabilities). Additive/nullable, no schema bump.
-    IReadOnlyList<string>? Provides = null);
+    IReadOnlyList<string>? Provides = null,
+    // Service-scoped host-port reservations (install-time port reservations). Null on legacy records and
+    // backfilled by the boot migration (PortAssignmentMigration); once populated, the reservation — not
+    // the endpoint URL — is the durable source of a service's assigned port. Additive/nullable, so no
+    // AppStateDocument schema bump. See docs/planning/install-time-runtime-port-reservations.md.
+    IReadOnlyList<AppPortAssignment>? PortAssignments = null);
 
 // Well-known InstallOrigin values. Null on the record means a user/operator install; only the
 // distribution bootstrap stamps an explicit origin today.
 internal static class AppInstallOrigins
 {
     public const string Distribution = "distribution";
+}
+
+// Persistent, service-scoped host-port reservation (install-time port reservations, phase 1). The
+// reservation — not the endpoint URL — is the durable source of an assigned host port;
+// AppEndpointContract.Url becomes a projection of it. Identity is (Service, PortKey, Transport,
+// BindScope): the numeric HostPort alone is insufficient because tcp and udp are distinct collision
+// domains and a host / host-network bind is broader than a loopback one. Additive/nullable on AppRecord,
+// so older state.json deserializes with PortAssignments = null and is migrated before first lifecycle use
+// (no AppStateDocument schema bump). See docs/planning/install-time-runtime-port-reservations.md.
+internal sealed record AppPortAssignment(
+    string Service,
+    string PortKey,
+    int HostPort,
+    string Transport,
+    string BindScope,
+    string Source,
+    bool Remappable,
+    DateTimeOffset AssignedAt);
+
+// Network transport of a port assignment. TCP and UDP occupy distinct collision domains and may share a
+// number, so the transport is part of the assignment identity.
+internal static class AppPortTransports
+{
+    public const string Tcp = "tcp";
+    public const string Udp = "udp";
+}
+
+// Bind scope of a port assignment. `loopback` is an ordinary published HTTP port; `host` binds the host
+// interface more broadly (raw L4); `host-network` is a fixed container port in the host network namespace
+// that cannot be remapped. A broader scope conflicts with any narrower assignment on the same transport/port.
+internal static class AppPortBindScopes
+{
+    public const string Loopback = "loopback";
+    public const string Host = "host";
+    public const string HostNetwork = "host-network";
+}
+
+// Origin of a port assignment. `automatic` is an OS-selected dynamic port; `manifest` is an explicit
+// localPort/hostPort; `operator` is a HOSTY_PORT_* override; `host-network` is a fixed host-namespace port.
+// Only `automatic` assignments are remappable.
+internal static class AppPortSources
+{
+    public const string Automatic = "automatic";
+    public const string Manifest = "manifest";
+    public const string Operator = "operator";
+    public const string HostNetwork = "host-network";
+}
+
+// Endpoint availability, projected onto AppSummary endpoints only (never persisted, like PublicOrigin).
+// `assigned` — a durable target (a port assignment or an already-resolved URL) exists but the owning
+// service is stopped; `running` — the service is up; `unavailable` — the persisted target failed
+// preflight/binding (phase 2). Null only when the endpoint has neither an assignment nor a resolved URL.
+// A non-null Url alone no longer implies reachability.
+internal static class EndpointAvailability
+{
+    public const string Assigned = "assigned";
+    public const string Running = "running";
+    public const string Unavailable = "unavailable";
 }
 
 // The resolved immutable identity of a compiled artifact (per service), advanced only by a reviewed
@@ -345,7 +408,10 @@ internal sealed record AppEndpointContract(
     bool Public,
     string? Service = null,
     string? Port = null,
-    string? PublicOrigin = null);
+    string? PublicOrigin = null,
+    // Availability projected on summaries only (assigned/running/unavailable); left null in the persisted
+    // record and attached in AppSummary.From, exactly like PublicOrigin. See EndpointAvailability.
+    string? Availability = null);
 
 // `Development` (additive/defaulted for back-compat) is the manifest author's declared default for
 // Development Mode on this runtime — the intent marker. `DevelopmentMode` is the *effective* per-runtime
@@ -664,7 +730,7 @@ internal sealed record AppSummary(
         string? liveSourcePath = null)
     {
         var ui = app.Ui;
-        var endpoints = AttachPublicOrigins(app.Endpoints, app.Settings);
+        var endpoints = AttachAvailability(AttachPublicOrigins(app.Endpoints, app.Settings), app);
         // Overlay each runtime's *effective* Development Mode (operator toggle over the manifest default)
         // so clients render the Live/Locked badge and the toggle switch from what actually governs
         // liveness, not the raw manifest flag.
@@ -810,6 +876,37 @@ internal sealed record AppSummary(
         }
 
         return summaries.Values.OrderBy(setting => setting.Key, StringComparer.Ordinal).ToArray();
+    }
+
+    // Project endpoint availability (assigned/running) onto the summary without persisting it — the same
+    // null-in-record, attach-on-summary shape as AttachPublicOrigins. An endpoint has a durable target when
+    // it carries a matching port assignment or an already-resolved URL; it reads `running` only while the
+    // owning app is running, otherwise `assigned`. A legacy endpoint with neither stays null. `unavailable`
+    // is a phase-2 preflight outcome not produced here.
+    private static IReadOnlyList<AppEndpointContract> AttachAvailability(
+        IReadOnlyList<AppEndpointContract> endpoints,
+        AppRecord app)
+    {
+        var running = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        // Pre-index assignment identities by (service, port key) so the projection stays O(endpoints)
+        // rather than scanning every assignment per endpoint.
+        var assigned = new HashSet<(string?, string?)>(
+            (app.PortAssignments ?? []).Select(assignment => ((string?)assignment.Service, (string?)assignment.PortKey)));
+        return endpoints
+            .Select(endpoint =>
+            {
+                var hasAssignment = assigned.Contains((endpoint.Service, endpoint.Port));
+                if (!hasAssignment && string.IsNullOrWhiteSpace(endpoint.Url))
+                {
+                    return endpoint;
+                }
+
+                return endpoint with
+                {
+                    Availability = running ? EndpointAvailability.Running : EndpointAvailability.Assigned,
+                };
+            })
+            .ToArray();
     }
 
     private static IReadOnlyList<AppEndpointContract> AttachPublicOrigins(

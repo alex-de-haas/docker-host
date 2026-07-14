@@ -405,6 +405,62 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public async Task UpsertAppAsync_RoundTripsPersistedPortAssignments()
+    {
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var store = new AppRegistryStore(paths);
+        await store.UpsertAppAsync(CreateApp("com.example.notes") with
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 3100, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+        });
+
+        // A fresh store reads the persisted state back from disk (proves AOT serialization of the block).
+        var record = await new AppRegistryStore(paths).GetAppAsync("com.example.notes");
+
+        Assert.NotNull(record);
+        var assignment = Assert.Single(record!.PortAssignments!);
+        Assert.Equal("app", assignment.Service);
+        Assert.Equal("http", assignment.PortKey);
+        Assert.Equal(3100, assignment.HostPort);
+        Assert.Equal(AppPortTransports.Tcp, assignment.Transport);
+        Assert.Equal(AppPortBindScopes.Loopback, assignment.BindScope);
+        Assert.Equal(AppPortSources.Automatic, assignment.Source);
+        Assert.True(assignment.Remappable);
+        Assert.Equal(DateTimeOffset.UnixEpoch, assignment.AssignedAt);
+    }
+
+    [Fact]
+    public void From_ProjectsEndpointAvailabilityFromAssignmentAndRuntimeState()
+    {
+        var app = CreateApp("com.example.notes") with
+        {
+            RuntimeState = "stopped",
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 3100, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+            Endpoints =
+            [
+                new AppEndpointContract("app.http", "http", "http://localhost:3100", Public: true, Service: "app", Port: "http"),
+                // No assignment and no resolved URL → availability stays null (legacy/never-started).
+                new AppEndpointContract("app.metrics", "http", Url: null, Public: false, Service: "app", Port: "metrics"),
+            ],
+        };
+
+        var stopped = AppSummary.From(app);
+        Assert.Equal(EndpointAvailability.Assigned, Assert.Single(stopped.Endpoints, e => e.Key == "app.http").Availability);
+        Assert.Null(Assert.Single(stopped.Endpoints, e => e.Key == "app.metrics").Availability);
+
+        // The same assigned endpoint reads `running` once the owning app is running.
+        var running = AppSummary.From(app with { RuntimeState = "running" });
+        Assert.Equal(EndpointAvailability.Running, Assert.Single(running.Endpoints, e => e.Key == "app.http").Availability);
+    }
+
+    [Fact]
     public async Task ListAppsAsync_SkipsInvalidAppDirectories()
     {
         var root = await CreateTempRootAsync();

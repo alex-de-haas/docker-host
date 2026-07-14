@@ -972,6 +972,7 @@ internal sealed class RuntimeAppSupervisorService(
             await bootstrap.EnsureInstalledAsync(descriptor, stoppingToken);
         }
 
+        await MigratePortAssignmentsAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
         await lifecycle.ReconcileIngressAsync(stoppingToken);
@@ -1228,6 +1229,31 @@ internal sealed class RuntimeAppSupervisorService(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
             logger.LogWarning(ex, "Hosty runtime app autostart did not complete.");
+        }
+    }
+
+    // Install-time port reservations, phase 1: backfill persistent port assignments from stored endpoint
+    // URLs before autostart reconciliation consumes them. Best-effort — a failure is logged and startup
+    // continues (start still resolves ports as it does today when a record has no assignments yet).
+    private async Task MigratePortAssignmentsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var migrated = await lifecycle.MigratePortAssignmentsAsync(cancellationToken);
+            if (migrated > 0)
+            {
+                logger.LogInformation("Backfilled port assignments for {Count} runtime app(s).", migrated);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        // Best-effort backfill must never abort boot. Beyond the storage exceptions the sibling helpers
+        // handle, tolerate InvalidOperationException — UpdateAppAsync throws it when a record is removed
+        // between the list snapshot and its per-app write.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Hosty port assignment backfill did not complete.");
         }
     }
 

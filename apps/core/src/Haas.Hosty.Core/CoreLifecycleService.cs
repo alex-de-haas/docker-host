@@ -1430,6 +1430,35 @@ internal sealed class CoreLifecycleService(
             ManifestUnknown: manifestUnknown);
     }
 
+    // Install-time port reservations, phase 1: backfill service-scoped port assignments for existing
+    // records from their stored endpoint URLs, once, before autostart reconciliation consumes them.
+    // Idempotent — a record whose assignments already cover its started endpoints yields no delta and is
+    // skipped without a write, so steady-state boots do not rewrite state.json. Returns the number of
+    // records migrated. See PortAssignmentMigration and docs/planning/install-time-runtime-port-reservations.md.
+    public async Task<int> MigratePortAssignmentsAsync(CancellationToken cancellationToken = default)
+    {
+        var migrated = 0;
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records.Where(app => string.Equals(app.Kind, "runtime", StringComparison.Ordinal)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (PortAssignmentMigration.DeriveAssignments(app) is null)
+            {
+                continue;
+            }
+
+            // Re-derive under the record lock so a concurrent write is not clobbered; the derivation is
+            // pure and idempotent, so the committed result reflects the latest persisted endpoints.
+            await apps.UpdateAppAsync(
+                app.Id,
+                current => PortAssignmentMigration.DeriveAssignments(current) ?? current,
+                cancellationToken);
+            migrated++;
+        }
+
+        return migrated;
+    }
+
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<AppBackgroundLifecycleResult>();

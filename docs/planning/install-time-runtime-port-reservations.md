@@ -1,8 +1,10 @@
 # Install-Time Runtime Port Reservations
 
-Status: Draft
+Status: Ready
 Created: 2026-07-14
 Updated: 2026-07-14
+
+Approved for implementation on 2026-07-14; Phase 1 (persistent model + migration) in progress.
 
 ## Goal
 
