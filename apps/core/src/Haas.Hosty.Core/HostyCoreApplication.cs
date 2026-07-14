@@ -1248,7 +1248,10 @@ internal sealed class RuntimeAppSupervisorService(
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        // Best-effort backfill must never abort boot. Beyond the storage exceptions the sibling helpers
+        // handle, tolerate InvalidOperationException — UpdateAppAsync throws it when a record is removed
+        // between the list snapshot and its per-app write.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
         {
             logger.LogWarning(ex, "Hosty port assignment backfill did not complete.");
         }

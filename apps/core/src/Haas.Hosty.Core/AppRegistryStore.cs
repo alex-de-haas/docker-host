@@ -344,9 +344,10 @@ internal static class AppPortSources
 }
 
 // Endpoint availability, projected onto AppSummary endpoints only (never persisted, like PublicOrigin).
-// `assigned` — a durable port target exists but the owning service is stopped; `running` — the service is
-// up; `unavailable` — the persisted target failed preflight/binding (phase 2). Null for a legacy endpoint
-// with no assignment. A non-null Url alone no longer implies reachability.
+// `assigned` — a durable target (a port assignment or an already-resolved URL) exists but the owning
+// service is stopped; `running` — the service is up; `unavailable` — the persisted target failed
+// preflight/binding (phase 2). Null only when the endpoint has neither an assignment nor a resolved URL.
+// A non-null Url alone no longer implies reachability.
 internal static class EndpointAvailability
 {
     public const string Assigned = "assigned";
@@ -886,14 +887,15 @@ internal sealed record AppSummary(
         IReadOnlyList<AppEndpointContract> endpoints,
         AppRecord app)
     {
-        var assignments = app.PortAssignments ?? [];
         var running = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        // Pre-index assignment identities by (service, port key) so the projection stays O(endpoints)
+        // rather than scanning every assignment per endpoint.
+        var assigned = new HashSet<(string?, string?)>(
+            (app.PortAssignments ?? []).Select(assignment => ((string?)assignment.Service, (string?)assignment.PortKey)));
         return endpoints
             .Select(endpoint =>
             {
-                var hasAssignment = assignments.Any(assignment =>
-                    string.Equals(assignment.Service, endpoint.Service, StringComparison.Ordinal) &&
-                    string.Equals(assignment.PortKey, endpoint.Port, StringComparison.Ordinal));
+                var hasAssignment = assigned.Contains((endpoint.Service, endpoint.Port));
                 if (!hasAssignment && string.IsNullOrWhiteSpace(endpoint.Url))
                 {
                     return endpoint;

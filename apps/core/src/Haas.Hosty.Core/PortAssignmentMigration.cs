@@ -17,7 +17,15 @@ internal static class PortAssignmentMigration
     public static AppRecord? DeriveAssignments(AppRecord app)
     {
         var existing = app.PortAssignments ?? [];
-        var byIdentity = existing.ToDictionary(AssignmentIdentity, assignment => assignment);
+        // Build the identity map defensively rather than via ToDictionary: a corrupted or hand-edited
+        // record could carry duplicate identities, and this runs at boot — ToDictionary would throw
+        // ArgumentException and abort the backfill. First occurrence wins.
+        var byIdentity = new Dictionary<(string, string, string, string), AppPortAssignment>();
+        foreach (var assignment in existing)
+        {
+            byIdentity.TryAdd(AssignmentIdentity(assignment), assignment);
+        }
+
         var added = false;
         var now = DateTimeOffset.UtcNow;
 
@@ -58,11 +66,14 @@ internal static class PortAssignmentMigration
             return null;
         }
 
-        // Deterministic order (service, then port key) so the persisted collection is stable across runs
-        // and diffs are legible; identity dedup already happened above.
+        // Deterministic order across the full identity (service, port key, transport, bind scope) so the
+        // persisted collection is stable across runs and diffs are legible even when a service exposes the
+        // same port key on several transports/scopes; identity dedup already happened above.
         var assignments = byIdentity.Values
             .OrderBy(assignment => assignment.Service, StringComparer.Ordinal)
             .ThenBy(assignment => assignment.PortKey, StringComparer.Ordinal)
+            .ThenBy(assignment => assignment.Transport, StringComparer.Ordinal)
+            .ThenBy(assignment => assignment.BindScope, StringComparer.Ordinal)
             .ToArray();
         return app with { PortAssignments = assignments };
     }

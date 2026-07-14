@@ -130,6 +130,26 @@ public sealed class PortAssignmentMigrationTests
         Assert.Null(PortAssignmentMigration.DeriveAssignments(app));
     }
 
+    [Fact]
+    public void DeriveAssignments_ToleratesDuplicateExistingIdentities_WithoutThrowing()
+    {
+        // A corrupted or hand-edited record could persist two assignments with the same identity. The
+        // migration runs at boot, so it must dedup (first wins) rather than throw and abort the backfill.
+        var duplicate = new AppPortAssignment("api", "http", 4001, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch);
+        var app = CreateApp("com.example.suite") with
+        {
+            PortAssignments = [duplicate, duplicate with { HostPort = 9999 }],
+            Endpoints = [new AppEndpointContract("web.http", "http", "http://localhost:4002", Public: true, Service: "web", Port: "http")],
+        };
+
+        var migrated = PortAssignmentMigration.DeriveAssignments(app);
+
+        Assert.NotNull(migrated);
+        Assert.Equal(2, migrated!.PortAssignments!.Count);
+        // The first occurrence of the duplicated identity is kept.
+        Assert.Equal(4001, Assert.Single(migrated.PortAssignments, a => a.Service == "api").HostPort);
+    }
+
     private static AppRecord CreateApp(string id)
         => new(
             Id: id,
