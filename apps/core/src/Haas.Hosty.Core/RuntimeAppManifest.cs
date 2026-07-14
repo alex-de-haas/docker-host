@@ -1450,12 +1450,30 @@ internal sealed class DockerRuntimeAdapter(
 
             var hostNetwork = service.Runtime.IsHostNetwork;
             var containerName = BuildContainerName(context.App.Id, service.Key);
+            var existingLock = context.App.ArtifactLocks?.GetValueOrDefault(service.Key);
+
+            // Adoption: when a Core-owned container for this service is already running the exact image
+            // its lock pins, keep it running instead of docker rm -f + docker run. This is what makes a
+            // keep-apps Core restart (light stop) non-disruptive — the app never blips and its published
+            // host ports never churn. Any mismatch (not running, different image, no digest lock, or a
+            // foreign/unlabelled container) falls through to the normal recreate path below. Adopted
+            // containers are intentionally NOT added to startedContainers: this start did not create
+            // them, so a later sibling's failure must not tear a healthy running service down.
+            if (await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
+            {
+                resolvedLocks[service.Key] = existingLock!;
+                AppendServiceEndpoints(endpoints, service, AssignServicePorts(context, service, hostNetwork), config);
+                logger.LogInformation(
+                    "Adopted already-running container '{Container}' for app '{AppId}' (image matches lock); skipping recreate.",
+                    containerName, context.App.Id);
+                continue;
+            }
+
             await RemoveContainerIfOwnedAsync(context.App.Id, containerName, cancellationToken);
 
             // Resolve what to run from the lock + policy instead of blindly running the mutable tag:
             // pinned reuses the locked digest (pulling it only if missing), rolling re-resolves the
             // tag and advances the lock, and a lockless app is backfilled (TOFU). See A3/A4/A8.
-            var existingLock = context.App.ArtifactLocks?.GetValueOrDefault(service.Key);
             var (runReference, resolvedLock) = await ResolveImageRunReferenceAsync(service.Image, existingLock, policy, cancellationToken);
             resolvedLocks[service.Key] = resolvedLock;
 
@@ -1554,7 +1572,7 @@ internal sealed class DockerRuntimeAdapter(
                 runArgs.Add($"{serviceUrl.Key}={serviceUrl.Value}");
             }
 
-            var assignedPorts = new Dictionary<string, int>(StringComparer.Ordinal);
+            var assignedPorts = AssignServicePorts(context, service, hostNetwork);
             foreach (var port in service.Runtime.Ports)
             {
                 if (port.ContainerPort is null)
@@ -1563,13 +1581,7 @@ internal sealed class DockerRuntimeAdapter(
                 }
 
                 var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                // Under host networking the listener binds the host directly on its container port,
-                // so that *is* the reachable host port — there is nothing to publish or allocate.
-                var hostPort = hostNetwork
-                    ? port.ContainerPort.Value
-                    : RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
-                assignedPorts[key] = hostPort;
-                runArgs.AddRange(BuildPortArguments(port, hostPort, port.ContainerPort.Value, hostNetwork));
+                runArgs.AddRange(BuildPortArguments(port, assignedPorts[key], port.ContainerPort.Value, hostNetwork));
             }
 
             if (context.Manifest.DataTarget is not null &&
@@ -1602,22 +1614,7 @@ internal sealed class DockerRuntimeAdapter(
             _ = await RunDockerAsync(runArgs, ignoreFailures: false, cancellationToken, environment: containerEnvironment);
             startedContainers.Add(containerName);
 
-            foreach (var port in service.Runtime.Ports.Where(port => port.ContainerPort is not null))
-            {
-                var key = port.Key ?? port.ContainerPort!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                if (!assignedPorts.TryGetValue(key, out var hostPort))
-                {
-                    continue;
-                }
-
-                endpoints.Add(new AppEndpointContract(
-                    Key: $"{service.Key}.{key}",
-                    Protocol: string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol,
-                    Url: $"{(string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol)}://{config.RuntimePublicHost}:{hostPort}",
-                    Public: port.Public ?? false,
-                    Service: service.Key,
-                    Port: key));
-            }
+            AppendServiceEndpoints(endpoints, service, assignedPorts, config);
         }
         }
         catch
@@ -1945,6 +1942,95 @@ internal sealed class DockerRuntimeAdapter(
         var inspect = await RunRawAsync(["inspect", "--format", "{{.State.Running}}", containerName], cancellationToken);
         return inspect.ExitCode == 0 &&
             string.Equals(inspect.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // True when a Core-owned container of this name is already running the exact image the app's lock
+    // pins, so it can be adopted as-is (skip docker rm -f + docker run). Requires: the container exists,
+    // State.Running is true, its hosty.app.id label equals this app, and its created-from image
+    // (.Config.Image, which docker records as the `repo@sha256:...` reference it was run with) equals the
+    // pinned digest reference the lock resolves to. A missing/tag-only lock (local-only image with no
+    // digest) or any mismatch returns false so the caller recreates the container. This is the boot-time
+    // reconcile that keeps a keep-apps Core restart from churning still-running app containers.
+    private async Task<bool> TryAdoptRunningContainerAsync(
+        string appId,
+        string containerName,
+        RuntimeDockerImage image,
+        ArtifactLock? existingLock,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
+        {
+            return false;
+        }
+
+        var inspect = await RunRawAsync(
+            ["inspect", "--format", "{{.State.Running}}::{{ index .Config.Labels \"hosty.app.id\" }}::{{.Config.Image}}", containerName],
+            cancellationToken);
+        if (inspect.ExitCode != 0)
+        {
+            return false;
+        }
+
+        var parts = inspect.StandardOutput.Trim().Split("::", 3);
+        if (parts.Length != 3)
+        {
+            return false;
+        }
+
+        var pinnedReference = (image with { Digest = existingLock.ImageDigest }).Reference;
+        return string.Equals(parts[0].Trim(), "true", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(parts[1].Trim(), appId, StringComparison.Ordinal) &&
+            string.Equals(parts[2].Trim(), pinnedReference, StringComparison.Ordinal);
+    }
+
+    // Deterministic host-port assignment for a service's published ports. Host networking binds the
+    // container port on the host directly (nothing to publish/allocate), otherwise the host port is
+    // resolved from the app's persisted overrides / manifest. Shared by the normal run path and the
+    // adopt path so their published `-p` mappings and endpoint URLs can never drift.
+    private static Dictionary<string, int> AssignServicePorts(RuntimeLifecycleContext context, RuntimeSelectedService service, bool hostNetwork)
+    {
+        var assignedPorts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var port in service.Runtime.Ports)
+        {
+            if (port.ContainerPort is null)
+            {
+                continue;
+            }
+
+            var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            assignedPorts[key] = hostNetwork
+                ? port.ContainerPort.Value
+                : RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
+        }
+
+        return assignedPorts;
+    }
+
+    // Appends the reachable host endpoints for a service from its assigned ports. Shared by the normal
+    // run path and the adopt path (see AssignServicePorts).
+    private static void AppendServiceEndpoints(
+        List<AppEndpointContract> endpoints,
+        RuntimeSelectedService service,
+        IReadOnlyDictionary<string, int> assignedPorts,
+        HostyCoreRuntimeConfig config)
+    {
+        foreach (var port in service.Runtime.Ports.Where(port => port.ContainerPort is not null))
+        {
+            var key = port.Key ?? port.ContainerPort!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (!assignedPorts.TryGetValue(key, out var hostPort))
+            {
+                continue;
+            }
+
+            var protocol = string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol;
+            endpoints.Add(new AppEndpointContract(
+                Key: $"{service.Key}.{key}",
+                Protocol: protocol,
+                Url: $"{protocol}://{config.RuntimePublicHost}:{hostPort}",
+                Public: port.Public ?? false,
+                Service: service.Key,
+                Port: key));
+        }
     }
 
     // Reports the app ids that currently own a running Hosty-labelled container. One `docker ps` per

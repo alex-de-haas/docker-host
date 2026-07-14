@@ -1475,20 +1475,23 @@ internal sealed class CoreLifecycleService(
 
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StopRuntimeAppsAsync(CancellationToken cancellationToken = default)
     {
-        var results = new List<AppBackgroundLifecycleResult>();
         var records = await apps.ListAppRecordsAsync(cancellationToken);
-        foreach (var app in records.Where(app =>
-            string.Equals(app.Kind, "runtime", StringComparison.Ordinal)).OrderByDescending(app => app.Id, StringComparer.Ordinal))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            results.Add(await RunBackgroundLifecycleActionAsync(
+        // Stop every runtime app CONCURRENTLY. Each app owns a separate state.json under its own per-app
+        // lock and `docker stop` is an independent process, so parallel stops don't race. Stopping
+        // serially summed each app's SIGTERM grace (~10s default): with several apps that blew the
+        // caller's 15s shutdown budget after the first one or two, and the rest were abandoned
+        // still-running — their published host ports stayed bound by Docker Desktop until a reboot. In
+        // parallel the budget covers all apps at once (max grace, not the sum).
+        var tasks = records
+            .Where(app => string.Equals(app.Kind, "runtime", StringComparison.Ordinal))
+            .Select(app => RunBackgroundLifecycleActionAsync(
                 app.Id,
                 "core-shutdown-stop",
                 async () => await StopAsync(app.Id, cancellationToken),
-                cancellationToken));
-        }
+                cancellationToken))
+            .ToArray();
 
-        return results;
+        return await Task.WhenAll(tasks);
     }
 
     // Startup sweep: kills localCommand process trees a previous, non-gracefully-exited Core left

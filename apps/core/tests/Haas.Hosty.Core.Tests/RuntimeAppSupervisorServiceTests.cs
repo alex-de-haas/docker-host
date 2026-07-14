@@ -48,6 +48,55 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StopAsync_KeepApps_LeavesRuntimeAppsRunning()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var manifest = Path.Combine(root, "keep-apps-manifest.json");
+        await File.WriteAllTextAsync(manifest, CreateShellManifest("1.0.0", "hosty-shell", "local", "never"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: manifest,
+            SelectedRuntime: "docker",
+            System: false,
+            Autostart: true));
+        var config = CreateConfig(fixture.Paths, shellAutostart: true);
+        var supervisor = CreateSupervisor(fixture, config, CreateDistribution(), new CoreShutdownOptions { KeepRuntimeApps = true });
+
+        await supervisor.StartAsync(CancellationToken.None);
+        await WaitForAppAsync(fixture.Apps, "hosty.shell", app => string.Equals(app.RuntimeState, "running", StringComparison.Ordinal));
+
+        await supervisor.StopAsync(CancellationToken.None);
+
+        // Light stop: Core exits without stopping app containers, so the adapter's Stop is never called
+        // and the record stays running (to be re-adopted by the next Core).
+        Assert.Equal(0, fixture.Docker.StopCount);
+        var app = await fixture.Apps.GetAppAsync("hosty.shell");
+        Assert.Equal("running", app?.RuntimeState);
+    }
+
+    [Fact]
+    public async Task StopAsync_Default_StopsRuntimeApps()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var manifest = Path.Combine(root, "default-stop-manifest.json");
+        await File.WriteAllTextAsync(manifest, CreateShellManifest("1.0.0", "hosty-shell", "local", "never"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: manifest,
+            SelectedRuntime: "docker",
+            System: false,
+            Autostart: true));
+        var config = CreateConfig(fixture.Paths, shellAutostart: true);
+        var supervisor = CreateSupervisor(fixture, config, CreateDistribution());
+
+        await supervisor.StartAsync(CancellationToken.None);
+        await WaitForAppAsync(fixture.Apps, "hosty.shell", app => string.Equals(app.RuntimeState, "running", StringComparison.Ordinal));
+
+        await supervisor.StopAsync(CancellationToken.None);
+
+        // Default shutdown stops the app containers so Core can release their ports.
+        Assert.True(fixture.Docker.StopCount >= 1);
+    }
+
+    [Fact]
     public async Task StartAsync_ShellBootstrapHttpFailureLeavesCoreSupervisorRunning()
     {
         const string manifestUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
@@ -758,18 +807,19 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         var backups = new AppBackupService(paths, clock);
         var sources = new AppSourceService(paths, apps, clock);
         var choices = new BootstrapChoicesStore(paths, NullLogger<BootstrapChoicesStore>.Instance);
+        var docker = new NoopDockerRuntimeAdapter();
         var lifecycle = new CoreLifecycleService(
             paths,
             apps,
             manifests,
             backups,
             sources,
-            [new NoopDockerRuntimeAdapter(), new NoopLocalCommandRuntimeAdapter()],
+            [docker, new NoopLocalCommandRuntimeAdapter()],
             new NoneIngressController(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance,
             feedService: new AppFeedService(new HttpClient(new StubHttpMessageHandler(manifestHandler))),
             bootstrapChoices: choices);
-        return new TestFixture(paths, apps, sources, lifecycle, choices);
+        return new TestFixture(paths, apps, sources, lifecycle, choices, docker);
     }
 
     private static HostyCoreRuntimeConfig CreateConfig(CoreDataPaths paths, bool shellAutostart)
@@ -789,12 +839,14 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     private RuntimeAppSupervisorService CreateSupervisor(
         TestFixture fixture,
         HostyCoreRuntimeConfig config,
-        DistributionAppsProvider distribution)
+        DistributionAppsProvider distribution,
+        CoreShutdownOptions? shutdownOptions = null)
         => new(
             config,
             fixture.Apps,
             fixture.Lifecycle,
             CreateBootstrapService(fixture, config, distribution),
+            shutdownOptions ?? new CoreShutdownOptions(),
             NullLogger<RuntimeAppSupervisorService>.Instance);
 
     private static SystemAppBootstrapService CreateBootstrapService(
@@ -934,7 +986,8 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         AppRegistryStore Apps,
         AppSourceService Sources,
         CoreLifecycleService Lifecycle,
-        BootstrapChoicesStore Choices);
+        BootstrapChoicesStore Choices,
+        NoopDockerRuntimeAdapter Docker);
 
     private sealed class TestClock : IClock
     {
@@ -949,13 +1002,18 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
 
     private sealed class NoopDockerRuntimeAdapter : IAppRuntimeAdapter
     {
+        public int StopCount { get; private set; }
+
         public string Type => "docker";
 
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeStartResult("running", []));
 
         public Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
-            => Task.FromResult(new AppRuntimeOperationResult("stopped"));
+        {
+            StopCount++;
+            return Task.FromResult(new AppRuntimeOperationResult("stopped"));
+        }
 
         public Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeOperationResult("removed"));

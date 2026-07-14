@@ -54,6 +54,14 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<NotificationBroadcaster>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
+        // Shared flag the control-plane stop endpoint sets and the runtime-app supervisor reads at
+        // shutdown to decide whether a stop leaves app containers running (keep-apps light restart).
+        builder.Services.AddSingleton<CoreShutdownOptions>();
+        // Fast Core update-available check for the Shell sidebar. Its own named HttpClient follows
+        // redirects (release downloads bounce github.com -> the object CDN), unlike the SSRF-guarded feed
+        // client. Singleton so its TTL cache survives across requests.
+        builder.Services.AddHttpClient(CoreUpdateCheckService.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));
+        builder.Services.AddSingleton<CoreUpdateCheckService>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         // Resolve the setsid shim path once so the localCommand adapter spawns reclaimable process-group
@@ -131,11 +139,16 @@ internal static class HostyCoreApplication
         });
         app.MapGet("/control/v1/core/status", (HttpRequest request, HostyCoreRuntimeConfig config, ControlSecret secret) =>
             RequireControlSecret(request, secret, () => CoreJson.Json(CoreStatusResponse.From(config))));
-        app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime) =>
+        app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime, CoreShutdownOptions shutdownOptions) =>
             RequireControlSecret(request, secret, () =>
             {
+                // keepApps=true is the "light stop": Core exits without stopping its app containers, so a
+                // Core-only restart/update never triggers the destructive per-app docker-stop sweep. The
+                // running containers are re-adopted by the next Core at boot (image-matched).
+                var keepApps = IsTruthy(request.Query["keepApps"]);
+                shutdownOptions.KeepRuntimeApps = keepApps;
                 lifetime.StopApplication();
-                return CoreJson.Json(new StopResponse("stopping"));
+                return CoreJson.Json(new StopResponse(keepApps ? "stopping-keep-apps" : "stopping"));
             }));
 
         if (app.Environment.IsDevelopment())
@@ -267,12 +280,29 @@ internal static class HostyCoreApplication
         GlobalMountEndpoints.Map(app);
         CoreBootstrapEndpoints.Map(app);
         CoreSettingsEndpoints.Map(app);
+        CoreRestartEndpoints.Map(app);
         SourceEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
         AppAssetEndpoints.Map(app);
         AppBackupEndpoints.Map(app);
         NotificationEndpoints.Map(app);
+    }
+
+    // Query-flag parsing for control endpoints: accepts a bare `?keepApps` (empty value) plus the usual
+    // true/1/yes spellings, so both `?keepApps` and `?keepApps=true` mean the same thing.
+    private static bool IsTruthy(Microsoft.Extensions.Primitives.StringValues value)
+    {
+        if (value.Count == 0)
+        {
+            return false;
+        }
+
+        var text = value.ToString();
+        return text.Length == 0 ||
+            text.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("1", StringComparison.Ordinal) ||
+            text.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static IResult RequireControlSecret(HttpRequest request, ControlSecret secret, Func<IResult> action)
@@ -958,6 +988,7 @@ internal sealed class RuntimeAppSupervisorService(
     AppRegistryStore apps,
     CoreLifecycleService lifecycle,
     SystemAppBootstrapService bootstrap,
+    CoreShutdownOptions shutdownOptions,
     ILogger<RuntimeAppSupervisorService> logger,
     NotificationService? notifications = null) : BackgroundService
 {
@@ -1197,6 +1228,17 @@ internal sealed class RuntimeAppSupervisorService(
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
+
+        // Keep-apps light stop: leave the app containers running so a Core-only restart/update does not
+        // churn them (and cannot get wedged abandoning a slow docker-stop sweep). The next Core adopts
+        // the still-running, image-matched containers at boot instead of recreating them.
+        if (shutdownOptions.KeepRuntimeApps)
+        {
+            logger.LogInformation(
+                "Hosty Core shutdown requested with keep-apps: leaving runtime app containers running for adoption on the next start.");
+            return;
+        }
+
         await StopRuntimeAppsAsync(cancellationToken);
     }
 
@@ -1542,6 +1584,9 @@ internal sealed record CoreStatusResponse(
     // Core and CLI ship as one release bundle and share this version (see Directory.Build.props),
     // so reporting Core's assembly version also tells the Shell which CLI release is in play.
     private static readonly string PlatformVersion = ResolvePlatformVersion();
+
+    // The running platform version, for callers outside status (e.g. the update-check service).
+    internal static string PlatformVersionString => PlatformVersion;
 
     private static string ResolvePlatformVersion()
     {

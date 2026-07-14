@@ -659,6 +659,106 @@ public sealed class DockerRuntimeAdapterTests
             UpdatePolicy: updatePolicy);
 
     [Fact]
+    public async Task StartAsync_OwnedContainerRunningWithMatchingImage_AdoptsWithoutRecreate()
+    {
+        // A keep-apps Core restart leaves this container running; the new Core's start must adopt it
+        // (image matches the lock) instead of docker rm -f + docker run, so the app never blips.
+        var digest = "sha256:" + new string('a', 64);
+        var runner = new FakeDockerCommandRunner(args =>
+            args is ["inspect", "--format", var fmt, ..] && fmt.Contains("State.Running", StringComparison.Ordinal)
+                ? new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{digest}", "")
+                : new DockerCommandResult(0, "", ""));
+
+        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+
+        // No recreate churn: nothing pulled, run, or removed.
+        Assert.DoesNotContain(runner.Commands, command => command[0] is "run" or "pull" or "rm");
+        Assert.Equal("running", result.RuntimeState);
+        // The lock is preserved (adoption reuses the existing one; it never re-resolves the tag).
+        Assert.Equal(digest, result.ArtifactLocks?["app"].ImageDigest);
+    }
+
+    [Fact]
+    public async Task StartAsync_OwnedContainerRunningWithDifferentImage_Recreates()
+    {
+        // The running container is on a different digest than the lock pins, so it must be recreated
+        // (adoption is image-matched, not "any running owned container").
+        var digest = "sha256:" + new string('a', 64);
+        var otherDigest = "sha256:" + new string('b', 64);
+        var runner = new FakeDockerCommandRunner(args =>
+        {
+            if (args is ["inspect", "--format", var fmt, ..])
+            {
+                if (fmt.Contains("State.Running", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{otherDigest}", "");
+                }
+
+                if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, "com.example.app", "");
+                }
+            }
+
+            return args is ["image", "inspect", ..]
+                ? new DockerCommandResult(0, "[{}]", "")
+                : new DockerCommandResult(0, "", "");
+        });
+
+        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+
+        Assert.True(runner.Ran("rm", "-f", "hosty-com-example-app-app"));
+        Assert.Equal($"ghcr.io/example/app@{digest}", runner.Find("run")![^1]);
+    }
+
+    [Fact]
+    public async Task StartAsync_OwnedContainerNotRunning_Recreates()
+    {
+        // A stopped-but-present owned container is not adopted (only a live one is), so it is recreated.
+        var digest = "sha256:" + new string('a', 64);
+        var runner = new FakeDockerCommandRunner(args =>
+        {
+            if (args is ["inspect", "--format", var fmt, ..])
+            {
+                if (fmt.Contains("State.Running", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, $"false::com.example.app::ghcr.io/example/app@{digest}", "");
+                }
+
+                if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, "com.example.app", "");
+                }
+            }
+
+            return args is ["image", "inspect", ..]
+                ? new DockerCommandResult(0, "[{}]", "")
+                : new DockerCommandResult(0, "", "");
+        });
+
+        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+
+        Assert.NotNull(runner.Find("run"));
+        Assert.Equal($"ghcr.io/example/app@{digest}", runner.Find("run")![^1]);
+    }
+
+    [Fact]
+    public async Task StartAsync_RunningContainerButNoLock_Recreates()
+    {
+        // Without a persisted digest lock there is nothing to match the running image against, so the
+        // adopt fast-path is skipped entirely (no inspect short-circuit) and the app is (re)started.
+        var digest = "sha256:" + new string('c', 64);
+        var runner = new FakeDockerCommandRunner(args =>
+            args[0] == "pull"
+                ? new DockerCommandResult(0, $"Digest: {digest}\nStatus: Downloaded", "")
+                : new DockerCommandResult(0, "", ""));
+
+        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("rolling", locks: null)));
+
+        Assert.NotNull(runner.Find("run"));
+    }
+
+    [Fact]
     public async Task StartAsync_SettingsAndServiceToken_PassedViaEnvironmentNotArgv()
     {
         var runner = new FakeDockerCommandRunner();
