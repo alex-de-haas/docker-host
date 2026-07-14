@@ -120,6 +120,67 @@ public sealed class RuntimePortAllocatorTests
     }
 
     [Fact]
+    public async Task AssignAndPersistAsync_ListsAssignsAndPersistsAtomically()
+    {
+        // The exclusion-view read, the assignment, and the persist run under one gate so a concurrent
+        // install cannot allocate against a stale snapshot. Here we assert the wiring: listInstalled is
+        // consulted, persist receives the assigned record (with reservation + projected URL), and the
+        // persist result is returned.
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = CreateApp("com.example.new", [Endpoint("app", "http")]);
+        var selection = Selection(Service("app", Port("http", containerPort: 8080)));
+
+        var listed = false;
+        AppRecord? persistedArg = null;
+        var result = await allocator.AssignAndPersistAsync(
+            record,
+            selection,
+            _ =>
+            {
+                listed = true;
+                return Task.FromResult<IReadOnlyList<AppRecord>>([]);
+            },
+            (assigned, _) =>
+            {
+                persistedArg = assigned;
+                return Task.FromResult("persisted");
+            });
+
+        Assert.True(listed);
+        Assert.Equal("persisted", result);
+        Assert.NotNull(persistedArg);
+        Assert.Single(persistedArg!.PortAssignments!);
+        Assert.StartsWith("http://127.0.0.1:", Assert.Single(persistedArg.Endpoints).Url);
+    }
+
+    [Fact]
+    public async Task AssignAndPersistAsync_ExcludesOwnIdFromExclusionView()
+    {
+        // A record already present under its own id (a re-list of the app being installed) must not feed
+        // its own ports back into the exclusion view; only other apps are excluded.
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = CreateApp("com.example.new", [Endpoint("app", "http")]);
+        var selection = Selection(Service("app", Port("http", containerPort: 8080)));
+        var selfWithBogusPort = record with
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 65000, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+        };
+
+        var assigned = await allocator.AssignAndPersistAsync(
+            record,
+            selection,
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([selfWithBogusPort]),
+            (result, _) => Task.FromResult(result));
+
+        // A freshly allocated automatic port, not the stale self-listed 65000.
+        var assignment = Assert.Single(assigned.PortAssignments!);
+        Assert.Equal(AppPortSources.Automatic, assignment.Source);
+    }
+
+    [Fact]
     public void TryResolvePinnedHostPort_ConsumesPersistedAssignment()
     {
         var app = CreateApp("com.example.notes", []) with

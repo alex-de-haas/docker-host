@@ -29,6 +29,33 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
         }
     }
 
+    // Read the exclusion view, assign, and persist as one critical section, so two concurrent installs of
+    // different apps cannot each allocate against a snapshot that predates the other's persisted ports. The
+    // caller supplies how to list installed apps and how to persist; both run under the gate against a fresh
+    // read, so the second install observes the first's reservation. The record's own id is excluded from
+    // the exclusion view.
+    public async Task<TResult> AssignAndPersistAsync<TResult>(
+        AppRecord record,
+        RuntimeAppManifestSelection selection,
+        Func<CancellationToken, Task<IReadOnlyList<AppRecord>>> listInstalled,
+        Func<AppRecord, CancellationToken, Task<TResult>> persist,
+        CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var others = (await listInstalled(cancellationToken))
+                .Where(other => !string.Equals(other.Id, record.Id, StringComparison.Ordinal))
+                .ToArray();
+            var assigned = Assign(record, selection, others);
+            return await persist(assigned, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     private AppRecord Assign(
         AppRecord record,
         RuntimeAppManifestSelection selection,

@@ -261,18 +261,18 @@ internal sealed class CoreLifecycleService(
 
         // Reserve host ports now — after settings (including any HOSTY_PORT_* overrides) are final — so a
         // stopped app carries durable endpoint URLs before its first start, and its ports are excluded
-        // from every other app's allocation. Skipped only in unit fixtures without the coordinator, where
-        // ports resolve at first start as before.
-        if (portAllocator is not null &&
-            string.Equals(record.Kind, "runtime", StringComparison.Ordinal))
-        {
-            var others = (await apps.ListAppRecordsAsync(cancellationToken))
-                .Where(other => !string.Equals(other.Id, record.Id, StringComparison.Ordinal))
-                .ToArray();
-            record = await portAllocator.AssignAsync(record, selection, others, cancellationToken);
-        }
-
-        var document = await apps.UpsertAppAsync(record, cancellationToken);
+        // from every other app's allocation. The exclusion-view read, the assignment, and the upsert run
+        // as one critical section under the allocator's gate, so two concurrent installs of different apps
+        // cannot allocate against a stale snapshot. Skipped only in unit fixtures without the coordinator,
+        // where ports resolve at first start as before.
+        var document = portAllocator is not null && string.Equals(record.Kind, "runtime", StringComparison.Ordinal)
+            ? await portAllocator.AssignAndPersistAsync(
+                record,
+                selection,
+                apps.ListAppRecordsAsync,
+                apps.UpsertAppAsync,
+                cancellationToken)
+            : await apps.UpsertAppAsync(record, cancellationToken);
         // Consume the snapshot only once it has been applied. A null `retained` may mean a transient
         // read failure (IO/permissions), so leaving the file lets a later reinstall recover the
         // config instead of permanently discarding it over a hiccup.
