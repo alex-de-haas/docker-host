@@ -85,7 +85,11 @@ internal sealed class CoreUpdateCheckService(
             var updateAvailable = !string.Equals(installed, expected, StringComparison.OrdinalIgnoreCase);
             return new CoreUpdateStatus(currentVersion, updateAvailable, releaseTag, DateTimeOffset.UtcNow, null);
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or InvalidOperationException)
+        catch (Exception ex) when (
+            ex is HttpRequestException or IOException or InvalidOperationException ||
+            // Our local FetchTimeout tripping is a graceful "check failed"; a genuine caller cancellation
+            // (request aborted) must propagate rather than be swallowed as a normal result.
+            (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
             logger.LogDebug(ex, "Core update check against release tag {ReleaseTag} did not complete.", releaseTag);
             return new CoreUpdateStatus(currentVersion, false, releaseTag, DateTimeOffset.UtcNow, "Update check failed.");

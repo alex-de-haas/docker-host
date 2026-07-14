@@ -50,7 +50,7 @@ internal static class CoreCliLauncher
 
         if (OperatingSystem.IsWindows())
         {
-            var command = $"{CmdQuote(cliPath)} {string.Join(' ', args)} > {CmdQuote(logPath)} 2>&1";
+            var command = $"{CmdQuote(cliPath)} {string.Join(' ', args.Select(CmdQuote))} > {CmdQuote(logPath)} 2>&1";
             var startInfo = new ProcessStartInfo
             {
                 FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",

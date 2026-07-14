@@ -151,6 +151,8 @@ export function ShellClient({
   const [coreSettingsError, setCoreSettingsError] = useState<string | null>(null);
   const [coreUpdate, setCoreUpdate] = useState<CoreUpdateStatus | null>(null);
   const [coreUpdating, setCoreUpdating] = useState(false);
+  // Tracks the post-update re-probe timer so it can be cancelled on unmount / re-trigger.
+  const coreUpdateProbeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Applying an update / switching runtime resets Core's artifact locks, so the cached update-status
   // owned by the Installed Apps page goes stale (it would keep showing "Update available"). We can't
   // reach into that page's state from here, so we bump a per-app counter it watches to re-probe.
@@ -307,20 +309,22 @@ export function ShellClient({
     [coreOrigin, loadCsrfToken],
   );
 
-  // Best-effort Core update-available probe (admin-only endpoint). A failure just leaves the badge off —
-  // it must never break the shell load, so errors are swallowed. Pass force to bypass Core's TTL cache
-  // (e.g. right after a hotfix release), so the operator never has to drop to the CLI to re-check.
-  const loadCoreUpdateStatus = useCallback(async (force = false) => {
+  // Best-effort Core update-available probe (admin-only endpoint). A failure clears the badge rather
+  // than leaving a stale "Update available" showing (auth expiry, Core mid-restart, transient error),
+  // and never breaks the shell load. Pass force to bypass Core's TTL cache (e.g. right after a hotfix
+  // release) so the operator never has to drop to the CLI to re-check. An optional AbortSignal lets a
+  // superseding call / unmount cancel the in-flight request without touching state.
+  const loadCoreUpdateStatus = useCallback(async (force = false, signal?: AbortSignal) => {
     try {
       const url = `${coreOrigin}/api/core/update-status${force ? "?refresh=true" : ""}`;
-      const response = await fetch(url, { credentials: "include" });
-      if (!response.ok) {
+      const response = await fetch(url, { credentials: "include", signal });
+      setCoreUpdate(response.ok ? ((await response.json()) as CoreUpdateStatus) : null);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
 
-      setCoreUpdate((await response.json()) as CoreUpdateStatus);
-    } catch {
-      // ignore: the update badge is non-essential
+      setCoreUpdate(null);
     }
   }, [coreOrigin]);
 
@@ -338,7 +342,11 @@ export function ShellClient({
       // Fire-and-forget on Core's side: it spawns `hosty update` detached and restarts. Give Core time to
       // self-update and come back, then re-probe — the badge clears itself when the new binary matches.
       await sendCsrfJson(`${coreOrigin}/api/core/update`, {});
-      window.setTimeout(() => {
+      if (coreUpdateProbeTimer.current !== null) {
+        clearTimeout(coreUpdateProbeTimer.current);
+      }
+      coreUpdateProbeTimer.current = setTimeout(() => {
+        coreUpdateProbeTimer.current = null;
         setCoreUpdating(false);
         void loadCoreUpdateStatus(true);
       }, 20000);
@@ -477,12 +485,27 @@ export function ShellClient({
   }, [state.apps]);
 
   // Probe for a newer Core once we know the session is an admin (the endpoint is admin-only). Core
-  // TTL-caches the result, so this stays cheap across reloads.
+  // TTL-caches the result, so this stays cheap across reloads. Aborts the in-flight probe on unmount /
+  // dependency change so a late response can't overwrite fresher state.
   useEffect(() => {
-    if (canManageApps) {
-      void loadCoreUpdateStatus();
+    if (!canManageApps) {
+      return;
     }
+
+    const controller = new AbortController();
+    void loadCoreUpdateStatus(false, controller.signal);
+    return () => controller.abort();
   }, [canManageApps, loadCoreUpdateStatus]);
+
+  // Cancel a pending post-update re-probe timer when the shell unmounts.
+  useEffect(
+    () => () => {
+      if (coreUpdateProbeTimer.current !== null) {
+        clearTimeout(coreUpdateProbeTimer.current);
+      }
+    },
+    [],
+  );
 
   const runAppAction = useCallback(
     async (app: CoreApp, action: AppAction) => {
