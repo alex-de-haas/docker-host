@@ -860,7 +860,7 @@ internal sealed class CoreLifecycleService(
     private static IReadOnlyList<ReassignDependentImpact> FindDependents(IReadOnlyList<AppRecord> installed, string appId)
         => installed
             .Where(candidate => !string.Equals(candidate.Id, appId, StringComparison.Ordinal) &&
-                candidate.Dependencies.Any(dependency => string.Equals(dependency.AppId, appId, StringComparison.Ordinal)))
+                (candidate.Dependencies ?? []).Any(dependency => string.Equals(dependency.AppId, appId, StringComparison.Ordinal)))
             .OrderBy(candidate => candidate.Id, StringComparer.Ordinal)
             .Select(candidate => new ReassignDependentImpact(
                 candidate.Id,
@@ -868,7 +868,7 @@ internal sealed class CoreLifecycleService(
             .ToArray();
 
     private static string? FindEndpointUrl(AppRecord app, string service, string portKey)
-        => app.Endpoints.FirstOrDefault(endpoint =>
+        => (app.Endpoints ?? []).FirstOrDefault(endpoint =>
             string.Equals(endpoint.Service, service, StringComparison.Ordinal) &&
             string.Equals(endpoint.Port, portKey, StringComparison.Ordinal))?.Url;
 

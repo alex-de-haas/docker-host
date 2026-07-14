@@ -82,10 +82,12 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
                 .Where(other => !string.Equals(other.Id, record.Id, StringComparison.Ordinal))
                 .ToArray();
             var reserved = ReservedLoopbackPorts(others);
+            // Exclude every OTHER port this app already holds, regardless of bind scope: a host-scope
+            // (raw L4) or host-network assignment occupies a real host port number too, so reusing it for
+            // the reassigned loopback port would guarantee a bind conflict once that service (re)starts.
             foreach (var assignment in record.PortAssignments ?? [])
             {
-                if (string.Equals(assignment.BindScope, AppPortBindScopes.Loopback, StringComparison.Ordinal) &&
-                    !(string.Equals(assignment.Service, service, StringComparison.Ordinal) &&
+                if (!(string.Equals(assignment.Service, service, StringComparison.Ordinal) &&
                       string.Equals(assignment.PortKey, portKey, StringComparison.Ordinal)))
                 {
                     reserved.Add(assignment.HostPort);
@@ -102,7 +104,7 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
                         ? assignment with { HostPort = newPort, AssignedAt = now }
                         : assignment)
                 .ToArray();
-            var endpoints = record.Endpoints
+            var endpoints = (record.Endpoints ?? [])
                 .Select(endpoint => string.Equals(endpoint.Service, service, StringComparison.Ordinal) &&
                     string.Equals(endpoint.Port, portKey, StringComparison.Ordinal)
                         ? endpoint with { Url = BuildUrl(EndpointProtocol(endpoint), newPort) }
@@ -184,7 +186,7 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             }
         }
 
-        var endpoints = ProjectEndpointUrls(record.Endpoints, resolved);
+        var endpoints = ProjectEndpointUrls(record.Endpoints ?? [], resolved);
         return record with { PortAssignments = assignments, Endpoints = endpoints };
     }
 
