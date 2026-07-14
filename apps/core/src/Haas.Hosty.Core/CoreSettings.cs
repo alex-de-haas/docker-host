@@ -147,13 +147,24 @@ internal sealed record IngressSettings(
 
     internal static string NormalizePath(string path)
     {
-        if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal))
+        try
         {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            path = Path.Combine(home, path[2..]);
-        }
+            if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal))
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                path = Path.Combine(home, path[2..]);
+            }
 
-        return Path.GetFullPath(path);
+            return Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException)
+        {
+            // A pathological credentials path (invalid chars, too long) must not crash Core — this runs at
+            // startup via FromEnvironment (CoreSettingsService construction) and on the save path via
+            // NormalizeIngressValue. Keep the raw value; the credentials-file warning / cloudflared surface
+            // the bad path instead.
+            return path;
+        }
     }
 }
 
@@ -467,10 +478,18 @@ internal sealed class CoreSettingsService
             return provider;
         }
 
-        if (key == "HOSTY_INGRESS_BASE_DOMAIN" && !CloudflaredIngressPlanner.IsValidHostname(value))
+        if (key == "HOSTY_INGRESS_BASE_DOMAIN")
         {
-            throw new AppLifecycleException("core_setting_invalid",
-                $"'{value}' is not a valid lowercase domain.");
+            // Canonicalize to lowercase before validating/persisting: DNS is case-insensitive but the
+            // planner's hostname regex and Cloudflare expect lowercase, so accept "Example.com".
+            var domain = value.ToLowerInvariant();
+            if (!CloudflaredIngressPlanner.IsValidHostname(domain))
+            {
+                throw new AppLifecycleException("core_setting_invalid",
+                    $"'{value}' is not a valid domain.");
+            }
+
+            return domain;
         }
 
         if (key == "HOSTY_INGRESS_CREDENTIALS_FILE")

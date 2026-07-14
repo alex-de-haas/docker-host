@@ -94,6 +94,42 @@ public sealed class CloudflaredIngressControllerTests : IDisposable
         Assert.False(File.Exists(ConfigPath));
     }
 
+    [Fact]
+    public async Task DisablingProvider_RemovesManagedConfig()
+    {
+        var settings = CreateSettings();
+        await settings.UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_INGRESS_PROVIDER"] = "cloudflared",
+            ["HOSTY_INGRESS_BASE_DOMAIN"] = "apps.example.test",
+            ["HOSTY_INGRESS_TUNNEL_ID"] = "tunnel-abc",
+            ["HOSTY_INGRESS_CREDENTIALS_FILE"] = Path.Combine(root, "creds.json"),
+        });
+        var controller = CreateController(settings);
+        await controller.ReconcileAsync([]);
+        Assert.True(File.Exists(ConfigPath));
+
+        // Switching back to none must take the stale routes offline, not just stop updating them.
+        await settings.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = "none" });
+        await controller.ReconcileAsync([]);
+        Assert.False(File.Exists(ConfigPath));
+    }
+
+    [Fact]
+    public async Task DisablingProvider_KeepsOperatorAuthoredConfig()
+    {
+        // A custom HOSTY_INGRESS_CONFIG_PATH may point at a file Hosty did not write; disabling ingress
+        // must never delete it (no managed header ⇒ leave it alone).
+        Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
+        await File.WriteAllTextAsync(ConfigPath, "tunnel: operator-owned\ningress:\n  - service: http_status:404\n");
+
+        var settings = CreateSettings(); // provider defaults to none
+        var controller = CreateController(settings);
+        await controller.ReconcileAsync([]);
+
+        Assert.True(File.Exists(ConfigPath));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))

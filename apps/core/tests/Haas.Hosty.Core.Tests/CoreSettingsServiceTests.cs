@@ -190,6 +190,17 @@ public sealed class CoreSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateAsync_Ingress_LowercasesBaseDomain()
+    {
+        var service = CreateService();
+
+        // DNS is case-insensitive; a mixed-case domain is accepted and canonicalized to lowercase.
+        await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_BASE_DOMAIN"] = "Apps.Example.Test" });
+
+        Assert.Equal("apps.example.test", service.Ingress.BaseDomain);
+    }
+
+    [Fact]
     public void TouchesIngress_TrueOnlyWhenAnIngressKeyIsPresent()
     {
         Assert.True(CoreSettingsService.TouchesIngress(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = "none" }));
