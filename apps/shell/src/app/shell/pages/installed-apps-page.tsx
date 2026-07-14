@@ -63,6 +63,7 @@ import type {
   UpdateStatusState,
 } from "../types";
 import { EmptyState, IconButton, PageHeader, StatusBadge } from "../ui";
+import { EndpointAvailabilityBadge, PortReassignControl } from "./port-reassign-control";
 
 export function InstalledAppsPage({
   coreOrigin,
@@ -464,25 +465,34 @@ function AppServiceDetailsPanel({
                   {service.endpoints.map((endpoint) => {
                     const publicOrigin = getEndpointPublicOrigin(app, endpoint);
                     return (
-                      <div key={endpoint.key} className={cn("grid gap-2 text-xs", endpoint.public && "md:grid-cols-2")}>
-                        <EndpointUrlBlock
-                          url={endpoint.url}
-                          missingText="not assigned"
-                          copyTitle="Copy local endpoint URL"
-                          openTitle="Open local endpoint URL"
-                          onCopy={copyEndpointUrl}
-                        />
-                        {endpoint.public && (
+                      <div key={endpoint.key} className="grid gap-1 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate font-mono text-muted-foreground">{endpoint.key}</span>
+                          <EndpointAvailabilityBadge availability={endpoint.availability} />
+                          <span className="ml-auto">
+                            <PortReassignControl app={app} endpoint={endpoint} />
+                          </span>
+                        </div>
+                        <div className={cn("grid gap-2", endpoint.public && "md:grid-cols-2")}>
                           <EndpointUrlBlock
-                            url={publicOrigin}
-                            missingText="not configured"
-                            copyTitle="Copy public origin"
-                            openTitle="Open public origin"
+                            url={endpoint.url}
+                            missingText="not assigned"
+                            copyTitle="Copy local endpoint URL"
+                            openTitle="Open local endpoint URL"
                             onCopy={copyEndpointUrl}
-                            configureTitle="Configure public origin"
-                            onConfigure={canConfigurePublicOrigins ? onConfigurePublicOrigins : undefined}
                           />
-                        )}
+                          {endpoint.public && (
+                            <EndpointUrlBlock
+                              url={publicOrigin}
+                              missingText="not configured"
+                              copyTitle="Copy public origin"
+                              openTitle="Open public origin"
+                              onCopy={copyEndpointUrl}
+                              configureTitle="Configure public origin"
+                              onConfigure={canConfigurePublicOrigins ? onConfigurePublicOrigins : undefined}
+                            />
+                          )}
+                        </div>
                       </div>
                     );
                   })}
