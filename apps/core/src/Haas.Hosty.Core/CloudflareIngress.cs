@@ -8,7 +8,9 @@ namespace Haas.Hosty.Core;
 // Ingress turns a runtime app's loopback ports into externally reachable, TLS-terminated URLs.
 // Core does not run a reverse proxy itself; the cloudflared provider drives an operator-run
 // Cloudflare Tunnel by writing its config file and auto-deriving HOSTY_PUBLIC_ORIGIN_* values.
-// "none" (the default) keeps today's behaviour: the operator manages exposure and origins.
+// The provider and its identity are live settings (CoreSettingsService.Ingress): provider "none"
+// (the default) leaves exposure and origins to the operator; the single controller reads the current
+// value each call, so a platform-panel edit takes effect without a restart.
 internal interface IIngressController
 {
     // True when Core derives HOSTY_PUBLIC_ORIGIN_* itself; false when the operator owns them.
@@ -26,54 +28,47 @@ internal interface IIngressController
     Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default);
 }
 
-internal sealed class NoneIngressController : IIngressController
-{
-    private static readonly IReadOnlyDictionary<string, string> Empty =
-        new Dictionary<string, string>(StringComparer.Ordinal);
-
-    public bool ManagesPublicOrigins => false;
-
-    public IReadOnlyDictionary<string, string> ResolvePublicOrigins(
-        string appId,
-        string? subdomainOverride,
-        IReadOnlyList<string> publicEndpointKeys)
-        => Empty;
-
-    public Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
-}
-
+// The one ingress controller. It reads the live ingress config from CoreSettingsService and no-ops when
+// the provider is "none", so there is no separate "none" implementation to swap in at startup — the
+// provider is an operator setting, not a DI-time choice.
 internal sealed class CloudflaredIngressController(
+    CoreSettingsService settings,
     HostyCoreRuntimeConfig config,
     ILogger<CloudflaredIngressController> logger) : IIngressController
 {
     private static readonly IReadOnlyDictionary<string, string> Empty =
         new Dictionary<string, string>(StringComparer.Ordinal);
 
-    public bool ManagesPublicOrigins => true;
+    public bool ManagesPublicOrigins => settings.Ingress.ManagesPublicOrigins;
 
     public IReadOnlyDictionary<string, string> ResolvePublicOrigins(
         string appId,
         string? subdomainOverride,
         IReadOnlyList<string> publicEndpointKeys)
     {
-        if (string.IsNullOrWhiteSpace(config.IngressBaseDomain) || publicEndpointKeys.Count == 0)
+        var ingress = settings.Ingress;
+        if (!ingress.ManagesPublicOrigins || string.IsNullOrWhiteSpace(ingress.BaseDomain) || publicEndpointKeys.Count == 0)
         {
             return Empty;
         }
 
         var subdomain = CloudflaredIngressPlanner.ResolveSubdomain(appId, subdomainOverride);
-        return CloudflaredIngressPlanner.ResolveOrigins(config.IngressBaseDomain, subdomain, publicEndpointKeys);
+        return CloudflaredIngressPlanner.ResolveOrigins(ingress.BaseDomain, subdomain, publicEndpointKeys);
     }
 
     public async Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default)
     {
-        // Missing identity/domain is surfaced to the operator via /api/core/status warnings; do not
-        // write a half-formed config that cloudflared would reject.
-        if (string.IsNullOrWhiteSpace(config.IngressBaseDomain) ||
-            string.IsNullOrWhiteSpace(config.IngressTunnelId) ||
-            string.IsNullOrWhiteSpace(config.IngressCredentialsFile))
+        var ingress = settings.Ingress;
+        // Provider "none" or missing identity/domain: do not write a half-formed config that cloudflared
+        // would reject. Incomplete cloudflared config is surfaced via /api/core/status warnings. Remove a
+        // config we previously wrote so an operator-run cloudflared stops serving the stale routes — the
+        // live toggle must actually disable ingress, not just stop updating it.
+        if (!ingress.ManagesPublicOrigins ||
+            string.IsNullOrWhiteSpace(ingress.BaseDomain) ||
+            string.IsNullOrWhiteSpace(ingress.TunnelId) ||
+            string.IsNullOrWhiteSpace(ingress.CredentialsFile))
         {
+            RemoveManagedConfig();
             return;
         }
 
@@ -91,8 +86,8 @@ internal sealed class CloudflaredIngressController(
                 .Where(app => app.Endpoints.Count > 0)
                 .ToArray();
 
-            var routes = CloudflaredIngressPlanner.BuildRoutes(config.IngressBaseDomain, config.CorePort, ingressApps);
-            var yaml = CloudflaredIngressPlanner.RenderConfig(config.IngressTunnelId, config.IngressCredentialsFile, routes);
+            var routes = CloudflaredIngressPlanner.BuildRoutes(ingress.BaseDomain, config.CorePort, ingressApps);
+            var yaml = CloudflaredIngressPlanner.RenderConfig(ingress.TunnelId, ingress.CredentialsFile, routes);
 
             var directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(directory))
@@ -117,6 +112,38 @@ internal sealed class CloudflaredIngressController(
         => app.Settings.TryGetValue(CloudflaredIngressPlanner.SubdomainSettingKey, out var setting)
             ? setting.Value
             : null;
+
+    // Best-effort removal of a config we own. Guarded on the managed header so a custom
+    // HOSTY_INGRESS_CONFIG_PATH aimed at an operator-authored file is never deleted when ingress is
+    // disabled; a missing file is a no-op.
+    private void RemoveManagedConfig()
+    {
+        var path = config.EffectiveIngressConfigPath;
+        try
+        {
+            if (!File.Exists(path) || !IsManagedConfig(path))
+            {
+                return;
+            }
+
+            File.Delete(path);
+            logger.LogInformation("Hosty ingress disabled; removed managed tunnel config at {Path}.", path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            logger.LogWarning(ex, "Hosty ingress config at {Path} could not be removed.", path);
+        }
+    }
+
+    private static bool IsManagedConfig(string path)
+    {
+        foreach (var line in File.ReadLines(path))
+        {
+            return line.StartsWith(CloudflaredIngressPlanner.ManagedHeaderPrefix, StringComparison.Ordinal);
+        }
+
+        return false;
+    }
 }
 
 // Pure helpers for hostname/origin derivation and cloudflared config rendering, so the lifecycle
@@ -128,6 +155,10 @@ internal static class CloudflaredIngressPlanner
 
     // Core's own UI/API is seeded under this subdomain so apps can reach it via the tunnel too.
     public const string CoreSubdomain = "core";
+
+    // Stamped as the first line of every generated config so the controller can recognise (and safely
+    // remove) a file it owns when ingress is disabled.
+    public const string ManagedHeaderPrefix = "# Managed by Hosty Core";
 
     private static readonly Regex HostLabelPattern =
         new("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", RegexOptions.Compiled);
@@ -203,7 +234,7 @@ internal static class CloudflaredIngressPlanner
         IReadOnlyList<CloudflaredRoute> routes)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("# Managed by Hosty Core - do not edit. Regenerated on runtime app lifecycle changes.");
+        builder.AppendLine($"{ManagedHeaderPrefix} - do not edit. Regenerated on runtime app lifecycle changes.");
         builder.AppendLine($"tunnel: {YamlQuote(tunnelId)}");
         builder.AppendLine($"credentials-file: {YamlQuote(credentialsFile)}");
         builder.AppendLine("ingress:");

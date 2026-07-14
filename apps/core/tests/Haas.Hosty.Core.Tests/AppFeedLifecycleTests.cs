@@ -242,7 +242,7 @@ public sealed class AppFeedLifecycleTests
                 backups,
                 sources,
                 [new NoopDockerRuntimeAdapter()],
-                new NoneIngressController(),
+                new NoopIngressController(),
                 NullLogger<CoreLifecycleService>.Instance,
                 clock: clock,
                 feedService: feeds);

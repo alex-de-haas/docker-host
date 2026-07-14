@@ -40,10 +40,10 @@ public sealed class CoreSettingsServiceTests : IDisposable
     {
         var service = CreateService();
 
-        await service.UpdateAsync(new Dictionary<string, double?>
+        await service.UpdateAsync(new Dictionary<string, string?>
         {
-            ["HOSTY_AUTH_CORE_SESSION_IDLE_HOURS"] = 1,
-            ["HOSTY_AUTH_APP_GRANT_ABSOLUTE_HOURS"] = 240,
+            ["HOSTY_AUTH_CORE_SESSION_IDLE_HOURS"] = "1",
+            ["HOSTY_AUTH_APP_GRANT_ABSOLUTE_HOURS"] = "240",
         });
 
         // Live: the in-memory record reflects the change immediately, and the row is marked overridden.
@@ -64,12 +64,12 @@ public sealed class CoreSettingsServiceTests : IDisposable
     public async Task UpdateAsync_NullValueClearsOverride()
     {
         var service = CreateService();
-        await service.UpdateAsync(new Dictionary<string, double?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = 1 });
+        await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = "1" });
         Assert.Equal(TimeSpan.FromHours(1), service.AuthLifetimes.CliGrantLifetime);
         Assert.True(service.GetAuthRows().Single(r => r.Definition.Key == "HOSTY_AUTH_CLI_GRANT_HOURS").Overridden);
 
         // Null clears the override -> the key falls back to env/default, persisted so a fresh service agrees.
-        await service.UpdateAsync(new Dictionary<string, double?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = null });
+        await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = null });
         Assert.Equal(AuthLifetimes.FromEnvironment().CliGrantLifetime, service.AuthLifetimes.CliGrantLifetime);
         Assert.False(service.GetAuthRows().Single(r => r.Definition.Key == "HOSTY_AUTH_CLI_GRANT_HOURS").Overridden);
         Assert.False(CreateService().GetAuthRows().Single(r => r.Definition.Key == "HOSTY_AUTH_CLI_GRANT_HOURS").Overridden);
@@ -81,25 +81,130 @@ public sealed class CoreSettingsServiceTests : IDisposable
         var service = CreateService();
 
         var exception = await Assert.ThrowsAsync<AppLifecycleException>(
-            () => service.UpdateAsync(new Dictionary<string, double?> { ["HOSTY_AUTH_MADE_UP"] = 5 }));
+            () => service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_MADE_UP"] = "5" }));
 
         Assert.Equal("core_setting_unknown", exception.Code);
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(-5)]
-    [InlineData(double.NaN)]
-    [InlineData(double.PositiveInfinity)]
-    [InlineData(double.MaxValue)] // finite but overflows TimeSpan — must be rejected, not persisted
-    public async Task UpdateAsync_RejectsNonPositiveOrNonFinite(double hours)
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("1.7976931348623157E+308")] // finite but overflows TimeSpan — must be rejected, not persisted
+    [InlineData("abc")] // non-numeric — must be rejected
+    public async Task UpdateAsync_RejectsNonPositiveOrNonFiniteHours(string hours)
     {
         var service = CreateService();
 
         var exception = await Assert.ThrowsAsync<AppLifecycleException>(
-            () => service.UpdateAsync(new Dictionary<string, double?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = hours }));
+            () => service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = hours }));
 
         Assert.Equal("core_setting_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void Ingress_NoOverrides_MatchesEnvironmentBaseline()
+    {
+        var service = CreateService();
+
+        Assert.Equal(IngressSettings.FromEnvironment(), service.Ingress);
+
+        var rows = service.GetIngressRows();
+        Assert.Equal(CoreIngressSettings.All.Count, rows.Count);
+        Assert.All(rows, row => Assert.False(row.Overridden));
+        var provider = rows.Single(r => r.Definition.Key == "HOSTY_INGRESS_PROVIDER");
+        Assert.Equal(IngressSettings.ProviderNone, provider.EffectiveValue);
+        Assert.Equal("select", provider.Definition.Type);
+        Assert.Equal(IngressSettings.ProviderNone, provider.Definition.DefaultValue);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Ingress_AppliesLiveAndPersists()
+    {
+        var service = CreateService();
+
+        await service.UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_INGRESS_PROVIDER"] = "cloudflared",
+            ["HOSTY_INGRESS_BASE_DOMAIN"] = "apps.example.test",
+            ["HOSTY_INGRESS_TUNNEL_ID"] = "tunnel-123",
+        });
+
+        Assert.True(service.Ingress.ManagesPublicOrigins);
+        Assert.Equal("apps.example.test", service.Ingress.BaseDomain);
+        Assert.Equal("tunnel-123", service.Ingress.TunnelId);
+        Assert.True(service.GetIngressRows().Single(r => r.Definition.Key == "HOSTY_INGRESS_PROVIDER").Overridden);
+
+        // Persisted: a fresh service reads the ingress overrides back.
+        var reloaded = CreateService();
+        Assert.True(reloaded.Ingress.ManagesPublicOrigins);
+        Assert.Equal("apps.example.test", reloaded.Ingress.BaseDomain);
+        Assert.Equal("tunnel-123", reloaded.Ingress.TunnelId);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Ingress_NormalizesCredentialsPathToAbsolute()
+    {
+        var service = CreateService();
+
+        await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_CREDENTIALS_FILE"] = "creds.json" });
+
+        Assert.True(Path.IsPathRooted(service.Ingress.CredentialsFile));
+        Assert.EndsWith("creds.json", service.Ingress.CredentialsFile);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Ingress_NullClearsOverride()
+    {
+        var service = CreateService();
+        await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = "cloudflared" });
+        Assert.True(service.Ingress.ManagesPublicOrigins);
+
+        await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = null });
+        Assert.Equal(IngressSettings.ProviderNone, service.Ingress.Provider);
+        Assert.False(service.GetIngressRows().Single(r => r.Definition.Key == "HOSTY_INGRESS_PROVIDER").Overridden);
+        Assert.False(CreateService().Ingress.ManagesPublicOrigins);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Ingress_RejectsInvalidProvider()
+    {
+        var service = CreateService();
+
+        var exception = await Assert.ThrowsAsync<AppLifecycleException>(
+            () => service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = "nginx" }));
+
+        Assert.Equal("core_setting_invalid", exception.Code);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Ingress_RejectsInvalidBaseDomain()
+    {
+        var service = CreateService();
+
+        var exception = await Assert.ThrowsAsync<AppLifecycleException>(
+            () => service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_BASE_DOMAIN"] = "Not A Domain" }));
+
+        Assert.Equal("core_setting_invalid", exception.Code);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Ingress_LowercasesBaseDomain()
+    {
+        var service = CreateService();
+
+        // DNS is case-insensitive; a mixed-case domain is accepted and canonicalized to lowercase.
+        await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_BASE_DOMAIN"] = "Apps.Example.Test" });
+
+        Assert.Equal("apps.example.test", service.Ingress.BaseDomain);
+    }
+
+    [Fact]
+    public void TouchesIngress_TrueOnlyWhenAnIngressKeyIsPresent()
+    {
+        Assert.True(CoreSettingsService.TouchesIngress(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = "none" }));
+        Assert.False(CoreSettingsService.TouchesIngress(new Dictionary<string, string?> { ["HOSTY_AUTH_CLI_GRANT_HOURS"] = "6" }));
     }
 
     [Fact]
@@ -111,6 +216,7 @@ public sealed class CoreSettingsServiceTests : IDisposable
         var service = CreateService();
 
         Assert.Equal(AuthLifetimes.FromEnvironment(), service.AuthLifetimes);
+        Assert.Equal(IngressSettings.FromEnvironment(), service.Ingress);
     }
 
     [Fact]
@@ -129,22 +235,65 @@ public sealed class CoreSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void Load_HandEditedInvalidProvider_IsSkippedNotCrash()
+    {
+        // An unrecognized provider in a hand-edited file is dropped per-entry, so the provider follows
+        // the baseline ('none') rather than wedging ingress.
+        Directory.CreateDirectory(Path.Combine(root, "core"));
+        File.WriteAllText(
+            Path.Combine(root, "core", CoreSettingsSchema.FileName),
+            "{\"schemaVersion\":\"" + CoreSettingsSchema.Version + "\",\"ingress\":{\"HOSTY_INGRESS_PROVIDER\":\"bogus\"}}");
+
+        var service = CreateService();
+
+        Assert.Equal(IngressSettings.ProviderNone, service.Ingress.Provider);
+    }
+
+    [Fact]
+    public void Load_AuthOnlyFile_StillParses()
+    {
+        // The ingress section is additive: an older auth-only settings.json (no `ingress` key) must still
+        // load its auth overrides rather than being rejected.
+        Directory.CreateDirectory(Path.Combine(root, "core"));
+        File.WriteAllText(
+            Path.Combine(root, "core", CoreSettingsSchema.FileName),
+            "{\"schemaVersion\":\"" + CoreSettingsSchema.Version + "\",\"auth\":{\"HOSTY_AUTH_CLI_GRANT_HOURS\":3}}");
+
+        var service = CreateService();
+
+        Assert.Equal(TimeSpan.FromHours(3), service.AuthLifetimes.CliGrantLifetime);
+        Assert.Equal(IngressSettings.ProviderNone, service.Ingress.Provider);
+    }
+
+    [Fact]
     public void EndpointDtos_AreRegisteredInAotContext()
     {
         // The endpoint serializes these through the source-gen context; a missing registration would be
-        // a runtime 500, not a compile error, so assert the round-trip here.
+        // a runtime 500, not a compile error, so assert the round-trip here — including a select-typed
+        // ingress row with options and the ingress overrides section on the persisted document.
         var response = new CoreSettingsResponse(
         [
-            new CoreSettingSummary("HOSTY_AUTH_CLI_GRANT_HOURS", "number", "12", "12", "CLI diagnostic grants", "Lifetime", "desc", Overridden: false),
+            new CoreSettingSummary("HOSTY_AUTH_CLI_GRANT_HOURS", "number", "12", "12", "CLI diagnostic grants", "Lifetime", "desc", Overridden: false, Unit: "h"),
+            new CoreSettingSummary("HOSTY_INGRESS_PROVIDER", "select", "cloudflared", "none", "Public ingress", "Provider", "desc", Overridden: true,
+                Options: [new CoreSettingOption("none", "Disabled"), new CoreSettingOption("cloudflared", "Cloudflare Tunnel")]),
         ]);
 
         var json = JsonSerializer.Serialize(response, CoreJsonSerializerContext.Default.CoreSettingsResponse);
-        Assert.Contains("HOSTY_AUTH_CLI_GRANT_HOURS", json);
+        Assert.Contains("HOSTY_INGRESS_PROVIDER", json);
+        Assert.Contains("Cloudflare Tunnel", json);
 
         var request = JsonSerializer.Deserialize(
-            """{"settings":{"HOSTY_AUTH_CLI_GRANT_HOURS":"6"}}""",
+            """{"settings":{"HOSTY_INGRESS_PROVIDER":"cloudflared"}}""",
             CoreJsonSerializerContext.Default.CoreSettingsUpdateRequest);
-        Assert.Equal("6", request!.Settings!["HOSTY_AUTH_CLI_GRANT_HOURS"]);
+        Assert.Equal("cloudflared", request!.Settings!["HOSTY_INGRESS_PROVIDER"]);
+
+        var document = new CoreSettingsDocument
+        {
+            SchemaVersion = CoreSettingsSchema.Version,
+            Ingress = new Dictionary<string, string> { ["HOSTY_INGRESS_BASE_DOMAIN"] = "example.com" },
+        };
+        var documentJson = JsonSerializer.Serialize(document, CoreJsonSerializerContext.Default.CoreSettingsDocument);
+        Assert.Contains("example.com", documentJson);
     }
 
     public void Dispose()

@@ -815,7 +815,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             backups,
             sources,
             [docker, new NoopLocalCommandRuntimeAdapter()],
-            new NoneIngressController(),
+            new NoopIngressController(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance,
             feedService: new AppFeedService(new HttpClient(new StubHttpMessageHandler(manifestHandler))),
             bootstrapChoices: choices);

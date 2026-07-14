@@ -30,17 +30,33 @@ Selected with `HOSTY_INGRESS_PROVIDER`:
 
 ## Configuration
 
-| Env var | Meaning |
+The provider, base domain, tunnel ID, and credentials file are **live Core settings** (see
+[Core settings](../ideas/core-settings.md)): edit them from the Shell platform panel (below), or set the
+environment variables as the baseline/bootstrap. A persisted setting wins over its env var; env stays an
+ambient dev/fork override. Only the `config.yml` **output path** is launch-only (like the data root).
+
+| Env var / setting | Meaning |
 | --- | --- |
 | `HOSTY_INGRESS_PROVIDER` | `none` (default) or `cloudflared`. |
 | `HOSTY_INGRESS_BASE_DOMAIN` | Base domain for derived hostnames, e.g. `example.com`. |
 | `HOSTY_INGRESS_TUNNEL_ID` | Cloudflare Tunnel UUID. |
 | `HOSTY_INGRESS_CREDENTIALS_FILE` | Path to the tunnel credentials JSON. |
-| `HOSTY_INGRESS_CONFIG_PATH` | Where Core writes `config.yml` (default `<data>/core/ingress/config.yml`). |
+| `HOSTY_INGRESS_CONFIG_PATH` | **Env-only.** Where Core writes `config.yml` (default `<data>/core/ingress/config.yml`). |
 
 Per app (a Hosty app setting): `HOSTY_INGRESS_SUBDOMAIN` overrides the auto-derived subdomain (e.g.
 `pm` → `pm.example.com`). When `cloudflared` is selected but a required value is missing, Core skips
 writing the config and surfaces a warning on `GET /api/core/status` rather than emitting a broken file.
+
+### Configuring from the Shell
+
+The Shell's **Platform → Core settings** panel has a "Public ingress" group with the provider
+(Disabled / Cloudflare Tunnel), base domain, tunnel ID, and credentials-file path. Saving persists the
+override to `settings.json` (`GET`/`PUT /api/core/settings`, host-admin + CSRF) and applies **live**: the
+single ingress controller reads the current values, so Core re-renders `config.yml` immediately on save —
+no restart. Per-app `HOSTY_PUBLIC_ORIGIN_*` values refresh on the app's next start (the host is
+deterministic). Clearing a field falls back to its env var / built-in default. The panel form only points
+Core at the tunnel; you still perform the one-time Cloudflare setup below (create the tunnel, DNS, and run
+`cloudflared` yourself).
 
 ## Hostname scheme
 
@@ -89,7 +105,9 @@ Using a placeholder domain `example.com`:
 2. **Add one wildcard DNS record.** A CNAME `*.example.com` → `<UUID>.cfargotunnel.com`, proxied
    (orange cloud). Cloudflare Universal SSL covers `*.example.com` at a single subdomain level — this
    is why Core uses single-level hostnames. No per-app DNS changes are ever needed.
-3. **Point Core at the tunnel:**
+3. **Point Core at the tunnel.** Either fill the "Public ingress" group in the Shell's Platform → Core
+   settings panel (provider = Cloudflare Tunnel, base domain, tunnel ID, credentials file), or set the
+   equivalent environment variables:
    ```
    HOSTY_INGRESS_PROVIDER=cloudflared
    HOSTY_INGRESS_BASE_DOMAIN=example.com

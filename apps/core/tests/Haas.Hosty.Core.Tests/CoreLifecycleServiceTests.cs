@@ -3909,17 +3909,25 @@ public sealed class CoreLifecycleServiceTests
                 RuntimePublicHost: "localhost",
                 ShellSourceOverridePath: null,
                 ShellAutostart: false,
-                IngressProvider: ingressBaseDomain is null ? "none" : "cloudflared",
-                IngressBaseDomain: ingressBaseDomain,
-                IngressConfigPath: Path.Combine(root, "core", "ingress", "config.yml"),
-                IngressTunnelId: ingressBaseDomain is null ? null : "test-tunnel",
-                IngressCredentialsFile: ingressBaseDomain is null ? null : Path.Combine(root, "creds.json"));
+                IngressConfigPath: Path.Combine(root, "core", "ingress", "config.yml"));
             var localProcesses = new LocalCommandProcessRegistry();
             var appServiceTokens = new AppServiceTokenService(new ControlSecret("test-control-secret"));
             var localAdapter = new LocalCommandRuntimeAdapter(runtimeConfig, localProcesses, appServiceTokens);
-            IIngressController ingress = ingressBaseDomain is null
-                ? new NoneIngressController()
-                : new CloudflaredIngressController(runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
+            // Ingress config is now a live Core setting (CoreSettingsService), not baked into the runtime
+            // config, so seed the cloudflared provider through the settings store the controller reads.
+            var coreSettings = new CoreSettingsService(new CoreSettingsStore(paths, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreSettingsStore>.Instance));
+            if (ingressBaseDomain is not null)
+            {
+                await coreSettings.UpdateAsync(new Dictionary<string, string?>
+                {
+                    ["HOSTY_INGRESS_PROVIDER"] = "cloudflared",
+                    ["HOSTY_INGRESS_BASE_DOMAIN"] = ingressBaseDomain,
+                    ["HOSTY_INGRESS_TUNNEL_ID"] = "test-tunnel",
+                    ["HOSTY_INGRESS_CREDENTIALS_FILE"] = Path.Combine(root, "creds.json"),
+                });
+            }
+
+            IIngressController ingress = new CloudflaredIngressController(coreSettings, runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
             var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }

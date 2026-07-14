@@ -3640,11 +3640,12 @@ internal sealed class CoreLifecycleService(
             var records = await apps.ListAppRecordsAsync(cancellationToken);
             await ingress.ReconcileAsync(records, cancellationToken);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Best-effort: ingress reconciliation runs on the startup BackgroundService path too,
-            // so it must never throw (an unhandled exception there would crash the host). Log for
-            // visibility rather than swallowing silently.
+            // Best-effort: ingress reconciliation runs on the startup BackgroundService path and on the
+            // /api/core/settings save path, so it must never throw — an unhandled exception would crash
+            // the host on the former and 500 the save on the latter. Catch everything but cancellation
+            // (which must propagate) and log for visibility rather than swallowing silently.
             logger.LogWarning(ex, "Hosty ingress reconciliation did not complete.");
         }
     }

@@ -139,7 +139,7 @@ public sealed class HostyCoreRuntimeConfigTests
         using var shellOriginEnv = TemporaryEnvironment.With("HOSTY_SHELL_PUBLIC_ORIGIN", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
-        var response = CoreStatusResponse.From(config);
+        var response = CoreStatusResponse.From(config, IngressSettings.FromEnvironment());
 
         Assert.Equal("http://localhost:7070", response.CorePublicOrigin);
         Assert.Equal("http://localhost:7171", response.ShellPublicOrigin);
