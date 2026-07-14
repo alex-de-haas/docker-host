@@ -138,6 +138,38 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        app.MapPost("/api/apps/{appId}/ports/reassign/plan", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            ReassignPortPlanRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.ReassignPortPlanAsync(appId, input.Service, input.PortKey, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        app.MapPost("/api/apps/{appId}/ports/reassign", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            ReassignPortRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.ReassignPortAsync(appId, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapPost("/api/apps/{appId}/mounts", async (
             string appId,
             HttpRequest request,

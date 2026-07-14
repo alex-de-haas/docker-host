@@ -212,6 +212,107 @@ public sealed class RuntimePortAllocatorTests
     }
 
     [Fact]
+    public async Task ReassignAsync_AllocatesNewPort_UpdatesAssignmentAndEndpointUrl()
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = CreateApp("com.example.notes",
+            [new AppEndpointContract("app.http", "http", "http://127.0.0.1:5000", Public: true, Service: "app", Port: "http")]) with
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 5000, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+        };
+
+        AppRecord? persisted = null;
+        var (result, oldPort, newPort) = await allocator.ReassignAsync(
+            record,
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) =>
+            {
+                persisted = updated;
+                return Task.FromResult(updated);
+            });
+
+        Assert.Equal(5000, oldPort);
+        Assert.NotEqual(5000, newPort);
+        Assert.Equal(newPort, Assert.Single(result.PortAssignments!).HostPort);
+        Assert.Equal($"http://127.0.0.1:{newPort}", Assert.Single(result.Endpoints).Url);
+        Assert.NotNull(persisted);
+    }
+
+    [Fact]
+    public async Task ReassignAsync_ExcludesAppOwnHostScopeAssignment()
+    {
+        // A raw-L4 (host-scope) assignment occupies a real host port; the reassigned loopback port must
+        // never land on it. Force the automatic pool to a single candidate by reserving everything else so
+        // the collision would be guaranteed if the host-scope port were not excluded.
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = CreateApp("com.example.suite",
+            [new AppEndpointContract("api.http", "http", "http://127.0.0.1:5000", Public: true, Service: "api", Port: "http")]) with
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("api", "http", 5000, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+                new AppPortAssignment("raw", "torrent", 6881, AppPortTransports.Tcp, AppPortBindScopes.Host, AppPortSources.Manifest, Remappable: false, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+        };
+
+        var (result, _, newPort) = await allocator.ReassignAsync(
+            record,
+            "api",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated));
+
+        Assert.NotEqual(6881, newPort);
+        Assert.DoesNotContain(result.PortAssignments!, assignment => assignment.Service == "api" && assignment.HostPort == 6881);
+    }
+
+    [Fact]
+    public async Task ReassignAsync_ToleratesNullEndpoints()
+    {
+        // A record deserialized from older/hand-edited state could carry a null Endpoints collection.
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = CreateApp("com.example.notes", []) with
+        {
+            Endpoints = null!,
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 5000, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+        };
+
+        var (result, oldPort, newPort) = await allocator.ReassignAsync(
+            record,
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated));
+
+        Assert.Equal(5000, oldPort);
+        Assert.NotEqual(5000, newPort);
+        Assert.Empty(result.Endpoints);
+    }
+
+    [Fact]
+    public async Task ReassignAsync_UnknownAssignment_Throws()
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = CreateApp("com.example.notes", []);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => allocator.ReassignAsync(
+            record,
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated)));
+        Assert.Equal("reassign_not_found", error.Code);
+    }
+
+    [Fact]
     public void AllocateLoopbackPort_ExcludesProvidedPorts()
     {
         var first = RuntimePortHelper.AllocateLoopbackPort();

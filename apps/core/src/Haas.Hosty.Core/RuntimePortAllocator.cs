@@ -56,6 +56,69 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
         }
     }
 
+    // Reassign one automatic loopback port to a fresh value, as one critical section under the gate so the
+    // new port is chosen against the current view of every other app plus the platform. The exclusion set
+    // spans other apps' loopback ports, the Core/Shell launch ports, this record's other loopback
+    // reservations, and the old port (so the new one always differs). The target assignment and its
+    // endpoint URL are reprojected; the caller persists the returned record. Returns the persisted record
+    // with the old and new ports.
+    public async Task<(TResult Persisted, int OldPort, int NewPort)> ReassignAsync<TResult>(
+        AppRecord record,
+        string service,
+        string portKey,
+        Func<CancellationToken, Task<IReadOnlyList<AppRecord>>> listInstalled,
+        Func<AppRecord, CancellationToken, Task<TResult>> persist,
+        CancellationToken cancellationToken = default)
+    {
+        var target = (record.PortAssignments ?? []).FirstOrDefault(assignment =>
+            string.Equals(assignment.Service, service, StringComparison.Ordinal) &&
+            string.Equals(assignment.PortKey, portKey, StringComparison.Ordinal))
+            ?? throw new AppLifecycleException("reassign_not_found", $"No port assignment for service '{service}' key '{portKey}'.");
+
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var others = (await listInstalled(cancellationToken))
+                .Where(other => !string.Equals(other.Id, record.Id, StringComparison.Ordinal))
+                .ToArray();
+            var reserved = ReservedLoopbackPorts(others);
+            // Exclude every OTHER port this app already holds, regardless of bind scope: a host-scope
+            // (raw L4) or host-network assignment occupies a real host port number too, so reusing it for
+            // the reassigned loopback port would guarantee a bind conflict once that service (re)starts.
+            foreach (var assignment in record.PortAssignments ?? [])
+            {
+                if (!(string.Equals(assignment.Service, service, StringComparison.Ordinal) &&
+                      string.Equals(assignment.PortKey, portKey, StringComparison.Ordinal)))
+                {
+                    reserved.Add(assignment.HostPort);
+                }
+            }
+
+            var oldPort = target.HostPort;
+            reserved.Add(oldPort);
+            var newPort = RuntimePortHelper.AllocateLoopbackPort(reserved);
+            var now = DateTimeOffset.UtcNow;
+            var assignments = (record.PortAssignments ?? [])
+                .Select(assignment => string.Equals(assignment.Service, service, StringComparison.Ordinal) &&
+                    string.Equals(assignment.PortKey, portKey, StringComparison.Ordinal)
+                        ? assignment with { HostPort = newPort, AssignedAt = now }
+                        : assignment)
+                .ToArray();
+            var endpoints = (record.Endpoints ?? [])
+                .Select(endpoint => string.Equals(endpoint.Service, service, StringComparison.Ordinal) &&
+                    string.Equals(endpoint.Port, portKey, StringComparison.Ordinal)
+                        ? endpoint with { Url = BuildUrl(EndpointProtocol(endpoint), newPort) }
+                        : endpoint)
+                .ToArray();
+            var persisted = await persist(record with { PortAssignments = assignments, Endpoints = endpoints }, cancellationToken);
+            return (persisted, oldPort, newPort);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     private AppRecord Assign(
         AppRecord record,
         RuntimeAppManifestSelection selection,
@@ -64,12 +127,7 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
         // Exclude every loopback host port already reserved by another installed app plus the Core and
         // Shell launch ports, so a fresh automatic allocation cannot collide with a stopped sibling or the
         // platform. Host-network assignments bind a fixed container port and never enter this pool.
-        var reserved = new HashSet<int>(otherInstalledApps
-            .SelectMany(app => app.PortAssignments ?? [])
-            .Where(assignment => !string.Equals(assignment.BindScope, AppPortBindScopes.HostNetwork, StringComparison.Ordinal))
-            .Select(assignment => assignment.HostPort));
-        reserved.Add(config.CorePort);
-        reserved.Add(config.ShellPort);
+        var reserved = ReservedLoopbackPorts(otherInstalledApps);
 
         var now = DateTimeOffset.UtcNow;
         var assignments = new List<AppPortAssignment>();
@@ -128,7 +186,7 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             }
         }
 
-        var endpoints = ProjectEndpointUrls(record.Endpoints, resolved);
+        var endpoints = ProjectEndpointUrls(record.Endpoints ?? [], resolved);
         return record with { PortAssignments = assignments, Endpoints = endpoints };
     }
 
@@ -172,7 +230,27 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
                 }
 
                 var protocol = string.IsNullOrWhiteSpace(endpoint.Protocol) ? target.Protocol : endpoint.Protocol;
-                return endpoint with { Url = $"{protocol}://{config.RuntimePublicHost}:{target.HostPort}" };
+                return endpoint with { Url = BuildUrl(protocol, target.HostPort) };
             })
             .ToArray();
+
+    // The loopback ports no fresh automatic allocation may reuse: every non-host-network reservation held
+    // by another installed app, plus the Core and Shell launch ports.
+    private HashSet<int> ReservedLoopbackPorts(IEnumerable<AppRecord> apps)
+    {
+        var reserved = new HashSet<int>(apps
+            .SelectMany(app => app.PortAssignments ?? [])
+            .Where(assignment => !string.Equals(assignment.BindScope, AppPortBindScopes.HostNetwork, StringComparison.Ordinal))
+            .Select(assignment => assignment.HostPort));
+        reserved.Add(config.CorePort);
+        reserved.Add(config.ShellPort);
+        return reserved;
+    }
+
+    // A host→app URL uses RuntimePublicHost (a literal IPv4 by default) so it never resolves through the
+    // docker-proxy IPv6 black hole. See the RuntimePublicHost note in the telemetry port-pin fix.
+    private string BuildUrl(string protocol, int port) => $"{protocol}://{config.RuntimePublicHost}:{port}";
+
+    private static string EndpointProtocol(AppEndpointContract endpoint)
+        => string.IsNullOrWhiteSpace(endpoint.Protocol) ? "http" : endpoint.Protocol;
 }
