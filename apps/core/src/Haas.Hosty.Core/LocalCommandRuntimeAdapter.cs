@@ -598,7 +598,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     continue;
                 }
 
-                if (!IsLoopbackPortAvailable(hostPort))
+                if (!RuntimePortHelper.IsLoopbackTcpPortAvailable(hostPort))
                 {
                     throw new AppLifecycleException(
                         "local_command_port_unavailable",
@@ -622,40 +622,6 @@ internal sealed class LocalCommandRuntimeAdapter(
             context.App.Settings.Values.Any(setting =>
                 string.Equals(setting.Key, "PORT", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(setting.Value));
-
-    private static bool IsLoopbackPortAvailable(int port)
-    {
-        if (port is <= 0 or > IPEndPoint.MaxPort)
-        {
-            return false;
-        }
-
-        if (ProbeBind(IPAddress.Loopback, port) is not PortBindProbeResult.Available)
-        {
-            return false;
-        }
-
-        return !Socket.OSSupportsIPv6 ||
-            ProbeBind(IPAddress.IPv6Loopback, port) is not PortBindProbeResult.InUse;
-    }
-
-    private static PortBindProbeResult ProbeBind(IPAddress address, int port)
-    {
-        try
-        {
-            using var listener = new TcpListener(address, port);
-            listener.Start();
-            return PortBindProbeResult.Available;
-        }
-        catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
-        {
-            return PortBindProbeResult.InUse;
-        }
-        catch (SocketException)
-        {
-            return PortBindProbeResult.Unavailable;
-        }
-    }
 
     // The effective source root: the lifecycle-resolved root (honors Development Mode — e.g. a locked
     // runtime's pinned checkout) when set, else an override folder, else the managed checkout, else the
@@ -786,12 +752,6 @@ internal sealed class LocalCommandRuntimeAdapter(
             Message: hasExited ? "Local command process exited." : null);
     }
 
-    private enum PortBindProbeResult
-    {
-        Available,
-        InUse,
-        Unavailable,
-    }
 }
 
 internal sealed class LocalCommandProcessRegistry

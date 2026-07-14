@@ -6,9 +6,9 @@ Updated: 2026-07-14
 
 Approved for implementation on 2026-07-14. Phase 1 (persistent model + migration) MERGED (PR #187).
 Phase 2 (coordinated allocation at install + adapter consumption) MERGED (PR #188). Phase 3a (reassignment
-plan/apply API + dependency-impact reporting) in progress; the start-time structured "port unavailable"
-preflight and the Shell reassignment/stopped-endpoint UI follow in later slices, along with update/switch/
-live-source re-allocation and raw-L4/host-network collision validation.
+plan/apply API + dependency-impact reporting) MERGED (PR #189). Phase 3b-1 (start-time structured
+"port unavailable" preflight) in progress; the Shell reassignment/stopped-endpoint UI follows next, along
+with the deferred update/switch/live-source re-allocation and raw-L4/host-network collision validation.
 
 ## Goal
 

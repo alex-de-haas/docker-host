@@ -132,6 +132,51 @@ internal static class RuntimePortHelper
             "Unable to allocate a free loopback port that was not already handed to another starting service.");
     }
 
+    // True when a loopback TCP bind on `port` currently succeeds. Probes both IPv4 and IPv6 loopback so a
+    // port held only on `::1` is still reported unavailable. TCP-specific by design (the reservation model
+    // is currently TCP-only); a UDP probe would need its own helper. Used by the localCommand adapter's
+    // explicit preflight and by the lifecycle start-time reservation preflight. Point-in-time, not a lease.
+    public static bool IsLoopbackTcpPortAvailable(int port)
+    {
+        if (port is <= 0 or > IPEndPoint.MaxPort)
+        {
+            return false;
+        }
+
+        if (ProbeBind(IPAddress.Loopback, port) is not PortBindProbeResult.Available)
+        {
+            return false;
+        }
+
+        return !Socket.OSSupportsIPv6 ||
+            ProbeBind(IPAddress.IPv6Loopback, port) is not PortBindProbeResult.InUse;
+    }
+
+    private static PortBindProbeResult ProbeBind(IPAddress address, int port)
+    {
+        try
+        {
+            using var listener = new TcpListener(address, port);
+            listener.Start();
+            return PortBindProbeResult.Available;
+        }
+        catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+        {
+            return PortBindProbeResult.InUse;
+        }
+        catch (SocketException)
+        {
+            return PortBindProbeResult.Unavailable;
+        }
+    }
+
+    private enum PortBindProbeResult
+    {
+        Available,
+        InUse,
+        Unavailable,
+    }
+
     private static string ServiceScopedOverrideKey(string serviceKey, string key) => $"{serviceKey}_{key}";
 
     private static bool HasOverrideSetting(AppRecord app, string key)
