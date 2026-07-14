@@ -212,6 +212,53 @@ public sealed class RuntimePortAllocatorTests
     }
 
     [Fact]
+    public async Task ReassignAsync_AllocatesNewPort_UpdatesAssignmentAndEndpointUrl()
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = CreateApp("com.example.notes",
+            [new AppEndpointContract("app.http", "http", "http://127.0.0.1:5000", Public: true, Service: "app", Port: "http")]) with
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 5000, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+        };
+
+        AppRecord? persisted = null;
+        var (result, oldPort, newPort) = await allocator.ReassignAsync(
+            record,
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) =>
+            {
+                persisted = updated;
+                return Task.FromResult(updated);
+            });
+
+        Assert.Equal(5000, oldPort);
+        Assert.NotEqual(5000, newPort);
+        Assert.Equal(newPort, Assert.Single(result.PortAssignments!).HostPort);
+        Assert.Equal($"http://127.0.0.1:{newPort}", Assert.Single(result.Endpoints).Url);
+        Assert.NotNull(persisted);
+    }
+
+    [Fact]
+    public async Task ReassignAsync_UnknownAssignment_Throws()
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = CreateApp("com.example.notes", []);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => allocator.ReassignAsync(
+            record,
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated)));
+        Assert.Equal("reassign_not_found", error.Code);
+    }
+
+    [Fact]
     public void AllocateLoopbackPort_ExcludesProvidedPorts()
     {
         var first = RuntimePortHelper.AllocateLoopbackPort();

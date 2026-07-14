@@ -767,6 +767,125 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "stopped");
     }
 
+    // Preview reassigning one automatic host port: reports the current port/URL, the installed apps that
+    // depend on this app (whose injected local URL would go stale), whether each is running, and a digest
+    // binding a later apply to this structural state. Read-only. Only an automatic, remappable assignment
+    // can be reassigned — a manifest/operator/host-network port is fixed.
+    public async Task<ReassignPortPlan> ReassignPortPlanAsync(string appId, string service, string portKey, CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var assignment = RequireRemappableAssignment(app, service, portKey);
+        var dependents = FindDependents(await apps.ListAppRecordsAsync(cancellationToken), appId);
+        return new ReassignPortPlan(
+            appId,
+            service,
+            portKey,
+            assignment.HostPort,
+            FindEndpointUrl(app, service, portKey),
+            string.Equals(app.RuntimeState, "running", StringComparison.Ordinal),
+            dependents,
+            ComputeReassignDigest(app, assignment, dependents));
+    }
+
+    public Task<ReassignPortResult> ReassignPortAsync(string appId, ReassignPortRequest request, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => ReassignPortCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<ReassignPortResult> ReassignPortCoreAsync(string appId, ReassignPortRequest request, CancellationToken cancellationToken)
+    {
+        if (portAllocator is null)
+        {
+            throw new AppLifecycleException("reassign_unavailable", "Port reassignment requires the allocation coordinator.");
+        }
+
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var assignment = RequireRemappableAssignment(app, request.Service, request.PortKey);
+        var dependents = FindDependents(await apps.ListAppRecordsAsync(cancellationToken), appId);
+        // Bind apply to the state the plan was computed against: a changed assignment or dependency graph
+        // (e.g. a runtime switch moved the port, or a dependency was added/removed) fails rather than
+        // acting on a stale plan. Dependents' running state is UX-only and deliberately not in the digest,
+        // so a dependent starting/stopping does not invalidate an otherwise-valid reassignment.
+        if (!string.Equals(ComputeReassignDigest(app, assignment, dependents), request.Digest, StringComparison.Ordinal))
+        {
+            throw new AppLifecycleException(
+                "reassign_state_changed",
+                "The app or its dependencies changed since the plan was computed. Re-open the plan and try again.");
+        }
+
+        var (updated, oldPort, newPort) = await portAllocator.ReassignAsync(
+            app,
+            request.Service,
+            request.PortKey,
+            apps.ListAppRecordsAsync,
+            async (record, ct) => (await apps.UpsertAppAsync(record, ct)).App,
+            cancellationToken);
+
+        // Reassignment never restarts anything as a side effect. The owning app, if running, still binds
+        // the old port until restarted; running dependents still hold the old injected local URL.
+        var restartRequired = new List<string>();
+        if (string.Equals(updated.RuntimeState, "running", StringComparison.Ordinal))
+        {
+            restartRequired.Add(appId);
+        }
+
+        restartRequired.AddRange(dependents.Where(dependent => dependent.Running).Select(dependent => dependent.AppId));
+        await ReconcileIngressAsync(cancellationToken);
+        return new ReassignPortResult(
+            appId,
+            request.Service,
+            request.PortKey,
+            oldPort,
+            newPort,
+            FindEndpointUrl(updated, request.Service, request.PortKey),
+            restartRequired);
+    }
+
+    private static AppPortAssignment RequireRemappableAssignment(AppRecord app, string service, string portKey)
+    {
+        var assignment = (app.PortAssignments ?? []).FirstOrDefault(assignment =>
+            string.Equals(assignment.Service, service, StringComparison.Ordinal) &&
+            string.Equals(assignment.PortKey, portKey, StringComparison.Ordinal))
+            ?? throw new AppLifecycleException(
+                "reassign_not_found",
+                $"App '{app.Id}' has no port assignment for service '{service}' key '{portKey}'.");
+        if (!assignment.Remappable || !string.Equals(assignment.Source, AppPortSources.Automatic, StringComparison.Ordinal))
+        {
+            throw new AppLifecycleException(
+                "reassign_not_remappable",
+                $"The port for service '{service}' key '{portKey}' is {assignment.Source}-assigned and cannot be automatically reassigned.");
+        }
+
+        return assignment;
+    }
+
+    private static IReadOnlyList<ReassignDependentImpact> FindDependents(IReadOnlyList<AppRecord> installed, string appId)
+        => installed
+            .Where(candidate => !string.Equals(candidate.Id, appId, StringComparison.Ordinal) &&
+                candidate.Dependencies.Any(dependency => string.Equals(dependency.AppId, appId, StringComparison.Ordinal)))
+            .OrderBy(candidate => candidate.Id, StringComparer.Ordinal)
+            .Select(candidate => new ReassignDependentImpact(
+                candidate.Id,
+                string.Equals(candidate.RuntimeState, "running", StringComparison.Ordinal)))
+            .ToArray();
+
+    private static string? FindEndpointUrl(AppRecord app, string service, string portKey)
+        => app.Endpoints.FirstOrDefault(endpoint =>
+            string.Equals(endpoint.Service, service, StringComparison.Ordinal) &&
+            string.Equals(endpoint.Port, portKey, StringComparison.Ordinal))?.Url;
+
+    // Structural digest (app id, service, port key, current port, sorted dependent ids). Dependents'
+    // running state is intentionally excluded — it is reported for UX but must not invalidate an apply.
+    private static string ComputeReassignDigest(AppRecord app, AppPortAssignment assignment, IReadOnlyList<ReassignDependentImpact> dependents)
+    {
+        var seed = string.Join(
+            "\n",
+            app.Id,
+            assignment.Service,
+            assignment.PortKey,
+            assignment.HostPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            string.Join(",", dependents.Select(dependent => dependent.AppId).OrderBy(id => id, StringComparer.Ordinal)));
+        return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(seed))).ToLowerInvariant();
+    }
+
     public Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
         => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken);
 
@@ -4130,6 +4249,34 @@ internal sealed record AppRestoreBackupRequest(bool CreatePreRestoreBackup = fal
 internal sealed record AppRuntimeSwitchPlanRequest(string TargetRuntime);
 
 internal sealed record AppRuntimeSwitchApplyRequest(string TargetRuntime, string PlanDigest);
+
+internal sealed record ReassignPortPlanRequest(string Service, string PortKey);
+
+internal sealed record ReassignPortRequest(string Service, string PortKey, string Digest);
+
+internal sealed record ReassignDependentImpact(string AppId, bool Running);
+
+internal sealed record ReassignPortPlan(
+    string AppId,
+    string Service,
+    string PortKey,
+    int CurrentPort,
+    string? CurrentUrl,
+    bool OwnerRunning,
+    IReadOnlyList<ReassignDependentImpact> AffectedDependents,
+    // Binds a later apply to this structural state; apply fails with reassign_state_changed on mismatch.
+    string Digest);
+
+internal sealed record ReassignPortResult(
+    string AppId,
+    string Service,
+    string PortKey,
+    int OldPort,
+    int NewPort,
+    string? NewUrl,
+    // Apps the operator should explicitly restart to pick up the new port: the owning app (if running,
+    // it still binds the old port) and any running dependent (still holding the old injected local URL).
+    IReadOnlyList<string> RestartRequiredAppIds);
 
 internal sealed record AppBackgroundLifecycleResult(
     string AppId,

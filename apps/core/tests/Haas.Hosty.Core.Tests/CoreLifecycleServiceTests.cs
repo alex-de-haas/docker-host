@@ -3832,6 +3832,110 @@ public sealed class CoreLifecycleServiceTests
                   }],
                 """;
 
+    [Fact]
+    public async Task ReassignPortPlanAsync_ReportsCurrentPortAndRunningDependent()
+    {
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 5000)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:5000")]));
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.web", "running",
+            dependencies: [new AppDependencyContract("com.example.api", null, Required: true, [])]));
+
+        var plan = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+
+        Assert.Equal(5000, plan.CurrentPort);
+        Assert.False(plan.OwnerRunning);
+        var dependent = Assert.Single(plan.AffectedDependents);
+        Assert.Equal("com.example.web", dependent.AppId);
+        Assert.True(dependent.Running);
+        Assert.NotEmpty(plan.Digest);
+    }
+
+    [Fact]
+    public async Task ReassignPortAsync_MovesPortAndReportsRunningDependentsForRestart()
+    {
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 5000)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:5000")]));
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.web", "running",
+            dependencies: [new AppDependencyContract("com.example.api", null, Required: true, [])]));
+
+        var plan = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+        var result = await fixture.Service.ReassignPortAsync("com.example.api", new ReassignPortRequest("app", "http", plan.Digest));
+
+        Assert.Equal(5000, result.OldPort);
+        Assert.NotEqual(5000, result.NewPort);
+        // The stopped owner is not restarted; the running dependent must be, to drop the stale local URL.
+        Assert.Equal(new[] { "com.example.web" }, result.RestartRequiredAppIds);
+        var api = await fixture.Apps.GetAppAsync("com.example.api");
+        Assert.Equal(result.NewPort, Assert.Single(api!.PortAssignments!).HostPort);
+        Assert.Equal($"http://localhost:{result.NewPort}", Assert.Single(api.Endpoints).Url);
+    }
+
+    [Fact]
+    public async Task ReassignPortAsync_StaleDigest_Throws()
+    {
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 5000)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:5000")]));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ReassignPortAsync("com.example.api", new ReassignPortRequest("app", "http", "stale-digest")));
+        Assert.Equal("reassign_state_changed", error.Code);
+    }
+
+    [Fact]
+    public async Task ReassignPortPlanAsync_ManifestPort_RejectedAsNotRemappable()
+    {
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 5000, source: AppPortSources.Manifest, remappable: false)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:5000")]));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http"));
+        Assert.Equal("reassign_not_remappable", error.Code);
+    }
+
+    private static AppRecord SeedReassignApp(
+        string id,
+        string runtimeState,
+        IReadOnlyList<AppPortAssignment>? assignments = null,
+        IReadOnlyList<AppEndpointContract>? endpoints = null,
+        IReadOnlyList<AppDependencyContract>? dependencies = null)
+        => new(
+            Id: id,
+            DisplayName: id,
+            Description: null,
+            Version: "1.0.0",
+            Kind: "runtime",
+            System: false,
+            Source: "installed",
+            ManifestPath: null,
+            ManifestUrl: null,
+            SelectedRuntime: "docker",
+            OperationStatus: "installed",
+            RuntimeState: runtimeState,
+            LastOperation: null,
+            LastError: null,
+            Capabilities: [],
+            Settings: new Dictionary<string, AppSettingValue>(),
+            StorageMappings: [],
+            Dependencies: dependencies ?? [],
+            Endpoints: endpoints ?? [],
+            InstalledAt: DateTimeOffset.UtcNow,
+            UpdatedAt: DateTimeOffset.UtcNow,
+            PortAssignments: assignments);
+
+    private static AppPortAssignment ReassignAssignment(string service, string key, int port, string? source = null, bool remappable = true)
+        => new(service, key, port, AppPortTransports.Tcp, AppPortBindScopes.Loopback, source ?? AppPortSources.Automatic, remappable, DateTimeOffset.UnixEpoch);
+
+    private static AppEndpointContract ReassignEndpoint(string service, string key, string? url)
+        => new($"{service}.{key}", "http", url, Public: true, Service: service, Port: key);
+
     private sealed class LifecycleFixture
     {
         private LifecycleFixture(
@@ -3878,7 +3982,7 @@ public sealed class CoreLifecycleServiceTests
 
         public FakeClock Clock { get; }
 
-        public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null, string? ingressBaseDomain = null)
+        public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null, string? ingressBaseDomain = null, bool withPortAllocator = false)
         {
             var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -3928,7 +4032,8 @@ public sealed class CoreLifecycleServiceTests
             }
 
             IIngressController ingress = new CloudflaredIngressController(coreSettings, runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock);
+            var portAllocator = withPortAllocator ? new RuntimePortAllocator(runtimeConfig) : null;
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }
 
