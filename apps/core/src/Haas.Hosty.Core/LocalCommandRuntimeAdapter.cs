@@ -566,7 +566,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     continue;
                 }
 
-                var hostPort = RuntimePortHelper.ResolveHostPort(context, service.Key, port, key, assigned);
+                var hostPort = RuntimePortHelper.ResolveHostPort(context.App, service.Key, port, key, assigned);
                 ports[key] = hostPort;
                 assigned.Add(hostPort);
             }
@@ -593,7 +593,7 @@ internal sealed class LocalCommandRuntimeAdapter(
             foreach (var port in service.Runtime.Ports)
             {
                 var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port";
-                if (!RuntimePortHelper.TryResolvePinnedHostPort(context, service.Key, port, key, out var hostPort))
+                if (!RuntimePortHelper.TryResolvePinnedHostPort(context.App, service.Key, port, key, out var hostPort))
                 {
                     continue;
                 }

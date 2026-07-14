@@ -4,7 +4,9 @@ Status: Ready
 Created: 2026-07-14
 Updated: 2026-07-14
 
-Approved for implementation on 2026-07-14; Phase 1 (persistent model + migration) in progress.
+Approved for implementation on 2026-07-14. Phase 1 (persistent model + migration) MERGED (PR #187).
+Phase 2 (coordinated allocation at install + adapter consumption) in progress; update/switch/live-source
+re-allocation, raw-L4/host-network collision validation, and reassignment follow in later slices.
 
 ## Goal
 

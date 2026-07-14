@@ -2000,7 +2000,7 @@ internal sealed class DockerRuntimeAdapter(
             var key = port.Key ?? port.ContainerPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
             assignedPorts[key] = hostNetwork
                 ? port.ContainerPort.Value
-                : RuntimePortHelper.ResolveHostPort(context, service.Key, port, key);
+                : RuntimePortHelper.ResolveHostPort(context.App, service.Key, port, key);
         }
 
         return assignedPorts;

@@ -17,13 +17,13 @@ internal static class RuntimePortHelper
     // dynamic allocations off ports it has already handed out — pinned or dynamic — closing the
     // window where two not-yet-started siblings could be probed onto the same loopback port.
     public static int ResolveHostPort(
-        RuntimeLifecycleContext context,
+        AppRecord app,
         string serviceKey,
         RuntimePortManifest port,
         string key,
         IReadOnlySet<int>? exclude = null)
     {
-        if (TryResolvePinnedHostPort(context, serviceKey, port, key, out var pinnedPort))
+        if (TryResolvePinnedHostPort(app, serviceKey, port, key, out var pinnedPort))
         {
             return pinnedPort;
         }
@@ -32,13 +32,16 @@ internal static class RuntimePortHelper
     }
 
     public static bool TryResolvePinnedHostPort(
-        RuntimeLifecycleContext context,
+        AppRecord app,
         string serviceKey,
         RuntimePortManifest portManifest,
         string key,
         out int port)
     {
-        if (TryReadHostPortOverride(context, key, out port))
+        // Service-scoped override wins first so an operator can pin one service when a port key (e.g.
+        // `http`) is shared by another service in the same app, which the app-scoped form cannot express.
+        if (TryReadHostPortOverride(app, ServiceScopedOverrideKey(serviceKey, key), out port) ||
+            TryReadHostPortOverride(app, key, out port))
         {
             return true;
         }
@@ -50,14 +53,22 @@ internal static class RuntimePortHelper
             return true;
         }
 
-        return TryReadPreviousEndpointPort(context, serviceKey, key, out port);
+        // The install-time reservation is the durable source of an automatic port; a start consumes it
+        // instead of allocating a fresh one. The legacy endpoint-URL sticky remains a fallback for records
+        // that predate the assignment model (or a port added after install without a re-allocation).
+        if (TryReadAssignedHostPort(app, serviceKey, key, out port))
+        {
+            return true;
+        }
+
+        return TryReadPreviousEndpointPort(app, serviceKey, key, out port);
     }
 
-    public static bool TryReadHostPortOverride(RuntimeLifecycleContext context, string key, out int port)
+    public static bool TryReadHostPortOverride(AppRecord app, string key, out int port)
     {
         port = 0;
-        var settingKey = $"HOSTY_PORT_{NormalizeEnvironmentKey(key)}";
-        if (!context.App.Settings.TryGetValue(settingKey, out var setting) ||
+        var settingKey = OverrideSettingKey(key);
+        if (!app.Settings.TryGetValue(settingKey, out var setting) ||
             string.IsNullOrWhiteSpace(setting.Value))
         {
             return false;
@@ -72,28 +83,23 @@ internal static class RuntimePortHelper
         throw new AppLifecycleException("runtime_port_invalid", $"{settingKey} must be an integer between 1 and {IPEndPoint.MaxPort}.");
     }
 
+    // True when a HOSTY_PORT_* override (service- or app-scoped) exists with a non-blank value for this
+    // port. A non-throwing presence check used to classify an assignment's source; the value is validated
+    // by TryReadHostPortOverride at resolution time.
+    public static bool HasHostPortOverride(AppRecord app, string serviceKey, string key)
+        => HasOverrideSetting(app, ServiceScopedOverrideKey(serviceKey, key)) || HasOverrideSetting(app, key);
+
     public static string NormalizeEnvironmentKey(string value)
         => new(value.Select(character => char.IsLetterOrDigit(character) ? char.ToUpperInvariant(character) : '_').ToArray());
 
-    private static bool TryReadPreviousEndpointPort(RuntimeLifecycleContext context, string serviceKey, string key, out int port)
-    {
-        port = 0;
-        var endpoint = context.App.Endpoints.FirstOrDefault(endpoint =>
-            string.Equals(endpoint.Service, serviceKey, StringComparison.Ordinal) &&
-            string.Equals(endpoint.Port, key, StringComparison.Ordinal) &&
-            !string.IsNullOrWhiteSpace(endpoint.Url));
-        if (endpoint is null ||
-            !Uri.TryCreate(endpoint.Url, UriKind.Absolute, out var uri) ||
-            uri.Port is <= 0 or > IPEndPoint.MaxPort)
-        {
-            return false;
-        }
+    // The env/setting key an override for `key` is read from (HOSTY_PORT_<NORMALIZED-KEY>).
+    public static string OverrideSettingKey(string key)
+        => $"HOSTY_PORT_{NormalizeEnvironmentKey(key)}";
 
-        port = uri.Port;
-        return true;
-    }
-
-    private static int AllocateLoopbackPort(IReadOnlySet<int>? exclude = null)
+    // Allocate a free loopback TCP port, excluding a caller-provided set (ports already handed out in the
+    // same pass, or reserved by other installed apps and the platform). Public so the install-time
+    // allocator can resolve automatic ports with the same self-race protection the start path uses.
+    public static int AllocateLoopbackPort(IReadOnlySet<int>? exclude = null)
     {
         lock (AllocationLock)
         {
@@ -124,5 +130,43 @@ internal static class RuntimePortHelper
         throw new AppLifecycleException(
             "runtime_port_allocation_failed",
             "Unable to allocate a free loopback port that was not already handed to another starting service.");
+    }
+
+    private static string ServiceScopedOverrideKey(string serviceKey, string key) => $"{serviceKey}_{key}";
+
+    private static bool HasOverrideSetting(AppRecord app, string key)
+        => app.Settings.TryGetValue(OverrideSettingKey(key), out var setting) && !string.IsNullOrWhiteSpace(setting.Value);
+
+    private static bool TryReadAssignedHostPort(AppRecord app, string serviceKey, string key, out int port)
+    {
+        port = 0;
+        var assignment = app.PortAssignments?.FirstOrDefault(assignment =>
+            string.Equals(assignment.Service, serviceKey, StringComparison.Ordinal) &&
+            string.Equals(assignment.PortKey, key, StringComparison.Ordinal));
+        if (assignment is null || assignment.HostPort is <= 0 or > IPEndPoint.MaxPort)
+        {
+            return false;
+        }
+
+        port = assignment.HostPort;
+        return true;
+    }
+
+    private static bool TryReadPreviousEndpointPort(AppRecord app, string serviceKey, string key, out int port)
+    {
+        port = 0;
+        var endpoint = app.Endpoints.FirstOrDefault(endpoint =>
+            string.Equals(endpoint.Service, serviceKey, StringComparison.Ordinal) &&
+            string.Equals(endpoint.Port, key, StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(endpoint.Url));
+        if (endpoint is null ||
+            !Uri.TryCreate(endpoint.Url, UriKind.Absolute, out var uri) ||
+            uri.Port is <= 0 or > IPEndPoint.MaxPort)
+        {
+            return false;
+        }
+
+        port = uri.Port;
+        return true;
     }
 }
