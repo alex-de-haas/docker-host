@@ -859,7 +859,10 @@ internal sealed class CoreLifecycleService(
         var conflicts = (app.PortAssignments ?? [])
             .Where(assignment =>
                 string.Equals(assignment.BindScope, AppPortBindScopes.Loopback, StringComparison.Ordinal) &&
-                !RuntimePortHelper.IsLoopbackPortAvailable(assignment.HostPort))
+                // Skip an unset/invalid reservation: it is not a real conflict, and the adapter's start-time
+                // resolver falls back to a fresh automatic allocation for it (see ResolveHostPort).
+                assignment.HostPort is > 0 and <= 65535 &&
+                !RuntimePortHelper.IsLoopbackTcpPortAvailable(assignment.HostPort))
             .OrderBy(assignment => assignment.Service, StringComparer.Ordinal)
             .ThenBy(assignment => assignment.PortKey, StringComparer.Ordinal)
             .ToArray();
@@ -871,7 +874,8 @@ internal sealed class CoreLifecycleService(
         var detail = string.Join(", ", conflicts.Select(assignment => $"{assignment.Service}.{assignment.PortKey} → {assignment.HostPort}"));
         throw new AppLifecycleException(
             "runtime_port_unavailable",
-            $"App '{app.Id}' cannot start: assigned host port(s) already in use: {detail}. Reassign the port(s) and retry.");
+            $"App '{app.Id}' cannot start: assigned host port(s) already in use: {detail}. " +
+            "Free the conflicting port(s), or reassign an automatically-assigned one, then retry.");
     }
 
     private static AppPortAssignment RequireRemappableAssignment(AppRecord app, string service, string portKey)

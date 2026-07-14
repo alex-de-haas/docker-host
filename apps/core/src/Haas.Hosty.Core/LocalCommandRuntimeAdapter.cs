@@ -598,7 +598,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     continue;
                 }
 
-                if (!RuntimePortHelper.IsLoopbackPortAvailable(hostPort))
+                if (!RuntimePortHelper.IsLoopbackTcpPortAvailable(hostPort))
                 {
                     throw new AppLifecycleException(
                         "local_command_port_unavailable",

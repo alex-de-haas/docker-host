@@ -133,9 +133,10 @@ internal static class RuntimePortHelper
     }
 
     // True when a loopback TCP bind on `port` currently succeeds. Probes both IPv4 and IPv6 loopback so a
-    // port held only on `::1` is still reported unavailable. Used by the localCommand adapter's explicit
-    // preflight and by the lifecycle start-time reservation preflight. A point-in-time probe, not a lease.
-    public static bool IsLoopbackPortAvailable(int port)
+    // port held only on `::1` is still reported unavailable. TCP-specific by design (the reservation model
+    // is currently TCP-only); a UDP probe would need its own helper. Used by the localCommand adapter's
+    // explicit preflight and by the lifecycle start-time reservation preflight. Point-in-time, not a lease.
+    public static bool IsLoopbackTcpPortAvailable(int port)
     {
         if (port is <= 0 or > IPEndPoint.MaxPort)
         {
