@@ -13,16 +13,23 @@ internal static class CoreSettingsSchema
     public const string FileName = "settings.json";
 }
 
-// The persisted overrides: auth setting key (the HOSTY_AUTH_* name) -> value in hours. Only keys the
+// The persisted overrides. `Auth` maps an auth setting key (the HOSTY_AUTH_* name) -> value in hours;
+// `Ingress` maps an ingress setting key (the HOSTY_INGRESS_* name) -> its string value. Only keys the
 // operator has explicitly set live here; an absent key falls back to the env var, then the built-in
-// default. Env stays an ambient dev/fork override — the store simply wins over it when present.
+// default. Env stays an ambient dev/fork override — the store simply wins over it when present. Both
+// sections share one file and one schema version (adding `Ingress` is additive: an older auth-only file
+// still parses, so the version is deliberately NOT bumped).
 internal sealed class CoreSettingsDocument
 {
     public string? SchemaVersion { get; init; }
     public IReadOnlyDictionary<string, double> Auth { get => field ?? EmptyAuth; init; } = EmptyAuth;
+    public IReadOnlyDictionary<string, string> Ingress { get => field ?? EmptyIngress; init; } = EmptyIngress;
 
     private static readonly IReadOnlyDictionary<string, double> EmptyAuth =
         new Dictionary<string, double>(StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyIngress =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
 // One editable auth-lifetime setting: its stable key (the env var name), presentation metadata, and
@@ -68,6 +75,142 @@ internal static class CoreAuthSettings
     private static readonly IReadOnlySet<string> Keys = All.Select(d => d.Key).ToHashSet(StringComparer.Ordinal);
 
     public static bool IsKnown(string key) => Keys.Contains(key);
+}
+
+// The live ingress configuration Core hands to the cloudflared controller. Previously env-only and
+// baked into HostyCoreRuntimeConfig at startup; now owned by CoreSettingsService so operator edits from
+// the platform panel apply without a restart (config.yml is re-rendered on save). The config.yml output
+// path stays a launch-only knob on HostyCoreRuntimeConfig — it is plumbing, not a behavior setting.
+internal sealed record IngressSettings(
+    string Provider,
+    string? BaseDomain,
+    string? TunnelId,
+    string? CredentialsFile)
+{
+    public const string ProviderNone = "none";
+    public const string ProviderCloudflared = "cloudflared";
+
+    // The built-in baseline (no env, no override): ingress off.
+    public static IngressSettings Defaults { get; } = new(ProviderNone, null, null, null);
+
+    // True when a provider derives HOSTY_PUBLIC_ORIGIN_* and writes tunnel config; false ("none") leaves
+    // exposure and origins to the operator.
+    public bool ManagesPublicOrigins =>
+        string.Equals(Provider, ProviderCloudflared, StringComparison.OrdinalIgnoreCase);
+
+    public static IngressSettings FromEnvironment()
+        => new(
+            Provider: ReadValue("HOSTY_INGRESS_PROVIDER") ?? ProviderNone,
+            BaseDomain: ReadValue("HOSTY_INGRESS_BASE_DOMAIN"),
+            TunnelId: ReadValue("HOSTY_INGRESS_TUNNEL_ID"),
+            // The credentials path is written verbatim into config.yml; cloudflared (run from another cwd
+            // or as a service) cannot resolve relative or ~ paths, so resolve to absolute up front.
+            CredentialsFile: ReadValue("HOSTY_INGRESS_CREDENTIALS_FILE") is { } path ? NormalizePath(path) : null);
+
+    // Same shape as HostyCoreRuntimeConfig's former BuildIngressWarnings(), moved here so /api/core/status
+    // reflects the live provider/domain after a save rather than the startup snapshot.
+    public IReadOnlyList<string> BuildWarnings()
+    {
+        if (!ManagesPublicOrigins)
+        {
+            return [];
+        }
+
+        var warnings = new List<string>();
+        if (string.IsNullOrWhiteSpace(BaseDomain))
+        {
+            warnings.Add("Ingress provider 'cloudflared' requires a base domain; tunnel config will not be written.");
+        }
+        else if (!CloudflaredIngressPlanner.IsValidHostname(BaseDomain))
+        {
+            warnings.Add($"Ingress base domain '{BaseDomain}' is not a valid lowercase domain; ingress hostnames will be skipped.");
+        }
+
+        if (string.IsNullOrWhiteSpace(TunnelId))
+        {
+            warnings.Add("Ingress provider 'cloudflared' requires a tunnel ID; tunnel config will not be written.");
+        }
+
+        if (string.IsNullOrWhiteSpace(CredentialsFile))
+        {
+            warnings.Add("Ingress provider 'cloudflared' requires a credentials file; tunnel config will not be written.");
+        }
+
+        return warnings;
+    }
+
+    private static string? ReadValue(string name)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    internal static string NormalizePath(string path)
+    {
+        if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith("~\\", StringComparison.Ordinal))
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            path = Path.Combine(home, path[2..]);
+        }
+
+        return Path.GetFullPath(path);
+    }
+}
+
+// A choice for a select-typed setting: the stored value and the label the Shell shows.
+internal sealed record CoreSettingOption(string Value, string Label);
+
+// One editable ingress setting: its stable key (the env var name), presentation metadata, and the
+// projection to/from IngressSettings so the store, the endpoint, and the effective value share one
+// source of truth. Mirrors CoreAuthSettingDefinition but for string values.
+internal sealed record CoreIngressSettingDefinition(
+    string Key,
+    string Group,
+    string Label,
+    string Description,
+    string Type,
+    IReadOnlyList<CoreSettingOption>? Options,
+    Func<IngressSettings, string?> Get,
+    Func<IngressSettings, string, IngressSettings> With)
+{
+    public string DefaultValue => Get(IngressSettings.Defaults) ?? string.Empty;
+}
+
+internal static class CoreIngressSettings
+{
+    public const string Group = "Public ingress";
+
+    public static readonly IReadOnlyList<CoreIngressSettingDefinition> All =
+    [
+        new("HOSTY_INGRESS_PROVIDER", Group, "Provider",
+            "How app ports are exposed to the internet. 'Cloudflare Tunnel' writes a tunnel config that an "
+            + "operator-run cloudflared reads and derives https public origins; 'Disabled' leaves exposure to "
+            + "you. You must create the tunnel, its credentials file, and a wildcard DNS record and run "
+            + "cloudflared yourself — Hosty only writes its config. See docs/features/cloudflared-ingress.md.",
+            "select",
+            [new(IngressSettings.ProviderNone, "Disabled"), new(IngressSettings.ProviderCloudflared, "Cloudflare Tunnel")],
+            x => x.Provider, (x, v) => x with { Provider = v }),
+        new("HOSTY_INGRESS_BASE_DOMAIN", Group, "Base domain",
+            "The domain apps are published under, e.g. example.com. Each app gets a single-level subdomain "
+            + "(app.example.com) covered by one wildcard CNAME.",
+            "text", Options: null,
+            x => x.BaseDomain, (x, v) => x with { BaseDomain = v }),
+        new("HOSTY_INGRESS_TUNNEL_ID", Group, "Tunnel ID",
+            "The cloudflared tunnel UUID (from `cloudflared tunnel create`) written into the tunnel config.",
+            "text", Options: null,
+            x => x.TunnelId, (x, v) => x with { TunnelId = v }),
+        new("HOSTY_INGRESS_CREDENTIALS_FILE", Group, "Credentials file",
+            "Absolute path to the tunnel's credentials JSON on this host, written verbatim into the tunnel "
+            + "config for cloudflared to read.",
+            "text", Options: null,
+            x => x.CredentialsFile, (x, v) => x with { CredentialsFile = v }),
+    ];
+
+    private static readonly IReadOnlySet<string> Keys = All.Select(d => d.Key).ToHashSet(StringComparer.Ordinal);
+
+    public static bool IsKnown(string key) => Keys.Contains(key);
+
+    public static CoreIngressSettingDefinition Get(string key) => All.Single(d => d.Key == key);
 }
 
 // Core-owned store for settings.json in the core data root. Unlike bootstrap-choices this file is
@@ -132,6 +275,9 @@ internal sealed class CoreSettingsStore(CoreDataPaths paths, ILogger<CoreSetting
 // persisted override is what's driving it (so the UI can offer "reset to default").
 internal sealed record CoreSettingRow(CoreAuthSettingDefinition Definition, double EffectiveHours, bool Overridden);
 
+// The ingress equivalent of CoreSettingRow: string-valued rather than hours.
+internal sealed record CoreIngressSettingRow(CoreIngressSettingDefinition Definition, string EffectiveValue, bool Overridden);
+
 // Singleton source of truth for editable Core behavior settings. Holds the current effective
 // AuthLifetimes (env baseline overlaid with persisted overrides) so grant/session issuance reads the
 // live value rather than a startup snapshot. Writes go through UpdateAsync, which persists and
@@ -141,17 +287,26 @@ internal sealed class CoreSettingsService
     private readonly CoreSettingsStore store;
     private readonly SemaphoreSlim gate = new(1, 1);
     private Dictionary<string, double> overrides;
+    private Dictionary<string, string> ingressOverrides;
     private volatile AuthLifetimes current;
+    private volatile IngressSettings currentIngress;
 
     public CoreSettingsService(CoreSettingsStore store)
     {
         this.store = store;
-        overrides = LoadOverrides(store.Load());
+        var document = store.Load();
+        overrides = LoadOverrides(document);
+        ingressOverrides = LoadIngressOverrides(document);
         current = Compute(overrides);
+        currentIngress = ComputeIngress(ingressOverrides);
     }
 
     // The live auth lifetimes: env-or-default baseline with persisted overrides applied.
     public AuthLifetimes AuthLifetimes => current;
+
+    // The live ingress config: env-or-default baseline with persisted overrides applied. Read by the
+    // cloudflared controller (per reconcile) and /api/core/status, so a save takes effect without restart.
+    public IngressSettings Ingress => currentIngress;
 
     public IReadOnlyList<CoreSettingRow> GetAuthRows()
     {
@@ -166,51 +321,164 @@ internal sealed class CoreSettingsService
             .ToArray();
     }
 
-    // Applies the submitted overrides, persists them, and recomputes the effective lifetimes. A null
-    // value clears the override for that key so it falls back to the env var / built-in default — the
-    // per-app settings "null to clear" contract. Unknown keys or out-of-range values throw
-    // AppLifecycleException (surfaced as 400).
-    public async Task UpdateAsync(IReadOnlyDictionary<string, double?> input, CancellationToken cancellationToken = default)
+    public IReadOnlyList<CoreIngressSettingRow> GetIngressRows()
     {
-        foreach (var (key, hours) in input)
+        var ingress = currentIngress;
+        var active = ingressOverrides;
+        return CoreIngressSettings.All
+            .Select(definition => new CoreIngressSettingRow(
+                definition,
+                definition.Get(ingress) ?? string.Empty,
+                Overridden: active.ContainsKey(definition.Key)))
+            .ToArray();
+    }
+
+    // True when at least one of the submitted keys is an ingress setting — the endpoint uses this to
+    // decide whether a save must re-render the tunnel config.
+    public static bool TouchesIngress(IReadOnlyDictionary<string, string?> input)
+        => input.Keys.Any(CoreIngressSettings.IsKnown);
+
+    // Applies the submitted overrides, persists them, and recomputes the effective auth + ingress
+    // settings. Values arrive as raw strings (the PUT payload shape); a null or blank value clears the
+    // override for that key so it falls back to the env var / built-in default — the per-app settings
+    // "null to clear" contract. Unknown keys or invalid values throw AppLifecycleException (surfaced as
+    // 400). Auth keys carry a number of hours; ingress keys carry their string value.
+    public async Task UpdateAsync(IReadOnlyDictionary<string, string?> input, CancellationToken cancellationToken = default)
+    {
+        // Parse + validate everything before touching state, so a single bad key rejects the whole PUT.
+        var authChanges = new Dictionary<string, double?>(StringComparer.Ordinal);
+        var ingressChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var (key, raw) in input)
         {
-            if (!CoreAuthSettings.IsKnown(key))
+            if (CoreAuthSettings.IsKnown(key))
+            {
+                authChanges[key] = ParseAuthValue(key, raw);
+            }
+            else if (CoreIngressSettings.IsKnown(key))
+            {
+                ingressChanges[key] = NormalizeIngressValue(key, raw);
+            }
+            else
             {
                 throw new AppLifecycleException("core_setting_unknown", $"Unknown Core setting '{key}'.");
-            }
-
-            if (hours is { } value && !TryFromHours(value, out _))
-            {
-                throw new AppLifecycleException("core_setting_invalid", $"'{key}' must be a positive number of hours within range.");
             }
         }
 
         await gate.WaitAsync(cancellationToken);
         try
         {
-            var merged = new Dictionary<string, double>(overrides, StringComparer.Ordinal);
-            foreach (var (key, hours) in input)
-            {
-                if (hours is { } value)
-                {
-                    merged[key] = value;
-                }
-                else
-                {
-                    merged.Remove(key);
-                }
-            }
+            var mergedAuth = Apply(overrides, authChanges);
+            var mergedIngress = Apply(ingressOverrides, ingressChanges);
 
             await store.SaveAsync(
-                new CoreSettingsDocument { SchemaVersion = CoreSettingsSchema.Version, Auth = merged },
+                new CoreSettingsDocument
+                {
+                    SchemaVersion = CoreSettingsSchema.Version,
+                    Auth = mergedAuth,
+                    Ingress = mergedIngress,
+                },
                 cancellationToken);
-            overrides = merged;
-            current = Compute(merged);
+            overrides = mergedAuth;
+            ingressOverrides = mergedIngress;
+            current = Compute(mergedAuth);
+            currentIngress = ComputeIngress(mergedIngress);
         }
         finally
         {
             gate.Release();
         }
+    }
+
+    // Overlays the parsed changes onto a copy of the current overrides: a present value sets it, a null
+    // removes it (clear -> fall back to env/default).
+    private static Dictionary<string, T> Apply<T>(Dictionary<string, T> current, Dictionary<string, T?> changes)
+        where T : struct
+    {
+        var merged = new Dictionary<string, T>(current, StringComparer.Ordinal);
+        foreach (var (key, value) in changes)
+        {
+            if (value is { } present)
+            {
+                merged[key] = present;
+            }
+            else
+            {
+                merged.Remove(key);
+            }
+        }
+
+        return merged;
+    }
+
+    private static Dictionary<string, string> Apply(Dictionary<string, string> current, Dictionary<string, string?> changes)
+    {
+        var merged = new Dictionary<string, string>(current, StringComparer.Ordinal);
+        foreach (var (key, value) in changes)
+        {
+            if (value is { } present)
+            {
+                merged[key] = present;
+            }
+            else
+            {
+                merged.Remove(key);
+            }
+        }
+
+        return merged;
+    }
+
+    private static double? ParseAuthValue(string key, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        if (!double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var hours) ||
+            !TryFromHours(hours, out _))
+        {
+            throw new AppLifecycleException("core_setting_invalid", $"'{key}' must be a positive number of hours within range.");
+        }
+
+        return hours;
+    }
+
+    // Validates and canonicalizes an ingress value for persistence, or null to clear. Missing pieces for
+    // a cloudflared provider are surfaced as /api/core/status warnings, not rejected here, so an operator
+    // can fill the fields in any order.
+    private static string? NormalizeIngressValue(string key, string? raw)
+    {
+        var value = raw?.Trim();
+        if (string.IsNullOrEmpty(value))
+        {
+            return null;
+        }
+
+        if (key == "HOSTY_INGRESS_PROVIDER")
+        {
+            var provider = value.ToLowerInvariant();
+            if (provider is not (IngressSettings.ProviderNone or IngressSettings.ProviderCloudflared))
+            {
+                throw new AppLifecycleException("core_setting_invalid",
+                    $"Ingress provider must be '{IngressSettings.ProviderNone}' or '{IngressSettings.ProviderCloudflared}'.");
+            }
+
+            return provider;
+        }
+
+        if (key == "HOSTY_INGRESS_BASE_DOMAIN" && !CloudflaredIngressPlanner.IsValidHostname(value))
+        {
+            throw new AppLifecycleException("core_setting_invalid",
+                $"'{value}' is not a valid lowercase domain.");
+        }
+
+        if (key == "HOSTY_INGRESS_CREDENTIALS_FILE")
+        {
+            return IngressSettings.NormalizePath(value);
+        }
+
+        return value;
     }
 
     private static Dictionary<string, double> LoadOverrides(CoreSettingsDocument document)
@@ -225,6 +493,30 @@ internal sealed class CoreSettingsService
             {
                 overrides[key] = hours;
             }
+        }
+
+        return overrides;
+    }
+
+    private static Dictionary<string, string> LoadIngressOverrides(CoreSettingsDocument document)
+    {
+        var overrides = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in document.Ingress)
+        {
+            // Same per-entry tolerance as the auth overrides: skip unknown keys, blanks, and a
+            // hand-edited provider that is neither 'none' nor 'cloudflared' rather than crashing startup.
+            if (!CoreIngressSettings.IsKnown(key) || string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (key == "HOSTY_INGRESS_PROVIDER" &&
+                value is not (IngressSettings.ProviderNone or IngressSettings.ProviderCloudflared))
+            {
+                continue;
+            }
+
+            overrides[key] = value;
         }
 
         return overrides;
@@ -245,6 +537,20 @@ internal sealed class CoreSettingsService
         }
 
         return lifetimes;
+    }
+
+    private static IngressSettings ComputeIngress(IReadOnlyDictionary<string, string> overrides)
+    {
+        var ingress = IngressSettings.FromEnvironment();
+        foreach (var definition in CoreIngressSettings.All)
+        {
+            if (overrides.TryGetValue(definition.Key, out var value))
+            {
+                ingress = definition.With(ingress, value);
+            }
+        }
+
+        return ingress;
     }
 
     // Converts an hours value to a TimeSpan, rejecting non-finite, non-positive, and out-of-range

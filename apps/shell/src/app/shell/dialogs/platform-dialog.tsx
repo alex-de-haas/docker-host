@@ -225,9 +225,10 @@ function ExtensionRow({
   );
 }
 
-// Core's own behavior settings (auth session/grant lifetimes), rendered with the shared per-app
-// settings inputs. Live-apply: saving PUTs the changed keys and Core returns the fresh snapshot, so
-// there is no restart affordance here — the copy explains what applies immediately vs. on next issue.
+// Core's own behavior settings (auth session lifetimes + cloudflared ingress), rendered with the shared
+// per-app settings inputs and grouped by the `group` Core returns. Live-apply: saving PUTs the changed
+// keys and Core returns the fresh snapshot (no restart affordance) — an ingress change also re-renders
+// the tunnel config server-side. Per-field copy explains what applies immediately.
 function CoreSettingsSection({
   settings,
   error,
@@ -286,8 +287,8 @@ function CoreSettingsSection({
       <div>
         <h3 className="text-sm font-medium">Core settings</h3>
         <p className="text-xs text-muted-foreground">
-          Session and grant lifetimes for Core, in hours. Idle timeouts apply immediately, including to existing sessions;
-          maximum lifetimes apply to sessions issued after you save.
+          Core&apos;s own behavior settings — auth session lifetimes (in hours) and public ingress — edited here rather than
+          through environment variables. Changes save and apply live; see each setting for what takes effect immediately.
         </p>
       </div>
 
@@ -315,6 +316,7 @@ function CoreSettingsSection({
                       description: item.description,
                       required: false,
                       secret: false,
+                      options: item.options,
                     }}
                     value={draft[item.key] ?? item.value}
                     disabled={saving}
@@ -329,7 +331,7 @@ function CoreSettingsSection({
                         disabled={saving}
                         onClick={() => reset(item.key)}
                       >
-                        Reset to default ({item.default}h)
+                        {item.default ? `Reset to default (${item.default}${item.unit ?? ""})` : "Reset to default"}
                       </Button>
                     </div>
                   )}

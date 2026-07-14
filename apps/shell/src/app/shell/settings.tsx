@@ -179,6 +179,24 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
     );
   }
 
+  if (setting.type === "select" && setting.options && setting.options.length > 0) {
+    return (
+      <select
+        id={controlId}
+        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+        value={safeValue}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {setting.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
   return (
     <Input
       id={controlId}

@@ -1,6 +1,6 @@
 # Core Settings
 
-Status: Implemented (v1 — auth lifetimes)
+Status: Implemented (v1 — auth lifetimes; v2 — cloudflared ingress)
 Created: 2026-07-13
 
 ## Motivation
@@ -58,11 +58,17 @@ what it would display (per core-dev-target).
 
 ## Scope and sequencing
 
-- **v1 (this change): the seven auth lifetimes.** They were the motivating case and the only Core
-  behavior that was both env-only and painful to change (restart-to-apply).
-- **Candidates for later phases:** the ingress block (provider/base domain/tunnel) and the
-  trusted-proxy secret are also env-only Core behavior. They are deferred — ingress is due its own
-  pass (managed cloudflared), and a secret needs a masked/secret editor and rotation semantics.
+- **v1: the seven auth lifetimes.** The motivating case and the only Core behavior that was both
+  env-only and painful to change (restart-to-apply).
+- **v2 (shipped): the cloudflared ingress block** — provider, base domain, tunnel ID, credentials
+  file. These moved off `HostyCoreRuntimeConfig` into a live `IngressSettings` record owned by
+  `CoreSettingsService`, alongside the auth overrides in the same `settings.json` (the `ingress`
+  section; schema stays `core-settings.0.1`, an additive change). The single ingress controller reads
+  the live values and a save re-renders `config.yml` immediately, so switching cloudflared on/off is a
+  settings edit, not a restart. The provider renders as a `select`; the `config.yml` output path stays
+  launch-only. See [cloudflared ingress](../features/cloudflared-ingress.md).
+- **Candidates for later phases:** the trusted-proxy secret is also env-only Core behavior. It is
+  deferred — a secret needs a masked/secret editor and rotation semantics.
 
 ## Links
 

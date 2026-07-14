@@ -8,7 +8,9 @@ namespace Haas.Hosty.Core;
 // Ingress turns a runtime app's loopback ports into externally reachable, TLS-terminated URLs.
 // Core does not run a reverse proxy itself; the cloudflared provider drives an operator-run
 // Cloudflare Tunnel by writing its config file and auto-deriving HOSTY_PUBLIC_ORIGIN_* values.
-// "none" (the default) keeps today's behaviour: the operator manages exposure and origins.
+// The provider and its identity are live settings (CoreSettingsService.Ingress): provider "none"
+// (the default) leaves exposure and origins to the operator; the single controller reads the current
+// value each call, so a platform-panel edit takes effect without a restart.
 internal interface IIngressController
 {
     // True when Core derives HOSTY_PUBLIC_ORIGIN_* itself; false when the operator owns them.
@@ -26,53 +28,43 @@ internal interface IIngressController
     Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default);
 }
 
-internal sealed class NoneIngressController : IIngressController
-{
-    private static readonly IReadOnlyDictionary<string, string> Empty =
-        new Dictionary<string, string>(StringComparer.Ordinal);
-
-    public bool ManagesPublicOrigins => false;
-
-    public IReadOnlyDictionary<string, string> ResolvePublicOrigins(
-        string appId,
-        string? subdomainOverride,
-        IReadOnlyList<string> publicEndpointKeys)
-        => Empty;
-
-    public Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
-}
-
+// The one ingress controller. It reads the live ingress config from CoreSettingsService and no-ops when
+// the provider is "none", so there is no separate "none" implementation to swap in at startup — the
+// provider is an operator setting, not a DI-time choice.
 internal sealed class CloudflaredIngressController(
+    CoreSettingsService settings,
     HostyCoreRuntimeConfig config,
     ILogger<CloudflaredIngressController> logger) : IIngressController
 {
     private static readonly IReadOnlyDictionary<string, string> Empty =
         new Dictionary<string, string>(StringComparer.Ordinal);
 
-    public bool ManagesPublicOrigins => true;
+    public bool ManagesPublicOrigins => settings.Ingress.ManagesPublicOrigins;
 
     public IReadOnlyDictionary<string, string> ResolvePublicOrigins(
         string appId,
         string? subdomainOverride,
         IReadOnlyList<string> publicEndpointKeys)
     {
-        if (string.IsNullOrWhiteSpace(config.IngressBaseDomain) || publicEndpointKeys.Count == 0)
+        var ingress = settings.Ingress;
+        if (!ingress.ManagesPublicOrigins || string.IsNullOrWhiteSpace(ingress.BaseDomain) || publicEndpointKeys.Count == 0)
         {
             return Empty;
         }
 
         var subdomain = CloudflaredIngressPlanner.ResolveSubdomain(appId, subdomainOverride);
-        return CloudflaredIngressPlanner.ResolveOrigins(config.IngressBaseDomain, subdomain, publicEndpointKeys);
+        return CloudflaredIngressPlanner.ResolveOrigins(ingress.BaseDomain, subdomain, publicEndpointKeys);
     }
 
     public async Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default)
     {
-        // Missing identity/domain is surfaced to the operator via /api/core/status warnings; do not
-        // write a half-formed config that cloudflared would reject.
-        if (string.IsNullOrWhiteSpace(config.IngressBaseDomain) ||
-            string.IsNullOrWhiteSpace(config.IngressTunnelId) ||
-            string.IsNullOrWhiteSpace(config.IngressCredentialsFile))
+        var ingress = settings.Ingress;
+        // Provider "none" or missing identity/domain: do not write a half-formed config that cloudflared
+        // would reject. Incomplete cloudflared config is surfaced via /api/core/status warnings.
+        if (!ingress.ManagesPublicOrigins ||
+            string.IsNullOrWhiteSpace(ingress.BaseDomain) ||
+            string.IsNullOrWhiteSpace(ingress.TunnelId) ||
+            string.IsNullOrWhiteSpace(ingress.CredentialsFile))
         {
             return;
         }
@@ -91,8 +83,8 @@ internal sealed class CloudflaredIngressController(
                 .Where(app => app.Endpoints.Count > 0)
                 .ToArray();
 
-            var routes = CloudflaredIngressPlanner.BuildRoutes(config.IngressBaseDomain, config.CorePort, ingressApps);
-            var yaml = CloudflaredIngressPlanner.RenderConfig(config.IngressTunnelId, config.IngressCredentialsFile, routes);
+            var routes = CloudflaredIngressPlanner.BuildRoutes(ingress.BaseDomain, config.CorePort, ingressApps);
+            var yaml = CloudflaredIngressPlanner.RenderConfig(ingress.TunnelId, ingress.CredentialsFile, routes);
 
             var directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(directory))

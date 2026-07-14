@@ -20,6 +20,12 @@ export type CoreUpdateStatus = {
   error?: string | null;
 };
 
+// A choice for a select-typed setting: the stored value and its display label.
+export type CoreSettingOption = {
+  value: string;
+  label: string;
+};
+
 export type CoreSetting = {
   key: string;
   type: string;
@@ -28,6 +34,8 @@ export type CoreSetting = {
   required?: boolean;
   label?: string | null;
   description?: string | null;
+  // Present for select-typed settings (e.g. the ingress provider); absent for free-form inputs.
+  options?: CoreSettingOption[] | null;
 };
 
 export type CoreEndpoint = {
@@ -183,11 +191,13 @@ export type CoreBootstrapState = {
 // per-app settings so the platform panel renders them with the shared settings form. Reuses the shared
 // field types from CoreSetting; `value` is the current effective value; `default` is the built-in
 // fallback; `group` clusters related keys; `overridden` marks a persisted override (so the UI can reset).
-export type CoreSettingItem = Pick<CoreSetting, "key" | "type" | "label" | "description"> & {
+export type CoreSettingItem = Pick<CoreSetting, "key" | "type" | "label" | "description" | "options"> & {
   value: string;
   default: string;
   group: string;
   overridden: boolean;
+  // Display unit appended after value/default (e.g. "h" for hours), or absent for none.
+  unit?: string | null;
 };
 
 export type CoreSettingsState = {
@@ -358,6 +368,7 @@ export type CoreInstallSetting = {
   required?: boolean;
   label?: string | null;
   description?: string | null;
+  options?: CoreSettingOption[] | null;
 };
 
 export type CoreRuntimeProfile = {

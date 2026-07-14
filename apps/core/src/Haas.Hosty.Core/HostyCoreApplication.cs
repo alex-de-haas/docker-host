@@ -81,13 +81,9 @@ internal static class HostyCoreApplication
         // singleton the exposition endpoint reads and run as a hosted service.
         builder.Services.AddSingleton<DockerStatsExposition>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DockerStatsExposition>());
-        builder.Services.AddSingleton<IIngressController>(sp =>
-        {
-            var ingressConfig = sp.GetRequiredService<HostyCoreRuntimeConfig>();
-            return string.Equals(ingressConfig.IngressProvider, "cloudflared", StringComparison.OrdinalIgnoreCase)
-                ? new CloudflaredIngressController(ingressConfig, sp.GetRequiredService<ILogger<CloudflaredIngressController>>())
-                : new NoneIngressController();
-        });
+        // One controller: it reads the live ingress provider from CoreSettingsService and no-ops when the
+        // provider is "none", so switching cloudflared on/off is a settings edit, not a restart.
+        builder.Services.AddSingleton<IIngressController, CloudflaredIngressController>();
         // Generic bootstrap: the release-owned distribution list and the operator's bootstrap
         // choices drive which first-party apps the supervisor preinstalls at boot; the service is
         // shared with the host-admin bootstrap endpoints for live toggles.
@@ -126,6 +122,7 @@ internal static class HostyCoreApplication
         app.MapGet("/api/core/status", async (
             HttpRequest request,
             HostyCoreRuntimeConfig config,
+            CoreSettingsService settings,
             UserDirectoryStore users,
             IClock clock,
             CancellationToken cancellationToken) =>
@@ -134,11 +131,11 @@ internal static class HostyCoreApplication
             // including anyone who reaches core.<domain> through ingress — get only liveness/version.
             var user = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, cancellationToken);
             return CoreJson.Json(user is not null && string.Equals(user.Role, "host.admin", StringComparison.Ordinal)
-                ? CoreStatusResponse.From(config)
+                ? CoreStatusResponse.From(config, settings.Ingress)
                 : CoreStatusResponse.Public());
         });
-        app.MapGet("/control/v1/core/status", (HttpRequest request, HostyCoreRuntimeConfig config, ControlSecret secret) =>
-            RequireControlSecret(request, secret, () => CoreJson.Json(CoreStatusResponse.From(config))));
+        app.MapGet("/control/v1/core/status", (HttpRequest request, HostyCoreRuntimeConfig config, CoreSettingsService settings, ControlSecret secret) =>
+            RequireControlSecret(request, secret, () => CoreJson.Json(CoreStatusResponse.From(config, settings.Ingress))));
         app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime, CoreShutdownOptions shutdownOptions) =>
             RequireControlSecret(request, secret, () =>
             {
@@ -743,11 +740,10 @@ internal sealed record HostyCoreRuntimeConfig(
     string? ShellSourceOverridePath,
     bool ShellAutostart,
     string? TrustedProxySecret = null,
-    string IngressProvider = "none",
-    string? IngressBaseDomain = null,
+    // The cloudflared config.yml output path stays a launch-only knob (like the data root): it is
+    // plumbing, not a behavior setting. The provider/base-domain/tunnel/credentials are live settings
+    // owned by CoreSettingsService (IngressSettings), not baked into this startup snapshot.
     string? IngressConfigPath = null,
-    string? IngressTunnelId = null,
-    string? IngressCredentialsFile = null,
     // Shell/collector runtime profile as an ambient dev/fork-only override
     // (HOSTY_SHELL_BOOTSTRAP_RUNTIME, HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME). Removed from `hosty config`:
     // a system app's runtime profile is a normal per-app choice. Null when unset — the manifest
@@ -799,13 +795,10 @@ internal sealed record HostyCoreRuntimeConfig(
             ObservabilityEnabled: ReadOptionalBoolean("HOSTY_OBSERVABILITY_ENABLED"),
             MarketplaceManifestPath: NormalizeOptional(rawMarketplaceManifestPath),
             MarketplaceManifestPathConfigured: rawMarketplaceManifestPath is not null);
-        // Resolve to absolute paths: the credentials path is written verbatim into config.yml and
-        // cloudflared (run from another cwd / as a service) cannot resolve relative or ~ paths.
+        // Resolve to an absolute path: the config path is written by Core and read by cloudflared (run
+        // from another cwd / as a service), which cannot resolve relative or ~ paths.
         var ingressConfigPath = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CONFIG_PATH")) is { } configPath
             ? NormalizePath(configPath)
-            : null;
-        var ingressCredentialsFile = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_CREDENTIALS_FILE")) is { } credentialsPath
-            ? NormalizePath(credentialsPath)
             : null;
 
         return new HostyCoreRuntimeConfig(
@@ -821,11 +814,7 @@ internal sealed record HostyCoreRuntimeConfig(
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_SOURCE_OVERRIDE_PATH")),
             ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true),
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_TRUSTED_PROXY_SECRET")),
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_PROVIDER")) ?? "none",
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_BASE_DOMAIN")),
             ingressConfigPath,
-            NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_INGRESS_TUNNEL_ID")),
-            ingressCredentialsFile,
             // Ambient dev/fork-only override, null when unset (no "docker" default): unset lets the
             // manifest default choose and keeps reconciliation from fighting a switch-runtime choice.
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_BOOTSTRAP_RUNTIME")),
@@ -904,36 +893,6 @@ internal sealed record HostyCoreRuntimeConfig(
         var warnings = new List<string>();
         AddPublicOriginWarnings(warnings, "Core", CorePublicOrigin);
         AddPublicOriginWarnings(warnings, "Shell", ShellPublicOrigin);
-        return warnings;
-    }
-
-    public IReadOnlyList<string> BuildIngressWarnings()
-    {
-        if (!string.Equals(IngressProvider, "cloudflared", StringComparison.OrdinalIgnoreCase))
-        {
-            return [];
-        }
-
-        var warnings = new List<string>();
-        if (string.IsNullOrWhiteSpace(IngressBaseDomain))
-        {
-            warnings.Add("Ingress provider 'cloudflared' requires HOSTY_INGRESS_BASE_DOMAIN; tunnel config will not be written.");
-        }
-        else if (!CloudflaredIngressPlanner.IsValidHostname(IngressBaseDomain))
-        {
-            warnings.Add($"HOSTY_INGRESS_BASE_DOMAIN '{IngressBaseDomain}' is not a valid lowercase domain; ingress hostnames will be skipped.");
-        }
-
-        if (string.IsNullOrWhiteSpace(IngressTunnelId))
-        {
-            warnings.Add("Ingress provider 'cloudflared' requires HOSTY_INGRESS_TUNNEL_ID; tunnel config will not be written.");
-        }
-
-        if (string.IsNullOrWhiteSpace(IngressCredentialsFile))
-        {
-            warnings.Add("Ingress provider 'cloudflared' requires HOSTY_INGRESS_CREDENTIALS_FILE; tunnel config will not be written.");
-        }
-
         return warnings;
     }
 
@@ -1610,7 +1569,10 @@ internal sealed record CoreStatusResponse(
         return $"{version.Major}.{version.Minor}.{(version.Build >= 0 ? version.Build : 0)}";
     }
 
-    public static CoreStatusResponse From(HostyCoreRuntimeConfig config)
+    // Ingress provider/domain/tunnel are live operator settings, so pass the current IngressSettings
+    // (from CoreSettingsService) rather than reading a startup snapshot — the reported provider and
+    // warnings track platform-panel edits without a restart. The config.yml path stays launch-only.
+    public static CoreStatusResponse From(HostyCoreRuntimeConfig config, IngressSettings ingress)
         => new(
             "running",
             "hosty-core",
@@ -1626,11 +1588,9 @@ internal sealed record CoreStatusResponse(
             // explicit legacy override still surfaces here. Null means "distribution default".
             config.Legacy?.ShellManifestPath,
             config.ShellAutostart,
-            config.IngressProvider,
-            string.Equals(config.IngressProvider, "cloudflared", StringComparison.OrdinalIgnoreCase)
-                ? config.EffectiveIngressConfigPath
-                : null,
-            [.. config.BuildPublicOriginWarnings(), .. config.BuildIngressWarnings()],
+            ingress.Provider,
+            ingress.ManagesPublicOrigins ? config.EffectiveIngressConfigPath : null,
+            [.. config.BuildPublicOriginWarnings(), .. ingress.BuildWarnings()],
             DateTimeOffset.UtcNow);
 
     // Public liveness payload. `/api/core/status` is unauthenticated and, under cloudflared, published at
