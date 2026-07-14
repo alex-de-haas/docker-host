@@ -24,7 +24,11 @@ internal sealed class CoreLifecycleService(
     AppFeedService? feedService = null,
     // Bootstrap-choices writer for the uninstall hook on distribution-origin apps. Optional only for
     // unit fixtures; production DI always supplies it.
-    BootstrapChoicesStore? bootstrapChoices = null)
+    BootstrapChoicesStore? bootstrapChoices = null,
+    // Install-time port-reservation coordinator. Optional only for unit fixtures that do not exercise
+    // allocation; production DI always supplies it. When absent, install skips reservation and ports are
+    // resolved at first start as before. See RuntimePortAllocator.
+    RuntimePortAllocator? portAllocator = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -255,7 +259,20 @@ internal sealed class CoreLifecycleService(
             record = record with { Settings = MergeSettings(record.Settings, request.Settings) };
         }
 
-        var document = await apps.UpsertAppAsync(record, cancellationToken);
+        // Reserve host ports now — after settings (including any HOSTY_PORT_* overrides) are final — so a
+        // stopped app carries durable endpoint URLs before its first start, and its ports are excluded
+        // from every other app's allocation. The exclusion-view read, the assignment, and the upsert run
+        // as one critical section under the allocator's gate, so two concurrent installs of different apps
+        // cannot allocate against a stale snapshot. Skipped only in unit fixtures without the coordinator,
+        // where ports resolve at first start as before.
+        var document = portAllocator is not null && string.Equals(record.Kind, "runtime", StringComparison.Ordinal)
+            ? await portAllocator.AssignAndPersistAsync(
+                record,
+                selection,
+                apps.ListAppRecordsAsync,
+                apps.UpsertAppAsync,
+                cancellationToken)
+            : await apps.UpsertAppAsync(record, cancellationToken);
         // Consume the snapshot only once it has been applied. A null `retained` may mean a transient
         // read failure (IO/permissions), so leaving the file lets a later reinstall recover the
         // config instead of permanently discarding it over a hiccup.
@@ -1675,7 +1692,13 @@ internal sealed class CoreLifecycleService(
             // App-owned feed state is lifecycle bookkeeping, not manifest contract — preserve it
             // across update/switch/reconcile like UpdatePolicy.
             FeedsUrl: existing?.FeedsUrl,
-            FollowedFeedId: existing?.FollowedFeedId);
+            FollowedFeedId: existing?.FollowedFeedId,
+            // Persisted host-port reservations are Core-owned durable state, not manifest contract: carry
+            // them across every rebuild so a runtime switch or update keeps an app's assigned ports. A
+            // reservation whose service/port key the new manifest no longer declares is inert (nothing
+            // resolves or projects it) and is reconciled when install-time allocation is wired into the
+            // update/switch apply path.
+            PortAssignments: existing?.PortAssignments);
     }
 
     // External-mount slots are redeclared from the manifest on every (re)build, like runtime

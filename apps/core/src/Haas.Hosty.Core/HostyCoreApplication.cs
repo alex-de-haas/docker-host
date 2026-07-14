@@ -62,6 +62,7 @@ internal static class HostyCoreApplication
         // client. Singleton so its TTL cache survives across requests.
         builder.Services.AddHttpClient(CoreUpdateCheckService.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));
         builder.Services.AddSingleton<CoreUpdateCheckService>();
+        builder.Services.AddSingleton<RuntimePortAllocator>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         // Resolve the setsid shim path once so the localCommand adapter spawns reclaimable process-group
