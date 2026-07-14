@@ -698,6 +698,9 @@ internal sealed class CoreLifecycleService(
             }
 
             await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
+            // Fail a cold start with a clear, reassign-able error when a stopped app's reserved port was
+            // taken by another process, rather than letting the adapter hit a generic bind failure.
+            PreflightLoopbackAssignments(app);
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
@@ -837,6 +840,38 @@ internal sealed class CoreLifecycleService(
             newPort,
             FindEndpointUrl(updated, request.Service, request.PortKey),
             restartRequired);
+    }
+
+    // Before a cold start, verify each persisted loopback reservation is still bindable. A port an unrelated
+    // process took while the app was stopped fails the start with a structured runtime_port_unavailable that
+    // names the affected endpoints, so the operator can reassign them, instead of a generic adapter bind
+    // error. Skipped when the app is already running — a restart or docker adoption legitimately holds its
+    // own ports, and this must not flag them as stolen. Host-network ports bind a fixed container port and
+    // are not part of the loopback pool. This is a point-in-time probe: a race after it still surfaces as
+    // the adapter's own bind failure.
+    internal static void PreflightLoopbackAssignments(AppRecord app)
+    {
+        if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var conflicts = (app.PortAssignments ?? [])
+            .Where(assignment =>
+                string.Equals(assignment.BindScope, AppPortBindScopes.Loopback, StringComparison.Ordinal) &&
+                !RuntimePortHelper.IsLoopbackPortAvailable(assignment.HostPort))
+            .OrderBy(assignment => assignment.Service, StringComparer.Ordinal)
+            .ThenBy(assignment => assignment.PortKey, StringComparer.Ordinal)
+            .ToArray();
+        if (conflicts.Length == 0)
+        {
+            return;
+        }
+
+        var detail = string.Join(", ", conflicts.Select(assignment => $"{assignment.Service}.{assignment.PortKey} → {assignment.HostPort}"));
+        throw new AppLifecycleException(
+            "runtime_port_unavailable",
+            $"App '{app.Id}' cannot start: assigned host port(s) already in use: {detail}. Reassign the port(s) and retry.");
     }
 
     private static AppPortAssignment RequireRemappableAssignment(AppRecord app, string service, string portKey)

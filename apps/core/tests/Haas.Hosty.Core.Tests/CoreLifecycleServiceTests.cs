@@ -3900,6 +3900,54 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("reassign_not_remappable", error.Code);
     }
 
+    [Fact]
+    public void PreflightLoopbackAssignments_PortInUse_ThrowsRuntimePortUnavailable()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var app = SeedReassignApp("com.example.api", "stopped", assignments: [ReassignAssignment("app", "http", port)]);
+
+        var error = Assert.Throws<AppLifecycleException>(() => CoreLifecycleService.PreflightLoopbackAssignments(app));
+        Assert.Equal("runtime_port_unavailable", error.Code);
+        Assert.Contains($"app.http → {port}", error.Message);
+    }
+
+    [Fact]
+    public void PreflightLoopbackAssignments_FreePort_DoesNotThrow()
+    {
+        var freePort = RuntimePortHelper.AllocateLoopbackPort();
+        var app = SeedReassignApp("com.example.api", "stopped", assignments: [ReassignAssignment("app", "http", freePort)]);
+
+        CoreLifecycleService.PreflightLoopbackAssignments(app); // does not throw
+    }
+
+    [Fact]
+    public void PreflightLoopbackAssignments_RunningApp_SkipsCheckEvenWhenPortBound()
+    {
+        // A running app (restart/adoption) legitimately holds its own port; the preflight must not flag it.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var app = SeedReassignApp("com.example.api", "running", assignments: [ReassignAssignment("app", "http", port)]);
+
+        CoreLifecycleService.PreflightLoopbackAssignments(app); // skipped → does not throw
+    }
+
+    [Fact]
+    public void PreflightLoopbackAssignments_HostNetworkAssignment_IsNotProbed()
+    {
+        // Host-network ports bind a fixed container port and are outside the loopback pool; even if the
+        // number is currently bound on loopback, the preflight ignores them.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var app = SeedReassignApp("com.example.torrent", "stopped",
+            assignments: [new AppPortAssignment("app", "torrent", port, AppPortTransports.Tcp, AppPortBindScopes.HostNetwork, AppPortSources.HostNetwork, Remappable: false, AssignedAt: DateTimeOffset.UnixEpoch)]);
+
+        CoreLifecycleService.PreflightLoopbackAssignments(app); // host-network skipped → does not throw
+    }
+
     private static AppRecord SeedReassignApp(
         string id,
         string runtimeState,
