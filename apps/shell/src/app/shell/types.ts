@@ -46,6 +46,34 @@ export type CoreEndpoint = {
   service?: string | null;
   port?: string | null;
   publicOrigin?: string | null;
+  // Install-time port reservations: "assigned" (a durable port target exists but the service is stopped),
+  // "running" (the service is up), or "unavailable" (the reserved port failed preflight/binding). Absent on
+  // older Core builds, so treat undefined as "no availability information".
+  availability?: "assigned" | "running" | "unavailable" | null;
+};
+
+// POST /api/apps/{id}/ports/reassign/plan — preview of reassigning one automatic host port.
+export type CoreReassignDependent = { appId: string; running: boolean };
+export type CoreReassignPlan = {
+  appId: string;
+  service: string;
+  portKey: string;
+  currentPort: number;
+  currentUrl?: string | null;
+  ownerRunning: boolean;
+  affectedDependents: CoreReassignDependent[];
+  digest: string;
+};
+
+// POST /api/apps/{id}/ports/reassign — result of applying a reassignment.
+export type CoreReassignResult = {
+  appId: string;
+  service: string;
+  portKey: string;
+  oldPort: number;
+  newPort: number;
+  newUrl?: string | null;
+  restartRequiredAppIds: string[];
 };
 
 export type CoreNavigationItem = {
