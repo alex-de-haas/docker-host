@@ -11,6 +11,15 @@ export type CoreStatus = {
   serverTime: string;
 };
 
+// GET /api/core/update-status — a newer Core binary is available for the selected release channel.
+export type CoreUpdateStatus = {
+  currentVersion: string;
+  updateAvailable: boolean;
+  releaseTag: string;
+  checkedAt: string;
+  error?: string | null;
+};
+
 export type CoreSetting = {
   key: string;
   type: string;

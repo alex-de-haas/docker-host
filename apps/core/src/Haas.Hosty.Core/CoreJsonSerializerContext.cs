@@ -59,6 +59,9 @@ internal static class CoreJson
 [JsonSerializable(typeof(CoreSettingsDocument))]
 [JsonSerializable(typeof(CoreSettingsResponse))]
 [JsonSerializable(typeof(CoreSettingsUpdateRequest))]
+// Core update-available check for the Shell sidebar + the persisted product-channel pointer it reads.
+[JsonSerializable(typeof(CoreUpdateStatus))]
+[JsonSerializable(typeof(CoreProductChannelRef))]
 [JsonSerializable(typeof(AuditRecord))]
 [JsonSerializable(typeof(AppAuthCodeState))]
 [JsonSerializable(typeof(AppSessionGrantState))]
@@ -112,6 +115,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(HealthResponse))]
 [JsonSerializable(typeof(CoreStatusResponse))]
 [JsonSerializable(typeof(StopResponse))]
+[JsonSerializable(typeof(CoreRestartResponse))]
 [JsonSerializable(typeof(ErrorResponse))]
 [JsonSerializable(typeof(ManifestErrorResponse))]
 [JsonSerializable(typeof(AuthSessionResponse))]

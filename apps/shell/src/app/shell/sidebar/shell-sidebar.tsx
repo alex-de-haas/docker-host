@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import {
+  ArrowUpCircle,
   Boxes,
   ChevronDown,
   ChevronRight,
@@ -47,6 +48,9 @@ export function ShellSidebar({
   coreOrigin,
   coreOnline,
   coreVersion,
+  coreUpdateAvailable,
+  coreUpdating,
+  onUpdateCore,
   activeUser,
   canManageApps,
   runtimeApps,
@@ -64,6 +68,9 @@ export function ShellSidebar({
   coreOrigin: string;
   coreOnline: boolean;
   coreVersion: string | null;
+  coreUpdateAvailable: boolean;
+  coreUpdating: boolean;
+  onUpdateCore?: () => void;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   runtimeApps: CoreApp[];
@@ -156,7 +163,15 @@ export function ShellSidebar({
 
       <div className={cn("shrink-0 border-t", compact ? "space-y-2 px-2 py-3" : "space-y-3 p-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
-        <SidebarVersionInfo compact={compact} coreOnline={coreOnline} coreVersion={coreVersion} onOpenPlatform={onOpenPlatform} />
+        <SidebarVersionInfo
+          compact={compact}
+          coreOnline={coreOnline}
+          coreVersion={coreVersion}
+          coreUpdateAvailable={coreUpdateAvailable}
+          coreUpdating={coreUpdating}
+          onUpdateCore={onUpdateCore}
+          onOpenPlatform={onOpenPlatform}
+        />
       </div>
     </div>
   );
@@ -166,11 +181,17 @@ function SidebarVersionInfo({
   compact,
   coreOnline,
   coreVersion,
+  coreUpdateAvailable,
+  coreUpdating,
+  onUpdateCore,
   onOpenPlatform,
 }: {
   compact: boolean;
   coreOnline: boolean;
   coreVersion: string | null;
+  coreUpdateAvailable: boolean;
+  coreUpdating: boolean;
+  onUpdateCore?: () => void;
   onOpenPlatform?: () => void;
 }) {
   // A reachable Core that predates the version field reports no version, so only call it
@@ -193,15 +214,11 @@ function SidebarVersionInfo({
 
   // Admins get the platform panel behind the version block (generic-bootstrap Phase 3); everyone
   // else keeps the plain read-only text.
-  if (!onOpenPlatform) {
-    return (
-      <div className={cn("text-muted-foreground", compact ? "" : "px-2")} title={platformLabel}>
-        {body}
-      </div>
-    );
-  }
-
-  return (
+  const versionBlock = !onOpenPlatform ? (
+    <div className={cn("text-muted-foreground", compact ? "" : "px-2")} title={platformLabel}>
+      {body}
+    </div>
+  ) : (
     <button
       type="button"
       className={cn(
@@ -214,6 +231,46 @@ function SidebarVersionInfo({
     >
       {body}
     </button>
+  );
+
+  // A small Update affordance next to the version when a newer Core is available (admins only). While
+  // the update runs, it shows a spinner and disables — Core restarts and the probe re-clears the badge.
+  const showUpdate = Boolean(onUpdateCore) && (coreUpdateAvailable || coreUpdating);
+  if (!showUpdate) {
+    return versionBlock;
+  }
+
+  const updateButton = (
+    <button
+      type="button"
+      disabled={coreUpdating}
+      onClick={onUpdateCore}
+      title={coreUpdating ? "Updating Core…" : "A new Core version is available — click to update"}
+      aria-label={coreUpdating ? "Updating Core" : "Update Core"}
+      className={cn(
+        "flex shrink-0 items-center gap-1 rounded-md border border-primary/40 bg-primary/10 font-medium text-primary transition-colors hover:bg-primary/20 focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:opacity-60",
+        compact ? "mt-1 justify-center p-1" : "px-1.5 py-0.5 text-[10px]",
+      )}
+    >
+      {coreUpdating ? (
+        <LoaderCircle className="h-3 w-3 animate-spin" />
+      ) : (
+        <ArrowUpCircle className="h-3 w-3" />
+      )}
+      {!compact && <span>{coreUpdating ? "Updating…" : "Update"}</span>}
+    </button>
+  );
+
+  return compact ? (
+    <div className="flex flex-col items-center">
+      {versionBlock}
+      {updateButton}
+    </div>
+  ) : (
+    <div className="flex items-center gap-1">
+      <div className="min-w-0 flex-1">{versionBlock}</div>
+      {updateButton}
+    </div>
   );
 }
 

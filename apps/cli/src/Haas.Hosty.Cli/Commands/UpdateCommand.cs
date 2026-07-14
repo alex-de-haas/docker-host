@@ -50,19 +50,45 @@ internal sealed partial class UpdateCommand(CommandContext context)
         }
 
         context.Console.MarkupLine("[green]Bootstrap CLI update step completed.[/]");
+
+        // Light-stop Core before replacing its executable. On Windows the running exe is file-locked and
+        // cannot be overwritten otherwise; on every platform the new binary only takes effect after a
+        // restart. --keep-apps means this stop leaves the app containers running (Core does not run its
+        // destructive per-app docker-stop sweep), and the start below re-adopts them — so `hosty update`
+        // never disturbs running apps and cannot get wedged on a slow shutdown.
+        var stopOutcome = await new CoreCommand(context).StopForUpdateAsync();
+        if (stopOutcome == CoreCommand.CoreUpdateStopOutcome.Failed)
+        {
+            context.Error.MarkupLine("[yellow]Hosty Core did not stop cleanly before the update; on Windows the executable replace may fail while the file stays locked.[/]");
+        }
+
         try
         {
-            await TryStopWindowsCoreBeforeExecutableUpdateAsync();
             await new CoreInstallationService(context).UpdateAsync(releaseTag);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
             context.Error.MarkupLine($"[red]Core update failed:[/] {Markup.Escape(ex.Message)}");
-            context.Error.MarkupLine("Hosty Shell was not changed. Retry later, then restart Core with [grey]hosty restart[/].");
+            context.Error.MarkupLine("Hosty Shell was not changed. Retry later, then restart Core with [grey]hosty restart --keep-apps[/].");
             return 1;
         }
 
         context.Console.MarkupLine("[green]Hosty Core update step completed.[/]");
+
+        // Bring Core back on the new binary only when it was running before the update (a deliberately
+        // stopped Core stays stopped). The new process adopts the still-running app containers.
+        if (stopOutcome == CoreCommand.CoreUpdateStopOutcome.StoppedRunning)
+        {
+            if (await new CoreCommand(context).StartInstalledAsync() != 0)
+            {
+                context.Error.MarkupLine("[yellow]Hosty Core did not report ready after the update; check [white]hosty core status[/] and [white]hosty core logs[/].[/]");
+            }
+        }
+        else
+        {
+            context.Console.MarkupLine("[grey]Core was not running; start it with [white]hosty core start[/] to run the updated binary.[/]");
+        }
+
         await CheckCoreAndShellAsync(selectedChannel);
 
         return 0;
@@ -83,47 +109,6 @@ internal sealed partial class UpdateCommand(CommandContext context)
         {
             context.Console.MarkupLine(
                 $"[yellow]Warning:[/] channel [white]{Markup.Escape(channel.Id)}[/] targets CLI [white]{Markup.Escape(targetVersion)}[/], older than the installed [white]{Markup.Escape(CommandLine.Version)}[/] — this is a downgrade.");
-        }
-    }
-
-    private async Task TryStopWindowsCoreBeforeExecutableUpdateAsync()
-    {
-        if (!OperatingSystem.IsWindows() ||
-            !File.Exists(CoreInstallationService.GetInstalledExecutablePath(context.Environment)))
-        {
-            return;
-        }
-
-        try
-        {
-            using var core = await CoreControlClient.TryCreateAsync(context);
-            if (core is null)
-            {
-                return;
-            }
-
-            var processId = core.CoreProcessId;
-            await core.PostAsync("core/stop");
-            context.Console.MarkupLine("[grey]Hosty Core stop requested before Windows executable update.[/]");
-
-            // The executable cannot be replaced while the old Core still holds it open, so wait for
-            // the process to actually exit (the /core/stop call only signals shutdown). Fall back to
-            // a short delay for an older Core whose discovery file records no PID.
-            if (processId is int pid && pid > 0)
-            {
-                if (!await ProcessLiveness.WaitForExitAsync(pid, TimeSpan.FromSeconds(30)))
-                {
-                    context.Error.MarkupLine("[yellow]Hosty Core did not exit before the Windows executable update; the update may fail if the file is locked.[/]");
-                }
-            }
-            else
-            {
-                await Task.Delay(750);
-            }
-        }
-        catch (Exception ex) when (ex is CoreControlException or HttpRequestException or IOException or JsonException or OperationCanceledException)
-        {
-            context.Error.MarkupLine($"[yellow]Could not stop Hosty Core before Windows executable update:[/] {Markup.Escape(ex.Message)}");
         }
     }
 

@@ -230,6 +230,15 @@ internal sealed partial class CoreCommand(CommandContext context)
 
         AddOptional(environment, LaunchSettingDefinitions.HostyCorePublicOrigin, settings.HostyCorePublicOrigin);
         AddOptional(environment, LaunchSettingDefinitions.HostyShellPublicOrigin, settings.HostyShellPublicOrigin);
+        // Hand Core the path to this managed CLI so its admin restart endpoint (used by the Shell platform
+        // panel) can spawn `hosty core restart --keep-apps` to light-restart Core without an external
+        // supervisor. Only when we are the installed `hosty` binary — a source/dev CLI (dotnet host) has
+        // no restartable managed path, and Core falls back to a PATH lookup.
+        if (Environment.ProcessPath is { } cliPath &&
+            SelfUpdateService.IsManagedExecutableName(Path.GetFileName(cliPath)))
+        {
+            environment["HOSTY_CLI_PATH"] = cliPath;
+        }
         // Manifest locations resolve from Core's release-owned distribution list, and which apps
         // bootstrap is the bootstrap-choices file's job (`hosty setup`). The runtime profile of a
         // system app (Shell, Telemetry, Marketplace) is a normal per-app choice: the manifest default
@@ -293,12 +302,8 @@ internal sealed partial class CoreCommand(CommandContext context)
 
     private async Task<int> StopAsync(string[] args)
     {
-        if (args.Length > 0)
-        {
-            throw new CommandUsageException("core stop does not accept arguments.", Usage);
-        }
-
-        switch (await StopCoreAsync())
+        var keepApps = ParseKeepAppsOnly(args);
+        switch (await StopCoreAsync(keepApps))
         {
             case StopOutcome.NotRunning:
                 context.Error.MarkupLine("[yellow]Hosty Core is not running or local control discovery is unavailable.[/]");
@@ -320,7 +325,7 @@ internal sealed partial class CoreCommand(CommandContext context)
     // notably `restart`/`update` — would race the dying Core: start a new one while the old still
     // holds the port, or have the old Core's shutdown delete the new Core's freshly-written
     // discovery file. Error messages are printed here; the caller maps the outcome to an exit code.
-    private async Task<StopOutcome> StopCoreAsync()
+    private async Task<StopOutcome> StopCoreAsync(bool keepApps = false)
     {
         var core = await CoreControlClient.TryCreateAsync(context, probeTimeout: ControlProbeTimeout, operationTimeout: StopTimeout);
         if (core is null)
@@ -336,16 +341,18 @@ internal sealed partial class CoreCommand(CommandContext context)
         {
             return await CommandStatus.RunAsync(
                 context,
-                "Stopping Hosty Core…",
-                () => RequestStopAndWaitAsync(core));
+                keepApps ? "Stopping Hosty Core (keeping apps running)…" : "Stopping Hosty Core…",
+                () => RequestStopAndWaitAsync(core, keepApps));
         }
     }
 
-    private async Task<StopOutcome> RequestStopAndWaitAsync(CoreControlClient core)
+    private async Task<StopOutcome> RequestStopAndWaitAsync(CoreControlClient core, bool keepApps)
     {
         try
         {
-            await core.PostAsync("core/stop");
+            // keepApps=true is the "light stop": Core exits without stopping its app containers, so a
+            // Core-only restart/update leaves running apps untouched (they are re-adopted on next boot).
+            await core.PostAsync(keepApps ? "core/stop?keepApps=true" : "core/stop");
         }
         catch (CoreControlException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
         {
@@ -372,13 +379,18 @@ internal sealed partial class CoreCommand(CommandContext context)
 
     private async Task<int> RestartAsync(string[] args)
     {
+        // --keep-apps is a restart/stop concern, not a start option, so pull it out before the rest is
+        // validated as start options and forwarded to StartAsync.
+        var (keepApps, startArgs) = ExtractKeepAppsFlag(args);
+
         // Validate start options up front so a bad flag fails before we stop the running Core.
-        _ = ParseStartOptions(args);
+        _ = ParseStartOptions(startArgs);
 
         // StopCoreAsync waits for the old process to fully exit (port released, discovery file
         // removed), so the start below binds cleanly and cannot have its discovery clobbered by the
-        // old Core's shutdown. NotRunning is fine — there is simply nothing to stop.
-        switch (await StopCoreAsync())
+        // old Core's shutdown. NotRunning is fine — there is simply nothing to stop. With --keep-apps
+        // the stop leaves the app containers running and the start below re-adopts them.
+        switch (await StopCoreAsync(keepApps))
         {
             case StopOutcome.NotRunning:
             case StopOutcome.Stopped:
@@ -392,7 +404,69 @@ internal sealed partial class CoreCommand(CommandContext context)
                 return 1;
         }
 
-        return await StartAsync(args);
+        return await StartAsync(startArgs);
+    }
+
+    internal enum CoreUpdateStopOutcome
+    {
+        // A running Core was stopped (keeping apps) — the caller should restart it on the new binary.
+        StoppedRunning,
+        // No Core was running — nothing to stop; the caller leaves it stopped.
+        NotRunning,
+        // A running Core could not be stopped in time — on Windows the executable replace may then fail.
+        Failed,
+    }
+
+    // Light restart for `hosty update`: stop Core WITHOUT stopping its apps so the executable can be
+    // replaced (and, on Windows, unlocked) without disturbing running containers. The apps are re-adopted
+    // when Core starts again.
+    internal async Task<CoreUpdateStopOutcome> StopForUpdateAsync()
+        => await StopCoreAsync(keepApps: true) switch
+        {
+            StopOutcome.Stopped => CoreUpdateStopOutcome.StoppedRunning,
+            StopOutcome.NotRunning => CoreUpdateStopOutcome.NotRunning,
+            _ => CoreUpdateStopOutcome.Failed,
+        };
+
+    // Starts the installed Core (no start options) after an update replaced its executable. The new
+    // process re-adopts the still-running app containers left by StopForUpdateAsync.
+    internal Task<int> StartInstalledAsync() => StartAsync([]);
+
+    private static bool ParseKeepAppsOnly(string[] args)
+    {
+        var keepApps = false;
+        foreach (var arg in args)
+        {
+            if (arg == "--keep-apps")
+            {
+                keepApps = true;
+            }
+            else
+            {
+                throw new CommandUsageException($"Unknown core stop option '{arg}'.", Usage);
+            }
+        }
+
+        return keepApps;
+    }
+
+    private static (bool KeepApps, string[] Remaining) ExtractKeepAppsFlag(string[] args)
+    {
+        var keepApps = false;
+        var rest = new List<string>(args.Length);
+        foreach (var arg in args)
+        {
+            if (arg == "--keep-apps")
+            {
+                keepApps = true;
+            }
+            else
+            {
+                rest.Add(arg);
+            }
+        }
+
+        return (keepApps, rest.ToArray());
     }
 
     private Task<int> LogsAsync(string[] args)
@@ -674,11 +748,13 @@ internal sealed partial class CoreCommand(CommandContext context)
         Commands:
           start [--project <csproj-path>] [--url <url>] [--foreground]
           status
-          stop
-          restart [--project <csproj-path>] [--url <url>] [--foreground]
+          stop [--keep-apps]
+          restart [--keep-apps] [--project <csproj-path>] [--url <url>] [--foreground]
           logs [--tail <count>]
 
         Description:
           Manages the installed Hosty Core process. Pass --project for explicit source mode.
+          --keep-apps stops/restarts Core WITHOUT stopping running apps (light restart), leaving
+          their containers up to be re-adopted when Core starts again.
         """;
 }
