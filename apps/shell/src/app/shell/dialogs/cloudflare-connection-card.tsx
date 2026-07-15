@@ -23,8 +23,10 @@ export function CloudflareConnectionCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const [statusResponse, templateResponse] = await Promise.all([
         sendCsrfJson(`${coreOrigin}/api/core/cloudflare/status`, undefined, "GET"),
@@ -38,7 +40,9 @@ export function CloudflareConnectionCard() {
         setError(loadError instanceof Error ? loadError.message : "Could not load the Cloudflare status.");
       }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [coreOrigin, sendCsrfJson]);
 
@@ -56,7 +60,7 @@ export function CloudflareConnectionCard() {
     try {
       await sendCsrfJson(`${coreOrigin}/api/core/cloudflare/connect`, { token: token.trim() });
       setToken("");
-      await load();
+      await load(true);
       toast.success("Cloudflare connected");
     } catch (connectError) {
       if (!isAuthRequiredRedirectError(connectError)) {
@@ -72,7 +76,7 @@ export function CloudflareConnectionCard() {
     setError(null);
     try {
       await sendCsrfJson(`${coreOrigin}/api/core/cloudflare/disconnect`, {});
-      await load();
+      await load(true);
       toast.success("Cloudflare disconnected");
     } catch (disconnectError) {
       if (!isAuthRequiredRedirectError(disconnectError)) {
