@@ -9,7 +9,7 @@ internal sealed class CloudflareCredentialStore(CoreDataPaths paths)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
 
-    private string CredentialPath => Path.Combine(paths.DataRoot, "core", "cloudflare-credential.json");
+    private string CredentialPath => Path.Combine(paths.CoreRoot, "cloudflare-credential.json");
 
     public async Task SaveAsync(CloudflareCredential credential, CancellationToken cancellationToken = default)
     {

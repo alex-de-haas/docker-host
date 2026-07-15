@@ -47,7 +47,9 @@ internal sealed class CloudflareApiClient(IHttpClientFactory httpClientFactory)
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}{path}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await client.SendAsync(request, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        // Content is effectively always present for HttpClient responses, but the type is nullable and a
+        // custom handler could omit it — treat that as an empty body rather than risking an NRE.
+        var body = response.Content is null ? string.Empty : await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
