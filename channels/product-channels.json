@@ -3,7 +3,7 @@
     {
       "id": "main",
       "label": "Main",
-      "cliVersion": "0.48.1",
+      "cliVersion": "0.48.2",
       "coreArtifactPrefix": "hosty-core",
       "shellManifestPath": "apps/shell/manifest.json",
       "releaseTag": "cli-dev"
