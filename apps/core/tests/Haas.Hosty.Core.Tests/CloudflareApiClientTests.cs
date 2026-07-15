@@ -94,6 +94,48 @@ public sealed class CloudflareApiClientTests
         Assert.Contains("nope", error.CloudflareErrors);
     }
 
+    [Fact]
+    public async Task GetTunnelConfigurationAsync_ParsesVersionAndPreservesRawConfigIncludingWarpRouting()
+    {
+        const string configJson = """
+            {"success":true,"errors":[],"result":{"version":41,"source":"cloudflare","config":{
+              "ingress":[{"hostname":"media.zayats.io","service":"http://localhost:8096"},{"service":"http_status:404"}],
+              "warp-routing":{"enabled":true}
+            }}}
+            """;
+        var client = Client((_, _) => (HttpStatusCode.OK, configJson));
+
+        var result = await client.GetTunnelConfigurationAsync("t", "acc", "tid");
+
+        Assert.Equal(41, result!.Version);
+        Assert.NotNull(result.Config);
+        // The raw pass-through document keeps the sibling warp-routing key.
+        Assert.True((bool)result.Config!["warp-routing"]!["enabled"]!);
+    }
+
+    [Fact]
+    public async Task PutTunnelConfigurationAsync_SendsPutWithConfigWrapper_AndParsesNewVersion()
+    {
+        string? method = null;
+        string? sentBody = null;
+        var client = Client((request, _) =>
+        {
+            method = request.Method.Method;
+            sentBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return (HttpStatusCode.OK, """{"success":true,"errors":[],"result":{"version":42,"source":"cloudflare","config":{"ingress":[]}}}""");
+        });
+        var config = (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse("""{"ingress":[{"hostname":"app.zayats.io","service":"http://localhost:4000"}],"warp-routing":{"enabled":true}}""")!;
+
+        var result = await client.PutTunnelConfigurationAsync("t", "acc", "tid", config);
+
+        Assert.Equal("PUT", method);
+        Assert.Equal(42, result!.Version);
+        // The body wraps the caller's document under "config" and carries warp-routing verbatim.
+        Assert.Contains("\"config\"", sentBody);
+        Assert.Contains("warp-routing", sentBody);
+        Assert.Contains("app.zayats.io", sentBody);
+    }
+
     private static CloudflareApiClient Client(Func<HttpRequestMessage, CancellationToken, (HttpStatusCode, string)> respond)
         => new(new StubHttpClientFactory(new StubHttpMessageHandler(respond)));
 

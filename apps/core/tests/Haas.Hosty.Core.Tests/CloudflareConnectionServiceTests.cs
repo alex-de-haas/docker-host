@@ -161,5 +161,12 @@ public sealed class CloudflareConnectionServiceTests : IDisposable
 
         public Task<string?> GetEgressIpAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(Egress);
+
+        public Task<CloudflareTunnelConfigResult?> GetTunnelConfigurationAsync(string token, string accountId, string tunnelId, CancellationToken cancellationToken = default)
+            => Task.FromResult<CloudflareTunnelConfigResult?>(new CloudflareTunnelConfigResult(41, "cloudflare",
+                new System.Text.Json.Nodes.JsonObject { ["ingress"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["service"] = "http_status:404" }) }));
+
+        public Task<CloudflareTunnelConfigResult?> PutTunnelConfigurationAsync(string token, string accountId, string tunnelId, System.Text.Json.Nodes.JsonObject config, CancellationToken cancellationToken = default)
+            => Task.FromResult<CloudflareTunnelConfigResult?>(new CloudflareTunnelConfigResult(42, "cloudflare", config));
     }
 }
