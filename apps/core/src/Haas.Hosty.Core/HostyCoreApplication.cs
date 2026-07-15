@@ -70,6 +70,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CloudflareIntegrationStore>();
         builder.Services.AddSingleton<CloudflarePublicationStore>();
         builder.Services.AddSingleton<CloudflarePublicationReconciler>();
+        builder.Services.AddSingleton<CloudflarePublicationService>();
         builder.Services.AddSingleton<CloudflareConnectionService>();
         builder.Services.AddSingleton<RuntimePortAllocator>();
         builder.Services.AddSingleton<CoreLifecycleService>();
@@ -289,6 +290,7 @@ internal static class HostyCoreApplication
         CoreSettingsEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
         CloudflareConnectionEndpoints.Map(app);
+        CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
