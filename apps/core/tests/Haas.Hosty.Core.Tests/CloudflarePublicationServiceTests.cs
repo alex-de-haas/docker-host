@@ -141,7 +141,12 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         }
 
         public Task<CloudflareDnsRecord?> UpdateCnameAsync(string token, string zoneId, string recordId, string name, string content, bool proxied, CancellationToken cancellationToken = default)
-            => Task.FromResult<CloudflareDnsRecord?>(new CloudflareDnsRecord(recordId, "CNAME", name, content, proxied, 1));
+        {
+            var record = new CloudflareDnsRecord(recordId, "CNAME", name, content, proxied, 1);
+            Dns.RemoveAll(existing => string.Equals(existing.Id, recordId, StringComparison.Ordinal));
+            Dns.Add(record);
+            return Task.FromResult<CloudflareDnsRecord?>(record);
+        }
 
         public Task DeleteDnsRecordAsync(string token, string zoneId, string recordId, CancellationToken cancellationToken = default)
         {

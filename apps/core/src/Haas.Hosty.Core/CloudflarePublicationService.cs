@@ -36,8 +36,22 @@ internal sealed class CloudflarePublicationService(
 
     public async Task<CloudflarePublicationResult> UnpublishAsync(string appId, string endpointKey, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(endpointKey))
+        {
+            throw new CloudflareConnectionException("cloudflare_endpoint_invalid", "An endpoint key is required.");
+        }
+
         var (token, target) = await RequireConnectionAsync(cancellationToken);
+        // Clean the Cloudflare resources regardless (the reconciler tolerates an already-deleted record). Only
+        // clear the managed setting when the app still exists: an already-uninstalled app has nothing to
+        // update and must not surface as a 500 from UpdateAppAsync.
         await reconciler.UnpublishAsync(token, target, appId, endpointKey, cancellationToken);
+        var app = await apps.GetAppAsync(appId, cancellationToken);
+        if (app is null)
+        {
+            return new CloudflarePublicationResult(appId, endpointKey, null, null, false);
+        }
+
         var updated = await apps.UpdateAppAsync(appId, record => WithoutPublicOrigin(record, endpointKey), cancellationToken);
         return new CloudflarePublicationResult(appId, endpointKey, null, null, IsRunning(updated.App));
     }
@@ -68,8 +82,12 @@ internal sealed class CloudflarePublicationService(
             throw new CloudflareConnectionException("cloudflare_not_connected", "Connect Cloudflare before publishing a public origin.");
         }
 
-        var credential = await credentials.LoadAsync(cancellationToken)
-            ?? throw new CloudflareConnectionException("cloudflare_not_connected", "The Cloudflare token is missing; reconnect Cloudflare.");
+        var credential = await credentials.LoadAsync(cancellationToken);
+        if (credential is null || string.IsNullOrWhiteSpace(credential.Token))
+        {
+            throw new CloudflareConnectionException("cloudflare_not_connected", "The Cloudflare token is missing; reconnect Cloudflare.");
+        }
+
         return (credential.Token, new CloudflareIngressTarget(state.AccountId, state.ZoneId, state.TunnelId, state.BaseDomain));
     }
 
