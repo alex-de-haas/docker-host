@@ -168,5 +168,17 @@ public sealed class CloudflareConnectionServiceTests : IDisposable
 
         public Task<CloudflareTunnelConfigResult?> PutTunnelConfigurationAsync(string token, string accountId, string tunnelId, System.Text.Json.Nodes.JsonObject config, CancellationToken cancellationToken = default)
             => Task.FromResult<CloudflareTunnelConfigResult?>(new CloudflareTunnelConfigResult(42, "cloudflare", config));
+
+        public Task<IReadOnlyList<CloudflareDnsRecord>> ListDnsRecordsAsync(string token, string zoneId, string name, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<CloudflareDnsRecord>>([]);
+
+        public Task<CloudflareDnsRecord?> CreateCnameAsync(string token, string zoneId, string name, string content, bool proxied, CancellationToken cancellationToken = default)
+            => Task.FromResult<CloudflareDnsRecord?>(new CloudflareDnsRecord("rec-id", "CNAME", name, content, proxied, 1));
+
+        public Task<CloudflareDnsRecord?> UpdateCnameAsync(string token, string zoneId, string recordId, string name, string content, bool proxied, CancellationToken cancellationToken = default)
+            => Task.FromResult<CloudflareDnsRecord?>(new CloudflareDnsRecord(recordId, "CNAME", name, content, proxied, 1));
+
+        public Task DeleteDnsRecordAsync(string token, string zoneId, string recordId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 }
