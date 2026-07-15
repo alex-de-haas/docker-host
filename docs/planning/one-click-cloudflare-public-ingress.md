@@ -199,7 +199,7 @@ succeed. Verification must not assume a user-owned token: the phase-0 spike conf
 produces an **account-owned** token, which returns `Invalid API Token` from `GET /user/tokens/verify` and
 must instead be checked with `GET /accounts/{account_id}/tokens/verify` — so Core proves validity by a
 resource probe (e.g. `GET /accounts`) first, then calls the account-scoped verify for status/expiry once
-the account id is known. Do not assume a fixed token length (the spike's account token was 53 chars, not
+the account ID is known. Do not assume a fixed token length (the spike's account token was 53 chars, not
 the 40-char user-token length). The token is never echoed back to Shell, stored in browser state, or
 logged. Verification failure reports which capability was missing so the administrator can adjust the token
 in the dashboard and retry.
