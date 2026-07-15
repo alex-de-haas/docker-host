@@ -60,8 +60,8 @@ flowchart LR
 
 ## Planning
 
-- [Install-Time Runtime Port Reservations](planning/install-time-runtime-port-reservations.md) - Draft implementation plan for persistent service-scoped ports assigned during install, migration, collision handling, and explicit reassignment.
-- [One-Click Cloudflare Public Ingress](planning/one-click-cloudflare-public-ingress.md) - Draft implementation plan for API-token-based remote Tunnel adoption, per-app hostname publication, Dashboard-safe reconciliation, diagnostics, and cleanup.
+- [Install-Time Runtime Port Reservations](planning/install-time-runtime-port-reservations.md) - Implemented plan (shipped in #187–#191) for persistent service-scoped ports assigned during install, migration, collision handling, and explicit reassignment.
+- [One-Click Cloudflare Public Ingress](planning/one-click-cloudflare-public-ingress.md) - Ready implementation plan for API-token-based remote Tunnel adoption, per-app hostname publication, Dashboard-safe reconciliation, diagnostics, and cleanup (phase-0 spike verified against a live account).
 - [Marketplace System App - Vertical Slice](planning/marketplace-system-app.md) - approved replacement of the Core-owned catalog with a Marketplace system app and generic Core feed lifecycle.
 
 ## Ideas

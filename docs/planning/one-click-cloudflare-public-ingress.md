@@ -1,6 +1,6 @@
 # One-Click Cloudflare Public Ingress
 
-Status: Draft
+Status: Ready
 Created: 2026-07-14
 Updated: 2026-07-14
 
@@ -193,11 +193,16 @@ Connection starts in Shell with two artifacts produced by Core:
    `Hosty <hostname>`) that opens the token-creation form with exactly the required permission groups;
 2. a paste form posting to a host-admin/CSRF-protected connect endpoint.
 
-On paste, Core calls Cloudflare's token-verification endpoint, executes the discovery reads (accounts,
-zones, tunnels, connectors) to prove the granted permissions, and persists the token in
-`CloudflareCredentialStore` only after both succeed. The token is never echoed back to Shell, stored in
-browser state, or logged. Verification failure reports which capability was missing so the administrator
-can adjust the token in the dashboard and retry.
+On paste, Core verifies the token and executes the discovery reads (accounts, zones, tunnels, connectors)
+to prove the granted permissions, then persists the token in `CloudflareCredentialStore` only after both
+succeed. Verification must not assume a user-owned token: the phase-0 spike confirmed the template flow
+produces an **account-owned** token, which returns `Invalid API Token` from `GET /user/tokens/verify` and
+must instead be checked with `GET /accounts/{account_id}/tokens/verify` — so Core proves validity by a
+resource probe (e.g. `GET /accounts`) first, then calls the account-scoped verify for status/expiry once
+the account ID is known. Do not assume a fixed token length (the spike's account token was 53 chars, not
+the 40-char user-token length). The token is never echoed back to Shell, stored in browser state, or
+logged. Verification failure reports which capability was missing so the administrator can adjust the token
+in the dashboard and retry.
 
 Every later Cloudflare call classifies `401`/`403` as an authorization failure: status changes to
 `Reconnect required`, all non-secret ownership/intent is retained, and no cleanup runs automatically.
@@ -230,6 +235,12 @@ Because the egress-IP lookup is an external network call feeding only an advisor
 block connection. The lookup is wrapped so any failure other than cancellation is logged and the check
 degrades to `locality_unknown` — connection proceeds and the definitive end-to-end probe still runs. Only a
 successful lookup that actually disagrees with the connector IP produces `connector_not_local`.
+
+The comparison must be dual-stack. The phase-0 spike's connector reported an **IPv6** `origin_ip`
+(`2001:…`), so comparing it against an IPv4-only egress lookup would always mismatch and raise a false
+`connector_not_local`. Compare the connector's address family against the matching-family egress address,
+and when the host and connector advertise different families with no overlap, degrade to `locality_unknown`
+rather than declaring a mismatch — the end-to-end probe remains the definitive proof.
 
 ### Core And Shell Public Origins
 
@@ -286,8 +297,11 @@ because it targets the same local port.
 ### Tunnel Configuration Mutation
 
 Fetch the latest configuration for every operation. Patch it as a pass-through `JsonNode` document (or an
-equivalent extension-data-preserving representation) so unknown/new Cloudflare fields survive. For the
-submitted app endpoints only:
+equivalent extension-data-preserving representation) so unknown/new Cloudflare fields survive. This is not a
+hypothetical safeguard: the phase-0 spike's tunnel configuration carried a top-level `warp-routing` key
+alongside `ingress`, so a narrow ingress-only serialization would silently drop the operator's WARP routing.
+Preserve every top-level key and every `originRequest`/global option verbatim. For the submitted app
+endpoints only:
 
 - update a same-hostname owned rule's `service` when the local assigned URL changes;
 - insert new exact rules before any overlapping wildcard/final catch-all rules;
@@ -467,6 +481,31 @@ None.
   replaced OAuth as the primary authorization method after verifying Cloudflare's public-client
   distribution requirements (private-by-default clients, permanent domain verification) and refresh-token
   rotation behavior. The OAuth client and callback bridge are deferred, not rejected.
-- This plan depends on install-time runtime port reservations for publication before first start.
-- This plan must be explicitly approved and moved to `Ready` before implementation begins.
+- This plan depends on install-time runtime port reservations for publication before first start. That
+  prerequisite is now complete end to end (persistent assignments, install-time allocation, reassignment
+  API + Shell UI, and the start-time port-unavailable preflight).
+- Approved and moved to `Ready` on 2026-07-14; implementation begins with Phase 1.
 - Version changes are evaluated once only when the eventual pull request is prepared for merge.
+
+### Phase-0 spike (read-only, verified against a live account)
+
+A read-only spike ran against a real account and zone before promotion. It confirmed the token-first flow
+end to end and produced concrete adjustments now folded into the design above:
+
+- The template flow yields an **account-owned** token: `GET /user/tokens/verify` returns `Invalid API
+  Token`; use `GET /accounts/{account_id}/tokens/verify`, and prove validity by a resource probe first. Do
+  not assume a 40-char token length.
+- Sufficient permission groups were **Argo Tunnel (Legacy) Read+Edit** (the `cfd_tunnel` permission under
+  the current dashboard naming; "Cloudflare Tunnel" is no longer a search hit), **DNS Edit**, and **Zone
+  Read**. "Connectivity Directory" was not needed for read/discovery.
+- Discovery matched the design: exactly one healthy `config_src: cloudflare` tunnel was present (auto-select
+  with no prompt), alongside an inactive tunnel that was correctly filtered out.
+- The tunnel configuration carried a top-level `warp-routing` key beside `ingress` — proving preserve-unknown
+  pass-through is mandatory, not precautionary. The config exposed a monotonic `version`, `originRequest`
+  entries, and a final catch-all, with no PUT precondition.
+- The connector's `origin_ip` was **IPv6** — the locality comparison must be dual-stack.
+- The account already published several proxied `CNAME → <tunnel-id>.cfargotunnel.com` hostnames matching the
+  tunnel's ingress rules, so the adoption / hostname-conflict path is exercised on the very first connect,
+  not as an edge case.
+- No write was performed; the whole-document PUT round-trip and DNS mutations remain to be exercised in
+  Phase 2 against a disposable target.
