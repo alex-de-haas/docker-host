@@ -8,6 +8,15 @@ if (args.Length >= 2 && args[0] == LocalCommandShim.Verb)
     return await LocalCommandShim.RunAsync(args);
 }
 
+// Before spawning any child (localCommand services, docker/git CLI, the detached CLI launcher), drop the
+// inherit flag from Core's own stdio. The CLI runs Core with `> core.log 2>&1`, so those handles are the
+// core.log file; a localCommand child that outlives Core would otherwise keep core.log open and wedge the
+// next Core start's redirect. See WindowsProcessControl.
+if (OperatingSystem.IsWindows())
+{
+    WindowsProcessControl.MakeStandardHandlesNonInheritable();
+}
+
 var builder = WebApplication.CreateSlimBuilder(args);
 HostyCoreApplication.ConfigureServices(builder);
 
