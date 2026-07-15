@@ -50,17 +50,25 @@ internal sealed class CloudflarePublicationReconciler(
         string? createdDnsId = null;
         try
         {
-            // 1. Tunnel route first.
+            // 1. Tunnel route first. On a label change (rename) the old hostname's route is removed in the
+            // same PUT, so a rename never leaks the previous route.
             var config = await RequireConfigAsync(token, target, cancellationToken);
-            var unrelatedBefore = UnrelatedProjection(config, hostname);
+            var oldHostname = existing is not null && !HostnameEquals(existing.Hostname, hostname) ? existing.Hostname : null;
+            var unrelatedBefore = UnrelatedProjection(config, hostname, oldHostname);
             var alreadyRouted = CloudflareTunnelConfigPatcher.IngressHostnames(config).Any(host => HostnameEquals(host, hostname));
             var patched = CloudflareTunnelConfigPatcher.UpsertIngress(config, hostname, serviceUrl);
+            if (oldHostname is not null)
+            {
+                patched = CloudflareTunnelConfigPatcher.RemoveIngress(patched, oldHostname);
+            }
+
             await client.PutTunnelConfigurationAsync(token, target.AccountId, target.TunnelId, patched, cancellationToken);
             routeAdded = !alreadyRouted;
 
-            // 2. Read-back: our rule landed with the intended service, and nothing unrelated changed.
+            // 2. Read-back: our rule landed with the intended service, and nothing unrelated changed (the
+            // old hostname, if any, is excluded from the comparison since we removed it on purpose).
             var readback = await RequireConfigAsync(token, target, cancellationToken);
-            VerifyReadback(readback, hostname, serviceUrl, unrelatedBefore);
+            VerifyReadback(readback, hostname, serviceUrl, unrelatedBefore, oldHostname);
 
             // 3. DNS: proxied CNAME to the tunnel (create, or update an existing owned record).
             var record = ownedRecordId is not null
@@ -108,7 +116,16 @@ internal sealed class CloudflarePublicationReconciler(
         // name pointing at a removed route. Only a Hosty-owned record is deleted.
         if (publication.DnsRecordId is not null && string.Equals(publication.OwnershipState, CloudflareOwnershipStates.Owned, StringComparison.Ordinal))
         {
-            await client.DeleteDnsRecordAsync(token, target.ZoneId, publication.DnsRecordId, cancellationToken);
+            try
+            {
+                await client.DeleteDnsRecordAsync(token, target.ZoneId, publication.DnsRecordId, cancellationToken);
+            }
+            catch (CloudflareApiException exception) when (exception.StatusCode == 404)
+            {
+                // Already gone (e.g. deleted from the dashboard) — treat as success and continue the cleanup
+                // so the route and local record don't get stuck.
+                logger.LogDebug("Cloudflare DNS record for '{Hostname}' was already absent during unpublish.", publication.Hostname);
+            }
         }
 
         var config = await RequireConfigAsync(token, target, cancellationToken);
@@ -155,7 +172,7 @@ internal sealed class CloudflarePublicationReconciler(
         => (await client.GetTunnelConfigurationAsync(token, target.AccountId, target.TunnelId, cancellationToken))?.Config
             ?? throw new CloudflareConnectionException("cloudflare_config_unavailable", "Could not read the tunnel configuration.");
 
-    private static void VerifyReadback(JsonObject readback, string hostname, string serviceUrl, string unrelatedBefore)
+    private static void VerifyReadback(JsonObject readback, string hostname, string serviceUrl, string unrelatedBefore, string? oldHostname)
     {
         var rule = (readback["ingress"] as JsonArray)?
             .OfType<JsonObject>()
@@ -165,23 +182,27 @@ internal sealed class CloudflarePublicationReconciler(
             throw new CloudflareConnectionException("cloudflare_readback_failed", $"The tunnel route for '{hostname}' did not read back as expected.");
         }
 
-        if (!string.Equals(UnrelatedProjection(readback, hostname), unrelatedBefore, StringComparison.Ordinal))
+        if (!string.Equals(UnrelatedProjection(readback, hostname, oldHostname), unrelatedBefore, StringComparison.Ordinal))
         {
             throw new CloudflareConnectionException("cloudflare_readback_unrelated_changed", "The tunnel configuration changed unexpectedly during the update; retry.");
         }
     }
 
-    // A stable string of everything OTHER than the target hostname's rule: all sibling top-level keys and
-    // every other ingress rule in order. Comparing this before/after proves the mutation touched only the
-    // target and preserved warp-routing, other apps' rules, order, and the catch-all.
-    private static string UnrelatedProjection(JsonObject config, string hostname)
+    // A stable string of everything OTHER than the target hostname's rule (and, on a rename, the old
+    // hostname's rule): all sibling top-level keys and every other ingress rule in order. Comparing this
+    // before/after proves the mutation touched only the target(s) and preserved warp-routing, other apps'
+    // rules, order, and the catch-all. Rules with no hostname (the catch-all) are never excluded.
+    private static string UnrelatedProjection(JsonObject config, string hostname, string? oldHostname)
     {
         var clone = (JsonObject)config.DeepClone();
         if (clone["ingress"] is JsonArray ingress)
         {
             for (var index = ingress.Count - 1; index >= 0; index--)
             {
-                if (ingress[index] is JsonObject rule && HostnameEquals((string?)rule["hostname"], hostname))
+                if (ingress[index] is JsonObject rule &&
+                    !string.IsNullOrEmpty((string?)rule["hostname"]) &&
+                    (HostnameEquals((string?)rule["hostname"], hostname) ||
+                        (oldHostname is not null && HostnameEquals((string?)rule["hostname"], oldHostname))))
                 {
                     ingress.RemoveAt(index);
                 }

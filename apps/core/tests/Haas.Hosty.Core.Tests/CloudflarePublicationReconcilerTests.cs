@@ -99,6 +99,41 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
         Assert.Contains("core.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
     }
 
+    [Fact]
+    public async Task PublishAsync_LabelChange_RemovesOldRouteAndRenamesDns()
+    {
+        var api = new StatefulApi(SampleConfig());
+        var (reconciler, _) = Create(api);
+        await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096");
+
+        // Republish the same endpoint with a different label → a rename.
+        await reconciler.PublishAsync("t", Target, "app", "web.http", "media-new", "http://127.0.0.1:8096");
+
+        var hostnames = CloudflareTunnelConfigPatcher.IngressHostnames(api.Config);
+        Assert.Contains("media-new.zayats.io", hostnames);
+        Assert.DoesNotContain("media.zayats.io", hostnames); // old route removed, not leaked
+        Assert.Contains("core.zayats.io", hostnames); // unrelated preserved
+        // The DNS record was renamed in place (still a single owned record).
+        var dns = Assert.Single(api.Dns);
+        Assert.Equal("media-new.zayats.io", dns.Name);
+    }
+
+    [Fact]
+    public async Task UnpublishAsync_ToleratesAlreadyDeletedDnsRecord()
+    {
+        var api = new StatefulApi(SampleConfig());
+        var (reconciler, publications) = Create(api);
+        await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096");
+        api.Dns.Clear(); // operator deleted the record from the dashboard → DELETE will 404
+        api.FailDnsDeleteWith404 = true;
+
+        await reconciler.UnpublishAsync("t", Target, "app", "web.http");
+
+        // Cleanup still completes: route gone, publication cleared.
+        Assert.DoesNotContain("media.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Null(await publications.GetAsync("app", "web.http"));
+    }
+
     private static JsonObject SampleConfig() => (JsonObject)JsonNode.Parse("""
         {
           "ingress": [
@@ -138,6 +173,7 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
         public List<CloudflareDnsRecord> Dns { get; } = [];
         public List<string> Ops { get; } = [];
         public bool FailDnsCreate { get; init; }
+        public bool FailDnsDeleteWith404 { get; set; }
         private int nextId = 1;
 
         public Task<CloudflareTunnelConfigResult?> GetTunnelConfigurationAsync(string token, string accountId, string tunnelId, CancellationToken cancellationToken = default)
@@ -181,6 +217,11 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
         public Task DeleteDnsRecordAsync(string token, string zoneId, string recordId, CancellationToken cancellationToken = default)
         {
             Ops.Add("dns-delete");
+            if (FailDnsDeleteWith404)
+            {
+                throw new CloudflareApiException(404, ["Record not found"]);
+            }
+
             Dns.RemoveAll(existing => string.Equals(existing.Id, recordId, StringComparison.Ordinal));
             return Task.CompletedTask;
         }
