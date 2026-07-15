@@ -71,8 +71,10 @@ internal sealed class CloudflareConnectionService(
             expiresOn = status?.ExpiresOn;
             tokenId = status?.Id;
         }
-        catch (CloudflareApiException exception)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            // Best-effort: validity is already proven by the resource probe, so any failure here (including
+            // a transient network/transport error) must not fail the connection.
             logger.LogDebug(exception, "Cloudflare account token verify did not return status; continuing (validity already proven by the resource probe).");
         }
 
@@ -254,15 +256,27 @@ internal sealed class CloudflareIntegrationStore(CoreDataPaths paths)
 
     private string StatePath => Path.Combine(paths.CoreRoot, "cloudflare-integration.json");
 
-    public Task<CloudflareIntegrationState?> LoadAsync(CancellationToken cancellationToken = default)
-        => JsonStorage.ReadAsync<CloudflareIntegrationState>(StatePath, cancellationToken);
+    public async Task<CloudflareIntegrationState?> LoadAsync(CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await JsonStorage.ReadAsync<CloudflareIntegrationState>(StatePath, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
 
     public async Task SaveAsync(CloudflareIntegrationState state, CancellationToken cancellationToken = default)
     {
         await gate.WaitAsync(cancellationToken);
         try
         {
-            await JsonStorage.WriteAsync(StatePath, state, cancellationToken);
+            // Owner-only: not the token, but account/zone/tunnel metadata and timestamps that should not be
+            // world-readable.
+            await JsonStorage.WriteAsync(StatePath, state, restrictToOwner: true, cancellationToken);
         }
         finally
         {
