@@ -25,9 +25,20 @@ internal sealed class CloudflareCredentialStore(CoreDataPaths paths)
     }
 
     // Returns the raw credential (including the token) for the API client only. Callers must never surface
-    // the token to Shell, logs, or API responses — use GetSummaryAsync for anything user-facing.
-    public Task<CloudflareCredential?> LoadAsync(CancellationToken cancellationToken = default)
-        => JsonStorage.ReadAsync<CloudflareCredential>(CredentialPath, cancellationToken);
+    // the token to Shell, logs, or API responses — use GetSummaryAsync for anything user-facing. Reads under
+    // the same gate as writes/deletes so a concurrent Save/Delete cannot race the read.
+    public async Task<CloudflareCredential?> LoadAsync(CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await JsonStorage.ReadAsync<CloudflareCredential>(CredentialPath, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
 
     // The user-facing projection: presence + non-secret metadata + a masked token, never the raw value.
     public async Task<CloudflareCredentialSummary> GetSummaryAsync(CancellationToken cancellationToken = default)

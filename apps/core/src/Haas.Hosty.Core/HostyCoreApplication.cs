@@ -65,8 +65,10 @@ internal static class HostyCoreApplication
         // One-click Cloudflare ingress (phase 1): a named client for the Cloudflare API, the read-only
         // discovery client, and the private token store.
         builder.Services.AddHttpClient(CloudflareApiClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));
-        builder.Services.AddSingleton<CloudflareApiClient>();
+        builder.Services.AddSingleton<ICloudflareApiClient, CloudflareApiClient>();
         builder.Services.AddSingleton<CloudflareCredentialStore>();
+        builder.Services.AddSingleton<CloudflareIntegrationStore>();
+        builder.Services.AddSingleton<CloudflareConnectionService>();
         builder.Services.AddSingleton<RuntimePortAllocator>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
@@ -284,6 +286,7 @@ internal static class HostyCoreApplication
         CoreBootstrapEndpoints.Map(app);
         CoreSettingsEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
+        CloudflareConnectionEndpoints.Map(app);
         SourceEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
