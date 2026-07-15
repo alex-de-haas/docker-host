@@ -71,6 +71,7 @@ internal sealed class CloudflareApiClient(IHttpClientFactory httpClientFactory) 
     // caller's already-patched pass-through document; it is sent verbatim under `{ "config": ... }`.
     public async Task<CloudflareTunnelConfigResult?> PutTunnelConfigurationAsync(string token, string accountId, string tunnelId, System.Text.Json.Nodes.JsonObject config, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(config);
         var body = new System.Text.Json.Nodes.JsonObject { ["config"] = config.DeepClone() };
         return (await SendAsync(HttpMethod.Put, token, $"/accounts/{Escape(accountId)}/cfd_tunnel/{Escape(tunnelId)}/configurations", CoreJsonSerializerContext.Default.CloudflareTunnelConfigResponse, body, cancellationToken)).Result;
     }

@@ -17,6 +17,9 @@ internal static class CloudflareTunnelConfigPatcher
     // catch-all. Returns a new document; the input is not mutated.
     public static JsonObject UpsertIngress(JsonObject config, string hostname, string service)
     {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
+        ArgumentException.ThrowIfNullOrWhiteSpace(service);
         var clone = (JsonObject)config.DeepClone();
         var ingress = GetOrCreateIngress(clone);
         var index = FindRuleIndex(ingress, hostname);
@@ -44,6 +47,8 @@ internal static class CloudflareTunnelConfigPatcher
     // preserved. Returns a new document; the input is not mutated.
     public static JsonObject RemoveIngress(JsonObject config, string hostname)
     {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
         var clone = (JsonObject)config.DeepClone();
         var ingress = GetOrCreateIngress(clone);
         var index = FindRuleIndex(ingress, hostname);
@@ -89,7 +94,11 @@ internal static class CloudflareTunnelConfigPatcher
     {
         for (var index = 0; index < ingress.Count; index++)
         {
-            if (ingress[index] is JsonObject rule && string.Equals((string?)rule["hostname"], hostname, StringComparison.OrdinalIgnoreCase))
+            // Require an actual hostname so a lookup can never match (and thus overwrite or delete) the
+            // hostname-less catch-all rule.
+            if (ingress[index] is JsonObject rule &&
+                rule["hostname"] is not null &&
+                string.Equals((string?)rule["hostname"], hostname, StringComparison.OrdinalIgnoreCase))
             {
                 return index;
             }

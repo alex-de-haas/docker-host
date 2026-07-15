@@ -72,6 +72,20 @@ public sealed class CloudflareTunnelConfigPatcherTests
     }
 
     [Fact]
+    public void UpsertIngress_BlankHostnameOrService_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "  ", "http://localhost:1"));
+        Assert.Throws<ArgumentException>(() => CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "app.zayats.io", ""));
+    }
+
+    [Fact]
+    public void RemoveIngress_BlankHostname_DoesNotTouchCatchAll()
+    {
+        // A blank hostname is rejected rather than matching the hostname-less catch-all.
+        Assert.Throws<ArgumentException>(() => CloudflareTunnelConfigPatcher.RemoveIngress(Sample(), " "));
+    }
+
+    [Fact]
     public void IngressHostnames_ExcludesTheCatchAll()
         => Assert.Equal(["media.zayats.io", "core.zayats.io"], CloudflareTunnelConfigPatcher.IngressHostnames(Sample()));
 
