@@ -39,6 +39,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(CloudflareTunnelsResponse))]
 [JsonSerializable(typeof(CloudflareConnectionsResponse))]
 [JsonSerializable(typeof(CloudflareTokenVerifyResponse))]
+[JsonSerializable(typeof(CloudflareTunnelConfigResponse))]
 [JsonSerializable(typeof(CloudflareCredential))]
 [JsonSerializable(typeof(CloudflareCredentialSummary))]
 [JsonSerializable(typeof(CloudflareIntegrationState))]

@@ -24,6 +24,10 @@ internal interface ICloudflareApiClient
 
     Task<CloudflareTokenStatus?> VerifyAccountTokenAsync(string token, string accountId, CancellationToken cancellationToken = default);
 
+    Task<CloudflareTunnelConfigResult?> GetTunnelConfigurationAsync(string token, string accountId, string tunnelId, CancellationToken cancellationToken = default);
+
+    Task<CloudflareTunnelConfigResult?> PutTunnelConfigurationAsync(string token, string accountId, string tunnelId, System.Text.Json.Nodes.JsonObject config, CancellationToken cancellationToken = default);
+
     // The host's public egress IP, observed through a Cloudflare-owned trace endpoint, for the advisory
     // connector-locality check. Best-effort: returns null on any failure so locality degrades to "unknown"
     // rather than blocking connection.
@@ -57,6 +61,21 @@ internal sealed class CloudflareApiClient(IHttpClientFactory httpClientFactory) 
     public async Task<CloudflareTokenStatus?> VerifyAccountTokenAsync(string token, string accountId, CancellationToken cancellationToken = default)
         => (await SendAsync(token, $"/accounts/{Escape(accountId)}/tokens/verify", CoreJsonSerializerContext.Default.CloudflareTokenVerifyResponse, cancellationToken)).Result;
 
+    // The latest tunnel configuration as a raw pass-through document (version + JsonObject), so a mutation
+    // can patch it without deserializing into a narrow model that would drop unknown/sibling keys such as
+    // `warp-routing` (confirmed present in the phase-0 spike).
+    public async Task<CloudflareTunnelConfigResult?> GetTunnelConfigurationAsync(string token, string accountId, string tunnelId, CancellationToken cancellationToken = default)
+        => (await SendAsync(token, $"/accounts/{Escape(accountId)}/cfd_tunnel/{Escape(tunnelId)}/configurations", CoreJsonSerializerContext.Default.CloudflareTunnelConfigResponse, cancellationToken)).Result;
+
+    // Replace the whole tunnel configuration (Cloudflare exposes only a whole-document PUT). `config` is the
+    // caller's already-patched pass-through document; it is sent verbatim under `{ "config": ... }`.
+    public async Task<CloudflareTunnelConfigResult?> PutTunnelConfigurationAsync(string token, string accountId, string tunnelId, System.Text.Json.Nodes.JsonObject config, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        var body = new System.Text.Json.Nodes.JsonObject { ["config"] = config.DeepClone() };
+        return (await SendAsync(HttpMethod.Put, token, $"/accounts/{Escape(accountId)}/cfd_tunnel/{Escape(tunnelId)}/configurations", CoreJsonSerializerContext.Default.CloudflareTunnelConfigResponse, body, cancellationToken)).Result;
+    }
+
     public async Task<string?> GetEgressIpAsync(CancellationToken cancellationToken = default)
     {
         try
@@ -81,29 +100,44 @@ internal sealed class CloudflareApiClient(IHttpClientFactory httpClientFactory) 
         }
     }
 
-    private async Task<TResponse> SendAsync<TResponse>(
+    private Task<TResponse> SendAsync<TResponse>(
         string token,
         string path,
         System.Text.Json.Serialization.Metadata.JsonTypeInfo<TResponse> typeInfo,
         CancellationToken cancellationToken)
         where TResponse : ICloudflareResponse
+        => SendAsync(HttpMethod.Get, token, path, typeInfo, body: null, cancellationToken);
+
+    private async Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
+        string token,
+        string path,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<TResponse> typeInfo,
+        System.Text.Json.Nodes.JsonNode? body,
+        CancellationToken cancellationToken)
+        where TResponse : ICloudflareResponse
     {
         var client = httpClientFactory.CreateClient(HttpClientName);
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}{path}");
+        using var request = new HttpRequestMessage(method, $"{BaseUrl}{path}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body is not null)
+        {
+            request.Content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+        }
+
         using var response = await client.SendAsync(request, cancellationToken);
         // Content is effectively always present for HttpClient responses, but the type is nullable and a
         // custom handler could omit it — treat that as an empty body rather than risking an NRE.
-        var body = response.Content is null ? string.Empty : await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = response.Content is null ? string.Empty : await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
             // 401 (revoked/invalid) and 403 (missing permission) are the classifiable auth failures the
             // connection flow turns into "Reconnect required"; carry the status and any Cloudflare error text.
-            throw new CloudflareApiException((int)response.StatusCode, ReadErrors(body));
+            throw new CloudflareApiException((int)response.StatusCode, ReadErrors(responseBody));
         }
 
-        var parsed = SafeDeserialize(body, typeInfo)
+        var parsed = SafeDeserialize(responseBody, typeInfo)
             ?? throw new CloudflareApiException((int)response.StatusCode, ["Cloudflare returned an empty or unreadable response body."]);
         if (!parsed.Success)
         {
@@ -204,3 +238,9 @@ internal sealed record CloudflareTokenStatus(
     [property: JsonPropertyName("not_before")] DateTimeOffset? NotBefore);
 
 internal sealed record CloudflareTokenVerifyResponse(bool Success, IReadOnlyList<CloudflareError>? Errors, CloudflareTokenStatus? Result) : ICloudflareResponse;
+
+// The tunnel configuration as a pass-through document: `Version` is monotonic (response-only; there is no
+// PUT precondition), `Config` is the raw JsonObject preserved verbatim across a patch.
+internal sealed record CloudflareTunnelConfigResult(int? Version, string? Source, System.Text.Json.Nodes.JsonObject? Config);
+
+internal sealed record CloudflareTunnelConfigResponse(bool Success, IReadOnlyList<CloudflareError>? Errors, CloudflareTunnelConfigResult? Result) : ICloudflareResponse;
