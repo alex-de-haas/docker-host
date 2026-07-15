@@ -28,6 +28,16 @@ internal interface ICloudflareApiClient
 
     Task<CloudflareTunnelConfigResult?> PutTunnelConfigurationAsync(string token, string accountId, string tunnelId, System.Text.Json.Nodes.JsonObject config, CancellationToken cancellationToken = default);
 
+    // Exact DNS record lookup/CRUD for a hostname. DNS supports item-level operations (unlike the tunnel
+    // config), so ownership is by exact record id.
+    Task<IReadOnlyList<CloudflareDnsRecord>> ListDnsRecordsAsync(string token, string zoneId, string name, CancellationToken cancellationToken = default);
+
+    Task<CloudflareDnsRecord?> CreateCnameAsync(string token, string zoneId, string name, string content, bool proxied, CancellationToken cancellationToken = default);
+
+    Task<CloudflareDnsRecord?> UpdateCnameAsync(string token, string zoneId, string recordId, string name, string content, bool proxied, CancellationToken cancellationToken = default);
+
+    Task DeleteDnsRecordAsync(string token, string zoneId, string recordId, CancellationToken cancellationToken = default);
+
     // The host's public egress IP, observed through a Cloudflare-owned trace endpoint, for the advisory
     // connector-locality check. Best-effort: returns null on any failure so locality degrades to "unknown"
     // rather than blocking connection.
@@ -75,6 +85,28 @@ internal sealed class CloudflareApiClient(IHttpClientFactory httpClientFactory) 
         var body = new System.Text.Json.Nodes.JsonObject { ["config"] = config.DeepClone() };
         return (await SendAsync(HttpMethod.Put, token, $"/accounts/{Escape(accountId)}/cfd_tunnel/{Escape(tunnelId)}/configurations", CoreJsonSerializerContext.Default.CloudflareTunnelConfigResponse, body, cancellationToken)).Result;
     }
+
+    public async Task<IReadOnlyList<CloudflareDnsRecord>> ListDnsRecordsAsync(string token, string zoneId, string name, CancellationToken cancellationToken = default)
+        => (await SendAsync(token, $"/zones/{Escape(zoneId)}/dns_records?type=CNAME&name={Escape(name)}&per_page=50", CoreJsonSerializerContext.Default.CloudflareDnsListResponse, cancellationToken)).Result ?? [];
+
+    public async Task<CloudflareDnsRecord?> CreateCnameAsync(string token, string zoneId, string name, string content, bool proxied, CancellationToken cancellationToken = default)
+        => (await SendAsync(HttpMethod.Post, token, $"/zones/{Escape(zoneId)}/dns_records", CoreJsonSerializerContext.Default.CloudflareDnsRecordResponse, CnameBody(name, content, proxied), cancellationToken)).Result;
+
+    public async Task<CloudflareDnsRecord?> UpdateCnameAsync(string token, string zoneId, string recordId, string name, string content, bool proxied, CancellationToken cancellationToken = default)
+        => (await SendAsync(HttpMethod.Put, token, $"/zones/{Escape(zoneId)}/dns_records/{Escape(recordId)}", CoreJsonSerializerContext.Default.CloudflareDnsRecordResponse, CnameBody(name, content, proxied), cancellationToken)).Result;
+
+    public async Task DeleteDnsRecordAsync(string token, string zoneId, string recordId, CancellationToken cancellationToken = default)
+        => await SendAsync(HttpMethod.Delete, token, $"/zones/{Escape(zoneId)}/dns_records/{Escape(recordId)}", CoreJsonSerializerContext.Default.CloudflareDnsDeleteResponse, body: null, cancellationToken);
+
+    private static System.Text.Json.Nodes.JsonObject CnameBody(string name, string content, bool proxied)
+        => new()
+        {
+            ["type"] = "CNAME",
+            ["name"] = name,
+            ["content"] = content,
+            ["proxied"] = proxied,
+            ["ttl"] = 1, // 1 = automatic
+        };
 
     public async Task<string?> GetEgressIpAsync(CancellationToken cancellationToken = default)
     {
@@ -244,3 +276,15 @@ internal sealed record CloudflareTokenVerifyResponse(bool Success, IReadOnlyList
 internal sealed record CloudflareTunnelConfigResult(int? Version, string? Source, System.Text.Json.Nodes.JsonObject? Config);
 
 internal sealed record CloudflareTunnelConfigResponse(bool Success, IReadOnlyList<CloudflareError>? Errors, CloudflareTunnelConfigResult? Result) : ICloudflareResponse;
+
+// A DNS record. For Hosty ingress these are proxied CNAMEs to `<tunnel-id>.cfargotunnel.com`. Ownership is
+// tracked by the exact record `Id`.
+internal sealed record CloudflareDnsRecord(string? Id, string Type, string Name, string Content, bool Proxied, int? Ttl);
+
+internal sealed record CloudflareDnsListResponse(bool Success, IReadOnlyList<CloudflareError>? Errors, IReadOnlyList<CloudflareDnsRecord>? Result) : ICloudflareResponse;
+
+internal sealed record CloudflareDnsRecordResponse(bool Success, IReadOnlyList<CloudflareError>? Errors, CloudflareDnsRecord? Result) : ICloudflareResponse;
+
+internal sealed record CloudflareDnsDeleteResult(string? Id);
+
+internal sealed record CloudflareDnsDeleteResponse(bool Success, IReadOnlyList<CloudflareError>? Errors, CloudflareDnsDeleteResult? Result) : ICloudflareResponse;

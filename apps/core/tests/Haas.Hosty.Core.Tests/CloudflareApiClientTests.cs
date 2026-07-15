@@ -136,6 +136,53 @@ public sealed class CloudflareApiClientTests
         Assert.Contains("app.zayats.io", sentBody);
     }
 
+    [Fact]
+    public async Task ListDnsRecordsAsync_ParsesProxiedCnames()
+    {
+        const string json = """{"success":true,"errors":[],"result":[{"id":"r1","type":"CNAME","name":"media.zayats.io","content":"abc.cfargotunnel.com","proxied":true,"ttl":1}]}""";
+        var client = Client((_, _) => (HttpStatusCode.OK, json));
+
+        var record = Assert.Single(await client.ListDnsRecordsAsync("t", "zone", "media.zayats.io"));
+        Assert.Equal("r1", record.Id);
+        Assert.True(record.Proxied);
+        Assert.Equal("abc.cfargotunnel.com", record.Content);
+    }
+
+    [Fact]
+    public async Task CreateCnameAsync_PostsProxiedCnameBody_AndParsesId()
+    {
+        string? method = null;
+        string? body = null;
+        var client = Client((request, _) =>
+        {
+            method = request.Method.Method;
+            body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return (HttpStatusCode.OK, """{"success":true,"errors":[],"result":{"id":"new-id","type":"CNAME","name":"app.zayats.io","content":"abc.cfargotunnel.com","proxied":true,"ttl":1}}""");
+        });
+
+        var record = await client.CreateCnameAsync("t", "zone", "app.zayats.io", "abc.cfargotunnel.com", proxied: true);
+
+        Assert.Equal("POST", method);
+        Assert.Equal("new-id", record!.Id);
+        Assert.Contains("\"type\":\"CNAME\"", body);
+        Assert.Contains("\"proxied\":true", body);
+        Assert.Contains("app.zayats.io", body);
+    }
+
+    [Fact]
+    public async Task DeleteDnsRecordAsync_SendsDelete()
+    {
+        string? method = null;
+        var client = Client((request, _) =>
+        {
+            method = request.Method.Method;
+            return (HttpStatusCode.OK, """{"success":true,"errors":[],"result":{"id":"r1"}}""");
+        });
+
+        await client.DeleteDnsRecordAsync("t", "zone", "r1");
+        Assert.Equal("DELETE", method);
+    }
+
     private static CloudflareApiClient Client(Func<HttpRequestMessage, CancellationToken, (HttpStatusCode, string)> respond)
         => new(new StubHttpClientFactory(new StubHttpMessageHandler(respond)));
 
