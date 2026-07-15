@@ -9,7 +9,28 @@ namespace Haas.Hosty.Core;
 // per call as a Bearer header and never logged; this client holds no credential at rest (see
 // CloudflareCredentialStore). Mutation (DNS + tunnel configuration writes) is deliberately out of scope
 // here and lands in phase 2. See docs/planning/one-click-cloudflare-public-ingress.md.
-internal sealed class CloudflareApiClient(IHttpClientFactory httpClientFactory)
+// The read-only Cloudflare API seam. An interface so the connection/discovery service can be unit-tested
+// against a fake, and (per the in-Core-now, extract-later decision) so this whole client can move into a
+// future ingress-provider system app without the service depending on its concrete type.
+internal interface ICloudflareApiClient
+{
+    Task<IReadOnlyList<CloudflareAccount>> ListAccountsAsync(string token, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<CloudflareZone>> ListZonesAsync(string token, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<CloudflareTunnel>> ListTunnelsAsync(string token, string accountId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<CloudflareConnectorConn>> GetTunnelConnectionsAsync(string token, string accountId, string tunnelId, CancellationToken cancellationToken = default);
+
+    Task<CloudflareTokenStatus?> VerifyAccountTokenAsync(string token, string accountId, CancellationToken cancellationToken = default);
+
+    // The host's public egress IP, observed through a Cloudflare-owned trace endpoint, for the advisory
+    // connector-locality check. Best-effort: returns null on any failure so locality degrades to "unknown"
+    // rather than blocking connection.
+    Task<string?> GetEgressIpAsync(CancellationToken cancellationToken = default);
+}
+
+internal sealed class CloudflareApiClient(IHttpClientFactory httpClientFactory) : ICloudflareApiClient
 {
     public const string HttpClientName = "cloudflare";
     private const string BaseUrl = "https://api.cloudflare.com/client/v4";
@@ -35,6 +56,30 @@ internal sealed class CloudflareApiClient(IHttpClientFactory httpClientFactory)
     // known from the resource probe above.
     public async Task<CloudflareTokenStatus?> VerifyAccountTokenAsync(string token, string accountId, CancellationToken cancellationToken = default)
         => (await SendAsync(token, $"/accounts/{Escape(accountId)}/tokens/verify", CoreJsonSerializerContext.Default.CloudflareTokenVerifyResponse, cancellationToken)).Result;
+
+    public async Task<string?> GetEgressIpAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var client = httpClientFactory.CreateClient(HttpClientName);
+            var trace = await client.GetStringAsync("https://one.one.one.one/cdn-cgi/trace", cancellationToken);
+            // The trace body is `key=value` lines; the `ip=` line carries the observed egress address.
+            foreach (var line in trace.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (line.StartsWith("ip=", StringComparison.Ordinal))
+                {
+                    var value = line[3..].Trim();
+                    return value.Length == 0 ? null : value;
+                }
+            }
+
+            return null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
 
     private async Task<TResponse> SendAsync<TResponse>(
         string token,

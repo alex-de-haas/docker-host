@@ -169,6 +169,14 @@ Keep provider `cloudflared` unchanged for the locally managed config-file implem
 provider identity `cloudflare-remote`; it never writes/removes local tunnel files and never derives hostnames
 from app IDs during start.
 
+**Build location (decided 2026-07-14).** This lands in Core now, behind the existing `IIngressController`
+seam, and is extracted into an ingress-provider system app later — the same path telemetry and Marketplace
+took. The end state is a system-app provider, but doing that now would front-load unbuilt platform machinery
+(the out-of-process provider contract from `core-extension-model.md`, and the "heavy, deferred" third-party
+token broker that a Cloudflare app would need). The guardrail: keep all Cloudflare-specific logic behind
+`IIngressController` and out of Core's lifecycle internals, so the eventual extraction stays a bounded
+refactor. The API client and credential store are written to move as-is.
+
 Add `CloudflareIntegrationStore` under the private Core data root for non-secret state:
 
 - connection status and reconnect reason;
