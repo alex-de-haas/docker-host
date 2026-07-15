@@ -31,6 +31,16 @@ internal static class CoreJson
 // JsonSerializerDefaults.Web matches every JsonSerializerOptions instance in Core
 // (camelCase, case-insensitive). WriteIndented is a runtime formatting flag applied
 // by each options object, so the same context serves both indented and compact callers.
+// One-click Cloudflare ingress (phase 1): API response envelopes, the at-rest credential, and its masked
+// summary projection.
+[JsonSerializable(typeof(CloudflareErrorResponse))]
+[JsonSerializable(typeof(CloudflareAccountsResponse))]
+[JsonSerializable(typeof(CloudflareZonesResponse))]
+[JsonSerializable(typeof(CloudflareTunnelsResponse))]
+[JsonSerializable(typeof(CloudflareConnectionsResponse))]
+[JsonSerializable(typeof(CloudflareTokenVerifyResponse))]
+[JsonSerializable(typeof(CloudflareCredential))]
+[JsonSerializable(typeof(CloudflareCredentialSummary))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 
 // Persisted state / internal serialization roots.

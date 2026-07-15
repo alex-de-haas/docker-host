@@ -62,6 +62,11 @@ internal static class HostyCoreApplication
         // client. Singleton so its TTL cache survives across requests.
         builder.Services.AddHttpClient(CoreUpdateCheckService.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));
         builder.Services.AddSingleton<CoreUpdateCheckService>();
+        // One-click Cloudflare ingress (phase 1): a named client for the Cloudflare API, the read-only
+        // discovery client, and the private token store.
+        builder.Services.AddHttpClient(CloudflareApiClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));
+        builder.Services.AddSingleton<CloudflareApiClient>();
+        builder.Services.AddSingleton<CloudflareCredentialStore>();
         builder.Services.AddSingleton<RuntimePortAllocator>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
