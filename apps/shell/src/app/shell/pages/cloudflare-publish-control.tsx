@@ -46,7 +46,7 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
       ]);
       setConnection((await statusResponse.json()) as CloudflareConnectionStatus);
       const publications = (await publicationsResponse.json()) as CloudflareAppPublications;
-      const mine = publications.publications.find((entry) => entry.endpointKey === endpoint.key) ?? null;
+      const mine = publications?.publications?.find((entry) => entry.endpointKey === endpoint.key) ?? null;
       setPublication(mine);
       if (mine) {
         setLabel(mine.label);
@@ -112,7 +112,7 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
       <IconButton title="Publish public origin (Cloudflare)" onClick={() => void openDialog()}>
         <Cloud className="h-4 w-4" />
       </IconButton>
-      <Dialog open={open} onOpenChange={(next) => { if (!busy) setOpen(next); }}>
+      <Dialog open={open} onOpenChange={(next) => { if (!busy && !loading) setOpen(next); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Public origin — {endpoint.key}</DialogTitle>
@@ -124,7 +124,16 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
                 <LoaderCircle className="h-4 w-4 animate-spin" /> Loading…
               </div>
             ) : !connected ? (
-              <p className="text-sm text-muted-foreground">Connect Cloudflare in Platform settings before publishing a public origin.</p>
+              // A load failure leaves connection null with an error set; distinguish it from a genuine
+              // disconnected state so the "connect Cloudflare" hint is not shown misleadingly.
+              error ? (
+                <div className="space-y-2">
+                  <InlineError message={error} />
+                  <Button type="button" size="sm" variant="outline" onClick={() => void openDialog()}>Retry</Button>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Connect Cloudflare in Platform settings before publishing a public origin.</p>
+              )
             ) : publication ? (
               <div className="space-y-1 text-sm">
                 <div className="text-muted-foreground">Published at</div>
@@ -134,13 +143,20 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
               <div className="space-y-1">
                 <label className="text-xs font-medium" htmlFor="cf-label">Subdomain label</label>
                 <div className="flex items-center gap-1">
-                  <Input id="cf-label" value={label} onChange={(event) => setLabel(event.target.value)} placeholder="media" className="h-8 text-xs" />
+                  <Input
+                    id="cf-label"
+                    value={label}
+                    onChange={(event) => setLabel(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+                    placeholder="media"
+                    className="h-8 text-xs"
+                  />
                   {suffix && <span className="whitespace-nowrap text-xs text-muted-foreground">{suffix}</span>}
                 </div>
                 {label.trim() && <p className="text-[11px] text-muted-foreground">→ https://{label.trim()}{suffix}</p>}
               </div>
             )}
-            {error && <InlineError message={error} />}
+            {/* Action (publish/unpublish) errors while connected are shown inline; a load error is handled above. */}
+            {connected && error && <InlineError message={error} />}
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Close</Button>
