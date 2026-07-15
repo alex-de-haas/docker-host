@@ -68,6 +68,12 @@ export type CloudflareConnectionStatus = {
 // GET /api/core/cloudflare/token-template — dashboard URL + the permissions to grant.
 export type CloudflareTokenTemplate = { url: string; requiredPermissions: string[] };
 
+// GET /api/apps/{id}/public-origins
+export type CloudflarePublicationSummary = { endpointKey: string; label: string; hostname: string; publicOrigin?: string | null; ownershipState: string };
+export type CloudflareAppPublications = { publications: CloudflarePublicationSummary[] };
+// POST /api/apps/{id}/public-origins/publish | unpublish
+export type CloudflarePublicationResult = { appId: string; endpointKey: string; hostname?: string | null; publicOrigin?: string | null; restartRequired: boolean };
+
 // POST /api/apps/{id}/ports/reassign/plan — preview of reassigning one automatic host port.
 export type CoreReassignDependent = { appId: string; running: boolean };
 export type CoreReassignPlan = {

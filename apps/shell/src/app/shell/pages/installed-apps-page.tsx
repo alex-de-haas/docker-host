@@ -64,6 +64,7 @@ import type {
 } from "../types";
 import { EmptyState, IconButton, PageHeader, StatusBadge } from "../ui";
 import { EndpointAvailabilityBadge, PortReassignControl } from "./port-reassign-control";
+import { CloudflarePublishControl } from "./cloudflare-publish-control";
 
 export function InstalledAppsPage({
   coreOrigin,
@@ -469,7 +470,8 @@ function AppServiceDetailsPanel({
                         <div className="flex items-center gap-2">
                           <span className="truncate font-mono text-muted-foreground">{endpoint.key}</span>
                           <EndpointAvailabilityBadge availability={endpoint.availability} />
-                          <span className="ml-auto">
+                          <span className="ml-auto flex items-center gap-1">
+                            {endpoint.public && <CloudflarePublishControl app={app} endpoint={endpoint} />}
                             <PortReassignControl app={app} endpoint={endpoint} />
                           </span>
                         </div>
