@@ -7,6 +7,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, Dia
 import { SettingInput } from "../settings";
 import type { CoreBootstrapApp, CoreBootstrapState, CoreSettingItem, CoreSettingsState } from "../types";
 import { InlineError } from "../ui";
+import { CloudflareConnectionCard } from "./cloudflare-connection-card";
 
 // The platform panel opened from the sidebar version block. Today it carries the Extensions
 // section (which distribution-list apps Core preinstalls, docs/ideas/generic-bootstrap.md
@@ -77,6 +78,10 @@ export function PlatformDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <CoreSettingsSection settings={settings} error={settingsError} onSave={onSaveSettings} />
+
+          <div className="border-t" />
+
+          <CloudflareConnectionCard />
 
           <div className="border-t" />
 

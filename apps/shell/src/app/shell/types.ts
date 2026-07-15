@@ -52,6 +52,22 @@ export type CoreEndpoint = {
   availability?: "assigned" | "running" | "unavailable" | null;
 };
 
+// GET /api/core/cloudflare/status — the Cloudflare connection projection (masked token, never raw).
+export type CloudflareConnectionStatus = {
+  status: "connected" | "disconnected" | "reconnect_required";
+  reconnectReason?: string | null;
+  token: { present: boolean; tokenId?: string | null; tokenName?: string | null; expiresOn?: string | null; masked?: string | null };
+  accountName?: string | null;
+  baseDomain?: string | null;
+  tunnelName?: string | null;
+  connectorStatus?: string | null;
+  locality?: string | null;
+  connectedAt?: string | null;
+};
+
+// GET /api/core/cloudflare/token-template — dashboard URL + the permissions to grant.
+export type CloudflareTokenTemplate = { url: string; requiredPermissions: string[] };
+
 // POST /api/apps/{id}/ports/reassign/plan — preview of reassigning one automatic host port.
 export type CoreReassignDependent = { appId: string; running: boolean };
 export type CoreReassignPlan = {
