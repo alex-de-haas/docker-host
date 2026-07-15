@@ -69,6 +69,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CloudflareCredentialStore>();
         builder.Services.AddSingleton<CloudflareIntegrationStore>();
         builder.Services.AddSingleton<CloudflarePublicationStore>();
+        builder.Services.AddSingleton<CloudflarePublicationReconciler>();
         builder.Services.AddSingleton<CloudflareConnectionService>();
         builder.Services.AddSingleton<RuntimePortAllocator>();
         builder.Services.AddSingleton<CoreLifecycleService>();
