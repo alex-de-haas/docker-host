@@ -909,10 +909,13 @@ internal sealed class CoreLifecycleService(
             return;
         }
 
-        var attempts = Math.Max(1, (int)(timeout.TotalMilliseconds / LoopbackReleasePollMs));
-        for (var attempt = 0; attempt < attempts; attempt++)
+        // Track the deadline rather than counting fixed-length polls: a poll count truncates a timeout
+        // that is not a multiple of the interval, and would sleep a whole interval even for a zero one.
+        var poll = TimeSpan.FromMilliseconds(LoopbackReleasePollMs);
+        var start = System.Diagnostics.Stopwatch.GetTimestamp();
+        for (var remaining = timeout; remaining > TimeSpan.Zero; remaining = timeout - System.Diagnostics.Stopwatch.GetElapsedTime(start))
         {
-            await Task.Delay(LoopbackReleasePollMs, cancellationToken);
+            await Task.Delay(remaining < poll ? remaining : poll, cancellationToken);
             conflicts = FindUnavailableLoopbackAssignments(app);
             if (conflicts.Count == 0)
             {
