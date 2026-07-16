@@ -10,8 +10,8 @@ public sealed class CloudflareTunnelConfigPatcherTests
     private static JsonObject Sample() => (JsonObject)JsonNode.Parse("""
         {
           "ingress": [
-            {"hostname":"media.zayats.io","service":"http://localhost:8096","originRequest":{"connectTimeout":30}},
-            {"hostname":"core.zayats.io","service":"http://localhost:3001"},
+            {"hostname":"media.example.test","service":"http://localhost:8096","originRequest":{"connectTimeout":30}},
+            {"hostname":"core.example.test","service":"http://localhost:3001"},
             {"service":"http_status:404"}
           ],
           "warp-routing": {"enabled": true},
@@ -22,14 +22,14 @@ public sealed class CloudflareTunnelConfigPatcherTests
     [Fact]
     public void UpsertIngress_NewHostname_InsertsBeforeCatchAll_AndPreservesEverythingElse()
     {
-        var result = CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "app.zayats.io", "http://localhost:4000");
+        var result = CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "app.example.test", "http://localhost:4000");
 
         var ingress = (JsonArray)result["ingress"]!;
         Assert.Equal(4, ingress.Count);
         // New rule sits immediately before the catch-all, preserving the existing order.
-        Assert.Equal("media.zayats.io", (string?)ingress[0]!["hostname"]);
-        Assert.Equal("core.zayats.io", (string?)ingress[1]!["hostname"]);
-        Assert.Equal("app.zayats.io", (string?)ingress[2]!["hostname"]);
+        Assert.Equal("media.example.test", (string?)ingress[0]!["hostname"]);
+        Assert.Equal("core.example.test", (string?)ingress[1]!["hostname"]);
+        Assert.Equal("app.example.test", (string?)ingress[2]!["hostname"]);
         Assert.Equal("http://localhost:4000", (string?)ingress[2]!["service"]);
         Assert.Null(ingress[3]!["hostname"]); // catch-all still last
         Assert.Equal("http_status:404", (string?)ingress[3]!["service"]);
@@ -42,7 +42,7 @@ public sealed class CloudflareTunnelConfigPatcherTests
     [Fact]
     public void UpsertIngress_ExistingHostname_UpdatesServiceOnly_KeepingOriginRequest()
     {
-        var result = CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "media.zayats.io", "http://localhost:9999");
+        var result = CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "media.example.test", "http://localhost:9999");
 
         var ingress = (JsonArray)result["ingress"]!;
         Assert.Equal(3, ingress.Count); // no new rule
@@ -53,10 +53,10 @@ public sealed class CloudflareTunnelConfigPatcherTests
     [Fact]
     public void RemoveIngress_RemovesOnlyThatRule_KeepingCatchAllAndSiblings()
     {
-        var result = CloudflareTunnelConfigPatcher.RemoveIngress(Sample(), "core.zayats.io");
+        var result = CloudflareTunnelConfigPatcher.RemoveIngress(Sample(), "core.example.test");
 
         var hostnames = CloudflareTunnelConfigPatcher.IngressHostnames(result);
-        Assert.Equal(["media.zayats.io"], hostnames);
+        Assert.Equal(["media.example.test"], hostnames);
         Assert.True((bool)result["warp-routing"]!["enabled"]!);
         Assert.Equal("http_status:404", (string?)((JsonArray)result["ingress"]!)[^1]!["service"]);
     }
@@ -65,8 +65,8 @@ public sealed class CloudflareTunnelConfigPatcherTests
     public void Patch_DoesNotMutateTheInputDocument()
     {
         var input = Sample();
-        _ = CloudflareTunnelConfigPatcher.UpsertIngress(input, "app.zayats.io", "http://localhost:4000");
-        _ = CloudflareTunnelConfigPatcher.RemoveIngress(input, "media.zayats.io");
+        _ = CloudflareTunnelConfigPatcher.UpsertIngress(input, "app.example.test", "http://localhost:4000");
+        _ = CloudflareTunnelConfigPatcher.RemoveIngress(input, "media.example.test");
 
         Assert.Equal(3, ((JsonArray)input["ingress"]!).Count); // untouched
     }
@@ -75,7 +75,7 @@ public sealed class CloudflareTunnelConfigPatcherTests
     public void UpsertIngress_BlankHostnameOrService_Throws()
     {
         Assert.Throws<ArgumentException>(() => CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "  ", "http://localhost:1"));
-        Assert.Throws<ArgumentException>(() => CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "app.zayats.io", ""));
+        Assert.Throws<ArgumentException>(() => CloudflareTunnelConfigPatcher.UpsertIngress(Sample(), "app.example.test", ""));
     }
 
     [Fact]
@@ -87,16 +87,16 @@ public sealed class CloudflareTunnelConfigPatcherTests
 
     [Fact]
     public void IngressHostnames_ExcludesTheCatchAll()
-        => Assert.Equal(["media.zayats.io", "core.zayats.io"], CloudflareTunnelConfigPatcher.IngressHostnames(Sample()));
+        => Assert.Equal(["media.example.test", "core.example.test"], CloudflareTunnelConfigPatcher.IngressHostnames(Sample()));
 
     [Fact]
     public void UpsertIngress_MissingIngressArray_SynthesizesCatchAllAndInserts()
     {
         var config = (JsonObject)JsonNode.Parse("""{"warp-routing":{"enabled":true}}""")!;
-        var result = CloudflareTunnelConfigPatcher.UpsertIngress(config, "app.zayats.io", "http://localhost:4000");
+        var result = CloudflareTunnelConfigPatcher.UpsertIngress(config, "app.example.test", "http://localhost:4000");
 
         var ingress = (JsonArray)result["ingress"]!;
-        Assert.Equal("app.zayats.io", (string?)ingress[0]!["hostname"]);
+        Assert.Equal("app.example.test", (string?)ingress[0]!["hostname"]);
         Assert.Equal("http_status:404", (string?)ingress[1]!["service"]); // synthesized catch-all last
         Assert.True((bool)result["warp-routing"]!["enabled"]!);
     }

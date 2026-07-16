@@ -16,15 +16,15 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
 
         var result = await service.PublishAsync("com.example.media", "web.http", "media");
 
-        Assert.Equal("media.zayats.io", result.Hostname);
-        Assert.Equal("https://media.zayats.io", result.PublicOrigin);
+        Assert.Equal("media.example.test", result.Hostname);
+        Assert.Equal("https://media.example.test", result.PublicOrigin);
         Assert.True(result.RestartRequired); // app is running
         // The public origin was written into the app's managed setting.
         var app = await apps.GetAppAsync("com.example.media");
         var setting = app!.Settings[PublicOriginSettings.BuildSettingKey("web.http")];
-        Assert.Equal("https://media.zayats.io", setting.Value);
+        Assert.Equal("https://media.example.test", setting.Value);
         // The tunnel route + DNS were synced.
-        Assert.Contains("media.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Contains("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
         Assert.Single(api.Dns);
     }
 
@@ -40,7 +40,7 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         Assert.False(result.RestartRequired); // app stopped
         var app = await apps.GetAppAsync("com.example.media");
         Assert.False(app!.Settings.ContainsKey(PublicOriginSettings.BuildSettingKey("web.http")));
-        Assert.DoesNotContain("media.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.DoesNotContain("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
         Assert.Empty(api.Dns);
     }
 
@@ -82,9 +82,9 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
 
         if (connected)
         {
-            await credentials.SaveAsync(new CloudflareCredential("cf-token", "tok", "Hosty zayats.io", null));
+            await credentials.SaveAsync(new CloudflareCredential("cf-token", "tok", "Hosty example.test", null));
             await integration.SaveAsync(new CloudflareIntegrationState(
-                CloudflareConnectionStatuses.Connected, null, "acc", "Acct", "zone", "zayats.io", "zayats.io",
+                CloudflareConnectionStatuses.Connected, null, "acc", "Acct", "zone", "example.test", "example.test",
                 "tunnel-123", "NL", "healthy", ConnectorLocality.Local, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch));
         }
 

@@ -7,7 +7,7 @@ public sealed class CloudflareApiClientTests
 {
     // Real response shapes captured from the phase-0 spike (ids abbreviated).
     private const string AccountsJson = """{"success":true,"errors":[],"result":[{"id":"583c0e86","name":"Aleksandr Zayats"}]}""";
-    private const string ZonesJson = """{"success":true,"errors":[],"result":[{"id":"z1","name":"zayats.io","status":"active"}]}""";
+    private const string ZonesJson = """{"success":true,"errors":[],"result":[{"id":"z1","name":"example.test","status":"active"}]}""";
     private const string TunnelsJson = """
         {"success":true,"errors":[],"result":[
           {"id":"t-remote","name":"NL_HOME_SERVER","status":"healthy","config_src":"cloudflare","remote_config":true},
@@ -45,7 +45,7 @@ public sealed class CloudflareApiClientTests
         var client = Client((_, _) => (HttpStatusCode.OK, ZonesJson));
 
         var zone = Assert.Single(await client.ListZonesAsync("t"));
-        Assert.Equal("zayats.io", zone.Name);
+        Assert.Equal("example.test", zone.Name);
         Assert.Equal("active", zone.Status);
     }
 
@@ -99,7 +99,7 @@ public sealed class CloudflareApiClientTests
     {
         const string configJson = """
             {"success":true,"errors":[],"result":{"version":41,"source":"cloudflare","config":{
-              "ingress":[{"hostname":"media.zayats.io","service":"http://localhost:8096"},{"service":"http_status:404"}],
+              "ingress":[{"hostname":"media.example.test","service":"http://localhost:8096"},{"service":"http_status:404"}],
               "warp-routing":{"enabled":true}
             }}}
             """;
@@ -124,7 +124,7 @@ public sealed class CloudflareApiClientTests
             sentBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             return (HttpStatusCode.OK, """{"success":true,"errors":[],"result":{"version":42,"source":"cloudflare","config":{"ingress":[]}}}""");
         });
-        var config = (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse("""{"ingress":[{"hostname":"app.zayats.io","service":"http://localhost:4000"}],"warp-routing":{"enabled":true}}""")!;
+        var config = (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse("""{"ingress":[{"hostname":"app.example.test","service":"http://localhost:4000"}],"warp-routing":{"enabled":true}}""")!;
 
         var result = await client.PutTunnelConfigurationAsync("t", "acc", "tid", config);
 
@@ -133,16 +133,16 @@ public sealed class CloudflareApiClientTests
         // The body wraps the caller's document under "config" and carries warp-routing verbatim.
         Assert.Contains("\"config\"", sentBody);
         Assert.Contains("warp-routing", sentBody);
-        Assert.Contains("app.zayats.io", sentBody);
+        Assert.Contains("app.example.test", sentBody);
     }
 
     [Fact]
     public async Task ListDnsRecordsAsync_ParsesProxiedCnames()
     {
-        const string json = """{"success":true,"errors":[],"result":[{"id":"r1","type":"CNAME","name":"media.zayats.io","content":"abc.cfargotunnel.com","proxied":true,"ttl":1}]}""";
+        const string json = """{"success":true,"errors":[],"result":[{"id":"r1","type":"CNAME","name":"media.example.test","content":"abc.cfargotunnel.com","proxied":true,"ttl":1}]}""";
         var client = Client((_, _) => (HttpStatusCode.OK, json));
 
-        var record = Assert.Single(await client.ListDnsRecordsAsync("t", "zone", "media.zayats.io"));
+        var record = Assert.Single(await client.ListDnsRecordsAsync("t", "zone", "media.example.test"));
         Assert.Equal("r1", record.Id);
         Assert.True(record.Proxied);
         Assert.Equal("abc.cfargotunnel.com", record.Content);
@@ -157,16 +157,16 @@ public sealed class CloudflareApiClientTests
         {
             method = request.Method.Method;
             body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
-            return (HttpStatusCode.OK, """{"success":true,"errors":[],"result":{"id":"new-id","type":"CNAME","name":"app.zayats.io","content":"abc.cfargotunnel.com","proxied":true,"ttl":1}}""");
+            return (HttpStatusCode.OK, """{"success":true,"errors":[],"result":{"id":"new-id","type":"CNAME","name":"app.example.test","content":"abc.cfargotunnel.com","proxied":true,"ttl":1}}""");
         });
 
-        var record = await client.CreateCnameAsync("t", "zone", "app.zayats.io", "abc.cfargotunnel.com", proxied: true);
+        var record = await client.CreateCnameAsync("t", "zone", "app.example.test", "abc.cfargotunnel.com", proxied: true);
 
         Assert.Equal("POST", method);
         Assert.Equal("new-id", record!.Id);
         Assert.Contains("\"type\":\"CNAME\"", body);
         Assert.Contains("\"proxied\":true", body);
-        Assert.Contains("app.zayats.io", body);
+        Assert.Contains("app.example.test", body);
     }
 
     [Fact]

@@ -10,14 +10,14 @@ public sealed class CloudflarePublicationStoreTests : IDisposable
     public async Task Upsert_ThenGet_RoundTrips_AndReplacesSameKey()
     {
         var store = CreateStore();
-        await store.UpsertAsync(Publication("app", "web.http", "media", "media.zayats.io", "http://localhost:8096"));
+        await store.UpsertAsync(Publication("app", "web.http", "media", "media.example.test", "http://localhost:8096"));
 
         var loaded = await store.GetAsync("app", "web.http");
-        Assert.Equal("media.zayats.io", loaded!.Hostname);
+        Assert.Equal("media.example.test", loaded!.Hostname);
         Assert.Equal("http://localhost:8096", loaded.ServiceUrl);
 
         // Upserting the same (app, endpoint) replaces rather than duplicates.
-        await store.UpsertAsync(Publication("app", "web.http", "media", "media.zayats.io", "http://localhost:9999"));
+        await store.UpsertAsync(Publication("app", "web.http", "media", "media.example.test", "http://localhost:9999"));
         Assert.Single(await store.ListAsync());
         Assert.Equal("http://localhost:9999", (await store.GetAsync("app", "web.http"))!.ServiceUrl);
     }
@@ -26,9 +26,9 @@ public sealed class CloudflarePublicationStoreTests : IDisposable
     public async Task ListForApp_FiltersByApp()
     {
         var store = CreateStore();
-        await store.UpsertAsync(Publication("app-a", "web.http", "a", "a.zayats.io", null));
-        await store.UpsertAsync(Publication("app-a", "api.http", "a-api", "a-api.zayats.io", null));
-        await store.UpsertAsync(Publication("app-b", "web.http", "b", "b.zayats.io", null));
+        await store.UpsertAsync(Publication("app-a", "web.http", "a", "a.example.test", null));
+        await store.UpsertAsync(Publication("app-a", "api.http", "a-api", "a-api.example.test", null));
+        await store.UpsertAsync(Publication("app-b", "web.http", "b", "b.example.test", null));
 
         Assert.Equal(2, (await store.ListForAppAsync("app-a")).Count);
         Assert.Single(await store.ListForAppAsync("app-b"));
@@ -38,8 +38,8 @@ public sealed class CloudflarePublicationStoreTests : IDisposable
     public async Task Remove_DeletesOnlyThatEndpoint()
     {
         var store = CreateStore();
-        await store.UpsertAsync(Publication("app", "web.http", "w", "w.zayats.io", null));
-        await store.UpsertAsync(Publication("app", "api.http", "a", "a.zayats.io", null));
+        await store.UpsertAsync(Publication("app", "web.http", "w", "w.example.test", null));
+        await store.UpsertAsync(Publication("app", "api.http", "a", "a.example.test", null));
 
         await store.RemoveAsync("app", "web.http");
 
