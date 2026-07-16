@@ -89,8 +89,9 @@ reload, Shell self-update, or second browser never loses it.
 
 ## Acceptance Criteria
 
-- A fleet sweep performs at most one fetch per distinct feeds.json / manifest URL and bounded
-  parallel registry probes; a 10-app sweep is not 10× slower than a 1-app probe.
+- A fleet sweep performs one plan build per app (feed + manifest fetch and a capped probe pass —
+  the minimal network pass, since `app-feeds.0.1` documents are per-app) under bounded app-level
+  concurrency; a 10-app sweep is not 10× slower than a 1-app probe.
 - `AppUpdatePlan` carries `requiresReview`; it is true iff the change list contains any entry
   that is not a routine `version:*`, `manifest`, resolved-digest `artifact:*`, or same-repository
   `image:*` change (an `artifact:*->unknown` entry always requires review), and false for a
@@ -136,9 +137,11 @@ A Core service used by both the manual trigger and the scheduler:
   `appSupportsReviewedUpdate`: live-source apps are skipped).
 - Builds each plan through the existing `CreateUpdatePlanAsync` path with per-app error capture —
   one broken feed marks that app "check failed" instead of failing the sweep.
-- Per-sweep memoization of feeds.json and manifest fetches keyed by URL; bounded app-level
-  concurrency (3–4) and parallel per-service digest probes with a small cap, so a sweep does not
-  fan out unbounded docker CLI processes.
+- No cross-app fetch memoization: `app-feeds.0.1` documents are per-app (a single `appId` that must
+  match the installed app), so no two apps can share a feeds.json and one plan build per app is
+  already the minimal network pass. (The design draft assumed vendor-shared feed documents; the
+  schema says otherwise.) Bounded app-level concurrency (3–4) and parallel per-service digest
+  probes with a small cap keep a sweep from fanning out unbounded docker CLI processes.
 - Caching a plan overwrites the app's `reviewedUpdatePlans` slot — this is the "Check updates
   clears plan caches" semantic for free. Overwriting a plan an operator is mid-reviewing degrades
   exactly like today's popup re-open: their apply gets `update_plan_digest_mismatch` and re-reviews.

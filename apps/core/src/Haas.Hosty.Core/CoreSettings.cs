@@ -24,11 +24,17 @@ internal sealed class CoreSettingsDocument
     public string? SchemaVersion { get; init; }
     public IReadOnlyDictionary<string, double> Auth { get => field ?? EmptyAuth; init; } = EmptyAuth;
     public IReadOnlyDictionary<string, string> Ingress { get => field ?? EmptyIngress; init; } = EmptyIngress;
+    // Update-check overrides (the background fleet sweep cadence). String-valued like `Ingress`;
+    // additive to the schema for the same reason, so the version is deliberately NOT bumped.
+    public IReadOnlyDictionary<string, string> Updates { get => field ?? EmptyUpdates; init; } = EmptyUpdates;
 
     private static readonly IReadOnlyDictionary<string, double> EmptyAuth =
         new Dictionary<string, double>(StringComparer.Ordinal);
 
     private static readonly IReadOnlyDictionary<string, string> EmptyIngress =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyUpdates =
         new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
@@ -168,6 +174,57 @@ internal sealed record IngressSettings(
     }
 }
 
+// The background fleet update-check cadence (plan-first updates, phase 2). Interval in minutes; 0
+// disables the scheduler entirely — manual checks (POST /api/apps/update-check and the per-app
+// refresh) stay available either way. Env baseline with a persisted override on top, like the other
+// Core settings sections.
+internal sealed record UpdateCheckSettings(int IntervalMinutes)
+{
+    public const string IntervalKey = "HOSTY_UPDATE_CHECK_INTERVAL_MINUTES";
+    public const int DefaultIntervalMinutes = 60;
+    // A week; anything longer means "use 0 and check manually".
+    public const int MaxIntervalMinutes = 10080;
+
+    public static UpdateCheckSettings Defaults { get; } = new(DefaultIntervalMinutes);
+
+    public bool Enabled => IntervalMinutes > 0;
+
+    public TimeSpan Interval => TimeSpan.FromMinutes(IntervalMinutes);
+
+    public static UpdateCheckSettings FromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable(IntervalKey);
+        return TryParseIntervalMinutes(raw, out var minutes)
+            ? new UpdateCheckSettings(minutes)
+            : Defaults;
+    }
+
+    public static bool TryParseIntervalMinutes(string? raw, out int minutes)
+    {
+        minutes = 0;
+        return int.TryParse(raw?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out minutes)
+            && minutes is >= 0 and <= MaxIntervalMinutes;
+    }
+}
+
+internal static class CoreUpdateCheckSettings
+{
+    public const string Group = "App updates";
+
+    public const string IntervalLabel = "Background check interval";
+
+    public const string IntervalDescription =
+        "How often Core checks installed apps for updates in the background, in minutes. Apps "
+        + "running live from a source folder have no reviewed-update path and are not checked. "
+        + "0 disables the background check; manual checks stay available.";
+
+    public static bool IsKnown(string key)
+        => string.Equals(key, UpdateCheckSettings.IntervalKey, StringComparison.Ordinal);
+}
+
+// The update-check equivalent of CoreSettingRow: a single numeric row.
+internal sealed record CoreUpdateCheckSettingRow(int EffectiveIntervalMinutes, bool Overridden);
+
 // A choice for a select-typed setting: the stored value and the label the Shell shows.
 internal sealed record CoreSettingOption(string Value, string Label);
 
@@ -299,8 +356,10 @@ internal sealed class CoreSettingsService
     private readonly SemaphoreSlim gate = new(1, 1);
     private Dictionary<string, double> overrides;
     private Dictionary<string, string> ingressOverrides;
+    private Dictionary<string, string> updateCheckOverrides;
     private volatile AuthLifetimes current;
     private volatile IngressSettings currentIngress;
+    private volatile UpdateCheckSettings currentUpdateCheck;
 
     public CoreSettingsService(CoreSettingsStore store)
     {
@@ -308,8 +367,10 @@ internal sealed class CoreSettingsService
         var document = store.Load();
         overrides = LoadOverrides(document);
         ingressOverrides = LoadIngressOverrides(document);
+        updateCheckOverrides = LoadUpdateCheckOverrides(document);
         current = Compute(overrides);
         currentIngress = ComputeIngress(ingressOverrides);
+        currentUpdateCheck = ComputeUpdateCheck(updateCheckOverrides);
     }
 
     // The live auth lifetimes: env-or-default baseline with persisted overrides applied.
@@ -318,6 +379,10 @@ internal sealed class CoreSettingsService
     // The live ingress config: env-or-default baseline with persisted overrides applied. Read by the
     // cloudflared controller (per reconcile) and /api/core/status, so a save takes effect without restart.
     public IngressSettings Ingress => currentIngress;
+
+    // The live update-check cadence: env-or-default baseline with a persisted override applied. Read by
+    // the sweep scheduler each cycle, so a save takes effect without restart.
+    public UpdateCheckSettings UpdateCheck => currentUpdateCheck;
 
     public IReadOnlyList<CoreSettingRow> GetAuthRows()
     {
@@ -344,6 +409,9 @@ internal sealed class CoreSettingsService
             .ToArray();
     }
 
+    public CoreUpdateCheckSettingRow GetUpdateCheckRow()
+        => new(currentUpdateCheck.IntervalMinutes, Overridden: updateCheckOverrides.ContainsKey(UpdateCheckSettings.IntervalKey));
+
     // True when at least one of the submitted keys is an ingress setting — the endpoint uses this to
     // decide whether a save must re-render the tunnel config.
     public static bool TouchesIngress(IReadOnlyDictionary<string, string?> input)
@@ -359,6 +427,7 @@ internal sealed class CoreSettingsService
         // Parse + validate everything before touching state, so a single bad key rejects the whole PUT.
         var authChanges = new Dictionary<string, double?>(StringComparer.Ordinal);
         var ingressChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var updateCheckChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (key, raw) in input)
         {
             if (CoreAuthSettings.IsKnown(key))
@@ -368,6 +437,10 @@ internal sealed class CoreSettingsService
             else if (CoreIngressSettings.IsKnown(key))
             {
                 ingressChanges[key] = NormalizeIngressValue(key, raw);
+            }
+            else if (CoreUpdateCheckSettings.IsKnown(key))
+            {
+                updateCheckChanges[key] = NormalizeUpdateCheckValue(key, raw);
             }
             else
             {
@@ -380,6 +453,7 @@ internal sealed class CoreSettingsService
         {
             var mergedAuth = Apply(overrides, authChanges);
             var mergedIngress = Apply(ingressOverrides, ingressChanges);
+            var mergedUpdateCheck = Apply(updateCheckOverrides, updateCheckChanges);
 
             await store.SaveAsync(
                 new CoreSettingsDocument
@@ -387,12 +461,15 @@ internal sealed class CoreSettingsService
                     SchemaVersion = CoreSettingsSchema.Version,
                     Auth = mergedAuth,
                     Ingress = mergedIngress,
+                    Updates = mergedUpdateCheck,
                 },
                 cancellationToken);
             overrides = mergedAuth;
             ingressOverrides = mergedIngress;
+            updateCheckOverrides = mergedUpdateCheck;
             current = Compute(mergedAuth);
             currentIngress = ComputeIngress(mergedIngress);
+            currentUpdateCheck = ComputeUpdateCheck(mergedUpdateCheck);
         }
         finally
         {
@@ -453,6 +530,25 @@ internal sealed class CoreSettingsService
         }
 
         return hours;
+    }
+
+    // Validates an update-check value for persistence, or null to clear. Stored as the canonical
+    // integer string so the document stays culture-stable.
+    private static string? NormalizeUpdateCheckValue(string key, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        if (!UpdateCheckSettings.TryParseIntervalMinutes(raw, out var minutes))
+        {
+            throw new AppLifecycleException(
+                "core_setting_invalid",
+                $"'{key}' must be a whole number of minutes between 0 (disabled) and {UpdateCheckSettings.MaxIntervalMinutes}.");
+        }
+
+        return minutes.ToString(CultureInfo.InvariantCulture);
     }
 
     // Validates and canonicalizes an ingress value for persistence, or null to clear. Missing pieces for
@@ -570,6 +666,36 @@ internal sealed class CoreSettingsService
         }
 
         return ingress;
+    }
+
+    private static Dictionary<string, string> LoadUpdateCheckOverrides(CoreSettingsDocument document)
+    {
+        var loaded = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in document.Updates)
+        {
+            // Same per-entry tolerance as the other sections: skip unknown keys and hand-edited
+            // values that do not parse rather than crashing startup.
+            if (!CoreUpdateCheckSettings.IsKnown(key) || !UpdateCheckSettings.TryParseIntervalMinutes(value, out _))
+            {
+                continue;
+            }
+
+            loaded[key] = value;
+        }
+
+        return loaded;
+    }
+
+    private static UpdateCheckSettings ComputeUpdateCheck(IReadOnlyDictionary<string, string> overrides)
+    {
+        var settings = UpdateCheckSettings.FromEnvironment();
+        if (overrides.TryGetValue(UpdateCheckSettings.IntervalKey, out var raw) &&
+            UpdateCheckSettings.TryParseIntervalMinutes(raw, out var minutes))
+        {
+            settings = settings with { IntervalMinutes = minutes };
+        }
+
+        return settings;
     }
 
     // Converts an hours value to a TimeSpan, rejecting non-finite, non-positive, and out-of-range

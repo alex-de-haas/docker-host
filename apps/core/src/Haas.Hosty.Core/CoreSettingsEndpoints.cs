@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Haas.Hosty.Core;
 
 // Host-admin surface over Core's own behavior settings (auth session/grant lifetimes and cloudflared
@@ -99,6 +101,19 @@ internal static class CoreSettingsEndpoints
                 Unit: null,
                 Options: row.Definition.Options));
         }
+
+        var updateCheck = settings.GetUpdateCheckRow();
+        rows.Add(new CoreSettingSummary(
+            UpdateCheckSettings.IntervalKey,
+            Type: "number",
+            Value: updateCheck.EffectiveIntervalMinutes.ToString(CultureInfo.InvariantCulture),
+            Default: UpdateCheckSettings.DefaultIntervalMinutes.ToString(CultureInfo.InvariantCulture),
+            Group: CoreUpdateCheckSettings.Group,
+            Label: CoreUpdateCheckSettings.IntervalLabel,
+            Description: CoreUpdateCheckSettings.IntervalDescription,
+            Overridden: updateCheck.Overridden,
+            Unit: "min",
+            Options: null));
 
         return new CoreSettingsResponse(rows);
     }

@@ -2150,6 +2150,34 @@ public sealed class CoreLifecycleServiceTests
         Assert.Null((await fixture.Service.GetPendingUpdatePlanAsync("com.example.live")).Plan);
     }
 
+    [Fact]
+    public async Task UpdateAvailabilityProjection_FollowsPlanBuildAndApply()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // No check has run yet: the summary carries no verdict.
+        Assert.Null(Assert.Single(await fixture.Service.ListAppsAsync()).UpdateCheck);
+
+        var manifestV2 = await fixture.WriteManifestAsync("1.1.0");
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+
+        // Any successful plan build refreshes the projection the apps list renders from.
+        var checkedSummary = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.NotNull(checkedSummary.UpdateCheck);
+        Assert.True(checkedSummary.UpdateCheck!.UpdateAvailable);
+        Assert.False(checkedSummary.UpdateCheck.RequiresReview);
+        Assert.Equal(plan.PlanDigest, checkedSummary.UpdateCheck.PlanDigest);
+
+        await fixture.Service.ApplyUpdateAsync(
+            "com.example.notes",
+            new AppUpdateApplyRequest(plan.PlanDigest, manifestV2));
+
+        // The apply consumed the plan: the verdict is cleared until the next check re-establishes it.
+        Assert.Null(Assert.Single(await fixture.Service.ListAppsAsync()).UpdateCheck);
+    }
+
     private static string NotesManifestWithImageRepository(string version, string imageRepository) => $$"""
         {
           "schemaVersion": "app.0.1",

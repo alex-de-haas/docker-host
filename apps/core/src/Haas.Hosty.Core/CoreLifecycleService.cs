@@ -1155,6 +1155,14 @@ internal sealed class CoreLifecycleService(
         // for the base-state guard in apply. Overwrites any prior pending plan for this app.
         var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, clock.UtcNow);
         reviewedUpdatePlans[appId] = cached;
+        // Every successful plan build — sweep, dialog open, status probe — refreshes the app's
+        // availability projection, so the apps-list verdict and the plan cache never disagree.
+        updateAvailability[appId] = new AppUpdateAvailability(
+            UpdateAvailable: PlanIndicatesUpdateAvailable(changes),
+            RequiresReview: plan.RequiresReview,
+            PlanDigest: plan.PlanDigest,
+            CheckedAt: clock.UtcNow,
+            Error: null);
         return cached;
     }
 
@@ -1164,6 +1172,35 @@ internal sealed class CoreLifecycleService(
     // Reviewed update plans awaiting apply, keyed by app id (one pending plan per app). See the write in
     // CreateUpdatePlanAsync for why apply consumes this rather than rebuilding.
     private readonly ConcurrentDictionary<string, CachedUpdatePlan> reviewedUpdatePlans = new(StringComparer.Ordinal);
+
+    // Last-known update-availability verdict per app (plan-first updates phase 2), projected into the
+    // app summaries so clients render Update/Review affordances straight from the list. Written on
+    // every successful plan build, by the sweep on per-app failures, and reset by a successful apply.
+    // In-memory by design: after a Core restart the post-boot sweep repopulates it (see the resolved
+    // questions in docs/planning/plan-first-app-updates.md).
+    private readonly ConcurrentDictionary<string, AppUpdateAvailability> updateAvailability = new(StringComparer.Ordinal);
+
+    // Sweep hook: a plan build failed for this app, so its row shows "check failed" instead of a
+    // stale verdict. The pending plan slot is deliberately left alone — an earlier plan may still be
+    // fresh and applicable even when the latest re-check could not resolve its inputs.
+    internal void RecordUpdateCheckFailure(string appId, string message)
+        => updateAvailability[appId] = new AppUpdateAvailability(
+            UpdateAvailable: false,
+            RequiresReview: false,
+            PlanDigest: null,
+            CheckedAt: clock.UtcNow,
+            Error: message);
+
+    // Sweep hook: drop projections for apps that no longer exist (or stopped being sweep targets),
+    // so a removed app's verdict does not linger until Core restarts.
+    internal void PruneUpdateAvailability(IReadOnlySet<string> keepAppIds)
+    {
+        // ConcurrentDictionary.Keys is already a snapshot, so removing while iterating it is safe.
+        foreach (var appId in updateAvailability.Keys.Where(key => !keepAppIds.Contains(key)))
+        {
+            updateAvailability.TryRemove(appId, out _);
+        }
+    }
 
     // A pending plan is discarded after this long. The operator applies from an open dialog, so a stale
     // entry means they wandered off and should re-review against current inputs rather than apply a plan
@@ -1307,6 +1344,10 @@ internal sealed class CoreLifecycleService(
         // Consumed: the app is now at the target, so the pending plan (built against the old base) would
         // only fail the base-state guard from here on. Drop it so a fresh review starts clean.
         EvictReviewedPlan(appId, confirmed);
+        // The app just moved to the reviewed target: clear the availability verdict so the row's
+        // update affordance disappears immediately instead of pointing at the consumed plan. The
+        // next check (row refresh or sweep) re-establishes it against current upstream.
+        updateAvailability.TryRemove(appId, out _);
         if (wasRunning)
         {
             var restarted = await StartCoreAsync(appId, cancellationToken);
@@ -1686,7 +1727,7 @@ internal sealed class CoreLifecycleService(
             Runtime: cached.Selection.RuntimeProfile.Key,
             RuntimeType: cached.Selection.RuntimeProfile.Type,
             UpdatePolicy: DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
-            UpdateAvailable: cached.Plan.Changes.Any(change => !IsUnknownArtifactChange(change)),
+            UpdateAvailable: PlanIndicatesUpdateAvailable(cached.Plan.Changes),
             Services: cached.ArtifactProbes.Select(ToServiceUpdateStatus).ToList(),
             ManifestUpdateAvailable: !string.Equals(cached.CurrentManifestDigest, cached.Plan.ManifestDigest, StringComparison.Ordinal),
             ManifestUnknown: false);
@@ -2091,7 +2132,12 @@ internal sealed class CoreLifecycleService(
     {
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
         var liveSourcePath = ResolveLiveSourcePath(app, profiles);
-        return AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
+        var summary = AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
+        // Last-known update verdict (plan-first updates): null until a check has run for this app.
+        // Suppressed for a live-source runtime — it has no reviewed-update path, so a verdict from
+        // before the app went live must not keep offering an update the plan flow would refuse
+        // (sweep pruning alone can't be relied on: the scheduler may be disabled).
+        return summary with { UpdateCheck = summary.Live ? null : updateAvailability.GetValueOrDefault(app.Id) };
     }
 
     // The app's runtime profiles, preferring the persisted record and falling back to a live load from
@@ -3525,6 +3571,11 @@ internal sealed class CoreLifecycleService(
     // digest. See docs/planning/plan-first-app-updates.md.
     internal static bool PlanRequiresReview(IReadOnlyList<string> changes)
         => changes.Any(change => !IsRoutineChange(change));
+
+    // An update exists when the plan carries any change except an unresolved artifact target — an
+    // `artifact:...->unknown` entry is "cannot tell", not "update available".
+    internal static bool PlanIndicatesUpdateAvailable(IReadOnlyList<string> changes)
+        => changes.Any(change => !IsUnknownArtifactChange(change));
 
     private static bool IsRoutineChange(string change)
         => change.StartsWith("version:", StringComparison.Ordinal)
