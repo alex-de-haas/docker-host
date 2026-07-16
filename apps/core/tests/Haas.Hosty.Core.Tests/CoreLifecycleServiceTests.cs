@@ -227,6 +227,31 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyUpdateAsync_DoesNotEvictAPlanReviewedBySomeoneElse()
+    {
+        // Plan creation runs outside the app lock (it resolves feeds and probes the registry; holding the
+        // lock across that would stall start/stop), so a second operator can review a fresh plan while an
+        // apply is in flight. Eviction must therefore be compare-and-remove: an unconditional one would
+        // drop *their* plan and fail their apply with a phantom "no plan is pending".
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var first = await fixture.WriteManifestAsync("2.0.0");
+        var second = await fixture.WriteManifestAsync("3.0.0");
+
+        var mine = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(first));
+        // Someone else reviews a different target; their plan is now the pending one.
+        var theirs = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(second));
+
+        // My digest no longer matches the pending plan, so my apply is refused — and must leave theirs alone.
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(mine.PlanDigest, first)));
+        Assert.Equal("update_plan_digest_mismatch", error.Code);
+
+        var applied = await fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(theirs.PlanDigest, second));
+        Assert.Equal("3.0.0", applied.App?.Version);
+    }
+
+    [Fact]
     public async Task ApplyUpdateAsync_RejectsWhenNoPlanWasReviewed()
     {
         var fixture = await LifecycleFixture.CreateAsync();

@@ -1119,6 +1119,17 @@ internal sealed class CoreLifecycleService(
         string CurrentManifestDigest,
         DateTimeOffset CreatedAt);
 
+    // Compare-and-remove: drop the pending plan only while it is still the entry we read. Apply runs under
+    // the app lock but CreateUpdatePlanAsync does not (it resolves feeds and probes the registry, and
+    // holding the lock across that would stall start/stop for the duration), so a second operator can
+    // review a fresh plan mid-apply. An unconditional TryRemove would evict *their* valid plan and fail
+    // their apply with a phantom update_plan_expired. Equality is effectively per-instance here: the
+    // records carry collection members, which record equality compares by reference, so two separately
+    // built plans never match — and in the degenerate case where they would, both describe the same plan
+    // against the same base, so evicting either is the same outcome.
+    private void EvictReviewedPlan(string appId, CachedUpdatePlan plan)
+        => reviewedUpdatePlans.TryRemove(new KeyValuePair<string, CachedUpdatePlan>(appId, plan));
+
     // Returns the pending plan the operator confirmed, or throws an actionable "reopen the update" error.
     // Never rebuilds: the point is to apply exactly what was reviewed.
     private CachedUpdatePlan ResolveConfirmedUpdatePlan(string appId, string planDigest)
@@ -1132,7 +1143,7 @@ internal sealed class CoreLifecycleService(
 
         if (clock.UtcNow - cached.CreatedAt > ReviewedUpdatePlanTtl)
         {
-            reviewedUpdatePlans.TryRemove(appId, out _);
+            EvictReviewedPlan(appId, cached);
             throw new AppLifecycleException(
                 "update_plan_expired",
                 "The reviewed update plan has expired. Reopen the update to review the current plan, then apply.");
@@ -1168,7 +1179,7 @@ internal sealed class CoreLifecycleService(
             !string.Equals(app.SelectedRuntime, plan.CurrentRuntime, StringComparison.Ordinal) ||
             !string.Equals(currentSelection.ManifestDigest, confirmed.CurrentManifestDigest, StringComparison.Ordinal))
         {
-            reviewedUpdatePlans.TryRemove(appId, out _);
+            EvictReviewedPlan(appId, confirmed);
             throw new AppLifecycleException(
                 "update_plan_stale",
                 "The app changed since this update was reviewed. Reopen the update to review the current plan, then apply.");
@@ -1207,7 +1218,7 @@ internal sealed class CoreLifecycleService(
         var document = await apps.UpsertAppAsync(next, cancellationToken);
         // Consumed: the app is now at the target, so the pending plan (built against the old base) would
         // only fail the base-state guard from here on. Drop it so a fresh review starts clean.
-        reviewedUpdatePlans.TryRemove(appId, out _);
+        EvictReviewedPlan(appId, confirmed);
         if (wasRunning)
         {
             var restarted = await StartCoreAsync(appId, cancellationToken);
