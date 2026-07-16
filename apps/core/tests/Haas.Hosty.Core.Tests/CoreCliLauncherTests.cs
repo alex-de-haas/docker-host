@@ -54,6 +54,22 @@ public sealed class CoreCliLauncherTests : IDisposable
         Assert.True(File.Exists(unrelated));
     }
 
+    // The sweep must only claim names BuildLogFileName could have produced: a prefix-sharing file an
+    // operator left in the logs directory is not a stale spawn log, even though the wildcard matches it.
+    [Fact]
+    public void CleanUpStaleLogs_LeavesPrefixSharingFilesWithoutTheStamp()
+    {
+        var operatorNotes = CreateLog("core-update-notes.log");
+        var malformedStamp = CreateLog("core-update-20269999-999999999.log");
+        var staleTimestamped = CreateLog("core-update-20260716-110900000.log");
+
+        CoreCliLauncher.CleanUpStaleLogs(logDirectory, "core-update.log");
+
+        Assert.True(File.Exists(operatorNotes));
+        Assert.True(File.Exists(malformedStamp));
+        Assert.False(File.Exists(staleTimestamped));
+    }
+
     // The exact situation on a wedged host: an old log is still held open by a process tree that
     // inherited its handle. Cleanup must skip it silently — the spawn proceeds on a fresh name.
     [Fact]

@@ -107,6 +107,10 @@ internal static class CoreCliLauncher
         return logPath;
     }
 
+    // The stamp appended to each spawn's log name; also the exact shape CleanUpStaleLogs requires
+    // before deleting anything, so the two stay in sync through this constant.
+    private const string SpawnLogTimestampFormat = "yyyyMMdd-HHmmssfff";
+
     // "core-update.log" + 2026-07-16T13:00:45.123Z -> "core-update-20260716-130045123.log". The stamp
     // keeps concurrent/consecutive spawns off each other's redirect handles; millisecond precision is
     // enough because a same-instant duplicate only reproduces the shared-name failure the probe reports.
@@ -114,12 +118,15 @@ internal static class CoreCliLauncher
     {
         var stem = Path.GetFileNameWithoutExtension(baseFileName);
         var extension = Path.GetExtension(baseFileName);
-        return FormattableString.Invariant($"{stem}-{timestamp.UtcDateTime:yyyyMMdd-HHmmssfff}{extension}");
+        var stamp = timestamp.UtcDateTime.ToString(SpawnLogTimestampFormat, System.Globalization.CultureInfo.InvariantCulture);
+        return $"{stem}-{stamp}{extension}";
     }
 
     // Deletes earlier spawns' logs for this base name (timestamped ones and the legacy fixed name) so
-    // they do not accumulate. Best-effort: a log still held open by a surviving helper tree cannot be
-    // deleted on Windows and is simply left for a later pass.
+    // they do not accumulate. Only names BuildLogFileName could have produced are touched — an
+    // operator's own file that happens to share the prefix (say core-update-notes.log) is not ours to
+    // delete. Best-effort: a log still held open by a surviving helper tree cannot be deleted on
+    // Windows and is simply left for a later pass.
     internal static void CleanUpStaleLogs(string logDirectory, string baseFileName)
     {
         var stem = Path.GetFileNameWithoutExtension(baseFileName);
@@ -127,7 +134,12 @@ internal static class CoreCliLauncher
         IEnumerable<string> staleLogs;
         try
         {
-            staleLogs = [.. Directory.EnumerateFiles(logDirectory, $"{stem}-*{extension}"), Path.Combine(logDirectory, baseFileName)];
+            staleLogs =
+            [
+                .. Directory.EnumerateFiles(logDirectory, $"{stem}-*{extension}")
+                    .Where(path => HasSpawnLogTimestamp(Path.GetFileName(path), stem, extension)),
+                Path.Combine(logDirectory, baseFileName),
+            ];
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -145,6 +157,21 @@ internal static class CoreCliLauncher
                 // Still open (e.g. inherited by a process tree that outlived its helper) — leave it.
             }
         }
+    }
+
+    // True when fileName is exactly "{stem}-{SpawnLogTimestampFormat}{extension}". The enumeration
+    // pattern already pins the prefix and suffix; this pins the middle to a real stamp.
+    private static bool HasSpawnLogTimestamp(string fileName, string stem, string extension)
+    {
+        var stampStart = stem.Length + 1;
+        var stampLength = fileName.Length - stampStart - extension.Length;
+        return stampLength == SpawnLogTimestampFormat.Length &&
+            DateTime.TryParseExact(
+                fileName.AsSpan(stampStart, stampLength),
+                SpawnLogTimestampFormat,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out _);
     }
 
     private static string ShellQuote(string value)
