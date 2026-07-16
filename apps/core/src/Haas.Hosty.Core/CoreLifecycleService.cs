@@ -4151,7 +4151,18 @@ internal sealed class CoreLifecycleService(
             }
             else if (!hasTarget)
             {
-                changes.Add($"setting:{key}:removed");
+                // Core-reserved host-port overrides (HOSTY_PORT_<key>) are not manifest settings and
+                // the update deliberately carries them forward (see the BuildAppRecord carry-forward).
+                // Reporting one "removed" here made every plan for such an app carry a phantom
+                // review-class change that apply could never clear — an endless same-version "Review"
+                // loop (seen live on a Shell record still holding its retired HOSTY_PORT_HTTP pin).
+                // The skip is prefix-wide on purpose: the carry-forward is prefix-based too, keeping
+                // any stored HOSTY_PORT_* key the target does not declare — even one a past manifest
+                // declared itself — so this mirrors exactly what apply does.
+                if (!key.StartsWith("HOSTY_PORT_", StringComparison.Ordinal))
+                {
+                    changes.Add($"setting:{key}:removed");
+                }
             }
             else
             {
