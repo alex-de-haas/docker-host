@@ -1037,6 +1037,7 @@ internal sealed class RuntimeAppSupervisorService(
         }
 
         await MigratePortAssignmentsAsync(stoppingToken);
+        await RecoverInterruptedUpdatesAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
         await lifecycle.ReconcileIngressAsync(stoppingToken);
@@ -1299,6 +1300,28 @@ internal sealed class RuntimeAppSupervisorService(
     // Install-time port reservations, phase 1: backfill persistent port assignments from stored endpoint
     // URLs before autostart reconciliation consumes them. Best-effort — a failure is logged and startup
     // continues (start still resolves ports as it does today when a record has no assignments yet).
+    // Boot sweep for background applies interrupted by a Core stop (plan-first updates phase 3):
+    // flips stuck "updating" records to failed-for-re-review before autostart reconciliation reads
+    // them. Best-effort — a recovery failure must never abort boot.
+    private async Task RecoverInterruptedUpdatesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var recovered = await lifecycle.RecoverInterruptedUpdatesAsync(cancellationToken);
+            if (recovered > 0)
+            {
+                logger.LogWarning("Marked {Count} app update(s) interrupted by the previous Core stop as failed.", recovered);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Interrupted-update recovery did not complete.");
+        }
+    }
+
     private async Task MigratePortAssignmentsAsync(CancellationToken cancellationToken)
     {
         try

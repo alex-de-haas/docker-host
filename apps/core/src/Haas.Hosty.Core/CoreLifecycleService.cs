@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
@@ -28,7 +29,11 @@ internal sealed class CoreLifecycleService(
     // Install-time port-reservation coordinator. Optional only for unit fixtures that do not exercise
     // allocation; production DI always supplies it. When absent, install skips reservation and ports are
     // resolved at first start as before. See RuntimePortAllocator.
-    RuntimePortAllocator? portAllocator = null)
+    RuntimePortAllocator? portAllocator = null,
+    // Application lifetime for detaching background update applies from the triggering HTTP request
+    // (a page reload must not abort a half-done apply). Optional only for unit fixtures; production
+    // DI always supplies it. When absent, background applies run unlinked from any token.
+    IHostApplicationLifetime? hostLifetime = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -1168,6 +1173,207 @@ internal sealed class CoreLifecycleService(
 
     public Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
         => WithAppLockAsync(appId, () => ApplyUpdateCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    // Enqueue-and-return apply (plan-first updates phase 3), the browser surface's path: validate
+    // fast and locally so a stale click still gets its error in the response, persist the
+    // `"updating"` marker so every client renders progress from the record, then run the real apply
+    // detached on the application lifetime token — a page reload or Shell self-update must never
+    // abort a half-done apply (the request-scoped token did exactly that). The CLI control plane
+    // keeps the synchronous ApplyUpdateAsync. Completion flips the record (existing apply path),
+    // publishes a notification, and re-plans the app so its row settles without waiting for the
+    // next sweep. See docs/planning/plan-first-app-updates.md.
+    public async Task<AppLifecycleResponse> EnqueueUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
+    {
+        // Advisory pre-checks — the background run re-validates both under the app lock. Cheap and
+        // local (no network): the confirmed plan must exist and match, and the base must not have
+        // moved since it was reviewed.
+        var confirmed = ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
+        if (!string.Equals(app.Version, confirmed.Plan.CurrentVersion, StringComparison.Ordinal) ||
+            !string.Equals(app.SelectedRuntime, confirmed.Plan.CurrentRuntime, StringComparison.Ordinal) ||
+            !string.Equals(currentSelection.ManifestDigest, confirmed.CurrentManifestDigest, StringComparison.Ordinal))
+        {
+            EvictReviewedPlan(appId, confirmed);
+            throw new AppLifecycleException(
+                "update_plan_stale",
+                "The app changed since this update was reviewed. Reopen the update to review the current plan, then apply.");
+        }
+
+        // Atomic single-flight per app: the in-memory slot is the authority (the persisted
+        // `"updating"` marker is display state — it can be stale across a restart until the boot
+        // sweep flips it, and a retry then must not be blocked by it).
+        if (!runningBackgroundUpdates.TryAdd(appId, Task.CompletedTask))
+        {
+            throw new AppLifecycleException(
+                "update_in_progress",
+                "An update is already being applied to this app.");
+        }
+
+        AppStateDocument document;
+        try
+        {
+            document = await apps.UpdateAppAsync(appId, current => current with
+            {
+                OperationStatus = "updating",
+                LastOperation = "update",
+                LastError = null,
+            }, cancellationToken);
+        }
+        catch
+        {
+            runningBackgroundUpdates.TryRemove(appId, out _);
+            throw;
+        }
+
+        var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None);
+        runningBackgroundUpdates[appId] = run;
+        _ = RemoveWhenCompleteAsync(appId, run);
+
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "updating");
+    }
+
+    // In-flight background update applies, keyed by app id. TryAdd in EnqueueUpdateAsync is the
+    // atomic `update_in_progress` guard; the stored task lets tests await completion.
+    private readonly ConcurrentDictionary<string, Task> runningBackgroundUpdates = new(StringComparer.Ordinal);
+
+    // Test seam: the in-flight background apply for this app, or null when none is running.
+    internal Task? TryGetRunningBackgroundUpdate(string appId)
+        => runningBackgroundUpdates.GetValueOrDefault(appId);
+
+    private async Task RemoveWhenCompleteAsync(string appId, Task run)
+    {
+        try
+        {
+            await run;
+        }
+        finally
+        {
+            // Compare-and-remove: only clear the slot while it still holds this run, so a follow-up
+            // enqueue that raced in is never evicted.
+            runningBackgroundUpdates.TryRemove(new KeyValuePair<string, Task>(appId, run));
+        }
+    }
+
+    // The detached apply body. Exception-total: every outcome lands on the record (and as a
+    // notification) because there is no request left to surface it to.
+    private async Task ExecuteBackgroundUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await ApplyUpdateAsync(appId, request, cancellationToken);
+            await NotifyUpdateAppliedAsync(response.App, cancellationToken);
+            await RebuildPlanAfterApplyAsync(appId, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Core is shutting down mid-apply. The record stays "updating" and the boot sweep flips
+            // it to failed/interrupted on the next start (RecoverInterruptedUpdatesAsync).
+            logger.LogWarning("Background update for app {AppId} was cancelled by shutdown; the boot sweep will mark it interrupted.", appId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Background update for app {AppId} failed.", appId);
+            await RecordBackgroundLifecycleFailureAsync(appId, "update", ex.Message, CancellationToken.None);
+            await NotifyUpdateFailedAsync(appId, ex.Message, CancellationToken.None);
+        }
+    }
+
+    // Post-apply single-app re-plan: re-establishes the availability verdict against the new base
+    // (normally "up to date") so the row settles immediately instead of waiting for the next sweep.
+    // Best-effort — the apply already succeeded; a dark feed here just leaves the verdict cleared.
+    private async Task RebuildPlanAfterApplyAsync(string appId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _ = await CreateUpdatePlanAsync(appId, new AppUpdatePlanRequest(), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Post-apply re-plan failed for app {AppId}; the verdict stays cleared until the next check.", appId);
+        }
+    }
+
+    // Boot sweep (plan-first updates phase 3): a record still marked "updating" at startup means a
+    // background apply was cut down mid-flight by a Core stop or crash — the completion write never
+    // happened (a successful apply flips the record to "updated" atomically). Flip it to failed with
+    // an actionable error so the operator re-reviews, and say so in a notification. Returns the
+    // number of records recovered.
+    public async Task<int> RecoverInterruptedUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        var recovered = 0;
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records.Where(app => string.Equals(app.OperationStatus, "updating", StringComparison.Ordinal)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            const string message = "The update was interrupted by a Core restart. Review the update and apply it again.";
+            // Re-check under the record lock so a concurrent write is not clobbered.
+            await apps.UpdateAppAsync(
+                app.Id,
+                current => string.Equals(current.OperationStatus, "updating", StringComparison.Ordinal)
+                    ? current with { OperationStatus = "failed", LastOperation = "update", LastError = message }
+                    : current,
+                cancellationToken);
+            await NotifyUpdateFailedAsync(app.Id, message, cancellationToken);
+            logger.LogWarning("App {AppId} was mid-update when Core stopped; marked failed for re-review.", app.Id);
+            recovered++;
+        }
+
+        return recovered;
+    }
+
+    // Host-admin notification for a completed background update — with no request left to answer,
+    // this (plus the record flip) is how a reloaded page learns the outcome. Best-effort, never
+    // throws. Dedupe key includes the version so distinct updates each notify once.
+    private async Task NotifyUpdateAppliedAsync(AppSummary? app, CancellationToken cancellationToken)
+    {
+        if (notifications is null || app is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await notifications.PublishAsync(
+                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                "info",
+                $"'{app.DisplayName}' updated to {app.Version}",
+                $"The update was applied and '{app.DisplayName}' is now at version {app.Version}.",
+                link: null,
+                $"app-update-applied:{app.Id}:{app.Version}",
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Failed to publish update-applied notification for {AppId}.", app.Id);
+        }
+    }
+
+    // Failure twin of NotifyUpdateAppliedAsync. Dedupe key is per-app so repeated failures coalesce
+    // until one succeeds.
+    private async Task NotifyUpdateFailedAsync(string appId, string message, CancellationToken cancellationToken)
+    {
+        if (notifications is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await notifications.PublishAsync(
+                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                "error",
+                $"'{appId}' update failed",
+                message,
+                link: null,
+                $"app-update-failed:{appId}",
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Failed to publish update-failed notification for {AppId}.", appId);
+        }
+    }
 
     // Reviewed update plans awaiting apply, keyed by app id (one pending plan per app). See the write in
     // CreateUpdatePlanAsync for why apply consumes this rather than rebuilding.
