@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.HttpOverrides;
 
 namespace Haas.Hosty.Core;
@@ -31,6 +32,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
         builder.Services.AddSingleton<AppServiceTokenService>();
         builder.Services.AddSingleton<AppRegistryStore>();
+        builder.Services.AddSingleton<ShellPublicOriginResolver>();
         builder.Services.AddSingleton<MountPathPolicy>();
         builder.Services.AddSingleton<GlobalMountStore>();
         builder.Services.AddSingleton<GlobalMountService>();
@@ -104,16 +106,11 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
-        builder.Services.AddCors(options =>
-        {
-            options.AddPolicy("HostyShell", policy =>
-            {
-                policy.WithOrigins(config.EffectiveShellPublicOrigin)
-                    .AllowCredentials()
-                    .AllowAnyHeader()
-                    .AllowAnyMethod();
-            });
-        });
+        builder.Services.AddCors();
+        // Registered after AddCors so it wins over the default provider it TryAdds. The Shell policy is
+        // built per request because its origin now lives in Shell's app record, which the operator can
+        // change without restarting Core — see ShellCorsPolicyProvider.
+        builder.Services.AddSingleton<ICorsPolicyProvider, ShellCorsPolicyProvider>();
         builder.Services.Configure<ForwardedHeadersOptions>(options =>
         {
             options.ForwardedHeaders =
@@ -134,6 +131,7 @@ internal static class HostyCoreApplication
             HttpRequest request,
             HostyCoreRuntimeConfig config,
             CoreSettingsService settings,
+            ShellPublicOriginResolver shellOrigins,
             UserDirectoryStore users,
             IClock clock,
             CancellationToken cancellationToken) =>
@@ -142,11 +140,11 @@ internal static class HostyCoreApplication
             // including anyone who reaches core.<domain> through ingress — get only liveness/version.
             var user = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, cancellationToken);
             return CoreJson.Json(user is not null && string.Equals(user.Role, "host.admin", StringComparison.Ordinal)
-                ? CoreStatusResponse.From(config, settings.Ingress)
+                ? CoreStatusResponse.From(config, settings.Ingress, await shellOrigins.ResolveAsync(cancellationToken))
                 : CoreStatusResponse.Public());
         });
-        app.MapGet("/control/v1/core/status", (HttpRequest request, HostyCoreRuntimeConfig config, CoreSettingsService settings, ControlSecret secret) =>
-            RequireControlSecret(request, secret, () => CoreJson.Json(CoreStatusResponse.From(config, settings.Ingress))));
+        app.MapGet("/control/v1/core/status", async (HttpRequest request, HostyCoreRuntimeConfig config, CoreSettingsService settings, ShellPublicOriginResolver shellOrigins, ControlSecret secret, CancellationToken cancellationToken) =>
+            await RequireControlSecret(request, secret, async () => CoreJson.Json(CoreStatusResponse.From(config, settings.Ingress, await shellOrigins.ResolveAsync(cancellationToken)))));
         app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime, CoreShutdownOptions shutdownOptions) =>
             RequireControlSecret(request, secret, () =>
             {
@@ -161,15 +159,17 @@ internal static class HostyCoreApplication
 
         if (app.Environment.IsDevelopment())
         {
-            app.MapGet("/login", async (string? returnTo, HostyCoreRuntimeConfig config, UserDirectoryStore users, CancellationToken cancellationToken) =>
+            app.MapGet("/login", async (string? returnTo, HostyCoreRuntimeConfig config, ShellPublicOriginResolver shellOrigins, UserDirectoryStore users, CancellationToken cancellationToken) =>
             {
                 var state = await users.ReadAsync(cancellationToken);
-                return Results.Content(RenderDevelopmentLoginPage(config, state.Users, returnTo: returnTo), "text/html");
+                var shellOrigin = await shellOrigins.ResolveAsync(cancellationToken);
+                return Results.Content(RenderDevelopmentLoginPage(config, shellOrigin, state.Users, returnTo: returnTo), "text/html");
             });
             app.MapPost("/login", async (
                 HttpRequest request,
                 HttpResponse response,
                 HostyCoreRuntimeConfig config,
+                ShellPublicOriginResolver shellOrigins,
                 UserDirectoryStore users,
                 IClock clock,
                 AuthLifetimes lifetimes,
@@ -186,14 +186,15 @@ internal static class HostyCoreApplication
                     lifetimes,
                     cancellationToken);
 
+                var shellOrigin = await shellOrigins.ResolveAsync(cancellationToken);
                 if (result.Succeeded)
                 {
-                    return Results.Redirect(AuthEndpoints.ResolveLoginRedirect(returnTo, config));
+                    return RedirectAfterLogin(returnTo, shellOrigin, config);
                 }
 
                 var state = await users.ReadAsync(cancellationToken);
                 return Results.Content(
-                    RenderDevelopmentLoginPage(config, state.Users, "Select an enabled local Hosty user.", returnTo),
+                    RenderDevelopmentLoginPage(config, shellOrigin, state.Users, "Select an enabled local Hosty user.", returnTo),
                     "text/html",
                     Encoding.UTF8,
                     StatusCodes.Status403Forbidden);
@@ -201,13 +202,14 @@ internal static class HostyCoreApplication
         }
         else
         {
-            app.MapGet("/login", (string? returnTo, HostyCoreRuntimeConfig config) => Results.Content(
-                RenderPasswordLoginPage(config, returnTo: returnTo),
+            app.MapGet("/login", async (string? returnTo, HostyCoreRuntimeConfig config, ShellPublicOriginResolver shellOrigins, CancellationToken cancellationToken) => Results.Content(
+                RenderPasswordLoginPage(config, await shellOrigins.ResolveAsync(cancellationToken), returnTo: returnTo),
                 "text/html"));
             app.MapPost("/login", async (
                 HttpRequest request,
                 HttpResponse response,
                 HostyCoreRuntimeConfig config,
+                ShellPublicOriginResolver shellOrigins,
                 LocalPasswordAuthService passwords,
                 UserDirectoryStore users,
                 IClock clock,
@@ -216,6 +218,7 @@ internal static class HostyCoreApplication
             {
                 var form = await request.ReadFormAsync(cancellationToken);
                 var returnTo = form["returnTo"].ToString();
+                var shellOrigin = await shellOrigins.ResolveAsync(cancellationToken);
                 try
                 {
                     var user = await passwords.AuthenticateAsync(
@@ -234,9 +237,9 @@ internal static class HostyCoreApplication
                         cancellationToken);
 
                     return result.Succeeded
-                        ? Results.Redirect(AuthEndpoints.ResolveLoginRedirect(returnTo, config))
+                        ? RedirectAfterLogin(returnTo, shellOrigin, config)
                         : Results.Content(
-                            RenderPasswordLoginPage(config, "Email or password is invalid.", returnTo),
+                            RenderPasswordLoginPage(config, shellOrigin, "Email or password is invalid.", returnTo),
                             "text/html",
                             Encoding.UTF8,
                             StatusCodes.Status403Forbidden);
@@ -247,38 +250,45 @@ internal static class HostyCoreApplication
                         ? ex.Message
                         : "Email or password is invalid.";
                     return Results.Content(
-                        RenderPasswordLoginPage(config, message, returnTo),
+                        RenderPasswordLoginPage(config, shellOrigin, message, returnTo),
                         "text/html",
                         Encoding.UTF8,
                         ex.StatusCode);
                 }
             });
         }
-        app.MapGet("/setup", (string? setupToken, HostyCoreRuntimeConfig config) => Results.Content(
-            RenderSetupPage(config, setupToken),
+        app.MapGet("/setup", async (string? setupToken, ShellPublicOriginResolver shellOrigins, CancellationToken cancellationToken) => Results.Content(
+            RenderSetupPage(await shellOrigins.ResolveAsync(cancellationToken), setupToken),
             "text/html"));
-        app.MapGet("/setup/invite", (string? setupToken, HostyCoreRuntimeConfig config) => Results.Content(
-            RenderInvitationPage(config, setupToken),
+        app.MapGet("/setup/invite", async (string? setupToken, ShellPublicOriginResolver shellOrigins, CancellationToken cancellationToken) => Results.Content(
+            RenderInvitationPage(await shellOrigins.ResolveAsync(cancellationToken), setupToken),
             "text/html"));
-        app.MapGet("/recovery", (string? recoveryToken, HostyCoreRuntimeConfig config) => Results.Content(
-            RenderRecoveryPage(config, recoveryToken),
+        app.MapGet("/recovery", async (string? recoveryToken, ShellPublicOriginResolver shellOrigins, CancellationToken cancellationToken) => Results.Content(
+            RenderRecoveryPage(await shellOrigins.ResolveAsync(cancellationToken), recoveryToken),
             "text/html"));
         app.MapGet("/logout", async (
             HttpRequest request,
             HttpResponse response,
-            HostyCoreRuntimeConfig config,
             UserDirectoryStore users,
             AppSessionGrantStore grants,
             IClock clock,
             CancellationToken cancellationToken) =>
         {
             await AuthEndpoints.LogoutAsync(request, response, users, grants, clock, cancellationToken);
-            return Results.Redirect(config.EffectiveShellPublicOrigin);
+            // Core's own login page, not Shell. The session is gone, so bouncing to Shell only made it
+            // bounce straight back here — and it needed a Shell origin to do it, which a host that runs
+            // without Shell (an optional distribution app) does not have. Dropping the hop removes the
+            // dependency rather than teaching it to cope with a missing one.
+            return Results.Redirect("/login");
         });
-        app.MapGet("/api/auth/callback/oidc", (HostyCoreRuntimeConfig config) => Results.Content(RenderCorePage(
+        app.MapGet("/api/auth/callback/oidc", async (
+            HostyCoreRuntimeConfig config,
+            ShellPublicOriginResolver shellOrigins,
+            CancellationToken cancellationToken) => Results.Content(RenderCorePage(
             "Hosty Core OIDC Callback",
             "Hosty Core owns external auth callbacks.",
-            config), "text/html"));
+            config,
+            await shellOrigins.ResolveAsync(cancellationToken)), "text/html"));
 
         DomainEndpoints.Map(app);
         AuthEndpoints.Map(app);
@@ -340,12 +350,12 @@ internal static class HostyCoreApplication
     private static string CreateControlSecret()
         => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
-    private static string RenderCorePage(string title, string message, HostyCoreRuntimeConfig config)
+    private static string RenderCorePage(string title, string message, HostyCoreRuntimeConfig config, string? shellOrigin)
     {
         var encodedTitle = HtmlEncoder.Default.Encode(title);
         var encodedMessage = HtmlEncoder.Default.Encode(message);
         var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
-        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
+        var encodedShellOrigin = RenderShellOriginText(shellOrigin);
 
         return $$"""
           <!doctype html>
@@ -384,12 +394,13 @@ internal static class HostyCoreApplication
 
     private static string RenderDevelopmentLoginPage(
         HostyCoreRuntimeConfig config,
+        string? shellOrigin,
         IReadOnlyList<HostUserRecord> users,
         string? error = null,
         string? returnTo = null)
     {
         var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
-        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
+        var encodedShellOrigin = RenderShellOriginText(shellOrigin);
         var returnToField = RenderReturnToField(returnTo);
         var enabledUsers = users.Where(user => !user.Disabled).ToArray();
         var options = string.Join(Environment.NewLine, enabledUsers.Select(user =>
@@ -449,10 +460,10 @@ internal static class HostyCoreApplication
           """;
     }
 
-    private static string RenderPasswordLoginPage(HostyCoreRuntimeConfig config, string? error = null, string? returnTo = null)
+    private static string RenderPasswordLoginPage(HostyCoreRuntimeConfig config, string? shellOrigin, string? error = null, string? returnTo = null)
     {
         var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
-        var encodedShellOrigin = HtmlEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
+        var encodedShellOrigin = RenderShellOriginText(shellOrigin);
         var returnToField = RenderReturnToField(returnTo);
         var encodedError = error is null
             ? string.Empty
@@ -501,10 +512,30 @@ internal static class HostyCoreApplication
           """;
     }
 
-    private static string RenderSetupPage(HostyCoreRuntimeConfig config, string? setupToken)
+    // Where a freshly signed-in browser goes. A Core-relative app-open continuation wins; otherwise Shell.
+    // With no Shell installed there is no destination at all, so say that on Core's own page rather than
+    // bouncing to a dead origin — Core serves no UI of its own beyond these auth pages by design.
+    private static IResult RedirectAfterLogin(string? returnTo, string? shellOrigin, HostyCoreRuntimeConfig config)
+        => AuthEndpoints.ResolveLoginRedirect(returnTo, shellOrigin) is { } target
+            ? Results.Redirect(target)
+            : Results.Content(
+                RenderCorePage("Hosty Core", "Signed in. This host has no web UI installed.", config, shellOrigin),
+                "text/html");
+
+    // The Shell origin as a JavaScript literal: a quoted string, or `null` when this host has no Shell
+    // installed (it is an optional distribution app). The pages branch on it rather than navigating to a
+    // dead origin, which is what the old `http://localhost:{ShellPort}` fallback produced.
+    private static string RenderShellOriginLiteral(string? shellOrigin)
+        => shellOrigin is null ? "null" : $"'{JavaScriptEncoder.Default.Encode(shellOrigin)}'";
+
+    // Same for prose: the origin, or a plain statement that there is none.
+    private static string RenderShellOriginText(string? shellOrigin)
+        => HtmlEncoder.Default.Encode(shellOrigin ?? "not installed");
+
+    private static string RenderSetupPage(string? shellOrigin, string? setupToken)
     {
         var encodedToken = HtmlEncoder.Default.Encode(setupToken ?? "");
-        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
+        var shellOriginLiteral = RenderShellOriginLiteral(shellOrigin);
 
         return $$"""
           <!doctype html>
@@ -573,7 +604,13 @@ internal static class HostyCoreApplication
                   message.textContent = error.message || 'Administrator setup could not be completed.';
                   return;
                 }
-                window.location.href = '{{encodedShellOrigin}}';
+                const shellOrigin = {{shellOriginLiteral}};
+                if (!shellOrigin) {
+                  message.className = '';
+                  message.textContent = 'Done. This host has no web UI installed, so there is nowhere to send you.';
+                  return;
+                }
+                window.location.href = shellOrigin;
               });
             </script>
           </body>
@@ -581,10 +618,10 @@ internal static class HostyCoreApplication
           """;
     }
 
-    private static string RenderRecoveryPage(HostyCoreRuntimeConfig config, string? recoveryToken)
+    private static string RenderRecoveryPage(string? shellOrigin, string? recoveryToken)
     {
         var encodedToken = HtmlEncoder.Default.Encode(recoveryToken ?? "");
-        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
+        var shellOriginLiteral = RenderShellOriginLiteral(shellOrigin);
 
         return $$"""
           <!doctype html>
@@ -653,7 +690,13 @@ internal static class HostyCoreApplication
                   message.textContent = error.message || 'Administrator recovery could not be completed.';
                   return;
                 }
-                window.location.href = '{{encodedShellOrigin}}';
+                const shellOrigin = {{shellOriginLiteral}};
+                if (!shellOrigin) {
+                  message.className = '';
+                  message.textContent = 'Done. This host has no web UI installed, so there is nowhere to send you.';
+                  return;
+                }
+                window.location.href = shellOrigin;
               });
             </script>
           </body>
@@ -661,10 +704,10 @@ internal static class HostyCoreApplication
           """;
     }
 
-    private static string RenderInvitationPage(HostyCoreRuntimeConfig config, string? setupToken)
+    private static string RenderInvitationPage(string? shellOrigin, string? setupToken)
     {
         var encodedToken = HtmlEncoder.Default.Encode(setupToken ?? "");
-        var encodedShellOrigin = JavaScriptEncoder.Default.Encode(config.EffectiveShellPublicOrigin);
+        var shellOriginLiteral = RenderShellOriginLiteral(shellOrigin);
 
         return $$"""
           <!doctype html>
@@ -731,7 +774,13 @@ internal static class HostyCoreApplication
                   message.textContent = error.message || 'Invitation could not be accepted.';
                   return;
                 }
-                window.location.href = '{{encodedShellOrigin}}';
+                const shellOrigin = {{shellOriginLiteral}};
+                if (!shellOrigin) {
+                  message.className = '';
+                  message.textContent = 'Done. This host has no web UI installed, so there is nowhere to send you.';
+                  return;
+                }
+                window.location.href = shellOrigin;
               });
             </script>
           </body>
@@ -771,7 +820,12 @@ internal sealed record HostyCoreRuntimeConfig(
 {
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
 
-    public string EffectiveShellPublicOrigin => ShellPublicOrigin ?? $"http://localhost:{ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+    // No EffectiveShellPublicOrigin: where Shell is reachable is resolved from Shell's own app record
+    // (ShellPublicOriginResolver), not from Core's launch config. Shell is an optional distribution app,
+    // so Core carrying a config for it — and synthesising a localhost fallback for a host that may have
+    // no Shell at all — was the bug. ShellPublicOrigin survives only as the transitional seed that the
+    // bootstrap stamps into the record's public-origin setting; it retires with the CLI's other per-app
+    // launch settings.
 
     public string EffectiveIngressConfigPath => IngressConfigPath ?? Path.Combine(DataRoot, "core", "ingress", "config.yml");
 
@@ -1611,7 +1665,7 @@ internal sealed record CoreStatusResponse(
     // Ingress provider/domain/tunnel are live operator settings, so pass the current IngressSettings
     // (from CoreSettingsService) rather than reading a startup snapshot — the reported provider and
     // warnings track platform-panel edits without a restart. The config.yml path stays launch-only.
-    public static CoreStatusResponse From(HostyCoreRuntimeConfig config, IngressSettings ingress)
+    public static CoreStatusResponse From(HostyCoreRuntimeConfig config, IngressSettings ingress, string? shellPublicOrigin)
         => new(
             "running",
             "hosty-core",
@@ -1621,7 +1675,8 @@ internal sealed record CoreStatusResponse(
             config.CorePort,
             config.ShellPort,
             config.EffectiveCorePublicOrigin,
-            config.EffectiveShellPublicOrigin,
+            // Resolved from Shell's app record, not Core config: null when this host has no Shell.
+            shellPublicOrigin,
             config.RuntimePublicHost,
             // The Shell manifest now resolves from the distribution list at boot; only a deprecated
             // explicit legacy override still surfaces here. Null means "distribution default".

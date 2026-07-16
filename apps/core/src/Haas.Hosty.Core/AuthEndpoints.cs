@@ -221,9 +221,11 @@ internal static class AuthEndpoints
     };
 
     // Only a Core-relative app-open continuation may be used as a post-login redirect target, so
-    // /login can never be turned into an open redirect. Anything else falls back to the Shell origin.
-    internal static string ResolveLoginRedirect(string? returnTo, HostyCoreRuntimeConfig config)
-        => IsAllowedLoginReturnTo(returnTo) ? returnTo! : config.EffectiveShellPublicOrigin;
+    // /login can never be turned into an open redirect. Anything else falls back to the Shell origin —
+    // and null when this host has no Shell (an optional distribution app), because then there is
+    // genuinely nowhere to send the browser and the caller has to say so instead of inventing a target.
+    internal static string? ResolveLoginRedirect(string? returnTo, string? shellOrigin)
+        => IsAllowedLoginReturnTo(returnTo) ? returnTo! : shellOrigin;
 
     internal static bool IsAllowedLoginReturnTo(string? returnTo)
     {
