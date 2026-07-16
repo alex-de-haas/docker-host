@@ -48,6 +48,44 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_DropsTheRetiredShellHostnameSettingFromAnExistingRecord()
+    {
+        // Boot used to stamp HOSTNAME onto the Shell record from the public origin's host. It never
+        // reached the container (the manifest's own HOSTNAME=0.0.0.0 bind address is appended later and
+        // wins docker's last-`-e` rule), so all it did was leave a settings row that looked like it
+        // controlled the public origin. ConfigureAsync can only null a value, not drop the key, so the
+        // bootstrap has to remove it explicitly — otherwise it lingers forever on existing installs.
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected at boot"));
+        var manifest = Path.Combine(root, "retired-setting-manifest.json");
+        await File.WriteAllTextAsync(manifest, CreateShellManifest("1.0.0", "hosty-shell", "local", "never"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: manifest,
+            SelectedRuntime: "docker",
+            System: true,
+            Autostart: false));
+        await fixture.Lifecycle.ConfigureAsync(
+            "hosty.shell",
+            new AppConfigureRequest(new Dictionary<string, string?>(StringComparer.Ordinal) { ["HOSTNAME"] = "shell.example.test" }));
+        Assert.Contains("HOSTNAME", (await fixture.Apps.GetAppAsync("hosty.shell"))!.Settings.Keys);
+
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var supervisor = CreateSupervisor(fixture, config, CreateDistribution(("hosty.shell", manifest, true)));
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            var shell = await WaitForAppAsync(fixture.Apps, "hosty.shell", app => !app.Settings.ContainsKey("HOSTNAME"));
+
+            // The Core-owned setting the bootstrap still owns is untouched.
+            Assert.Contains("HOSTY_PORT_HTTP", shell.Settings.Keys);
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task StopAsync_KeepApps_LeavesRuntimeAppsRunning()
     {
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
