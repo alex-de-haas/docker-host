@@ -59,7 +59,14 @@ internal sealed class ShellPublicOriginResolver(AppRegistryStore apps, IClock cl
     private async Task<string?> ReadAsync(CancellationToken cancellationToken)
     {
         var app = await apps.GetAppAsync(ShellBootstrap.AppId, cancellationToken);
-        var endpoint = (app?.Endpoints ?? []).FirstOrDefault(candidate => candidate.Public);
+        var publicEndpoints = (app?.Endpoints ?? []).Where(candidate => candidate.Public).ToArray();
+        // Name the web endpoint rather than taking whichever public one comes first: the legacy-origin
+        // migration stamps that exact key (ShellBootstrap.WebEndpointKey), so letting endpoint order pick
+        // it here would have the two sides disagree the moment Shell publishes a second endpoint. Any
+        // public endpoint still serves as a fallback, so a manifest that renames it is not a dead end.
+        var endpoint = publicEndpoints.FirstOrDefault(candidate =>
+                string.Equals(candidate.Key, ShellBootstrap.WebEndpointKey, StringComparison.Ordinal))
+            ?? publicEndpoints.FirstOrDefault();
         if (app is null || endpoint is null)
         {
             return null;

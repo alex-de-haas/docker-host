@@ -51,6 +51,32 @@ public sealed class ShellPublicOriginResolverTests : IDisposable
         Assert.Equal("http://127.0.0.1:7171", await resolver.ResolveAsync());
     }
 
+    [Fact]
+    public async Task ResolveAsync_PrefersTheWebEndpointOverAnotherPublicOne()
+    {
+        // The legacy-origin migration stamps the web endpoint's key specifically, so the resolver has to
+        // name it too. Taking whichever public endpoint sorts first would read a different setting than
+        // the one that was written the moment Shell publishes a second endpoint.
+        var resolver = CreateResolver(out var apps);
+        var webKey = PublicOriginSettings.BuildSettingKey("web");
+        var adminKey = PublicOriginSettings.BuildSettingKey("admin");
+        await apps.UpsertAppAsync(CreateShell(publicOrigin: null, endpointUrl: null) with
+        {
+            Endpoints =
+            [
+                new AppEndpointContract("admin", "http", "http://127.0.0.1:9001", Public: true),
+                new AppEndpointContract("web", "http", "http://127.0.0.1:7171", Public: true),
+            ],
+            Settings = new Dictionary<string, AppSettingValue>(StringComparer.Ordinal)
+            {
+                [adminKey] = new(adminKey, "url", "https://admin.example.test", Secret: false),
+                [webKey] = new(webKey, "url", "https://shell.example.test", Secret: false),
+            },
+        });
+
+        Assert.Equal("https://shell.example.test", await resolver.ResolveAsync());
+    }
+
     private ShellPublicOriginResolver CreateResolver(out AppRegistryStore apps)
     {
         Directory.CreateDirectory(root);

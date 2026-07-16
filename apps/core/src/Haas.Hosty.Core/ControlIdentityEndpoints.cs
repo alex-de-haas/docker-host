@@ -50,7 +50,6 @@ internal static class ControlIdentityEndpoints
             UserDirectoryStore users,
             AppRegistryStore apps,
             AppIdentityService identity,
-            HostyCoreRuntimeConfig config,
             ShellPublicOriginResolver shellOrigins,
             AppOpenLinkRequest input,
             CancellationToken cancellationToken) =>
