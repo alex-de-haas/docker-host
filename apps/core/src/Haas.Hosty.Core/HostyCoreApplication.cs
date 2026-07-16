@@ -1037,6 +1037,7 @@ internal sealed class RuntimeAppSupervisorService(
         }
 
         await MigratePortAssignmentsAsync(stoppingToken);
+        await RecoverInterruptedUpdatesAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
         await lifecycle.ReconcileIngressAsync(stoppingToken);
@@ -1293,6 +1294,28 @@ internal sealed class RuntimeAppSupervisorService(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
             logger.LogWarning(ex, "Hosty runtime app autostart did not complete.");
+        }
+    }
+
+    // Boot sweep for background applies interrupted by a Core stop (plan-first updates phase 3):
+    // flips stuck "updating" records to failed-for-re-review before autostart reconciliation reads
+    // them. Best-effort — a recovery failure must never abort boot.
+    private async Task RecoverInterruptedUpdatesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var recovered = await lifecycle.RecoverInterruptedUpdatesAsync(cancellationToken);
+            if (recovered > 0)
+            {
+                logger.LogWarning("Marked {Count} app update(s) interrupted by the previous Core stop as failed.", recovered);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Interrupted-update recovery did not complete.");
         }
     }
 

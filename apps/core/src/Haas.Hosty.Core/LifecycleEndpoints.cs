@@ -348,6 +348,11 @@ internal static class LifecycleEndpoints
                 async () => await HandleLifecycleError(() => lifecycle.GetPendingUpdatePlanAsync(appId, cancellationToken)),
                 cancellationToken: cancellationToken));
 
+        // Enqueue-and-return: validation errors (digest mismatch, stale base, already updating) come
+        // back immediately; the apply itself runs detached on the application lifetime token so a
+        // page reload never aborts it. Progress is the record's operationStatus ("updating"), the
+        // outcome is the record flip plus a notification. The CLI control-plane twin below stays
+        // synchronous. See docs/planning/plan-first-app-updates.md (phase 3).
         app.MapPost("/api/apps/{appId}/update", async (
             string appId,
             HttpRequest request,
@@ -360,7 +365,7 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.ApplyUpdateAsync(appId, input, cancellationToken)),
+                async () => await HandleLifecycleError(() => lifecycle.EnqueueUpdateAsync(appId, input, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 

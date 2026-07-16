@@ -2151,6 +2151,177 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task EnqueueUpdateAsync_ReturnsUpdatingThenFlipsToUpdated()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        // The install source moves to 1.1.0 in place, like a real folder/URL source would.
+        File.Copy(await fixture.WriteManifestAsync("1.1.0"), manifest, overwrite: true);
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        var response = await fixture.Service.EnqueueUpdateAsync(
+            "com.example.notes",
+            new AppUpdateApplyRequest(plan.PlanDigest));
+
+        // The enqueue answers immediately with the persisted in-progress marker.
+        Assert.Equal("updating", response.Status);
+        Assert.Equal("updating", response.App?.OperationStatus);
+
+        // Awaiting the detached run (test seam) lands the real outcome on the record.
+        if (fixture.Service.TryGetRunningBackgroundUpdate("com.example.notes") is { } run)
+        {
+            await run;
+        }
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("updated", app!.OperationStatus);
+        Assert.Equal("1.1.0", app.Version);
+        Assert.Null(app.LastError);
+
+        // The post-apply re-plan settled the row: a fresh verdict against the new base, no update.
+        var summary = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.NotNull(summary.UpdateCheck);
+        Assert.False(summary.UpdateCheck!.UpdateAvailable);
+    }
+
+    [Fact]
+    public async Task EnqueueUpdateAsync_RejectsASecondEnqueueWhileApplying()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Service.StartAsync("com.example.notes");
+        var manifestV2 = await fixture.WriteManifestAsync("1.1.0");
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+
+        // Hold the apply inside the runtime stop so it is deterministically in flight.
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Adapter.StopGate = gate.Task;
+
+        var accepted = await fixture.Service.EnqueueUpdateAsync(
+            "com.example.notes",
+            new AppUpdateApplyRequest(plan.PlanDigest, manifestV2));
+        Assert.Equal("updating", accepted.Status);
+
+        var rejected = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.EnqueueUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest, manifestV2)));
+        Assert.Equal("update_in_progress", rejected.Code);
+
+        gate.SetResult();
+        fixture.Adapter.StopGate = null;
+        if (fixture.Service.TryGetRunningBackgroundUpdate("com.example.notes") is { } run)
+        {
+            await run;
+        }
+
+        // The app was running, so the apply restarted it — the post-update start is the last
+        // operation on the record; the version proves the update landed.
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("started", app!.OperationStatus);
+        Assert.Equal("1.1.0", app.Version);
+    }
+
+    [Fact]
+    public async Task EnqueueUpdateAsync_ValidationErrorsAnswerImmediatelyWithoutMarkingTheRecord()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // No pending plan at all: the enqueue must not touch the record.
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.EnqueueUpdateAsync("com.example.notes", new AppUpdateApplyRequest("sha256:nope")));
+        Assert.Equal("update_plan_expired", error.Code);
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("installed", app!.OperationStatus);
+        Assert.Null(fixture.Service.TryGetRunningBackgroundUpdate("com.example.notes"));
+    }
+
+    [Fact]
+    public async Task EnqueueUpdateAsync_BackgroundFailureLandsOnTheRecord()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Service.StartAsync("com.example.notes");
+        var manifestV2 = await fixture.WriteManifestAsync("1.1.0");
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+
+        // The post-update restart fails (StartCount 1 was the initial start, 2 is the re-start).
+        fixture.Adapter.FailOnStartCount = 2;
+
+        _ = await fixture.Service.EnqueueUpdateAsync(
+            "com.example.notes",
+            new AppUpdateApplyRequest(plan.PlanDigest, manifestV2));
+        if (fixture.Service.TryGetRunningBackgroundUpdate("com.example.notes") is { } run)
+        {
+            await run;
+        }
+
+        // With no request left to answer, the outcome lives on the record.
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("failed", app!.OperationStatus);
+        Assert.Equal("update", app.LastOperation);
+        Assert.NotNull(app.LastError);
+    }
+
+    [Fact]
+    public async Task RecoverInterruptedUpdatesAsync_FlipsStuckUpdatingRecords()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var healthy = await fixture.WriteManifestAsync("1.0.0", id: "com.example.other", name: "Other");
+        await fixture.Service.InstallAsync(new AppInstallRequest(healthy));
+
+        // Simulate a Core stop mid-apply: the record was left marked "updating".
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(app! with { OperationStatus = "updating", LastOperation = "update" });
+
+        var recovered = await fixture.Service.RecoverInterruptedUpdatesAsync();
+
+        Assert.Equal(1, recovered);
+        var flipped = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("failed", flipped!.OperationStatus);
+        Assert.Contains("interrupted", flipped.LastError, StringComparison.OrdinalIgnoreCase);
+
+        // The untouched app is left alone, and a second sweep finds nothing.
+        Assert.Equal("installed", (await fixture.Apps.GetAppAsync("com.example.other"))!.OperationStatus);
+        Assert.Equal(0, await fixture.Service.RecoverInterruptedUpdatesAsync());
+    }
+
+    [Fact]
+    public async Task RecoverInterruptedUpdatesAsync_LeavesAnInFlightBackgroundUpdateAlone()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Service.StartAsync("com.example.notes");
+        File.Copy(await fixture.WriteManifestAsync("1.1.0"), manifest, overwrite: true);
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        // A legitimate background apply is in flight (held inside the runtime stop) — its record is
+        // marked "updating", but its single-flight slot must shield it from the boot sweep.
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Adapter.StopGate = gate.Task;
+        _ = await fixture.Service.EnqueueUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest));
+
+        Assert.Equal(0, await fixture.Service.RecoverInterruptedUpdatesAsync());
+        Assert.Equal("updating", (await fixture.Apps.GetAppAsync("com.example.notes"))!.OperationStatus);
+
+        gate.SetResult();
+        fixture.Adapter.StopGate = null;
+        if (fixture.Service.TryGetRunningBackgroundUpdate("com.example.notes") is { } run)
+        {
+            await run;
+        }
+
+        Assert.Equal("1.1.0", (await fixture.Apps.GetAppAsync("com.example.notes"))!.Version);
+    }
+
+    [Fact]
     public async Task UpdateAvailabilityProjection_FollowsPlanBuildAndApply()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -5010,10 +5181,19 @@ public sealed class CoreLifecycleServiceTests
         public Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
             => Task.FromResult(RemoteDigest);
 
-        public Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+        // When set, StopAsync waits for this gate before answering — lets a test hold a background
+        // update apply deterministically "in flight".
+        public Task? StopGate { get; set; }
+
+        public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             StopCount++;
-            return Task.FromResult(new AppRuntimeOperationResult("stopped"));
+            if (StopGate is { } gate)
+            {
+                await gate;
+            }
+
+            return new AppRuntimeOperationResult("stopped");
         }
 
         public Task<AppRuntimeOperationResult> RemoveAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
