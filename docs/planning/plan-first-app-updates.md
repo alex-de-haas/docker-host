@@ -1,10 +1,10 @@
 # Plan-First App Updates
 
-Status: Draft
+Status: Ready
 Created: 2026-07-16
 Updated: 2026-07-16
 
-Not yet approved for implementation. Captures the agreed design for one-click, reload-safe app
+Approved for implementation on 2026-07-16. Captures the agreed design for one-click, reload-safe app
 updates: update checking builds full reviewed-update plans up front, rows offer a silent "Update"
 or an explicit "Review" based on the plan's change classes, apply runs as a Core-side background
 operation with persisted progress, and "Update All" applies every routine update in one action.
