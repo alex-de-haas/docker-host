@@ -41,6 +41,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 import {
   appHasMissingRequiredSettings,
+  appSupportsReviewedUpdate,
   buildRuntimeServiceRows,
   formatRuntimeProfileLabel,
   formatUpdateChange,
@@ -177,12 +178,12 @@ export function InstalledAppsPage({
   }, [updateStatusInvalidations, runtimeApps, systemApps, loadUpdateStatus]);
 
   // Fleet "Check updates": probe every app that has a reviewed-update path — system apps included,
-  // since they update through the same plan/apply flow. Live source apps (manifest adopted on
-  // restart) and apps without the update capability are skipped — mirrors the per-row `canUpdate`
-  // gate. Runs a small concurrency pool so a large fleet does not fan out N registry lookups at
-  // once, then summarises the outcome in a toast.
+  // since they update through the same plan/apply flow. Only live source apps (manifest adopted on
+  // restart) are skipped — mirrors the per-row `canUpdate` gate via appSupportsReviewedUpdate. Runs a
+  // small concurrency pool so a large fleet does not fan out N registry lookups at once, then
+  // summarises the outcome in a toast.
   const checkAllUpdates = useCallback(async () => {
-    const targets = [...runtimeApps, ...systemApps].filter((app) => !app.live && app.capabilities.includes("update"));
+    const targets = [...runtimeApps, ...systemApps].filter(appSupportsReviewedUpdate);
     if (targets.length === 0) {
       toast.info("No updatable apps", { description: "Apps with a reviewed update path will appear here." });
       return;
@@ -824,20 +825,26 @@ function InstalledAppRow({
   const running = app.runtimeState === "running";
   const canControl = canManageApps && !app.system;
   const canSwitchRuntime = canManageApps;
+  // `backup` and `logs` are the only genuine capability gates left: unlike the lifecycle verbs, they
+  // are optional *features* that depend on the app itself (does it have data worth snapshotting?),
+  // which is why Core's canonical vocabulary is now just those two. Restore lives inside this panel.
   const canBackup = canControl && app.capabilities.includes("backup");
   // Settings (env/public origins/mounts/source) are available for system apps too; only start/stop,
   // backups, and remove stay gated on !app.system via canControl.
   const canConfigure = canManageApps;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
-  // Update affordance is hidden and the live-source status icon is shown instead. See CoreApp.live.
-  // Deliberately not gated on !app.system: system apps go through the same reviewed plan/apply flow
-  // as every other runtime app (docs/ideas/system-app-updates.md); only start/stop, backups, and
-  // remove stay system-gated via canControl.
-  const canUpdate = canManageApps && !app.live && app.capabilities.includes("update");
+  // Update affordance is hidden and the live-source status icon is shown instead — that live check is
+  // all appSupportsReviewedUpdate does. Deliberately not gated on !app.system: system apps go through
+  // the same reviewed plan/apply flow as every other runtime app (docs/ideas/system-app-updates.md);
+  // only start/stop, backups, and remove stay system-gated via canControl.
+  const canUpdate = canManageApps && appSupportsReviewedUpdate(app);
   // The Update button is promoted out of the actions menu into the row: it appears only once an
   // update-status probe (row expand or the header "Check updates") has confirmed one is available.
   const updateAvailable = canUpdate && (updateStatusState?.status?.updateAvailable ?? false);
-  const canRemove = canControl && app.capabilities.includes("remove");
+  // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
+  // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
+  // uninstalled by omitting a token. canControl already keeps system apps out.
+  const canRemove = canControl;
   // Development Mode is a per-source-runtime toggle (localCommand + Core reports developmentMode).
   // Surface it in the actions menu only for the *selected* source runtime, so an operator can flip
   // live/reviewed without opening Settings → Source. See runtime-artifact-model.md.

@@ -3246,7 +3246,10 @@ internal sealed class CoreLifecycleService(
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
         AddUpdateDataTargetChanges(changes, app, targetSelection);
-        AddCapabilityChanges(changes, app.Capabilities, ResolveCapabilities(targetSelection.Manifest));
+        // Both sides are normalized: the stored list may predate the canonical vocabulary (records
+        // installed when it still carried `update`/`stop`/`open`/...), and diffing it raw against a
+        // normalized target would report those retired tokens as freshly "removed".
+        AddCapabilityChanges(changes, NormalizeCapabilities(app.Capabilities), ResolveCapabilities(targetSelection.Manifest));
 
         if (changes.Count == 0 &&
             !string.Equals(currentSelection.ManifestDigest, targetSelection.ManifestDigest, StringComparison.Ordinal))
@@ -3715,8 +3718,19 @@ internal sealed class CoreLifecycleService(
         }
     }
 
+    // Filters a declared list down to the canonical vocabulary, dropping retired lifecycle tokens
+    // (`update`, `stop`, ...) and anything unknown. Applied to BOTH sides of an update diff so a
+    // record installed under the old vocabulary does not surface a wall of phantom
+    // `capability:*:removed` changes on its next update plan.
+    private static IReadOnlyList<string> NormalizeCapabilities(IReadOnlyList<string> capabilities)
+        => capabilities.Where(CanonicalCapabilities.Contains).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+
+    // A manifest that declares no capabilities gets the default set; one that declares any list has it
+    // normalized (replace, not merge — the author states exactly which optional features they support,
+    // and with lifecycle tokens out of the vocabulary a partial list can no longer strip an inherent
+    // operation the way it used to).
     private static IReadOnlyList<string> ResolveCapabilities(RuntimeAppManifest manifest)
-        => manifest.Capabilities.Count == 0 ? DefaultCapabilities : manifest.Capabilities;
+        => manifest.Capabilities.Count == 0 ? DefaultCapabilities : NormalizeCapabilities(manifest.Capabilities);
 
     private static IReadOnlyDictionary<string, string> BuildPortMap(IReadOnlyList<RuntimePortManifest> ports)
     {
@@ -4180,7 +4194,17 @@ internal sealed class CoreLifecycleService(
         }
     }
 
-    private static readonly string[] DefaultCapabilities = ["open", "update", "restart", "stop", "remove", "backup", "restore", "logs"];
+    // The canonical capability vocabulary: optional, app-provided *features* a client may surface —
+    // never lifecycle operations. start/stop/restart/update/remove are inherent to Core managing an
+    // app and are authorized by the admin session on the endpoint (see LifecycleEndpoints), never by
+    // this list: an app must not be able to opt out of being stopped or updated by omitting a token.
+    // `open` is derived from the app's endpoints and `restore` lives inside the backup panel, so
+    // neither was ever read by a client either. Historic manifests still declare all of the above;
+    // NormalizeCapabilities strips them. Defaults coincide with the vocabulary because omitting the
+    // field means "whatever optional features this app has". See docs/features/core-app-shell.md.
+    private static readonly string[] DefaultCapabilities = ["backup", "logs"];
+
+    private static readonly HashSet<string> CanonicalCapabilities = new(DefaultCapabilities, StringComparer.Ordinal);
 }
 
 internal sealed record AppUpdatePlanDigestSeed(

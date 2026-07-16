@@ -248,6 +248,62 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_NormalizesDeclaredCapabilitiesToOptionalFeatures()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        // The vocabulary a real pre-existing manifest declares: lifecycle verbs plus `open`. None of
+        // those are the app's to grant — Core authorizes lifecycle on the admin session — so only the
+        // optional feature survives. This is what unwedged an app whose manifest predated "update":
+        // gating the Update affordance on this list made the update that adds the token unreachable.
+        var manifest = await fixture.WriteManifestAsync(
+            "1.0.0",
+            capabilitiesJson: """ "capabilities": ["restart", "stop", "logs", "open", "update"], """);
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(["logs"], app!.Capabilities);
+    }
+
+    [Fact]
+    public async Task InstallAsync_DefaultsCapabilitiesToOptionalFeaturesWhenManifestDeclaresNone()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        // Omitting the field means "whatever optional features this app has", not the old all-verbs set.
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(["backup", "logs"], app!.Capabilities);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_DoesNotReportRetiredCapabilityTokensAsRemoved()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestV1 = await fixture.WriteManifestAsync(
+            "1.0.0",
+            capabilitiesJson: """ "capabilities": ["logs"], """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestV1));
+
+        // Simulate a record persisted under the old vocabulary, before normalization existed. Diffing
+        // it raw against a normalized target would report every retired token as freshly "removed".
+        await fixture.Apps.UpdateAppAsync(
+            "com.example.notes",
+            app => app with { Capabilities = ["open", "update", "restart", "stop", "logs"] });
+
+        var manifestV2 = await fixture.WriteManifestAsync(
+            "1.0.1",
+            capabilitiesJson: """ "capabilities": ["logs"], """);
+        var plan = await fixture.Service.CreateUpdatePlanAsync(
+            "com.example.notes",
+            new AppUpdatePlanRequest(manifestV2));
+
+        Assert.DoesNotContain(plan.Changes, change => change.StartsWith("capability:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task InstallAsync_StillSucceedsWhenStartOnInstallStartFails()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -4096,6 +4152,7 @@ public sealed class CoreLifecycleServiceTests
             string? settingsJson = null,
             string? externalMountsJson = null,
             string? networkJson = null,
+            string? capabilitiesJson = null,
             string id = "com.example.notes",
             string name = "Notes")
         {
@@ -4162,6 +4219,7 @@ public sealed class CoreLifecycleServiceTests
                   {{manifestSettingsJson}}
                   {{dependencyJson}}
                   {{externalMountsJson ?? ""}}
+                  {{capabilitiesJson ?? ""}}
                   "data": {
                     "enabled": true,
                     "targets": [{
