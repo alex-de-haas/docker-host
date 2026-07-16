@@ -676,8 +676,12 @@ internal sealed partial class CoreCommand(CommandContext context)
             .Field("Core origin", Markup.Escape(status.CorePublicOrigin ?? "not configured"))
             // Core resolves this from Shell's app record, so a blank means Shell is not installed at all
             // — not that someone forgot to configure it. "not configured" would send the operator looking
-            // for a setting that no longer exists.
-            .Field("Shell origin", Markup.Escape(status.ShellPublicOrigin ?? "no Shell installed"));
+            // for a setting that no longer exists. Blank-checked rather than null-checked: Core only ever
+            // sends a normalized origin or null, but this is parsing a wire response, and an empty string
+            // slipping through would render an empty cell — the one outcome this line exists to avoid.
+            .Field("Shell origin", string.IsNullOrWhiteSpace(status.ShellPublicOrigin)
+                ? "no Shell installed"
+                : Markup.Escape(status.ShellPublicOrigin));
         context.Console.Write(table);
 
         foreach (var warning in status.Warnings ?? [])
