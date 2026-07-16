@@ -144,6 +144,32 @@ public sealed class SystemAppBootstrapsTests
     }
 
     [Fact]
+    public void FromDistribution_CarriesTheLegacyShellOriginIntoThePublicOriginSetting()
+    {
+        // HOSTY_SHELL_PUBLIC_ORIGIN used to be read straight by Core's auth flow, which made it a second,
+        // invisible source of truth beside the Public Origins the operator can actually see and edit.
+        // Core resolves Shell's origin from the app record now, so the legacy value is carried into that
+        // record — existing hosts keep behaving identically and the effective value finally shows in the UI.
+        var config = CreateConfig() with { ShellPublicOrigin = "https://shell.example.test" };
+
+        var plan = SystemAppBootstraps.FromDistribution([Shell], choices: null, config);
+
+        var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
+        Assert.Equal("https://shell.example.test", shell.Settings!["HOSTY_PUBLIC_ORIGIN_WEB"]);
+    }
+
+    [Fact]
+    public void FromDistribution_WithoutTheLegacyShellOriginStampsNoPublicOrigin()
+    {
+        // Nothing to carry: the setting stays the operator's own, resolved from the record (or absent, in
+        // which case Core falls back to the loopback URL it assigned Shell).
+        var plan = SystemAppBootstraps.FromDistribution([Shell], choices: null, CreateConfig() with { ShellPublicOrigin = null });
+
+        var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
+        Assert.DoesNotContain("HOSTY_PUBLIC_ORIGIN_WEB", shell.Settings!.Keys);
+    }
+
+    [Fact]
     public void FromDistribution_AmbientRuntimeOverridePinsShellAndCollectorDescriptors()
     {
         // The ambient dev/fork override (HOSTY_SHELL_BOOTSTRAP_RUNTIME / HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME)

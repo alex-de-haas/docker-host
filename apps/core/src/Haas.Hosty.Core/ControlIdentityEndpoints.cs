@@ -50,7 +50,7 @@ internal static class ControlIdentityEndpoints
             UserDirectoryStore users,
             AppRegistryStore apps,
             AppIdentityService identity,
-            HostyCoreRuntimeConfig config,
+            ShellPublicOriginResolver shellOrigins,
             AppOpenLinkRequest input,
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
@@ -60,7 +60,16 @@ internal static class ControlIdentityEndpoints
                     var mode = string.IsNullOrWhiteSpace(input.Mode) ? "standalone" : input.Mode;
                     if (string.Equals(mode, "shell", StringComparison.OrdinalIgnoreCase))
                     {
-                        var shellOrigin = config.EffectiveShellPublicOrigin;
+                        // No Shell installed (it is an optional distribution app) means there is no shell
+                        // link to mint. Say so plainly — `hosty open` surfaces this — instead of handing
+                        // back a URL built on a fallback origin that nothing is listening on.
+                        if (await shellOrigins.ResolveAsync(cancellationToken) is not { } shellOrigin)
+                        {
+                            return CoreJson.Json(
+                                new ErrorResponse("shell_not_installed", "This host has no Shell installed, so there is no shell link to open."),
+                                statusCode: StatusCodes.Status409Conflict);
+                        }
+
                         return CoreJson.Json(new AppOpenLinkResponse(
                             AppId: appId,
                             UserId: user.Id,

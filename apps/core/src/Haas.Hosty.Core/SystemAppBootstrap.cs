@@ -180,11 +180,30 @@ internal static class ShellBootstrap
 {
     public const string AppId = "hosty.shell";
 
+    // The endpoint Shell publishes; its public-origin setting is the one Core resolves against.
+    public const string WebEndpointKey = "web";
+
     public static IReadOnlyDictionary<string, string?> BuildBootstrapSettings(HostyCoreRuntimeConfig config)
-        => new Dictionary<string, string?>(StringComparer.Ordinal)
+    {
+        var settings = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
             ["HOSTY_PORT_HTTP"] = config.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
+
+        // Transition: HOSTY_SHELL_PUBLIC_ORIGIN used to be read directly by Core's auth flow, which made
+        // it a second, invisible source of truth next to the Public Origins the operator can actually
+        // see. Core now resolves Shell's origin from the app record like any other app, so the legacy
+        // value is carried into that record instead — stamped every boot while the variable is set, which
+        // keeps existing hosts behaving exactly as before and finally shows the effective value in the UI.
+        // Clearing the variable hands ownership to the operator (the setting becomes editable and sticks);
+        // the variable itself retires with the rest of the CLI's per-app launch settings.
+        if (PublicOriginSettings.TryNormalizeOrigin(config.ShellPublicOrigin, out var legacyOrigin))
+        {
+            settings[PublicOriginSettings.BuildSettingKey(WebEndpointKey)] = legacyOrigin;
+        }
+
+        return settings;
+    }
 
     // HOSTNAME used to be stamped here from the Shell public origin's host. It never did anything: the
     // manifest declares HOSTNAME=0.0.0.0 as the Next.js bind address, and a service's manifest

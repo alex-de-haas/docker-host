@@ -316,9 +316,10 @@ internal sealed record AuthBootstrapRequest(string SetupToken, string Email, str
 
 internal sealed record AuthRecoveryRequest(string RecoveryToken, string Email, string? DisplayName = null, string? Password = null);
 
-internal sealed record AuthBootstrapCompleteResponse(HostUserRecord User, string RedirectTo);
+// RedirectTo is null when the host has no Shell installed: there is no UI client to continue to.
+internal sealed record AuthBootstrapCompleteResponse(HostUserRecord User, string? RedirectTo);
 
-internal sealed record AuthRecoveryCompleteResponse(HostUserRecord User, string RedirectTo);
+internal sealed record AuthRecoveryCompleteResponse(HostUserRecord User, string? RedirectTo);
 
 internal sealed record IssuedAuthBootstrapToken(string Id, string Token, DateTimeOffset ExpiresAt);
 

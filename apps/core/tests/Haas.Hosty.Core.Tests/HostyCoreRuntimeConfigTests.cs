@@ -23,7 +23,9 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Null(config.CorePublicOrigin);
         Assert.Null(config.ShellPublicOrigin);
         Assert.Equal("http://localhost:7070", config.EffectiveCorePublicOrigin);
-        Assert.Equal("http://localhost:7171", config.EffectiveShellPublicOrigin);
+        // No effective-Shell counterpart: Core no longer synthesises a Shell origin. Where Shell is
+        // reachable comes from its own app record now (ShellPublicOriginResolver), and a host without
+        // Shell has none at all — the old http://localhost:{ShellPort} fallback pointed at nothing.
     }
 
     [Fact]
@@ -67,7 +69,6 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Equal(8181, config.ShellPort);
         Assert.Equal("http://localhost:8080", config.ListenUrl);
         Assert.Equal("http://localhost:8080", config.EffectiveCorePublicOrigin);
-        Assert.Equal("http://localhost:8181", config.EffectiveShellPublicOrigin);
     }
 
     [Fact]
@@ -89,8 +90,8 @@ public sealed class HostyCoreRuntimeConfigTests
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
 
+        // Survives only as the transitional seed the bootstrap stamps into Shell's public-origin setting.
         Assert.Equal("http://localhost:3100/", config.ShellPublicOrigin);
-        Assert.Equal("http://localhost:3100/", config.EffectiveShellPublicOrigin);
     }
 
     [Fact]
@@ -139,10 +140,11 @@ public sealed class HostyCoreRuntimeConfigTests
         using var shellOriginEnv = TemporaryEnvironment.With("HOSTY_SHELL_PUBLIC_ORIGIN", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
-        var response = CoreStatusResponse.From(config, IngressSettings.FromEnvironment());
+        var response = CoreStatusResponse.From(config, IngressSettings.FromEnvironment(), shellPublicOrigin: null);
 
         Assert.Equal("http://localhost:7070", response.CorePublicOrigin);
-        Assert.Equal("http://localhost:7171", response.ShellPublicOrigin);
+        // Reported straight from the resolver: null here stands for "this host has no Shell installed".
+        Assert.Null(response.ShellPublicOrigin);
         Assert.False(string.IsNullOrWhiteSpace(response.Version));
     }
 
