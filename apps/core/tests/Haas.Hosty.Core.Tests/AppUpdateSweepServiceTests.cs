@@ -41,21 +41,28 @@ public sealed class AppUpdateSweepServiceTests
     }
 
     [Fact]
-    public async Task RunAsync_SkipsLiveSourceApps()
+    public async Task RunAsync_SkipsLiveSourceApps_AndLivenessSuppressesAnEarlierVerdict()
     {
         using var fixture = CreateFixture();
         var manifestPath = Path.Combine(fixture.Root, "live-app.json");
         await File.WriteAllTextAsync(manifestPath, LiveManifest());
         await fixture.Lifecycle.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "docker"));
+
+        // Checked while still on the compiled runtime: the app carries a verdict.
+        await fixture.Sweep.RunAsync(CancellationToken.None);
+        Assert.NotNull(Assert.Single(await fixture.Lifecycle.ListAppsAsync()).UpdateCheck);
+
+        // Going live must hide that verdict immediately — there is no reviewed-update path anymore,
+        // and no sweep (the scheduler may be disabled) can be relied on to prune it.
         var app = await fixture.Apps.GetAppAsync("com.example.live");
         await fixture.Apps.UpsertAppAsync(app! with { SelectedRuntime = "local" });
+        var live = Assert.Single(await fixture.Lifecycle.ListAppsAsync());
+        Assert.True(live.Live);
+        Assert.Null(live.UpdateCheck);
 
+        // And a sweep leaves the live app unchecked.
         await fixture.Sweep.RunAsync(CancellationToken.None);
-
-        // A live-source app has no reviewed-update path: the sweep leaves it unchecked.
-        var summary = Assert.Single(await fixture.Lifecycle.ListAppsAsync());
-        Assert.True(summary.Live);
-        Assert.Null(summary.UpdateCheck);
+        Assert.Null(Assert.Single(await fixture.Lifecycle.ListAppsAsync()).UpdateCheck);
     }
 
     [Fact]

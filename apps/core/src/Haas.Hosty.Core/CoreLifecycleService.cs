@@ -2133,7 +2133,10 @@ internal sealed class CoreLifecycleService(
         var liveSourcePath = ResolveLiveSourcePath(app, profiles);
         var summary = AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
         // Last-known update verdict (plan-first updates): null until a check has run for this app.
-        return summary with { UpdateCheck = updateAvailability.GetValueOrDefault(app.Id) };
+        // Suppressed for a live-source runtime — it has no reviewed-update path, so a verdict from
+        // before the app went live must not keep offering an update the plan flow would refuse
+        // (sweep pruning alone can't be relied on: the scheduler may be disabled).
+        return summary with { UpdateCheck = summary.Live ? null : updateAvailability.GetValueOrDefault(app.Id) };
     }
 
     // The app's runtime profiles, preferring the persisted record and falling back to a live load from

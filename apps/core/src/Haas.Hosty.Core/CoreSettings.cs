@@ -214,7 +214,8 @@ internal static class CoreUpdateCheckSettings
     public const string IntervalLabel = "Background check interval";
 
     public const string IntervalDescription =
-        "How often Core checks every installed app for updates in the background, in minutes. "
+        "How often Core checks installed apps for updates in the background, in minutes. Apps "
+        + "running live from a source folder have no reviewed-update path and are not checked. "
         + "0 disables the background check; manual checks stay available.";
 
     public static bool IsKnown(string key)
