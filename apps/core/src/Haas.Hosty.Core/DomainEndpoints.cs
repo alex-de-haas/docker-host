@@ -129,7 +129,7 @@ internal static class DomainEndpoints
 
             try
             {
-                var status = await lifecycle.GetUpdateStatusAsync(targetAppId, cancellationToken);
+                var status = await lifecycle.GetUpdateStatusAsync(targetAppId, refresh: false, cancellationToken);
                 return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, status.UpdateAvailable));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

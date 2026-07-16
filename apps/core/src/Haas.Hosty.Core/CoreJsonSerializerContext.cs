@@ -177,6 +177,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppDevelopmentModeRestoreHint))]
 [JsonSerializable(typeof(GlobalMountListResponse))]
 [JsonSerializable(typeof(AppUpdatePlan))]
+[JsonSerializable(typeof(AppPendingUpdatePlanResponse))]
 [JsonSerializable(typeof(AppRuntimeSwitchPlan))]
 [JsonSerializable(typeof(AppBackupsResponse))]
 [JsonSerializable(typeof(AppBackupResponse))]

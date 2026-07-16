@@ -1052,6 +1052,12 @@ internal sealed class CoreLifecycleService(
     }
 
     public async Task<AppUpdatePlan> CreateUpdatePlanAsync(string appId, AppUpdatePlanRequest request, CancellationToken cancellationToken = default)
+        => (await CreateUpdatePlanCoreAsync(appId, request, cancellationToken)).Plan;
+
+    // Builds, classifies, and caches the reviewed-update plan; returns the cache entry so in-process
+    // callers (the update-status projection) can reach the structured artifact probes that ride along
+    // with the wire-shaped plan.
+    private async Task<CachedUpdatePlan> CreateUpdatePlanCoreAsync(string appId, AppUpdatePlanRequest request, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
 
@@ -1110,7 +1116,8 @@ internal sealed class CoreLifecycleService(
         // re-pushed tag): resolve the target tag's digest with a light remote lookup and compare it
         // to the current lock. This closes the invisible-update gap and folds the artifact delta into
         // the plan digest the operator confirms. See runtime-app-marketplace.md (Reviewed update / A4).
-        changes.AddRange(await BuildArtifactDigestChangesAsync(app, selection, cancellationToken));
+        var artifactProbes = await ProbeServiceArtifactsAsync(app, selection, cancellationToken);
+        changes.AddRange(BuildArtifactDigestChanges(artifactProbes));
         var seed = new AppUpdatePlanDigestSeed(
             appId,
             app.Version,
@@ -1137,7 +1144,8 @@ internal sealed class CoreLifecycleService(
             PlanDigest: digest,
             WillCreatePreUpdateBackup: willCreateBackup,
             Changes: changes,
-            SourceConfigured: sourceConfigured);
+            SourceConfigured: sourceConfigured,
+            RequiresReview: PlanRequiresReview(changes));
 
         // Retain the fully-resolved plan so apply can use exactly what the operator confirmed instead of
         // rebuilding it. The rebuild was never reproducible across the plan->apply gap: it re-resolved the
@@ -1145,8 +1153,9 @@ internal sealed class CoreLifecycleService(
         // the feed seed fields, mismatching every time) and re-hit the registry (a blip flipped an
         // artifact digest to "unknown", mismatching the rest). currentSelection.ManifestDigest rides along
         // for the base-state guard in apply. Overwrites any prior pending plan for this app.
-        reviewedUpdatePlans[appId] = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, clock.UtcNow);
-        return plan;
+        var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, clock.UtcNow);
+        reviewedUpdatePlans[appId] = cached;
+        return cached;
     }
 
     public Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
@@ -1165,7 +1174,38 @@ internal sealed class CoreLifecycleService(
         AppUpdatePlan Plan,
         RuntimeAppManifestSelection Selection,
         string CurrentManifestDigest,
+        // Structured per-service registry probe results from the plan build, so the update-status
+        // projection can report per-service digests without re-hitting the registry.
+        IReadOnlyList<AppServiceArtifactProbe> ArtifactProbes,
         DateTimeOffset CreatedAt);
+
+    // Non-throwing read of the pending reviewed plan: returns it while fresh, evicts and returns null
+    // once expired. The read paths (pending-plan GET, update-status projection) share this;
+    // ResolveConfirmedUpdatePlan keeps its own throwing variant with apply-grade error messages.
+    private CachedUpdatePlan? TryGetFreshReviewedPlan(string appId)
+    {
+        if (!reviewedUpdatePlans.TryGetValue(appId, out var cached))
+        {
+            return null;
+        }
+
+        if (clock.UtcNow - cached.CreatedAt > ReviewedUpdatePlanTtl)
+        {
+            EvictReviewedPlan(appId, cached);
+            return null;
+        }
+
+        return cached;
+    }
+
+    // Read-only view of the pending reviewed plan built by an earlier update check or dialog open. A
+    // null plan means nothing is pending (never built, expired, or consumed by an apply) — clients
+    // fall back to requesting a fresh plan. See docs/planning/plan-first-app-updates.md.
+    public async Task<AppPendingUpdatePlanResponse> GetPendingUpdatePlanAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        _ = await RequireAppAsync(appId, cancellationToken);
+        return new AppPendingUpdatePlanResponse(TryGetFreshReviewedPlan(appId)?.Plan);
+    }
 
     // Compare-and-remove: drop the pending plan only while it is still the entry we read. Apply runs under
     // the app lock but CreateUpdatePlanAsync does not (it resolves feeds and probes the registry, and
@@ -1610,9 +1650,62 @@ internal sealed class CoreLifecycleService(
     // no full pull). A service is "update available" only when a lock exists and the candidate differs;
     // an unreachable registry yields a null candidate reported as "unknown" rather than failing. This
     // never mutates state — applying an update still goes through the reviewed-update plan.
-    public async Task<AppUpdateStatusResponse> GetUpdateStatusAsync(string appId, CancellationToken cancellationToken = default)
+    // Read-only update-available report, backed by the cached reviewed-update plan (plan-first
+    // updates): a fresh cached plan is projected without touching the network; otherwise a plan is
+    // built — and cached, so it is the exact plan a subsequent one-click apply consumes by digest —
+    // and projected. `refresh` forces the rebuild. Apps a plan cannot be built for (live source,
+    // unreachable manifest URL, a feed binding with no selection) fall back to the legacy live
+    // computation, which degrades per-source to "unknown": this report must stay total for every
+    // app, never throw for one source being dark. See docs/planning/plan-first-app-updates.md.
+    public async Task<AppUpdateStatusResponse> GetUpdateStatusAsync(string appId, bool refresh = false, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+        if (!refresh && TryGetFreshReviewedPlan(appId) is { } cached)
+        {
+            return ProjectUpdateStatus(app, cached);
+        }
+
+        try
+        {
+            return ProjectUpdateStatus(app, await CreateUpdatePlanCoreAsync(appId, new AppUpdatePlanRequest(), cancellationToken));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Update-status plan build failed for app {AppId}; falling back to the live probe.", appId);
+            return await ComputeLiveUpdateStatusAsync(app, cancellationToken);
+        }
+    }
+
+    // Projects the status response from a cached plan without any network work. `Unknown` keeps the
+    // probe semantics: no lock to compare against, or no resolvable candidate. `UpdateAvailable`
+    // counts every plan change except `artifact:...->unknown` — an unresolvable candidate is
+    // "cannot tell", not "update available".
+    private static AppUpdateStatusResponse ProjectUpdateStatus(AppRecord app, CachedUpdatePlan cached)
+        => new(
+            AppId: app.Id,
+            Runtime: cached.Selection.RuntimeProfile.Key,
+            RuntimeType: cached.Selection.RuntimeProfile.Type,
+            UpdatePolicy: DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
+            UpdateAvailable: cached.Plan.Changes.Any(change => !IsUnknownArtifactChange(change)),
+            Services: cached.ArtifactProbes.Select(ToServiceUpdateStatus).ToList(),
+            ManifestUpdateAvailable: !string.Equals(cached.CurrentManifestDigest, cached.Plan.ManifestDigest, StringComparison.Ordinal),
+            ManifestUnknown: false);
+
+    private static AppServiceUpdateStatus ToServiceUpdateStatus(AppServiceArtifactProbe probe)
+        => new(
+            Service: probe.Service,
+            LockedDigest: probe.LockedDigest,
+            CandidateDigest: probe.CandidateDigest,
+            UpdateAvailable: !string.IsNullOrWhiteSpace(probe.LockedDigest)
+                && !string.IsNullOrWhiteSpace(probe.CandidateDigest)
+                && !string.Equals(probe.LockedDigest, probe.CandidateDigest, StringComparison.Ordinal),
+            Unknown: string.IsNullOrWhiteSpace(probe.LockedDigest) || string.IsNullOrWhiteSpace(probe.CandidateDigest));
+
+    // Legacy live status computation, kept for the apps the plan path refuses (see
+    // GetUpdateStatusAsync): resolves the candidate manifest per source with graceful per-source
+    // degradation, then compares locked digests against the registry.
+    private async Task<AppUpdateStatusResponse> ComputeLiveUpdateStatusAsync(AppRecord app, CancellationToken cancellationToken)
+    {
         var selection = await LoadSelectionForAppAsync(app, cancellationToken);
         var candidateSelection = selection;
         var manifestUpdateAvailable = false;
@@ -1639,7 +1732,7 @@ internal sealed class CoreLifecycleService(
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 manifestUnknown = true;
-                logger.LogWarning(ex, "Failed to resolve feed update status for app {AppId}.", appId);
+                logger.LogWarning(ex, "Failed to resolve feed update status for app {AppId}.", app.Id);
             }
         }
         else if (!string.IsNullOrWhiteSpace(app.ManifestUrl))
@@ -1668,61 +1761,18 @@ internal sealed class CoreLifecycleService(
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 manifestUnknown = true;
-                logger.LogWarning(ex, "Failed to resolve manifest update status for app {AppId} from {ManifestUrl}.", appId, app.ManifestUrl);
+                logger.LogWarning(ex, "Failed to resolve manifest update status for app {AppId} from {ManifestUrl}.", app.Id, app.ManifestUrl);
             }
         }
 
-        var policy = DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy);
-        var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
-
-        var services = new List<AppServiceUpdateStatus>();
-        foreach (var service in candidateSelection.Services
-            .Where(service => service.Image is not null)
-            .OrderBy(service => service.Key, StringComparer.Ordinal))
-        {
-            var lockedDigest = app.ArtifactLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
-
-            // Without a recorded lock (an app not yet started, or a local-only image that has no
-            // digest) there is nothing to compare a candidate against, so update availability cannot
-            // be determined — report "unknown" and skip the registry lookup entirely.
-            if (string.IsNullOrWhiteSpace(lockedDigest))
-            {
-                services.Add(new AppServiceUpdateStatus(service.Key, lockedDigest, null, UpdateAvailable: false, Unknown: true));
-                continue;
-            }
-
-            string? candidateDigest = null;
-            if (resolver is not null)
-            {
-                try
-                {
-                    candidateDigest = await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // A network/registry failure must not fail the whole read-only status check; the
-                    // service is just reported "unknown" (candidate stays null) and the error is logged.
-                    logger.LogWarning(ex, "Failed to resolve remote image digest for app {AppId} service {Service}.", appId, service.Key);
-                }
-            }
-
-            var unknown = string.IsNullOrWhiteSpace(candidateDigest);
-            var serviceUpdateAvailable = !unknown
-                && !string.Equals(lockedDigest, candidateDigest, StringComparison.Ordinal);
-
-            services.Add(new AppServiceUpdateStatus(
-                Service: service.Key,
-                LockedDigest: lockedDigest,
-                CandidateDigest: candidateDigest,
-                UpdateAvailable: serviceUpdateAvailable,
-                Unknown: unknown));
-        }
+        var probes = await ProbeServiceArtifactsAsync(app, candidateSelection, cancellationToken);
+        var services = probes.Select(ToServiceUpdateStatus).ToList();
 
         return new AppUpdateStatusResponse(
-            AppId: appId,
+            AppId: app.Id,
             Runtime: selection.RuntimeProfile.Key,
             RuntimeType: selection.RuntimeProfile.Type,
-            UpdatePolicy: policy,
+            UpdatePolicy: DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
             UpdateAvailable: manifestUpdateAvailable || services.Any(service => service.UpdateAvailable),
             Services: services,
             ManifestUpdateAvailable: manifestUpdateAvailable,
@@ -3389,40 +3439,153 @@ internal sealed class CoreLifecycleService(
     // entries. A re-pushed tag (identical manifest) therefore still shows up as a pending change.
     // If the registry is unreachable the target is "unknown" (do not fail the plan, A4): surfaced
     // only when a current lock exists, signalling the artifact will be re-pulled at apply.
-    private async Task<IReadOnlyList<string>> BuildArtifactDigestChangesAsync(
-        AppRecord app,
-        RuntimeAppManifestSelection targetSelection,
-        CancellationToken cancellationToken)
+    private static IReadOnlyList<string> BuildArtifactDigestChanges(IReadOnlyList<AppServiceArtifactProbe> probes)
     {
-        var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
         var changes = new List<string>();
-        foreach (var service in targetSelection.Services
-            .Where(service => service.Image is not null)
-            .OrderBy(service => service.Key, StringComparer.Ordinal))
+        foreach (var probe in probes)
         {
-            var currentDigest = app.ArtifactLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
-            var targetDigest = resolver is null
-                ? null
-                : await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
-
-            if (string.IsNullOrWhiteSpace(targetDigest))
+            if (string.IsNullOrWhiteSpace(probe.CandidateDigest))
             {
-                if (!string.IsNullOrWhiteSpace(currentDigest))
+                if (!string.IsNullOrWhiteSpace(probe.LockedDigest))
                 {
-                    changes.Add($"artifact:{service.Key}:{currentDigest}->unknown");
+                    changes.Add($"artifact:{probe.Service}:{probe.LockedDigest}->unknown");
                 }
 
                 continue;
             }
 
-            if (!string.Equals(currentDigest, targetDigest, StringComparison.Ordinal))
+            if (!string.Equals(probe.LockedDigest, probe.CandidateDigest, StringComparison.Ordinal))
             {
-                changes.Add($"artifact:{service.Key}:{currentDigest ?? "none"}->{targetDigest}");
+                changes.Add($"artifact:{probe.Service}:{probe.LockedDigest ?? "none"}->{probe.CandidateDigest}");
             }
         }
 
         return changes;
     }
+
+    // One registry pass over the target selection's compiled services: the locked digest from the app
+    // record next to the remotely-resolved candidate. Shared by the update plan (artifact change
+    // entries) and the update-status report (per-service digests), so both read the same probe.
+    // Lock-less services are still probed: the plan needs the candidate for its `none->{digest}`
+    // entries (pre-existing behavior), and forking a skip-when-lockless variant just for the rare
+    // status fallback would give the two paths different probe semantics for no real saving.
+    // Probes run concurrently under a small cap: each spawns a docker CLI process and waits out a
+    // registry round-trip, and an app's services are independent — but an unbounded fan-out would
+    // burst-spawn processes for image-heavy apps. Task.WhenAll keeps the service-key order.
+    private async Task<IReadOnlyList<AppServiceArtifactProbe>> ProbeServiceArtifactsAsync(
+        AppRecord app,
+        RuntimeAppManifestSelection targetSelection,
+        CancellationToken cancellationToken)
+    {
+        var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
+        using var gate = new SemaphoreSlim(MaxConcurrentArtifactProbes);
+        return await Task.WhenAll(targetSelection.Services
+            .Where(service => service.Image is not null)
+            .OrderBy(service => service.Key, StringComparer.Ordinal)
+            .Select(async service =>
+            {
+                var lockedDigest = app.ArtifactLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
+                string? candidateDigest = null;
+                if (resolver is not null)
+                {
+                    await gate.WaitAsync(cancellationToken);
+                    try
+                    {
+                        candidateDigest = await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // The resolver's contract is "null when unresolvable", but IImageDigestResolver
+                        // is an injectable seam — degrade the one service to unknown rather than failing
+                        // the whole pass.
+                        logger.LogWarning(ex, "Failed to resolve remote image digest for app {AppId} service {Service}.", app.Id, service.Key);
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                }
+
+                return new AppServiceArtifactProbe(service.Key, lockedDigest, candidateDigest);
+            })
+            .ToList());
+    }
+
+    private const int MaxConcurrentArtifactProbes = 4;
+
+    // Reviewed-update plan classification: a plan whose changes are all routine may be applied without
+    // a human reading it (the one-click "Update" path); anything else must go through the review
+    // dialog. Routine is an allow-list — a version bump, a manifest-body delta, a compiled artifact
+    // moving to a digest that actually resolved, and an image tag advancing inside its own repository
+    // (the shape of every ordinary release). Every change kind the list does not recognize
+    // (runtime/role/service/setting/dependency/endpoint/data/capability movement, and anything added
+    // later) is review-class by default: expanding an app's shape or privileges stays
+    // operator-approved (see the `role:runtime->system` note in BuildUpdateChanges), and an
+    // `artifact:...->unknown` target means applying would pull an image nobody could resolve even as a
+    // digest. See docs/planning/plan-first-app-updates.md.
+    internal static bool PlanRequiresReview(IReadOnlyList<string> changes)
+        => changes.Any(change => !IsRoutineChange(change));
+
+    private static bool IsRoutineChange(string change)
+        => change.StartsWith("version:", StringComparison.Ordinal)
+            || string.Equals(change, "manifest", StringComparison.Ordinal)
+            || (change.StartsWith("artifact:", StringComparison.Ordinal) && !IsUnknownArtifactChange(change))
+            || IsSameRepositoryImageChange(change);
+
+    // `image:{service}:{currentRef}->{targetRef}` moves are routine only while both references point
+    // into the same repository: a tag advancing inside the app's own repository is an ordinary
+    // release, while a repository change redirects where the bytes come from and must be reviewed
+    // even when the target digest resolves. Parses the entry this class itself emits (AddImageChange):
+    // service keys cannot contain ':' and docker references cannot contain '>', so the format is
+    // unambiguous. Anything that does not parse cleanly is review-class.
+    private static bool IsSameRepositoryImageChange(string change)
+    {
+        const string prefix = "image:";
+        if (!change.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var body = change[prefix.Length..];
+        var serviceSeparator = body.IndexOf(':');
+        var arrow = body.IndexOf("->", StringComparison.Ordinal);
+        if (serviceSeparator < 0 || arrow <= serviceSeparator)
+        {
+            return false;
+        }
+
+        var currentReference = body[(serviceSeparator + 1)..arrow];
+        var targetReference = body[(arrow + 2)..];
+        if (string.Equals(currentReference, "none", StringComparison.Ordinal) ||
+            string.Equals(targetReference, "none", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return string.Equals(ImageRepository(currentReference), ImageRepository(targetReference), StringComparison.Ordinal);
+    }
+
+    // Repository part of a docker reference: strips an `@sha256:...` digest pin, then a trailing
+    // `:tag` — a colon followed by a '/' belongs to a registry port, not a tag.
+    private static string ImageRepository(string reference)
+    {
+        var digestSeparator = reference.IndexOf('@');
+        if (digestSeparator >= 0)
+        {
+            reference = reference[..digestSeparator];
+        }
+
+        var tagSeparator = reference.LastIndexOf(':');
+        return tagSeparator >= 0 && reference.IndexOf('/', tagSeparator) < 0
+            ? reference[..tagSeparator]
+            : reference;
+    }
+
+    // An artifact delta whose target digest could not be resolved (registry unreachable at plan time):
+    // the artifact would be re-pulled blind at apply.
+    private static bool IsUnknownArtifactChange(string change)
+        => change.StartsWith("artifact:", StringComparison.Ordinal)
+            && change.EndsWith("->unknown", StringComparison.Ordinal);
 
     private static void AddUpdateServiceChanges(
         List<string> changes,
@@ -4551,7 +4714,16 @@ internal sealed record AppUpdatePlan(
     // False when no external source is configured and Recheck could only read Core's internal copy,
     // so an empty Changes list does not mean the app is up to date. Excluded from the plan digest
     // (informational only). Defaulted so older callers/payloads stay compatible.
-    bool SourceConfigured = true);
+    bool SourceConfigured = true,
+    // True when the change list carries anything beyond routine version/manifest/resolved-artifact
+    // movement, so a client must show the plan to a human instead of applying it silently (see
+    // CoreLifecycleService.PlanRequiresReview). Derived from Changes, which the plan digest already
+    // covers — excluded from the digest seed. Defaulted so older payloads stay compatible.
+    bool RequiresReview = false);
+
+// Pending reviewed-update plan read (see GetPendingUpdatePlanAsync). A null plan means nothing is
+// pending for the app: never built, expired, or already consumed by an apply.
+internal sealed record AppPendingUpdatePlanResponse(AppUpdatePlan? Plan);
 
 internal sealed record AppRuntimeSwitchPlan(
     string AppId,
@@ -4598,10 +4770,15 @@ internal sealed record AppUpdateStatusResponse(
 
 // Per-service update status: the currently-locked digest, the remotely-resolved candidate digest, and
 // whether the candidate is a new build (lock present and differs). `Unknown` = the registry could not
-// be reached so no candidate could be resolved.
+// be reached so no candidate could be resolved, or there is no lock to compare a candidate against.
 internal sealed record AppServiceUpdateStatus(
     string Service,
     string? LockedDigest,
     string? CandidateDigest,
     bool UpdateAvailable,
     bool Unknown);
+
+// One shared registry-probe result for a compiled service (see ProbeServiceArtifactsAsync). Rides the
+// cached update plan so the status projection reads the plan build's probe instead of re-hitting the
+// registry. Not serialized — internal plan/status plumbing only.
+internal sealed record AppServiceArtifactProbe(string Service, string? LockedDigest, string? CandidateDigest);
