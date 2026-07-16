@@ -32,8 +32,11 @@ internal sealed partial class OpenCommand(CommandContext context)
         var url = ResolveShellOpenUrl(status);
         if (string.IsNullOrWhiteSpace(url))
         {
-            context.Error.MarkupLine("[red]Hosty Shell origin is not configured.[/]");
-            context.Error.MarkupLine("Set [grey]HOSTY_SHELL_PUBLIC_ORIGIN[/] when starting Core, or run [grey]npm run dev[/] for local Core/Shell development.");
+            // Core reports the origin from Shell's own app record and reports nothing when Shell is not
+            // installed — it is an optional app. Say that, rather than the old behaviour of synthesising
+            // http://localhost:{ShellPort} and opening a browser on a port nothing is listening on.
+            context.Error.MarkupLine("[red]This host has no Hosty Shell to open.[/]");
+            context.Error.MarkupLine("Install it with [grey]hosty setup[/], or check [grey]hosty core status[/] if you expected it to be there.");
             return 1;
         }
 
@@ -49,19 +52,11 @@ internal sealed partial class OpenCommand(CommandContext context)
         return 0;
     }
 
-    internal sealed record CoreStatusDocument(string? ShellPublicOrigin, int? ShellPort);
+    internal sealed record CoreStatusDocument(string? ShellPublicOrigin);
 
-    private static string? ResolveShellOpenUrl(CoreStatusDocument? status)
-    {
-        if (!string.IsNullOrWhiteSpace(status?.ShellPublicOrigin))
-        {
-            return status.ShellPublicOrigin;
-        }
-
-        return status?.ShellPort is int shellPort && shellPort > 0
-            ? $"http://localhost:{shellPort}"
-            : null;
-    }
+    // Whatever Core resolved from Shell's record — its published origin, else the loopback URL Core
+    // assigned it. No local fallback of our own: Core knowing of no Shell means there is none to open.
+    private static string? ResolveShellOpenUrl(CoreStatusDocument? status) => status?.ShellPublicOrigin;
 
     private static bool TryOpen(string url)
     {

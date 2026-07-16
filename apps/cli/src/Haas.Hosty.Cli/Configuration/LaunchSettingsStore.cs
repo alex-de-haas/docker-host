@@ -106,7 +106,7 @@ internal sealed class LaunchSettingsStore(HostyEnvironment environment)
     private static string NormalizeValue(string key, string value)
         => key switch
         {
-            LaunchSettingDefinitions.HostyCorePort or LaunchSettingDefinitions.HostyShellPort => value.Trim(),
+            LaunchSettingDefinitions.HostyCorePort => value.Trim(),
             _ => value,
         };
 

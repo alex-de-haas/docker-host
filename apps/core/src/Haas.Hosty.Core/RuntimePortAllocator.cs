@@ -235,7 +235,9 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             .ToArray();
 
     // The loopback ports no fresh automatic allocation may reuse: every non-host-network reservation held
-    // by another installed app, plus the Core and Shell launch ports.
+    // by another installed app, plus the Core port. Shell is not special-cased any more: it pins its port
+    // in its own manifest like any app, and once installed its assignment is in the set below. Core's port
+    // stays because Core is not an app and has no assignment to be found in.
     private HashSet<int> ReservedLoopbackPorts(IEnumerable<AppRecord> apps)
     {
         var reserved = new HashSet<int>(apps
@@ -243,7 +245,6 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             .Where(assignment => !string.Equals(assignment.BindScope, AppPortBindScopes.HostNetwork, StringComparison.Ordinal))
             .Select(assignment => assignment.HostPort));
         reserved.Add(config.CorePort);
-        reserved.Add(config.ShellPort);
         return reserved;
     }
 

@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.39.0",
+  "version": "0.40.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -41,7 +41,7 @@
             {
               "key": "http",
               "containerPort": 3000,
-              "localPort": 3000,
+              "localPort": 7171,
               "protocol": "http",
               "public": true
             }
@@ -59,7 +59,7 @@
             {
               "key": "http",
               "containerPort": 3000,
-              "localPort": 3000,
+              "localPort": 7171,
               "protocol": "http",
               "public": true
             }

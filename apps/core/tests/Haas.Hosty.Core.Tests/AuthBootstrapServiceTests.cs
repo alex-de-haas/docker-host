@@ -191,10 +191,8 @@ public sealed class AuthBootstrapServiceTests
                 RunDirectory: Path.Combine(root, "core", "run"),
                 ControlDiscoveryPath: Path.Combine(root, "core", "run", "control.json"),
                 CorePort: 3001,
-                ShellPort: 3000,
                 ListenUrl: "http://127.0.0.1:3001",
                 CorePublicOrigin: "http://127.0.0.1:3001",
-                ShellPublicOrigin: "http://127.0.0.1:3000",
                 RuntimePublicHost: "localhost",
                 ShellSourceOverridePath: null,
                 ShellAutostart: false);

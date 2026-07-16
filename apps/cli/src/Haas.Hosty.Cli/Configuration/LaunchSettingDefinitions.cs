@@ -1,20 +1,20 @@
 namespace Haas.Hosty.Cli.Configuration;
 
+// The launch config keeps only what has nowhere else to live: Core loads before anything exists, so its
+// data root, port and public origin cannot come from anywhere but here. Shell's port and public origin
+// used to sit alongside them and no longer do — Shell is an ordinary, optional app, so its port is
+// declared in its manifest and its public origin in its app record, like every other app's.
 internal static class LaunchSettingDefinitions
 {
     public const string HostyDataRoot = "HOSTY_DATA_ROOT";
     public const string HostyCorePort = "HOSTY_CORE_PORT";
-    public const string HostyShellPort = "HOSTY_SHELL_PORT";
     public const string HostyCorePublicOrigin = "HOSTY_CORE_PUBLIC_ORIGIN";
-    public const string HostyShellPublicOrigin = "HOSTY_SHELL_PUBLIC_ORIGIN";
 
     public static readonly IReadOnlyList<LaunchSettingDefinition> All =
     [
         new(HostyDataRoot, DefaultDataRootHost, true, ValidateHostPath),
         new(HostyCorePort, _ => "7070", true, ValidatePort),
-        new(HostyShellPort, _ => "7171", true, ValidatePort),
         new(HostyCorePublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
-        new(HostyShellPublicOrigin, _ => "", true, ValidateOptionalHttpOrigin),
     ];
 
     private static readonly Dictionary<string, LaunchSettingDefinition> ByKey = All.ToDictionary(x => x.Key, StringComparer.Ordinal);

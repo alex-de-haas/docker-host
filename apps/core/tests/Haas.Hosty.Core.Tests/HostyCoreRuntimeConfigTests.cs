@@ -18,10 +18,8 @@ public sealed class HostyCoreRuntimeConfigTests
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
         Assert.Equal(7070, config.CorePort);
-        Assert.Equal(7171, config.ShellPort);
         Assert.Equal("http://localhost:7070", config.ListenUrl);
         Assert.Null(config.CorePublicOrigin);
-        Assert.Null(config.ShellPublicOrigin);
         Assert.Equal("http://localhost:7070", config.EffectiveCorePublicOrigin);
         // No effective-Shell counterpart: Core no longer synthesises a Shell origin. Where Shell is
         // reachable comes from its own app record now (ShellPublicOriginResolver), and a host without
@@ -66,7 +64,6 @@ public sealed class HostyCoreRuntimeConfigTests
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
         Assert.Equal(8080, config.CorePort);
-        Assert.Equal(8181, config.ShellPort);
         Assert.Equal("http://localhost:8080", config.ListenUrl);
         Assert.Equal("http://localhost:8080", config.EffectiveCorePublicOrigin);
     }
@@ -83,18 +80,6 @@ public sealed class HostyCoreRuntimeConfigTests
     }
 
     [Fact]
-    public void FromEnvironment_UsesExplicitShellPublicOrigin()
-    {
-        using var env = TemporaryEnvironment.With("HOSTY_SHELL_PUBLIC_ORIGIN", " http://localhost:3100/ ");
-        using var coreEnv = TemporaryEnvironment.With("HOSTY_CORE_PUBLIC_ORIGIN", null);
-
-        var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Development));
-
-        // Survives only as the transitional seed the bootstrap stamps into Shell's public-origin setting.
-        Assert.Equal("http://localhost:3100/", config.ShellPublicOrigin);
-    }
-
-    [Fact]
     public void FromEnvironment_UsesExplicitCorePublicOrigin()
     {
         using var coreEnv = TemporaryEnvironment.With("HOSTY_CORE_PUBLIC_ORIGIN", "https://core.example");
@@ -103,7 +88,6 @@ public sealed class HostyCoreRuntimeConfigTests
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
         Assert.Equal("https://core.example", config.CorePublicOrigin);
-        Assert.Null(config.ShellPublicOrigin);
         Assert.Equal("https://core.example", config.EffectiveCorePublicOrigin);
     }
 
@@ -160,7 +144,6 @@ public sealed class HostyCoreRuntimeConfigTests
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
         Assert.Null(config.CorePublicOrigin);
-        Assert.Null(config.ShellPublicOrigin);
     }
 
     [Fact]

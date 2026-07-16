@@ -17,11 +17,9 @@ internal sealed class LaunchSettings
 
     public string HostyCorePort => this[LaunchSettingDefinitions.HostyCorePort];
 
-    public string HostyShellPort => this[LaunchSettingDefinitions.HostyShellPort];
 
     public string HostyCorePublicOrigin => this[LaunchSettingDefinitions.HostyCorePublicOrigin];
 
-    public string HostyShellPublicOrigin => this[LaunchSettingDefinitions.HostyShellPublicOrigin];
 
     public string ResolveHostDataRoot(HostyEnvironment environment)
         => environment.ResolvePath(HostyDataRootRaw);
