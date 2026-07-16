@@ -206,6 +206,62 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyUpdateAsync_AppliesTheConfirmedPlan_IgnoringRequestManifestPath()
+    {
+        // The bug this closes: Shell sent the plan's *resolved* manifestPath on apply, so Core's rebuild
+        // took a different branch than the plan (for a feed app, one that dropped the feed seed fields) and
+        // the recomputed digest never matched. Apply must use the plan the operator confirmed regardless
+        // of what the request carries — so a request pointing at a wholly different manifest still applies
+        // the reviewed one.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var reviewed = await fixture.WriteManifestAsync("2.0.0");
+        var decoy = await fixture.WriteManifestAsync("9.9.9");
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(reviewed));
+        var result = await fixture.Service.ApplyUpdateAsync(
+            "com.example.notes",
+            new AppUpdateApplyRequest(plan.PlanDigest, ManifestPath: decoy));
+
+        Assert.Equal("2.0.0", result.App?.Version);
+    }
+
+    [Fact]
+    public async Task ApplyUpdateAsync_RejectsWhenNoPlanWasReviewed()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        // A digest the operator never reviewed through this Core (a stale client, a scripted caller, or a
+        // plan that expired) cannot be applied — Core has nothing to apply, and must not fabricate one.
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest("sha256:deadbeef")));
+
+        Assert.Equal("update_plan_expired", error.Code);
+    }
+
+    [Fact]
+    public async Task ApplyUpdateAsync_RejectsWhenTheBaseMovedSinceReview()
+    {
+        // The plan was reviewed against 1.0.0; the installed app moves out from under it before apply.
+        // Applying the cached plan now would act against a base the operator never saw — the guard is what
+        // stops a stale plan silently *downgrading* an app that advanced past the reviewed target. Here the
+        // drift is injected straight into the record (a concurrent apply would instead evict the cache),
+        // which is the point: even an out-of-band base change is caught rather than silently applied.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var target = await fixture.WriteManifestAsync("2.0.0");
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(target));
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { Version = "5.0.0" });
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest, target)));
+
+        Assert.Equal("update_plan_stale", error.Code);
+    }
+
+    [Fact]
     public async Task InstallAsync_StartsAppImmediatelyWhenStartOnInstallAndAutostartEnabled()
     {
         var fixture = await LifecycleFixture.CreateAsync();

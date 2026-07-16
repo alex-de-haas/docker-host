@@ -1078,7 +1078,7 @@ internal sealed class CoreLifecycleService(
             willCreateBackup,
             changes);
         var digest = HashPlanSeed(seed);
-        return new AppUpdatePlan(
+        var plan = new AppUpdatePlan(
             AppId: appId,
             CurrentVersion: app.Version,
             TargetVersion: selection.Manifest.Version!,
@@ -1090,29 +1090,91 @@ internal sealed class CoreLifecycleService(
             WillCreatePreUpdateBackup: willCreateBackup,
             Changes: changes,
             SourceConfigured: sourceConfigured);
+
+        // Retain the fully-resolved plan so apply can use exactly what the operator confirmed instead of
+        // rebuilding it. The rebuild was never reproducible across the plan->apply gap: it re-resolved the
+        // feed (and apply passed a resolved manifestPath, so a feed app took the non-feed branch and lost
+        // the feed seed fields, mismatching every time) and re-hit the registry (a blip flipped an
+        // artifact digest to "unknown", mismatching the rest). currentSelection.ManifestDigest rides along
+        // for the base-state guard in apply. Overwrites any prior pending plan for this app.
+        reviewedUpdatePlans[appId] = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, clock.UtcNow);
+        return plan;
     }
 
     public Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
         => WithAppLockAsync(appId, () => ApplyUpdateCoreAsync(appId, request, cancellationToken), cancellationToken);
 
-    private async Task<AppLifecycleResponse> ApplyUpdateCoreAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken)
+    // Reviewed update plans awaiting apply, keyed by app id (one pending plan per app). See the write in
+    // CreateUpdatePlanAsync for why apply consumes this rather than rebuilding.
+    private readonly ConcurrentDictionary<string, CachedUpdatePlan> reviewedUpdatePlans = new(StringComparer.Ordinal);
+
+    // A pending plan is discarded after this long. The operator applies from an open dialog, so a stale
+    // entry means they wandered off and should re-review against current inputs rather than apply a plan
+    // built against possibly-moved ones. Generous enough for a distracted operator; short of "yesterday".
+    private static readonly TimeSpan ReviewedUpdatePlanTtl = TimeSpan.FromHours(1);
+
+    private sealed record CachedUpdatePlan(
+        AppUpdatePlan Plan,
+        RuntimeAppManifestSelection Selection,
+        string CurrentManifestDigest,
+        DateTimeOffset CreatedAt);
+
+    // Returns the pending plan the operator confirmed, or throws an actionable "reopen the update" error.
+    // Never rebuilds: the point is to apply exactly what was reviewed.
+    private CachedUpdatePlan ResolveConfirmedUpdatePlan(string appId, string planDigest)
     {
-        var plan = await CreateUpdatePlanAsync(appId, new AppUpdatePlanRequest(request.ManifestPath, request.SelectedRuntime), cancellationToken);
-        if (!string.Equals(plan.PlanDigest, request.PlanDigest, StringComparison.Ordinal))
+        if (!reviewedUpdatePlans.TryGetValue(appId, out var cached))
         {
-            throw new AppLifecycleException("update_plan_digest_mismatch", "Update plan digest does not match the current update plan.");
+            throw new AppLifecycleException(
+                "update_plan_expired",
+                "No reviewed update plan is pending for this app. Reopen the update to review it, then apply.");
         }
 
-        var app = await RequireAppAsync(appId, cancellationToken);
-        var selection = await manifests.LoadAsync(plan.ManifestPath, plan.TargetRuntime, cancellationToken);
-        if (!string.Equals(selection.ManifestDigest, plan.ManifestDigest, StringComparison.Ordinal))
+        if (clock.UtcNow - cached.CreatedAt > ReviewedUpdatePlanTtl)
+        {
+            reviewedUpdatePlans.TryRemove(appId, out _);
+            throw new AppLifecycleException(
+                "update_plan_expired",
+                "The reviewed update plan has expired. Reopen the update to review the current plan, then apply.");
+        }
+
+        if (!string.Equals(cached.Plan.PlanDigest, planDigest, StringComparison.Ordinal))
         {
             throw new AppLifecycleException(
                 "update_plan_digest_mismatch",
-                "Update manifest changed after the current update plan was calculated.");
+                "Update plan digest does not match the current update plan. Reopen the update to review it, then apply.");
         }
 
+        return cached;
+    }
+
+    private async Task<AppLifecycleResponse> ApplyUpdateCoreAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken)
+    {
+        // Apply the plan the operator confirmed, verbatim — request.ManifestPath / SelectedRuntime are
+        // ignored because the resolved source (feed ref or source override) is already captured in the
+        // cached plan. Rebuilding here was the whole defect: it re-resolved the feed and re-hit the
+        // registry, so the recomputed digest routinely differed from the one just confirmed.
+        var confirmed = ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
+        var plan = confirmed.Plan;
+
+        var app = await RequireAppAsync(appId, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
+
+        // Base-state guard, under the app lock: the plan was reviewed against a specific installed
+        // version/runtime/manifest. If the app moved since (a concurrent update landed before this apply
+        // took the lock, or the plan sat open across one), applying the stale plan could move it somewhere
+        // the operator never saw — including a silent downgrade. Cheap and local; no network, no rebuild.
+        if (!string.Equals(app.Version, plan.CurrentVersion, StringComparison.Ordinal) ||
+            !string.Equals(app.SelectedRuntime, plan.CurrentRuntime, StringComparison.Ordinal) ||
+            !string.Equals(currentSelection.ManifestDigest, confirmed.CurrentManifestDigest, StringComparison.Ordinal))
+        {
+            reviewedUpdatePlans.TryRemove(appId, out _);
+            throw new AppLifecycleException(
+                "update_plan_stale",
+                "The app changed since this update was reviewed. Reopen the update to review the current plan, then apply.");
+        }
+
+        var selection = confirmed.Selection;
         var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
         var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
         if (wasRunning)
@@ -1143,6 +1205,9 @@ internal sealed class CoreLifecycleService(
             LastError = null,
         };
         var document = await apps.UpsertAppAsync(next, cancellationToken);
+        // Consumed: the app is now at the target, so the pending plan (built against the old base) would
+        // only fail the base-state guard from here on. Drop it so a fresh review starts clean.
+        reviewedUpdatePlans.TryRemove(appId, out _);
         if (wasRunning)
         {
             var restarted = await StartCoreAsync(appId, cancellationToken);

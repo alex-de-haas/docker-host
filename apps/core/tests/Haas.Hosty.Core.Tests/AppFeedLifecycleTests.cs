@@ -121,13 +121,19 @@ public sealed class AppFeedLifecycleTests
         Assert.Equal("1.2.0", updatePlan.TargetVersion);
         Assert.Equal(NextManifestUrl, updatePlan.ManifestPath);
 
+        // Apply applies the plan the operator confirmed, not a re-resolution: moving the feed back to beta
+        // after the review does NOT change what lands. This is the deliberate contract that replaced
+        // rebuild-on-apply — the rebuild re-resolved the feed here (and elsewhere passed a resolved
+        // manifestPath that skipped the feed branch entirely), which mismatched the just-confirmed digest.
+        // A feed that moves upstream surfaces on the next update check, not by silently mutating this one.
         fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl, BetaManifestUrl));
-        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            fixture.Lifecycle.ApplyUpdateAsync(
-                "com.example.notes",
-                new AppUpdateApplyRequest(updatePlan.PlanDigest)));
+        var applied = await fixture.Lifecycle.ApplyUpdateAsync(
+            "com.example.notes",
+            new AppUpdateApplyRequest(updatePlan.PlanDigest));
 
-        Assert.Equal("update_plan_digest_mismatch", error.Code);
+        Assert.Equal("1.2.0", applied.App?.Version);
+        var updated = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("1.2.0", updated?.Version);
     }
 
     [Fact]
