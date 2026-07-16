@@ -92,8 +92,9 @@ reload, Shell self-update, or second browser never loses it.
 - A fleet sweep performs at most one fetch per distinct feeds.json / manifest URL and bounded
   parallel registry probes; a 10-app sweep is not 10× slower than a 1-app probe.
 - `AppUpdatePlan` carries `requiresReview`; it is true iff the change list contains any entry
-  outside `version:*` / `manifest` / `artifact:*` with a resolved target digest (an
-  `->unknown` artifact target forces true), and false for a non-empty routine-only list.
+  that is not a routine `version:*`, `manifest`, or resolved-digest `artifact:*` change (an
+  `artifact:*->unknown` entry always requires review), and false for a non-empty list of only
+  routine changes.
 - A plan with zero changes yields `updateAvailable: false` and no row button.
 - `POST /api/apps/{id}/update` returns within ~1s; the apply continues on an application-lifetime
   token; aborting the HTTP request does not abort the apply.
