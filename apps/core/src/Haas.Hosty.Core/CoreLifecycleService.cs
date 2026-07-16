@@ -1195,7 +1195,8 @@ internal sealed class CoreLifecycleService(
     // so a removed app's verdict does not linger until Core restarts.
     internal void PruneUpdateAvailability(IReadOnlySet<string> keepAppIds)
     {
-        foreach (var appId in updateAvailability.Keys.Where(key => !keepAppIds.Contains(key)).ToList())
+        // ConcurrentDictionary.Keys is already a snapshot, so removing while iterating it is safe.
+        foreach (var appId in updateAvailability.Keys.Where(key => !keepAppIds.Contains(key)))
         {
             updateAvailability.TryRemove(appId, out _);
         }
