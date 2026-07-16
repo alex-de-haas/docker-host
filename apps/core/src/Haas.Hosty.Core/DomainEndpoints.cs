@@ -10,6 +10,7 @@ internal static class DomainEndpoints
         app.MapGet("/api/apps", async (
             HttpRequest request,
             CoreLifecycleService lifecycle,
+            AppUpdateSweepService updateSweep,
             UserDirectoryStore users,
             IClock clock,
             CancellationToken cancellationToken) =>
@@ -21,7 +22,9 @@ internal static class DomainEndpoints
                 {
                     var state = await users.ReadAsync(cancellationToken);
                     var apps = await lifecycle.ListAppsAsync(cancellationToken);
-                    return CoreJson.Json(new AppsResponse(FilterAppsForUser(apps, state, user)));
+                    // The sweep status block drives the "Check updates" spinner from server state,
+                    // so a page opened mid-sweep (or after a reload) shows the check in progress.
+                    return CoreJson.Json(new AppsResponse(FilterAppsForUser(apps, state, user), updateSweep.Status));
                 },
                 cancellationToken: cancellationToken));
 
@@ -213,7 +216,11 @@ internal static class DomainEndpoints
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)))[..12].ToLowerInvariant();
 }
 
-internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
+internal sealed record AppsResponse(
+    IReadOnlyList<AppSummary> Apps,
+    // Fleet update-check status (plan-first updates). Null on surfaces that do not attach it (the
+    // control-plane list); additive so older clients ignore it.
+    AppUpdateCheckStatus? UpdateCheck = null);
 
 internal sealed record InstalledAppsResponse(IReadOnlyList<string> AppIds);
 

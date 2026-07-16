@@ -106,6 +106,10 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
+        // Plan-first updates: the fleet sweep is a singleton (the trigger endpoint and the apps-list
+        // status block read it) and its scheduler runs it on the Core-settings cadence.
+        builder.Services.AddSingleton<AppUpdateSweepService>();
+        builder.Services.AddHostedService<AppUpdateSweepScheduler>();
         builder.Services.AddCors();
         // Registered after AddCors so it wins over the default provider it TryAdds. The Shell policy is
         // built per request because its origin now lives in Shell's app record, which the operator can

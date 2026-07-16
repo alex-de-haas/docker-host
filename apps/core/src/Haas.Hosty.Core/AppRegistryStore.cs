@@ -705,7 +705,11 @@ internal sealed record AppSummary(
     string? DescriptionUrl = null,
     // Generic app-owned feed source and selected feed. Null for direct installs.
     string? FeedsUrl = null,
-    string? FollowedFeedId = null)
+    string? FollowedFeedId = null,
+    // Last-known update-availability verdict (plan-first updates): written by the fleet sweep and by
+    // any successful plan build, reset by a successful apply. Null until a check has run for this
+    // app. Attached by the lifecycle service, which owns the projection. Additive/nullable.
+    AppUpdateAvailability? UpdateCheck = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
     // manifest profile's `development` flag as the default. Always false for a non-source runtime

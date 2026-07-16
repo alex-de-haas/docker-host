@@ -178,6 +178,10 @@ internal static class CoreJson
 [JsonSerializable(typeof(GlobalMountListResponse))]
 [JsonSerializable(typeof(AppUpdatePlan))]
 [JsonSerializable(typeof(AppPendingUpdatePlanResponse))]
+// Reachable via AppSummary/AppsResponse, but rooted explicitly for parity with the other nested DTOs.
+[JsonSerializable(typeof(AppUpdateAvailability))]
+[JsonSerializable(typeof(AppUpdateCheckStatus))]
+[JsonSerializable(typeof(AppUpdateCheckTriggerResponse))]
 [JsonSerializable(typeof(AppRuntimeSwitchPlan))]
 [JsonSerializable(typeof(AppBackupsResponse))]
 [JsonSerializable(typeof(AppBackupResponse))]

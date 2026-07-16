@@ -314,6 +314,23 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        // Fleet update check: starts a sweep (or joins the one already running) and returns
+        // immediately — the sweep runs on the application lifetime token, so closing the tab never
+        // aborts it. Progress is read from the `updateCheck` block on GET /api/apps.
+        app.MapPost("/api/apps/update-check", async (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            AppUpdateSweepService updateSweep,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                () => Task.FromResult(CoreJson.Json(updateSweep.Trigger())),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         // Read-only pending-plan view: what an earlier update check (or dialog open) cached for this
         // app, if still fresh. Lets clients apply or review without rebuilding the plan. No CSRF —
         // nothing is mutated.

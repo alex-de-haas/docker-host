@@ -296,6 +296,57 @@ public sealed class CoreSettingsServiceTests : IDisposable
         Assert.Contains("example.com", documentJson);
     }
 
+    [Fact]
+    public void UpdateCheck_NoOverrides_MatchesEnvironmentBaseline()
+    {
+        var service = CreateService();
+
+        Assert.Equal(UpdateCheckSettings.FromEnvironment(), service.UpdateCheck);
+        Assert.Equal(UpdateCheckSettings.DefaultIntervalMinutes, service.UpdateCheck.IntervalMinutes);
+        Assert.True(service.UpdateCheck.Enabled);
+        Assert.False(service.GetUpdateCheckRow().Overridden);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_UpdateCheck_AppliesLivePersistsAndClears()
+    {
+        var service = CreateService();
+
+        await service.UpdateAsync(new Dictionary<string, string?>
+        {
+            [UpdateCheckSettings.IntervalKey] = "15",
+        });
+        Assert.Equal(15, service.UpdateCheck.IntervalMinutes);
+        Assert.True(service.GetUpdateCheckRow().Overridden);
+
+        // Persisted: a fresh service over the same data root reads the override back.
+        var reloaded = CreateService();
+        Assert.Equal(15, reloaded.UpdateCheck.IntervalMinutes);
+
+        // 0 = disabled is a valid persisted value, not a clear.
+        await reloaded.UpdateAsync(new Dictionary<string, string?> { [UpdateCheckSettings.IntervalKey] = "0" });
+        Assert.False(reloaded.UpdateCheck.Enabled);
+        Assert.True(reloaded.GetUpdateCheckRow().Overridden);
+
+        // Blank clears the override back to the env/default baseline.
+        await reloaded.UpdateAsync(new Dictionary<string, string?> { [UpdateCheckSettings.IntervalKey] = "" });
+        Assert.Equal(UpdateCheckSettings.FromEnvironment(), reloaded.UpdateCheck);
+        Assert.False(reloaded.GetUpdateCheckRow().Overridden);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    [InlineData("often")]
+    [InlineData("10081")]
+    public async Task UpdateAsync_UpdateCheck_RejectsInvalidIntervals(string interval)
+    {
+        var service = CreateService();
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            service.UpdateAsync(new Dictionary<string, string?> { [UpdateCheckSettings.IntervalKey] = interval }));
+        Assert.Equal("core_setting_invalid", error.Code);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))
