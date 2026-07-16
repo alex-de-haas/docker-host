@@ -92,9 +92,9 @@ reload, Shell self-update, or second browser never loses it.
 - A fleet sweep performs at most one fetch per distinct feeds.json / manifest URL and bounded
   parallel registry probes; a 10-app sweep is not 10× slower than a 1-app probe.
 - `AppUpdatePlan` carries `requiresReview`; it is true iff the change list contains any entry
-  that is not a routine `version:*`, `manifest`, or resolved-digest `artifact:*` change (an
-  `artifact:*->unknown` entry always requires review), and false for a non-empty list of only
-  routine changes.
+  that is not a routine `version:*`, `manifest`, resolved-digest `artifact:*`, or same-repository
+  `image:*` change (an `artifact:*->unknown` entry always requires review), and false for a
+  non-empty list of only routine changes.
 - A plan with zero changes yields `updateAvailable: false` and no row button.
 - `POST /api/apps/{id}/update` returns within ~1s; the apply continues on an application-lifetime
   token; aborting the HTTP request does not abort the apply.
@@ -113,10 +113,16 @@ reload, Shell self-update, or second browser never loses it.
 `BuildUpdateChanges` already emits a typed-by-prefix vocabulary. Classification lives next to it
 on Core and rides the plan record:
 
-- Routine: `version:*`, `manifest`, `artifact:{service}:{digest}->{digest}` (resolved target).
-- Review: `runtime:*`, `role:*`, `service:*` (added/removed/changed), `setting:*`, `dependency:*`,
-  `endpoint:*`, data-target changes, `capability:*`, and any `artifact:*->unknown` (applying an
-  artifact nobody could resolve is not a routine act).
+- Routine: `version:*`, `manifest`, `artifact:{service}:{digest}->{digest}` (resolved target), and
+  `image:{service}:{ref}->{ref}` while both references stay inside the same repository — an image
+  tag advancing in the app's own repository is the shape of every ordinary release, so without this
+  rule no real update would ever classify as routine.
+- Review: `runtime:*`, `role:*`, `service:*` (added/removed/type), `setting:*`, `dependency:*`,
+  `endpoint:*`, data-target changes, `capability:*`, an `image:*` change that moves to a different
+  repository (the source of the bytes changed, even if the digest resolves), any
+  `artifact:*->unknown` (applying an artifact nobody could resolve is not a routine act), and every
+  change kind the allow-list does not recognize (`command:*`, `network:*`, `port:*`,
+  `environment:*`, `devices:*`, ... — including kinds added later).
 
 `requiresReview` is derived from `Changes`, which is already folded into the plan digest, so it
 needs no separate integrity treatment. New field on `AppUpdatePlan` → additive for CLI (STJ

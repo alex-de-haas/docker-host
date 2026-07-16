@@ -314,6 +314,23 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        // Read-only pending-plan view: what an earlier update check (or dialog open) cached for this
+        // app, if still fresh. Lets clients apply or review without rebuilding the plan. No CSRF —
+        // nothing is mutated.
+        app.MapGet("/api/apps/{appId}/update/plan", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetPendingUpdatePlanAsync(appId, cancellationToken)),
+                cancellationToken: cancellationToken));
+
         app.MapPost("/api/apps/{appId}/update", async (
             string appId,
             HttpRequest request,
@@ -419,8 +436,11 @@ internal static class LifecycleEndpoints
         app.MapGet("/internal/telemetry/metrics", (DockerStatsExposition exposition)
             => Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4"));
 
+        // `refresh=true` forces a plan rebuild; otherwise a fresh cached plan is projected without
+        // network work (plan-first updates, docs/planning/plan-first-app-updates.md).
         app.MapGet("/api/apps/{appId}/update-status", async (
             string appId,
+            bool? refresh,
             HttpRequest request,
             UserDirectoryStore users,
             IClock clock,
@@ -430,7 +450,7 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.GetUpdateStatusAsync(appId, cancellationToken)),
+                async () => await HandleLifecycleError(() => lifecycle.GetUpdateStatusAsync(appId, refresh ?? false, cancellationToken)),
                 cancellationToken: cancellationToken));
 
         app.MapGet("/api/apps/{appId}/backups", async (

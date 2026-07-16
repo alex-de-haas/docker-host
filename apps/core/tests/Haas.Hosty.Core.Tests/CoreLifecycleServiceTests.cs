@@ -1930,6 +1930,274 @@ public sealed class CoreLifecycleServiceTests
         }
         """;
 
+    // Plan-first updates: the classification allow-list. Routine = version bump, manifest-body delta,
+    // resolved artifact move, image tag advancing inside its own repository. Everything else —
+    // including change kinds the classifier has never seen — is review-class by default.
+    [Theory]
+    [InlineData("version:1.0.0->1.1.0", false)]
+    [InlineData("manifest", false)]
+    [InlineData("artifact:app:sha256:aaa->sha256:bbb", false)]
+    [InlineData("artifact:app:sha256:aaa->unknown", true)]
+    [InlineData("image:app:ghcr.io/example/notes:1.0.0->ghcr.io/example/notes:1.1.0", false)]
+    [InlineData("image:app:registry:5000/notes:1.0.0->registry:5000/notes:1.1.0", false)]
+    [InlineData("image:app:ghcr.io/example/notes@sha256:aaa->ghcr.io/example/notes@sha256:bbb", false)]
+    [InlineData("image:app:ghcr.io/example/notes:1.0.0->ghcr.io/elsewhere/notes:1.1.0", true)]
+    [InlineData("image:app:none->ghcr.io/example/notes:1.1.0", true)]
+    [InlineData("runtime:docker->docker-alt", true)]
+    [InlineData("role:runtime->system", true)]
+    [InlineData("service:worker:added:docker", true)]
+    [InlineData("setting:APP_MODE:added", true)]
+    [InlineData("dependency:com.example.cache:added", true)]
+    [InlineData("endpoint:app.http:removed:http", true)]
+    [InlineData("network:app:bridge->host", true)]
+    [InlineData("capabilities:app:none->NET_ADMIN", true)]
+    [InlineData("port:app.http:added:3000/http", true)]
+    [InlineData("environment:app.DEBUG:added", true)]
+    [InlineData("command:app:changed", true)]
+    [InlineData("some-future-change-kind", true)]
+    public void PlanRequiresReview_ClassifiesChangeKinds(string change, bool requiresReview)
+        => Assert.Equal(requiresReview, CoreLifecycleService.PlanRequiresReview([change]));
+
+    [Fact]
+    public void PlanRequiresReview_EmptyChangesAreRoutine()
+        => Assert.False(CoreLifecycleService.PlanRequiresReview([]));
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_RoutineVersionBumpDoesNotRequireReview()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var manifestV2 = await fixture.WriteManifestAsync("1.1.0");
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+
+        // The ordinary release shape: version bump + the image tag advancing in the same repository.
+        Assert.Contains(plan.Changes, change => change.StartsWith("version:", StringComparison.Ordinal));
+        Assert.Contains(plan.Changes, change => change.StartsWith("image:", StringComparison.Ordinal));
+        Assert.False(plan.RequiresReview);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_ResolvedArtifactMoveDoesNotRequireReview()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", "sha256:" + new string('a', 64), "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+        fixture.Adapter.RemoteDigest = "sha256:" + new string('b', 64);
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        Assert.Contains(plan.Changes, change => change.StartsWith("artifact:app:", StringComparison.Ordinal));
+        Assert.False(plan.RequiresReview);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_UnknownArtifactTargetRequiresReview()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", "sha256:" + new string('c', 64), "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+        // Registry unreachable: applying would pull an image nobody could resolve even as a digest.
+        fixture.Adapter.RemoteDigest = null;
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        Assert.Contains(plan.Changes, change => change.EndsWith("->unknown", StringComparison.Ordinal));
+        Assert.True(plan.RequiresReview);
+    }
+
+    [Fact]
+    public async Task CreateUpdatePlanAsync_ImageRepositoryChangeRequiresReview()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var movedRepository = Path.Combine(fixture.Root, "notes-moved-repo.json");
+        await File.WriteAllTextAsync(movedRepository, NotesManifestWithImageRepository("1.1.0", "ghcr.io/elsewhere/notes"));
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(movedRepository));
+
+        // The bytes now come from a different repository: reviewable even though the version bump and
+        // tag shape look like an ordinary release.
+        Assert.Contains(plan.Changes, change => change.StartsWith("image:", StringComparison.Ordinal));
+        Assert.True(plan.RequiresReview);
+    }
+
+    [Fact]
+    public async Task GetPendingUpdatePlanAsync_ReturnsCachedPlanUntilExpiry()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        Assert.Null((await fixture.Service.GetPendingUpdatePlanAsync("com.example.notes")).Plan);
+
+        var manifestV2 = await fixture.WriteManifestAsync("1.1.0");
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+        var pending = (await fixture.Service.GetPendingUpdatePlanAsync("com.example.notes")).Plan;
+        Assert.Equal(plan.PlanDigest, pending?.PlanDigest);
+
+        // Past the TTL the slot is evicted: clients see "nothing pending" and request a fresh plan.
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddHours(2);
+        Assert.Null((await fixture.Service.GetPendingUpdatePlanAsync("com.example.notes")).Plan);
+    }
+
+    [Fact]
+    public async Task GetPendingUpdatePlanAsync_UnknownAppThrows()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.GetPendingUpdatePlanAsync("com.example.missing"));
+        Assert.Equal("app_not_found", error.Code);
+    }
+
+    [Fact]
+    public async Task GetUpdateStatusAsync_ProjectsCachedPlanWithoutReprobing()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", "sha256:" + new string('a', 64), "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+        var plannedCandidate = "sha256:" + new string('b', 64);
+        fixture.Adapter.RemoteDigest = plannedCandidate;
+        _ = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        // The registry moves again after the plan was cached: the projection must keep reporting the
+        // plan's probe (no network re-check), while refresh=true rebuilds and sees the new candidate.
+        var laterCandidate = "sha256:" + new string('e', 64);
+        fixture.Adapter.RemoteDigest = laterCandidate;
+
+        var projected = await fixture.Service.GetUpdateStatusAsync("com.example.notes");
+        Assert.Equal(plannedCandidate, Assert.Single(projected.Services).CandidateDigest);
+        Assert.True(projected.UpdateAvailable);
+
+        var refreshed = await fixture.Service.GetUpdateStatusAsync("com.example.notes", refresh: true);
+        Assert.Equal(laterCandidate, Assert.Single(refreshed.Services).CandidateDigest);
+    }
+
+    [Fact]
+    public async Task GetUpdateStatusAsync_CachesThePlanItBuilds()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        fixture.Adapter.StartLocks = new Dictionary<string, ArtifactLock>
+        {
+            ["app"] = new("image", "sha256:" + new string('a', 64), "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+        };
+        await fixture.Service.StartAsync("com.example.notes");
+        fixture.Adapter.RemoteDigest = "sha256:" + new string('b', 64);
+
+        var status = await fixture.Service.GetUpdateStatusAsync("com.example.notes");
+        Assert.True(status.UpdateAvailable);
+
+        // The probe built (and cached) the plan a one-click apply consumes by digest.
+        var pending = (await fixture.Service.GetPendingUpdatePlanAsync("com.example.notes")).Plan;
+        Assert.NotNull(pending);
+        Assert.False(pending!.RequiresReview);
+    }
+
+    [Fact]
+    public async Task GetUpdateStatusAsync_LiveSourceAppFallsBackToLiveProbe()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "live-app.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.live",
+              "name": "Live App",
+              "version": "1.0.0",
+              "runtimeProfiles": [
+                { "key": "docker", "type": "docker", "default": true },
+                { "key": "local", "type": "localCommand", "development": true }
+              ],
+              "defaultRuntime": "docker",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/example/live:1.0.0" },
+                  "local": { "type": "localCommand", "command": "sleep 5", "workingDirectory": "." }
+                }
+              }]
+            }
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "docker"));
+        var app = await fixture.Apps.GetAppAsync("com.example.live");
+        await fixture.Apps.UpsertAppAsync(app! with { SelectedRuntime = "local" });
+
+        // Plan building refuses live-source apps; the status probe must degrade to the live
+        // computation instead of surfacing that refusal.
+        var status = await fixture.Service.GetUpdateStatusAsync("com.example.live");
+
+        Assert.Equal("local", status.Runtime);
+        Assert.False(status.UpdateAvailable);
+        Assert.Null((await fixture.Service.GetPendingUpdatePlanAsync("com.example.live")).Plan);
+    }
+
+    private static string NotesManifestWithImageRepository(string version, string imageRepository) => $$"""
+        {
+          "schemaVersion": "app.0.1",
+          "id": "com.example.notes",
+          "name": "Notes",
+          "description": "Personal notes.",
+          "version": "{{version}}",
+          "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+          "defaultRuntime": "docker",
+          "services": [{
+            "key": "app",
+            "runtimes": {
+              "docker": {
+                "type": "docker",
+                "image": "{{imageRepository}}:{{version}}",
+                "ports": [{
+                  "key": "http",
+                  "containerPort": 3000,
+                  "protocol": "http",
+                  "public": true
+                }]
+              }
+            }
+          }],
+          "endpoints": [{
+            "key": "app.http",
+            "service": "app",
+            "port": "http",
+            "protocol": "http",
+            "public": true
+          }],
+          "settings": [{
+            "key": "APP_MODE",
+            "type": "string",
+            "default": "production"
+          }],
+          "data": {
+            "enabled": true,
+            "targets": [{
+              "runtime": "docker",
+              "service": "app",
+              "containerPath": "/app/data",
+              "environment": "HOSTY_APP_DATA_DIR"
+            }]
+          }
+        }
+        """;
+
     [Fact]
     public async Task StartAsync_CloudflaredIngress_PersistsPublicOriginAndWritesTunnelConfig()
     {
