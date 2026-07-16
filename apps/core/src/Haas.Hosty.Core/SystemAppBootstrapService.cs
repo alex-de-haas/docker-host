@@ -248,6 +248,27 @@ internal sealed class SystemAppBootstrapService(
             await lifecycle.ConfigureAsync(descriptor.AppId, new AppConfigureRequest(descriptor.Settings), cancellationToken);
         }
 
+        // Drop settings the bootstrap has retired. Only touches the record when one is actually present,
+        // so a clean install never takes a needless write.
+        if (app is not null &&
+            descriptor.RetiredSettings is { Count: > 0 } retired &&
+            app.Settings.Keys.Any(key => retired.Contains(key, StringComparer.Ordinal)))
+        {
+            logger.LogInformation(
+                "{DisplayName}: removing retired bootstrap setting(s) {Settings}.",
+                descriptor.DisplayName,
+                string.Join(", ", retired.Where(key => app.Settings.ContainsKey(key))));
+            app = (await apps.UpdateAppAsync(
+                descriptor.AppId,
+                record => record with
+                {
+                    Settings = record.Settings
+                        .Where(pair => !retired.Contains(pair.Key, StringComparer.Ordinal))
+                        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+                },
+                cancellationToken)).App;
+        }
+
         if (app is not null && descriptor.Autostart is bool configuredAutostart && app.Autostart != configuredAutostart)
         {
             await lifecycle.ConfigureAutostartAsync(descriptor.AppId, new AppAutostartRequest(configuredAutostart), cancellationToken);

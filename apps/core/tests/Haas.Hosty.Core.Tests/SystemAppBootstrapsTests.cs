@@ -128,6 +128,22 @@ public sealed class SystemAppBootstrapsTests
     }
 
     [Fact]
+    public void FromDistribution_ShellDescriptorRetiresHostnameInsteadOfStampingIt()
+    {
+        // HOSTNAME was stamped from the Shell public origin's host but never reached the container: the
+        // manifest declares HOSTNAME=0.0.0.0 as the Next.js bind address and its environment is appended
+        // after the settings, so docker's last-wins duplicate handling always kept the bind address. It
+        // only ever showed up as a settings row that looked like it controlled the public origin.
+        var config = CreateConfig() with { ShellPublicOrigin = "https://shell.example.test" };
+
+        var plan = SystemAppBootstraps.FromDistribution([Shell], choices: null, config);
+
+        var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
+        Assert.DoesNotContain("HOSTNAME", shell.Settings!.Keys);
+        Assert.Contains("HOSTNAME", shell.RetiredSettings!);
+    }
+
+    [Fact]
     public void FromDistribution_AmbientRuntimeOverridePinsShellAndCollectorDescriptors()
     {
         // The ambient dev/fork override (HOSTY_SHELL_BOOTSTRAP_RUNTIME / HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME)
