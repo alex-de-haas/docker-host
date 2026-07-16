@@ -3466,6 +3466,9 @@ internal sealed class CoreLifecycleService(
     // One registry pass over the target selection's compiled services: the locked digest from the app
     // record next to the remotely-resolved candidate. Shared by the update plan (artifact change
     // entries) and the update-status report (per-service digests), so both read the same probe.
+    // Lock-less services are still probed: the plan needs the candidate for its `none->{digest}`
+    // entries (pre-existing behavior), and forking a skip-when-lockless variant just for the rare
+    // status fallback would give the two paths different probe semantics for no real saving.
     // Probes run concurrently under a small cap: each spawns a docker CLI process and waits out a
     // registry round-trip, and an app's services are independent — but an unbounded fan-out would
     // burst-spawn processes for image-heavy apps. Task.WhenAll keeps the service-key order.
