@@ -304,6 +304,28 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateUpdatePlanAsync_ToleratesARecordWithNoCapabilitiesCollection()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestV1 = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestV1));
+
+        // AppRecord.Capabilities is a positional record parameter read straight out of state.json, and
+        // nothing enforces its non-null contract at runtime — a hand-edited or truncated file yields
+        // null. Planning an update must still work rather than throw out of the diff.
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { Capabilities = null! });
+
+        var manifestV2 = await fixture.WriteManifestAsync("1.0.1");
+        var plan = await fixture.Service.CreateUpdatePlanAsync(
+            "com.example.notes",
+            new AppUpdatePlanRequest(manifestV2));
+
+        // The absent list reads as "no optional features", so the target's defaults arrive as additions.
+        Assert.Contains("capability:backup:added", plan.Changes);
+        Assert.Contains("capability:logs:added", plan.Changes);
+    }
+
+    [Fact]
     public async Task InstallAsync_StillSucceedsWhenStartOnInstallStartFails()
     {
         var fixture = await LifecycleFixture.CreateAsync();

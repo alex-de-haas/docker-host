@@ -3722,8 +3722,13 @@ internal sealed class CoreLifecycleService(
     // (`update`, `stop`, ...) and anything unknown. Applied to BOTH sides of an update diff so a
     // record installed under the old vocabulary does not surface a wall of phantom
     // `capability:*:removed` changes on its next update plan.
-    private static IReadOnlyList<string> NormalizeCapabilities(IReadOnlyList<string> capabilities)
-        => capabilities.Where(CanonicalCapabilities.Contains).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+    //
+    // Takes a nullable list because one caller passes AppRecord.Capabilities, a positional record
+    // parameter deserialized straight from state.json: nothing enforces the non-null contract at
+    // runtime, so a hand-edited or truncated file yields null here. Matches how the registry store
+    // already reads its own deserialized collections (`app.PortAssignments ?? []`).
+    private static IReadOnlyList<string> NormalizeCapabilities(IReadOnlyList<string>? capabilities)
+        => (capabilities ?? []).Where(CanonicalCapabilities.Contains).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 
     // A manifest that declares no capabilities gets the default set; one that declares any list has it
     // normalized (replace, not merge — the author states exactly which optional features they support,
