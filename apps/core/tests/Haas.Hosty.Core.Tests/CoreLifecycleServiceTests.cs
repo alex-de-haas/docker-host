@@ -2035,6 +2035,33 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task CreateUpdatePlanAsync_CarriedPortOverrideIsNotAPhantomRemovedSetting()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        // Legacy Core-reserved port override on the record (never manifest-declared); the update
+        // carries it forward rather than removing it, so the plan must not report it "removed" —
+        // that phantom made the same-version plan review-class forever (apply preserves the key, the
+        // next check rebuilds the identical plan, and the Review affordance never converges).
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var settings = new Dictionary<string, AppSettingValue>(app!.Settings, StringComparer.Ordinal)
+        {
+            ["HOSTY_PORT_HTTP"] = new("HOSTY_PORT_HTTP", "number", "7171", Secret: false),
+        };
+        await fixture.Apps.UpsertAppAsync(app with { Settings = settings });
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
+
+        Assert.Empty(plan.Changes);
+        Assert.False(plan.RequiresReview);
+
+        // And the availability verdict agrees: nothing to update, no Review affordance.
+        var summary = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.False(summary.UpdateCheck!.UpdateAvailable);
+    }
+
+    [Fact]
     public async Task GetPendingUpdatePlanAsync_ReturnsCachedPlanUntilExpiry()
     {
         var fixture = await LifecycleFixture.CreateAsync();
