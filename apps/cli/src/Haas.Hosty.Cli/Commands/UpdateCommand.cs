@@ -56,10 +56,17 @@ internal sealed partial class UpdateCommand(CommandContext context)
         // restart. --keep-apps means this stop leaves the app containers running (Core does not run its
         // destructive per-app docker-stop sweep), and the start below re-adopts them — so `hosty update`
         // never disturbs running apps and cannot get wedged on a slow shutdown.
+        // A stop that failed outright must abort: proceeding would swap the executable under a still-
+        // running Core (the rename-based replace succeeds even then) and, because the outcome is not
+        // StoppedRunning, skip the restart — leaving the old Core serving with a newer binary on disk
+        // and the update-available badge stuck on. The CLI step above already completed; rerunning
+        // `hosty update` finishes the Core half.
         var stopOutcome = await new CoreCommand(context).StopForUpdateAsync();
         if (stopOutcome == CoreCommand.CoreUpdateStopOutcome.Failed)
         {
-            context.Error.MarkupLine("[yellow]Hosty Core did not stop cleanly before the update; on Windows the executable replace may fail while the file stays locked.[/]");
+            context.Error.MarkupLine("[red]Hosty Core did not stop cleanly; the Core update was aborted before replacing the executable.[/]");
+            context.Error.MarkupLine("[grey]The CLI itself was already updated. Check Core with [white]hosty core status[/], then rerun [white]hosty update[/].[/]");
+            return 1;
         }
 
         try
