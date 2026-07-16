@@ -82,9 +82,10 @@ internal static class CoreRestartEndpoints
                         statusCode: StatusCodes.Status503ServiceUnavailable));
                 }
 
+                string logPath;
                 try
                 {
-                    CoreCliLauncher.SpawnDetached(cliPath, args, config, logFileName);
+                    logPath = CoreCliLauncher.SpawnDetached(cliPath, args, config, logFileName);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
                 {
@@ -94,11 +95,13 @@ internal static class CoreRestartEndpoints
                         statusCode: StatusCodes.Status500InternalServerError));
                 }
 
-                logger.LogInformation("Core {Operation} requested via API; spawned '{Cli} {Args}'.", operation, cliPath, string.Join(' ', args));
-                return Task.FromResult(CoreJson.Json(new CoreRestartResponse(operation == "update" ? "updating" : "restarting"), statusCode: StatusCodes.Status202Accepted));
+                logger.LogInformation("Core {Operation} requested via API; spawned '{Cli} {Args}' (log: {LogPath}).", operation, cliPath, string.Join(' ', args), logPath);
+                return Task.FromResult(CoreJson.Json(new CoreRestartResponse(operation == "update" ? "updating" : "restarting", logPath), statusCode: StatusCodes.Status202Accepted));
             },
             requireCsrf: true,
             cancellationToken: cancellationToken);
 }
 
-internal sealed record CoreRestartResponse(string Status);
+// LogFile is the helper's output log on the host — the first place to look when the detached operation
+// never lands (the spawn itself is fire-and-forget past the immediate-failure probe).
+internal sealed record CoreRestartResponse(string Status, string LogFile);
