@@ -39,6 +39,7 @@ import type {
   AppLaunchResponse,
   AppOpenTarget,
   AppPageLink,
+  AppPendingUpdatePlanResponse,
   AppsResponse,
   BackupsResponse,
   CoreApp,
@@ -70,6 +71,10 @@ import type {
 // Minimum spacing between launch-code reissues for one app, a loop guard against a frame that keeps
 // re-posting hosty:auth-required.
 const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
+
+// Refresh cadence while server-side update work (a fleet check or a background apply) is in flight.
+// Quick enough that spinners and verdicts feel live, light enough for a full list poll.
+const UPDATE_WORK_POLL_INTERVAL_MS = 4_000;
 
 // Polls this page's own document URL until the restarted Shell answers again. Used after a Shell
 // self-update: the already-loaded bundle keeps working against Core while the Shell container
@@ -250,6 +255,7 @@ export function ShellClient({
         apps: apps.apps,
         session,
         updatedAt: new Date().toISOString(),
+        updateCheck: apps.updateCheck ?? null,
       });
     } catch (error) {
       if (isAuthRequiredRedirectError(error) || requestToken !== refreshRequestRef.current) {
@@ -497,6 +503,24 @@ export function ShellClient({
     return () => controller.abort();
   }, [canManageApps, loadCoreUpdateStatus]);
 
+  // Poll while server-side update work is in flight — a fleet check or a background apply — so
+  // spinners and verdicts track server state without manual refreshes (and keep tracking it after a
+  // reload: both signals live on the apps list, not in this page's memory). Everything else stays
+  // on-demand; the interval tears down as soon as the work settles.
+  const updateWorkInFlight =
+    (state.updateCheck?.running ?? false) ||
+    state.apps.some((app) => app.operationStatus === "updating");
+  useEffect(() => {
+    if (!updateWorkInFlight) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      void refresh();
+    }, UPDATE_WORK_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [updateWorkInFlight, refresh]);
+
   // Cancel a pending post-update re-probe timer when the shell unmounts.
   useEffect(
     () => () => {
@@ -602,15 +626,30 @@ export function ShellClient({
   );
 
   const loadUpdatePlan = useCallback(
-    async (app: CoreApp, manifestPath?: string) => {
+    async (app: CoreApp, manifestPath?: string, options?: { rebuild?: boolean }) => {
       const requestToken = ++detailRequestRef.current;
       setActivePanel({ appId: app.id, view: "update" });
       setDetailPanel({ loading: true, error: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
         const source = manifestPath?.trim();
-        // Plan routes require the CSRF header like their apply twins (C-M9); sendCsrfJson attaches it.
-        const response = await sendCsrfJson(appEndpoint(app, "/update/plan"), { manifestPath: source ? source : null });
-        const payload = (await response.json()) as CoreUpdatePlan;
+        let payload: CoreUpdatePlan | null = null;
+        // The fleet check (or an earlier dialog open) usually left a fresh plan cached on Core —
+        // render it instantly instead of rebuilding. An explicit source, or a caller that knows the
+        // cached plan is stale (a feed change), skips the cache and rebuilds.
+        if (!source && !options?.rebuild) {
+          const pending = await fetch(appEndpoint(app, "/update/plan"), { credentials: "include" });
+          redirectToCoreLoginIfAuthRequired(pending, coreOrigin);
+          if (pending.ok) {
+            payload = ((await pending.json()) as AppPendingUpdatePlanResponse).plan;
+          }
+        }
+
+        if (!payload) {
+          // Plan routes require the CSRF header like their apply twins (C-M9); sendCsrfJson attaches it.
+          const response = await sendCsrfJson(appEndpoint(app, "/update/plan"), { manifestPath: source ? source : null });
+          payload = (await response.json()) as CoreUpdatePlan;
+        }
+
         if (requestToken !== detailRequestRef.current) {
           return;
         }
@@ -624,7 +663,7 @@ export function ShellClient({
         setDetailPanel({ loading: false, error: error instanceof Error ? error.message : "Update plan is unavailable.", backups: null, backupCleanupPlan: null, updatePlan: null });
       }
     },
-    [appEndpoint, sendCsrfJson],
+    [appEndpoint, coreOrigin, sendCsrfJson],
   );
 
   // Points an installed app at one of its app-owned feeds. Core resolves the stored FeedsUrl and
@@ -638,7 +677,8 @@ export function ShellClient({
         toast.success("Feed updated", {
           description: feedId.length > 0 ? `Now following '${feedId}'.` : "No longer following a feed.",
         });
-        void loadUpdatePlan(app);
+        // The cached pending plan was built against the previous feed — force a rebuild.
+        void loadUpdatePlan(app, undefined, { rebuild: true });
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
           return;
@@ -1094,26 +1134,27 @@ export function ShellClient({
     [coreOrigin, sendCsrfJson],
   );
 
-  const applyUpdate = useCallback(
-    async (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => {
+  // Enqueues the update on Core (plan-first updates): the request returns as soon as the apply is
+  // accepted, progress lives on the record (operationStatus "updating" drives the row spinner via
+  // the update-work poll), and the outcome arrives as a record flip plus a host-admin notification.
+  // A rejected enqueue (the plan moved, expired, was consumed, or an apply is already running)
+  // answers with an actionable error — surface it and refresh so the row's affordance corrects
+  // itself instead of resending a dead digest.
+  const enqueueUpdate = useCallback(
+    async (app: CoreApp, planDigest: string) => {
       const actionKey = `${app.id}:update`;
       setBusyAction(actionKey);
       try {
-        const source = manifestPath?.trim();
-        await sendCsrfJson(appEndpoint(app, "/update"), {
-          planDigest: plan.planDigest,
-          manifestPath: source ? source : plan.manifestPath,
-          selectedRuntime: plan.targetRuntime,
-        });
-        await refresh();
-        invalidateUpdateStatus(app.id);
-        setActivePanel(null);
-        // Shell self-update: the apply request survives the Shell restart because the browser talks
-        // to Core directly, but the bundle running this page is now the old build. Wait for the new
-        // Shell to answer on our own origin, then reload so the browser loads the new assets. On
-        // timeout keep the (still functional) old page alive instead of reloading into an error.
+        await sendCsrfJson(appEndpoint(app, "/update"), { planDigest });
+        // Close this app's dialog if it is the one open; another app's panel is left alone.
+        setActivePanel((current) => (current?.appId === app.id ? null : current));
+
+        // Shell self-update: the apply now runs detached on Core, so it survives this page going
+        // away. Wait for the new Shell to answer on our own origin, then reload so the browser
+        // loads the new assets. On timeout keep the (still functional) old page alive.
         if (app.id === shellAppId) {
-          toast.success("Shell updated", { description: "Waiting for the new Shell, then reloading this page…" });
+          toast.success("Shell update started", { description: "Waiting for the new Shell, then reloading this page…" });
+          void refresh();
           if (await waitForOwnOrigin()) {
             window.location.reload();
           } else {
@@ -1124,23 +1165,117 @@ export function ShellClient({
           return;
         }
 
-        toast.success("Update applied", { description: app.displayName });
+        toast.success("Update started", { description: app.displayName });
+        await refresh();
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
           return;
         }
 
-        setDetailPanel((current) => ({
-          ...current,
-          loading: false,
-          error: error instanceof Error ? error.message : "Update failed.",
-        }));
+        toast.error("Update not started", {
+          description: error instanceof Error ? error.message : "The update could not be started.",
+        });
+        // The verdict or pending plan may have moved — refresh so the row renders current reality.
+        void refresh();
       } finally {
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, invalidateUpdateStatus, refresh, sendCsrfJson, shellAppId],
+    [appEndpoint, refresh, sendCsrfJson, shellAppId],
   );
+
+  const applyUpdate = useCallback(
+    async (app: CoreApp, plan: CoreUpdatePlan) => {
+      await enqueueUpdate(app, plan.planDigest);
+    },
+    [enqueueUpdate],
+  );
+
+  // Row one-click apply from the fleet-check verdict: the cached pending plan is applied by digest,
+  // no dialog involved. Only offered for routine verdicts (the page gates on requiresReview).
+  const applyUpdateFromRow = useCallback(
+    async (app: CoreApp) => {
+      const planDigest = app.updateCheck?.planDigest;
+      if (!planDigest) {
+        return;
+      }
+
+      await enqueueUpdate(app, planDigest);
+    },
+    [enqueueUpdate],
+  );
+
+  // Starts (or joins) the Core fleet update check; progress is server state on the apps list, so the
+  // spinner survives reloads and shows for every admin, not just the one who clicked.
+  const startUpdateCheck = useCallback(async () => {
+    try {
+      await sendCsrfJson(`${coreOrigin}/api/apps/update-check`, {});
+      await refresh();
+    } catch (error) {
+      if (isAuthRequiredRedirectError(error)) {
+        return;
+      }
+
+      toast.error("Update check failed to start", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  }, [coreOrigin, refresh, sendCsrfJson]);
+
+  // Applies every routine verdict in one action; review-class updates are left for a human and
+  // counted in the summary. Shell's own app goes last: its apply restarts the Shell serving this
+  // page, so every other enqueue must already be accepted by then (enqueueUpdate then owns the
+  // wait-for-new-Shell reload).
+  const updateAllApps = useCallback(async () => {
+    const routine = state.apps.filter(
+      (app) =>
+        app.updateCheck?.updateAvailable === true &&
+        app.updateCheck.requiresReview !== true &&
+        Boolean(app.updateCheck.planDigest) &&
+        app.operationStatus !== "updating",
+    );
+    const reviewCount = state.apps.filter(
+      (app) => app.updateCheck?.updateAvailable === true && app.updateCheck.requiresReview === true,
+    ).length;
+    const reviewNote = reviewCount > 0 ? `${reviewCount} update${reviewCount === 1 ? "" : "s"} need review.` : undefined;
+    if (routine.length === 0) {
+      toast.info("No routine updates to apply", { description: reviewNote });
+      return;
+    }
+
+    const shellApp = routine.find((app) => app.id === shellAppId);
+    let started = 0;
+    let failed = 0;
+    for (const app of routine.filter((candidate) => candidate.id !== shellAppId)) {
+      try {
+        await sendCsrfJson(appEndpoint(app, "/update"), { planDigest: app.updateCheck!.planDigest });
+        started += 1;
+      } catch (error) {
+        if (isAuthRequiredRedirectError(error)) {
+          return;
+        }
+
+        failed += 1;
+      }
+    }
+
+    // Count only what actually got accepted; the Shell's own enqueue runs after this and reports
+    // through enqueueUpdate's dedicated toast (or its error path), never pre-counted here. A batch
+    // where nothing started is a warning, not a "0 updates started" success.
+    const failedNote = failed > 0 ? `${failed} could not be started.` : undefined;
+    const notes = [reviewNote, failedNote, shellApp ? "The Shell updates last." : undefined]
+      .filter(Boolean)
+      .join(" ") || undefined;
+    if (started > 0) {
+      toast.success(`${started} update${started === 1 ? "" : "s"} started`, { description: notes });
+    } else if (failed > 0) {
+      toast.warning("No updates could be started", { description: notes });
+    }
+    await refresh();
+    if (shellApp?.updateCheck?.planDigest) {
+      await enqueueUpdate(shellApp, shellApp.updateCheck.planDigest);
+    }
+  }, [appEndpoint, enqueueUpdate, refresh, sendCsrfJson, shellAppId, state.apps]);
 
   const removeApp = useCallback(
     // The RemovePanel is itself the confirmation (it names the app, lists the delete-data/backups/source
@@ -1621,8 +1756,12 @@ export function ShellClient({
       openAppPanel,
       openInstalledApps,
       openSharedMounts,
+      applyUpdateFromRow,
+      startUpdateCheck,
+      updateAllApps,
     }),
     [
+      applyUpdateFromRow,
       configureAppDevelopmentMode,
       coreOrigin,
       createManualBackup,
@@ -1636,6 +1775,8 @@ export function ShellClient({
       runAppAction,
       sendCsrfJson,
       shellAppId,
+      startUpdateCheck,
+      updateAllApps,
       switchAppRuntime,
     ],
   );

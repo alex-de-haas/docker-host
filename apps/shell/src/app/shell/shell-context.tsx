@@ -40,6 +40,11 @@ export type ShellActionsContextValue = {
   openInstallDialog: (manifestPath?: string) => void;
   runAppAction: (app: CoreApp, action: AppAction) => Promise<void>;
   switchAppRuntime: (app: CoreApp, targetRuntime: string) => Promise<void>;
+  // Plan-first updates: one-click apply of a routine verdict from the row, the fleet update-check
+  // trigger, and the apply-everything-routine action.
+  applyUpdateFromRow: (app: CoreApp) => Promise<void>;
+  startUpdateCheck: () => Promise<void>;
+  updateAllApps: () => Promise<void>;
   configureAppDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => Promise<void>;
   createManualBackup: (app: CoreApp) => Promise<void>;
   openAppPanel: OpenAppPanel;

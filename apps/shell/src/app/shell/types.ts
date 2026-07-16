@@ -149,6 +149,9 @@ export type CoreApp = {
   // "Live" badge. Optional for backwards compatibility with older Core builds. See
   // runtime-artifact-model.md.
   live?: boolean | null;
+  // Last-known update verdict from the Core fleet check (plan-first updates); null until a check has
+  // run for this app. Drives the row Update/Review affordances. Optional for backwards compatibility.
+  updateCheck?: AppUpdateAvailability | null;
   // Set when the live source folder manifest was invalid on the last start and Core kept the last-good
   // copy running; surfaced as a non-blocking warning. Null when valid or not a live source app.
   manifestError?: string | null;
@@ -214,6 +217,31 @@ export type CoreGlobalMount = {
 
 export type AppsResponse = {
   apps: CoreApp[];
+  // Fleet update-check status (plan-first updates): drives the header "Check updates" spinner from
+  // server state, so a page opened mid-sweep (or after a reload) shows the check in progress.
+  updateCheck?: AppUpdateCheckStatus | null;
+};
+
+// Last-known update verdict for one app, written by the Core fleet check (and by any successful plan
+// build), cleared by a successful apply. `planDigest` names the cached pending plan a one-click
+// apply consumes; `error` means the latest check failed for this app.
+export type AppUpdateAvailability = {
+  updateAvailable: boolean;
+  requiresReview: boolean;
+  planDigest?: string | null;
+  checkedAt: string;
+  error?: string | null;
+};
+
+export type AppUpdateCheckStatus = {
+  running: boolean;
+  lastCompletedAt?: string | null;
+};
+
+// Response of GET /api/apps/{id}/update/plan: the cached pending plan, or null when nothing is
+// pending (never built, expired, or consumed by an apply).
+export type AppPendingUpdatePlanResponse = {
+  plan: CoreUpdatePlan | null;
 };
 
 // Generic bootstrap (docs/ideas/generic-bootstrap.md): one distribution-list entry as reported by
@@ -398,6 +426,10 @@ export type CoreUpdatePlan = {
   // so an empty `changes` list does not mean the app is up to date. Optional for backwards compatibility
   // with older Core builds that omit the field.
   sourceConfigured?: boolean;
+  // True when the change list carries anything beyond routine version/manifest/artifact/image-tag
+  // movement, so the plan must be reviewed by a human instead of applied silently. Optional for
+  // backwards compatibility with older Core builds.
+  requiresReview?: boolean;
 };
 
 export type CoreRuntimeSwitchPlan = {
@@ -585,6 +617,8 @@ export type LoadState = {
   apps: CoreApp[];
   session: SessionResponse | null;
   updatedAt: string | null;
+  // Fleet update-check status from the last apps load (plan-first updates).
+  updateCheck?: AppUpdateCheckStatus | null;
 };
 
 export type DetailPanelState = {
