@@ -2092,7 +2092,46 @@ internal sealed class DockerRuntimeAdapter(
         }
 
         var manifest = await RunRawAsync(["manifest", "inspect", "--verbose", tagReference], cancellationToken);
-        return manifest.ExitCode == 0 ? ParseManifestInspectDigest(manifest.StandardOutput) : null;
+        if (manifest.ExitCode == 0 && ParseManifestInspectDigest(manifest.StandardOutput) is { } manifestDigest)
+        {
+            return manifestDigest;
+        }
+
+        // Both registry probes failed, and a null here is all the callers ever see: an update plan turns
+        // it into the `->unknown` marker, an update-status row into "unknown / no update available". The
+        // reason exists only in docker's stderr, which RunRawAsync already captured (it also folds a
+        // DockerUnavailableException into exit 127 rather than throwing, so nothing upstream can catch
+        // this either) — drop it and every distinct failure renders identically. A registry rate limit,
+        // an auth failure, a missing buildx plugin, and a genuinely unreachable registry are very
+        // different operator problems, and an intermittent one shows up as a digest that flaps between
+        // real and "unknown" across plan rebuilds. Log at warning so the cause is recoverable from
+        // core.log without a debugger.
+        logger.LogWarning(
+            "Remote image digest lookup failed for '{Image}'; callers will report it as unknown. " +
+            "'buildx imagetools inspect' exited {ImagetoolsExit}: {ImagetoolsError} — " +
+            "'manifest inspect' exited {ManifestExit}: {ManifestError}",
+            tagReference,
+            imagetools.ExitCode,
+            DescribeDockerFailure(imagetools),
+            manifest.ExitCode,
+            DescribeDockerFailure(manifest));
+        return null;
+    }
+
+    // One-line rendering of a failed docker probe for the log: stderr when there is any, else a note
+    // that it said nothing (exit 0 here means the command succeeded but its output did not parse into a
+    // digest, which is worth telling apart from a non-zero exit). Bounded so a verbose registry error
+    // cannot flood core.log.
+    private static string DescribeDockerFailure(DockerCommandResult result)
+    {
+        var detail = result.StandardError.Trim();
+        if (detail.Length == 0)
+        {
+            detail = result.ExitCode == 0 ? "<no digest in output>" : "<no stderr>";
+        }
+
+        detail = detail.ReplaceLineEndings(" ");
+        return detail.Length <= 400 ? detail : $"{detail[..400]}…";
     }
 
     // Parses the `Digest: sha256:...` line docker prints during a pull. Returns `sha256:...` or null.

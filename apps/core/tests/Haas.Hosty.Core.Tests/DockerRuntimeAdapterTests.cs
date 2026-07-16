@@ -1,4 +1,5 @@
 using Haas.Hosty.Core;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core.Tests;
 
@@ -515,6 +516,59 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task ResolveRemoteDigestAsync_LogsWhyBothRegistryProbesFailed()
+    {
+        // A null here reaches the operator as a bare "unknown" in an update plan or update-status row.
+        // Without this warning the reason lives only in docker's stderr and is dropped, so a rate limit,
+        // an auth failure and an unreachable registry are indistinguishable — and an intermittent one
+        // looks like a digest randomly flapping between real and "unknown".
+        var runner = new FakeDockerCommandRunner(args => args[0] switch
+        {
+            "buildx" => new DockerCommandResult(125, "", "ERROR: unknown flag: --format"),
+            _ => new DockerCommandResult(1, "", "toomanyrequests: retry-after 60s"),
+        });
+        var logger = new CapturingLogger<DockerRuntimeAdapter>();
+
+        Assert.Null(await CreateAdapter(runner, logger).ResolveRemoteDigestAsync(new RuntimeDockerImage("ghcr.io/example/app", "latest")));
+
+        var warning = Assert.Single(logger.Warnings);
+        Assert.Contains("ghcr.io/example/app:latest", warning, StringComparison.Ordinal);
+        Assert.Contains("unknown flag: --format", warning, StringComparison.Ordinal);
+        Assert.Contains("toomanyrequests", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResolveRemoteDigestAsync_LogsWhenAProbeSucceedsButYieldsNoDigest()
+    {
+        // Exit 0 with unparseable output is a different failure from a non-zero exit, and it used to be
+        // just as silent: the old code returned null for any unparseable manifest-inspect payload.
+        var runner = new FakeDockerCommandRunner(args => args[0] switch
+        {
+            "buildx" => new DockerCommandResult(1, "", "no builder"),
+            _ => new DockerCommandResult(0, "{\"Descriptor\":{}}", ""),
+        });
+        var logger = new CapturingLogger<DockerRuntimeAdapter>();
+
+        Assert.Null(await CreateAdapter(runner, logger).ResolveRemoteDigestAsync(new RuntimeDockerImage("ghcr.io/example/app", "latest")));
+
+        Assert.Contains("<no digest in output>", Assert.Single(logger.Warnings), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResolveRemoteDigestAsync_DoesNotLogWhenResolutionSucceeds()
+    {
+        var digest = "sha256:" + new string('a', 64);
+        var runner = new FakeDockerCommandRunner(args =>
+            args[0] == "buildx" ? new DockerCommandResult(0, digest + "\n", "") : new DockerCommandResult(1, "", ""));
+        var logger = new CapturingLogger<DockerRuntimeAdapter>();
+
+        Assert.Equal(digest, await CreateAdapter(runner, logger).ResolveRemoteDigestAsync(new RuntimeDockerImage("ghcr.io/example/app", "latest")));
+
+        // A fleet "Check updates" resolves every service of every app, so the healthy path must stay quiet.
+        Assert.Empty(logger.Warnings);
+    }
+
+    [Fact]
     public void BuildTelemetryEnvironment_InjectsOtelWhenEnabledWithEndpoint()
     {
         var context = CreateTelemetryContext(enabled: true, sampleRatio: 0.25, endpoint: "http://localhost:4318");
@@ -605,12 +659,38 @@ public sealed class DockerRuntimeAdapterTests
         return new RuntimeLifecycleContext(app, selection, "/tmp/app", "/tmp/app/data", new Dictionary<string, string>(), [], endpoint);
     }
 
-    private static DockerRuntimeAdapter CreateAdapter(IDockerCommandRunner runner)
+    private static DockerRuntimeAdapter CreateAdapter(
+        IDockerCommandRunner runner,
+        ILogger<DockerRuntimeAdapter>? logger = null)
         => new(
             CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
             new AppServiceTokenService(new ControlSecret("test-control-secret")),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<DockerRuntimeAdapter>.Instance,
+            logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DockerRuntimeAdapter>.Instance,
             runner);
+
+    // Minimal warning capture: the adapter's diagnostics are the product here, so a test must be able to
+    // assert what an operator would actually read in core.log.
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning)
+            {
+                Warnings.Add(formatter(state, exception));
+            }
+        }
+    }
 
     private static RuntimeLifecycleContext CreateDockerContext(AppRecord app)
     {
