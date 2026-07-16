@@ -72,6 +72,10 @@ import type {
 // re-posting hosty:auth-required.
 const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
 
+// Refresh cadence while server-side update work (a fleet check or a background apply) is in flight.
+// Quick enough that spinners and verdicts feel live, light enough for a full list poll.
+const UPDATE_WORK_POLL_INTERVAL_MS = 4_000;
+
 // Polls this page's own document URL until the restarted Shell answers again. Used after a Shell
 // self-update: the already-loaded bundle keeps working against Core while the Shell container
 // swaps, but the new build only reaches the browser via a reload — which must wait until the new
@@ -513,7 +517,7 @@ export function ShellClient({
 
     const timer = setInterval(() => {
       void refresh();
-    }, 4_000);
+    }, UPDATE_WORK_POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [updateWorkInFlight, refresh]);
 
