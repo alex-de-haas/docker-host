@@ -65,6 +65,19 @@ expectEqual("shell version", {
   packageJson: json("apps/shell/package.json").version,
 });
 
+// workspaces: each package.json ↔ the version npm mirrors into the lockfile's `packages` entry. npm
+// only rewrites these on an install that touches the workspace, so a version bump committed on its own
+// leaves the lockfile behind (apps/shell sat three minors stale this way). Nothing consumes the mirrored
+// version at build time, which is exactly why it drifts unnoticed — assert it so the bump commit has to
+// carry the lockfile.
+const lockfile = json("package-lock.json");
+for (const workspace of json("package.json").workspaces ?? []) {
+  expectEqual(`${workspace} lockfile version`, {
+    packageJson: json(`${workspace}/package.json`).version,
+    lockfile: lockfile.packages?.[workspace]?.version,
+  });
+}
+
 // telemetry: the manifest version ↔ the first-party image tags it pins (see R-M1). The app ships as a
 // unit, so the backend and the UI images (+ the UI package.json) all track the manifest version. The
 // collector is a third-party image (own upstream version) and is exempt.

@@ -35,6 +35,21 @@ export function appHasMissingRequiredSettings(app: CoreApp) {
   );
 }
 
+// Whether Shell should offer the reviewed-update entry points (the row Update button and the fleet
+// "Check updates" probe) for this app. Updating is an inherent Core operation, not something an app
+// grants: Core authorizes it on the admin session and refuses it for exactly one reason — a live
+// source runtime, whose manifest is adopted on restart rather than advanced through a plan
+// (CreateUpdatePlanAsync -> update_live_source_runtime). That single check is all this is, which
+// mirrors the UpdatePanel's own gate (`canManageApps` alone, see app-details-dialog.tsx) — an entry
+// point must never be stricter than the panel it opens.
+//
+// Deliberately NOT gated on the manifest `capabilities` list: that list is a client action hint that
+// Core never enforces for lifecycle operations, so gating on it trapped any app installed before its
+// manifest declared "update" — it could not receive the very update that would add the token.
+export function appSupportsReviewedUpdate(app: CoreApp) {
+  return !app.live;
+}
+
 export function formatUpdateChange(change: string): string {
   if (change === "manifest") {
     return "Manifest content changed";

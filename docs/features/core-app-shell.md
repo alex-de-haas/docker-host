@@ -89,7 +89,7 @@ The Installed Apps view is the current administrator management surface for inst
 - Runtime Apps: non-system runtime apps installed by users or administrators;
 - System Apps: Core-managed apps such as Hosty Shell.
 
-Runtime Apps expose actions according to Core state and app capabilities:
+Runtime Apps expose actions according to Core state, plus — for the two entries that are optional app features rather than lifecycle verbs — the `logs` and `backup` capabilities the app declares (see below):
 
 - start, stop, and restart;
 - install from an `app.0.1` manifest URL, local manifest file path, or local app directory containing `manifest.json`;
@@ -99,7 +99,17 @@ Runtime Apps expose actions according to Core state and app capabilities:
 - create, restore, delete, and prune backups;
 - remove an app, with optional backup deletion.
 
-System Apps are inspectable and configurable in Shell. Administrators can open their ordinary settings dialog and switch runtime profiles; logs remain available when the `logs` capability is present. Shell hides start, stop, restart, update, backup, restore, autostart, and removal controls for all `system` apps. This lets Marketplace own its catalog URL as a manifest setting without adding Marketplace logic to Core. Core remains the source of truth for what operations are allowed.
+### Lifecycle operations vs. app capabilities
+
+These are two different things, and only one of them is the app's to declare.
+
+**Lifecycle operations are inherent to Core managing an app** — start, stop, restart, update, remove, autostart. Core authorizes them on the administrator session at the endpoint (`RequireAdminSessionAsync`) and never consults the manifest, so an app cannot decline to be stopped or updated by omitting a token. Shell gates them on administrator rights, and additionally hides start, stop, restart, backups, autostart, and removal for `system` apps. Updates are deliberately **not** system-gated: a system app is reviewed-updated through the same plan/apply flow as any other runtime app. The one genuine Core-side refusal is a live source runtime, which has no reviewed update because its manifest is adopted on restart rather than advanced through a plan.
+
+**The manifest `capabilities` list describes optional app *features*** a client may surface, and its canonical vocabulary is therefore only `backup` and `logs` — things that genuinely depend on the app (does it have data worth snapshotting?). Core normalizes a declared list to that vocabulary, dropping the retired lifecycle tokens (`update`, `stop`, `restart`, `remove`) and the two that no client ever read: `open` is derived from the app's endpoints, and `restore` lives inside the backup panel. A manifest that declares nothing gets the full default set.
+
+This list is a client hint, never a grant. The separate manifest `provides` field is the axis on which an app declares a role to Core (see [Runtime App Manifest](runtime-app-manifest.md) and [Core Extension Model](../ideas/core-extension-model.md)); self-description is load-bearing there and is guarded by explicit operator consent instead.
+
+System Apps are inspectable and configurable in Shell. Administrators can open their ordinary settings dialog, switch runtime profiles, and apply reviewed updates — system apps update through the exact same plan/apply flow as every other runtime app. Logs remain available when the `logs` capability is present. Shell hides start, stop, restart, backup, restore, autostart, and removal controls for all `system` apps. This lets Marketplace own its catalog URL as a manifest setting without adding Marketplace logic to Core. Core remains the source of truth for what operations are allowed.
 
 ## Embedded Apps
 
