@@ -1275,7 +1275,21 @@ internal sealed class CoreLifecycleService(
         {
             logger.LogError(ex, "Background update for app {AppId} failed.", appId);
             await RecordBackgroundLifecycleFailureAsync(appId, "update", ex.Message, CancellationToken.None);
-            await NotifyUpdateFailedAsync(appId, ex.Message, CancellationToken.None);
+            await NotifyUpdateFailedAsync(appId, await TryGetDisplayNameAsync(appId), ex.Message, CancellationToken.None);
+        }
+    }
+
+    // Best-effort display-name lookup for a notification title; the id is an acceptable fallback —
+    // a broken read must not swallow the failure notification itself.
+    private async Task<string> TryGetDisplayNameAsync(string appId)
+    {
+        try
+        {
+            return (await apps.GetAppAsync(appId))?.DisplayName ?? appId;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return appId;
         }
     }
 
@@ -1307,14 +1321,33 @@ internal sealed class CoreLifecycleService(
         {
             cancellationToken.ThrowIfCancellationRequested();
             const string message = "The update was interrupted by a Core restart. Review the update and apply it again.";
-            // Re-check under the record lock so a concurrent write is not clobbered.
+            // The mapper runs under the record lock. A record is flipped only while it is still
+            // "updating" AND no background apply is in flight for it: a fresh enqueue registers its
+            // single-flight slot before persisting the marker (also under the record lock), so a
+            // legitimate in-flight update racing this sweep always has its slot visible here and is
+            // left alone. `flipped` gates the notification and the count, so a record that moved on
+            // between the list snapshot and this write is not reported as interrupted.
+            var flipped = false;
             await apps.UpdateAppAsync(
                 app.Id,
-                current => string.Equals(current.OperationStatus, "updating", StringComparison.Ordinal)
-                    ? current with { OperationStatus = "failed", LastOperation = "update", LastError = message }
-                    : current,
+                current =>
+                {
+                    if (!string.Equals(current.OperationStatus, "updating", StringComparison.Ordinal) ||
+                        runningBackgroundUpdates.ContainsKey(app.Id))
+                    {
+                        return current;
+                    }
+
+                    flipped = true;
+                    return current with { OperationStatus = "failed", LastOperation = "update", LastError = message };
+                },
                 cancellationToken);
-            await NotifyUpdateFailedAsync(app.Id, message, cancellationToken);
+            if (!flipped)
+            {
+                continue;
+            }
+
+            await NotifyUpdateFailedAsync(app.Id, app.DisplayName, message, cancellationToken);
             logger.LogWarning("App {AppId} was mid-update when Core stopped; marked failed for re-review.", app.Id);
             recovered++;
         }
@@ -1351,7 +1384,7 @@ internal sealed class CoreLifecycleService(
 
     // Failure twin of NotifyUpdateAppliedAsync. Dedupe key is per-app so repeated failures coalesce
     // until one succeeds.
-    private async Task NotifyUpdateFailedAsync(string appId, string message, CancellationToken cancellationToken)
+    private async Task NotifyUpdateFailedAsync(string appId, string displayName, string message, CancellationToken cancellationToken)
     {
         if (notifications is null)
         {
@@ -1363,7 +1396,7 @@ internal sealed class CoreLifecycleService(
             await notifications.PublishAsync(
                 new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
                 "error",
-                $"'{appId}' update failed",
+                $"'{displayName}' update failed",
                 message,
                 link: null,
                 $"app-update-failed:{appId}",
