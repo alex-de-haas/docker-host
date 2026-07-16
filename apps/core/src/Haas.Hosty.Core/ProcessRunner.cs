@@ -24,6 +24,16 @@ internal static class ProcessRunner
     {
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
+        // Own stdin too, even though nothing here writes to it. Redirecting any stream makes .NET set
+        // STARTF_USESTDHANDLES, and Windows then requires every handle in STARTUPINFO to be inheritable —
+        // an unredirected stdin hands the child Core's own handle, whatever state it is in (Core runs
+        // detached under `cmd /c "core.exe > core.log 2>&1"`, and WindowsProcessControl used to clear its
+        // inherit flag outright). A child holding a broken stdin dies the moment it re-spawns: docker
+        // exec'ing a cli-plugin failed with "The request is not supported". An owned pipe, closed
+        // immediately below, gives every child a valid stdin at EOF regardless of how Core was launched.
+        // Both callers are non-interactive captures, and EOF is the better answer for them anyway — it
+        // stops git blocking forever on a credential prompt nobody can type into.
+        startInfo.RedirectStandardInput = true;
         startInfo.UseShellExecute = false;
 
         using var process = new Process { StartInfo = startInfo };
@@ -31,6 +41,7 @@ internal static class ProcessRunner
         // Start exceptions (missing binary, etc.) propagate to the caller, which wraps them in its own
         // domain exception (DockerUnavailableException / AppLifecycleException).
         process.Start();
+        process.StandardInput.Close();
 
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (timeout is { } limit)
