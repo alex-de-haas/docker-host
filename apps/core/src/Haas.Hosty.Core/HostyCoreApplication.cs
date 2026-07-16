@@ -1297,9 +1297,6 @@ internal sealed class RuntimeAppSupervisorService(
         }
     }
 
-    // Install-time port reservations, phase 1: backfill persistent port assignments from stored endpoint
-    // URLs before autostart reconciliation consumes them. Best-effort — a failure is logged and startup
-    // continues (start still resolves ports as it does today when a record has no assignments yet).
     // Boot sweep for background applies interrupted by a Core stop (plan-first updates phase 3):
     // flips stuck "updating" records to failed-for-re-review before autostart reconciliation reads
     // them. Best-effort — a recovery failure must never abort boot.
@@ -1322,6 +1319,9 @@ internal sealed class RuntimeAppSupervisorService(
         }
     }
 
+    // Install-time port reservations, phase 1: backfill persistent port assignments from stored endpoint
+    // URLs before autostart reconciliation consumes them. Best-effort — a failure is logged and startup
+    // continues (start still resolves ports as it does today when a record has no assignments yet).
     private async Task MigratePortAssignmentsAsync(CancellationToken cancellationToken)
     {
         try
