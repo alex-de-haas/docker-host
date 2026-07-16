@@ -235,9 +235,18 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             .ToArray();
 
     // The loopback ports no fresh automatic allocation may reuse: every non-host-network reservation held
-    // by another installed app, plus the Core port. Shell is not special-cased any more: it pins its port
-    // in its own manifest like any app, and once installed its assignment is in the set below. Core's port
-    // stays because Core is not an app and has no assignment to be found in.
+    // by another installed app, plus the Core port. Core's port stays because Core is not an app and has
+    // no assignment to be found in.
+    //
+    // Shell is not special-cased any more: it pins its port in its own manifest like any app, and once
+    // installed its assignment is in the set below. That does drop a guarantee — before Shell installs,
+    // nothing holds its pinned port — but only to the exact degree every other app already lives with: no
+    // one reserves a pinned port for an app that is not installed yet. Reserving Shell's would be the
+    // special case this exists to remove. In practice the window is narrower still: allocation takes
+    // whatever the OS hands out for port 0, and every default ephemeral range (Linux 32768+, Windows and
+    // macOS 49152+) sits well above the ports apps pin. A host with a deliberately widened range could
+    // collide, and then Shell's start fails with the same reassign-able runtime_port_unavailable any app
+    // gets — recoverable by setting HOSTY_PORT_HTTP on it, which now sticks instead of being re-stamped.
     private HashSet<int> ReservedLoopbackPorts(IEnumerable<AppRecord> apps)
     {
         var reserved = new HashSet<int>(apps
