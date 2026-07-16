@@ -401,10 +401,8 @@ public sealed class LocalCommandRuntimeAdapterTests
             RunDirectory: "/tmp/hosty/core/run",
             ControlDiscoveryPath: "/tmp/hosty/core/run/control.json",
             CorePort: corePort,
-            ShellPort: 7171,
             ListenUrl: listenUrl,
             CorePublicOrigin: corePublicOrigin,
-            ShellPublicOrigin: null,
             RuntimePublicHost: "localhost",
             ShellSourceOverridePath: null,
             ShellAutostart: false);

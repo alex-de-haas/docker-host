@@ -223,13 +223,11 @@ internal sealed partial class CoreCommand(CommandContext context)
         {
             [LaunchSettingDefinitions.HostyDataRoot] = settings.ResolveHostDataRoot(context.Environment),
             [LaunchSettingDefinitions.HostyCorePort] = ResolveCorePort(url, settings.HostyCorePort),
-            [LaunchSettingDefinitions.HostyShellPort] = settings.HostyShellPort,
             ["HOSTY_CORE_URL"] = url,
             ["ASPNETCORE_URLS"] = url,
         };
 
         AddOptional(environment, LaunchSettingDefinitions.HostyCorePublicOrigin, settings.HostyCorePublicOrigin);
-        AddOptional(environment, LaunchSettingDefinitions.HostyShellPublicOrigin, settings.HostyShellPublicOrigin);
         // Hand Core the path to this managed CLI so its admin restart endpoint (used by the Shell platform
         // panel) can spawn `hosty core restart --keep-apps` to light-restart Core without an external
         // supervisor. Only when we are the installed `hosty` binary — a source/dev CLI (dotnet host) has
@@ -673,15 +671,17 @@ internal sealed partial class CoreCommand(CommandContext context)
             table.Field("Core port", status.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
-        if (status.ShellPort > 0)
-        {
-            table.Field("Shell port", status.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        }
-
         table
             .Field("Data root", Markup.Escape(status.DataRoot ?? ""))
             .Field("Core origin", Markup.Escape(status.CorePublicOrigin ?? "not configured"))
-            .Field("Shell origin", Markup.Escape(status.ShellPublicOrigin ?? "not configured"));
+            // Core resolves this from Shell's app record, so a blank means Shell is not installed at all
+            // — not that someone forgot to configure it. "not configured" would send the operator looking
+            // for a setting that no longer exists. Blank-checked rather than null-checked: Core only ever
+            // sends a normalized origin or null, but this is parsing a wire response, and an empty string
+            // slipping through would render an empty cell — the one outcome this line exists to avoid.
+            .Field("Shell origin", string.IsNullOrWhiteSpace(status.ShellPublicOrigin)
+                ? "no Shell installed"
+                : Markup.Escape(status.ShellPublicOrigin));
         context.Console.Write(table);
 
         foreach (var warning in status.Warnings ?? [])
@@ -734,7 +734,6 @@ internal sealed partial class CoreCommand(CommandContext context)
         string? DataRoot,
         string? ListenUrl,
         int CorePort,
-        int ShellPort,
         string? CorePublicOrigin,
         string? ShellPublicOrigin,
         IReadOnlyList<string> Warnings);

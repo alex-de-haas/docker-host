@@ -329,10 +329,8 @@ public sealed class RuntimePortAllocatorTests
             RunDirectory: "/tmp/hosty/core/run",
             ControlDiscoveryPath: "/tmp/hosty/core/run/control.json",
             CorePort: CorePort,
-            ShellPort: ShellPort,
             ListenUrl: $"http://localhost:{CorePort}",
             CorePublicOrigin: null,
-            ShellPublicOrigin: null,
             RuntimePublicHost: "127.0.0.1",
             ShellSourceOverridePath: null,
             ShellAutostart: false);

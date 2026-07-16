@@ -86,7 +86,6 @@ internal static class SystemAppBootstraps
                     // install (docker), operator's switch-runtime choice preserved on later boots.
                     Runtime: config.ShellBootstrapRuntime,
                     Autostart: config.ShellAutostart,
-                    Settings: ShellBootstrap.BuildBootstrapSettings(config),
                     RetiredSettings: ShellBootstrap.RetiredSettings,
                     SourceOverridePath: config.ShellSourceOverridePath,
                     FeedsUrl: entry.FeedsUrl),
@@ -180,31 +179,21 @@ internal static class ShellBootstrap
 {
     public const string AppId = "hosty.shell";
 
-    // The endpoint Shell publishes; its public-origin setting is the one Core resolves against.
+    // The endpoint Shell publishes. Named here because ShellPublicOriginResolver resolves against this
+    // endpoint's public-origin setting specifically, rather than whichever public endpoint sorts first.
     public const string WebEndpointKey = "web";
 
-    public static IReadOnlyDictionary<string, string?> BuildBootstrapSettings(HostyCoreRuntimeConfig config)
-    {
-        var settings = new Dictionary<string, string?>(StringComparer.Ordinal)
-        {
-            ["HOSTY_PORT_HTTP"] = config.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        };
-
-        // Transition: HOSTY_SHELL_PUBLIC_ORIGIN used to be read directly by Core's auth flow, which made
-        // it a second, invisible source of truth next to the Public Origins the operator can actually
-        // see. Core now resolves Shell's origin from the app record like any other app, so the legacy
-        // value is carried into that record instead — stamped every boot while the variable is set, which
-        // keeps existing hosts behaving exactly as before and finally shows the effective value in the UI.
-        // Clearing the variable hands ownership to the operator (the setting becomes editable and sticks);
-        // the variable itself retires with the rest of the CLI's per-app launch settings.
-        if (PublicOriginSettings.TryNormalizeOrigin(config.ShellPublicOrigin, out var legacyOrigin))
-        {
-            settings[PublicOriginSettings.BuildSettingKey(WebEndpointKey)] = legacyOrigin;
-        }
-
-        return settings;
-    }
-
+    // No Core-owned settings left. HOSTY_PORT_HTTP used to be stamped from HOSTY_SHELL_PORT, which made
+    // Core impersonate an operator port override (RuntimePortAllocator classifies the setting as
+    // AppPortSources.Operator) and left Shell's own manifest claiming a port it never ran on. The port is
+    // declared in that manifest now, like any app's. HOSTY_PUBLIC_ORIGIN_WEB was stamped from
+    // HOSTY_SHELL_PUBLIC_ORIGIN as the transition that moved the origin into the record; the record owns
+    // it from here, so an operator's edit finally sticks instead of being overwritten every boot.
+    //
+    // Records installed before this keep whichever values they were stamped, which is exactly right:
+    // 7171 and the configured origin, now genuinely theirs and editable. Nothing is retired — unlike
+    // HOSTNAME these are real settings an operator may want; RetiredSettings would delete them on every
+    // boot and make them impossible to set.
     // HOSTNAME used to be stamped here from the Shell public origin's host. It never did anything: the
     // manifest declares HOSTNAME=0.0.0.0 as the Next.js bind address, and a service's manifest
     // environment is appended *after* the settings in the docker run args, so docker's last-wins

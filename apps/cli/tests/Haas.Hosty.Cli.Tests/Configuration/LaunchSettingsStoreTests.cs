@@ -33,11 +33,34 @@ public sealed class LaunchSettingsStoreTests : IDisposable
 
         Assert.Equal(rootDirectory, settings[LaunchSettingDefinitions.HostyDataRoot]);
         Assert.Equal("7070", settings.HostyCorePort);
-        Assert.Equal("7171", settings.HostyShellPort);
         Assert.Equal("", settings.HostyCorePublicOrigin);
-        Assert.Equal("", settings.HostyShellPublicOrigin);
         Assert.False(settings.Values.ContainsKey("HOST_IMAGE"));
         Assert.False(settings.Values.ContainsKey("UNKNOWN_SETTING"));
+    }
+
+    [Fact]
+    public void Load_RetiredShellKeys_AreIgnoredNotFatal()
+    {
+        // Hosts upgrading carry HOSTY_SHELL_PORT / HOSTY_SHELL_PUBLIC_ORIGIN in an existing config.yml.
+        // Shell owns both now — its port in its manifest, its origin in its app record — so the keys are
+        // simply unknown here, and an unknown key must load quietly rather than fail the whole config.
+        var environment = HostyEnvironment.Current();
+        Directory.CreateDirectory(environment.ConfigDirectory);
+        File.WriteAllText(
+            environment.LaunchConfigPath,
+            """
+            # hosty launch settings
+            HOSTY_CORE_PORT=7070
+            HOSTY_SHELL_PORT=7171
+            HOSTY_SHELL_PUBLIC_ORIGIN=https://shell.example.test
+            """);
+        var store = new LaunchSettingsStore(environment);
+
+        var settings = store.Load();
+
+        Assert.Equal("7070", settings.HostyCorePort);
+        Assert.False(settings.Values.ContainsKey("HOSTY_SHELL_PORT"));
+        Assert.False(settings.Values.ContainsKey("HOSTY_SHELL_PUBLIC_ORIGIN"));
     }
 
     [Fact]
@@ -57,7 +80,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
         var settings = store.Load();
 
         Assert.Equal("", settings.HostyCorePublicOrigin);
-        Assert.Equal("", settings.HostyShellPublicOrigin);
         Assert.False(settings.Values.ContainsKey("HOST_CORE_PUBLIC_ORIGIN"));
         Assert.False(settings.Values.ContainsKey("HOST_SHELL_PUBLIC_ORIGIN"));
     }
@@ -130,9 +152,7 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     [Theory]
     [InlineData("HOSTY_DATA_ROOT", "$HOME/custom-hosty")]
     [InlineData("HOSTY_CORE_PORT", "8080")]
-    [InlineData("HOSTY_SHELL_PORT", "8181")]
     [InlineData("HOSTY_CORE_PUBLIC_ORIGIN", "https://core.example")]
-    [InlineData("HOSTY_SHELL_PUBLIC_ORIGIN", "https://shell.example")]
     public void Set_EditableLaunchSetting_AcceptsValidValues(string key, string value)
     {
         var environment = HostyEnvironment.Current();
@@ -159,7 +179,6 @@ public sealed class LaunchSettingsStoreTests : IDisposable
     [Theory]
     [InlineData("HOSTY_CORE_PORT", "0")]
     [InlineData("HOSTY_CORE_PORT", "65536")]
-    [InlineData("HOSTY_SHELL_PORT", "port")]
     public void Set_PortSetting_RejectsInvalidPorts(string key, string value)
     {
         var environment = HostyEnvironment.Current();

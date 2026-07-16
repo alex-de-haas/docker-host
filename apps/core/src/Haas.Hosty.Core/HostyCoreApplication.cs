@@ -794,10 +794,8 @@ internal sealed record HostyCoreRuntimeConfig(
     string RunDirectory,
     string ControlDiscoveryPath,
     int CorePort,
-    int ShellPort,
     string ListenUrl,
     string? CorePublicOrigin,
-    string? ShellPublicOrigin,
     string RuntimePublicHost,
     string? ShellSourceOverridePath,
     bool ShellAutostart,
@@ -837,12 +835,10 @@ internal sealed record HostyCoreRuntimeConfig(
         var coreRoot = Path.Combine(dataRoot, "core");
         var runDirectory = Path.Combine(coreRoot, "run");
         var corePort = ReadPort("HOSTY_CORE_PORT", 7070);
-        var shellPort = ReadPort("HOSTY_SHELL_PORT", 7171);
         var listenUrl = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_URL")) ??
             NormalizeOptional(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) ??
             $"http://localhost:{corePort}";
         var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_PUBLIC_ORIGIN"));
-        var shellPublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_PUBLIC_ORIGIN"));
         // The host Core advertises (and dials) for an app's published loopback port. Must be the IPv4
         // loopback literal, NOT "localhost": docker publishes these ports on 127.0.0.1 only, but on
         // hosts where "localhost" resolves to ::1 first (Windows, dual-stack Linux) .NET's HttpClient
@@ -873,10 +869,8 @@ internal sealed record HostyCoreRuntimeConfig(
             runDirectory,
             Path.Combine(runDirectory, "control.json"),
             corePort,
-            shellPort,
             listenUrl,
             corePublicOrigin,
-            shellPublicOrigin,
             runtimePublicHost,
             NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_SHELL_SOURCE_OVERRIDE_PATH")),
             ReadBoolean("HOSTY_SHELL_AUTOSTART", defaultValue: true),
@@ -959,7 +953,6 @@ internal sealed record HostyCoreRuntimeConfig(
     {
         var warnings = new List<string>();
         AddPublicOriginWarnings(warnings, "Core", CorePublicOrigin);
-        AddPublicOriginWarnings(warnings, "Shell", ShellPublicOrigin);
         return warnings;
     }
 
@@ -1622,7 +1615,6 @@ internal sealed record CoreStatusResponse(
     string DataRoot,
     string ListenUrl,
     int CorePort,
-    int ShellPort,
     string? CorePublicOrigin,
     string? ShellPublicOrigin,
     string RuntimePublicHost,
@@ -1673,7 +1665,6 @@ internal sealed record CoreStatusResponse(
             config.DataRoot,
             config.ListenUrl,
             config.CorePort,
-            config.ShellPort,
             config.EffectiveCorePublicOrigin,
             // Resolved from Shell's app record, not Core config: null when this host has no Shell.
             shellPublicOrigin,
@@ -1698,7 +1689,6 @@ internal sealed record CoreStatusResponse(
             DataRoot: "",
             ListenUrl: "",
             CorePort: 0,
-            ShellPort: 0,
             CorePublicOrigin: null,
             ShellPublicOrigin: null,
             RuntimePublicHost: "",

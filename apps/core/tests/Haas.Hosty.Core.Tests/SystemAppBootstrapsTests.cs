@@ -116,8 +116,9 @@ public sealed class SystemAppBootstrapsTests
         Assert.Null(shell.Runtime);
         Assert.False(shell.Autostart);
         Assert.Equal("/repo", shell.SourceOverridePath);
-        Assert.NotNull(shell.Settings);
-        Assert.Equal("3000", shell.Settings!["HOSTY_PORT_HTTP"]);
+        // No Core-owned settings any more: Shell's port is declared in its own manifest, and its public
+        // origin lives in its app record, like every other app's.
+        Assert.Null(shell.Settings);
 
         var telemetry = plan.Descriptors.Single(d => d.AppId == "hosty.telemetry");
         Assert.Null(telemetry.Runtime);
@@ -134,39 +135,13 @@ public sealed class SystemAppBootstrapsTests
         // manifest declares HOSTNAME=0.0.0.0 as the Next.js bind address and its environment is appended
         // after the settings, so docker's last-wins duplicate handling always kept the bind address. It
         // only ever showed up as a settings row that looked like it controlled the public origin.
-        var config = CreateConfig() with { ShellPublicOrigin = "https://shell.example.test" };
-
-        var plan = SystemAppBootstraps.FromDistribution([Shell], choices: null, config);
+        var plan = SystemAppBootstraps.FromDistribution([Shell], choices: null, CreateConfig());
 
         var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
-        Assert.DoesNotContain("HOSTNAME", shell.Settings!.Keys);
+        // The bootstrap stamps no settings at all now, so there is nothing to check for HOSTNAME's
+        // absence in — it only still retires the key from records that carry it.
+        Assert.Null(shell.Settings);
         Assert.Contains("HOSTNAME", shell.RetiredSettings!);
-    }
-
-    [Fact]
-    public void FromDistribution_CarriesTheLegacyShellOriginIntoThePublicOriginSetting()
-    {
-        // HOSTY_SHELL_PUBLIC_ORIGIN used to be read straight by Core's auth flow, which made it a second,
-        // invisible source of truth beside the Public Origins the operator can actually see and edit.
-        // Core resolves Shell's origin from the app record now, so the legacy value is carried into that
-        // record — existing hosts keep behaving identically and the effective value finally shows in the UI.
-        var config = CreateConfig() with { ShellPublicOrigin = "https://shell.example.test" };
-
-        var plan = SystemAppBootstraps.FromDistribution([Shell], choices: null, config);
-
-        var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
-        Assert.Equal("https://shell.example.test", shell.Settings!["HOSTY_PUBLIC_ORIGIN_WEB"]);
-    }
-
-    [Fact]
-    public void FromDistribution_WithoutTheLegacyShellOriginStampsNoPublicOrigin()
-    {
-        // Nothing to carry: the setting stays the operator's own, resolved from the record (or absent, in
-        // which case Core falls back to the loopback URL it assigned Shell).
-        var plan = SystemAppBootstraps.FromDistribution([Shell], choices: null, CreateConfig() with { ShellPublicOrigin = null });
-
-        var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
-        Assert.DoesNotContain("HOSTY_PUBLIC_ORIGIN_WEB", shell.Settings!.Keys);
     }
 
     [Fact]
@@ -220,10 +195,8 @@ public sealed class SystemAppBootstrapsTests
             RunDirectory: "/tmp/hosty-tests/core/run",
             ControlDiscoveryPath: "/tmp/hosty-tests/core/run/control.json",
             CorePort: 3001,
-            ShellPort: 3000,
             ListenUrl: "http://127.0.0.1:3001",
             CorePublicOrigin: "http://127.0.0.1:3001",
-            ShellPublicOrigin: "http://127.0.0.1:3000",
             RuntimePublicHost: "localhost",
             ShellSourceOverridePath: null,
             ShellAutostart: false);

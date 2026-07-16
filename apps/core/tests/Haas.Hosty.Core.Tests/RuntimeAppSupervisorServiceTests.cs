@@ -76,8 +76,10 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         {
             var shell = await WaitForAppAsync(fixture.Apps, "hosty.shell", app => !app.Settings.ContainsKey("HOSTNAME"));
 
-            // The Core-owned setting the bootstrap still owns is untouched.
-            Assert.Contains("HOSTY_PORT_HTTP", shell.Settings.Keys);
+            // Retirement is targeted, not a purge: the app's own settings survive. Here that is the
+            // public-origin row the install creates for Shell's public endpoint — the one the operator
+            // fills from the Public Origins tab, and the one Core resolves Shell's origin from.
+            Assert.Contains(PublicOriginSettings.BuildSettingKey("web"), shell.Settings.Keys);
         }
         finally
         {
@@ -866,10 +868,8 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             RunDirectory: Path.Combine(paths.CoreRoot, "run"),
             ControlDiscoveryPath: Path.Combine(paths.CoreRoot, "run", "control.json"),
             CorePort: 3001,
-            ShellPort: 3000,
             ListenUrl: "http://127.0.0.1:3001",
             CorePublicOrigin: "http://127.0.0.1:3001",
-            ShellPublicOrigin: "http://127.0.0.1:3000",
             RuntimePublicHost: "localhost",
             ShellSourceOverridePath: null,
             ShellAutostart: shellAutostart);
