@@ -41,7 +41,19 @@ internal static class ProcessRunner
         // Start exceptions (missing binary, etc.) propagate to the caller, which wraps them in its own
         // domain exception (DockerUnavailableException / AppLifecycleException).
         process.Start();
-        process.StandardInput.Close();
+
+        // Best-effort: a child that exits before this runs may already have torn down its read end, and
+        // the close then faults on the broken pipe. Swallow it — the child is on its way out, and its
+        // output and exit code are still ours to collect below. It especially must not escape here, in
+        // the gap between Start() and the try: `using` would dispose the Process without killing it,
+        // leaking exactly the child (and wedged docker) that point 2 above exists to prevent.
+        try
+        {
+            process.StandardInput.Close();
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+        }
 
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (timeout is { } limit)
