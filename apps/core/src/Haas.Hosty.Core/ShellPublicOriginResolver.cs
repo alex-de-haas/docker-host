@@ -19,28 +19,36 @@ internal sealed class ShellPublicOriginResolver(AppRegistryStore apps, IClock cl
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(5);
 
     private readonly SemaphoreSlim gate = new(1, 1);
-    private string? cached;
-    private DateTimeOffset cachedAt = DateTimeOffset.MinValue;
+
+    // One immutable entry behind a volatile reference. The fast path reads it without the gate, and a
+    // value/timestamp pair held as separate fields could not be read consistently there: DateTimeOffset is
+    // a multi-word struct, so its read can tear against a concurrent write, and the two fields could be
+    // observed from different refreshes. A reference assignment is atomic, so the pair is always coherent.
+    private volatile CacheEntry cache = new(null, DateTimeOffset.MinValue);
+
+    private sealed record CacheEntry(string? Value, DateTimeOffset ReadAt);
 
     public async ValueTask<string?> ResolveAsync(CancellationToken cancellationToken = default)
     {
-        if (clock.UtcNow - cachedAt < CacheTtl)
+        var entry = cache;
+        if (clock.UtcNow - entry.ReadAt < CacheTtl)
         {
-            return cached;
+            return entry.Value;
         }
 
         await gate.WaitAsync(cancellationToken);
         try
         {
             // Re-check under the gate: a concurrent caller may have just refreshed it.
-            if (clock.UtcNow - cachedAt < CacheTtl)
+            entry = cache;
+            if (clock.UtcNow - entry.ReadAt < CacheTtl)
             {
-                return cached;
+                return entry.Value;
             }
 
-            cached = await ReadAsync(cancellationToken);
-            cachedAt = clock.UtcNow;
-            return cached;
+            var value = await ReadAsync(cancellationToken);
+            cache = new CacheEntry(value, clock.UtcNow);
+            return value;
         }
         finally
         {
