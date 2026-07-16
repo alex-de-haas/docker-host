@@ -56,6 +56,7 @@ import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRe
 import type {
   AppAction,
   AppHealthResponse,
+  AppUpdateCheckStatus,
   AppUpdateStatusResponse,
   CoreApp,
   CoreRuntimeProfile,
@@ -75,12 +76,16 @@ export function InstalledAppsPage({
   canManageApps,
   loading,
   busyAction,
+  updateCheck,
   updateStatusInvalidations,
   onRefresh,
   onInstall,
   onAction,
   onSwitchRuntime,
   onSetDevelopmentMode,
+  onUpdateApp,
+  onCheckUpdates,
+  onUpdateAll,
   onOpenPanel,
   onOpenSharedMounts,
 }: {
@@ -91,6 +96,8 @@ export function InstalledAppsPage({
   canManageApps: boolean;
   loading: boolean;
   busyAction: string | null;
+  // Server-side fleet-check status: drives the header "Check updates" spinner from server state.
+  updateCheck: AppUpdateCheckStatus | null;
   // Per-app counter (owned by ShellClient) that advances when a mutation resets an app's artifact
   // locks; watched below to re-probe update-status so a just-applied update clears the row icon.
   updateStatusInvalidations: Record<string, number>;
@@ -99,18 +106,19 @@ export function InstalledAppsPage({
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
+  onUpdateApp: (app: CoreApp) => void;
+  onCheckUpdates: () => void;
+  onUpdateAll: () => void;
   onOpenPanel: OpenAppPanel;
   onOpenSharedMounts: () => void;
 }) {
   const isRefreshing = loading;
   const hasAnyApps = runtimeApps.length > 0 || systemApps.length > 0;
 
-  // Update-available state lives at the page level (not per section) so the header "Check updates"
-  // fleet check and the per-row Update button read from one source of truth. Each entry is a light,
-  // read-only registry probe (GET /api/apps/{id}/update-status); it is populated on demand — on row
-  // expansion or by the fleet check — never automatically for every row on load.
+  // Per-app per-service digest detail for the expanded row (GET /api/apps/{id}/update-status,
+  // served from Core's cached plan). The row Update/Review affordances read the fleet-check verdict
+  // on the app summary instead — this state only feeds the expanded services panel.
   const [updateStatusByApp, setUpdateStatusByApp] = useState<Record<string, UpdateStatusState>>({});
-  const [checkingUpdates, setCheckingUpdates] = useState(false);
 
   useEffect(() => {
     const appIds = new Set([...runtimeApps, ...systemApps].map((app) => app.id));
@@ -121,14 +129,19 @@ export function InstalledAppsPage({
   }, [runtimeApps, systemApps]);
 
   const loadUpdateStatus = useCallback(
-    async (app: CoreApp): Promise<AppUpdateStatusResponse | null> => {
+    async (app: CoreApp, options?: { refresh?: boolean }): Promise<AppUpdateStatusResponse | null> => {
       setUpdateStatusByApp((current) => ({
         ...current,
         [app.id]: { loading: true, error: null, status: current[app.id]?.status ?? null },
       }));
 
       try {
-        const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/update-status`, { credentials: "include" });
+        // Without `refresh` Core answers from its cached plan (no network work); refresh=true forces
+        // a single-app rebuild — the expanded panel's explicit "Check for updates" uses it.
+        const response = await fetch(
+          `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/update-status${options?.refresh ? "?refresh=true" : ""}`,
+          { credentials: "include" },
+        );
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           throw new Error(await readCoreError(response));
@@ -177,48 +190,42 @@ export function InstalledAppsPage({
     }
   }, [updateStatusInvalidations, runtimeApps, systemApps, loadUpdateStatus]);
 
-  // Fleet "Check updates": probe every app that has a reviewed-update path — system apps included,
-  // since they update through the same plan/apply flow. Only live source apps (manifest adopted on
-  // restart) are skipped — mirrors the per-row `canUpdate` gate via appSupportsReviewedUpdate. Runs a
-  // small concurrency pool so a large fleet does not fan out N registry lookups at once, then
-  // summarises the outcome in a toast.
-  const checkAllUpdates = useCallback(async () => {
-    const targets = [...runtimeApps, ...systemApps].filter(appSupportsReviewedUpdate);
-    if (targets.length === 0) {
-      toast.info("No updatable apps", { description: "Apps with a reviewed update path will appear here." });
+  // The fleet check runs on Core (plan-first updates): the button just triggers/joins the sweep and
+  // the spinner reads the server-side status block, so a page opened mid-sweep — or reloaded — keeps
+  // showing the check in progress. Summarise in a toast when a sweep observed running settles.
+  const checkingUpdates = updateCheck?.running ?? false;
+  const previousCheckingRef = useRef(checkingUpdates);
+  useEffect(() => {
+    const wasChecking = previousCheckingRef.current;
+    previousCheckingRef.current = checkingUpdates;
+    if (!wasChecking || checkingUpdates) {
       return;
     }
 
-    setCheckingUpdates(true);
-    try {
-      const queue = [...targets];
-      const results: (AppUpdateStatusResponse | null)[] = [];
-      const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
-        for (let app = queue.shift(); app; app = queue.shift()) {
-          results.push(await loadUpdateStatus(app));
-        }
+    const allApps = [...runtimeApps, ...systemApps];
+    const available = allApps.filter((app) => app.updateCheck?.updateAvailable).length;
+    const failed = allApps.filter((app) => app.updateCheck?.error).length;
+    const failedNote = failed > 0 ? `${failed} app${failed === 1 ? "" : "s"} could not be checked.` : undefined;
+    if (available > 0) {
+      const review = allApps.filter((app) => app.updateCheck?.updateAvailable && app.updateCheck.requiresReview).length;
+      const reviewNote = review > 0 ? `${review} need${review === 1 ? "s" : ""} review.` : undefined;
+      toast.success(`${available} update${available === 1 ? "" : "s"} available`, {
+        description: [reviewNote, failedNote].filter(Boolean).join(" ") || undefined,
       });
-      await Promise.all(workers);
-
-      const checked = results.filter(Boolean).length;
-      const available = results.filter((status) => status?.updateAvailable).length;
-      const failed = targets.length - checked;
-      const failedNote = failed > 0 ? `${failed} app${failed === 1 ? "" : "s"} could not be checked.` : undefined;
-      if (available > 0) {
-        toast.success(`${available} update${available === 1 ? "" : "s"} available`, { description: failedNote });
-      } else if (checked === 0) {
-        // Every probe failed (e.g. Core unreachable): nothing was actually checked, so a clean
-        // "up to date"/"no updates" result would be misleading — surface the failure instead.
-        toast.error("Update check failed", { description: "No apps could be checked. Is Core reachable?" });
-      } else if (failed > 0) {
-        toast.warning("No updates found", { description: failedNote });
-      } else {
-        toast.success("All apps up to date");
-      }
-    } finally {
-      setCheckingUpdates(false);
+    } else if (failed > 0) {
+      toast.warning("No updates found", { description: failedNote });
+    } else {
+      toast.success("All apps up to date");
     }
-  }, [runtimeApps, systemApps, loadUpdateStatus]);
+  }, [checkingUpdates, runtimeApps, systemApps]);
+
+  // Routine verdicts the header "Update all" would apply (review-class ones stay on their rows).
+  const routineUpdateCount = [...runtimeApps, ...systemApps].filter(
+    (app) =>
+      app.updateCheck?.updateAvailable === true &&
+      app.updateCheck.requiresReview !== true &&
+      app.operationStatus !== "updating",
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -231,9 +238,19 @@ export function InstalledAppsPage({
               <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
             </Button>
             {canManageApps && (
-              <Button variant="outline" onClick={() => void checkAllUpdates()} disabled={checkingUpdates || isRefreshing}>
+              <Button variant="outline" onClick={onCheckUpdates} disabled={checkingUpdates}>
                 {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
                 Check updates
+              </Button>
+            )}
+            {canManageApps && routineUpdateCount > 0 && (
+              <Button
+                variant="outline"
+                className="text-sky-600 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
+                onClick={onUpdateAll}
+              >
+                <ArrowUpCircle className="h-4 w-4" />
+                Update all ({routineUpdateCount})
               </Button>
             )}
             {canManageApps && (
@@ -275,6 +292,7 @@ export function InstalledAppsPage({
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
             onSetDevelopmentMode={onSetDevelopmentMode}
+            onUpdateApp={onUpdateApp}
             onOpenPanel={onOpenPanel}
           />
           <InstalledAppTableSection
@@ -292,6 +310,7 @@ export function InstalledAppsPage({
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
             onSetDevelopmentMode={onSetDevelopmentMode}
+            onUpdateApp={onUpdateApp}
             onOpenPanel={onOpenPanel}
           />
         </div>
@@ -627,6 +646,7 @@ function InstalledAppTableSection({
   onAction,
   onSwitchRuntime,
   onSetDevelopmentMode,
+  onUpdateApp,
   onOpenPanel,
 }: {
   coreOrigin: string;
@@ -638,13 +658,14 @@ function InstalledAppTableSection({
   shellAppId: string;
   canManageApps: boolean;
   busyAction: string | null;
-  // Update-available state is owned by the page (shared with the header "Check updates" button); the
-  // section only reads it and asks the page to (re)load a single app's status.
+  // Per-service digest detail for expanded rows, owned by the page; the section only reads it and
+  // asks the page to (re)load a single app's status.
   updateStatusByApp: Record<string, UpdateStatusState>;
-  onLoadUpdateStatus: (app: CoreApp) => void | Promise<unknown>;
+  onLoadUpdateStatus: (app: CoreApp, options?: { refresh?: boolean }) => void | Promise<unknown>;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
+  onUpdateApp: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
@@ -761,11 +782,11 @@ function InstalledAppTableSection({
                       healthLoading={healthState?.loading ?? false}
                       canManageApps={canManageApps}
                       busyAction={busyAction}
-                      updateStatusState={updateStatusState}
                       onToggleExpanded={() => toggleAppExpanded(app)}
                       onAction={onAction}
                       onSwitchRuntime={onSwitchRuntime}
                       onSetDevelopmentMode={onSetDevelopmentMode}
+                      onUpdateApp={onUpdateApp}
                       onOpenPanel={onOpenPanel}
                     />
                     {expanded && (
@@ -777,7 +798,7 @@ function InstalledAppTableSection({
                             updateStatusState={updateStatusState}
                             canConfigurePublicOrigins={canManageApps}
                             onConfigurePublicOrigins={() => onOpenPanel(app, "settings", { settingsTab: "publicOrigins" })}
-                            onRecheckUpdate={() => void onLoadUpdateStatus(app)}
+                            onRecheckUpdate={() => void onLoadUpdateStatus(app, { refresh: true })}
                           />
                         </TableCell>
                       </TableRow>
@@ -801,11 +822,11 @@ function InstalledAppRow({
   healthLoading,
   canManageApps,
   busyAction,
-  updateStatusState,
   onToggleExpanded,
   onAction,
   onSwitchRuntime,
   onSetDevelopmentMode,
+  onUpdateApp,
   onOpenPanel,
 }: {
   app: CoreApp;
@@ -815,11 +836,11 @@ function InstalledAppRow({
   healthLoading: boolean;
   canManageApps: boolean;
   busyAction: string | null;
-  updateStatusState?: UpdateStatusState;
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
+  onUpdateApp: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const running = app.runtimeState === "running";
@@ -838,9 +859,12 @@ function InstalledAppRow({
   // the same reviewed plan/apply flow as every other runtime app (docs/ideas/system-app-updates.md);
   // only start/stop, backups, and remove stay system-gated via canControl.
   const canUpdate = canManageApps && appSupportsReviewedUpdate(app);
-  // The Update button is promoted out of the actions menu into the row: it appears only once an
-  // update-status probe (row expand or the header "Check updates") has confirmed one is available.
-  const updateAvailable = canUpdate && (updateStatusState?.status?.updateAvailable ?? false);
+  // The row Update/Review affordances render from the fleet-check verdict on the app summary
+  // (plan-first updates): blue "Update" applies the cached plan without a dialog, its dropdown (and
+  // the yellow review-class button) opens the review popup over the same cached plan. Progress is
+  // the record's operationStatus — server state, so it survives reloads and shows for every admin.
+  const updating = app.operationStatus === "updating";
+  const verdict = canUpdate && !updating ? app.updateCheck : null;
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
   // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
   // uninstalled by omitting a token. canControl already keeps system apps out.
@@ -928,19 +952,64 @@ function InstalledAppRow({
       </TableCell>
       <TableCell>
         <div className="flex items-center justify-end gap-1">
-          {updateAvailable && (
+          {updating && (
+            <span
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground"
+              title="An update is being applied on Core; this row settles when it finishes."
+            >
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              Updating
+            </span>
+          )}
+          {verdict?.error && (
+            <span title={`Update check failed: ${verdict.error}`} className="inline-flex shrink-0">
+              <CircleAlert className="h-4 w-4 text-amber-500" aria-label="Update check failed" />
+            </span>
+          )}
+          {verdict?.updateAvailable && !verdict.error && (verdict.requiresReview ? (
             <Button
               type="button"
-              variant="ghost"
-              size="icon-sm"
-              title="Update available — review and apply"
-              aria-label="Update available — review and apply"
-              className="text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 border-amber-500/40 px-2 text-xs text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
+              title="This update changes more than the app's build — review it before applying"
               onClick={() => onOpenPanel(app, "update")}
             >
-              <ArrowUpCircle className="h-4 w-4" />
+              <ArrowUpCircle className="h-3.5 w-3.5" />
+              Review
             </Button>
-          )}
+          ) : (
+            <span className="inline-flex items-center">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 rounded-r-none border-r-0 px-2 text-xs text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
+                title="Routine update — apply without opening the review dialog"
+                disabled={isBusy("update")}
+                onClick={() => onUpdateApp(app)}
+              >
+                {isBusy("update") ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpCircle className="h-3.5 w-3.5" />}
+                Update
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 rounded-l-none px-1 text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
+                    aria-label="More update options"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => onOpenPanel(app, "update")}>Review changes</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </span>
+          ))}
           {canControl && (running ? (
             <IconButton title="Stop app" disabled={isBusy("stop")} onClick={() => onAction(app, "stop")}>
               {isBusy("stop") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}

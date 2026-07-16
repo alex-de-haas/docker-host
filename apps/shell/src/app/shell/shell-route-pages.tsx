@@ -57,12 +57,16 @@ export function ShellInstalledAppsRoute() {
         canManageApps={shell.canManageApps}
         loading={shell.state.loading}
         busyAction={shell.busyAction}
+        updateCheck={shell.state.updateCheck ?? null}
         updateStatusInvalidations={shell.updateStatusInvalidations}
         onRefresh={() => void shellActions.refresh()}
         onInstall={shellActions.openInstallDialog}
         onAction={shellActions.runAppAction}
         onSwitchRuntime={shellActions.switchAppRuntime}
         onSetDevelopmentMode={shellActions.configureAppDevelopmentMode}
+        onUpdateApp={shellActions.applyUpdateFromRow}
+        onCheckUpdates={shellActions.startUpdateCheck}
+        onUpdateAll={shellActions.updateAllApps}
         onOpenPanel={shellActions.openAppPanel}
         onOpenSharedMounts={shellActions.openSharedMounts}
       />
