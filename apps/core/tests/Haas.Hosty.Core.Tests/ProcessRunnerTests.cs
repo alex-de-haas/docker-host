@@ -28,6 +28,31 @@ public sealed class ProcessRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_OwnsChildStdinRatherThanInheritingCores()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var startInfo = Shell("cat");
+
+        var result = await ProcessRunner.RunAsync(startInfo, TimeSpan.FromSeconds(10));
+
+        // Owning stdin is the whole point, so assert the redirect itself: an unredirected stdin hands the
+        // child Core's own handle, which on Windows may be unusable (Core runs detached, and its inherit
+        // flag was once cleared outright while STARTF_USESTDHANDLES demands an inheritable one). A child
+        // holding a broken stdin dies the moment it re-spawns — docker exec'ing a cli-plugin failed with
+        // "The request is not supported". This is the half that catches the redirect being dropped: the
+        // EOF assertions below cannot, because a test host's own stdin is already at EOF, so `cat` would
+        // exit cleanly even with an inherited handle.
+        Assert.True(startInfo.RedirectStandardInput);
+        Assert.False(result.TimedOut);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("", result.StandardOutput);
+    }
+
+    [Fact]
     public async Task RunAsync_DeadlineExceeded_KillsAndReportsTimeout()
     {
         if (OperatingSystem.IsWindows())
