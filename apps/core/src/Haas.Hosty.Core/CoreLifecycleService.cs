@@ -698,9 +698,10 @@ internal sealed class CoreLifecycleService(
             }
 
             await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
-            // Fail a cold start with a clear, reassign-able error when a stopped app's reserved port was
-            // taken by another process, rather than letting the adapter hit a generic bind failure.
-            PreflightLoopbackAssignments(app);
+            // Fail a start with a clear, reassign-able error when a reserved port was taken by another
+            // process, rather than letting the adapter hit a generic bind failure — but wait out the app's
+            // own port lingering after a stop, so a restart (update/switch-runtime) does not trip on it.
+            await WaitForLoopbackAssignmentsReleasedAsync(app, LoopbackReleaseTimeout, cancellationToken);
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
@@ -842,40 +843,84 @@ internal sealed class CoreLifecycleService(
             restartRequired);
     }
 
-    // Before a cold start, verify each persisted loopback reservation is still bindable. A port an unrelated
-    // process took while the app was stopped fails the start with a structured runtime_port_unavailable that
-    // names the affected endpoints, so the operator can reassign them, instead of a generic adapter bind
-    // error. Skipped when the app is already running — a restart or docker adoption legitimately holds its
-    // own ports, and this must not flag them as stolen. Host-network ports bind a fixed container port and
-    // are not part of the loopback pool. This is a point-in-time probe: a race after it still surfaces as
-    // the adapter's own bind failure.
-    internal static void PreflightLoopbackAssignments(AppRecord app)
+    private const int LoopbackReleasePollMs = 250;
+
+    // How long a start waits for a reserved loopback port to become bindable before failing. Sized for
+    // docker releasing a published host port a beat after the container it belonged to exits — see
+    // WaitForLoopbackAssignmentsReleasedAsync.
+    private static readonly TimeSpan LoopbackReleaseTimeout = TimeSpan.FromSeconds(5);
+
+    // Reserved loopback ports that are not currently bindable. Empty when the app is already running (a
+    // restart or docker adoption legitimately holds its own ports, and this must never flag them as
+    // stolen). Host-network ports bind a fixed container port outside the loopback pool, so they are not
+    // probed; an unset/invalid reservation is skipped too (the adapter's start-time resolver falls back to
+    // a fresh automatic allocation for it, see ResolveHostPort).
+    private static IReadOnlyList<AppPortAssignment> FindUnavailableLoopbackAssignments(AppRecord app)
     {
         if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
         {
-            return;
+            return [];
         }
 
-        var conflicts = (app.PortAssignments ?? [])
+        return (app.PortAssignments ?? [])
             .Where(assignment =>
                 string.Equals(assignment.BindScope, AppPortBindScopes.Loopback, StringComparison.Ordinal) &&
-                // Skip an unset/invalid reservation: it is not a real conflict, and the adapter's start-time
-                // resolver falls back to a fresh automatic allocation for it (see ResolveHostPort).
                 assignment.HostPort is > 0 and <= 65535 &&
                 !RuntimePortHelper.IsLoopbackTcpPortAvailable(assignment.HostPort))
             .OrderBy(assignment => assignment.Service, StringComparer.Ordinal)
             .ThenBy(assignment => assignment.PortKey, StringComparer.Ordinal)
             .ToArray();
-        if (conflicts.Length == 0)
+    }
+
+    private static AppLifecycleException PortsUnavailable(AppRecord app, IReadOnlyList<AppPortAssignment> conflicts)
+    {
+        var detail = string.Join(", ", conflicts.Select(assignment => $"{assignment.Service}.{assignment.PortKey} → {assignment.HostPort}"));
+        return new AppLifecycleException(
+            "runtime_port_unavailable",
+            $"App '{app.Id}' cannot start: assigned host port(s) already in use: {detail}. " +
+            "Free the conflicting port(s), or reassign an automatically-assigned one, then retry.");
+    }
+
+    // Point-in-time check: a stopped app's reserved loopback port taken by an unrelated process fails the
+    // start with a structured runtime_port_unavailable naming the endpoints, instead of a generic adapter
+    // bind error. No wait — used where an immediate verdict is wanted (and by the tests).
+    internal static void PreflightLoopbackAssignments(AppRecord app)
+    {
+        var conflicts = FindUnavailableLoopbackAssignments(app);
+        if (conflicts.Count > 0)
+        {
+            throw PortsUnavailable(app, conflicts);
+        }
+    }
+
+    // Start-path variant that tolerates the app's *own* port still lingering right after a stop. A restart
+    // (update, switch-runtime, dev-mode toggle) stops the container then immediately restarts it, but
+    // docker frees a published host port a beat after the container exits — the docker-proxy binding
+    // outlives the container, TIME_WAIT lingers — so a bare probe flags the app's own just-freed port as
+    // stolen and the restart fails (the reported symptom: updating a *running* app hit
+    // runtime_port_unavailable on its own port, while updating a stopped one did not). Poll briefly: a
+    // genuine external conflict persists and still fails with the structured error; a self-release race
+    // clears within the window. The common no-conflict case does a single probe and returns immediately.
+    internal static async Task WaitForLoopbackAssignmentsReleasedAsync(AppRecord app, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var conflicts = FindUnavailableLoopbackAssignments(app);
+        if (conflicts.Count == 0)
         {
             return;
         }
 
-        var detail = string.Join(", ", conflicts.Select(assignment => $"{assignment.Service}.{assignment.PortKey} → {assignment.HostPort}"));
-        throw new AppLifecycleException(
-            "runtime_port_unavailable",
-            $"App '{app.Id}' cannot start: assigned host port(s) already in use: {detail}. " +
-            "Free the conflicting port(s), or reassign an automatically-assigned one, then retry.");
+        var attempts = Math.Max(1, (int)(timeout.TotalMilliseconds / LoopbackReleasePollMs));
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            await Task.Delay(LoopbackReleasePollMs, cancellationToken);
+            conflicts = FindUnavailableLoopbackAssignments(app);
+            if (conflicts.Count == 0)
+            {
+                return;
+            }
+        }
+
+        throw PortsUnavailable(app, conflicts);
     }
 
     private static AppPortAssignment RequireRemappableAssignment(AppRecord app, string service, string portKey)

@@ -4013,6 +4013,43 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task WaitForLoopbackAssignmentsReleasedAsync_PortFreedWithinWindow_DoesNotThrow()
+    {
+        // The reported bug: updating a *running* app stops its container then restarts, but docker frees
+        // the published host port a beat later, so the restart's preflight saw the app's own port as still
+        // taken. A short poll must ride out that self-release race. Here a listener holds the port, then
+        // frees it well within the wait window; the wait must complete cleanly rather than fail.
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var app = SeedReassignApp("com.example.api", "stopped", assignments: [ReassignAssignment("app", "http", port)]);
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(400);
+            listener.Stop();
+        });
+
+        await CoreLifecycleService.WaitForLoopbackAssignmentsReleasedAsync(app, TimeSpan.FromSeconds(5), CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task WaitForLoopbackAssignmentsReleasedAsync_PortHeldForWholeWindow_Throws()
+    {
+        // A genuine external conflict never clears, so after the window the structured error still fires.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var app = SeedReassignApp("com.example.api", "stopped", assignments: [ReassignAssignment("app", "http", port)]);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            CoreLifecycleService.WaitForLoopbackAssignmentsReleasedAsync(app, TimeSpan.FromMilliseconds(500), CancellationToken.None));
+
+        Assert.Equal("runtime_port_unavailable", error.Code);
+        Assert.Contains($"app.http → {port}", error.Message);
+    }
+
+    [Fact]
     public void PreflightLoopbackAssignments_HostNetworkAssignment_IsNotProbed()
     {
         // Host-network ports bind a fixed container port and are outside the loopback pool; even if the
