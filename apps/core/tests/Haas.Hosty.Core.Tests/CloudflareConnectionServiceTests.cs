@@ -25,7 +25,7 @@ public sealed class CloudflareConnectionServiceTests : IDisposable
         var status = await service.ConnectAsync("cf-secret-token-value");
 
         Assert.Equal(CloudflareConnectionStatuses.Connected, status.Status);
-        Assert.Equal("zayats.io", status.BaseDomain);
+        Assert.Equal("example.test", status.BaseDomain);
         Assert.Equal("NL_HOME_SERVER", status.TunnelName);
         Assert.Equal(ConnectorLocality.Local, status.Locality); // egress == connector IP
         Assert.True(status.Token.Present);
@@ -138,7 +138,7 @@ public sealed class CloudflareConnectionServiceTests : IDisposable
     private sealed class FakeApi : ICloudflareApiClient
     {
         public IReadOnlyList<CloudflareAccount> Accounts { get; init; } = [new("acc", "Acct")];
-        public IReadOnlyList<CloudflareZone> Zones { get; init; } = [new("z1", "zayats.io", "active")];
+        public IReadOnlyList<CloudflareZone> Zones { get; init; } = [new("z1", "example.test", "active")];
         public IReadOnlyList<CloudflareTunnel> Tunnels { get; init; } = [new("t", "NL_HOME_SERVER", "healthy", "cloudflare", true)];
         public IReadOnlyList<CloudflareConnectorConn> Conns { get; init; } = [];
         public string? Egress { get; init; }

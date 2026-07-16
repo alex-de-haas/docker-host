@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class CloudflarePublicationReconcilerTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), $"hosty-cf-recon-{Guid.NewGuid():N}");
-    private static readonly CloudflareIngressTarget Target = new("acc", "zone", "tunnel-123", "zayats.io");
+    private static readonly CloudflareIngressTarget Target = new("acc", "zone", "tunnel-123", "example.test");
 
     [Fact]
     public async Task PublishAsync_AddsRouteBeforeDns_AndPreservesExistingRulesAndWarpRouting()
@@ -17,13 +17,13 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
 
         var publication = await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096");
 
-        Assert.Equal("media.zayats.io", publication.Hostname);
+        Assert.Equal("media.example.test", publication.Hostname);
         // The route was written before the DNS record.
         Assert.True(api.Ops.IndexOf("put-config") < api.Ops.IndexOf("dns-create"));
         // The new rule is present; the pre-existing rule and warp-routing survive.
         var hostnames = CloudflareTunnelConfigPatcher.IngressHostnames(api.Config);
-        Assert.Contains("media.zayats.io", hostnames);
-        Assert.Contains("core.zayats.io", hostnames);
+        Assert.Contains("media.example.test", hostnames);
+        Assert.Contains("core.example.test", hostnames);
         Assert.True((bool)api.Config["warp-routing"]!["enabled"]!);
         // A proxied CNAME to the tunnel was created.
         var dns = Assert.Single(api.Dns);
@@ -41,11 +41,11 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
             reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096"));
 
         // The route it added was rolled back, no DNS record remains, and nothing was persisted.
-        Assert.DoesNotContain("media.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.DoesNotContain("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
         Assert.Empty(api.Dns);
         Assert.Null(await publications.GetAsync("app", "web.http"));
         // The pre-existing route is untouched by the rollback.
-        Assert.Contains("core.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Contains("core.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
     {
         var api = new StatefulApi(SampleConfig());
         var (reconciler, publications) = Create(api);
-        await publications.UpsertAsync(new CloudflarePublication("other-app", "web.http", "media", "media.zayats.io", "rec", "url", CloudflareOwnershipStates.Owned, DateTimeOffset.UnixEpoch));
+        await publications.UpsertAsync(new CloudflarePublication("other-app", "web.http", "media", "media.example.test", "rec", "url", CloudflareOwnershipStates.Owned, DateTimeOffset.UnixEpoch));
 
         var error = await Assert.ThrowsAsync<CloudflareConnectionException>(() =>
             reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096"));
@@ -64,7 +64,7 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
     public async Task PublishAsync_ForeignPreexistingDnsRecord_Throws()
     {
         var api = new StatefulApi(SampleConfig());
-        api.Dns.Add(new CloudflareDnsRecord("foreign", "CNAME", "media.zayats.io", "something-else.example", true, 1));
+        api.Dns.Add(new CloudflareDnsRecord("foreign", "CNAME", "media.example.test", "something-else.example", true, 1));
         var (reconciler, _) = Create(api);
 
         var error = await Assert.ThrowsAsync<CloudflareConnectionException>(() =>
@@ -92,11 +92,11 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
         await reconciler.UnpublishAsync("t", Target, "app", "web.http");
 
         Assert.True(api.Ops.IndexOf("dns-delete") < api.Ops.IndexOf("put-config"));
-        Assert.DoesNotContain("media.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.DoesNotContain("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
         Assert.Empty(api.Dns);
         Assert.Null(await publications.GetAsync("app", "web.http"));
         // The pre-existing route survives unpublish.
-        Assert.Contains("core.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Contains("core.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
     }
 
     [Fact]
@@ -110,12 +110,12 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
         await reconciler.PublishAsync("t", Target, "app", "web.http", "media-new", "http://127.0.0.1:8096");
 
         var hostnames = CloudflareTunnelConfigPatcher.IngressHostnames(api.Config);
-        Assert.Contains("media-new.zayats.io", hostnames);
-        Assert.DoesNotContain("media.zayats.io", hostnames); // old route removed, not leaked
-        Assert.Contains("core.zayats.io", hostnames); // unrelated preserved
+        Assert.Contains("media-new.example.test", hostnames);
+        Assert.DoesNotContain("media.example.test", hostnames); // old route removed, not leaked
+        Assert.Contains("core.example.test", hostnames); // unrelated preserved
         // The DNS record was renamed in place (still a single owned record).
         var dns = Assert.Single(api.Dns);
-        Assert.Equal("media-new.zayats.io", dns.Name);
+        Assert.Equal("media-new.example.test", dns.Name);
     }
 
     [Fact]
@@ -130,14 +130,14 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
         await reconciler.UnpublishAsync("t", Target, "app", "web.http");
 
         // Cleanup still completes: route gone, publication cleared.
-        Assert.DoesNotContain("media.zayats.io", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.DoesNotContain("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
         Assert.Null(await publications.GetAsync("app", "web.http"));
     }
 
     private static JsonObject SampleConfig() => (JsonObject)JsonNode.Parse("""
         {
           "ingress": [
-            {"hostname":"core.zayats.io","service":"http://127.0.0.1:3001"},
+            {"hostname":"core.example.test","service":"http://127.0.0.1:3001"},
             {"service":"http_status:404"}
           ],
           "warp-routing": {"enabled": true}
