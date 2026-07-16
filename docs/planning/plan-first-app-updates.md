@@ -285,7 +285,7 @@ Feature docs update (reviewed-update flow, Core settings), CHANGELOG/versions, l
   `updateStatusInvalidations`.
 - PR #206 — apply consumes the cached confirmed plan (the contract this design builds on).
 - PR #183 — update-status candidate refetch for non-feed apps.
-- `docs/ideas/hosty-notifications-design` context: notifications are the completion transport.
+- `docs/ideas/notifications.md` — notifications are the completion transport.
 
 ## Notes
 
