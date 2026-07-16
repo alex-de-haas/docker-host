@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -4010,6 +4011,70 @@ public sealed class CoreLifecycleServiceTests
         var app = SeedReassignApp("com.example.api", "running", assignments: [ReassignAssignment("app", "http", port)]);
 
         CoreLifecycleService.PreflightLoopbackAssignments(app); // skipped → does not throw
+    }
+
+    [Fact]
+    public async Task WaitForLoopbackAssignmentsReleasedAsync_PortFreedWithinWindow_DoesNotThrow()
+    {
+        // The reported bug: updating a *running* app stops its container then restarts, but docker frees
+        // the published host port a beat later, so the restart's preflight saw the app's own port as still
+        // taken. A short poll must ride out that self-release race. Here a listener holds the port, then
+        // frees it well within the wait window; the wait must complete cleanly rather than fail.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var app = SeedReassignApp("com.example.api", "stopped", assignments: [ReassignAssignment("app", "http", port)]);
+
+        var release = Task.Run(async () =>
+        {
+            await Task.Delay(400);
+            listener.Stop();
+        });
+
+        try
+        {
+            await CoreLifecycleService.WaitForLoopbackAssignmentsReleasedAsync(app, TimeSpan.FromSeconds(5), CancellationToken.None);
+        }
+        finally
+        {
+            // Awaited on every path so a fault in the release surfaces instead of going unobserved; the
+            // `using` frees the port regardless, so a failure here cannot leave it bound for later tests.
+            await release;
+        }
+    }
+
+    [Fact]
+    public async Task WaitForLoopbackAssignmentsReleasedAsync_PortHeldForWholeWindow_Throws()
+    {
+        // A genuine external conflict never clears, so after the window the structured error still fires.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var app = SeedReassignApp("com.example.api", "stopped", assignments: [ReassignAssignment("app", "http", port)]);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            CoreLifecycleService.WaitForLoopbackAssignmentsReleasedAsync(app, TimeSpan.FromMilliseconds(500), CancellationToken.None));
+
+        Assert.Equal("runtime_port_unavailable", error.Code);
+        Assert.Contains($"app.http → {port}", error.Message);
+    }
+
+    [Fact]
+    public async Task WaitForLoopbackAssignmentsReleasedAsync_ZeroTimeout_FailsWithoutSleeping()
+    {
+        // The timeout is a real bound, not a poll count: a zero one must fail immediately rather than
+        // serve one full poll interval first (which a count-based loop did).
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var app = SeedReassignApp("com.example.api", "stopped", assignments: [ReassignAssignment("app", "http", port)]);
+
+        var stopwatch = Stopwatch.StartNew();
+        await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            CoreLifecycleService.WaitForLoopbackAssignmentsReleasedAsync(app, TimeSpan.Zero, CancellationToken.None));
+        stopwatch.Stop();
+
+        Assert.True(stopwatch.ElapsedMilliseconds < 200, $"expected an immediate failure, took {stopwatch.ElapsedMilliseconds}ms");
     }
 
     [Fact]
