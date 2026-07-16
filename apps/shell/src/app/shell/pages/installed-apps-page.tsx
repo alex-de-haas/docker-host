@@ -99,7 +99,9 @@ export function InstalledAppsPage({
   // Server-side fleet-check status: drives the header "Check updates" spinner from server state.
   updateCheck: AppUpdateCheckStatus | null;
   // Per-app counter (owned by ShellClient) that advances when a mutation resets an app's artifact
-  // locks; watched below to re-probe update-status so a just-applied update clears the row icon.
+  // locks (runtime switch); watched below to re-probe update-status so the expanded row's
+  // per-service digest panel does not keep stale locked/candidate digests. Row affordances read the
+  // summary verdict (app.updateCheck) instead and are not driven by this.
   updateStatusInvalidations: Record<string, number>;
   onRefresh: () => void;
   onInstall: () => void;
@@ -220,10 +222,13 @@ export function InstalledAppsPage({
   }, [checkingUpdates, runtimeApps, systemApps]);
 
   // Routine verdicts the header "Update all" would apply (review-class ones stay on their rows).
+  // Mirrors updateAllApps' own filter — including the planDigest requirement, so N never counts an
+  // app the action could not actually enqueue.
   const routineUpdateCount = [...runtimeApps, ...systemApps].filter(
     (app) =>
       app.updateCheck?.updateAvailable === true &&
       app.updateCheck.requiresReview !== true &&
+      Boolean(app.updateCheck.planDigest) &&
       app.operationStatus !== "updating",
   ).length;
 
@@ -966,7 +971,7 @@ function InstalledAppRow({
               <CircleAlert className="h-4 w-4 text-amber-500" aria-label="Update check failed" />
             </span>
           )}
-          {verdict?.updateAvailable && !verdict.error && (verdict.requiresReview ? (
+          {verdict?.updateAvailable && !verdict.error && (verdict.requiresReview || !verdict.planDigest ? (
             <Button
               type="button"
               variant="outline"

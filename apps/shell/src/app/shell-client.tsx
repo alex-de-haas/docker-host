@@ -1255,10 +1255,16 @@ export function ShellClient({
       }
     }
 
+    // Count only what actually got accepted; the Shell's own enqueue runs after this and reports
+    // through enqueueUpdate's dedicated toast (or its error path), never pre-counted here.
     const failedNote = failed > 0 ? `${failed} could not be started.` : undefined;
-    toast.success(`${started + (shellApp ? 1 : 0)} update${started + (shellApp ? 1 : 0) === 1 ? "" : "s"} started`, {
-      description: [reviewNote, failedNote].filter(Boolean).join(" ") || undefined,
-    });
+    if (started > 0 || failed > 0) {
+      toast.success(`${started} update${started === 1 ? "" : "s"} started`, {
+        description: [reviewNote, failedNote, shellApp ? "The Shell updates last." : undefined]
+          .filter(Boolean)
+          .join(" ") || undefined,
+      });
+    }
     await refresh();
     if (shellApp?.updateCheck?.planDigest) {
       await enqueueUpdate(shellApp, shellApp.updateCheck.planDigest);
