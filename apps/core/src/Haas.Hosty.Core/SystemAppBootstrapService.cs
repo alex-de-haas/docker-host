@@ -248,6 +248,36 @@ internal sealed class SystemAppBootstrapService(
             await lifecycle.ConfigureAsync(descriptor.AppId, new AppConfigureRequest(descriptor.Settings), cancellationToken);
         }
 
+        // Drop settings the bootstrap has retired. Only touches the record when one is actually present, so
+        // a clean install never takes a needless write. AppRecord.Settings is a positional record parameter
+        // read straight from state.json and nothing enforces its non-null contract at runtime, so it is
+        // guarded the way the registry store reads its own collections (`app.PortAssignments ?? []`) —
+        // doubly worth it here, where a throw would silently skip the whole bootstrap on boot.
+        if (app is not null && descriptor.RetiredSettings is { Count: > 0 } retired)
+        {
+            var present = app.Settings is { } configured
+                ? retired.Where(configured.ContainsKey).ToArray()
+                : [];
+            if (present.Length > 0)
+            {
+                logger.LogInformation(
+                    "{DisplayName}: removing retired bootstrap setting(s) {Settings}.",
+                    descriptor.DisplayName,
+                    string.Join(", ", present));
+                app = (await apps.UpdateAppAsync(
+                    descriptor.AppId,
+                    record => record with
+                    {
+                        Settings = record.Settings is { } existing
+                            ? existing
+                                .Where(pair => !retired.Contains(pair.Key, StringComparer.Ordinal))
+                                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+                            : record.Settings,
+                    },
+                    cancellationToken)).App;
+            }
+        }
+
         if (app is not null && descriptor.Autostart is bool configuredAutostart && app.Autostart != configuredAutostart)
         {
             await lifecycle.ConfigureAutostartAsync(descriptor.AppId, new AppAutostartRequest(configuredAutostart), cancellationToken);

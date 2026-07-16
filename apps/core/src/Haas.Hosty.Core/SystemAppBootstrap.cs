@@ -25,6 +25,10 @@ internal sealed record SystemAppBootstrapDescriptor(
     // Core-owned bootstrap settings passed at install and re-applied on every boot so operator
     // configuration (e.g. the Shell port) follows the current Core config.
     IReadOnlyDictionary<string, string?>? Settings = null,
+    // Setting keys the bootstrap once stamped and no longer owns. Dropped from the record on boot:
+    // ConfigureAsync can only null a value, not remove the key, so without this a retired Core-owned
+    // setting lingers forever in the app's settings UI as an editable no-op.
+    IReadOnlyList<string>? RetiredSettings = null,
     // Optional local source override for development installs (development Shell workflow).
     string? SourceOverridePath = null,
     // When set, the first install goes through the digest-bound feed path so the record follows the
@@ -83,6 +87,7 @@ internal static class SystemAppBootstraps
                     Runtime: config.ShellBootstrapRuntime,
                     Autostart: config.ShellAutostart,
                     Settings: ShellBootstrap.BuildBootstrapSettings(config),
+                    RetiredSettings: ShellBootstrap.RetiredSettings,
                     SourceOverridePath: config.ShellSourceOverridePath,
                     FeedsUrl: entry.FeedsUrl),
                 CollectorBootstrap.AppId => new SystemAppBootstrapDescriptor(
@@ -176,21 +181,17 @@ internal static class ShellBootstrap
     public const string AppId = "hosty.shell";
 
     public static IReadOnlyDictionary<string, string?> BuildBootstrapSettings(HostyCoreRuntimeConfig config)
-    {
-        var shellPort = config.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var settings = new Dictionary<string, string?>(StringComparer.Ordinal)
+        => new Dictionary<string, string?>(StringComparer.Ordinal)
         {
-            ["HOSTY_PORT_HTTP"] = shellPort,
+            ["HOSTY_PORT_HTTP"] = config.ShellPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
 
-        if (Uri.TryCreate(config.EffectiveShellPublicOrigin, UriKind.Absolute, out var shellOrigin))
-        {
-            if (!string.IsNullOrWhiteSpace(shellOrigin.Host))
-            {
-                settings["HOSTNAME"] = shellOrigin.Host;
-            }
-        }
-
-        return settings;
-    }
+    // HOSTNAME used to be stamped here from the Shell public origin's host. It never did anything: the
+    // manifest declares HOSTNAME=0.0.0.0 as the Next.js bind address, and a service's manifest
+    // environment is appended *after* the settings in the docker run args, so docker's last-wins
+    // handling of a duplicated `-e` meant the bind address always won. All the setting achieved was a
+    // row in the app's settings that looked like it controlled the public origin — it did not; Core's
+    // own HOSTY_SHELL_PUBLIC_ORIGIN drives that — while colliding with a variable that means something
+    // else entirely. Retired here so records that still carry it are cleaned up on boot.
+    public static readonly IReadOnlyList<string> RetiredSettings = ["HOSTNAME"];
 }
