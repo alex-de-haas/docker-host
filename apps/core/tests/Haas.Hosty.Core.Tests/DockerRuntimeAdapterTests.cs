@@ -555,6 +555,32 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task ResolveRemoteDigestAsync_ReportsUnknownWhenAProbeThrowsUnexpectedly()
+    {
+        // "null when it cannot resolve" has to be total: BuildArtifactDigestChangesAsync calls this with
+        // no try/catch of its own, so an escaping exception would fail the operator's whole update plan
+        // instead of degrading one service to "unknown". The default runner funnels its own failures into
+        // exit 127, but the runner is an injectable seam — the contract must not rest on that.
+        var runner = new FakeDockerCommandRunner(_ => throw new IOException("broken pipe"));
+        var logger = new CapturingLogger<DockerRuntimeAdapter>();
+
+        Assert.Null(await CreateAdapter(runner, logger).ResolveRemoteDigestAsync(new RuntimeDockerImage("ghcr.io/example/app", "latest")));
+
+        Assert.Contains("broken pipe", Assert.Single(logger.Warnings), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResolveRemoteDigestAsync_LetsCancellationPropagate()
+    {
+        // An aborted request is not an unresolvable digest: swallowing it would report a phantom
+        // "unknown" for an image nobody actually asked about any more.
+        var runner = new FakeDockerCommandRunner(_ => throw new OperationCanceledException());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => CreateAdapter(runner).ResolveRemoteDigestAsync(new RuntimeDockerImage("ghcr.io/example/app", "latest")));
+    }
+
+    [Fact]
     public async Task ResolveRemoteDigestAsync_DoesNotLogWhenResolutionSucceeds()
     {
         var digest = "sha256:" + new string('a', 64);
@@ -676,7 +702,9 @@ public sealed class DockerRuntimeAdapterTests
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
-        public bool IsEnabled(LogLevel logLevel) => true;
+        // Warning+ only: this captures nothing else, so admitting lower levels would just make callers
+        // format messages the test then discards.
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
 
         public void Log<TState>(
             LogLevel logLevel,
@@ -685,10 +713,15 @@ public sealed class DockerRuntimeAdapterTests
             Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (logLevel == LogLevel.Warning)
+            if (!IsEnabled(logLevel))
             {
-                Warnings.Add(formatter(state, exception));
+                return;
             }
+
+            // Providers render the exception beneath the message, so fold it in — a test asserting what
+            // an operator reads should see both halves.
+            var message = formatter(state, exception);
+            Warnings.Add(exception is null ? message : $"{message} {exception}");
         }
     }
 

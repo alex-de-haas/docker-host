@@ -2083,38 +2083,57 @@ internal sealed class DockerRuntimeAdapter(
     public async Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
     {
         var tagReference = image.TagReference;
-        var imagetools = await RunRawAsync(
-            ["buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", tagReference],
-            cancellationToken);
-        if (imagetools.ExitCode == 0 && ParseSha256(imagetools.StandardOutput) is { } digest)
+        try
         {
-            return digest;
+            var imagetools = await RunRawAsync(
+                ["buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", tagReference],
+                cancellationToken);
+            if (imagetools.ExitCode == 0 && ParseSha256(imagetools.StandardOutput) is { } digest)
+            {
+                return digest;
+            }
+
+            var manifest = await RunRawAsync(["manifest", "inspect", "--verbose", tagReference], cancellationToken);
+            if (manifest.ExitCode == 0 && ParseManifestInspectDigest(manifest.StandardOutput) is { } manifestDigest)
+            {
+                return manifestDigest;
+            }
+
+            // Neither probe produced a digest — either one exited non-zero, or it exited 0 with output
+            // that did not parse. A null here is all the callers ever see: an update plan turns it into
+            // the `->unknown` marker, an update-status row into "unknown / no update available". The
+            // reason exists only in docker's stderr, which RunRawAsync already captured (it also folds a
+            // DockerUnavailableException into exit 127 rather than throwing, so nothing upstream can
+            // catch this either) — drop it and every distinct failure renders identically. A registry
+            // rate limit, an auth failure, a missing buildx plugin, and a genuinely unreachable registry
+            // are very different operator problems, and an intermittent one shows up as a digest that
+            // flaps between real and "unknown" across plan rebuilds. Log at warning so the cause is
+            // recoverable from core.log without a debugger.
+            logger.LogWarning(
+                "Remote image digest lookup failed for '{Image}'; callers will report it as unknown. " +
+                "'buildx imagetools inspect' exited {ImagetoolsExit}: {ImagetoolsError} — " +
+                "'manifest inspect' exited {ManifestExit}: {ManifestError}",
+                tagReference,
+                imagetools.ExitCode,
+                DescribeDockerFailure(imagetools),
+                manifest.ExitCode,
+                DescribeDockerFailure(manifest));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // "null when it cannot resolve" is this method's contract, and BuildArtifactDigestChangesAsync
+            // leans on it with no try/catch of its own: an escaping exception would fail the operator's
+            // whole update plan rather than degrade one service to "unknown", contradicting the
+            // registry-unreachable rule (A4). The default runner funnels its own failures into exit 127,
+            // but IDockerCommandRunner is an injectable seam and ProcessRunner can still surface an
+            // unexpected IO error — so make the contract total here instead of resting on another type's
+            // internals. Cancellation still propagates: an aborted request is not an unresolvable digest.
+            logger.LogWarning(
+                ex,
+                "Remote image digest lookup for '{Image}' failed unexpectedly; callers will report it as unknown.",
+                tagReference);
         }
 
-        var manifest = await RunRawAsync(["manifest", "inspect", "--verbose", tagReference], cancellationToken);
-        if (manifest.ExitCode == 0 && ParseManifestInspectDigest(manifest.StandardOutput) is { } manifestDigest)
-        {
-            return manifestDigest;
-        }
-
-        // Both registry probes failed, and a null here is all the callers ever see: an update plan turns
-        // it into the `->unknown` marker, an update-status row into "unknown / no update available". The
-        // reason exists only in docker's stderr, which RunRawAsync already captured (it also folds a
-        // DockerUnavailableException into exit 127 rather than throwing, so nothing upstream can catch
-        // this either) — drop it and every distinct failure renders identically. A registry rate limit,
-        // an auth failure, a missing buildx plugin, and a genuinely unreachable registry are very
-        // different operator problems, and an intermittent one shows up as a digest that flaps between
-        // real and "unknown" across plan rebuilds. Log at warning so the cause is recoverable from
-        // core.log without a debugger.
-        logger.LogWarning(
-            "Remote image digest lookup failed for '{Image}'; callers will report it as unknown. " +
-            "'buildx imagetools inspect' exited {ImagetoolsExit}: {ImagetoolsError} — " +
-            "'manifest inspect' exited {ManifestExit}: {ManifestError}",
-            tagReference,
-            imagetools.ExitCode,
-            DescribeDockerFailure(imagetools),
-            manifest.ExitCode,
-            DescribeDockerFailure(manifest));
         return null;
     }
 
