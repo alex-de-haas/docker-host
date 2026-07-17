@@ -76,9 +76,13 @@ Per-app specifics:
   gated by Shell/gateway. It disproves the assumption that "all apps are Next.js (React)."
 
 The platform side of the contract is already complete, which narrows this work to the apps
-(verified 2026-07-17): Core issues codes and revalidates grants correctly, and Shell's
-`handleAuthRequired` verifies the sender, reissues a launch code and swaps the iframe `src`,
-rate-limited to one reissue per app per 3s. What that verification also surfaced is **why the
+(verified 2026-07-17): Core issues codes and revalidates grants correctly, and Shell already
+implements the full responder in two pieces — `parseActiveFrameAuthRequired`
+(`workspace/auth-intent.ts`, a pure function invoked by `EmbeddedWorkspacePanel`'s message
+listener) verifies the sender (`event.source` must be the active frame's `contentWindow`,
+`event.origin` must match the frame URL's origin, the `appId` must match the mounted app), and
+only then `handleAuthRequired` (`shell-client.tsx`) reissues a launch code and swaps the
+iframe `src`, rate-limited to one reissue per app per 3s. What that verification also surfaced is **why the
 app half is load-bearing rather than a nicety**: when the requested app is already the one in
 the workspace, Shell deliberately skips `/launch-code` and reuses the bare redirect URI with
 no `?code=` (`shell-client.tsx`, both the `launchAppPage` and route-restore paths). That is
@@ -320,8 +324,11 @@ politeness.
 
 **SDK consequence: ship the embedder half as code too.** Add an `embedder` slice — the
 verified message listener, the rate limit, and a "re-open this app" callback — extracted from
-Hosty Shell's working `handleAuthRequired`, and migrate Shell onto it so the reference
-implementation and the shipped artifact are the same code (the same medicine the apps get).
+Hosty Shell's working pair: `parseActiveFrameAuthRequired` (the sender/origin/appId
+verification — already a standalone pure function in `workspace/auth-intent.ts`, the natural
+seed of the slice) plus `handleAuthRequired` (the rate-limited reissue in `shell-client.tsx`).
+Migrate Shell onto the slice so the reference implementation and the shipped artifact are the
+same code (the same medicine the apps get).
 Non-JS embedders keep the one-sentence contract in prose. Priority note: there are many apps
 and few shells (today: one), so this slice is lower-risk and lower-priority than the app
 slices — but it is also nearly free, since the code already exists in Shell.
