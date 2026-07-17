@@ -27,6 +27,9 @@ internal sealed class CoreSettingsDocument
     // Update-check overrides (the background fleet sweep cadence). String-valued like `Ingress`;
     // additive to the schema for the same reason, so the version is deliberately NOT bumped.
     public IReadOnlyDictionary<string, string> Updates { get => field ?? EmptyUpdates; init; } = EmptyUpdates;
+    // User-management overrides (currently just the disabled-user retention window). String-valued like
+    // `Ingress`/`Updates`; additive to the schema for the same reason, so the version is NOT bumped.
+    public IReadOnlyDictionary<string, string> Users { get => field ?? EmptyUsers; init; } = EmptyUsers;
 
     private static readonly IReadOnlyDictionary<string, double> EmptyAuth =
         new Dictionary<string, double>(StringComparer.Ordinal);
@@ -35,6 +38,9 @@ internal sealed class CoreSettingsDocument
         new Dictionary<string, string>(StringComparer.Ordinal);
 
     private static readonly IReadOnlyDictionary<string, string> EmptyUpdates =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyUsers =
         new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
@@ -225,6 +231,59 @@ internal static class CoreUpdateCheckSettings
 // The update-check equivalent of CoreSettingRow: a single numeric row.
 internal sealed record CoreUpdateCheckSettingRow(int EffectiveIntervalMinutes, bool Overridden);
 
+// How long a disabled ("deleted") user's record is retained before the background purge removes it for
+// good — the record, its password credential, and any leftover sessions/assignments. Days; 0 disables
+// the automatic purge entirely (records then linger until an admin deletes them by hand). Env baseline
+// with a persisted override on top, like the other Core settings sections.
+internal sealed record UserRetentionSettings(int DisabledRetentionDays)
+{
+    public const string DisabledRetentionDaysKey = "HOSTY_USERS_DISABLED_RETENTION_DAYS";
+    public const int DefaultDisabledRetentionDays = 10;
+    // Ten years; anything longer means "use 0 and delete by hand".
+    public const int MaxDisabledRetentionDays = 3650;
+
+    public static UserRetentionSettings Defaults { get; } = new(DefaultDisabledRetentionDays);
+
+    // 0 turns the automatic purge off; manual permanent deletion stays available either way.
+    public bool AutoPurgeEnabled => DisabledRetentionDays > 0;
+
+    public TimeSpan DisabledRetention => TimeSpan.FromDays(DisabledRetentionDays);
+
+    public static UserRetentionSettings FromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable(DisabledRetentionDaysKey);
+        return TryParseRetentionDays(raw, out var days)
+            ? new UserRetentionSettings(days)
+            : Defaults;
+    }
+
+    public static bool TryParseRetentionDays(string? raw, out int days)
+    {
+        days = 0;
+        return int.TryParse(raw?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out days)
+            && days is >= 0 and <= MaxDisabledRetentionDays;
+    }
+}
+
+internal static class CoreUserRetentionSettings
+{
+    public const string Group = "User management";
+
+    public const string RetentionLabel = "Delete disabled users after";
+
+    public const string RetentionDescription =
+        "How many days a disabled user is kept before Core permanently deletes the account — its "
+        + "record, password credential, and any leftover sessions. The countdown starts when the user "
+        + "is disabled. 0 keeps disabled users indefinitely; you can still delete them by hand. Deleting "
+        + "an account frees its email to be invited again.";
+
+    public static bool IsKnown(string key)
+        => string.Equals(key, UserRetentionSettings.DisabledRetentionDaysKey, StringComparison.Ordinal);
+}
+
+// The user-retention equivalent of CoreSettingRow: a single numeric row.
+internal sealed record CoreUserRetentionSettingRow(int EffectiveRetentionDays, bool Overridden);
+
 // A choice for a select-typed setting: the stored value and the label the Shell shows.
 internal sealed record CoreSettingOption(string Value, string Label);
 
@@ -357,9 +416,11 @@ internal sealed class CoreSettingsService
     private Dictionary<string, double> overrides;
     private Dictionary<string, string> ingressOverrides;
     private Dictionary<string, string> updateCheckOverrides;
+    private Dictionary<string, string> userRetentionOverrides;
     private volatile AuthLifetimes current;
     private volatile IngressSettings currentIngress;
     private volatile UpdateCheckSettings currentUpdateCheck;
+    private volatile UserRetentionSettings currentUserRetention;
 
     public CoreSettingsService(CoreSettingsStore store)
     {
@@ -368,9 +429,11 @@ internal sealed class CoreSettingsService
         overrides = LoadOverrides(document);
         ingressOverrides = LoadIngressOverrides(document);
         updateCheckOverrides = LoadUpdateCheckOverrides(document);
+        userRetentionOverrides = LoadUserRetentionOverrides(document);
         current = Compute(overrides);
         currentIngress = ComputeIngress(ingressOverrides);
         currentUpdateCheck = ComputeUpdateCheck(updateCheckOverrides);
+        currentUserRetention = ComputeUserRetention(userRetentionOverrides);
     }
 
     // The live auth lifetimes: env-or-default baseline with persisted overrides applied.
@@ -383,6 +446,10 @@ internal sealed class CoreSettingsService
     // The live update-check cadence: env-or-default baseline with a persisted override applied. Read by
     // the sweep scheduler each cycle, so a save takes effect without restart.
     public UpdateCheckSettings UpdateCheck => currentUpdateCheck;
+
+    // The live disabled-user retention window: env-or-default baseline with a persisted override applied.
+    // Read by the purge scheduler each cycle, so a save takes effect without restart.
+    public UserRetentionSettings UserRetention => currentUserRetention;
 
     public IReadOnlyList<CoreSettingRow> GetAuthRows()
     {
@@ -412,6 +479,9 @@ internal sealed class CoreSettingsService
     public CoreUpdateCheckSettingRow GetUpdateCheckRow()
         => new(currentUpdateCheck.IntervalMinutes, Overridden: updateCheckOverrides.ContainsKey(UpdateCheckSettings.IntervalKey));
 
+    public CoreUserRetentionSettingRow GetUserRetentionRow()
+        => new(currentUserRetention.DisabledRetentionDays, Overridden: userRetentionOverrides.ContainsKey(UserRetentionSettings.DisabledRetentionDaysKey));
+
     // True when at least one of the submitted keys is an ingress setting — the endpoint uses this to
     // decide whether a save must re-render the tunnel config.
     public static bool TouchesIngress(IReadOnlyDictionary<string, string?> input)
@@ -428,6 +498,7 @@ internal sealed class CoreSettingsService
         var authChanges = new Dictionary<string, double?>(StringComparer.Ordinal);
         var ingressChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         var updateCheckChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var userRetentionChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (key, raw) in input)
         {
             if (CoreAuthSettings.IsKnown(key))
@@ -442,6 +513,10 @@ internal sealed class CoreSettingsService
             {
                 updateCheckChanges[key] = NormalizeUpdateCheckValue(key, raw);
             }
+            else if (CoreUserRetentionSettings.IsKnown(key))
+            {
+                userRetentionChanges[key] = NormalizeUserRetentionValue(key, raw);
+            }
             else
             {
                 throw new AppLifecycleException("core_setting_unknown", $"Unknown Core setting '{key}'.");
@@ -454,6 +529,7 @@ internal sealed class CoreSettingsService
             var mergedAuth = Apply(overrides, authChanges);
             var mergedIngress = Apply(ingressOverrides, ingressChanges);
             var mergedUpdateCheck = Apply(updateCheckOverrides, updateCheckChanges);
+            var mergedUserRetention = Apply(userRetentionOverrides, userRetentionChanges);
 
             await store.SaveAsync(
                 new CoreSettingsDocument
@@ -462,14 +538,17 @@ internal sealed class CoreSettingsService
                     Auth = mergedAuth,
                     Ingress = mergedIngress,
                     Updates = mergedUpdateCheck,
+                    Users = mergedUserRetention,
                 },
                 cancellationToken);
             overrides = mergedAuth;
             ingressOverrides = mergedIngress;
             updateCheckOverrides = mergedUpdateCheck;
+            userRetentionOverrides = mergedUserRetention;
             current = Compute(mergedAuth);
             currentIngress = ComputeIngress(mergedIngress);
             currentUpdateCheck = ComputeUpdateCheck(mergedUpdateCheck);
+            currentUserRetention = ComputeUserRetention(mergedUserRetention);
         }
         finally
         {
@@ -549,6 +628,25 @@ internal sealed class CoreSettingsService
         }
 
         return minutes.ToString(CultureInfo.InvariantCulture);
+    }
+
+    // Validates a disabled-user retention value for persistence, or null to clear. Stored as the
+    // canonical integer string so the document stays culture-stable.
+    private static string? NormalizeUserRetentionValue(string key, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        if (!UserRetentionSettings.TryParseRetentionDays(raw, out var days))
+        {
+            throw new AppLifecycleException(
+                "core_setting_invalid",
+                $"'{key}' must be a whole number of days between 0 (never delete) and {UserRetentionSettings.MaxDisabledRetentionDays}.");
+        }
+
+        return days.ToString(CultureInfo.InvariantCulture);
     }
 
     // Validates and canonicalizes an ingress value for persistence, or null to clear. Missing pieces for
@@ -693,6 +791,36 @@ internal sealed class CoreSettingsService
             UpdateCheckSettings.TryParseIntervalMinutes(raw, out var minutes))
         {
             settings = settings with { IntervalMinutes = minutes };
+        }
+
+        return settings;
+    }
+
+    private static Dictionary<string, string> LoadUserRetentionOverrides(CoreSettingsDocument document)
+    {
+        var loaded = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in document.Users)
+        {
+            // Same per-entry tolerance as the other sections: skip unknown keys and hand-edited
+            // values that do not parse rather than crashing startup.
+            if (!CoreUserRetentionSettings.IsKnown(key) || !UserRetentionSettings.TryParseRetentionDays(value, out _))
+            {
+                continue;
+            }
+
+            loaded[key] = value;
+        }
+
+        return loaded;
+    }
+
+    private static UserRetentionSettings ComputeUserRetention(IReadOnlyDictionary<string, string> overrides)
+    {
+        var settings = UserRetentionSettings.FromEnvironment();
+        if (overrides.TryGetValue(UserRetentionSettings.DisabledRetentionDaysKey, out var raw) &&
+            UserRetentionSettings.TryParseRetentionDays(raw, out var days))
+        {
+            settings = settings with { DisabledRetentionDays = days };
         }
 
         return settings;

@@ -347,6 +347,57 @@ public sealed class CoreSettingsServiceTests : IDisposable
         Assert.Equal("core_setting_invalid", error.Code);
     }
 
+    [Fact]
+    public void UserRetention_NoOverrides_MatchesEnvironmentBaseline()
+    {
+        var service = CreateService();
+
+        Assert.Equal(UserRetentionSettings.FromEnvironment(), service.UserRetention);
+        Assert.Equal(UserRetentionSettings.DefaultDisabledRetentionDays, service.UserRetention.DisabledRetentionDays);
+        Assert.True(service.UserRetention.AutoPurgeEnabled);
+        Assert.False(service.GetUserRetentionRow().Overridden);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_UserRetention_AppliesLivePersistsAndClears()
+    {
+        var service = CreateService();
+
+        await service.UpdateAsync(new Dictionary<string, string?>
+        {
+            [UserRetentionSettings.DisabledRetentionDaysKey] = "30",
+        });
+        Assert.Equal(30, service.UserRetention.DisabledRetentionDays);
+        Assert.True(service.GetUserRetentionRow().Overridden);
+
+        // Persisted: a fresh service over the same data root reads the override back.
+        var reloaded = CreateService();
+        Assert.Equal(30, reloaded.UserRetention.DisabledRetentionDays);
+
+        // 0 = never delete is a valid persisted value, not a clear.
+        await reloaded.UpdateAsync(new Dictionary<string, string?> { [UserRetentionSettings.DisabledRetentionDaysKey] = "0" });
+        Assert.False(reloaded.UserRetention.AutoPurgeEnabled);
+        Assert.True(reloaded.GetUserRetentionRow().Overridden);
+
+        // Blank clears the override back to the env/default baseline.
+        await reloaded.UpdateAsync(new Dictionary<string, string?> { [UserRetentionSettings.DisabledRetentionDaysKey] = "" });
+        Assert.Equal(UserRetentionSettings.FromEnvironment(), reloaded.UserRetention);
+        Assert.False(reloaded.GetUserRetentionRow().Overridden);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    [InlineData("soon")]
+    [InlineData("3651")]
+    public async Task UpdateAsync_UserRetention_RejectsInvalidDays(string days)
+    {
+        var service = CreateService();
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            service.UpdateAsync(new Dictionary<string, string?> { [UserRetentionSettings.DisabledRetentionDaysKey] = days }));
+        Assert.Equal("core_setting_invalid", error.Code);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))

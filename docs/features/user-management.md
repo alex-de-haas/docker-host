@@ -87,14 +87,18 @@ Invitations do not pre-provision future OIDC or trusted-proxy identities. Extern
 
 ## Safety Rules
 
-User deletion is implemented as soft-disable. Disabled users remain in auth history but cannot authenticate.
+Deleting a user is a two-step operation: disable first, then permanently delete. This makes both steps deliberate and keeps a disabled user recoverable until an administrator (or the retention job) removes the record for good.
 
-When a user is disabled, Hosty Core:
+**Disable** is the reversible first step. Disabled users remain in auth history but cannot authenticate. When a user is disabled, Hosty Core:
 
 - revokes active browser sessions;
 - removes app assignments.
 
-Hosty Core prevents disabling or demoting the last active administrator. Administrators also cannot disable their own account from User Management.
+**Permanent deletion** removes the stored record entirely — the account, its local password credential, and any leftover sessions and assignments. A user must already be disabled before it can be permanently deleted (`DELETE /api/auth/users/{userId}/record` returns `user_not_disabled` otherwise). Deleting an account frees its email to be invited again. Permanent deletion cannot be undone.
+
+Disabled users are also deleted automatically once they age past the retention window. The window is the `HOSTY_USERS_DISABLED_RETENTION_DAYS` Core setting (default 10 days, editable from the Shell platform Settings panel under **User management**). The countdown starts when the user is disabled. Setting the window to `0` keeps disabled users indefinitely; manual permanent deletion stays available either way. The automatic purge runs in the background (`UserRetentionScheduler`) and writes an `auth.user.retention.cleanup` audit event when it removes accounts.
+
+Hosty Core prevents disabling or demoting the last active administrator. Administrators also cannot disable their own account from User Management. (A disabled administrator does not count as active, so purging one carries no last-admin risk.)
 
 Changing a local user's role revokes that user's active sessions.
 
@@ -128,9 +132,10 @@ The UI uses the Core auth API:
 - `GET /api/auth/invitations/accept?setupToken=...` returns a safe invitation preview.
 - `POST /api/auth/invitations/accept` consumes an invitation, stores the submitted password credential, and creates the user session.
 - `PATCH /api/auth/users/{userId}` updates local user profile or role.
-- `DELETE /api/auth/users/{userId}` disables the user.
+- `DELETE /api/auth/users/{userId}` disables the user (soft-delete).
+- `DELETE /api/auth/users/{userId}/record` permanently deletes an already-disabled user's record.
 - `PUT /api/auth/users/{userId}/assignments` replaces app assignments for the user.
 
 All administrator mutation endpoints require `host.users.manage` and same-origin CSRF checks for browser sessions.
 
-Common business errors include duplicate email, active invitation already exists, invalid or expired invitation token, provider-managed role, last active administrator protection, self-disable protection, and disabled or missing user.
+Common business errors include duplicate email, active invitation already exists, invalid or expired invitation token, provider-managed role, last active administrator protection, self-disable protection, disabled or missing user, and deleting a user that is not disabled (`user_not_disabled`).

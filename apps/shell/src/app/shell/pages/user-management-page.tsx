@@ -164,6 +164,17 @@ export function UserManagementPanel({
     });
   }
 
+  function purgeUser(user: HostUserSummary) {
+    if (!window.confirm(`Permanently delete ${user.displayName || user.email || user.id}? This removes the account and its sign-in credential for good and cannot be undone. The email becomes available to invite again.`)) {
+      return;
+    }
+
+    void runUserAction(`purge:${user.id}`, async () => {
+      await sendCsrfJson(`${coreOrigin}/api/auth/users/${encodeURIComponent(user.id)}/record`, undefined, "DELETE");
+      toast.success("User deleted");
+    });
+  }
+
   function revokeInvite(invitation: UserInvitationSummary) {
     void runUserAction(`invite:${invitation.id}`, async () => {
       await sendCsrfJson(`${coreOrigin}/api/auth/invitations/${encodeURIComponent(invitation.id)}`, undefined, "DELETE");
@@ -263,6 +274,7 @@ export function UserManagementPanel({
                       onOpenAccessEditor={openAccessEditor}
                       onUpdateRole={updateRole}
                       onDisableUser={disableUser}
+                      onPurgeUser={purgeUser}
                     />
                   </TableCell>
                 </TableRow>
@@ -410,6 +422,7 @@ function UserRowActionsMenu({
   onOpenAccessEditor,
   onUpdateRole,
   onDisableUser,
+  onPurgeUser,
 }: {
   user: HostUserSummary;
   activeUserId: string | null;
@@ -417,12 +430,15 @@ function UserRowActionsMenu({
   onOpenAccessEditor: (user: HostUserSummary) => void;
   onUpdateRole: (user: HostUserSummary) => void;
   onDisableUser: (user: HostUserSummary) => void;
+  onPurgeUser: (user: HostUserSummary) => void;
 }) {
   const isSelf = activeUserId === user.id;
   const roleActionKey = `role:${user.id}`;
   const disableActionKey = `disable:${user.id}`;
+  const purgeActionKey = `purge:${user.id}`;
   const roleActionDisabled = user.disabled || pendingAction === roleActionKey || (isSelf && user.role === "host.admin");
   const disableActionDisabled = user.disabled || pendingAction === disableActionKey || isSelf;
+  const purgeActionDisabled = pendingAction === purgeActionKey;
   const roleActionLabel = user.role === "host.admin" ? "Make user" : "Make admin";
 
   return (
@@ -444,10 +460,17 @@ function UserRowActionsMenu({
           {roleActionLabel}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={disableActionDisabled} onClick={() => onDisableUser(user)}>
-          {pendingAction === disableActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />}
-          Disable
-        </DropdownMenuItem>
+        {user.disabled ? (
+          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={purgeActionDisabled} onClick={() => onPurgeUser(user)}>
+            {pendingAction === purgeActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            Delete permanently
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={disableActionDisabled} onClick={() => onDisableUser(user)}>
+            {pendingAction === disableActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />}
+            Disable
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

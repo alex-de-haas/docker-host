@@ -111,6 +111,7 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
+        builder.Services.AddHostedService<UserRetentionScheduler>();
         // Plan-first updates: the fleet sweep is a singleton (the trigger endpoint and the apps-list
         // status block read it) and its scheduler runs it on the Core-settings cadence.
         builder.Services.AddSingleton<AppUpdateSweepService>();
@@ -1634,6 +1635,84 @@ internal sealed class AppBackupRetentionScheduler(
         catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
             logger.LogWarning(ex, "Hosty backup retention cleanup did not complete.");
+        }
+    }
+}
+
+// Permanently deletes disabled ("deleted") user records once they age past the configured retention
+// window. Mirrors AppBackupRetentionScheduler / NotificationRetentionScheduler: a thin timer shell over
+// a service method, running once at startup then on the interval. The window is read from
+// CoreSettingsService each cycle, so an operator's save takes effect without a restart; a 0-day window
+// disables the purge (manual deletion stays available).
+internal sealed class UserRetentionScheduler(
+    UserManagementService users,
+    CoreSettingsService settings,
+    AuditStore audit,
+    IClock clock,
+    ILogger<UserRetentionScheduler> logger) : BackgroundService
+{
+    private static readonly TimeSpan CleanupInterval = TimeSpan.FromHours(6);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        try
+        {
+            await RunCleanupAsync(stoppingToken);
+
+            using var timer = new PeriodicTimer(CleanupInterval);
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                await RunCleanupAsync(stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Host is shutting down; exit quietly so we don't trip StopHost crit logging.
+        }
+    }
+
+    // internal (not private) so a test can drive one pass without the timer, like the sibling schedulers.
+    internal async Task RunCleanupAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var retention = settings.UserRetention;
+            if (!retention.AutoPurgeEnabled)
+            {
+                logger.LogDebug("Hosty disabled-user retention is turned off; skipping purge.");
+                return;
+            }
+
+            var purged = await users.PurgeExpiredDisabledUsersAsync(retention.DisabledRetention, cancellationToken);
+            if (purged.Count == 0)
+            {
+                logger.LogDebug("Hosty disabled-user retention purge found no candidates.");
+                return;
+            }
+
+            await audit.AppendAsync(new AuditRecord(
+                Id: $"audit_{Guid.NewGuid():N}",
+                Action: "auth.user.retention.cleanup",
+                ResourceType: "auth.user",
+                ResourceId: null,
+                Outcome: "succeeded",
+                ActorUserId: null,
+                CreatedAt: clock.UtcNow,
+                Details: new Dictionary<string, string>
+                {
+                    ["retentionDays"] = retention.DisabledRetentionDays.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["purged"] = purged.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                }),
+                cancellationToken);
+            logger.LogInformation("Hosty disabled-user retention purge deleted {PurgedCount} account(s).", purged.Count);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Hosty disabled-user retention purge did not complete.");
         }
     }
 }
