@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.41.3",
+  "version": "0.41.4",
   "role": "system",
   "source": {
     "type": "git",
@@ -77,7 +77,7 @@
       "public": true
     }
   ],
-  "capabilities": ["open", "update", "restart", "stop", "logs"],
+  "capabilities": ["logs"],
   "catalogMetadata": {
     "icon": "assets/icon.svg"
   }
