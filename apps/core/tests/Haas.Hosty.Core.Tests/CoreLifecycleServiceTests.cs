@@ -4779,7 +4779,7 @@ public sealed class CoreLifecycleServiceTests
                 ShellAutostart: false,
                 IngressConfigPath: Path.Combine(root, "core", "ingress", "config.yml"));
             var localProcesses = new LocalCommandProcessRegistry();
-            var appServiceTokens = new AppServiceTokenService(new ControlSecret("test-control-secret"));
+            var appServiceTokens = new AppServiceTokenService(new AppServiceSigningKey("test-control-secret"u8.ToArray()));
             var localAdapter = new LocalCommandRuntimeAdapter(runtimeConfig, localProcesses, appServiceTokens);
             // Ingress config is now a live Core setting (CoreSettingsService), not baked into the runtime
             // config, so seed the cloudflared provider through the settings store the controller reads.

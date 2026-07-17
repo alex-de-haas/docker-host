@@ -29,7 +29,12 @@ internal static class HostyCoreApplication
         // value rather than capturing a startup snapshot.
         builder.Services.AddTransient(sp => sp.GetRequiredService<CoreSettingsService>().AuthLifetimes);
         builder.Services.AddSingleton(sp => CoreDataPaths.FromConfig(sp.GetRequiredService<HostyCoreRuntimeConfig>()));
+        // Two secrets, deliberately split: the ControlSecret guards the CLI control endpoints and is
+        // per-process (the discovery file carrying it is rewritten each boot), while the app service
+        // token key is durable on disk — a keep-apps restart adopts still-running containers whose
+        // HOSTY_APP_SERVICE_TOKEN was baked in by the previous Core, so it must keep validating here.
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
+        builder.Services.AddSingleton(sp => AppServiceSigningKey.LoadOrCreate(sp.GetRequiredService<CoreDataPaths>()));
         builder.Services.AddSingleton<AppServiceTokenService>();
         builder.Services.AddSingleton<AppRegistryStore>();
         builder.Services.AddSingleton<ShellPublicOriginResolver>();

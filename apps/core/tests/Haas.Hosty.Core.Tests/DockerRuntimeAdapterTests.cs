@@ -685,12 +685,16 @@ public sealed class DockerRuntimeAdapterTests
         return new RuntimeLifecycleContext(app, selection, "/tmp/app", "/tmp/app/data", new Dictionary<string, string>(), [], endpoint);
     }
 
+    private static AppServiceTokenService CreateTokenService(byte[]? key = null)
+        => new(new AppServiceSigningKey(key ?? "test-control-secret"u8.ToArray()));
+
     private static DockerRuntimeAdapter CreateAdapter(
         IDockerCommandRunner runner,
-        ILogger<DockerRuntimeAdapter>? logger = null)
+        ILogger<DockerRuntimeAdapter>? logger = null,
+        AppServiceTokenService? serviceTokens = null)
         => new(
             CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
-            new AppServiceTokenService(new ControlSecret("test-control-secret")),
+            serviceTokens ?? CreateTokenService(),
             logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DockerRuntimeAdapter>.Instance,
             runner);
 
@@ -775,14 +779,18 @@ public sealed class DockerRuntimeAdapterTests
     public async Task StartAsync_OwnedContainerRunningWithMatchingImage_AdoptsWithoutRecreate()
     {
         // A keep-apps Core restart leaves this container running; the new Core's start must adopt it
-        // (image matches the lock) instead of docker rm -f + docker run, so the app never blips.
+        // (image matches the lock, baked service token still validates) instead of docker rm -f +
+        // docker run, so the app never blips.
         var digest = "sha256:" + new string('a', 64);
+        var serviceTokens = CreateTokenService();
+        var token = serviceTokens.CreateToken("com.example.app");
         var runner = new FakeDockerCommandRunner(args =>
             args is ["inspect", "--format", var fmt, ..] && fmt.Contains("State.Running", StringComparison.Ordinal)
-                ? new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{digest}", "")
+                ? new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{digest}::HOSTY_APP_ID=com.example.app\nHOSTY_APP_SERVICE_TOKEN={token}\nPATH=/usr/bin\n", "")
                 : new DockerCommandResult(0, "", ""));
 
-        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+        var result = await CreateAdapter(runner, serviceTokens: serviceTokens)
+            .StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
 
         // No recreate churn: nothing pulled, run, or removed.
         Assert.DoesNotContain(runner.Commands, command => command[0] is "run" or "pull" or "rm");
@@ -792,19 +800,56 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
-    public async Task StartAsync_OwnedContainerRunningWithDifferentImage_Recreates()
+    public async Task StartAsync_OwnedContainerRunningWithStaleServiceToken_Recreates()
     {
-        // The running container is on a different digest than the lock pins, so it must be recreated
-        // (adoption is image-matched, not "any running owned container").
+        // The container matches the lock's image, but its baked HOSTY_APP_SERVICE_TOKEN was signed by
+        // a different key (minted before the key became durable, or after a rotation). Adopting it
+        // would leave every app→Core callback 401ing, so the adapter must recreate instead.
         var digest = "sha256:" + new string('a', 64);
-        var otherDigest = "sha256:" + new string('b', 64);
+        var staleToken = CreateTokenService("stale-old-secret"u8.ToArray()).CreateToken("com.example.app");
         var runner = new FakeDockerCommandRunner(args =>
         {
             if (args is ["inspect", "--format", var fmt, ..])
             {
                 if (fmt.Contains("State.Running", StringComparison.Ordinal))
                 {
-                    return new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{otherDigest}", "");
+                    return new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={staleToken}\n", "");
+                }
+
+                if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, "com.example.app", "");
+                }
+            }
+
+            return args is ["image", "inspect", ..]
+                ? new DockerCommandResult(0, "[{}]", "")
+                : new DockerCommandResult(0, "", "");
+        });
+
+        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+
+        Assert.True(runner.Ran("rm", "-f", "hosty-com-example-app-app"));
+        Assert.Equal($"ghcr.io/example/app@{digest}", runner.Find("run")![^1]);
+    }
+
+    [Fact]
+    public async Task StartAsync_OwnedContainerRunningWithDifferentImage_Recreates()
+    {
+        // The running container is on a different digest than the lock pins, so it must be recreated
+        // (adoption is image-matched, not "any running owned container"). The baked token is valid so
+        // the image mismatch is the only reason to recreate.
+        var digest = "sha256:" + new string('a', 64);
+        var otherDigest = "sha256:" + new string('b', 64);
+        var serviceTokens = CreateTokenService();
+        var token = serviceTokens.CreateToken("com.example.app");
+        var runner = new FakeDockerCommandRunner(args =>
+        {
+            if (args is ["inspect", "--format", var fmt, ..])
+            {
+                if (fmt.Contains("State.Running", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{otherDigest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "");
                 }
 
                 if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
@@ -829,13 +874,14 @@ public sealed class DockerRuntimeAdapterTests
     {
         // A stopped-but-present owned container is not adopted (only a live one is), so it is recreated.
         var digest = "sha256:" + new string('a', 64);
+        var token = CreateTokenService().CreateToken("com.example.app");
         var runner = new FakeDockerCommandRunner(args =>
         {
             if (args is ["inspect", "--format", var fmt, ..])
             {
                 if (fmt.Contains("State.Running", StringComparison.Ordinal))
                 {
-                    return new DockerCommandResult(0, $"false::com.example.app::ghcr.io/example/app@{digest}", "");
+                    return new DockerCommandResult(0, $"false::com.example.app::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "");
                 }
 
                 if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))

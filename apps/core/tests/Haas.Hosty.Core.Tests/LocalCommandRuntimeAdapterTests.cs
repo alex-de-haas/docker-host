@@ -291,7 +291,7 @@ public sealed class LocalCommandRuntimeAdapterTests
         var adapter = new LocalCommandRuntimeAdapter(
             CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
             registry,
-            new AppServiceTokenService(new ControlSecret("test-control-secret")));
+            new AppServiceTokenService(new AppServiceSigningKey("test-control-secret"u8.ToArray())));
 
         var service = new RuntimeSelectedService(
             "web",
@@ -326,7 +326,7 @@ public sealed class LocalCommandRuntimeAdapterTests
         var adapter = new LocalCommandRuntimeAdapter(
             CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
             registry,
-            new AppServiceTokenService(new ControlSecret("test-control-secret")));
+            new AppServiceTokenService(new AppServiceSigningKey("test-control-secret"u8.ToArray())));
 
         var service = new RuntimeSelectedService(
             "app",

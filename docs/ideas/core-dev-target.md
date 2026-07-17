@@ -27,7 +27,7 @@ This document records the design agreed on 2026-07-12 and the implementation pla
 - There is **no OS autostart integration** (no launchd/systemd anywhere in CLI or Core). The CLI is the only launcher today, so "CLI as agent layer" regresses nothing: nobody supervises Core after a crash now either.
 - Core install/update is CLI-owned: `CoreInstallationService` downloads the release artifact with SHA256 verification via `ReleaseArtifactService` into the CLI's bin directory. This is the "release slot".
 - Shell's sidebar already renders the Core version and online state (`SidebarVersionInfo`, `apps/shell/src/app/shell/sidebar/shell-sidebar.tsx:157`). This is the natural anchor for the platform panel.
-- The app service-token secret is per-process (`ControlSecret`, fresh random bytes each start, `HostyCoreApplication.cs:278`). Irrelevant to this feature — the fleet restarts with Core anyway — but it becomes the first blocker if the deferred "fleet survives Core restart" idea is ever picked up.
+- The app service-token secret is now durable (`AppServiceSigningKey`, persisted at `core/auth/app-service-signing.key`), while `ControlSecret` stays per-process for the CLI control endpoints (the discovery file carrying it is rewritten each boot). The split happened because the keep-apps light restart adopts still-running containers with their `HOSTY_APP_SERVICE_TOKEN` baked in — a per-process signing secret 401'd every app→Core callback after adoption.
 
 ## Decisions
 
@@ -144,7 +144,7 @@ Non-admin users see what they see today: the version, nothing clickable. All act
 - **Resident Hosty Agent (supervisor process)** — deferred. The persisted target is deliberately shaped as the future `CoreLaunchSpec`: an Agent would become a second reader of the same settings and add autostart, crash-loop restart with backoff, and versioned binary slots with rollback. Nothing in this design blocks it.
 - **Cheap autostart interim** — a launchd LaunchAgent / `systemd --user` unit with `KeepAlive` running the existing `hosty core start --foreground` (`CoreCommand.cs:74`) would make the OS the supervisor without writing an Agent. Requires teaching `hosty core restart` to cooperate with `launchctl kickstart`. Separate small feature.
 - **`dotnet watch` dev loop** — deferred. Watch survives app exit and waits for a file change, so after `hosty core stop` a live watcher would resurrect Core on the next save; stop must learn to kill the watcher's whole process tree first. Plain `dotnet run` (compile on every start) ships first.
-- **Fleet survives Core restart (handover/adopt)** — deferred, separate idea. Requires a durable `ControlSecret` (the persistence pattern already exists in `app-identity-signing.key`), skipping `StopRuntimeAppsAsync` under a handover flag, and adopt-if-healthy reconciliation (docker by labels, localCommand by pidfile/pgid). Even then a Core restart stays user-visible (auth, notifications, directory), which is why this is not on the main path.
+- **Fleet survives Core restart (handover/adopt)** — the docker half has since shipped as the keep-apps light restart: `StopRuntimeAppsAsync` is skipped under `CoreShutdownOptions.KeepRuntimeApps` and the next Core adopts image-matched, token-valid containers at boot, with the app service token signed by the durable `AppServiceSigningKey` so adopted containers keep authenticating. Still open: localCommand handover (processes are reclaimed and respawned, not adopted) and in-Core session/auth continuity across the restart.
 - **Shared CLI/Core library** — not needed by this feature. Its first honest contents, when it happens, are the control-discovery contract and PID-liveness rules currently maintained twice (`apps/cli/.../ControlDiscovery.cs` + `ProcessLiveness.cs` vs. Core's writer side). Both binaries are Native AOT: the library must be reflection-free with source-generated serialization owned per consumer.
 
 ## Implementation plan
@@ -188,7 +188,7 @@ Acceptance: admin sees mode badge and can switch release↔dev and restart from 
 
 1. `dotnet watch` dev mode with watcher-tree-aware stop.
 2. launchd/systemd autostart via `start --foreground` + `KeepAlive`.
-3. Handover/adopt (fleet survives Core restart) — starts with durable `ControlSecret`.
+3. Handover/adopt (fleet survives Core restart) — docker adoption + the durable app service signing key have shipped; localCommand handover remains.
 4. Shared CLI/Core contract library (control discovery + liveness first).
 5. Resident Hosty Agent, if autostart + rollback demand outgrows the launchd trick.
 

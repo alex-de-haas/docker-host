@@ -185,7 +185,7 @@ public sealed class NotificationEndpointsTests
             await apps.UpsertAppAsync(CreateApp("com.example.app"));
 
             var notifications = new NotificationService(new NotificationStore(paths), users, new NotificationBroadcaster(), clock);
-            var serviceTokens = new AppServiceTokenService(new ControlSecret("test-secret"));
+            var serviceTokens = new AppServiceTokenService(new AppServiceSigningKey("test-secret"u8.ToArray()));
             return new Fixture(serviceTokens, apps, notifications, new AuditStore(paths), paths.AuditLogPath, clock);
         }
 
