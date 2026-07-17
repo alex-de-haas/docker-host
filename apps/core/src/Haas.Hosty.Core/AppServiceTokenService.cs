@@ -3,7 +3,11 @@ using System.Text;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppServiceTokenService(ControlSecret secret)
+// Mints and validates HOSTY_APP_SERVICE_TOKEN. Signed with the durable AppServiceSigningKey (not
+// the per-process ControlSecret): tokens are baked into app environments at container/process
+// creation and must stay valid across a keep-apps Core restart, where the next Core adopts the
+// still-running container instead of recreating it.
+internal sealed class AppServiceTokenService(AppServiceSigningKey key)
 {
     private const string Prefix = "hosty_app_service";
     private const string Version = "1";
@@ -46,7 +50,7 @@ internal sealed class AppServiceTokenService(ControlSecret secret)
 
     private string Sign(string appId)
         => Base64UrlEncode(HMACSHA256.HashData(
-            Encoding.UTF8.GetBytes(secret.Value),
+            key.Value,
             Encoding.UTF8.GetBytes($"hosty-app-service:{appId}")));
 
     private static string Base64UrlEncode(byte[] bytes)

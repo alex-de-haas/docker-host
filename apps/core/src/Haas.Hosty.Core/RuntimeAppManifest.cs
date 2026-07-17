@@ -1455,8 +1455,9 @@ internal sealed class DockerRuntimeAdapter(
             // Adoption: when a Core-owned container for this service is already running the exact image
             // its lock pins, keep it running instead of docker rm -f + docker run. This is what makes a
             // keep-apps Core restart (light stop) non-disruptive — the app never blips and its published
-            // host ports never churn. Any mismatch (not running, different image, no digest lock, or a
-            // foreign/unlabelled container) falls through to the normal recreate path below. Adopted
+            // host ports never churn. Any mismatch (not running, different image, no digest lock, a
+            // foreign/unlabelled container, or a service token the current signing key rejects) falls
+            // through to the normal recreate path below. Adopted
             // containers are intentionally NOT added to startedContainers: this start did not create
             // them, so a later sibling's failure must not tear a healthy running service down.
             if (await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
@@ -1946,11 +1947,15 @@ internal sealed class DockerRuntimeAdapter(
 
     // True when a Core-owned container of this name is already running the exact image the app's lock
     // pins, so it can be adopted as-is (skip docker rm -f + docker run). Requires: the container exists,
-    // State.Running is true, its hosty.app.id label equals this app, and its created-from image
+    // State.Running is true, its hosty.app.id label equals this app, its created-from image
     // (.Config.Image, which docker records as the `repo@sha256:...` reference it was run with) equals the
-    // pinned digest reference the lock resolves to. A missing/tag-only lock (local-only image with no
-    // digest) or any mismatch returns false so the caller recreates the container. This is the boot-time
-    // reconcile that keeps a keep-apps Core restart from churning still-running app containers.
+    // pinned digest reference the lock resolves to, and its baked HOSTY_APP_SERVICE_TOKEN still validates
+    // under the current signing key — adoption keeps the container's environment as-is, so a token this
+    // Core would reject (key rotated or minted before the key became durable) must fall through to a
+    // recreate rather than leave the app 401ing on every callback. A missing/tag-only lock (local-only
+    // image with no digest) or any mismatch returns false so the caller recreates the container. This is
+    // the boot-time reconcile that keeps a keep-apps Core restart from churning still-running app
+    // containers.
     private async Task<bool> TryAdoptRunningContainerAsync(
         string appId,
         string containerName,
@@ -1964,15 +1969,17 @@ internal sealed class DockerRuntimeAdapter(
         }
 
         var inspect = await RunRawAsync(
-            ["inspect", "--format", "{{.State.Running}}::{{ index .Config.Labels \"hosty.app.id\" }}::{{.Config.Image}}", containerName],
+            ["inspect", "--format", "{{.State.Running}}::{{ index .Config.Labels \"hosty.app.id\" }}::{{.Config.Image}}::{{range .Config.Env}}{{println .}}{{end}}", containerName],
             cancellationToken);
         if (inspect.ExitCode != 0)
         {
             return false;
         }
 
-        var parts = inspect.StandardOutput.Trim().Split("::", 3);
-        if (parts.Length != 3)
+        // The first three fields cannot contain "::" (bool, validated app id, image reference), so the
+        // fourth capture is the raw env block regardless of what the container's variables hold.
+        var parts = inspect.StandardOutput.Trim().Split("::", 4);
+        if (parts.Length != 4)
         {
             return false;
         }
@@ -1980,7 +1987,18 @@ internal sealed class DockerRuntimeAdapter(
         var pinnedReference = (image with { Digest = existingLock.ImageDigest }).Reference;
         return string.Equals(parts[0].Trim(), "true", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(parts[1].Trim(), appId, StringComparison.Ordinal) &&
-            string.Equals(parts[2].Trim(), pinnedReference, StringComparison.Ordinal);
+            string.Equals(parts[2].Trim(), pinnedReference, StringComparison.Ordinal) &&
+            HasValidServiceToken(appId, parts[3]);
+    }
+
+    private bool HasValidServiceToken(string appId, string environmentBlock)
+    {
+        var token = environmentBlock
+            .Split('\n')
+            .Select(line => line.Trim())
+            .FirstOrDefault(line => line.StartsWith("HOSTY_APP_SERVICE_TOKEN=", StringComparison.Ordinal))?
+            ["HOSTY_APP_SERVICE_TOKEN=".Length..];
+        return token is not null && serviceTokens.ValidateToken(appId, token);
     }
 
     // Deterministic host-port assignment for a service's published ports. Host networking binds the
