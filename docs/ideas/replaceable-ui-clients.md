@@ -93,7 +93,7 @@ contract is the behavioral half of what a shell must implement).
 
    1. If `primaryUiAppId` names an installed app that provides `ui-client` → that app.
    2. Else if exactly one installed app provides `ui-client` → that app.
-   3. Else if several → the earliest-installed one.
+   3. Else if several → the earliest-installed one, ties broken by ordinal app id.
    4. Else → null ("no UI client", the already-valid state).
 
    The properties fall out without any install-time mutation: the first shell is automatically
@@ -103,11 +103,41 @@ contract is the behavioral half of what a shell must implement).
    The default-browser model: every installed shell works when opened directly at its own URL;
    primary only decides where *Core-initiated* navigation lands.
 
+   Rule 3's tiebreak is not hypothetical hygiene: `AppRecord.InstalledAt` is non-nullable and the
+   registry already normalizes a `default` value to "now" on write (`AppRegistryStore.cs:116`), so
+   the timestamp is always present — but two records can still carry the same instant, and an
+   unordered "earliest" would let the primary UI silently swap between boots. Ordinal app id is a
+   total order over a set that is unique by construction.
+
+   **The set is "installed", and deliberately not narrower.** Two tempting filters are both wrong:
+
+   - *Bootstrap-choice `enabled`* is not an app state at all. It is the operator's intent about
+     future boots (`SystemAppBootstrap.cs:14`), and disabling it explicitly **keeps the app
+     installed and running** — that is the panel's own contract ("disabling stops future installs
+     but keeps the app until you uninstall it"). A bootstrap-disabled shell serving traffic on its
+     port is a fully working UI; excluding it would send browsers nowhere while the shell they are
+     looking at keeps rendering. There is no `Enabled`/`Disabled` field on `AppRecord` — that flag
+     exists only for *users* (`UserDirectoryStore.cs:60`). Uninstall is the only removal, and it
+     drops the record, so resolution over installed apps already excludes it; the choice-pinning
+     that accompanies uninstall is about the boot reconcile, not about resolution.
+   - *Running* would make the answer flap with runtime state: a restarting shell would lose primary
+     mid-restart, and login continuation would resolve differently depending on when it was asked.
+     Resolution answers "which UI does this host present", which is a property of what is installed;
+     whether it happens to be up is the browser's problem to discover, and Core's existing null case
+     already covers "no UI at all".
+
 4. **CORS admits every installed `ui-client`, not just the primary.** `ShellCorsPolicyProvider`
-   extends from one origin to the set of origins of all installed `ui-client` apps. Multiple shells
-   coexisting on different URLs is a feature, not a conflict: each has its own record, port, and
-   origin. Domain UIs (telemetry-ui) are *not* in this set — per the trust model they call their own
-   backends, not Core, from the browser.
+   extends from one origin to the set of origins of all installed `ui-client` apps — the same set as
+   Decision 3, for the same reasons. Multiple shells coexisting on different URLs is a feature, not a
+   conflict: each has its own record, port, and origin. Domain UIs (telemetry-ui) are *not* in this
+   set — per the trust model they call their own backends, not Core, from the browser.
+
+   Restricting the set to running apps would buy nothing and cost correctness. A stopped shell
+   serves no page, so no browser can originate a request from its origin; the header would go
+   unused. The "stale origin gets hijacked" worry needs an attacker who can bind that host port,
+   and an attacker with local code execution can read Core's data root directly — CORS is not the
+   boundary holding there. Meanwhile the restriction would break the real case: a shell coming up
+   would be denied its own origin for as long as the policy lags its runtime state.
 
 5. **Uninstalling Shell — including the last shell — is always allowed.** Core already treats "no
    UI client" as valid, and the uninstall path already pins the bootstrap choice so boot does not
@@ -127,6 +157,18 @@ contract is the behavioral half of what a shell must implement).
    Nothing else is promised. A shell's internal routing, features, and design are its own. This is
    the `ui-client` contract in [core-extension-model.md](core-extension-model.md) terms:
    multi-instance cardinality with a designated default.
+
+   **The contract is not enforced by manifest validation.** `ValidateProvides` is deliberately
+   shape-only — kebab token, no blanks, no duplicates — and explicitly tolerates slot names a newer
+   Core would understand (`RuntimeAppManifest.cs:1134`). Teaching it that `ui-client` implies a
+   public endpoint would put per-slot knowledge into the one layer that is currently slot-agnostic,
+   and `otlp-collector` sets the precedent for the alternative: its requirements live with the
+   capability (`PlatformCapabilities`), not in manifest shape rules. It would also re-litigate #203,
+   where declarations stopped gating lifecycle. A `ui-client` with no public endpoint is not a
+   validation error but a resolution input: it never resolves to an origin, so it is never primary
+   and never in the CORS set — the same null-shaped answer Core already handles. If install-time
+   feedback proves worth it, the right surface is an install-review warning, not a rejected
+   manifest.
 
 7. **Domain-specific UIs stay out of this mechanism entirely.** A telemetry-only UI, an alternative
    metrics dashboard, or any single-domain frontend is a plain app with a `ui` service — it does
