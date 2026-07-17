@@ -155,10 +155,12 @@ Ratified by the owner 2026-07-17 (session review of the live media-server incide
    canonical channel, and the workspace link inside the monorepo is only an interim
    convenience for the apps still in-tree. Re-examined 2026-07-17 against GitHub-only
    alternatives and confirmed: GitHub Packages still token-gates public installs; git-tag
-   installs (`github:…#semver:^1`) work anonymously but need a separate SDK repo (npm cannot
-   install from a monorepo subfolder), build-on-install or a committed `dist/`, and have poor
-   bot support; a `.tgz` on GitHub Releases pins the version into the URL. And .NET settles
-   it: NuGet has no git dependencies at all, so nuget.org is unavoidable — at which point
+   installs (`github:<owner>/<repo>#semver:^1`) work anonymously but need a separate SDK repo
+   (npm's git-URL spec has no subfolder syntax — only `#<commit-ish>` / `#semver:` suffixes —
+   so a monorepo subfolder cannot be an install source), build-on-install or a committed
+   `dist/`, and have poor bot support; a `.tgz` on GitHub Releases pins the version into the
+   URL. And .NET settles it: NuGet has no git dependencies at all, so NuGet.org is
+   unavoidable — at which point
    avoiding npmjs saves nothing. The git-tag channel stays as a free *auxiliary* for
    installing the SDK from a branch or commit during debugging. Pre-flight before first
    publish: confirm the `@haas` npm scope is actually available (common name; fall back to
@@ -228,8 +230,8 @@ Ratified by the owner 2026-07-17 (session review of the live media-server incide
     - In-tree apps use the npm workspace symlink and always build against the working-tree
       SDK — no versions involved at all.
     - Co-developing the SDK with an external app needs no publishing: `npm link` / `file:` on
-      the TS side, `ProjectReference` or a local feed on .NET, and the `github:…#semver:`
-      git-tag channel for installing straight from a branch.
+      the TS side, `ProjectReference` or a local feed on .NET, and the
+      `github:<owner>/<repo>#semver:^1` git-tag channel for installing straight from a branch.
     Floating versions (`latest` / `*`, NuGet `1.*`) were considered and rejected: npm
     lockfiles make them a lie (CI restores the pinned resolve regardless), NuGet's genuine
     floating trades away build reproducibility, a bad release would hit every app's next
