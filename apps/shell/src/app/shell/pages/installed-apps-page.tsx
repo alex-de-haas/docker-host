@@ -121,6 +121,9 @@ export function InstalledAppsPage({
   // served from Core's cached plan). The row Update/Review affordances read the fleet-check verdict
   // on the app summary instead — this state only feeds the expanded services panel.
   const [updateStatusByApp, setUpdateStatusByApp] = useState<Record<string, UpdateStatusState>>({});
+  // Apps whose digest detail the operator explicitly asked for this session; gates the stale-digest
+  // re-read below so it can refresh what was requested without ever initiating a check itself.
+  const statusRequestedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const appIds = new Set([...runtimeApps, ...systemApps].map((app) => app.id));
@@ -170,12 +173,11 @@ export function InstalledAppsPage({
   );
 
   // ShellClient bumps an app's counter after a mutation that resets its artifact locks (apply update,
-  // switch runtime). The cached verdict for that app is now stale — left alone it would keep showing
-  // "Update available" and the row Update icon until a manual re-check — so re-probe it. `refresh()`
+  // switch runtime), which makes this panel's per-service digests stale. Only apps whose digests the
+  // operator actually asked for are re-read — nothing here may start a check on its own. `refresh()`
   // has already reloaded the app list by the time the counter advances, so the app is present here.
-  // Seed the ref with the counters as they stand on mount: any mutation from earlier in the session is
-  // treated as already-seen (rows are collapsed and probe on-demand when expanded), so only new bumps
-  // while this page is mounted trigger an automatic re-probe.
+  // Seed the ref with the counters as they stand on mount, so only new bumps while this page is
+  // mounted are acted on.
   const probedInvalidationsRef = useRef<Record<string, number>>({ ...updateStatusInvalidations });
   useEffect(() => {
     const appsById = new Map<string, CoreApp>([...runtimeApps, ...systemApps].map((app) => [app.id, app]));
@@ -183,14 +185,30 @@ export function InstalledAppsPage({
       if (probedInvalidationsRef.current[appId] === nonce) {
         continue;
       }
+      probedInvalidationsRef.current[appId] = nonce;
       const app = appsById.get(appId);
-      if (!app) {
+      if (!app || !statusRequestedRef.current.has(appId)) {
         continue;
       }
-      probedInvalidationsRef.current[appId] = nonce;
       void loadUpdateStatus(app);
     }
   }, [updateStatusInvalidations, runtimeApps, systemApps, loadUpdateStatus]);
+
+  // Explicit per-app check from the row's actions menu: rebuilds this app's plan on Core
+  // (?refresh=true), which both fills the expanded panel's per-service digests and refreshes Core's
+  // stored verdict — so pull the app list afterwards to bring the row's own Update/Review
+  // affordance in line with what was just found.
+  const checkAppUpdate = useCallback(
+    async (app: CoreApp) => {
+      statusRequestedRef.current.add(app.id);
+      const status = await loadUpdateStatus(app, { refresh: true });
+      if (status) {
+        toast.success(status.updateAvailable ? "Update available" : "Up to date", { description: app.displayName });
+      }
+      onRefresh();
+    },
+    [loadUpdateStatus, onRefresh],
+  );
 
   // The fleet check runs on Core (plan-first updates): the button just triggers/joins the sweep and
   // the spinner reads the server-side status block, so a page opened mid-sweep — or reloaded — keeps
@@ -293,11 +311,11 @@ export function InstalledAppsPage({
             canManageApps={canManageApps}
             busyAction={busyAction}
             updateStatusByApp={updateStatusByApp}
-            onLoadUpdateStatus={loadUpdateStatus}
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
             onSetDevelopmentMode={onSetDevelopmentMode}
             onUpdateApp={onUpdateApp}
+            onCheckUpdate={(target) => void checkAppUpdate(target)}
             onOpenPanel={onOpenPanel}
           />
           <InstalledAppTableSection
@@ -311,11 +329,11 @@ export function InstalledAppsPage({
             canManageApps={canManageApps}
             busyAction={busyAction}
             updateStatusByApp={updateStatusByApp}
-            onLoadUpdateStatus={loadUpdateStatus}
             onAction={onAction}
             onSwitchRuntime={onSwitchRuntime}
             onSetDevelopmentMode={onSetDevelopmentMode}
             onUpdateApp={onUpdateApp}
+            onCheckUpdate={(target) => void checkAppUpdate(target)}
             onOpenPanel={onOpenPanel}
           />
         </div>
@@ -340,14 +358,15 @@ function AppServiceDetailsPanel({
   updateStatusState,
   canConfigurePublicOrigins,
   onConfigurePublicOrigins,
-  onRecheckUpdate,
 }: {
   app: CoreApp;
   healthState?: RuntimeHealthState;
+  // Per-service digest detail, populated only once the operator explicitly runs "Check for updates"
+  // from the row's actions menu. Expanding a row does not probe: whether an update exists is the
+  // row's own Update/Review affordance (the fleet-check verdict), not this panel's job.
   updateStatusState?: UpdateStatusState;
   canConfigurePublicOrigins: boolean;
   onConfigurePublicOrigins: () => void;
-  onRecheckUpdate: () => void;
 }) {
   const serviceRows = buildRuntimeServiceRows(app, healthState?.health);
   const copyEndpointUrl = async (url: string) => {
@@ -377,6 +396,9 @@ function AppServiceDetailsPanel({
     Object.keys(lockedByService).length > 0 ||
     [...runningByService.values()].some((digest) => digest) ||
     statusByService.size > 0;
+  // The policy badge is the bar's only content now, and it renders nothing without an explicit
+  // policy from Core — so gate the bar on it too, or an older Core leaves an empty strip behind.
+  const showsUpdatePolicy = app.updatePolicy === "pinned" || app.updatePolicy === "rolling";
 
   return (
     <div className="space-y-2 rounded-md border bg-background p-3">
@@ -407,23 +429,9 @@ function AppServiceDetailsPanel({
           )}
         </div>
       )}
-      {hasImageInfo && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/30 px-2 py-1.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <UpdatePolicyBadge policy={app.updatePolicy} />
-            <UpdateAvailabilityIndicator state={updateStatusState} />
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1 px-2 text-xs"
-            disabled={updateStatusState?.loading}
-            onClick={onRecheckUpdate}
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", updateStatusState?.loading && "animate-spin")} />
-            Check for updates
-          </Button>
+      {hasImageInfo && showsUpdatePolicy && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
+          <UpdatePolicyBadge policy={app.updatePolicy} />
         </div>
       )}
       {healthState?.loading && (
@@ -549,38 +557,6 @@ function UpdatePolicyBadge({ policy }: { policy?: string | null }) {
   );
 }
 
-function UpdateAvailabilityIndicator({ state }: { state?: UpdateStatusState }) {
-  if (state?.loading) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-        Checking for updates
-      </span>
-    );
-  }
-  if (state?.error) {
-    return <span className="text-xs text-amber-700 dark:text-amber-300">Update check failed</span>;
-  }
-  const status = state?.status;
-  if (!status) {
-    return null;
-  }
-  if (status.updateAvailable) {
-    return (
-      <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-300">
-        <ArrowUpCircle className="h-3 w-3" />
-        Update available
-      </Badge>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-      <Check className="h-3.5 w-3.5" />
-      Up to date
-    </span>
-  );
-}
-
 function ServiceDigestRow({ label, digest, tone }: { label: string; digest: string; tone?: "warning" | "update" }) {
   const toneClass =
     tone === "warning"
@@ -647,11 +623,11 @@ function InstalledAppTableSection({
   canManageApps,
   busyAction,
   updateStatusByApp,
-  onLoadUpdateStatus,
   onAction,
   onSwitchRuntime,
   onSetDevelopmentMode,
   onUpdateApp,
+  onCheckUpdate,
   onOpenPanel,
 }: {
   coreOrigin: string;
@@ -663,14 +639,13 @@ function InstalledAppTableSection({
   shellAppId: string;
   canManageApps: boolean;
   busyAction: string | null;
-  // Per-service digest detail for expanded rows, owned by the page; the section only reads it and
-  // asks the page to (re)load a single app's status.
+  // Per-service digest detail for expanded rows, owned by the page; the section only reads it.
   updateStatusByApp: Record<string, UpdateStatusState>;
-  onLoadUpdateStatus: (app: CoreApp, options?: { refresh?: boolean }) => void | Promise<unknown>;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onUpdateApp: (app: CoreApp) => void;
+  onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set());
@@ -741,9 +716,11 @@ function InstalledAppTableSection({
       return next;
     });
 
+    // Health only: expanding a row must not probe for updates. Availability is the row's own
+    // affordance, fed by the fleet check; the panel's per-service digests are opt-in through the
+    // actions menu's "Check for updates".
     if (shouldExpand) {
       void loadAppHealth(app);
-      void onLoadUpdateStatus(app);
     }
   };
 
@@ -787,11 +764,13 @@ function InstalledAppTableSection({
                       healthLoading={healthState?.loading ?? false}
                       canManageApps={canManageApps}
                       busyAction={busyAction}
+                      checkingUpdate={updateStatusState?.loading ?? false}
                       onToggleExpanded={() => toggleAppExpanded(app)}
                       onAction={onAction}
                       onSwitchRuntime={onSwitchRuntime}
                       onSetDevelopmentMode={onSetDevelopmentMode}
                       onUpdateApp={onUpdateApp}
+                      onCheckUpdate={onCheckUpdate}
                       onOpenPanel={onOpenPanel}
                     />
                     {expanded && (
@@ -803,7 +782,6 @@ function InstalledAppTableSection({
                             updateStatusState={updateStatusState}
                             canConfigurePublicOrigins={canManageApps}
                             onConfigurePublicOrigins={() => onOpenPanel(app, "settings", { settingsTab: "publicOrigins" })}
-                            onRecheckUpdate={() => void onLoadUpdateStatus(app, { refresh: true })}
                           />
                         </TableCell>
                       </TableRow>
@@ -827,11 +805,13 @@ function InstalledAppRow({
   healthLoading,
   canManageApps,
   busyAction,
+  checkingUpdate,
   onToggleExpanded,
   onAction,
   onSwitchRuntime,
   onSetDevelopmentMode,
   onUpdateApp,
+  onCheckUpdate,
   onOpenPanel,
 }: {
   app: CoreApp;
@@ -841,11 +821,13 @@ function InstalledAppRow({
   healthLoading: boolean;
   canManageApps: boolean;
   busyAction: string | null;
+  checkingUpdate: boolean;
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onUpdateApp: (app: CoreApp) => void;
+  onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const running = app.runtimeState === "running";
@@ -1034,9 +1016,12 @@ function InstalledAppRow({
             canBackup={canBackup}
             canConfigure={canConfigure}
             canRemove={canRemove}
+            canCheckUpdate={canUpdate}
+            checkingUpdate={checkingUpdate}
             devRuntime={canManageApps ? selectedDevRuntime : undefined}
             devWillRestart={!app.system && running}
             devBusy={isBusy("development-mode")}
+            onCheckUpdate={() => onCheckUpdate(app)}
             onSetDevelopmentMode={onSetDevelopmentMode}
             onOpenPanel={onOpenPanel}
           />
@@ -1139,9 +1124,12 @@ function InstalledAppActionsMenu({
   canBackup,
   canConfigure,
   canRemove,
+  canCheckUpdate,
+  checkingUpdate,
   devRuntime,
   devWillRestart,
   devBusy,
+  onCheckUpdate,
   onSetDevelopmentMode,
   onOpenPanel,
 }: {
@@ -1149,6 +1137,10 @@ function InstalledAppActionsMenu({
   canBackup: boolean;
   canConfigure: boolean;
   canRemove: boolean;
+  // Same gate as the row's Update affordance: an admin, and an app with a reviewed-update path.
+  canCheckUpdate: boolean;
+  checkingUpdate: boolean;
+  onCheckUpdate: () => void;
   // The selected source runtime whose Development Mode can be toggled here (undefined when the
   // selected runtime is not a source runtime, or the operator cannot manage apps).
   devRuntime?: CoreRuntimeProfile;
@@ -1161,7 +1153,8 @@ function InstalledAppActionsMenu({
   // Console logs (docker logs) are served on-demand by Core, so the action shows for any app that
   // declares the `logs` capability — independent of the telemetry backend.
   const canViewLogs = app.capabilities.includes("logs");
-  const hasMenuActions = Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove;
+  const hasMenuActions =
+    canCheckUpdate || Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -1177,6 +1170,22 @@ function InstalledAppActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
+        {canCheckUpdate && (
+          <>
+            <DropdownMenuItem
+              disabled={checkingUpdate}
+              // Keep the menu open while the check runs so the spinner is visible.
+              onSelect={(event) => {
+                event.preventDefault();
+                onCheckUpdate();
+              }}
+            >
+              {checkingUpdate ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Check for updates
+            </DropdownMenuItem>
+            {(Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
+          </>
+        )}
         {devRuntime && (
           <>
             <DropdownMenuLabel>Development mode</DropdownMenuLabel>
