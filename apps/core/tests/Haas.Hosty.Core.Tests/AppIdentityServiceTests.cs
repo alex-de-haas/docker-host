@@ -293,6 +293,33 @@ public sealed class AppIdentityServiceTests
         Assert.Equal("app_access_denied", error.Code);
     }
 
+    // An app nobody has been assigned to is not "unrestricted" — it is granted to nobody. Regression:
+    // the rule used to skip the check when the app had no assignment rows, so every non-admin could
+    // launch every never-assigned app.
+    [Fact]
+    public async Task CreateLaunchTokenAsync_RejectsAppWithNoAssignments()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], []);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(
+            () => fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1"));
+
+        Assert.Equal("app_access_denied", error.Code);
+    }
+
+    [Fact]
+    public async Task CreateLaunchTokenAsync_AllowsAdminOnAppWithNoAssignments()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("admin_1", role: "host.admin")], []);
+
+        var token = await fixture.Service.CreateLaunchTokenAsync("com.example.notes", "admin_1");
+
+        var session = await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes");
+        Assert.True(session.Active);
+    }
+
     [Fact]
     public async Task RevalidateAsync_RejectsTokensIssuedForAnotherApp()
     {

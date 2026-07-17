@@ -170,11 +170,13 @@ internal sealed class AppIdentityService(
             throw new AppIdentityException("system_app_admin_required", "System app access requires a Host administrator.");
         }
 
-        var hasAssignmentsForApp = state.Assignments.Any(assignment => string.Equals(assignment.AppId, appId, StringComparison.Ordinal));
+        // Assignments are a per-user allowlist, so an app with no rows at all grants nobody access. The
+        // rule must not weaken to "unassigned means public": that made every never-assigned app reachable
+        // by every user, which is the opposite of what the admin picker's unchecked box promises.
         var userAssigned = state.Assignments.Any(assignment =>
             string.Equals(assignment.AppId, appId, StringComparison.Ordinal) &&
             string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal));
-        if (!string.Equals(user.Role, "host.admin", StringComparison.Ordinal) && hasAssignmentsForApp && !userAssigned)
+        if (!string.Equals(user.Role, "host.admin", StringComparison.Ordinal) && !userAssigned)
         {
             throw new AppIdentityException("app_access_denied", "Host user is not assigned to this app.");
         }
