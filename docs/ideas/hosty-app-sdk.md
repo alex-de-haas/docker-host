@@ -153,7 +153,18 @@ Ratified by the owner 2026-07-17 (session review of the live media-server incide
    the owner intends to gradually move runtime/system apps **out** of the monorepo, and
    third-party app authors need frictionless access — so published public packages are the
    canonical channel, and the workspace link inside the monorepo is only an interim
-   convenience for the apps still in-tree.
+   convenience for the apps still in-tree. Re-examined 2026-07-17 against GitHub-only
+   alternatives and confirmed: GitHub Packages still token-gates public installs; git-tag
+   installs (`github:<owner>/<repo>#semver:^1`) work anonymously but need a separate SDK repo
+   (npm's git-URL spec has no subfolder syntax — only `#<commit-ish>` / `#semver:` suffixes —
+   so a monorepo subfolder cannot be an install source), build-on-install or a committed
+   `dist/`, and have poor bot support; a `.tgz` on GitHub Releases pins the version into the
+   URL. And .NET settles it: NuGet has no git dependencies at all, so NuGet.org is
+   unavoidable — at which point
+   avoiding npmjs saves nothing. The git-tag channel stays as a free *auxiliary* for
+   installing the SDK from a branch or commit during debugging. Pre-flight before first
+   publish: confirm the `@haas` npm scope is actually available (common name; fall back to
+   another scope if taken).
 
 6. **Enforce the server/client boundary with subpath exports + `server-only`.** The service
    token and Core fetches must never reach a client bundle. `core` stays pure; `server` is
@@ -207,6 +218,27 @@ Ratified by the owner 2026-07-17 (session review of the live media-server incide
     line every embedded document shares, so an unprefixed type raises collision risk. Since
     the SDK becomes the only place the literal appears in app code, a future rename — should
     branding ever force one — is one SDK+Shell release with a dual-accept window.
+
+13. **Versioned packages; updates flow through Dependabot — never floating versions.**
+    (Owner-decided 2026-07-17.) Both registries require versions anyway; the bump chore is
+    eliminated by automation, not by floating:
+    - Apps depend on the SDK with a wide semver range (`^1`), so an app-side change never
+      touches the SDK version — SDK releases and app work are independent streams.
+    - SDK releases reach external repos as Dependabot PRs with **auto-merge on green CI**
+      enabled for the SDK dependency: in practice "always latest", but with a CI gate and a
+      visible trail.
+    - In-tree apps use the npm workspace symlink and always build against the working-tree
+      SDK — no versions involved at all.
+    - Co-developing the SDK with an external app needs no publishing: `npm link` / `file:` on
+      the TS side, `ProjectReference` or a local feed on .NET, and the
+      `github:<owner>/<repo>#semver:^1` git-tag channel for installing straight from a branch.
+    Floating versions (`latest` / `*`, NuGet `1.*`) were considered and rejected: npm
+    lockfiles make them a lie (CI restores the pinned resolve regardless), NuGet's genuine
+    floating trades away build reproducibility, a bad release would hit every app's next
+    build fleet-wide with no gate, and auth code auto-flowing from a registry account into
+    every build is exactly the supply-chain exposure the platform's own digest pinning
+    exists to prevent — the same rolling-vs-pinned choice already made for app images
+    (ArtifactLocks), decided the same way.
 
 ## UX Contract (owner-stated 2026-07-17)
 
