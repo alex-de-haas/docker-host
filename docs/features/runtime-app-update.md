@@ -26,7 +26,7 @@ The browser surface runs step 4 in the background (see [Background Apply](#backg
 
 If an update request does not provide a manifest reference and the app has both `FeedsUrl` and `FollowedFeedId`, Core re-fetches `feeds.json`, validates `app-feeds.0.1`, resolves the followed feed, and loads its current `manifestRef`. Otherwise Core resolves the source in this order: the stored manifest URL for remote direct installs; the original local manifest path or directory captured at install (so edits to the source folder are picked up on recheck); and finally the installed manifest copy under the app's Core state directory when that original source is no longer present.
 
-`planDigest` is the SHA-256 of the reviewed update plan seed: app id, current and target versions, current and target runtimes, current and target manifest digests, the resolved feed identity, whether a pre-update backup will be created, and the reported changes.
+`planDigest` is the SHA-256 of the reviewed update plan seed: app id, current and target versions, current and target runtimes, current and target manifest digests, the target manifest path, the resolved feed identity (feeds URL, feed id, and feed document digest), whether a pre-update backup will be created, and the reported changes.
 
 ## Pending Plans
 
@@ -41,7 +41,7 @@ All three errors mean the same thing to a client: re-review against current inpu
 
 ## Changes
 
-The `changes` list is a human-review summary of the update plan. Core reports specific contract changes when it can classify them, such as `version`, `runtime`, `service`, `image`, `command`, `port`, `environment`, `setting`, `endpoint`, `data`, `dependency`, and `capability` changes, plus `artifact:{service}:{current}->{target}` for compiled-image digest movement. When the target manifest digest differs but none of those contract categories changed, Core reports `manifest` as a fallback meaning "manifest content changed." A recheck against the same installed manifest returns an empty `changes` list.
+The `changes` list is a human-review summary of the update plan. Core reports specific contract changes when it can classify them, such as `version`, `runtime`, `role`, `service`, `image`, `command`, `port`, `environment`, `setting`, `endpoint`, `data`, `dependency`, and `capability` changes, plus `artifact:{service}:{current}->{target}` for compiled-image digest movement. When the target manifest digest differs but none of those contract categories changed, Core reports `manifest` as a fallback meaning "manifest content changed." A recheck against the same installed manifest returns an empty `changes` list.
 
 Core-reserved `HOSTY_PORT_*` host-port overrides are never reported as `setting:*:removed`: an update carries them forward, so reporting a removal would promise a change apply does not make — a same-version plan that could never converge.
 
